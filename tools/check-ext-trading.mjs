@@ -45,11 +45,15 @@ const _num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d;
 
 // ── ② 시간외 세션 판정 ───────────────────────────────────────────────────
 {
-  const src = cut("function extTradeSession(market, cfg) {", "\n/* [V33.331] 시간외 거래에 쓸 가격을");
+  // [V33.351] 세션 창이 marketWindows 한 곳으로 모였다 — 그 코어를 함께 넣어야 실행된다.
+  //   (창을 한 곳으로 모은 것이 A-2 의 고침이고, 이 게이트는 그 한 곳을 통과한 답을 본다.)
+  const src = cut("const MARKET_HOURS = {", "function isMarketOpen(market, now)") +
+    cut("function extTradeSession(market, cfg, now) {", "\n/* [V33.331] 시간외 거래에 쓸 가격을");
   const ctx = vm.createContext({
     DEFAULT_CFG: { extTrade: { enabled: true, us: { pre: true, post: true }, kr: { pre: true, post: true } } },
     getUSEt: (d) => ({ day: d.__day, totalMin: d.__min }),
     getKST: (d) => ({ day: d.__day, totalMin: d.__min }),
+    _num: _num, String: String,
     Date: function (){ return globalThis.__now; }
   });
   ctx.Date = function () { return ctx.__now; };

@@ -98,9 +98,26 @@ console.log("② 소스 계약");
   chk(!/symFail\+\+/.test(skipLine),
     "건너뛴 것을 실패로 세지 않는다",
     "휴장을 실패로 센다 — 자가진단이 정상 상태에 '모듈 실패 반복' 을 울린다");
-  chk(/getKST/.test(fn) && /totalMin >= 540/.test(fn),
-    "판정 기준이 KST 09:00 개장이다",
+  /* [V33.351] 종전엔 함수 안의 숫자(540)를 정규식으로 찾았다. 창이 marketWindows 한 곳으로
+     모이면서 그 문자열이 사라졌는데 기준 자체는 그대로다 —
+     ★문자열이 아니라 답을 본다★(V33.337 교훈). 개장 전후를 실제로 물어본다.
+     수능일처럼 개장이 밀리는 날에도 그날의 개장 시각을 따라간다는 것이 이 고침의 핵심이다. */
+  chk(/marketWindows\("kr"/.test(fn) && /marketLocalTime\("kr"/.test(fn),
+    "판정 기준이 그날의 개장 시각(marketWindows)이다",
     "개장 시각 기준이 없다 — 장중까지 막으면 수집이 통째로 죽는다");
+  {
+    const { marketSessionNow, marketWindows } = await import("../src/index.js");
+    const kst = (y, mo, d, h, m) => new Date(Date.UTC(y, mo - 1, d, h - 9, m));
+    const 평일 = marketWindows("kr", kst(2026, 9, 15, 12, 0));
+    const 수능 = marketWindows("kr", kst(2026, 11, 19, 12, 0));
+    chk(평일.regular[0] === 540 && 수능.regular[0] === 600,
+      `개장 시각이 날마다 따라온다 — 평일 09:00 · 수능일 10:00`,
+      `개장 시각이 고정이다 — 수능일(10시 개장)에 09:00~10:00 을 장중으로 본다`);
+    chk(marketSessionNow("kr", kst(2026, 9, 15, 8, 30)) === "PRE" &&
+        marketSessionNow("kr", kst(2026, 9, 15, 9, 30)) === "REGULAR",
+      "개장 전은 PRE, 개장 후는 REGULAR 로 갈린다",
+      "개장 전후가 안 갈린다");
+  }
   chk(/_failWhy|_failTop/.test(fn),
     "실패에 이유가 붙는다",
     "실패 수만 세고 이유가 없다 — 다음 진단도 로그 왕복이 필요하다");

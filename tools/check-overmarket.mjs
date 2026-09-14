@@ -59,7 +59,9 @@ function cut(a, b) {
   /* [V33.339] 이어받기가 ★세션에 따라★ 달라졌으므로 세션 함수도 함께 떼어 온다.
      시계는 시험용으로 갈아 끼운다 — 이 검사가 보려는 건 "지금 세션에서 무엇을 이어받는가" 이지
      실행한 시각이 아니다(시각에 따라 결과가 바뀌면 그건 검사가 아니라 주사위다). */
-  const helpers = cut("function usMarketStateNow(now) {", "/* [V33.331] ★지금 이 시장이");
+  // [V33.351] 세션 코어(marketWindows·marketSessionNow)가 앞에 있어야 실행된다.
+  const helpers = cut("const MARKET_HOURS = {", "function isMarketOpen(market, now)") +
+    cut("function usMarketStateNow(now) {", "/* [V33.331] ★지금 이 시장이");
   let saved = null;
   const ctx = vm.createContext({
     setState: async (_db, _k, v) => { saved = v; },
@@ -115,11 +117,18 @@ function cut(a, b) {
 
 // ── ④ 한국 시간외 창이 실제 거래시간과 맞는가 ──────────────────────────
 {
+  /* [V33.351] 종전엔 applyKrOverMarket 안의 숫자를 정규식으로 찾았다. 창이 marketWindows
+     한 곳으로 모이면서 그 문자열이 사라졌는데, 창 자체는 그대로다 —
+     ★문자열이 아니라 답을 본다★(V33.337 교훈). 시각을 넣어 실제로 부른다. */
   const kr = cut("function applyKrOverMarket(o, d) {", "\n// [PRE/POST 표시]");
-  const pre = /totalMin >= 480 && kst\.totalMin < 540/.test(kr);
-  const post = /totalMin >= 930 && kst\.totalMin < 1200/.test(kr);
-  if (pre && post) ok("한국 장전 08:00~09:00 · 장후 15:30~20:00(KST) — 넥스트레이드 시간외까지 덮는다");
-  else bad("한국 시간외 창이 바뀌었다 — 세션 판정이 네이버 잔상에 다시 끌려간다");
+  const { marketSessionNow } = await import("../src/index.js");
+  const kst = (h, m) => new Date(Date.UTC(2026, 8, 15, h - 9, m));   // 2026-09-15 화요일 KST
+  const want = [[7, 59, "CLOSED"], [8, 0, "PRE"], [8, 59, "PRE"], [9, 0, "REGULAR"],
+                [15, 29, "REGULAR"], [15, 30, "POST"], [19, 59, "POST"], [20, 0, "CLOSED"]];
+  const wrong = want.filter(([h, m, w]) => marketSessionNow("kr", kst(h, m)) !== w);
+  if (!wrong.length) ok("한국 장전 08:00~09:00 · 장후 15:30~20:00(KST) — 넥스트레이드 시간외까지 덮는다");
+  else bad("한국 시간외 창이 바뀌었다 — " + wrong.map(([h, m, w]) =>
+    `${h}:${String(m).padStart(2, "0")} → ${marketSessionNow("kr", kst(h, m))}(기대 ${w})`).join(", "));
   if (/code === "4" \|\| code === "5"/.test(kr))
     ok("네이버 하락 코드(4·5)를 음수 부호로 옮긴다 — 절대값만 받아 상승으로 뒤집히지 않는다");
   else bad("네이버 등락 부호 처리가 사라졌다 — 하락이 상승으로 표시될 수 있다");

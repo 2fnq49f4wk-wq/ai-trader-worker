@@ -5,9 +5,14 @@ import {spawnSync} from 'node:child_process';
 import vm from 'node:vm';
 const src=readFileSync(new URL('../src/index.js',import.meta.url),'utf8');
 const cut=(a,b)=>src.slice(src.indexOf(a),src.indexOf(b,src.indexOf(a)));
-const ctx=vm.createContext({Date,Number,Math,JSON,isFinite, getKST:()=>({day:5,totalMin:490}),
+// V33.351: session windows moved into marketWindows/marketSessionNow, so load that core first.
+// Stub clocks report 08:10 KST on a weekday (day 5, minute 490) and no calendar date, so the
+// special-day table is skipped and the default KR windows decide the session.
+const ctx=vm.createContext({Date,Number,Math,JSON,isFinite,String,
+ getKST:()=>({day:5,totalMin:490}),getUSEt:()=>({day:5,totalMin:490}),
  _num:(v,d)=>Number.isFinite(Number(v))?Number(v):d,DEFAULT_CFG:{extTrade:{freshMs:420000,minPrice:3,maxMovePct:12}}});
-vm.runInContext(cut('function applyKrOverMarket(o, d) {','// [PRE/POST 표시]')+
+vm.runInContext(cut('const MARKET_HOURS = {','function isMarketOpen(market, now)')+
+ cut('function applyKrOverMarket(o, d) {','// [PRE/POST 표시]')+
  cut('function extTradePriceEx(q, session, cfg) {','// [V8.6] 엔진이 거래해도 되는 시간'),ctx);
 const stamp=new Date(Date.now()-60000).toISOString();
 const info={tradingSessionType:'PRE_MARKET',overMarketStatus:'OPEN',overPrice:'105',localTradedAt:stamp};
@@ -40,11 +45,13 @@ assert.match(cut('const _qts = Date.now();','if (dailyRsi == null)'),/quoteSessi
 assert.match(cut('const targets = Array.from(new Set(missing','if (stmts2.length)'),/quoteSessionFields\(q\)/);
 // A-1: execute the common final guard with mocked committed ledger counts.
 let count=0;
-const entry=vm.createContext({Date,Number,Math,
+// V33.351: the session-start minute now comes from marketWindows, so load that core too.
+const entry=vm.createContext({Date,Number,Math,String,
  _extSessionAt:()=> 'pre',extTradeSession:()=> 'pre',extTradePrice:()=>105,
  _num:(x,d)=>typeof x==='number'?x:d,_clamp:(x,a,b)=>Math.min(b,Math.max(a,x)),
- getUSEt:()=>({totalMin:490}),getKST:()=>({totalMin:490})});
-vm.runInContext(cut('async function extBuyGuard(','async function executeBuy('),entry);
+ getUSEt:()=>({day:3,totalMin:490}),getKST:()=>({day:3,totalMin:490})});
+vm.runInContext(cut('const MARKET_HOURS = {','function isMarketOpen(market, now)')+
+ cut('async function extBuyGuard(','async function executeBuy('),entry);
 const entryDB={prepare:()=>({bind(){return this;},first:async()=>({n:count})})};
 const entryCfg={extTrade:{enabled:true,entries:true,minPickP:.62,sizeMult:.5,maxNewPerSession:2}};
 const guard=(c=entryCfg,p=.7)=>entry.extBuyGuard(entryDB,'us',10,105,{mlMindP:p},c,{quote:{}},Date.now());

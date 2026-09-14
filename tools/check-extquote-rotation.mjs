@@ -43,10 +43,21 @@ const bad = (m) => { fails++; console.error("  FAIL " + m); };
     ok("지금 세션에서 살아 있는 필드를 정하는 규칙이 한 곳에 있다");
   else bad("★어느 시간외 필드가 아직 유효한지 정하는 곳이 없다★");
   /* 세션은 IANA 를 거치는 getUSEt 위에 세워야 한다 — 손으로 쓴 서머타임 규칙이면 3월·11월에 틀린다. */
-  const i0 = S.indexOf("function usMarketStateNow(");
-  const blk = S.slice(i0, i0 + 420);
-  if (/getUSEt\(/.test(blk)) ok("세션 판정이 getUSEt(IANA·서머타임 자동) 위에 서 있다");
+  /* [V33.351] 세션 판정이 marketSessionNow → marketLocalTime → getUSEt 로 모였다.
+     블록을 글자로 뒤지는 대신 ★그 사슬이 실제로 IANA 를 타는지★ 를 본다:
+     서머타임 전환 경계에서 세션이 한 시간 어긋나지 않아야 한다. */
+  const { marketSessionNow, marketLocalTime } = await import("../src/index.js");
+  if (/getUSEt\(/.test(S.slice(S.indexOf("function marketLocalTime("), S.indexOf("function marketLocalTime(") + 260)))
+    ok("세션 판정이 getUSEt(IANA·서머타임 자동) 위에 서 있다");
   else bad("★세션 판정이 getUSEt 를 안 쓴다★ — 서머타임 전환 주에 한 시간씩 어긋난다");
+  // 2026-03-08 은 미국 서머타임 시작일(일요일). 그 다음 월요일 09:30 ET 는 UTC 13:30 이다.
+  //   손계산 규칙이면 여기서 한 시간 어긋난다.
+  const edtOpen = new Date(Date.UTC(2026, 2, 9, 13, 30));    // EDT(UTC-4) 09:30
+  const estOpen = new Date(Date.UTC(2026, 10, 9, 14, 30));   // EST(UTC-5) 09:30
+  if (marketSessionNow("us", edtOpen) === "REGULAR" && marketSessionNow("us", estOpen) === "REGULAR" &&
+      marketLocalTime("us", edtOpen).totalMin === 570 && marketLocalTime("us", estOpen).totalMin === 570)
+    ok("서머타임 전후 모두 09:30 ET 를 개장으로 본다(한 시간 어긋나지 않는다)");
+  else bad("★서머타임 전환 주에 세션이 한 시간 어긋난다★");
 }
 
 // ── ③ 지난 세션 값을 이어받지 않는가 ───────────────────────────────────
@@ -84,9 +95,17 @@ const bad = (m) => { fails++; console.error("  FAIL " + m); };
   if (i0 < 0 || i1 <= i0) bad("★세션 함수 본문을 못 잘라냈다 — 실행 검사를 못 한다★");
   else {
     /* getUSEt 대신 시험용 시계를 끼운다 — 이 검사가 보려는 건 '분 → 세션' 매핑이다. */
+    /* [V33.351] 창이 marketWindows 한 곳으로 모였다 — 그 코어를 함께 넣어야 실행된다.
+       시험용 시계를 끼우는 방식은 그대로다(이 검사가 보려는 건 '분 → 세션' 매핑이다).
+       marketLocalDate 가 null 을 내도록 year 를 안 준다 → 특례일 표를 안 타고 기본 창을 본다. */
+    const c0 = S.indexOf("const MARKET_HOURS = {");
+    const c1 = S.indexOf("function isMarketOpen(market, now)");
+    if (c0 < 0 || c1 <= c0) bad("★세션 코어(MARKET_HOURS~marketSessionNow)를 못 잘라냈다★");
     const ctx = { console };
     vm.createContext(ctx);
-    vm.runInContext("var __et = null; function getUSEt(){ return __et; }\n" + S.slice(i0, i1), ctx);
+    vm.runInContext("var __et = null; function getUSEt(){ return __et; } function getKST(){ return __et; }\n" +
+      "var _num = function(v,d){ var n = Number(v); return Number.isFinite(n) ? n : d; };\n" +
+      S.slice(c0, c1) + "\n" + S.slice(i0, i1), ctx);
     const at = (day, min) => { ctx.__et = { day, totalMin: min }; return ctx.usMarketStateNow(); };
     const cases = [
       [3, 300, "CLOSED", "새벽 05:00 ET — 아직 장전 전"],

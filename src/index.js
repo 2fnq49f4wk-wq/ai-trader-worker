@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.350";
+const _BUILD_VER = "V33.351";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -5332,74 +5332,125 @@ async function _indexFreshOpen(DB, market, today) {
   return true; // 데이터 없으면 개장 가정
 }
 
-function isMarketOpen(market) {
-  const now = new Date();
-  if (market === "us") {
-    const et = getUSEt(now);
-    return et.day >= 1 && et.day <= 5 && et.totalMin >= 570 && et.totalMin < 960;
+/* ══ [V33.351 · A-2 + A-8 해결] ★세션 창을 한 곳에서만 정한다.★ ═══════════════════════
+   종전엔 같은 창이 코드 곳곳에 숫자로 박혀 있었다 — 미국 pre 420~570 / post 960~1200,
+   한국 pre 480~540 / post 930~1200 이 각각 대여섯 군데. 한 곳을 고치면 나머지가 조용히
+   갈라진다(이 저장소가 라벨 공급자·MIND 설정에서 이미 겪은 그 사고다).
+   실제로 Codex V33.346 이 NXT 실제 체결창을 ★시세 경로에만★ 반영해, 거래 세션 판정은
+   여전히 옛 창을 들고 있었다 — 두 층이 서로 다른 시각을 믿는 상태였다.
+
+   ★그리고 창은 날마다 같지 않다.★ (A-8)
+     · 미국 반장(조기폐장) — 13:00 ET 마감. 2026-11-27(추수감사절 다음날) · 2026-12-24.
+       그날 13:00~16:00 을 정규장으로 믿으면, 얼어붙은 종가로 거래하면서
+       ★야후가 정확히 주고 있는 장후 체결가를 우리 손으로 지운다★ (normalizeExtUS).
+     · 한국 수능일 — 전 일정 1시간 지연. 2026-11-19(수능 예정일).
+       09:00~10:00 을 정규장으로 믿고(실제 휴장), 15:30~16:00 을 장후로 믿는다(실제 정규장).
+     · 한국 연초 개장일 — 10:00 개장, 마감은 정상.
+   이 표가 그 예외를 담는다. 없는 날은 기본 창이 그대로 답이다.
+
+   ※ 분(minute)은 ★그 시장의 현지 자정 기준★ 이다(미국 ET, 한국 KST).
+   ※ 휴장일 판정은 여기서 하지 않는다 — isMarketTradingDay 가 지수 신선도·규칙으로 따로 한다.
+     여기는 "열린 날이라면 몇 시부터 몇 시까지인가" 만 답한다. */
+const MARKET_HOURS = {
+  us: { pre: [420, 570], regular: [570, 960], post: [960, 1200], quoteTail: 10 },
+  kr: { pre: [480, 540], regular: [540, 930], post: [930, 1200], quoteTail: 0 }
+};
+
+/* 날짜별 예외. 키는 그 시장 현지 날짜 "YYYY-MM-DD".
+   규칙으로 뽑을 수 있는 날(추수감사절 다음날)도 ★적어 둔다★ — 규칙을 두 벌 만들면
+   그 둘이 갈라지고, 이 표는 사람이 읽고 확인할 수 있어야 한다.
+   ⚠️ 해가 바뀌면 그 해 날짜를 더할 것. 없으면 기본 창으로 도는데, 그날은 조용히 틀린다. */
+const MARKET_HOURS_SPECIAL = {
+  us: {
+    // 조기폐장(반장) — 13:00 ET 마감. 장후는 그 시각부터 17:00 ET 까지.
+    "2026-11-27": { regular: [570, 780], post: [780, 1020], why: "추수감사절 다음날 반장" },
+    "2026-12-24": { regular: [570, 780], post: [780, 1020], why: "성탄 전야 반장" },
+    "2027-07-02": { regular: [570, 780], post: [780, 1020], why: "독립기념일 전 반장" },
+    "2027-11-26": { regular: [570, 780], post: [780, 1020], why: "추수감사절 다음날 반장" },
+    "2027-12-23": { regular: [570, 780], post: [780, 1020], why: "성탄 전야 반장" }
+  },
+  kr: {
+    // 수능일 — 전 일정 1시간 지연(장전 09:00~10:00 · 정규장 10:00~16:00 · 장후 16:00~21:00).
+    "2026-11-19": { pre: [540, 600], regular: [600, 960], post: [960, 1260], why: "대학수학능력시험" },
+    "2027-11-18": { pre: [540, 600], regular: [600, 960], post: [960, 1260], why: "대학수학능력시험" },
+    // 연초 개장일 — 10:00 개장, 마감은 정상(15:30).
+    "2027-01-04": { pre: [480, 600], regular: [600, 930], post: [930, 1200], why: "연초 개장일" }
   }
-  if (market === "kr") {
-    const kst = getKST(now);
-    return kst.day >= 1 && kst.day <= 5 && kst.totalMin >= 540 && kst.totalMin < 930;
-  }
-  return false;
+};
+
+/* 그 시장의 현지 시각 조각 — 다른 곳이 getUSEt/getKST 를 직접 부르지 않게 여기로 모은다. */
+function marketLocalTime(market, now) {
+  const d = now || new Date();
+  if (market === "us") return getUSEt(d);
+  if (market === "kr") return getKST(d);
+  return null;
+}
+function marketLocalDate(t) {
+  if (!t || t.year == null) return null;
+  return t.year + "-" + String(t.month).padStart(2, "0") + "-" + String(t.date).padStart(2, "0");
+}
+/* 오늘 이 시장의 창. 예외가 있으면 그것이 이긴다(부분 지정도 허용 — 나머지는 기본값). */
+function marketWindows(market, now) {
+  const base = MARKET_HOURS[market];
+  if (!base) return null;
+  const t = marketLocalTime(market, now);
+  const sp = (MARKET_HOURS_SPECIAL[market] || {})[marketLocalDate(t)];
+  if (!sp) return { pre: base.pre, regular: base.regular, post: base.post, quoteTail: base.quoteTail, special: null };
+  return { pre: sp.pre || base.pre, regular: sp.regular || base.regular, post: sp.post || base.post,
+           quoteTail: base.quoteTail, special: sp.why || "특례" };
+}
+function _inWin(min, w) { return !!(w && min >= w[0] && min < w[1]); }
+function _isWeekday(t) { return !!(t && t.day >= 1 && t.day <= 5); }
+
+/* 지금 세션 — "PRE" / "REGULAR" / "POST" / "CLOSED". 모든 세션 판정의 뿌리다. */
+function marketSessionNow(market, now) {
+  const t = marketLocalTime(market, now);
+  if (!_isWeekday(t)) return "CLOSED";
+  const w = marketWindows(market, now);
+  if (!w) return "CLOSED";
+  if (_inWin(t.totalMin, w.regular)) return "REGULAR";
+  if (_inWin(t.totalMin, w.pre)) return "PRE";
+  if (_inWin(t.totalMin, w.post)) return "POST";
+  return "CLOSED";
+}
+
+function isMarketOpen(market, now) {
+  return marketSessionNow(market, now) === "REGULAR";   // [V33.351] 창은 marketWindows 한 곳에서
 }
 
 // [V33.74] 정규장 마감까지 남은 분. 개장 중이 아니면 null.
 //   원장 실증: 손절 37건 −$18,201 중 개장 30분 이내 12건이 손실의 64%를 차지했고,
 //   그 평균 손절률이 −9.46%(장중 손절은 −5.72%)였다. 즉 손실의 핵심은 오버나이트 갭이다.
 //   갭 자체는 못 막으니 '마감 전 노출'을 줄이는 데 쓴다.
-function minutesToClose(market) {
-  const now = new Date();
-  if (market === "us") {
-    const et = getUSEt(now);
-    if (!(et.day >= 1 && et.day <= 5)) return null;
-    if (et.totalMin < 570 || et.totalMin >= 960) return null;
-    return 960 - et.totalMin;
-  }
-  if (market === "kr") {
-    const kst = getKST(now);
-    if (!(kst.day >= 1 && kst.day <= 5)) return null;
-    if (kst.totalMin < 540 || kst.totalMin >= 930) return null;
-    return 930 - kst.totalMin;
-  }
-  return null;   // 원자재·채권은 거래시간 구조가 달라 적용하지 않는다
+function minutesToClose(market, now) {
+  // [V33.351] 반장이면 마감이 13:00 이다 — 그날 '남은 분' 도 그만큼 짧아야 한다.
+  const w = marketWindows(market, now);
+  const t = marketLocalTime(market, now);
+  if (!w || !_isWeekday(t)) return null;   // 원자재·채권은 거래시간 구조가 달라 적용하지 않는다
+  if (!_inWin(t.totalMin, w.regular)) return null;
+  return w.regular[1] - t.totalMin;
 }
 
 // [V9.0] 가격 갱신 전용 창 — UI/휴장판정용 isMarketOpen과 분리.
 //   KR: 네이버 실시간 시세 채택으로 지연 보정 불필요 — 정규장 09:00~15:30과 동일.
 //   US는 실시간이라 정규장과 동일.
-function isQuoteRefreshWindow(market) {
-  const now = new Date();
-  if (market === "us") {
-    const et = getUSEt(now);
-    // [V9.1] 종료 16:00→16:10 ET: 마감 직전 마지막 틱이 아닌 "공식 종가" 프린트가
-    //   야후에 반영될 시간을 확보 (기존엔 지수/종목 종가가 공식 종가와 0.1%대 어긋남).
-    return et.day >= 1 && et.day <= 5 && et.totalMin >= 570 && et.totalMin < 970;
-  }
-  if (market === "kr") {
-    const kst = getKST(now);
-    return kst.day >= 1 && kst.day <= 5 && kst.totalMin >= 540 && kst.totalMin < 930;
-  }
-  return false;
+function isQuoteRefreshWindow(market, now) {
+  // [V9.1] 미국은 종료를 +10분(quoteTail) 늘린다 — 마감 직전 마지막 틱이 아니라 "공식 종가"
+  //   프린트가 야후에 반영될 시간을 확보한다(종전엔 종가가 공식 종가와 0.1%대 어긋났다).
+  // [V33.351] 창은 marketWindows 한 곳에서 — 반장이면 이 창도 13:00(+10분)에 닫힌다.
+  const w = marketWindows(market, now);
+  const t = marketLocalTime(market, now);
+  if (!w || !_isWeekday(t)) return false;
+  return t.totalMin >= w.regular[0] && t.totalMin < w.regular[1] + _num(w.quoteTail, 0);
 }
 
 // [프리/애프터마켓] 시간외 시세 갱신 창 — 정규장 밖이지만 가격(시간외)만 실시간 갱신(거래는 안 함).
 //   US: 프리 07:00(420)~09:30(570) ET, 애프터 16:00(960)~20:00(1200) ET.
 //   KR: 장전 시간외/NXT 08:00(480)~09:00(540), 장후 시간외/단일가/NXT 15:30(930)~20:00(1200) KST.
-function isExtendedHoursWindow(market) {
-  const now = new Date();
-  if (market === "us") {
-    const et = getUSEt(now);
-    return et.day >= 1 && et.day <= 5 &&
-      ((et.totalMin >= 420 && et.totalMin < 570) || (et.totalMin >= 960 && et.totalMin < 1200));
-  }
-  if (market === "kr") {
-    const kst = getKST(now);
-    return kst.day >= 1 && kst.day <= 5 &&
-      ((kst.totalMin >= 480 && kst.totalMin < 540) || (kst.totalMin >= 930 && kst.totalMin < 1200));
-  }
-  return false;
+function isExtendedHoursWindow(market, now) {
+  // [V33.351] 창은 marketWindows 한 곳에서 — 반장·수능일엔 이 창도 같이 움직인다.
+  const s = marketSessionNow(market, now);
+  return s === "PRE" || s === "POST";
 }
 
 /* ══ [V33.339] ★미국 세션(mstate)은 우리 시계로 정한다 — 남의 서버에 묻지 않는다★ ══
@@ -5422,12 +5473,7 @@ function isExtendedHoursWindow(market) {
       그 3시간의 장전 시세를 extKeepMaskUS(pre:false) 가 통째로 버린다.
    ※ 고칠 때는 A-2(세션 창 네 벌)를 먼저 통합할 것. 그러면 이 수정이 한 곳으로 끝난다. */
 function usMarketStateNow(now) {
-  const t = getUSEt(now || new Date());
-  if (t.day < 1 || t.day > 5) return "CLOSED";
-  if (t.totalMin >= 420 && t.totalMin < 570) return "PRE";
-  if (t.totalMin >= 570 && t.totalMin < 960) return "REGULAR";
-  if (t.totalMin >= 960 && t.totalMin < 1200) return "POST";
-  return "CLOSED";
+  return marketSessionNow("us", now);   // [V33.351] 창은 marketWindows 한 곳에서
 }
 /* 지금 세션에서 ★살아 있는★ 시간외 필드를 알려 준다.
    · pre  는 장전(PRE) 동안만 지금 값이다. 정규장이 열리면 이미 지나간 값이다.
@@ -5448,12 +5494,7 @@ function extKeepMaskUS(state) {
    COALESCE 는 "새 값이 아직 안 왔다" 는 뜻이지 "지난 세션 값을 써라" 가 아니다.
    ※ 창은 isExtendedHoursWindow("kr") 과 같은 시각을 쓴다(A-2 가 통합되면 그 한 곳을 볼 것). */
 function krMarketStateNow(now) {
-  const t = getKST(now || new Date());
-  if (t.day < 1 || t.day > 5) return "CLOSED";
-  if (t.totalMin >= 480 && t.totalMin < 540) return "PRE";
-  if (t.totalMin >= 540 && t.totalMin < 930) return "REGULAR";
-  if (t.totalMin >= 930 && t.totalMin < 1200) return "POST";
-  return "CLOSED";
+  return marketSessionNow("kr", now);   // [V33.351] 창은 marketWindows 한 곳에서
 }
 /* 지금 세션에서 ★살아 있는★ 시간외 필드 — 미국과 같은 규칙이다.
    · pre  는 장전(PRE) 동안만 지금 값이다.
@@ -5496,26 +5537,16 @@ function normalizeExtUS(o, state) {
    같은 세션 창이 네 곳에 따로 적혀 있다(5339 · 5360 · 여기 · 11511).
    그리고 KR 창(08:00~09:00 / 15:30~20:00)은 NXT 실제 체결창(08:00~08:50 / 15:40~20:00)과 다르다 —
    Codex V33.346 은 시세 경로(7472)에만 반영했고 이 거래 세션 판정은 그대로다. */
-function extTradeSession(market, cfg) {
+function extTradeSession(market, cfg, now) {
   const et = (cfg && cfg.extTrade) || DEFAULT_CFG.extTrade;
   if (!et || et.enabled === false) return null;
   const m = et[market];
   if (!m) return null;
-  const now = new Date();
-  if (market === "us") {
-    const t = getUSEt(now);
-    if (t.day < 1 || t.day > 5) return null;
-    if (m.pre && t.totalMin >= 420 && t.totalMin < 570) return "pre";
-    if (m.post && t.totalMin >= 960 && t.totalMin < 1200) return "post";
-    return null;
-  }
-  if (market === "kr") {
-    const t = getKST(now);
-    if (t.day < 1 || t.day > 5) return null;
-    if (m.pre && t.totalMin >= 480 && t.totalMin < 540) return "pre";
-    if (m.post && t.totalMin >= 930 && t.totalMin < 1200) return "post";
-    return null;
-  }
+  // [V33.351] 창은 marketWindows 한 곳에서 — 시세 경로와 거래 판정이 같은 시각을 믿는다.
+  //   (종전엔 두 층이 각자 숫자를 들고 있어, Codex V33.346 이 시세 쪽만 고치자 갈라졌다.)
+  const sess = marketSessionNow(market, now);
+  if (sess === "PRE") return m.pre ? "pre" : null;
+  if (sess === "POST") return m.post ? "post" : null;
   return null;
 }
 
@@ -5576,18 +5607,9 @@ function extBlockSummary(cnt) {
 // [V8.6] 엔진이 거래해도 되는 시간
 // US: 09:30~16:00 ET (실시간이므로 정규장과 동일)
 // KR: 09:00~15:30 KST (네이버 실시간 시세 채택 — 15분 지연 보정 불필요)
-function isTradingWindow(market) {
-  const now = new Date();
-  if (market === "us") {
-    const et = getUSEt(now);
-    return et.day >= 1 && et.day <= 5 && et.totalMin >= 570 && et.totalMin < 960;
-  }
-  if (market === "kr") {
-    const kst = getKST(now);
-    // 09:00 = 540, 15:30 = 930
-    return kst.day >= 1 && kst.day <= 5 && kst.totalMin >= 540 && kst.totalMin < 930;
-  }
-  return false;
+function isTradingWindow(market, now) {
+  // [V33.351] 창은 marketWindows 한 곳에서 — 반장이면 13:00 에, 수능일이면 10:00 에 맞춰 움직인다.
+  return marketSessionNow(market, now) === "REGULAR";
 }
 
 // [V8.6 신규] LLM 트리거 시각 판정 — cron이 매분 돌 때 "지금이 분석 트리거 시각인가" 체크
@@ -5598,21 +5620,15 @@ function isTradingWindow(market) {
 //   지거나 cron이 미세하게 어긋나면 그날 LLM 분석을 통째로 놓쳤음(자동갱신 실패).
 //   → "트리거 시각 이후 ~ 장중"이면서 "오늘 아직 실행 안 됨"일 때 true가 되도록 변경.
 //   실제 1일 1회 보장은 호출부에서 llm_last_run:<market> 날짜 비교로 처리.
-function isLLMTriggerWindow(market) {
-  const now = new Date();
-  if (market === "kr") {
-    const kst = getKST(now);
-    if (kst.day < 1 || kst.day > 5) return false;
-    // 09:00 KST(540) 이후 ~ 15:30 KST(930) 사이 = 정규장 동안 언제든 따라잡기 가능
-    return kst.totalMin >= 540 && kst.totalMin < 930;
-  }
-  if (market === "us") {
-    const et = getUSEt(now);
-    if (et.day < 1 || et.day > 5) return false;
-    // 09:20 ET(560) 이후 ~ 16:00 ET(960) 사이
-    return et.totalMin >= 560 && et.totalMin < 960;
-  }
-  return false;
+function isLLMTriggerWindow(market, now) {
+  /* [V33.351] 창은 marketWindows 한 곳에서.
+     한국은 정규장 전체, 미국은 ★개장 10분 전부터★ 정규장 끝까지 — 그 '10분 전' 을
+     숫자(560)로 박아 두면 반장·지연개장 날 함께 안 움직인다. 개장 시각에서 빼서 만든다. */
+  const w = marketWindows(market, now);
+  const t = marketLocalTime(market, now);
+  if (!w || !_isWeekday(t)) return false;
+  const lead = market === "us" ? 10 : 0;
+  return t.totalMin >= w.regular[0] - lead && t.totalMin < w.regular[1];
 }
 // 하위호환 — 기존 이름도 윈도우 방식으로 위임
 function isLLMTriggerTime(market) {
@@ -5715,42 +5731,25 @@ function isFxMarketOpen() {
 // [V8.6] 장 마감까지 남은 분 — Day 전략 강제 청산용
 // US: 16:00 ET 마감 기준 (DST 자동)
 // KR: 15:30 KST 기준 — 네이버 실시간 시세 채택, 정규장 종료 시각 사용.
-function marketMinutesUntilClose(market) {
-  const now = new Date();
-  if (market === "us") {
-    const et = getUSEt(now);
-    if (et.day < 1 || et.day > 5) return null;
-    if (et.totalMin < 570 || et.totalMin >= 960) return null;
-    return 960 - et.totalMin;  // 16:00 ET
-  }
-  if (market === "kr") {
-    const kst = getKST(now);
-    if (kst.day < 1 || kst.day > 5) return null;
-    // 거래 윈도우: 09:00~15:30
-    if (kst.totalMin < 540 || kst.totalMin >= 930) return null;
-    return 930 - kst.totalMin;  // 15:30 KST
-  }
-  return null;
+function marketMinutesUntilClose(market, now) {
+  // [V33.351] minutesToClose 와 같은 답을 같은 표에서 낸다 — 반장이면 13:00 기준이다.
+  //   (종전엔 같은 계산이 두 벌이었고 둘 다 숫자를 박고 있었다.)
+  return minutesToClose(market, now);
 }
 
 // [강화·데이터적합] 현재 거래 세션의 경과 비율(0~1) — 장중 형성 중인 당일봉의
 //   "부분 거래량"을 풀데이(full-day) 기준으로 환산하는 데 사용. 윈도우 밖이면 null(=완성봉으로 취급).
 //   US 09:30~16:00(390분), KR 09:00~15:30(390분).
-function sessionElapsedFraction(market) {
-  const now = new Date();
-  if (market === "us") {
-    const et = getUSEt(now);
-    if (et.day < 1 || et.day > 5) return null;
-    if (et.totalMin < 570 || et.totalMin >= 960) return null;
-    return Math.max(0, Math.min(1, (et.totalMin - 570) / 390));
-  }
-  if (market === "kr") {
-    const kst = getKST(now);
-    if (kst.day < 1 || kst.day > 5) return null;
-    if (kst.totalMin < 540 || kst.totalMin >= 930) return null;
-    return Math.max(0, Math.min(1, (kst.totalMin - 540) / 390));
-  }
-  return null;
+function sessionElapsedFraction(market, now) {
+  /* [V33.351] 길이(390분)도 박지 않는다 — 반장은 210분, 수능일은 360분이다.
+     종전엔 분모가 390 고정이라 반장 12:00 에 경과율이 0.85 로 나왔다(실제 0.86 이 아니라
+     그날 기준으로는 1.0 에 가깝다). 당일봉 거래량 환산이 그만큼 어긋난다. */
+  const w = marketWindows(market, now);
+  const t = marketLocalTime(market, now);
+  if (!w || !_isWeekday(t) || !_inWin(t.totalMin, w.regular)) return null;
+  const span = w.regular[1] - w.regular[0];
+  if (!(span > 0)) return null;
+  return Math.max(0, Math.min(1, (t.totalMin - w.regular[0]) / span));
 }
 
 // ============================================================
@@ -7541,10 +7540,11 @@ function applyKrOverMarket(o, d) {
   if (d.ms === "OPEN") { o.mstate = "REGULAR"; return o; }
   // [PRE/POST FIX] 세션 판정을 네이버 tradingSessionType(불안정·직전세션 잔상)에 의존하지 않고
   //   KST 시각으로 확정한다. 08:00~09:00=장전(PRE), 15:30~20:00=장후(POST).
+  // [V33.351] 창은 marketWindows 한 곳에서 — 수능일이면 이 창도 1시간 밀린다.
   const kst = getKST(new Date());
-  const weekday = kst.day >= 1 && kst.day <= 5;
-  const inPre  = weekday && kst.totalMin >= 480 && kst.totalMin < 540;
-  const inPost = weekday && kst.totalMin >= 930 && kst.totalMin < 1200;
+  const _sessKR = marketSessionNow("kr", new Date());
+  const inPre  = _sessKR === "PRE";
+  const inPost = _sessKR === "POST";
   /* [V33.350 · A-10 해결] 여기서 값을 안 넣고 나가는 것 자체는 맞다 — 없는 체결을 지어내지 않는다.
      문제는 기록부가 한국에 대해 아무것도 지우지 않아, 안 넣은 자리에 ★지난 세션 값★ 이
      COALESCE 로 남던 것이었다. 이제 extKeepMaskKR 이 세션 밖 값을 지운다(16908 부근). */
@@ -11706,22 +11706,13 @@ const EXT_SLIP_MULT = 3;
    비용은 정책이 아니라 물리라서 cfg.extTrade 스위치를 보지 않는다 — 시간외에 체결됐으면
    그 스위치를 나중에 껐더라도 그때 낸 비용은 시간외 비용이다. */
 function _extSessionAt(market, ts) {
-  const d = new Date(ts);
-  if (market === "us" || market === "bdus") {
-    const t = getUSEt(d);
-    if (t.day < 1 || t.day > 5) return null;
-    if (t.totalMin >= 420 && t.totalMin < 570) return "pre";
-    if (t.totalMin >= 960 && t.totalMin < 1200) return "post";
-    return null;
-  }
-  if (market === "kr" || market === "bdkr") {
-    const t = getKST(d);
-    if (t.day < 1 || t.day > 5) return null;
-    if (t.totalMin >= 480 && t.totalMin < 540) return "pre";
-    if (t.totalMin >= 930 && t.totalMin < 1200) return "post";
-    return null;
-  }
-  return null;   // cm(암호화폐)은 24시간 — 시간외라는 개념이 없다
+  // [V33.351] 창은 marketWindows 한 곳에서. 통화 슬리브(bdus/bdkr)는 본장과 같은 시각을 쓴다.
+  //   ★비용은 정책이 아니라 물리다★ — 반장 13:00 이후 체결은 그날 장후 비용이 맞다.
+  const mk = (market === "us" || market === "bdus") ? "us"
+           : (market === "kr" || market === "bdkr") ? "kr" : null;
+  if (!mk) return null;   // cm(암호화폐)은 24시간 — 시간외라는 개념이 없다
+  const sess = marketSessionNow(mk, new Date(ts));
+  return sess === "PRE" ? "pre" : sess === "POST" ? "post" : null;
 }
 function _slipRate(market, ts) {
   if (!(typeof ts === "number" && isFinite(ts) && ts >= SLIPPAGE_FROM)) return 0;
@@ -15530,8 +15521,13 @@ async function extBuyGuard(DB, market, qty, price, signal, cfg, opts, now) {
   const p = signal && signal.mlMindP;
   if (!(typeof p === "number" && Number.isFinite(p) && p >= _num(et.minPickP, 0.62)))
     return { ok: false, why: "probability_floor" };
-  const t = market === "us" ? getUSEt(new Date(now)) : getKST(new Date(now));
-  const startMin = session === "pre" ? (market === "us" ? 420 : 480) : (market === "us" ? 960 : 930);
+  /* [V33.351 · A-2] 세션 시작 시각도 marketWindows 한 곳에서 — 종전엔 여기에도 숫자가 박혀 있었다.
+     반장이면 장후 시작이 16:00 이 아니라 13:00 이고, 수능일이면 장전이 09:00 부터다.
+     그 날 이 숫자만 옛 값이면 '세션당 신규 종목 수' 를 엉뚱한 창에서 세게 된다. */
+  const t = marketLocalTime(market, new Date(now));
+  const _w = marketWindows(market, new Date(now));
+  if (!t || !_w) return { ok: false, why: "session_window_unknown" };
+  const startMin = session === "pre" ? _w.pre[0] : _w.post[0];
   const startTs = Math.floor(now / 60000) * 60000 - (t.totalMin - startMin) * 60000;
   // Count committed buys, not attempts or an unrelated fast-watch counter. The cycle lock serializes entries.
   try {
@@ -35463,8 +35459,10 @@ async function stinBackfill(DB, opts) {
        주말은 새 세션이 없으므로 금요일 저녁 수확분이 마지막이다. */
     const _krSessionLive = function () {
       try {
-        const k = getKST(new Date());
-        return k.day >= 1 && k.day <= 5 && k.totalMin >= 540;   // 09:00 KST 개장 이후
+        // [V33.351] 개장 시각은 marketWindows 한 곳에서 — 수능일이면 10:00 이다.
+        const k = marketLocalTime("kr", new Date());
+        const w = marketWindows("kr", new Date());
+        return !!(k && w && _isWeekday(k) && k.totalMin >= w.regular[0]);
       } catch (e) { return true; }   // 판정 못 하면 종전대로 시도한다(막지 않는다)
     }();
     /* [V33.246] 실패를 세기만 하고 ★이유를 안 남겨★ 이 진단에 로그 왕복이 한 번 더 들었다.
@@ -49390,6 +49388,10 @@ export {
   stmtRecordTrade, stmtRecordTradeIfPos, KR_SELL_TAX_BY_YEAR,
   // [V33.350 · A-10] 한국 시간외 세션 마스크 — tools/check-ext-session-mask.mjs 가 실제로 호출한다.
   krMarketStateNow, extKeepMaskKR, extKeepMaskUS, usMarketStateNow, extKeepMaskFor, sleeveZeros, SLEEVES,
+  // [V33.351 · A-2/A-8] 세션 창 단일화 — tools/check-session-windows.mjs 가 분 단위로 대조한다.
+  MARKET_HOURS, MARKET_HOURS_SPECIAL, marketWindows, marketSessionNow, marketLocalTime, marketLocalDate,
+  isMarketOpen, isTradingWindow, isQuoteRefreshWindow, isExtendedHoursWindow, minutesToClose,
+  isLLMTriggerWindow, extTradeSession, _extSessionAt, sessionElapsedFraction, marketMinutesUntilClose, extBuyGuard,
   // [V33.348 · B-7] 반사실 라벨 진입정렬 — tools/check-cf-label-align.mjs 가 실제로 호출한다.
   _cfPriceLookup, _dailyCacheOk, _altBarIdx,
   // [V33.348] D1 부하 — tools/check-daily-bulk-cache.mjs 가 두 번 호출해 왕복을 센다.
