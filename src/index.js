@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.356";
+const _BUILD_VER = "V33.357";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -7760,6 +7760,7 @@ async function fetchBatchQuotes(symbols, opts) {
      (스키마 변경 / 심볼 거부 / 인증·쿼터). ★본문을 저장하지 않는다★ —
      최상위 키 이름과 배열 길이, error 문자열만 남긴다(개인정보·용량 문제 없음). */
   let _v7Shape = null;
+  let __v7BadSlice = null;   // [V33.357] v7 은 살아 있는데 0건을 준 배치(앞 10종목)
   function _v7ShapeOf(j) {
     try {
       if (j == null) return "null";
@@ -7864,7 +7865,34 @@ async function fetchBatchQuotes(symbols, opts) {
       try { v7First = parseV7(await yahooFetch(v7Url(slices[0], v7Fields), v7Headers)); }
       catch (e) { v7Err = (v7Err ? v7Err + "/" : "") + _v7ErrTag(e); }
     }
-    if (v7First === 0) {
+    /* ══ [V33.357] ★한 배치가 0건이라고 v7 전체를 죽었다고 하지 않는다 (결함 A-6)★ ══
+       종전엔 ★첫 배치 하나★ 가 558종의 운명을 정했다. slices[0] 이 0건이면 v7Dead 로 찍고
+       전 종목이 v8 폴백으로 내려간다 — 자가진단 문구 그대로 ★50종목/1회 → 1종목/1회★ 다.
+       그런데 "v7 이 죽었다" 와 "이 배치에 못 알아먹는 심볼이 하나 있다" 는 전혀 다른 일이고,
+       종전 코드는 그 둘을 구분할 방법이 아예 없었다(fields 를 뒤집어 본 게 전부인데,
+       두 번 다 같은 배치라 같은 심볼을 또 물어본 것뿐이다).
+       V33.347 이 남긴 응답모양이 이제 답을 준다 — 실측 `result=0 keys=quoteResponse`,
+       즉 ★봉투는 멀쩡하고 error 도 없는데 배열만 비었다★. 스키마 변경도 인증 실패도 아니다.
+       → 죽었다고 선언하기 전에 ★다른 배치★ 를 한 번 물어본다. 그게 오면 v7 은 살아 있고
+         문제는 첫 배치에 있다. subrequest 1회를 더 쓰지만, 살아나면 v8 폴백 수십 회를 아낀다.
+       ※ 어느 심볼이 범인인지까지는 여기서 안 가린다(이분탐색은 배치당 log2(50)≈6회를 더 쓴다).
+         대신 ★의심 배치를 기록해★ 사람이 볼 수 있게 남긴다 — F-3 이 요청한 관측이 이것이다. */
+    let v7Probe2 = 0, v7BadSlice = null;
+    if (v7First === 0 && slices.length > 1 && fetchBudgetLeft() > 0) {
+      v7Fields = v7Prefer;
+      try { v7Probe2 = parseV7(await yahooFetch(v7Url(slices[1], v7Fields), v7Headers)); }
+      catch (e) { v7Err = (v7Err ? v7Err + "/" : "") + _v7ErrTag(e); }
+    }
+    if (v7First === 0 && v7Probe2 > 0) {
+      /* v7 은 살아 있다 — 첫 배치만 0건이었다. 그 배치는 이번 사이클 v8 폴백에 맡기고
+         나머지는 정상 속도로 간다(종전엔 여기서 전부 폴백으로 내려갔다). */
+      v7BadSlice = slices[0].slice(0, 10);
+      const rest = slices.slice(2).filter(function(){ return fetchBudgetLeft() > 0; });
+      await Promise.all(rest.map(async function(slice){
+        if (fetchBudgetLeft() <= 0) return;
+        try { parseV7(await yahooFetch(v7Url(slice, v7Fields), v7Headers)); } catch (e) {}
+      }));
+    } else if (v7First === 0) {
       v7Dead = true;
       v7Fields = true;   // 다음 호출은 다시 fields 부터 — 기억이 사망 판정을 굳히지 않게 한다
     } else if (slices.length > 1) {
@@ -7875,6 +7903,7 @@ async function fetchBatchQuotes(symbols, opts) {
         try { parseV7(await yahooFetch(v7Url(slice, v7Fields), v7Headers)); } catch (e) {}
       }));
     }
+    __v7BadSlice = v7BadSlice;
   }
   /* [V33.331] ★v7 상태를 기록한다.★ 종전엔 v7Dead 를 계산만 하고 한 번도 안 읽어서,
      미국 시세의 1차 수집원이 죽어도 아무 신호가 없었다 — 시간외 결측을 오래 못 본 이유다. */
@@ -7882,7 +7911,10 @@ async function fetchBatchQuotes(symbols, opts) {
     try {
       await setState(opts.DB, "yahoo_v7", {
         dead: v7Dead, fields: v7Fields, first: v7First, slices: slices.length,
-        err: v7Err, shape: v7Dead ? _v7Shape : null, ts: Date.now()
+        err: v7Err, shape: (v7Dead || __v7BadSlice) ? _v7Shape : null, ts: Date.now(),
+        /* [V33.357] ★의심 배치를 남긴다.★ 안 남기면 "v7 이 왜 0건이냐" 를 다음에 또
+           코드를 읽어 추측하게 된다(F-3 이 요청한 "죽은 티커가 아무 데도 안 남는다" 의 답). */
+        badSlice: __v7BadSlice || null
       });
     } catch (e) {}
   }
@@ -25107,6 +25139,20 @@ async function handleRequest(request, env, ctx) {
           _icBlockWhy = "IC 경로 — 블록 유의성 t " + (_icT != null ? _icT.toFixed(2) : "미측정") + " < " + _icTMin;
       }
       if (_icBlockWhy) trust.reason = _icBlockWhy;
+      /* [V33.357 · G-2 1단계] ★그때 어떤 잣대로 통과했는지를 기록에 남긴다.★
+         현재 문턱이 두 벌이다 — 수신(승격) 때는 `_accFloor(trustFloor, accBase)` 로
+         무실력 기준선까지 올려 재는데(실측 0.523), 읽기(투표) 때 `_boosterAdmit` 은
+         맨 상수 `GBDT.trustFloor`(0.505)만 본다. 그래서 ★옛 규칙으로 승격된 모델이
+         낮은 바에서 계속 투표한다.★ 읽기 쪽을 수신 쪽에 맞추는 것이 옳지만, 지금 맞추면
+         현재 유일한 보조 위원(GBDT accLB 51.12%)이 0.523 에 막혀 빠지고 위원회가 빈다.
+         그런데 ★그 모델이 정확도로 들어왔는지 IC 로 들어왔는지 기록이 없어 추측 없이는
+         못 가른다.★ 실계좌에서 추측으로 위원을 뺄 일이 아니다.
+         → 먼저 판정의 근거를 남긴다. accFloorUsed 가 쌓이면 그때 읽기 쪽을 맞추면 되고,
+           그 시점엔 "누가 왜 빠지는가" 를 추측이 아니라 기록으로 말할 수 있다.
+         ※ 이 줄들은 ★기록만★ 이다 — 승격 판정을 한 톨도 바꾸지 않는다. */
+      trust.accBase = _num(body.accBase, null);
+      trust.accFloorUsed = +_gAccFloor.toFixed(4);
+      trust.icTMinUsed = _icTMin;
       if ((_passAcc || _passIC) && !_icBlockWhy) {
         const eG = Math.exp(GBDT.trustTemp * (gLB - 0.5)), eM = Math.exp(GBDT.trustTemp * (mindLB - 0.5));
         trust.wGbdt = +(eG / (eG + eM)).toFixed(4); trust.trusted = true;
@@ -45899,6 +45945,14 @@ async function _luxSelfCheck(DB) {
             : "야후 v7(미국 시세 1차 수집원)이 ★응답은 하는데 종목을 하나도 안 준다★(예외 없음 · 파싱 0건" +
               (_v7.shape ? " · 응답모양 " + String(_v7.shape).slice(0, 90) : "") + ")") +
           " — 종목당 1회 v8 폴백으로 버티는 중(50종목/1회 → 1종목/1회). 시간외는 v8 분봉으로 계속 채운다 — 다만 예산 압박으로 회전이 느려진다");
+        /* [V33.357] ★v7 은 살아 있는데 한 배치만 0건★ — 그 배치를 이름으로 남긴다.
+           종전엔 이 상황이 통째로 "v7 사망" 으로 뭉뚱그려져, 죽은 티커 하나가 558종의
+           수집 속도를 1/50 로 떨어뜨려도 아무 데도 안 남았다(F-3 이 요청한 관측). */
+        else if (_v7.badSlice && _v7.badSlice.length) add("warn", "시세",
+          "야후 v7 은 살아 있는데 ★배치 하나만 0건★ 이다 — 그 배치에 야후가 못 알아먹는 심볼이 있을 가능성이 크다" +
+          (_v7.shape ? "(응답모양 " + String(_v7.shape).slice(0, 60) + ")" : "") +
+          " · 의심 구간 앞 " + _v7.badSlice.length + "종: " + _v7.badSlice.join(", ") +
+          " — 이 중 상장폐지·티커변경이 있는지 확인할 것(나머지 배치는 정상 속도로 받고 있다)");
         else if (!_v7.fields) add("warn", "시세", "야후 v7 이 fields 지정을 거부해 기본 필드셋으로 받는 중 — 프리·애프터 값이 빠질 수 있다");
         else if (_v7h != null && _v7h > 6) add("warn", "시세", "v7 상태 기록이 " + _v7h.toFixed(1) + "h 전 — 가격 샤드가 안 돌고 있을 수 있다");
       }

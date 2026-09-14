@@ -16,7 +16,8 @@
  *     ④ ★판정(합류/불합류)은 하나도 안 바뀐다★ — 이건 사유만 고치는 변경이다
  *     ⑤ 진짜 판 불일치(갓 온 것이 없음)는 종전대로 "재학습 대기" 라고 말한다
  */
-import { _boosterAdmit, latestExternalReceipt, LUXML } from "../src/index.js";
+import { readFileSync } from "node:fs";
+import { _boosterAdmit, latestExternalReceipt, LUXML, _accFloor, GBDT } from "../src/index.js";
 
 let fail = 0;
 const ok = (c, m) => { console.log((c ? "  ok   " : "✗ FAIL ") + m); if (!c) fail++; };
@@ -112,6 +113,31 @@ for (const [nm, lb, t] of [["XGB", 0.5099, 1.36], ["LGB", 0.5104, 1.48], ["CAT",
      `— ${n}조합 중 다른 기록을 고른 ${diff}건, 위반 ${viol}건`);
   ok(latestExternalReceipt(staleLive, oldExt) === staleLive,
      "latestExternalReceipt 도 더 새로운 쪽(승격기록)을 고른다 — 두 함수가 같은 기록을 본다");
+}
+
+// ── ⑦ [V33.357 · G-2 1단계] ★문턱이 두 벌인 것을 기록으로 드러낸다★ ──────────
+//   수신(승격) 때는 _accFloor(trustFloor, accBase) 로 무실력 기준선까지 올려 재는데
+//   (실측 0.523), 읽기(투표) 때 _boosterAdmit 은 맨 상수 0.505 만 본다.
+//   → 옛 규칙으로 승격된 모델이 낮은 바에서 계속 투표한다.
+//   지금 맞추면 유일한 보조 위원(GBDT 51.12%)이 빠져 위원회가 빈다 — 그래서 아직 안 맞춘다.
+//   대신 ★판정 근거를 기록하게 했는지★ 를 여기서 지킨다. 기록이 없으면 다음 사람도
+//   "GBDT 가 어느 경로로 들어왔나" 를 또 추측으로 답하게 된다(이번 세션에 반복된 실패 부류).
+{
+  const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  for (const [k, why] of [["trust.accBase", "그때의 무실력 기준선"],
+                          ["trust.accFloorUsed", "그때 실제로 쓴 정확도 문턱"],
+                          ["trust.passedBy", "정확도로 들어왔나 IC로 들어왔나"]])
+    ok(src.indexOf(k) >= 0, `승격 기록에 ${k} 를 남긴다 — ${why}`);
+
+  /* 그리고 ★두 문턱이 실제로 다르다★ 는 것을 실행으로 못 박는다 —
+     같아지는 날 이 절이 실패하고, 그때가 읽기 쪽을 맞출 수 있게 된 시점이다. */
+  const recv = _accFloor(GBDT.trustFloor, 0.523);     // 수신 쪽 (실측 무실력 0.523)
+  const read = GBDT.trustFloor;                        // 읽기 쪽
+  ok(recv > read,
+     `문턱이 아직 두 벌이다 — 수신 ${recv} vs 읽기 ${read} (G-2: 맞추면 GBDT 가 빠져 위원회가 빈다. ` +
+     `accFloorUsed 가 쌓인 뒤 사람이 정한다)`);
+  ok(_accFloor(GBDT.trustFloor, null) === GBDT.trustFloor,
+     "무실력 기준선이 안 실려 오면 수신 문턱도 종전 상수 그대로(옛 업로드 호환)");
 }
 
 console.log(fail ? "\n부스터 사유 계약 위반 " + fail + "건 — 배포 차단" : "\n  ok   부스터 사유 계약 통과");

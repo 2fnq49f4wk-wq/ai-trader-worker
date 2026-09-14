@@ -294,6 +294,10 @@ jobs:
       #   XR_FLOW 전략이 추가된 날부터 한 번도 발동하지 않았다. 이름·모집단·동점을 함께 본다.
       - name: Market-cap rank drift check
         run: node tools/check-rv-rank.mjs
+      # [V33.357 · A-6] 배치 하나가 0건이면 v7 전체를 사망 판정해 558종이 통째로
+      #   1종목/1회 v8 폴백으로 떨어졌다. 죽었다고 하기 전에 다른 배치를 한 번 물어본다.
+      - name: Yahoo v7 batch liveness check
+        run: node tools/check-v7-batch.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,
