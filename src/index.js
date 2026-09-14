@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.352";
+const _BUILD_VER = "V33.353";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -7226,6 +7226,11 @@ function filterNulls(rawArr) {
 //     사이클 라운드로빈으로 처리된다.
 let __fetchBudget = { used: 0, max: 850 };  // [PAID] Workers Paid 1000 한도의 85%
 let __scalpDiag = {};  // [진단] scalp 게이트 탈락 사유 집계(사이클마다 리셋)
+/* [V33.353 · A-5] 시간외 보강 상한 — 한 사이클에 분봉으로 채울 종목 수의 천장.
+   종전 24 는 ★v7 이 죽은 날★(채울 종목이 수백인 날) 회전 한 바퀴에 20분 넘게 걸리게 했다.
+   무한으로 두지는 않는다 — 한 사이클이 예산을 다 쓰면 일봉 라운드로빈이 굶는다.
+   실제 상한은 이 값이 아니라 ★남은 예산★ 이다(루프가 fetchBudgetLeft() < 10 에서 멈춘다). */
+const EXT_ENRICH_MAX = 120;
 function resetFetchBudget(max) {
   __fetchBudget = { used: 0, max: (typeof max === "number" && max > 0) ? max : 600 };
 }
@@ -7897,9 +7902,21 @@ async function fetchBatchQuotes(symbols, opts) {
     missing = rotated.slice(0, maxFallback);
   }
 
+  /* ══ [V33.353 · A-5 해결] ★시간외 보강 몫을 먼저 떼어 둔다.★ ═════════════════════
+     종전엔 폴백 루프가 예산을 ★0 이 될 때까지★ 썼다. v7 이 살아 있으면 폴백이 몇 종목뿐이라
+     아무 문제가 없는데, ★v7 이 죽으면(A-6) 전 종목이 폴백 대상★ 이 되어 예산 200 을 통째로
+     먹어 버린다. 그러면 바로 아래 시간외 보강은 예산이 없어 한 종목도 못 돌린다 —
+     "v7 이 죽으면 시간외 평가가 24종목/사이클로 떨어진다" 던 A-5 는 실은 그보다 나빴다.
+     ★그리고 v7 이 죽었을 때가 바로 시간외 보강이 가장 필요한 때다.★
+     → 시간외 창이면 그만큼을 남겨 두고 폴백을 멈춘다. 못 받은 종목은 다음 사이클로 넘어간다
+       (폴백에는 이미 회전 커서가 있다 — 굶지 않는다).
+     ※ 예산 자체는 안 늘린다. 같은 예산을 쓰되 ★한쪽이 다 먹지 못하게★ 한다. */
+  const _extReserve = (isExtendedHoursWindow("us") && symbols.some(function (s2) {
+    return !(s2.endsWith(".KS") || s2.endsWith(".KQ"));
+  })) ? 40 : 0;
   const CBATCH = 10;
   for (let i = 0; i < missing.length; i += CBATCH) {
-    if (fetchBudgetLeft() <= 0) break;  // [V11] 예산 소진 시 중단 (나머지는 다음 사이클)
+    if (fetchBudgetLeft() <= _extReserve) break;  // [V11] 예산 소진 시 중단 (나머지는 다음 사이클)
     const slice = missing.slice(i, i + CBATCH);
     const results = await Promise.all(slice.map(async function(sym){
       try { return { sym: sym, q: await fetchQuoteViaChartFallback(sym) }; }
@@ -7937,12 +7954,21 @@ async function fetchBatchQuotes(symbols, opts) {
     const _rest = symbols.filter(function (s) { return _lack(s) && _pri.indexOf(s) < 0; });
     const _off = (typeof opts.extOffset === "number" && opts.extOffset >= 0) ? opts.extOffset : 0;
     const _rot = _rest.length ? _rest.slice(_off % _rest.length).concat(_rest.slice(0, _off % _rest.length)) : [];
-    const _cap = (typeof opts.extMax === "number" && opts.extMax >= 0) ? opts.extMax : 24;
+    /* [V33.353 · A-5] 상한을 ★남은 예산에도★ 묶는다. 24 는 종전 기본값이고, 예산이 남으면
+       그만큼 더 채운다 — v7 이 죽은 날은 채울 종목이 수백이고 예산은 남아 있기 때문이다.
+       코어용 예비 10 은 그대로 남긴다(아래 루프도 같은 문턱에서 멈춘다). */
+    const _cap = (typeof opts.extMax === "number" && opts.extMax >= 0) ? opts.extMax : EXT_ENRICH_MAX;
     const _todo = _pri.concat(_rot).slice(0, _cap);
     const EBATCH = 6;
+    /* [V33.353 · A-5] ★실제로 시도한 수를 센다.★ 종전엔 커서를 _todo.length 만큼 밀었는데,
+       예산에 막혀 중간에 멈추면 ★안 해 본 종목까지 지나간 것으로 친다★ — 그 종목들은
+       다음 사이클에도 차례가 안 오고, 회전이 한 바퀴 돌 때마다 같은 구간이 계속 빠진다.
+       예산이 넉넉하던 시절엔 드러나지 않다가, 예산이 빠듯해질수록 구멍이 커진다. */
+    let _tried = 0;
     for (let i = 0; i < _todo.length; i += EBATCH) {
       if (fetchBudgetLeft() < 10) break;   // 코어용 예비는 남긴다
       const _sl = _todo.slice(i, i + EBATCH);
+      _tried += _sl.length;
       const _rs = await Promise.all(_sl.map(async function (sym) {
         try { return { sym: sym, x: await fetchExtendedQuoteUS(sym) }; }
         catch (e) { return { sym: sym, x: null }; }
@@ -7957,7 +7983,7 @@ async function fetchBatchQuotes(symbols, opts) {
        그래서 v7 이 죽은 동안 시간외 값이 있는 종목이 계속 두어 개뿐이었다. */
     /* ★열거 불가로 심는다★ — 이 맵은 여러 호출부가 for..in / Object.keys 로 훑는다.
        평범한 속성으로 두면 "__extTried" 가 종목처럼 섞여 들어간다. */
-    try { Object.defineProperty(out, "__extTried", { value: _todo.length, enumerable: false, configurable: true }); } catch (e) {}
+    try { Object.defineProperty(out, "__extTried", { value: _tried, enumerable: false, configurable: true }); } catch (e) {}
   }
 
   // --- 3) [V58] KR 네이버 머지 — 네이버가 단독 primary (야후 KR 조회 완전 제거)
@@ -16971,7 +16997,7 @@ async function refreshPriceShard(env, market, shard) {
   const _extKey = "ext_rr:" + market;
   let _extOff = await getState(DB, _extKey, 0);
   if (typeof _extOff !== "number" || !isFinite(_extOff) || _extOff < 0) _extOff = 0;
-  const _extMax = 24;
+  const _extMax = EXT_ENRICH_MAX;
   const bq = await fetchBatchQuotes(symbols, {
     maxFallback: symbols.length, DB: DB,
     extPriority: _held, extOffset: _extOff, extMax: _extMax
@@ -49496,6 +49522,8 @@ export {
   log, _logSig, _logSeen, LOG_DEDUP_MS, _engineErrSeen,
   // [V33.352 · C-2] 표본 집계 캐시 — tools/check-fwd-ledger.mjs 가 어떤 SQL 을 던지는지 본다.
   _mlCountsCached,
+  // [V33.353 · A-5] 시간외 보강 예산 배분 — tools/check-ext-enrich-budget.mjs 가 실제로 돌린다.
+  fetchBatchQuotes, resetFetchBudget, fetchBudgetLeft, EXT_ENRICH_MAX,
   // [V33.348 · B-7] 반사실 라벨 진입정렬 — tools/check-cf-label-align.mjs 가 실제로 호출한다.
   _cfPriceLookup, _dailyCacheOk, _altBarIdx,
   // [V33.348] D1 부하 — tools/check-daily-bulk-cache.mjs 가 두 번 호출해 왕복을 센다.

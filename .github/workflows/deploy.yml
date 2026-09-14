@@ -269,6 +269,11 @@ jobs:
       #   실제 log() 를 돌려 묶음·ts 보존·새 문장 분리·통계 불변을 확인한다.
       - name: Log dedup check
         run: node tools/check-log-dedup.mjs
+      # [V33.353 · A-5] v7 이 죽으면 폴백이 예산을 다 먹어 시간외 보강이 0종목이 됐다.
+      #   그리고 v7 이 죽었을 때가 바로 보강이 가장 필요한 때다.
+      #   가짜 fetch 를 끼우고 fetchBatchQuotes 를 실제로 돌려 예산 배분을 확인한다.
+      - name: Extended enrichment budget check
+        run: node tools/check-ext-enrich-budget.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,
