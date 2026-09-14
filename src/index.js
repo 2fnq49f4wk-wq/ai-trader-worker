@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.355";
+const _BUILD_VER = "V33.356";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -14197,18 +14197,49 @@ async function rvBuildPanel(DB) {
     const rank = {};
     try {
       const shares = (await getState(DB, "mcap_shares", {})) || {};
+      /* [V33.356] ★저장부가 쓰는 이름은 `sh` 다 — 여기서만 `.shares` 를 찾고 있었다.★
+         `mcap_shares` 는 V33.217 부터 { sh, mc } 로 저장된다(두 저장 지점 모두). 그런데 이
+         읽기는 V33.250(이 전략 5종을 처음 넣은 판)에 `.shares` 로 쓰였고, 그 키는 이 맵에
+         ★존재한 적이 없다.★ 폴백인 `shares[s]` 는 객체라 `_num(객체, 0)` 이 0 이다.
+         → caps 가 늘 비고 → rank 가 늘 {} → rvContextFor().rank 가 늘 null
+         → ★XR_FLOW 는 추가된 날부터 한 번도 발동한 적이 없다.★
+         화면 시총 박스는 같은 맵을 `ms.sh` 로 바르게 읽어서(watchlist) 증상이 안 보였다. */
+      const _shOf = function (v) {
+        if (v == null) return 0;
+        if (typeof v === "number") return _num(v, 0);          // 아주 옛 판(숫자를 그대로 저장)
+        return _num(v.sh, _num(v.shares, 0));                  // 현행 `sh` · 혹시 모를 `shares`
+      };
       const caps = [];
       for (const s of keys) {
-        const sh = _num(shares[s] && (shares[s].shares != null ? shares[s].shares : shares[s]), 0);
+        const sh = _shOf(shares[s]);
         if (!(sh > 0) || !(lastC[s] > 0)) continue;
         caps.push({ s: s, cap: sh * lastC[s], kr: /\.(KS|KQ)$/i.test(s) });
       }
       for (const mkt of ["kr", "us"]) {
         const rows = caps.filter(function (r) { return r.kr === (mkt === "kr"); })
                          .sort(function (a2, b2) { return b2.cap - a2.cap; });
+        /* [V33.356] ★"몇 계단 올랐나" 는 같은 무리 안에서만 답이 있다 (결함 F-2).★
+           종전엔 now 가 ★이 패널에 든 종목들 안에서의 순위★(주식수·가격이력이 둘 다 있는
+           것만)인데 prev 는 ★정적 전체 유니버스에서의 순위★ 였다. 모집단이 다르면 그 차이는
+           "올라왔다" 가 아니라 ★"빠진 종목이 많다"★ 를 재는 값이 된다 — 패널에 절반만 들면
+           전 종목이 일제히 순위가 뛴 것처럼 보인다. 그래서 prev 도 같은 무리 안에서 센다.
+           · 정적 표에 없는 종목은 자리를 매길 수 없다 → prev 0 (진입부가 `prev > 0` 로 거른다)
+           · 동점은 앞뒤가 없다 — MCAP_RANK 미국 구간엔 동점이 28그룹 있다(F-2). 같은 값이
+             둘 이상이면 그 둘의 순서는 임의이므로 tie 로 적고 진입부가 기권한다.
+           ★모르면서 아는 척하지 않는다★ — 바로 위 주석과 같은 원칙이다. */
+        const _stat = function (sy) { return (typeof MCAP_RANK !== "undefined") ? _num(MCAP_RANK[sy], 0) : 0; };
+        const placed = rows.filter(function (r) { return _stat(r.s) > 0; })
+                           .sort(function (a2, b2) { return _stat(a2.s) - _stat(b2.s); });
+        const _dup = {};
+        for (const r of placed) { const v = _stat(r.s); _dup[v] = (_dup[v] || 0) + 1; }
+        const _prevOf = {};
+        for (let i = 0; i < placed.length; i++)
+          _prevOf[placed[i].s] = { r: i + 1, tie: _dup[_stat(placed[i].s)] > 1 };
         for (let i = 0; i < rows.length; i++) {
-          const prev = (typeof MCAP_RANK !== "undefined" && MCAP_RANK[rows[i].s]) || 0;
-          rank[rows[i].s] = { now: i + 1, prev: prev, mkt: mkt };
+          const p = _prevOf[rows[i].s] || null;
+          rank[rows[i].s] = { now: i + 1, prev: p ? p.r : 0, mkt: mkt,
+                              prevStatic: _stat(rows[i].s), cohort: rows.length,
+                              tie: !!(p && p.tie) };
         }
       }
     } catch (e) {}
@@ -14264,6 +14295,9 @@ function evaluateIndexFlowEntry(price, dailyData, cfg, market, rvCtx) {
   if (days == null) return null;                                   // 정기변경 창 밖
   const now = rvCtx.rank.now, prev = _num(rvCtx.rank.prev, 0);
   if (!(now >= R.bandLo && now <= R.bandHi)) return null;           // 편입 밴드가 아니다
+  /* [V33.356] 정적 순위가 ★동점★ 이면 그 종목의 앞뒤가 임의로 정해진다 — "몇 계단 올랐나" 에
+     답이 없다(F-2: 미국 구간 동점 28그룹). 임의의 답으로 돈을 걸지 않는다. */
+  if (rvCtx.rank.tie) return null;
   if (!(prev > 0 && (prev - now) >= R.minRankJump)) return null;    // 순위가 실제로 올라오고 있는가
   const closes = dailyData && dailyData.closes;
   if (!Array.isArray(closes) || closes.length < 60) return null;
@@ -39828,10 +39862,52 @@ function _boosterAdmit(live, ext) {
           (lb < icFloorAcc ? " · IC 경로도 불가(정확도 바닥 " + (icFloorAcc * 100).toFixed(0) + "% 미달)"
             : (icT == null ? " · 블록IC 미보고" : " · 블록IC t " + icT.toFixed(2) + " < " + tMin));
   }
+
+  /* ══ [V33.356] ★"재학습 대기" 가 거짓말이었다★ ═══════════════════════════════
+     운영 실측(2026-09-14 23:09 상태 스냅샷) — 같은 모델 하나를 두고 같은 응답 안에서
+     두 문장이 서로 반대였다:
+       committee.xgb.latestReceiptReason : "IC 경로 — 블록 유의성 t 1.36 < 1.65"   (featVer 17 · 0.4h 전)
+       committee.xgb.reason              : "판 불일치(featVer 15 ≠ 17) — 재학습 대기"
+     원인은 맨 위 `const t = live || ext` 다. live(=승격돼 있는 기록)를 ★언제나 먼저★ 보는데,
+     그 기록은 예전에 승격된 featVer 15 짜리고, 정작 방금 온 featVer 17 은 ext 에 있다.
+     그래서 화면은 ★이미 0.4시간 전에 도착해서 유의성으로 거절된 모델★ 을 두고
+     "아직 재학습을 기다리는 중" 이라고 말했다. 그 문장을 믿으면 학습기를 고치러 간다 —
+     학습기는 6시간마다 멀쩡히 돌고 있었다(외부 모델 6/6 수신).
+     그리고 accLB 도 낡은 기록의 것(52.25%)을 찍어, 갓 온 모델의 값(51.04%)과 달랐다.
+     바로 위 V33.339 주석이 경고한 바로 그 사고의 ★거울상★ 이다.
+     → 막은 판정은 그대로 두고(거래 동작 변화 0), ★사유만★ 지금 상태를 설명하는 기록으로 낸다.
+       판정을 바꾸지 않는 이유: 낡은 live 가 투표하면 안 되는 것은 종전 판단이 맞다. */
+  let recentWhy = null, recentAt = null, recentFv = null, recentLb = null;
+  try {
+    const rc = latestExternalReceipt(live, ext);
+    if (why && rc && rc !== t && _num(rc.trainedAt, 0) > _num(t && t.trainedAt, 0)) {
+      recentAt = _num(rc.trainedAt, null);
+      recentFv = rc.featVer != null ? _num(rc.featVer, null) : null;
+      recentLb = (typeof rc.gbdtAccLB === "number") ? rc.gbdtAccLB : null;
+      const ageH = recentAt != null ? ((Date.now() - recentAt) / 3600000) : null;
+      const when = (ageH != null && isFinite(ageH))
+        ? (ageH < 1 ? Math.round(ageH * 60) + "분 전" : ageH.toFixed(1) + "시간 전") : "시각미상";
+      /* 최신 수신분이 ★현재 판★ 이면 "재학습 대기" 는 명백히 거짓이다 — 왔는데 거절된 것이다. */
+      if (recentFv != null && recentFv === want) {
+        recentWhy = "재학습은 돌고 있다 — featVer " + recentFv + " 모델이 " + when + " 도착했으나 승격 거절: " +
+                    (rc.reason || "사유 미기록") +
+                    (recentLb != null ? " (그 모델 accLB " + (recentLb * 100).toFixed(2) + "%)" : "") +
+                    " · 승격돼 있는 기록은 아직 featVer " + fv + " 라 투표하지 않는다";
+      } else {
+        recentWhy = "최신 수신분(" + when + " · featVer " + (recentFv == null ? "미상" : recentFv) +
+                    ")도 승격 안 됨: " + (rc.reason || "사유 미기록");
+      }
+    }
+  } catch (e) {}
+  if (recentWhy) why = recentWhy;
+
   return { ok: why == null, promoted: promoted, shadow: !promoted,
            featVer: fv, wantVer: want, featVerOk: fvOk,
            accLB: t ? lb : null, w: t ? _num(t.wGbdt, null) : null,
-           source: (t && t.source) || null, why: why };
+           source: (t && t.source) || null, why: why,
+           /* 낡은 기록과 갓 온 기록을 ★섞지 않고 둘 다★ 내보낸다 — 화면이 어느 쪽 숫자를
+              쓰든 어느 기록의 값인지 알 수 있어야 한다(위 accLB 혼선의 재발 방지). */
+           recentAt: recentAt, recentFeatVer: recentFv, recentAccLB: recentLb };
 }
 
 // [V32.65] 부스터(XGB/LGB/Cat) 5분 메모 로드 — 전부 GBDT와 동일 트리포맷(mlGBDTScore)이라 즉시 채점 가능.
@@ -49570,6 +49646,7 @@ export {
   //   프로덕션 코드 경로에는 영향이 없다(named export 는 Worker 가 읽지 않는다).
   stinBackfill, stinIntradayFeat, stinChartFeat, stinObserve, stinLabel, mlBuildFeatures,
   STIN, STIN_IFEAT_N, STIN_FEATVER, LUXML, _LIVE_ONLY_FEATS, _setR2ForTest, getBigState, _bigLoadStatus,
+  _boosterAdmit, latestExternalReceipt, MCAP_RANK,
   // [V33.105] 확률 계수 적합기 검증용 — tools/check-prob-fitters.mjs
   shockPriorFitNightly, decisionBlendFitNightly, _shockLogitShift, _coefShrink, SHOCKCAL,
   // [V33.193] 확률적/디플레이션 샤프 검증용 — tools/check-edge-stats.mjs

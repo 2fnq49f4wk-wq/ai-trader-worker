@@ -285,6 +285,15 @@ jobs:
       #   어차피 재각인하는 순간이 유일한 제거 시점이므로, 그때 안 빼면 배포를 막는다.
       - name: Dead live-only feature tripwire
         run: node tools/check-live-only-feats.mjs
+      # [V33.356 · 모델 진단] 부스터 3종이 "재학습 대기" 라고 말하는데 실제로는 갓 온 모델이
+      #   유의성으로 거절된 상태였다(live||ext 가 낡은 승격기록을 먼저 읽었다). 사유만 고친다 —
+      #   합류 판정은 252조합 전수 대조로 한 건도 안 바뀌는 것을 확인한다.
+      - name: Booster admission reason check
+        run: node tools/check-booster-reason.mjs
+      # [V33.356 · F-2] mcap_shares 를 `.shares` 로 읽어(저장은 `sh`) 시총순위가 늘 비었고
+      #   XR_FLOW 전략이 추가된 날부터 한 번도 발동하지 않았다. 이름·모집단·동점을 함께 본다.
+      - name: Market-cap rank drift check
+        run: node tools/check-rv-rank.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,
