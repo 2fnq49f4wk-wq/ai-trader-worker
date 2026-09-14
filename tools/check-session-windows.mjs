@@ -29,8 +29,13 @@ let fail = 0;
 const ok = (c, m) => { console.log((c ? "  ok   " : "✗ FAIL ") + m); if (!c) fail++; };
 
 /* ── 종전 구현을 ★그대로★ 옮겨 적는다(참조 구현). 새 코드와 분 단위로 대조한다. ── */
+/* ※ 미국 pre 시작은 V33.351(A-9)에서 ★의도적으로★ 420(07:00) → 240(04:00) 으로 넓혔다.
+     미국 프리마켓은 실제로 04:00 ET 에 시작하고 야후도 그때부터 preMarketPrice 를 준다.
+     그 3시간을 종전엔 CLOSED 로 봐서 관측조차 못 했다(extKeepMaskUS 가 pre 를 지웠다).
+     ★거래 창은 안 넓혔다★ — 아래 A-9 절이 그 분리를 따로 확인한다.
+     이 참조표를 고칠 때는 "왜 달라졌는가" 를 여기 적을 것. 말없이 맞추면 대조가 무의미해진다. */
 const OLD = {
-  us: { pre: [420, 570], regular: [570, 960], post: [960, 1200], quoteEnd: 970, llmLead: 10 },
+  us: { pre: [240, 570], regular: [570, 960], post: [960, 1200], quoteEnd: 970, llmLead: 10 },
   kr: { pre: [480, 540], regular: [540, 930], post: [930, 1200], quoteEnd: 930, llmLead: 0 }
 };
 const oldSession = (mk, day, min) => {
@@ -161,6 +166,33 @@ const atKR = (y, mo, d, h, mi) => new Date(Date.UTC(y, mo - 1, d, h - 9, mi));
   const future = Object.values(MARKET_HOURS_SPECIAL)
     .flatMap((o) => Object.keys(o)).filter((d) => new Date(d + "T00:00:00Z") > new Date());
   ok(future.length > 0, `아직 오지 않은 특례일 ${future.length}건이 표에 있다 (${future.slice(0, 3).join(", ")}…)`);
+}
+
+/* ── ⑤-a A-9: 관측 창과 거래 창을 갈라 놓았는가 ──
+   미국 프리마켓은 04:00 ET 에 시작한다(= 한국 17~20시, 사용자가 화면을 보는 시간대).
+   그 구간을 ★보이게★ 하되 ★거래는 07:00 부터★ 로 둔다 — 04:00~07:00 은 호가가 극도로 얇아
+   A-3(신선도 이분법)·A-4(슬리피지 ×3 은 가정)가 맞는지 아직 모른다.
+   ★보는 것과 돈을 거는 것은 다른 문제다.★ */
+{
+  const et = (h, mi) => new Date(Date.UTC(2026, 8, 15, h + 4, mi));   // 2026-09-15 화요일 EDT
+  const cfg = { extTrade: { enabled: true, entries: true, us: { pre: true, post: true }, kr: { pre: true, post: true } } };
+  ok(marketSessionNow("us", et(4, 0)) === "PRE", "★04:00 ET → 장전(관측)★ — 종전엔 CLOSED 라 3시간을 못 봤다");
+  ok(marketSessionNow("us", et(6, 59)) === "PRE", "06:59 ET → 여전히 장전(관측)");
+  ok(marketSessionNow("us", et(3, 59)) === "CLOSED", "03:59 ET → 휴장(프리마켓 시작 전)");
+  ok(extKeepMaskFor("us", marketSessionNow("us", et(5, 0))).pre === true,
+     "★05:00 ET 에 장전 체결가가 보존된다★ — 종전엔 지웠다");
+  ok(extTradeSession("us", cfg, et(5, 0)) === null, "★05:00 ET 에는 거래하지 않는다★ — 관측만 넓혔다");
+  ok(extTradeSession("us", cfg, et(6, 59)) === null, "06:59 ET 에도 거래하지 않는다");
+  ok(extTradeSession("us", cfg, et(7, 0)) === "pre", "07:00 ET 부터 거래 창이 열린다(종전과 같다)");
+  ok(extTradeSession("us", cfg, et(18, 0)) === "post", "장후 거래 창은 종전 그대로");
+  // 한국은 갈라 둘 이유가 없다 — 관측 창이 곧 거래 창이어야 한다
+  const kst = (h, mi) => new Date(Date.UTC(2026, 8, 15, h - 9, mi));
+  ok(extTradeSession("kr", cfg, kst(8, 30)) === "pre" && marketSessionNow("kr", kst(8, 30)) === "PRE",
+     "한국은 관측 창과 거래 창이 같다");
+  // 특례일에는 관측 창이 곧 거래 창이다(반장 13:00 장후는 '얇아서 미루는' 구간이 아니다)
+  const hlf = (h, mi) => new Date(Date.UTC(2026, 10, 27, h + 5, mi));
+  ok(extTradeSession("us", cfg, hlf(14, 0)) === "post",
+     "★반장 14:00 ET 는 거래 가능한 장후★ — 그날의 정상 창이지 얇은 새벽이 아니다");
 }
 
 /* ── ⑤-b 창 ★길이★ 를 쓰는 계산도 그날 창을 따라가는가 ──

@@ -261,6 +261,10 @@ jobs:
       #   특례일에는 실제로 달라지는지 경계마다 확인한다.
       - name: Session window single-source check
         run: node tools/check-session-windows.mjs
+      # [V33.351 · A-7] 휴장 중 남아 있는 시간외 값에 나이가 없어, 3일 지난 값이
+      #   지금 값처럼 보였다. 화면 코드에서 함수를 잘라 실제로 실행해 확인한다.
+      - name: Extended quote age display check
+        run: node tools/check-ext-age.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

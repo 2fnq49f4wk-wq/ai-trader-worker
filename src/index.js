@@ -5351,8 +5351,17 @@ async function _indexFreshOpen(DB, market, today) {
    ※ 분(minute)은 ★그 시장의 현지 자정 기준★ 이다(미국 ET, 한국 KST).
    ※ 휴장일 판정은 여기서 하지 않는다 — isMarketTradingDay 가 지수 신선도·규칙으로 따로 한다.
      여기는 "열린 날이라면 몇 시부터 몇 시까지인가" 만 답한다. */
+/* ※ pre/post 는 ★관측(시세·표시)★ 창이고, preTrade/postTrade 는 ★거래 허용★ 창이다. (A-9)
+     둘을 갈라 둔 이유: 미국 프리마켓은 실제로 04:00 ET 에 시작하고 야후도 그때부터
+     preMarketPrice 를 채운다. 그 시각은 한국 17:00~20:00 — 사용자가 화면을 실제로 보는
+     시간대이고 실적·가이던스가 몰리는 구간이다. 종전엔 07:00 부터만 세션으로 봐서
+     그 3시간을 ★관측조차 못 했다★(extKeepMaskUS 가 pre 를 지웠다).
+     그렇다고 거래까지 04:00 에 열지는 않는다 — 그 구간은 호가가 극도로 얇아
+     A-3(신선도 이분법)·A-4(슬리피지 ×3 은 가정)가 그대로 맞는지 아직 모른다.
+     ★보는 것과 돈을 거는 것은 다른 문제다.★ preTrade 를 넓히는 것은 그 둘을 재고 나서 한다.
+   ※ preTrade/postTrade 가 없으면 pre/post 를 그대로 쓴다(한국은 갈라 둘 이유가 없다). */
 const MARKET_HOURS = {
-  us: { pre: [420, 570], regular: [570, 960], post: [960, 1200], quoteTail: 10 },
+  us: { pre: [240, 570], preTrade: [420, 570], regular: [570, 960], post: [960, 1200], quoteTail: 10 },
   kr: { pre: [480, 540], regular: [540, 930], post: [930, 1200], quoteTail: 0 }
 };
 
@@ -5395,9 +5404,16 @@ function marketWindows(market, now) {
   if (!base) return null;
   const t = marketLocalTime(market, now);
   const sp = (MARKET_HOURS_SPECIAL[market] || {})[marketLocalDate(t)];
-  if (!sp) return { pre: base.pre, regular: base.regular, post: base.post, quoteTail: base.quoteTail, special: null };
-  return { pre: sp.pre || base.pre, regular: sp.regular || base.regular, post: sp.post || base.post,
-           quoteTail: base.quoteTail, special: sp.why || "특례" };
+  const pick = function (k) { return (sp && sp[k]) || base[k]; };
+  const out = sp
+    ? { pre: pick("pre"), regular: pick("regular"), post: pick("post"),
+        quoteTail: base.quoteTail, special: sp.why || "특례" }
+    : { pre: base.pre, regular: base.regular, post: base.post, quoteTail: base.quoteTail, special: null };
+  // 거래 창 — 따로 지정이 없으면 관측 창과 같다. 특례일에는 관측 창이 곧 거래 창이다
+  //   (반장 13:00 장후·수능일 지연개장은 '얇아서 미루는' 구간이 아니라 그날의 정상 창이다).
+  out.preTrade = (sp && (sp.preTrade || sp.pre)) || base.preTrade || out.pre;
+  out.postTrade = (sp && (sp.postTrade || sp.post)) || base.postTrade || out.post;
+  return out;
 }
 function _inWin(min, w) { return !!(w && min >= w[0] && min < w[1]); }
 function _isWeekday(t) { return !!(t && t.day >= 1 && t.day <= 5); }
@@ -5544,9 +5560,13 @@ function extTradeSession(market, cfg, now) {
   if (!m) return null;
   // [V33.351] 창은 marketWindows 한 곳에서 — 시세 경로와 거래 판정이 같은 시각을 믿는다.
   //   (종전엔 두 층이 각자 숫자를 들고 있어, Codex V33.346 이 시세 쪽만 고치자 갈라졌다.)
-  const sess = marketSessionNow(market, now);
-  if (sess === "PRE") return m.pre ? "pre" : null;
-  if (sess === "POST") return m.post ? "post" : null;
+  /* [V33.351 · A-9] 거래는 ★거래 창★ 으로 판단한다 — 관측 창(pre/post)보다 좁을 수 있다.
+     미국 프리마켓은 04:00 ET 부터 보이지만 거래는 07:00 부터 연다. 보는 것과 거는 것은 다르다. */
+  const t = marketLocalTime(market, now);
+  const w = marketWindows(market, now);
+  if (!t || !w || !_isWeekday(t)) return null;
+  if (m.pre && _inWin(t.totalMin, w.preTrade)) return "pre";
+  if (m.post && _inWin(t.totalMin, w.postTrade)) return "post";
   return null;
 }
 
@@ -18833,9 +18853,21 @@ async function runTradingCycle(env) {
       // [프리/애프터마켓] 이 시장이 "시간외 전용"(정규장 마감 + 시간외 창)인가 — 가격 배치만 돌리고 일봉/평가/거래는 스킵.
       const regularOpen = market === "us" ? usMarketHours : krMarketHours;
       const extOnly = !regularOpen;
-      // [CPU 절감] 시간외 전용 시장은 2분마다만 시세 갱신(시간외는 분봉 단타 안 하고 호가 변동도 느림).
-      //   매분 전 종목 배치를 돌리지 않아 시간외 추가 fetch·CPU 추정치를 절반으로.
-      if (extOnly && (new Date().getUTCMinutes() % 2 === 1)) continue;
+      /* [CPU 절감] 시간외 전용 시장은 2분마다만 시세 갱신(시간외는 분봉 단타 안 하고 호가 변동도 느림).
+         매분 전 종목 배치를 돌리지 않아 시간외 추가 fetch·CPU 추정치를 절반으로.
+         [V33.351 · A-9] ★거래 창 밖의 시간외는 더 드물게 본다.★
+         미국 프리마켓 관측을 04:00 ET 로 3시간 넓혔는데(A-9), 그 구간을 2분 주기로 돌면
+         하루 fetch 가 그만큼 는다 — 예산은 이미 쪼들린다(A-5). 그런데 04:00~07:00 은
+         거래를 안 여는 구간이라 ★보여 주기만 하면 된다★. 6분이면 화면에 충분하고,
+         거래 창(07:00~) 안에서는 종전대로 2분을 지킨다.
+         ※ 창을 물어보는 것도 marketWindows 한 곳이다 — 특례일이면 이 경계도 같이 움직인다. */
+      if (extOnly) {
+        const _m = new Date().getUTCMinutes();
+        const _tw = marketWindows(market, null);
+        const _lt = marketLocalTime(market, null);
+        const _inTradeWin = !!(_tw && _lt && (_inWin(_lt.totalMin, _tw.preTrade) || _inWin(_lt.totalMin, _tw.postTrade)));
+        if (_m % (_inTradeWin ? 2 : 6) !== 0) continue;
+      }
       const positions = await getPositions(DB, market);  // key: "SYM::strategy"
       const feeRate = market === "us" ? mcfg.feeUS : mcfg.feeKR;
       const regime = regimes[market];

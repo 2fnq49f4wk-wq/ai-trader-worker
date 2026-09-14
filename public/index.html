@@ -592,6 +592,8 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .wl-pnl.pos{color:var(--pos);}
 .wl-pnl.neg{color:var(--neg);}
 .wl-ext{grid-column:3;grid-row:4;font-size:9px;text-align:right;color:var(--t3);}
+/* [V33.351 · A-7] 시간외 값의 나이 — 값보다 흐리게. 신선하면 아예 안 그려진다. */
+.wl-ext-age{opacity:.6;margin-left:3px;}
 .wl-fav{position:absolute;top:10px;right:8px;cursor:pointer;font-size:11px;color:var(--s3);transition:color .1s;user-select:none;}
 .wl-fav:hover{color:var(--t3);}
 .wl-fav.active{color:var(--amber);}
@@ -5297,6 +5299,26 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     return n.toLocaleString(undefined, { maximumFractionDigits: dec != null ? dec : 2 });
   }
 
+  /* [V33.351 · A-7] 시간외 값의 ★나이★ — 휴장 중에 남아 있는 마지막 체결가에 붙인다.
+     extKeepMask 는 CLOSED 동안 장후 값을 일부러 유지한다(야후와 같은 규칙). 그래서
+     금요일 장후 값이 월요일 장전까지 3일간 화면에 남는데, 종전엔 그게 ★지금 값처럼★ 보였다.
+     거래는 신선도 가드가 이미 막고 있으니 이건 표시 문제다 — 그렇다고 작은 문제는 아니다.
+     화면이 "장후 105.20 +0.8%" 라고만 말하면, 보는 사람은 그게 방금 값인 줄 안다.
+     ★값을 지어내지 않는 것과 값의 나이를 숨기지 않는 것은 같은 원칙이다.★
+     신선한 값(기본 20분 이내)에는 아무것도 안 붙인다 — 매번 붙으면 그게 잡음이 된다.
+     ts 를 모르면(0/누락) '시각미상' 이라고 말한다. 모르는 것을 아는 척하지 않는다. */
+  function extAgeTxt(ts, nowMs, freshMin) {
+    var now = (typeof nowMs === 'number' && nowMs > 0) ? nowMs : Date.now();
+    if (typeof ts !== 'number' || !isFinite(ts) || ts <= 0) return '시각미상';
+    var m = Math.floor((now - ts) / 60000);
+    if (m < 0) return '';                                  // 미래 시각 — 표시하지 않는다(시계 차이)
+    if (m < (typeof freshMin === 'number' ? freshMin : 20)) return '';
+    if (m < 60) return m + '분 전';
+    var h = Math.floor(m / 60);
+    if (h < 24) return h + '시간 전';
+    return Math.floor(h / 24) + '일 전';
+  }
+
   function fmtCompact(n) {
     if (typeof n !== 'number' || !isFinite(n)) return '-';  // [버그수정] Infinity도 차단
     var abs = Math.abs(n);
@@ -9722,8 +9744,11 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       pnlLine = '<div class="wl-pnl '+pnlCls+'">평가손익 '+pnlSign+held.pnlPct.toFixed(2)+'%</div>';
     }
     var extLine = '';
-    if (q.mstate === 'PRE' && q.pre > 0) { var _p=q.prePct||(q.prevClose>0?(q.pre-q.prevClose)/q.prevClose*100:0); extLine='<div class="wl-ext">장전 '+fmtNum(q.pre)+' <span class="'+((_p>=0)?'pos':'neg')+'">'+((_p>=0)?'+':'')+fmtNum(_p,2)+'%</span></div>'; }
-    else if ((q.mstate==='POST'||q.mstate==='POSTPOST'||q.mstate==='CLOSED') && q.post > 0) { var _p=(typeof q.postPct==='number')?q.postPct:(mainPx>0?(q.post-mainPx)/mainPx*100:0); extLine='<div class="wl-ext">장후 '+fmtNum(q.post)+' <span class="'+((_p>=0)?'pos':'neg')+'">'+((_p>=0)?'+':'')+fmtNum(_p,2)+'%</span></div>'; }
+    // [V33.351 · A-7] 시간외 값에 나이를 붙인다 — 신선하면 안 붙는다(extAgeTxt 주석 참조).
+    var _age = extAgeTxt(q.extTs);
+    var _ageTag = _age ? ' <span class="wl-ext-age">'+escapeHtml(_age)+'</span>' : '';
+    if (q.mstate === 'PRE' && q.pre > 0) { var _p=q.prePct||(q.prevClose>0?(q.pre-q.prevClose)/q.prevClose*100:0); extLine='<div class="wl-ext">장전 '+fmtNum(q.pre)+' <span class="'+((_p>=0)?'pos':'neg')+'">'+((_p>=0)?'+':'')+fmtNum(_p,2)+'%</span>'+_ageTag+'</div>'; }
+    else if ((q.mstate==='POST'||q.mstate==='POSTPOST'||q.mstate==='CLOSED') && q.post > 0) { var _p=(typeof q.postPct==='number')?q.postPct:(mainPx>0?(q.post-mainPx)/mainPx*100:0); extLine='<div class="wl-ext">장후 '+fmtNum(q.post)+' <span class="'+((_p>=0)?'pos':'neg')+'">'+((_p>=0)?'+':'')+fmtNum(_p,2)+'%</span>'+_ageTag+'</div>'; }
     return '<div class="wl-card'+(held?' held':'')+'" data-symbol="'+escapeHtml(q.symbol)+'" data-market="'+market+'">'+
       '<span class="wl-fav '+(isFav?'active':'')+'" data-symbol="'+escapeHtml(q.symbol)+'" data-market="'+market+'">'+(isFav?'\u2605':'\u2606')+'</span>'+
       // [V10.5] 종목명을 위, 티커를 아래로 — 이름 없으면 티커가 이름 자리 차지
