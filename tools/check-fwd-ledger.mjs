@@ -145,8 +145,25 @@ const dayIC = (trueIC, n) => trueIC + randn() / Math.sqrt(Math.max(4, n - 3));
   else bad("featVer 변경 시 원장을 이어 쓴다 — 다른 모델의 성적이 섞인다");
   if (/_led\.v\.length > FWDLED\.keepDays/.test(src)) ok(`원장을 최근 ${KEEP}일로 자른다(모델도 시장도 변한다)`);
   else bad("원장이 무한히 자란다");
-  if (/COALESCE\(ins_ts, ts\)>=/.test(src)) ok("표본 유입량을 적재시각(ins_ts)으로 센다 — ts 는 봉 날짜라 249배 어긋났다");
-  else bad("유입량을 ts 로 센다 — '최근 24h 1건' 같은 오경보가 다시 난다");
+  /* [V33.352] 종전엔 소스에서 `COALESCE(ins_ts, ts)>=` 를 글자로 찾았다. C-2 에서 이 집계가
+     _mlCountsCached 안으로 옮겨가며 띄어쓰기가 달라졌고, 뜻은 그대로인데 검사가 깨졌다.
+     ★어떤 SQL 을 실제로 던지는지★ 를 본다 — 글자가 아니라 행동이다(V33.337 교훈). */
+  {
+    const { _mlCountsCached } = await import("../src/index.js");
+    const sqls = [];
+    const db = { prepare(sql) { sqls.push(sql); return { bind: () => ({ all: async () => ({ results: [] }), first: async () => null }),
+                                                        all: async () => ({ results: [] }), first: async () => null }; } };
+    if (globalThis.__mlCounts) globalThis.__mlCounts = null;   // 캐시를 비워야 실제로 던진다
+    await _mlCountsCached(db);
+    const intake = sqls.filter((q) => /ins_ts/.test(q));
+    if (intake.length && intake.every((q) => /COALESCE\(\s*ins_ts\s*,\s*ts\s*\)/.test(q)))
+      ok("표본 유입량을 적재시각(ins_ts)으로 센다 — ts 는 봉 날짜라 249배 어긋났다");
+    else bad("유입량을 ts 로 센다 — '최근 24h 1건' 같은 오경보가 다시 난다");
+    if (sqls.some((q) => /GROUP BY featver, strategy/.test(q)))
+      ok("총량·구버전·전략별을 GROUP BY 한 방으로 낸다(요청당 여러 번 훑지 않는다)");
+    else bad("집계를 한 번에 안 낸다 — 같은 표를 여러 번 훑게 된다");
+    globalThis.__mlCounts = null;
+  }
 }
 
 // ── ⑥ 재학습이 멈춘 모델도 전진검증을 끝낼 수 있어야 한다 ────────────────────

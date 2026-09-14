@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.351";
+const _BUILD_VER = "V33.352";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -6894,11 +6894,59 @@ async function ensureSchema(DB) {
   __schemaReady = true;
 }
 
+/* ══ [V33.352 · E-1 해결] ★같은 문장이 수십 번 쌓여 새 사고를 묻는다★ ═══════════════
+   실측(2026-09-11 01:31): TIME-CAP 43회 · MLOPS 23회 · 기타 13회가 같은 문장으로 쌓였다.
+   로그 보존은 전체 1,500행 + ERROR/WARN 1,000행이다. 한 문장이 43줄을 먹으면 그만큼
+   ★다른 사건이 밀려 사라진다.★ 선례가 있다 — 09-10 에 `[FETCH] 평가가능 0종목` 이 21회
+   쌓이는 동안 진짜 원인은 전혀 다른 것(시간외 가드)이었고, 그 21줄이 판단을 흐렸다.
+
+   ★묶되 지우지 않는다.★
+     · 같은 문장이 창(10분) 안에 다시 오면 ★새 줄을 만들지 않고★ 원래 줄의 횟수를 올린다.
+     · ts 는 ★첫 발생 시각 그대로 둔다.★ 갱신하면 그 줄이 계속 맨 위로 올라와
+       새로 난 사건을 아래로 밀어낸다 — 고치려던 것과 같은 일이 된다.
+       대신 본문에 "(×43 · 최근 12초 전)" 을 실어 ★지금도 나고 있다★ 를 말한다.
+     · 창이 지나면 새 줄을 만든다 — "아직도 난다" 가 시간축에 보여야 한다.
+     · 숫자는 자리표시(#)로 바꿔 묶는다. "TIME-CAP 1.2s" 와 "TIME-CAP 1.5s" 는 같은 사건이다.
+     · ★통계는 건드리지 않는다★ — __engineErrCount 는 발생 횟수를 그대로 센다.
+       화면의 "오늘 에러 N건" 은 줄 수가 아니라 사건 수여야 한다.
+   ※ 묶음은 아이솔레이트 메모리다. 아이솔레이트가 갈리면 그쪽에서 한 줄이 더 생긴다 —
+     정확성 문제가 아니라 절약폭 문제다(D1 을 매 로그마다 조회하는 것이 훨씬 비싸다). */
+const LOG_DEDUP_MS = 600000;
+const _logSeen = new Map();
+/* 통계 검증용 — 줄 수가 아니라 ★사건 수★ 를 세고 있는지 게이트가 직접 확인한다.
+   (묶음을 넣으면서 여기를 같이 건드리면, 화면의 "오늘 에러 N건" 이 조용히 줄어든다.) */
+function _engineErrSeen() { return __engineErrCount; }
+function _logSig(level, symbol, message) {
+  const m = String(message == null ? "" : message).slice(0, 160).replace(/\d+(?:\.\d+)?/g, "#");
+  return String(level) + "|" + String(symbol == null ? "" : symbol) + "|" + m;
+}
+function _logAgoTxt(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return s + "초 전";
+  if (s < 3600) return Math.floor(s / 60) + "분 전";
+  return Math.floor(s / 3600) + "시간 전";
+}
 async function log(DB, level, symbol, message) {
-  if (level === "ERROR") __engineErrCount++;   // [통계] 에러 누적
+  if (level === "ERROR") __engineErrCount++;   // [통계] 에러 누적 — 묶어도 사건 수는 그대로 센다
+  const now = Date.now();
   try {
-    await DB.prepare("INSERT INTO logs (ts, level, symbol, message) VALUES (?, ?, ?, ?)")
-      .bind(Date.now(), level, symbol, message).run();
+    const sig = _logSig(level, symbol, message);
+    const prev = _logSeen.get(sig);
+    if (prev && prev.id && (now - prev.first) < LOG_DEDUP_MS) {
+      prev.n++; prev.last = now;
+      // ts 는 그대로 둔다 — 반복이 맨 위를 계속 차지하면 새 사건이 그 아래로 묻힌다.
+      await DB.prepare("UPDATE logs SET message = ? WHERE id = ?")
+        .bind(String(message) + " (×" + prev.n + " · 최근 " + _logAgoTxt(now - prev.first) + ")", prev.id).run();
+      return;
+    }
+    const r = await DB.prepare("INSERT INTO logs (ts, level, symbol, message) VALUES (?, ?, ?, ?)")
+      .bind(now, level, symbol, message).run();
+    const id = (r && r.meta && (r.meta.last_row_id != null ? r.meta.last_row_id : r.meta.lastRowId)) || null;
+    _logSeen.set(sig, { id: id, first: now, last: now, n: 1 });
+    // 묶음표가 무한히 자라지 않게 창 지난 것을 치운다(로그 호출마다 조금씩).
+    if (_logSeen.size > 400) {
+      for (const [k, v] of _logSeen) if ((now - v.first) >= LOG_DEDUP_MS) _logSeen.delete(k);
+    }
   } catch (e) { console.error("log fail:", e.message); }
 }
 
@@ -45768,9 +45816,13 @@ async function _luxSelfCheck(DB) {
       // [V32.56] ★AI 학습표본 누적 속도·양★ — ml_samples(현재 featVer) 총량·최근 유입으로 적재 속도 산출
       try {
         const fv = (typeof LUXML !== "undefined") ? LUXML.featVer : null;
-        const t24 = nowT - 24 * 3600000, t7 = nowT - 7 * 86400000;
-        let total = null, d1 = null, d7 = null;
-        try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(fv).first(); total = (r && r.c) || 0; } catch (e) {}
+        /* [V33.352 · C-2] ★같은 집계를 이 요청 안에서 네 번 훑고 있었다.★
+           총량 1회 + 24h 1회 + 7d 1회 + (아래 ML 절에서) 총량 1회 — 98만 행 위에서 네 번이다.
+           그런데 _mlCountsCached 가 GROUP BY 한 방으로 같은 값을 내고 60초 캐시까지 갖고 있다
+           (V12.130b 가 /api/ml-status 100초 지연을 고치며 만든 바로 그 함수다).
+           자가진단만 그걸 안 쓰고 자기 COUNT 를 따로 날리고 있었다 — C-3(FLOW 일봉)과 같은 모양이다. */
+        const _mc = await _mlCountsCached(DB);
+        let total = _num(_mc.curTotal, null), d1 = _mc.cur24, d7 = _mc.cur7d;
         // ══ [V33.140] ★유입량을 ts 로 세면 안 된다 — ts 는 '봉의 날짜' 다★ ══
         //   수확기는 표본의 ts 를 baseTs − k일 로 ★역산해 넣는다★. 그래서 오늘 적재된 행도
         //   ts 는 몇 달 전이 되고, `ts >= 지금−24h` 로 세면 거의 0 이 나온다.
@@ -45779,8 +45831,6 @@ async function _luxSelfCheck(DB) {
         //   이라 ★수집이 멈춘 것처럼★ 읽힌다. 오경보가 진짜 고장을 덮는 전형이다.
         //   V33.104 가 전진검증에서 고친 바로 그 함정이 여기엔 그대로 남아 있었다.
         //   → 적재시각 ins_ts 를 쓴다(V33.32 부터 기록). 없는 구행만 ts 로 폴백한다.
-        try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=? AND COALESCE(ins_ts, ts)>=?").bind(fv, t24).first(); d1 = (r && r.c) || 0; } catch (e) {}
-        try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=? AND COALESCE(ins_ts, ts)>=?").bind(fv, t7).first(); d7 = (r && r.c) || 0; } catch (e) {}
         perf.samples = { total: total, last24h: d1, last7d: d7, perDay: d7 != null ? Math.round(d7 / 7) : null, featVer: fv };
         if (total != null && total < 300) add("info", "학습표본", "현재 featVer 표본 " + total + "건 — 위원회 신뢰 승격 표본 축적 중");
         if (d1 === 0 && d7 === 0) add("warn", "학습표본", "최근 7일 신규 표본 0건 — 야간 수확/실거래 표본 적재 점검 필요");
@@ -45943,6 +45993,9 @@ async function _luxAutoRetrainModal(env) {
     meta.oldestAgeH = +oldestAge.toFixed(1); meta.missingExt = missingExt; meta.staleFeatVer = staleFV;
     if (anyExt && !missingExt && !staleFV && oldestAge <= 14) { meta.lastOk = now; meta.freshestAgeH = +freshestAge.toFixed(1); delete meta.lastSkip; try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }
     // 학습표본 충분 여부(부족하면 재학습해도 승격 안 됨 → 스킵)
+    /* [V33.352] 여기는 자가진단이 아니라 ★재학습 디스패치★ 경로다(야간 1회). 공유 캐시를
+       끌어오면 의존만 늘고 얻는 게 없어 종전대로 둔다 — C-2 는 selfcheck 안의 중복이 문제였다.
+       (처음엔 여기까지 바꿨다가 되돌렸다. 이 한 줄이 selfcheck 비용이라는 내 읽기가 틀렸다.) */
     let nSamp = 0; try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind((typeof LUXML !== "undefined") ? LUXML.featVer : null).first(); nSamp = (r && r.c) || 0; } catch (e) {}
     if (nSamp < 200) { meta.lastSkip = "insufficient_samples:" + nSamp; try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }
     // 워크플로 디스패치(재배포+즉시 학습 1회)
@@ -48251,7 +48304,8 @@ async function mlLabelCandidates(DB, priceLookup, opts) {
 //   → GROUP BY 한 방으로 전부 계산하고 60초 공유 캐시에 담는다(관측용이라 분 단위 신선도면 충분).
 async function _mlCountsCached(DB) {
   if (globalThis.__mlCounts && Date.now() - globalThis.__mlCounts.ts < 60000) return globalThis.__mlCounts.v;
-  const v = { byFvStrat: {}, curTotal: 0, curPosSum: 0, stale: 0, byStrategyCur: {}, cand: 0, candUnlabeled: 0 };
+  const v = { byFvStrat: {}, curTotal: 0, curPosSum: 0, stale: 0, byStrategyCur: {}, cand: 0, candUnlabeled: 0,
+              cur24: null, cur7d: null };
   try {
     // 표본: featver×strategy 집계 1회 스캔으로 현재/구버전/전략별을 모두 도출
     const rs = await DB.prepare("SELECT featver, strategy, COUNT(*) n, SUM(label) pos FROM ml_samples GROUP BY featver, strategy").all();
@@ -48262,6 +48316,20 @@ async function _mlCountsCached(DB) {
         v.byStrategyCur[st] = (v.byStrategyCur[st] || 0) + n;
       } else v.stale += n;
     }
+  } catch (e) {}
+  /* [V33.352 · C-2] 최근 유입(24h·7d)도 ★같은 캐시★ 에서 준다.
+     자가진단이 이 둘을 각자 COUNT 로 물어 왔다 — 98만 행 위에서 두 번 더 훑는 셈이다.
+     게다가 COALESCE(ins_ts, ts) 는 인덱스를 못 타서 그 구간을 행 단위로 계산한다.
+     CASE 합으로 ★한 번에★ 낸다(1회 스캔). 관측용이라 60초 신선도면 충분하다.
+     ※ ins_ts 를 쓰는 이유(V33.140): 수확 표본의 ts 는 '봉의 날짜' 라 역산된 과거다.
+       ts 로 세면 오늘 적재분이 거의 0 으로 나온다(실측 1 vs 249). 적재시각으로 센다. */
+  try {
+    const _t24 = Date.now() - 24 * 3600000, _t7 = Date.now() - 7 * 86400000;
+    const rr = await DB.prepare(
+      "SELECT SUM(CASE WHEN COALESCE(ins_ts, ts) >= ? THEN 1 ELSE 0 END) d1, " +
+      "SUM(CASE WHEN COALESCE(ins_ts, ts) >= ? THEN 1 ELSE 0 END) d7 " +
+      "FROM ml_samples WHERE featver = ?").bind(_t24, _t7, LUXML.featVer).first();
+    if (rr) { v.cur24 = _num(rr.d1, 0); v.cur7d = _num(rr.d7, 0); }
   } catch (e) {}
   try {
     const rc = await DB.prepare("SELECT labeled, COUNT(*) n FROM ml_candidates WHERE featver=? GROUP BY labeled").bind(LUXML.featVer).all();
@@ -49424,6 +49492,10 @@ export {
   MARKET_HOURS, MARKET_HOURS_SPECIAL, marketWindows, marketSessionNow, marketLocalTime, marketLocalDate,
   isMarketOpen, isTradingWindow, isQuoteRefreshWindow, isExtendedHoursWindow, minutesToClose,
   isLLMTriggerWindow, extTradeSession, _extSessionAt, sessionElapsedFraction, marketMinutesUntilClose, extBuyGuard,
+  // [V33.352 · E-1] 로그 묶음 — tools/check-log-dedup.mjs 가 실제로 log() 를 돌린다.
+  log, _logSig, _logSeen, LOG_DEDUP_MS, _engineErrSeen,
+  // [V33.352 · C-2] 표본 집계 캐시 — tools/check-fwd-ledger.mjs 가 어떤 SQL 을 던지는지 본다.
+  _mlCountsCached,
   // [V33.348 · B-7] 반사실 라벨 진입정렬 — tools/check-cf-label-align.mjs 가 실제로 호출한다.
   _cfPriceLookup, _dailyCacheOk, _altBarIdx,
   // [V33.348] D1 부하 — tools/check-daily-bulk-cache.mjs 가 두 번 호출해 왕복을 센다.
