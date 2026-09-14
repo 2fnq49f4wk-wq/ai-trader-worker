@@ -182,5 +182,63 @@ const M = (o) => Object.assign({
   else bad("문턱을 모델에 기록하지 않는다");
 }
 
+// ── ⑧ [V33.355 · B-3] ★"증거가 부족하다" 와 "증거가 반대다" 는 다르다 ────────────
+//   고치기 전 실측: 전진표본이 minForward 에 못 미치는 구간에서 이 함수는 fwdIC 의
+//   ★부호를 아예 읽지 않았다.★ 그래서
+//     · fwdN=399 · fwdIC +0.039 → ×0.5991
+//     · fwdN=399 · fwdIC −0.039 → ×0.5991   ← 똑같았다
+//   게다가 음수인 채로 표본만 쌓이면 0.25 → 0.60 으로 ★올라갔고★, 400 에 닿는 순간
+//   위쪽 하드 리젝으로 떨어져 ×0.599 → 제외의 절벽이 생겼다.
+//   이 절은 그 세 가지(부호를 읽는가 · 방향이 맞는가 · 이어지는가)를 실행으로 잰다.
+{
+  const B = (o) => Object.assign({ valICt: 3.0, valICBlock: 0.05, fwdReady: false,
+    fwdIC: null, fwdICt: null, fwdN: 0, trusted: false, tMinUsed: 2.5 }, o);
+  const N = ICGATE.minForward, F = ICGATE.forwardFloor;
+  const mult = (o) => expertAdmit(B(o)).mult;
+
+  // (a) 부호를 읽는가 — 같은 표본에서 양수와 음수가 같은 값이면 안 된다
+  const pos = mult({ fwdN: N - 1, fwdIC: 0.039, fwdICt: 1.2 });
+  const neg = mult({ fwdN: N - 1, fwdIC: -0.039, fwdICt: -1.2 });
+  if (neg < pos) ok(`표본 ${N - 1} 에서 전진 IC 부호를 읽는다 — 양수 ×${pos} vs 음수 ×${neg}`);
+  else bad(`전진 IC 부호를 안 읽는다: 양수 ×${pos} · 음수 ×${neg} — 반대 증거가 같은 대우를 받는다`);
+
+  // (b) 방향 — 반대 증거는 쌓일수록 ★내려가야★ 한다 (종전엔 올라갔다)
+  let rose = 0, prev = Infinity;
+  for (let n = 0; n <= N; n += Math.max(1, Math.floor(N / 40))) {
+    const m = mult({ fwdN: n, fwdIC: -0.039, fwdICt: -1.2, fwdReady: n >= N });
+    if (m > prev + 1e-12) rose++;
+    prev = m;
+  }
+  if (rose === 0) ok("전진 IC 음수 — 표본이 쌓일수록 배수가 단조 감소한다(반대 증거가 보상받지 않는다)");
+  else bad(`전진 IC 음수인데 배수가 ${rose}구간에서 ★올라갔다★ — 반대 증거가 쌓일수록 가중이 커진다`);
+
+  // (c) 이어지는가 — minForward 직전이 하드 리젝과 맞닿아야 한다(절벽 제거)
+  const edge = mult({ fwdN: N - 1, fwdIC: -0.039, fwdICt: -1.2 });
+  const over = expertAdmit(B({ fwdN: N, fwdIC: -0.039, fwdICt: -1.2, fwdReady: true }));
+  if (!over.admit && edge === 0) ok(`경계가 이어진다 — n=${N - 1} ×0 · n=${N} 제외 (종전 ×0.599 → 제외의 절벽이 사라졌다)`);
+  else bad(`경계에 절벽이 남아 있다: n=${N - 1} ×${edge} → n=${N} admit=${over.admit}`);
+
+  // (d) 어느 경우에도 종전보다 배수를 ★올리지 않는다★ — 없던 합류를 만들면 안 된다
+  //     종전 공식을 여기서 직접 재현해 전 구간을 대조한다.
+  //     ※ 반환값은 +mult.toFixed(4) 라 ±5e-5 의 반올림 오차가 있다 — 허용오차는 그보다 커야 한다.
+  const P = ICGATE.provisional || {};
+  const before = (n) => Math.min(P.cap ?? 0.85,
+    1 * ((P.fwdBase ?? 0.25) + (P.fwdSpan ?? 0.35) * Math.min(1, n / Math.max(1, N))));
+  let raised = 0;
+  for (const ic of [-0.5, -0.12, -0.039, -1e-9, 0, 1e-9, 0.02, 0.3]) {
+    for (let n = 0; n < N; n += 7) {
+      if (mult({ fwdN: n, fwdIC: ic, fwdICt: ic * 30 }) > before(n) + 1e-4) raised++;
+    }
+  }
+  if (raised === 0) ok(`전 구간(전진 IC 8종 × 표본 ${Math.ceil(N / 7)}점) 종전보다 배수가 오른 경우 0건 — 보수적 방향만 바꿨다`);
+  else bad(`${raised}건에서 배수가 종전보다 올랐다 — 이 수정으로 없던 합류가 생긴다`);
+
+  // (e) 부호가 ★아직 안 측정된★ 경우는 진짜 '부족한 증거' 라 종전 그대로여야 한다
+  let drift = 0;
+  for (let n = 0; n < N; n += 11) if (Math.abs(mult({ fwdN: n, fwdIC: null }) - before(n)) > 1e-4) drift++;
+  if (drift === 0) ok("전진 IC 미측정(null)은 종전과 완전히 동일 — '못 쟀다' 를 '반대다' 로 취급하지 않는다");
+  else bad(`전진 IC 미측정 구간이 ${drift}점에서 달라졌다`);
+}
+
 console.log(fails ? "\n위원 자격 계약 위반 " + fails + "건 — 배포 차단" : "\n  ok   위원 자격 계약 통과");
 process.exit(fails ? 1 : 0);

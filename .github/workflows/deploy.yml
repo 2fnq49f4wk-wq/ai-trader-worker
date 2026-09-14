@@ -279,6 +279,12 @@ jobs:
       #   그리고 돈 경로의 감시자·탐지기가 예외를 삼켜 "이상 없음" 과 구별되지 않았다.
       - name: Ledger retroactivity and watchdog check
         run: node tools/check-ledger-retro.mjs
+      # [V33.355 · B-4] 죽은 입력 6칸 덫 — liveCtxNeutral 이 sigWeight·confluence·전략원핫4 를
+      #   모든 행에서 같은 값으로 덮어써 80차원 중 6칸이 상수다. featNames 중간이라 지금은
+      #   못 뺀다(인덱스가 밀려 98만 표본이 어긋난다). featVer 가 올라가는 순간 = 표본을
+      #   어차피 재각인하는 순간이 유일한 제거 시점이므로, 그때 안 빼면 배포를 막는다.
+      - name: Dead live-only feature tripwire
+        run: node tools/check-live-only-feats.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

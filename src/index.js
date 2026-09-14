@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.354";
+const _BUILD_VER = "V33.355";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -33977,8 +33977,25 @@ function expertAdmit(m) {
       else { fwdMult = _num(P.fwdWeak, 0.6); fwdWhy = "전진 IC 양수이나 t " + (fwdT != null ? fwdT.toFixed(2) : "?") + " < " + ICGATE.forwardTMin; }
     } else {
       const frac = _clamp(fwdN / Math.max(1, ICGATE.minForward), 0, 1);
-      fwdMult = _num(P.fwdBase, 0.25) + _num(P.fwdSpan, 0.35) * frac;
-      fwdWhy = "전진표본 " + fwdN + "/" + ICGATE.minForward + " 축적 중";
+      /* [V33.355] ★B-3 — "증거가 부족하다" 와 "증거가 반대다" 를 가른다.★
+         종전엔 이 갈래가 fwdIC 의 ★부호를 아예 읽지 않았다.★ 그래서 전진 IC 가 음수로
+         측정돼 있어도 표본이 minForward 에 가까워질수록 배수가 0.25 → 0.60 으로 ★올라갔다★.
+         실측(고치기 전): fwdN=399 에서 전진 IC +0.039 와 −0.039 가 ★똑같이 ×0.599★.
+         즉 반대 방향 증거가 쌓일수록 가중이 커졌다. 게다가 fwdN=400 이 되는 순간 위쪽
+         하드 리젝으로 떨어져 ×0.599 → 제외의 ★절벽★ 이 생긴다. XALPHA 전진 IC −0.039 가
+         정확히 그 구간이었다(docs/OPEN-DEFECTS.md B-3).
+         → 부호가 이미 측정돼 있으면 경사로의 ★방향★ 을 그 부호가 정한다. 음수면 표본이
+           쌓일수록 0 으로 내려가 minForward 에서 하드 리젝과 ★이어진다★(절벽이 사라진다).
+         ※ 이 변경은 어느 경우에도 배수를 종전보다 ★올리지 않는다★ — 없던 합류를 만들지 않는다.
+           부호가 아직 측정 안 된 경우(fwdIC == null)는 진짜 '부족한 증거' 라 종전 그대로다. */
+      const _fwdNeg = (fwdIC != null && fwdIC <= ICGATE.forwardFloor);
+      fwdMult = _fwdNeg
+        ? _num(P.fwdBase, 0.25) * (1 - frac)
+        : _num(P.fwdBase, 0.25) + _num(P.fwdSpan, 0.35) * frac;
+      fwdWhy = _fwdNeg
+        ? ("전진 IC " + fwdIC.toFixed(4) + " ≤ " + ICGATE.forwardFloor + " — 표본 " + fwdN + "/" +
+           ICGATE.minForward + " 이라 확정은 못 하나 ★방향이 반대로 측정됐다★(표본이 찰수록 0 으로)")
+        : ("전진표본 " + fwdN + "/" + ICGATE.minForward + " 축적 중");
     }
     const mult = _clamp(holdMult * fwdMult, 0, _num(P.cap, 0.85));
     if (mult < _num(P.minAdmitMult, 0.12))
@@ -49552,7 +49569,7 @@ export {
   // [V33.103] 단타 표본 파이프라인 로컬 검증용 — tools/check-scalp-pipeline.mjs 가 쓴다.
   //   프로덕션 코드 경로에는 영향이 없다(named export 는 Worker 가 읽지 않는다).
   stinBackfill, stinIntradayFeat, stinChartFeat, stinObserve, stinLabel, mlBuildFeatures,
-  STIN, STIN_IFEAT_N, STIN_FEATVER, LUXML, _setR2ForTest, getBigState, _bigLoadStatus,
+  STIN, STIN_IFEAT_N, STIN_FEATVER, LUXML, _LIVE_ONLY_FEATS, _setR2ForTest, getBigState, _bigLoadStatus,
   // [V33.105] 확률 계수 적합기 검증용 — tools/check-prob-fitters.mjs
   shockPriorFitNightly, decisionBlendFitNightly, _shockLogitShift, _coefShrink, SHOCKCAL,
   // [V33.193] 확률적/디플레이션 샤프 검증용 — tools/check-edge-stats.mjs
