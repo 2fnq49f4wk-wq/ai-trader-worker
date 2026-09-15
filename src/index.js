@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.364";
+const _BUILD_VER = "V33.365";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -10537,7 +10537,11 @@ const MLSNAP_PART = 20000;
 //   실제로 그 사고가 났다: 아래 SELECT 에 symbol 이 빠져 있어 스냅샷 행에 s 가 없었고,
 //   트레이너는 전 표본을 한 종목으로 보고 고유도를 쟀다(아래 주석 참조).
 //   featVer 만으로는 이걸 못 가른다 — 피처 정의는 그대로이고 '전달 스키마'만 바뀌기 때문이다.
-const MLSNAP_SCHEMA = 2;
+/* [V33.365] 2→3 — 스냅샷 상태에 ★파트경계(bounds)★ 가 생겼다. 경계 없는 옛 사진은
+   커서 요청을 못 받아 매 페이지 D1 로 떨어진다(느리지만 옳다). 판을 올려 ★한 번에★
+   다시 뜨게 한다 — 이 상수가 바로 그 용도다(위 V33.176 주석 참조).
+   ※ 옛 키(ml/v*s2/part-*)는 남는다. 다음 정리 대상으로 OPEN-DEFECTS 에 적어 둔다. */
+const MLSNAP_SCHEMA = 3;
 function _mlSnapKey(fv, part) { return "ml/v" + fv + "s" + MLSNAP_SCHEMA + "/part-" + part + ".json"; }
 function _mlSnapStateKey(fv) { return "ml_snap:v" + fv + "s" + MLSNAP_SCHEMA; }
 async function mlSnapshotBuildStep(DB, deadline) {
@@ -10581,7 +10585,10 @@ async function mlSnapshotBuildStep(DB, deadline) {
   if (!st || st.done) {
     const total = _live >= 0 ? _live
       : (await (async function () { const c = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(fv).first(); return (c && c.c) || 0; })());
-    st = { done: false, ts: nowT, anchorTs: nowT, total: total, parts: Math.ceil(total / MLSNAP_PART), next: 0 };
+    /* [V33.365] bounds — 파트마다 ★마지막 (ts,id)★ 를 적는다.
+       익스포트가 커서로 "이 다음 파트" 를 찾으려면 이 색인이 있어야 한다.
+       없으면 커서 요청을 R2 로 못 받아 D1 로 떨어진다(느리지만 옳다). */
+    st = { done: false, ts: nowT, anchorTs: nowT, total: total, parts: Math.ceil(total / MLSNAP_PART), next: 0, bounds: [] };
     await setState(DB, _mlSnapStateKey(fv), st);
   }
   while (st.next < st.parts) {
@@ -10612,6 +10619,11 @@ async function mlSnapshotBuildStep(DB, deadline) {
                  pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" ? 1 : 0 });
     }
     await R2.put(_mlSnapKey(fv, st.next), JSON.stringify(out));
+    // [V33.365] 이 파트의 마지막 행 = 다음 파트의 커서. 행이 걸러졌어도 raw 기준이라야
+    //   D1 커서 경로와 같은 자리를 가리킨다(out 은 feat 파싱 실패분이 빠져 있을 수 있다).
+    const _lastRaw = raw.length ? raw[raw.length - 1] : null;
+    if (!Array.isArray(st.bounds)) st.bounds = [];
+    st.bounds[st.next] = _lastRaw ? { t: _num(_lastRaw.ts, 0), i: _num(_lastRaw.id, 0) } : null;
     st.next++;
     await setState(DB, _mlSnapStateKey(fv), st);
     if (raw.length < MLSNAP_PART) { st.parts = st.next; break; }
@@ -24643,6 +24655,10 @@ async function handleRequest(request, env, ctx) {
          같은 줄이 반복돼 로그를 읽기 어려웠다. 진단하려고 보는 로그를 진단 대상이 스스로
          덮어쓰는 셈이다. 커서가 없을 때만 첫 페이지다. */
       const _firstPage = offset === 0 && !Number(url.searchParams.get("cursorTs"));
+      /* [V33.365] 커서를 ★R2 분기보다 위에서★ 읽는다 — R2 도 커서를 알아들어야 하기 때문이다.
+         종전엔 D1 분기 바로 앞에서 선언돼 R2 는 커서의 존재조차 몰랐다(그게 중복수집의 자리다). */
+      const curTs = Number(url.searchParams.get("cursorTs")) || 0;
+      const curId = Number(url.searchParams.get("cursorId")) || 0;
       /* [V33.260] 구성 결정은 ★첫 페이지에서 한 번만★ 한다 — 트레이너는 config 를 첫 응답에서
          읽고, 뒷페이지의 것은 쓰지 않는다. 페이지마다 상태를 읽으면 D1 왕복만 는다. */
       let _arch = null;
@@ -24693,11 +24709,60 @@ async function handleRequest(request, env, ctx) {
               }
             } catch (e) { /* 카운트를 못 재면 종전대로 스냅샷을 쓴다 */ }
           }
+          /* ══ [V33.365] ★두 경로가 페이지 주소를 서로 다른 말로 하고 있었다★ ══════════
+             R2 분기는 `offset` 으로 파트를 고르고, D1 분기는 `cursorTs` 로 다음 줄을 찾는다.
+             그런데 트레이너는 커서를 한 번 받으면 ★그 뒤로 offset 을 영영 안 보낸다★
+             (modal_train.py:174 `if cur_ts: … else: params["offset"]=off` — if/else 다).
+             그래서 수집 도중 스냅샷이 done 으로 뒤집히면(빌더는 장외에 ★점진적★ 으로 돌다가
+             마지막 파트에서 done 을 찍는다 — 수집 중에 뒤집히는 게 정상이다) 이후 모든 페이지가
+               offset=0 → _part=0 → ★파트0(최근 2만행)만 계속★
+             이 된다. 트레이너는 `off += len(got)` 로 세므로 total 을 채우고 정상 종료한다.
+
+             ★실측 피해(2026-09-15 00:43 회차)★
+               받은 표본 1,123,768건 = 서로 다른 행 ★2만건★ × 56번
+               표본 고유도 붕괴 → 유효표본 ★210★/220,000 (동시성 1,047)
+               재현 결과 204/1,064 — 실측과 3% 안에서 일치한다.
+               그 탓에 Wilson 하한이 5.5%p 눌려 SEQ 가 위원회에서 빠지고 XGB·LGB·CAT 이 전부 거절.
+             ★검증표본이 학습표본의 복사본★ 이었으므로 valAcc 자체도 의미가 없었다.
+             "성능이 안 나온다" 의 실체가 이것이다 — 모델이 나쁜 게 아니라 ★표본이 20만이 아니었다★.
+
+             → 커서가 오면 bounds 색인으로 ★그 다음 파트★ 를 찾는다. 못 찾으면(옛 스냅샷·
+               어긋난 커서) ★파트0 을 내주지 않고★ D1 로 떨어진다. 느린 것은 고칠 수 있지만
+               조용히 틀린 표본은 못 고친다. */
+          /* [V33.365] 경계 없는 옛 사진이면 ★2페이지부터★ D1 로 떨어진다 — 그 사실을
+             1페이지에서 ★한 번만★ 말한다(페이지마다 찍지 않는다 — check-snapshot-drift 계약).
+             MLSNAP_SCHEMA 를 3 으로 올렸으므로 정상 경로에서는 나올 일이 없다. 나오면 그게 신호다. */
+          if (_firstPage) {
+            if (_snapOk && !Array.isArray(_snap.bounds)) {
+              try { ctx.waitUntil(log(env.DB, "WARN", null, "[ML-EXPORT] 스냅샷에 파트경계가 없다 — " +
+                "2페이지부터 D1 에서 읽는다(사진이 다시 뜨면 해소).")); } catch (e) {}
+            }
+          }
+          let _part = -1;
           if (_snapOk) {
-            const _part = Math.floor(offset / MLSNAP_PART);
+            if (curTs > 0) {
+              const _bd = Array.isArray(_snap.bounds) ? _snap.bounds : null;
+              if (_bd) {
+                for (let _k = 0; _k < _bd.length; _k++) {
+                  const _b = _bd[_k];
+                  if (_b && _num(_b.t, -1) === curTs && _num(_b.i, -1) === curId) { _part = _k + 1; break; }
+                }
+              }
+              // 커서를 R2 로 못 이어붙인다 → D1 이 정답을 안다. ★여기서는 로그를 남기지 않는다★ —
+              //   이 자리는 페이지마다 지나가므로 한 회차에 수십 줄이 된다(check-snapshot-drift 계약).
+              //   사람이 알아야 할 사실은 ★1페이지에서 이미 알 수 있다★ — 바로 아래에서 한 번만 말한다.
+              if (_part < 0) _snapOk = false;
+            } else if (offset % MLSNAP_PART !== 0) {
+              _snapOk = false;     // 파트 경계에 안 맞는 offset — 겹치거나 빠진다
+            } else {
+              _part = Math.floor(offset / MLSNAP_PART);
+            }
+          }
+          if (_snapOk) {
             if (_part >= _snap.parts) {
               return Response.json({ featVer: LUXML.featVer, featNames: LUXML.featNames, total: _snap.total,
                 offset: offset, returned: 0, anchorTs: _snap.anchorTs, source: "r2", samples: [],
+                nextCursorTs: null, nextCursorId: null,
                 config: _mlExportConfig(_arch) }, { headers: cors });
             }
             const _o = await _R2.get(_mlSnapKey(LUXML.featVer, _part));
@@ -24706,8 +24771,12 @@ async function handleRequest(request, env, ctx) {
               if (_firstPage) {
                 try { ctx.waitUntil(log(env.DB, "INFO", null, "[ML-EXPORT] 외부 트레이너가 표본 수집 시작 — R2 스냅샷 " + _snap.parts + "파트/total=" + _snap.total)); } catch (e) {}
               }
+              /* [V33.365] 다음 커서를 함께 낸다 — 이게 있어야 R2 로 시작한 수집이 중간에
+                 D1 로 떨어져도 ★같은 자리에서★ 이어진다(둘 다 ts DESC, id DESC 한 순서다). */
+              const _bn = (Array.isArray(_snap.bounds) && _snap.bounds[_part]) ? _snap.bounds[_part] : null;
               return Response.json({ featVer: LUXML.featVer, featNames: LUXML.featNames, total: _snap.total,
                 offset: offset, returned: _arr.length, anchorTs: _snap.anchorTs, source: "r2",
+                nextCursorTs: _bn ? _num(_bn.t, 0) : null, nextCursorId: _bn ? _num(_bn.i, 0) : null,
                 config: _mlExportConfig(_arch), samples: _arr }, { headers: cors });
             }
           }
@@ -24727,8 +24796,6 @@ async function handleRequest(request, env, ctx) {
       //   제곱으로 무거워져, D1이 조금만 바빠도 export가 실패 → Modal 학습 전체가 중단됐다.
       //   (ts,id) 커서로 바꾸면 매 페이지가 인덱스에서 바로 이어붙는다. cursorTs 미전달 시 종전 OFFSET
       //   경로를 그대로 써서 구버전 트레이너와도 호환된다.
-      const curTs = Number(url.searchParams.get("cursorTs")) || 0;
-      const curId = Number(url.searchParams.get("cursorId")) || 0;
       let rows;
       if (curTs > 0) {
         rows = await env.DB.prepare(

@@ -340,6 +340,12 @@ jobs:
       #   실측: US 12.0시간 전 / KR 19.3시간 전 값을 화면이 '지금 적용 중' 이라 표시했다.
       - name: Applied threshold record check
         run: node tools/check-thr-applied.mjs
+      # [V33.365] ★성능이 안 나오던 실체★ — R2 스냅샷 분기는 offset 으로, D1 분기는 cursorTs 로
+      #   페이지를 골랐다. 트레이너는 커서를 받으면 offset 을 안 보냈다(if/else). 수집 도중
+      #   스냅샷이 done 으로 뒤집히면 이후 전 페이지가 파트0 만 돌려줬다 —
+      #   1,123,768건 중 서로 다른 행 2만건, 유효표본 210/220,000.
+      - name: ML export pagination check
+        run: node tools/check-export-paging.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

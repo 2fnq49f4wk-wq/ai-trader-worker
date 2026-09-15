@@ -111,7 +111,7 @@ def _trainer_state():
 )
 def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
               depth_sweep: bool = False, sweep_seeds: int = 2, target: str = "all"):
-    import os, json, math, time
+    import os, json, math, time, hashlib
     import numpy as np
     import requests
     import torch
@@ -169,12 +169,16 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         off, page, samples, cfg, fv, fn = 0, 20000, [], None, None, None
         anchor = 0  # [V11.1] 스냅샷 앵커 — 수집 중 신규 수확행이 OFFSET을 밀어 중복/누락되는 것 방지
         cur_ts = cur_id = 0   # [V33.12] 커서 페이지네이션 — OFFSET 누적 스캔(표본^2) 제거
+        _seen_pages = set()   # [V33.365] 페이지 중복 탐지 — 아래 설명 참조
         while True:
-            params = {"key": KEY, "limit": page}
+            # [V33.365] ★offset 은 ★언제나★ 보낸다.★ 종전엔 if/else 라 커서를 한 번 받으면
+            #   offset 을 영영 안 보냈는데, 워커의 R2 스냅샷 분기는 offset 으로 파트를 고른다.
+            #   그래서 수집 도중 스냅샷이 신선해지면 이후 모든 페이지가 파트0(최근 2만행)만
+            #   돌려줬다 — 1,123,768건을 받았지만 서로 다른 행은 2만건뿐이었다.
+            #   D1 분기는 커서가 있으면 커서를 쓰므로(if curTs>0) 이 변경은 D1 동작을 안 바꾼다.
+            params = {"key": KEY, "limit": page, "offset": off}
             if cur_ts:
                 params["cursorTs"], params["cursorId"] = cur_ts, cur_id
-            else:
-                params["offset"] = off
             if anchor:
                 params["beforeTs"] = anchor
             # [V33.12] D1 과부하로 export가 한 번 실패하면 학습 전체가 죽었다 — 지수백오프 재시도.
@@ -204,6 +208,19 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             cfg, fv, fn = j["config"], j["featVer"], j["featNames"]
             anchor = j.get("anchorTs") or anchor
             got = j.get("samples", [])
+            # [V33.365] ★같은 페이지가 두 번 오면 즉시 멈춘다.★ 위 중복수집 사고는 화면·로그
+            #   어디에도 "중복" 이라는 말이 없이 valAcc 만 조용히 무너뜨렸다(유효표본 210/220,000).
+            #   페이지 내용이 ★똑같으면★ 그건 오해의 여지가 없는 고장이다 — 오탐이 없다.
+            #   덜 학습된 회차는 6시간 뒤 만회되지만, 복사본으로 학습한 모델은 승격돼 돈을 만진다.
+            if got:
+                _sig = hashlib.sha1(
+                    repr((len(got), got[0].get("ts"), got[0].get("s"),
+                          got[-1].get("ts"), got[-1].get("s"))).encode()).hexdigest()
+                if _sig in _seen_pages:
+                    raise RuntimeError(
+                        f"export 가 같은 페이지를 다시 줬다(중복 {len(samples):,}건 수집 지점) — "
+                        "R2 스냅샷 파트와 커서가 어긋난 상태다. 이 표본으로는 학습하지 않는다.")
+                _seen_pages.add(_sig)
             samples.extend(got)
             total = j.get("total", len(samples))
             print(f"  내려받음 {len(samples)}/{total}")
@@ -217,6 +234,25 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
 
     print("① 표본 수집")
     samples, cfg, featver, featnames = fetch_all()
+    # ══ [V33.365] ★표본 위생 — 받은 건수가 아니라 '서로 다른 건수' 를 먼저 말한다.★ ══
+    #   중복수집 사고는 "내려받음 1,123,768/1,123,768" 이라는 ★정상적으로 보이는★ 로그를 남겼다.
+    #   고유도가 무너진 뒤에야 티가 났고, 그때는 이미 모델이 승격 심사를 받고 있었다.
+    #   서로 다른 (ts,종목,라벨) 비율과 시간범위는 이 사고를 ★한 줄로★ 드러낸다.
+    try:
+        _key = {(s_.get("ts"), s_.get("s"), s_.get("y")) for s_ in samples}
+        _tsv = [float(s_.get("ts") or 0) for s_ in samples]
+        _spanD = (max(_tsv) - min(_tsv)) / 86400000.0 if _tsv else 0.0
+        _ratio = len(_key) / max(1, len(samples))
+        print(f"   [표본위생] 서로 다른 표본 {len(_key):,}/{len(samples):,} ({_ratio*100:.1f}%)"
+              f" · 시간범위 {_spanD:.0f}일")
+        if _ratio < 0.5 and len(samples) > 1000:
+            raise RuntimeError(
+                f"표본의 {(1-_ratio)*100:.0f}%가 중복이다({len(_key):,}종류가 {len(samples):,}건으로 왔다) — "
+                "익스포트 페이지네이션이 어긋난 상태다. 이 표본으로는 학습하지 않는다.")
+    except RuntimeError:
+        raise
+    except Exception as _e:
+        print("   [표본위생] 산출 실패(무시):", _e)
     _set_mkt_cols(featnames)   # [V33.291] 시장 원핫 열 위치 — IC 에서 시장 고정효과를 빼는 데 쓴다
     if not samples:
         print("표본 0 — 종료"); return {"ok": False, "reason": "no samples"}
