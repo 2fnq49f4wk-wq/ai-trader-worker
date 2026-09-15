@@ -316,6 +316,14 @@ jobs:
       #   그리고 표본 상한에 닿으면 표본이 영구 삭제됐다 — R2 로 옮긴 뒤에 지운다.
       - name: featVer retirement and R2 archive check
         run: node tools/check-featver-retire.mjs
+      # [V33.361 · A-6] v7 이 빈 배열을 주는 마지막 미관측 지점 — cookie·crumb 악수가
+      #   실패해도 catch 가 통째로 삼켰다. 기록을 남기고, Workers 의 합쳐진 Set-Cookie 파싱을 고쳤다.
+      - name: Yahoo auth handshake observability check
+        run: node tools/check-yahoo-auth.mjs
+      # [V33.361] 원장 드리프트가 "1건" 만 말하고 종목을 안 적었다. 그리고 anlrevk 가
+      #   419분째 대기인데 상류(v7 사망)를 아무도 지목하지 않았다.
+      - name: Audit drift and stalled stage diagnosis check
+        run: node tools/check-audit-drift.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

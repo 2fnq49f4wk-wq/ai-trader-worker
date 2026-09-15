@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.360";
+const _BUILD_VER = "V33.361";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -7359,6 +7359,21 @@ async function getYahooAuth(DB) {
       }
     } catch (e) {}
   }
+  /* ══ [V33.361] ★이 악수(handshake)가 조용히 실패하면 v7 이 통째로 죽는다 (결함 A-6)★ ══
+     v7 은 2023년부터 cookie + crumb 를 요구한다. 그런데 이 함수는 실패해도
+     `catch (e) {}` 로 ★아무 것도 남기지 않았다.★ 그러면 두 v7 경로가 모두
+     `if (auth && auth.crumb)` 에서 조용히 crumb 없이 나가고, 야후는 예외도 오류도 없이
+     ★빈 배열★ 을 돌려준다 — 그게 우리가 실측한 `result=0 keys=quoteResponse` 다.
+     즉 A-6 의 '원인 미상' 중 ★마지막으로 안 보고 있던 곳★ 이 여기다.
+     ★단정하지는 않는다★ — 이 환경에서 야후로 나갈 수 없어 실제 응답을 못 봤다.
+     대신 ★다음 사이클이 답하게★ 기록을 남긴다(무엇이 비었는지가 한 줄로 갈린다).
+
+     그리고 쿠키 파싱에 실제 위험이 하나 있다: Workers 의 `headers.get("set-cookie")` 는
+     ★여러 Set-Cookie 를 ", " 로 이어 붙인 한 문자열★ 을 준다. 거기에 `.split(";")[0]` 을
+     하면 ★첫 쿠키의 이름=값만★ 남고 나머지가 통째로 사라진다. 야후는 보통 A1/A3 를 함께
+     주므로 필요한 쿠키가 빠질 수 있다. `getSetCookie()` 가 있으면 그걸 쓴다(표준 API). */
+  const _probe = { ts: Date.now(), ok: false, httpCookie: null, httpCrumb: null,
+                   cookieN: 0, cookieLen: 0, crumbLen: 0, err: null, via: null };
   try {
     const ctrlA = new AbortController();
     const timerA = setTimeout(function(){ try { ctrlA.abort(); } catch (e) {} }, 8000);
@@ -7367,8 +7382,27 @@ async function getYahooAuth(DB) {
       signal: ctrlA.signal
     });
     clearTimeout(timerA);
-    let cookie = r1.headers.get("set-cookie") || "";
-    cookie = cookie.split(";")[0];
+    _probe.httpCookie = r1.status;
+    let cookie = "";
+    try {
+      /* 표준 API 가 있으면 쿠키를 ★낱개로★ 받는다 — 이름=값만 모아 잇는다. */
+      if (typeof r1.headers.getSetCookie === "function") {
+        const _all = r1.headers.getSetCookie() || [];
+        _probe.cookieN = _all.length; _probe.via = "getSetCookie";
+        cookie = _all.map(function (c) { return String(c).split(";")[0]; })
+                     .filter(function (c) { return c && c.indexOf("=") > 0; }).join("; ");
+      }
+    } catch (e) {}
+    if (!cookie) {
+      const _raw = r1.headers.get("set-cookie") || "";
+      _probe.via = _probe.via || "get";
+      /* 폴백: ", " 로 이어 붙은 문자열을 낱개로 되돌린 뒤 이름=값만 모은다.
+         (종전엔 `.split(";")[0]` 하나뿐이라 첫 쿠키만 남았다) */
+      cookie = _raw.split(/,\s*(?=[^=;,]+=)/).map(function (c) { return String(c).split(";")[0]; })
+                   .filter(function (c) { return c && c.indexOf("=") > 0; }).join("; ");
+      _probe.cookieN = cookie ? cookie.split("; ").length : 0;
+    }
+    _probe.cookieLen = cookie.length;
     const ctrlB = new AbortController();
     const timerB = setTimeout(function(){ try { ctrlB.abort(); } catch (e) {} }, 8000);
     const r2 = await fetch("https://query1.finance.yahoo.com/v1/test/getcrumb", {
@@ -7379,12 +7413,35 @@ async function getYahooAuth(DB) {
       signal: ctrlB.signal
     });
     clearTimeout(timerB);
+    _probe.httpCrumb = r2.status;
     const crumb = (await r2.text()).trim();
+    _probe.crumbLen = crumb.length;
     if (crumb && crumb.length < 30 && crumb.indexOf("<") === -1) {
       __yahooAuth = { cookie: cookie, crumb: crumb, ts: Date.now() };
+      _probe.ok = true;
       if (DB) { try { await setState(DB, "yahoo_auth", __yahooAuth); } catch (e) {} }
+    } else {
+      _probe.err = crumb ? ("crumb 모양이 아니다(" + crumb.length + "자" +
+                            (crumb.indexOf("<") >= 0 ? ", HTML" : "") + ")") : "crumb 빈 응답";
     }
-  } catch (e) { /* 실패 시 기존값 유지 — v8 폴백이 처리 */ }
+  } catch (e) {
+    _probe.err = String((e && e.name === "AbortError") ? "8초 초과" : ((e && e.message) || e)).slice(0, 80);
+  }
+  /* ★성공이든 실패든 남긴다.★ 종전엔 실패가 아무 데도 안 남아,
+     "v7 이 왜 빈 응답을 주나" 를 볼 때 이 자리를 아예 의심할 수 없었다. */
+  if (DB) {
+    try { await setState(DB, "yahoo_auth_probe", _probe); } catch (e) {}
+    if (!_probe.ok) {
+      try {
+        await log(DB, "WARN", null,
+          "[야후인증] cookie·crumb 획득 실패 — v7 이 crumb 없이 나가면 야후가 ★오류 없이 빈 배열★ 을 준다(A-6). " +
+          "cookie HTTP " + _probe.httpCookie + "(" + _probe.cookieN + "개/" + _probe.cookieLen + "자, " + _probe.via + ")" +
+          " · crumb HTTP " + _probe.httpCrumb + "(" + _probe.crumbLen + "자)" +
+          (_probe.err ? " · " + _probe.err : "") +
+          " · 직전 crumb 이 살아 있으면 그것으로 버틴다");
+      } catch (e) {}
+    }
+  }
   return __yahooAuth;
 }
 async function yahooFetch(url, extraHeaders) {
@@ -8786,7 +8843,23 @@ function analystRevScore(rec) {
 async function analystRevFitNightly(DB) {
   try {
     const led = await getState(DB, "analyst_rev", null);
-    if (!led || !led.bySym) return "\u27F3 " + "[ANLREVK] 개정 원장 없음 — 대기";
+    if (!led || !led.bySym) {
+      /* [V33.361] ★왜 없는지를 말한다.★ 종전엔 "개정 원장 없음 — 대기" 뿐이라,
+         이 단계가 며칠째 멈춰 있어도 무엇을 고쳐야 하는지 알 수 없었다.
+         이 원장은 updateAnalystConsensus 가 ★갱신에 성공할 때만★ 생긴다 —
+         그 수집은 야후 v7 전용이고, v7 이 죽으면(A-6) 여기까지 조용히 멈춘다. */
+      let _why = "";
+      try {
+        const _ac = await getState(DB, "analyst_consensus", null);
+        const _v7 = await getState(DB, "yahoo_v7", null);
+        const _n = _ac ? Object.keys(_ac.bySym || {}).length : 0;
+        const _ageH = (_ac && _ac.ts) ? ((Date.now() - _num(_ac.ts, 0)) / 3600000).toFixed(1) : null;
+        _why = " — 이 원장은 애널리스트 컨센서스가 ★갱신될 때만★ 생긴다: " +
+               (!_ac ? "컨센서스 자체가 없다" : "컨센서스 " + _n + "종목(" + _ageH + "시간 전)") +
+               (_v7 && _v7.dead ? " · ★야후 v7 사망(A-6) — 그 수집은 v7 전용이라 여기까지 멈춘다★" : "");
+      } catch (e) {}
+      return "\u27F3 " + "[ANLREVK] 개정 원장 없음 — 대기" + _why;
+    }
     const H = _num(AI_PARAMS.predictionHorizonDays, 10);
     const now = Date.now();
     const X = [], Y = [];
@@ -8894,7 +8967,30 @@ async function updateAnalystConsensus(DB, cfg, force) {
       });
     } catch (e) {}
   }
-  if (okCount === 0) return cached;  // 전부 실패 → 기존 캐시 보존
+  /* ══ [V33.361] ★죽은 상류가 조용히 캐시로 위장하고 있었다★ ═══════════════════
+     이 한 줄이 야간 파이프라인 한 단계를 며칠째 멈춰 세운 사슬의 시작이다:
+       ① 이 수집은 ★야후 v7★ 을 쓴다(위 v7Url). v7 은 지금 죽어 있다(결함 A-6 —
+          자가진단 ERROR "응답은 하는데 종목을 하나도 안 준다")
+       ② 그래서 okCount 가 0 이 되고 ★여기서 조용히 되돌아간다★ —
+          아래 [ANALYST] 로그에도, 아무 데도 안 남는다
+       ③ analystRevTrack 이 안 불려 `analyst_rev` 원장이 ★영영 안 생긴다★
+       ④ 야간 단계 anlrevk 가 "개정 원장 없음 — 대기" 로 매일 멈춘다
+       ⑤ 자가진단이 "완주 도장을 찍었는데 안 끝난 단계가 있다" 를 매일 경고한다
+     다섯 줄 어디에도 ★v7★ 이라는 말이 없어서, 화면만 보면 원인을 찾을 수 없었다.
+     → 캐시를 돌려주는 것 자체는 옳다(없는 값을 지어내지 않는다). 다만 ★말은 한다.★ */
+  if (okCount === 0) {
+    try {
+      const _v7 = await getState(DB, "yahoo_v7", null);
+      const _ageH = (cached && cached.ts) ? ((Date.now() - _num(cached.ts, 0)) / 3600000) : null;
+      await log(DB, "WARN", null,
+        "[ANALYST] 컨센서스 수집 0종목 — 목표가·투자의견이 갱신되지 않는다" +
+        (_ageH != null ? "(직전 갱신 " + _ageH.toFixed(1) + "시간 전 캐시로 버티는 중)" : "(캐시도 없다)") +
+        (_v7 && _v7.dead ? " · ★원인: 야후 v7 사망(A-6) — 이 수집은 v7 전용이다★"
+                         : " · v7 상태는 정상으로 기록돼 있다 — 필드 거부·크럼 만료 쪽을 볼 것") +
+        " · 이것이 멈추면 야간 anlrevk 단계가 '개정 원장 없음' 으로 계속 대기한다");
+    } catch (e) {}
+    return cached;  // 전부 실패 → 기존 캐시 보존(없는 값을 지어내지 않는다)
+  }
   const result = { bySym: bySym, ts: Date.now(), n: okCount };
   try { await setState(DB, "analyst_consensus", result); } catch (e) {}
   // [V33.151] 목표가 개정(상향/하향) 원장 갱신 — 이 갱신분과 직전분을 비교해 사건으로 남긴다.
@@ -46156,7 +46252,20 @@ async function _luxSelfCheck(DB) {
             ? "야후 v7(미국 시세 1차 수집원) 호출이 실패한다" + _v7e
             : "야후 v7(미국 시세 1차 수집원)이 ★응답은 하는데 종목을 하나도 안 준다★(예외 없음 · 파싱 0건" +
               (_v7.shape ? " · 응답모양 " + String(_v7.shape).slice(0, 90) : "") + ")") +
-          " — 종목당 1회 v8 폴백으로 버티는 중(50종목/1회 → 1종목/1회). 시간외는 v8 분봉으로 계속 채운다 — 다만 예산 압박으로 회전이 느려진다");
+          " — 종목당 1회 v8 폴백으로 버티는 중(50종목/1회 → 1종목/1회). 시간외는 v8 분봉으로 계속 채운다 — 다만 예산 압박으로 회전이 느려진다" +
+          /* [V33.361] ★인증 상태를 같은 줄에 붙인다.★ v7 은 cookie+crumb 를 요구하는데,
+             그 악수가 실패해도 종전엔 아무 데도 안 남아 이 자리를 의심조차 할 수 없었다.
+             crumb 이 없으면 야후는 오류 없이 빈 배열을 준다 — 지금 보이는 증상 그대로다. */
+          (await (async function () {
+            try {
+              const _ap = await getState(DB, "yahoo_auth_probe", null);
+              if (!_ap) return " · (인증 기록 없음 — 다음 사이클에 남는다)";
+              if (_ap.ok) return " · 인증은 정상(cookie " + _ap.cookieN + "개 · crumb " + _ap.crumbLen + "자) — 원인은 인증이 아니다";
+              return " · ★인증 악수 실패: cookie HTTP " + _ap.httpCookie + "(" + _ap.cookieN + "개)" +
+                     " · crumb HTTP " + _ap.httpCrumb + "(" + _ap.crumbLen + "자)" +
+                     (_ap.err ? " · " + _ap.err : "") + " — crumb 없이 나간 요청은 빈 배열을 받는다★";
+            } catch (e) { return ""; }
+          })()));
         /* [V33.357] ★v7 은 살아 있는데 한 배치만 0건★ — 그 배치를 이름으로 남긴다.
            종전엔 이 상황이 통째로 "v7 사망" 으로 뭉뚱그려져, 죽은 티커 하나가 558종의
            수집 속도를 1/50 로 떨어뜨려도 아무 데도 안 남았다(F-3 이 요청한 관측). */
@@ -49178,10 +49287,32 @@ export default {
             const _top = _ph.slice(-4).map(function (p) {
               return p.market + " " + p.symbol + " 초과" + p.oversellBy + "주";
             }).join(", ");
+            /* ══ [V33.361] ★드리프트를 이름으로 말한다★ ═══════════════════════════════
+               실측(운영 스냅샷 2026-09-14·15 연속): 이 ERROR 가 이틀째 같은 문장으로 떴다 —
+                 "[원장감사] ★이상★ 유령매도 0건(초과대금 약 0.00) / 포지션 드리프트 1건
+                  · 원인 점검 후 /api/audit 로 상세 확인"
+               그리고 자가진단은 그 위에 "원인 자동분류 안 됨 — 로그 원문 확인 권장" 을 붙였다.
+               ★어느 종목인지, 얼마나 어긋났는지, 어느 쪽이 큰지가 한 글자도 없다.★
+               원인은 위 `_top` 이 ★유령매도(_ph)만★ 훑는다는 것이다. 드리프트만 있는 경우
+               (지금이 정확히 그 경우다) `_top` 이 빈 문자열이 되어 "1건" 만 남는다.
+               감사는 { symbol, ledgerQty, tableQty, diff } 를 ★이미 갖고 있다★ — 안 적었을 뿐이다.
+
+               ★방향을 말로 푼다.★ 숫자만 적으면 어느 쪽이 위험한지 다음 사람이 또 헤맨다:
+                 diff > 0 (표 > 원장): 산 적 없는 수량을 들고 있다고 믿는다 → ★그대로 팔면 유령매도★
+                 diff < 0 (표 < 원장): 원장은 보유인데 표에서 사라졌다 → 그 포지션이 관리 밖이다 */
+            const _dfTxt = _df.slice(0, 4).map(function (d) {
+              const _dd = _num(d.diff, 0);
+              return d.market + " " + d.symbol + " 원장 " + _num(d.ledgerQty, 0) + "주 vs 표 " +
+                     _num(d.tableQty, 0) + "주(" + (_dd > 0 ? "+" : "") + _dd + ")" +
+                     (_dd > 0 ? " ★표가 더 많다 — 그대로 팔면 유령매도★"
+                              : " ★표에서 사라진 보유 — 관리 밖 포지션★");
+            }).join(" / ");
             await log(env.DB, "ERROR", null,
               "[원장감사] ★이상★ 유령매도 " + _ph.length + "건(초과대금 약 " + _phVal.toFixed(2) + ")" +
-              " / 포지션 드리프트 " + _df.length + "건" + (_top ? " — 최근: " + _top : "") +
-              " · 원인 점검 후 /api/audit 로 상세 확인");
+              " / 포지션 드리프트 " + _df.length + "건" +
+              (_top ? " — 유령 최근: " + _top : "") +
+              (_dfTxt ? " — 드리프트: " + _dfTxt + (_df.length > 4 ? " 외 " + (_df.length - 4) + "건" : "") : "") +
+              " · 상세는 /api/audit");
           }
         }
       } catch (e) { try { await log(env.DB, "WARN", null, "[원장감사] 예외: " + (e && e.message)); } catch (e2) {} }
