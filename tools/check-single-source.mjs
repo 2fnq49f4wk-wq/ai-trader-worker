@@ -90,9 +90,14 @@ function cut(start, end) {
     .filter((t) => new RegExp("CREATE TABLE IF NOT EXISTS " + t + " ?\\([^;]{0,400}featver").test(S));
   if (tables.length < 4) bad(`featver 를 가진 표본 표를 ${tables.length}개밖에 못 찾았다 — 이 검사가 헛돈다`);
   /* 표 하나가 '구 판 정리' 를 받는 방법은 두 가지다:
-       ① 직접 DELETE … featver != ?  (ml_samples · ml_candidates)
-       ② _altPrune 목록에 실려 공용 루프가 지운다 (V33.328 에서 넷을 여기 실었다) */
-  const direct = (t) => new RegExp("DELETE FROM " + t + "\\b[\\s\\S]{0,160}?featver != ").test(S);
+       ① 직접 DELETE … featver 로 거른다  (ml_samples · ml_candidates)
+       ② _altPrune 목록에 실려 공용 루프가 지운다 (V33.328 에서 넷을 여기 실었다)
+     [V33.359] ★`!=` 만 찾던 것을 `!=` 또는 `<` 로 넓힌다.★ 뜻은 같고 비용이 다르다 —
+     `featver != ?` 는 인덱스를 못 타 112만 행 ★전수 스캔★ 이고(쿼리계획 실측: SCAN),
+     `featver < ?` 는 (featver, ts) 인덱스를 탄다(COVERING INDEX). featVer 는 되감기지
+     않으므로(check-stale-base) 두 조건이 가리키는 집합은 같다.
+     이 절이 지켜야 할 것은 ★정리가 있는가★ 이지 그 철자가 아니다. */
+  const direct = (t) => new RegExp("DELETE FROM " + t + "\\b[\\s\\S]{0,200}?featver\\s*(!=|<)\\s*").test(S);
   const li = S.indexOf("const _altPrune = [");
   const inList = li < 0 ? [] : [...S.slice(li, S.indexOf("];", li)).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
   const missing = tables.filter((t) => !direct(t) && inList.indexOf(t) < 0);

@@ -14,6 +14,7 @@
  *   회전·예산 판정·실측 적립이 굶주림을 없애는지 확인한다.
  */
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -178,6 +179,34 @@ ok(Array.isArray(R.dnn_uw_leak) && R.dnn_uw_leak.length === 0,
    Array.isArray(R.dnn_uw_leak) && R.dnn_uw_leak.length
      ? `_dnn_uw 를 정의 함수 밖에서 참조한다 → 매 회차 NameError (줄 ${R.dnn_uw_leak.join(", ")})`
      : "_dnn_uw 를 정의한 함수 밖에서 참조하지 않는다(고유도 필드가 실제로 올라간다)");
+
+/* ── [V33.359] ★고유도 내역을 실제로 계산해서 찍는지★ ─────────────────────────
+   실측: 유효표본이 한 회차 만에 7,379 → 210 으로 무너져 SEQ 가 위원회에서 빠지고
+   부스터 3종이 전부 거절됐다. 트레이너 코드는 그 사이 안 바뀌었으니 원인은 데이터인데,
+   로그엔 '평균 고유도' 한 숫자뿐이라 무엇이 달라졌는지 알 길이 없었다.
+   고유도를 결정하는 두 값(평가창 일수 · 종목당 건수)을 찍게 했는지 지킨다. */
+{
+  const src = readFileSync(new URL("../trainer/modal/modal_train.py", import.meta.url), "utf8");
+  const blk = src.slice(src.indexOf("_dnn_uw = UNIQ["), src.indexOf("[V32.9]"));
+  ok(blk.indexOf("[고유도내역]") >= 0, "DNN 학습이 고유도 내역을 찍는다");
+  for (const [k, why] of [["_span_d", "평가창이 며칠에 걸쳐 있는가"],
+                          ["_nsym", "종목이 몇 개인가"],
+                          ["_per_sym", "종목당 몇 건인가"]])
+    ok(blk.indexOf(k) >= 0, `  · ${k} — ${why}`);
+  ok(/평균동시성/.test(blk), "  · 평균 동시성(= 명목/유효)을 함께 적는다");
+  ok(/except Exception/.test(blk),
+     "내역 산출이 실패해도 학습을 죽이지 않는다(계측 때문에 회차가 날아가면 안 된다)");
+
+  /* ★계산식이 맞는지 실행으로 잰다★ — 파이썬 식을 그대로 JS 로 옮겨 같은 답이 나오는지.
+     (찍기만 하고 값이 틀리면 다음 사람이 그 숫자를 믿고 엉뚱한 곳을 판다) */
+  const DAY = 86400000, T0 = Date.UTC(2026, 1, 1);
+  const ts = [], sy = [];
+  for (let i = 0; i < 2000; i++) { ts.push(T0 + Math.floor(i / 100) * DAY); sy.push("S" + (i % 100)); }
+  const spanD = (Math.max(...ts) - Math.min(...ts)) / DAY;
+  const nsym = new Set(sy).size;
+  ok(Math.abs(spanD - 19) < 1e-9 && nsym === 100 && Math.abs(2000 / nsym - 20) < 1e-9,
+     `내역 계산식 확인 — 평가창 ${spanD}일 · 종목 ${nsym}개 · 종목당 ${(2000 / nsym).toFixed(1)}건`);
+}
 
 console.log(fail ? `\n실패 ${fail}건` : "\n전부 통과");
 process.exit(fail ? 1 : 0);

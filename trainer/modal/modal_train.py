@@ -606,6 +606,25 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         lb = wilson_lb(acc, _dnn_neff)
         if _dnn_neff < n_eval:
             print(f"   유효표본 {_dnn_neff}/{n_eval} (평균 고유도 {_dnn_uw.mean():.3f}) — 하한을 유효표본으로 산출 {lb:.4f}")
+        # ══ [V33.359] ★고유도가 왜 그 값인지를 여기서 답하게 한다★ ═══════════════
+        #   실측(2026-09-15 00:43): 유효표본이 7,379 → ★210★ 으로 한 회차 만에 무너졌고,
+        #   그 탓에 accLB 가 문턱 아래로 떨어져 SEQ 가 위원회에서 빠지고 부스터 3종이
+        #   전부 거절됐다. 그런데 트레이너 코드는 그 사이 한 줄도 안 바뀌었다 —
+        #   즉 원인은 ★데이터★ 다. 그럼에도 로그에는 '평균 고유도' 한 숫자뿐이라
+        #   무엇이 달라졌는지 밖에서 알 길이 없었다(또 추측하게 된다).
+        #   고유도는 ★평가창이 며칠에 걸쳐 있는가★ 와 ★한 종목이 그 창에 몇 번 나오는가★
+        #   두 가지로 결정된다. 그 둘을 직접 적는다 — 다음 회차 로그 한 줄이 답을 준다.
+        try:
+            _ev_ts = TS[va[len(va) - n_eval:]]
+            _ev_sy = SYM[va[len(va) - n_eval:]] if SYM is not None else None
+            _span_d = (float(_ev_ts.max()) - float(_ev_ts.min())) / 86400000.0
+            _nsym = int(len(set(map(str, _ev_sy)))) if _ev_sy is not None else 0
+            _per_sym = (n_eval / max(1, _nsym))
+            print(f"   [고유도내역] 평가창 {_span_d:.1f}일 · 종목 {_nsym}개 · 종목당 {_per_sym:.1f}건"
+                  f" · 평균동시성 {(n_eval / max(1, _dnn_neff)):.1f}건"
+                  f" (지평 {_hor_d}일 — 창이 짧거나 종목당 건수가 많으면 고유도가 무너진다)")
+        except Exception as _e:
+            print(f"   [고유도내역] 산출 실패: {_e}")
         # [V32.9] ★과적합 진단★ 학습셋 정확도를 검증셋과 비교 — 격차가 크면 과적합(→데이터·규제 필요),
         #   격차가 작고 둘 다 낮으면 신호/피처 한계(→피처 품질·라벨 개선 필요). 캘리브레이션 반영 후 평가.
         try:

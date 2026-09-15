@@ -303,6 +303,11 @@ jobs:
       #   부르며 초록으로 칠했다. 나이를 사람이 읽는 표기로, 옛 집계는 '오늘' 이라 안 부른다.
       - name: R2 snapshot age honesty check
         run: node tools/check-r2-age.mjs
+      # [V33.359] ml_samples 가 112만행/896MB 가 되면서 전수 정렬 쿼리가 D1 CPU 한도를
+      #   넘겨 pooluniq·BDKR·CM·SCHED 가 동시에 쓰러졌다. 진짜 SQLite 에 데이터를 넣고
+      #   ANALYZE 한 뒤 EXPLAIN QUERY PLAN 으로 잰다(빈 표에서 재면 멀쩡한 쿼리를 오판한다).
+      - name: D1 query plan check
+        run: node --experimental-sqlite tools/check-d1-scan.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

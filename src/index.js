@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.358";
+const _BUILD_VER = "V33.359";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -34735,8 +34735,19 @@ async function mlPoolUniqNightly(DB) {
   try {
     const H = _num((AI_PARAMS.prediction && AI_PARAMS.prediction.horizonDays), 10);
     const span = Math.max(1, H) * 86400000;
+    /* ══ [V33.359] ★이 한 줄이 D1 을 CPU 한도로 죽이고 있었다★ ═══════════════════
+       실측 자가진단: `[STAGE:pooluniq] D1_ERROR: D1 DB exceeded its CPU time limit and was reset.`
+       인덱스는 `idx_samples_fv_ts(featver, ts)` 인데 정렬을 ★id★ 로 걸었다.
+       ★실제 쿼리계획으로 확인★(node:sqlite EXPLAIN QUERY PLAN):
+         ORDER BY id DESC → SEARCH … USING INDEX idx_samples_fv_ts (featver=?)
+                            ★USE TEMP B-TREE FOR ORDER BY★
+         ORDER BY ts DESC → SEARCH … USING INDEX idx_samples_fv_ts (featver=?)   (정렬 없음)
+       즉 featver=17 인 ★112만 행 전부★ 를 읽어 임시 B-트리로 정렬한 뒤 2만 건만 취했다.
+       ts 로 바꾸면 인덱스를 그대로 타고 2만 건에서 멈춘다.
+       ※ 뜻도 ts 가 맞다 — 고유도는 ★라벨 구간이 겹치는가★ 를 재는 것이라
+         '언제 적재됐나(id)' 가 아니라 '언제의 표본인가(ts)' 로 최근 창을 잡아야 한다. */
     const rs = await DB.prepare(
-      "SELECT ts, symbol FROM ml_samples WHERE featver = ? ORDER BY id DESC LIMIT ?"
+      "SELECT ts, symbol FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
     ).bind(LUXML.featVer, POOLUNIQ.sampleLimit).all();
     const rows = (rs && rs.results) ? rs.results : [];
     if (rows.length < POOLUNIQ.minN) {
@@ -42667,8 +42678,20 @@ async function mlMarketHarvestNightly(DB, opts) {
     try {
       const c = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE strategy='hv' AND featver=?").bind(LUXML.featVer).first();
       const over = ((c && c.c) || 0) - HARVEST.maxTotal;
+      /* [V33.359] ★`ORDER BY RANDOM()` 은 이 규모에서 실행 자체가 불가능하다.★
+         쿼리계획 실측: COVERING INDEX 로 후보를 찾은 뒤 ★USE TEMP B-TREE FOR ORDER BY★ —
+         즉 후보 ★전부(약 100만 행)★ 를 임시 B-트리에 담아 섞는다. D1 CPU 한도를 넘는다.
+         지금은 hv 표본이 상한(1,200,000)에 아직 안 닿아 이 가지가 안 돌지만,
+         총표본이 1,123,768 이라 ★곧 닿는다★ — 닿는 순간 폐기가 실패하고, 실패하면
+         표를 못 줄여 상한이 무의미해진다(터지고 나서 고치면 그땐 이미 D1 이 앓는다).
+         → 오래된 것부터 지운다. `ORDER BY ts ASC` 는 idx_samples_fv_ts 를 그대로 타
+           ★지울 만큼만★ 훑는다(전수 정렬 없음).
+         ★무엇이 바뀌나(정직하게)★: 종전은 무작위라 남는 표본의 시간 분포가 그대로였고,
+         이제는 오래된 쪽부터 빠져 풀이 최근으로 기운다. 라벨 지평이 10일이고 상한이
+         120만이라 남는 창은 여전히 수백 일이므로 학습에 필요한 다양성은 유지된다 —
+         다만 ★이건 정책 변화다★. 원치 않으면 HARVEST.maxTotal 을 올려 폐기 자체를 미룰 것. */
       if (over > 0) await DB.prepare(
-        "DELETE FROM ml_samples WHERE id IN (SELECT id FROM ml_samples WHERE strategy='hv' AND featver=? ORDER BY RANDOM() LIMIT ?)"
+        "DELETE FROM ml_samples WHERE id IN (SELECT id FROM ml_samples WHERE featver=? AND strategy='hv' ORDER BY ts ASC LIMIT ?)"
       ).bind(LUXML.featVer, over).run();
     } catch (e) {}
     // [V12.102] 구 featVer 표본 능동 정리 가속 — 죽은 표본(현 학습이 절대 안 읽음)이 D1을 채워 신 featVer
@@ -42685,8 +42708,14 @@ async function mlMarketHarvestNightly(DB, opts) {
     } else {
       try {
         for (let _p = 0; _p < 3; _p++) {
+          /* [V33.359] ★`!=` 는 인덱스를 못 탄다 — 매일 밤 112만 행 전수 스캔이었다.★
+             쿼리계획 실측: `featver != ?` → ★SCAN ml_samples★ (전체)
+                            `featver < ?`  → SEARCH … USING COVERING INDEX idx_samples_fv_ts (featver<?)
+             featVer 는 되감기지 않는다(check-stale-base 가 그것을 막는다) —
+             그래서 "현재판이 아닌 것" 과 "현재판보다 낮은 것" 은 같은 집합이다.
+             지금은 구판 행이 없어 ★한 건도 안 지우면서 전수 스캔만 하고 있었다.★ */
           const _r = await DB.prepare(
-            "DELETE FROM ml_samples WHERE id IN (SELECT id FROM ml_samples WHERE featver != ? ORDER BY id LIMIT 100000)"
+            "DELETE FROM ml_samples WHERE id IN (SELECT id FROM ml_samples WHERE featver < ? ORDER BY featver, ts LIMIT 100000)"
           ).bind(LUXML.featVer).run();
           if (!(_r && _r.meta && _r.meta.changes)) break;   // 더 지울 구 표본 없으면 조기 종료
         }
