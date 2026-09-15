@@ -455,6 +455,23 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     _ord, tr, cal, va, n_val, _emb = _split_ts(TS, val_frac, embargo_ms, min_val=20,
                                                horizon_ms=_HORIZON_MS, cal_frac=0.10)
     print(f"   분할: 학습 {len(tr)} · 보정 {len(cal)} · 검증 {len(va)} · 엠바고 {_emb/86400000:.0f}일")
+    # ══ [V33.366] ★홀드아웃이 '행의 20%' 로 정해진다 — 달력 기간이 통제되지 않는다.★ ══
+    #   블록 IC 유의성은 ★겹치지 않는 관측이 몇 개인가★ 로 정해지는데, 그 수는 행 수가
+    #   아니라 ★기간★ 에서 나온다. 그런데 분할은 기간을 보지 않는다. 그래서 "왜 t 가
+    #   안 서나" 를 물어도 로그가 답을 못 했다(G-2 가 icDf 11 만 보고 추정해야 했던 이유).
+    #   한 줄로 답하게 한다 — 지금 몇 일이고, 잘 보정된 검정을 하려면 몇 일이 필요한가.
+    try:
+        _hd_d = (float(TS[va].max()) - float(TS[va].min())) / 86400000.0
+        _blk_d = 2.0 * (_HORIZON_MS / 86400000.0)      # 정직한 블록 = 2×지평(측정 근거는 _calc_ic_blocks_time 주석)
+        _kk = int(_hd_d // _blk_d)
+        _need = _blk_d * 6                              # 블록 6개면 df=5 — t 1.65 의 명목값이 약 8%
+        print(f"   [홀드아웃] {_hd_d:.0f}일 · 검증 {len(va)}건 → 정직한 블록 {_kk}개"
+              f"(블록 {_blk_d:.0f}일 = 2×지평)"
+              + ("" if _kk >= 6 else
+                 f" — ★블록이 모자라 IC 유의성이 구조적으로 못 선다. 약 {_need:.0f}일이 필요하다"
+                 f"(valFrac 을 {min(0.6, max(0.2, 0.2*_need/max(1.0,_hd_d))):.2f} 쯤으로 올리면 그 근처다).★"))
+    except Exception as _e:
+        print("   [홀드아웃] 산출 실패(무시):", _e)
     pos = Y[tr].sum()
     w_pos = len(tr) / (2 * pos) if pos > 0 else 1.0
     w_neg = len(tr) / (2 * (len(tr) - pos)) if (len(tr) - pos) > 0 else 1.0
@@ -689,7 +706,12 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         #   순위를 맞히는 힘이 있어도 정확도가 동전 근처면 탈락한다 — 부스터였다면 통과했을 모델이.
         #   ★정확도를 잰 그 구간으로 IC 도 잰다.★ τ* 선택에 쓴 앞 절반에서 재면 그만큼
         #   낙관적으로 나온다 — 자를 하나 더 들이면서 그 자를 휘게 만들 이유가 없다.
-        _icf = _ic_block_fields(_p_ic, _y_ic, mkt=_m_ic)   # [V33.291] 시장 고정효과 제거
+        # [V33.366] 평가 구간의 ts 를 함께 넘겨 ★시간 기준 블록★ 의 정직한 t 도 기록한다.
+        _ic_ts = None
+        try: _ic_ts = TS[va[len(va) - n_eval:]]
+        except Exception: _ic_ts = None
+        _icf = _ic_block_fields(_p_ic, _y_ic, mkt=_m_ic, ts=_ic_ts,
+                                horizon_ms=_hor_d * 86400000.0)   # [V33.291] 시장 고정효과 제거
         out = {"nets": nets, "acc": acc, "lb": lb, "n_eval": n_eval, "dims": list(dims),
                "auc": auc, "base": base, "majority": majority,
                # [V33.350] ★고유도 가중을 여기 실어 보낸다.★ 업로드부가 _dnn_uw 를 직접
@@ -702,6 +724,16 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         out.update(_icf)
         if "valICt" in out:
             print(f"   블록IC {out['valICBlock']:.4f} t {out['valICt']:.2f} (K={out['valICK']}) — 정확도와 별개의 자")
+            # [V33.366] ★같은 예측을 시간 기준 블록으로 다시 재면 얼마가 되는가★
+            if "valICtHonest" in out:
+                print(f"   [정직한IC] t {out['valICtHonest']:.2f} (블록 {out['valICBlkDays']:.0f}일"
+                      f" ×{out['valICKHonest']}개 · 경계 {out['valICPurgeDays']:.0f}일 버림"
+                      f" · 홀드아웃 {out['valICSpanDays']:.0f}일)"
+                      f" — 게이트가 보는 t 와의 차 {out['valICtGap']:+.2f}"
+                      f" (★게이트는 여전히 위의 t 로 판정한다 — 이 값은 기록이다★)")
+            elif "valICHonestWhy" in out:
+                print(f"   [정직한IC] 못 쟀다 — {out['valICHonestWhy']}"
+                      f" (홀드아웃 {out.get('valICSpanDays', 0):.0f}일 · 블록 {out.get('valICBlkDays', 0):.0f}일 필요)")
         return out
 
     # ── [V33.204] 깊이 스윕 ───────────────────────────────────────────────────
@@ -1145,7 +1177,8 @@ def _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ=None, 
         except Exception as e:
             print("⑨ seq-arch 업로드 예외(무시):", e)
     lb, acc, pva, net, nparam = best
-    icf = _ic_block_fields(pva, yva, mkt=_mkt_of_X(X[_vai]))   # [V33.291/292]
+    icf = _ic_block_fields(pva, yva, mkt=_mkt_of_X(X[_vai]), ts=TS[_vai],
+                           horizon_ms=_HORIZON_MS)   # [V33.291/292 · V33.366]
     print(f"⑨ SEQ 채택 d{dm}·헤드{Hh}·{NL}층 valAcc {acc*100:.2f}% 하한 {lb*100:.2f}% (유효 {neff}/{len(yva)})"
           + (f" 블록IC {icf['valICBlock']:.4f} t {icf['valICt']:.2f}" if "valICt" in icf else ""))
 
@@ -1639,10 +1672,89 @@ def _calc_ic_blocks(pred, y, K=5, mkt=None):
         return None, None, None, 0
 
 
-def _ic_block_fields(pred, y, K=5, mkt=None):
+# ══ [V33.366] ★블록 IC 의 t 가 얼마나 정직한가 — 실측으로 답한다★ ═══════════════
+#   현재 규칙은 `K = max(K, min(12, n//200))` 로 ★표본 수★ 만 본다. 시간을 안 본다.
+#   그래서 홀드아웃이 짧으면 블록 하나가 라벨 지평보다 짧아지고, 인접 블록이 같은 라벨
+#   구간을 나눠 갖는다 — 블록 IC 끼리 상관이 생겨 표준편차가 작게 나오고 t 가 부풀려진다.
+#
+#   ★몬테카를로(실력을 정확히 0 으로 두고 오통과율을 잰다, 시행 800회)★
+#     라벨지평 10일 · 예측 지속성 60일(실제 모델은 인접일 예측이 비슷하다)
+#     [홀드아웃 140·300일]
+#       블록  5일(0.5×지평) : 오통과 13.6~13.9%  vs 명목 5.2~5.5%  → ★2.5~2.7배★
+#       블록 10일(1.0×지평) : 오통과  7.1~11.1% vs 명목 5.5~6.1%  → 1.3~1.8배
+#       블록 20일(2.0×지평) : 오통과  5.9~ 8.6% vs 명목 6.1~7.5%  → 0.97~1.15배  ← 정직
+#     ★경계에서 지평만큼 버리면★ 2.0×지평에서 0.90~0.97 배로 명목에 붙는다.
+#     [★운영 실측 조건★ — 홀드아웃 70일 · K=12 → 블록 5.8일] 부풀림 ★1.6배★
+#       (2.5배는 140일·K=28 구성의 값이다. 운영 지점은 그보다 작다 — 숫자를 섞지 말 것.)
+#
+#   ★정직해지면 검정력이 떨어진다 — 이것도 같이 말해야 한다.★
+#     홀드아웃 70일에 2×지평 블록이면 K=3 뿐이고, df=2 에서 t 1.65 의 명목값은 12% 다.
+#     즉 ★70일 홀드아웃으로는 잘 보정된 블록 IC 검정 자체가 불가능하다★ —
+#     부풀린 자를 쓰거나 검정력이 없거나 둘 중 하나다.
+#     → 진짜 해법은 ★관측 기간(홀드아웃 일수)을 늘리는 것★ 이다. 잣대가 아니다(G-2).
+#   ※ 예측이 백색잡음이면(지속성 0) 블록 길이와 무관하게 명목값이 나온다 — 처음엔 그렇게
+#     재서 "문제 없음" 이 나왔다. 실제 모델은 지속성이 0 이 아니므로 그 시험이 틀린 것이었다.
+#
+#   ★운영 실측이 바로 그 부풀림 구간이다★ — 홀드아웃 70일에 K=12 면 블록 5.8일(0.58×지평).
+#   즉 지금 IC 게이트는 ★관대한★ 쪽으로 틀려 있다. 그런데도 부스터 3종이 t 1.14~1.48 로
+#   떨어졌다는 것은, 참 유의성은 그보다 더 낮다는 뜻이다.
+#
+#   ★그래서 승격 판정은 바꾸지 않는다.★ 바꾸면 위원회가 더 비는데, 위원을 빼는 판단은
+#   사람의 몫이다(G-2 에 그렇게 적혀 있다). V33.357 이 쓴 방식을 그대로 쓴다 —
+#   ★정직한 값을 나란히 기록하고, 두 값이 어긋나는 폭을 보이게 한다.★ 판단은 그 다음이다.
+def _calc_ic_blocks_time(pred, y, ts, horizon_ms, mkt=None, blk_mult=2.0):
+    """블록을 ★시간★ 으로 자르고 경계에서 지평만큼 버린 IC 유의성."""
+    import numpy as np
+    try:
+        p = np.asarray(pred, dtype=np.float64); t = np.asarray(y, dtype=np.float64)
+        tv = np.asarray(ts, dtype=np.float64)
+        n = min(len(p), len(t), len(tv))
+        if n < 40 or not (horizon_ms > 0): return None
+        p, t, tv = p[:n], t[:n], tv[:n]
+        t0, t1 = float(tv.min()), float(tv.max())
+        span = t1 - t0
+        blk = max(float(blk_mult) * float(horizon_ms), 1.0)
+        K = int(span // blk)
+        if K < 2: return {"valICBlkDays": round(blk / 86400000.0, 1),
+                          "valICSpanDays": round(span / 86400000.0, 1),
+                          "valICHonestWhy": "홀드아웃이 짧아 독립 블록을 2개도 못 만든다"}
+        mk = None
+        if mkt is not None:
+            mk = np.asarray(mkt, dtype=object)
+            if len(mk) < n: mk = None
+            else: mk = mk[:n]
+        ics = []
+        for k in range(K):
+            lo = t0 + k * blk
+            hi = lo + blk - float(horizon_ms)      # ★경계 버림★ — 겹친 라벨을 블록 밖으로
+            m = (tv >= lo) & (tv < hi)
+            a, b = p[m], t[m]
+            if a.size < 8: continue
+            if mk is not None: a, b = _demean_by(a, b, mk[m])
+            if a.std() < 1e-12 or b.std() < 1e-12: continue
+            c = float(np.corrcoef(a, b)[0, 1])
+            if np.isfinite(c): ics.append(c)
+        if len(ics) < 2:
+            return {"valICBlkDays": round(blk / 86400000.0, 1),
+                    "valICSpanDays": round(span / 86400000.0, 1),
+                    "valICHonestWhy": "경계를 버리고 나니 쓸 수 있는 블록이 2개 미만이다"}
+        arr = np.asarray(ics, dtype=np.float64)
+        m_ = float(arr.mean()); sd = float(arr.std(ddof=1))
+        icir = (m_ / sd) if sd > 1e-9 else (9.0 if m_ > 0 else 0.0)
+        return {"valICBlockHonest": round(m_, 5), "valICtHonest": round(icir * (len(ics) ** 0.5), 3),
+                "valICKHonest": int(len(ics)), "valICBlkDays": round(blk / 86400000.0, 1),
+                "valICSpanDays": round(span / 86400000.0, 1),
+                "valICPurgeDays": round(float(horizon_ms) / 86400000.0, 1)}
+    except Exception:
+        return None
+
+
+def _ic_block_fields(pred, y, K=5, mkt=None, ts=None, horizon_ms=0):
     """모델 dict 에 그대로 합칠 블록 IC 필드.
        [V33.291] mkt 를 주면 게이트가 보는 값은 ★시장 고정효과를 뺀★ 값이 되고,
-       섞어 잰 값은 valICBlockPooled/valICtPooled 로 따로 남는다(바뀐 폭을 봐야 한다)."""
+       섞어 잰 값은 valICBlockPooled/valICtPooled 로 따로 남는다(바뀐 폭을 봐야 한다).
+       [V33.366] ts·horizon_ms 를 주면 ★시간 기준 블록★ 의 정직한 t 를 함께 낸다.
+       ★승격 판정에는 쓰지 않는다★ — 기록만 한다(위 주석 참조)."""
     bic, icir, tv, k = _calc_ic_blocks(pred, y, K, mkt)
     if bic is None: return {}
     out = {"valICBlock": round(bic, 5), "valICIR": round(icir, 3),
@@ -1659,6 +1771,13 @@ def _ic_block_fields(pred, y, K=5, mkt=None):
             out["valICBlockPooled"] = round(pb, 5)
             out["valICtPooled"] = round(pt, 3)
             out["mktFixed"] = True
+    # [V33.366] 시간 기준(정직한) 블록 — 기록만. 두 t 가 얼마나 벌어지는지가 요점이다.
+    if ts is not None and horizon_ms and horizon_ms > 0:
+        _h = _calc_ic_blocks_time(pred, y, ts, horizon_ms, mkt)
+        if _h:
+            out.update(_h)
+            if "valICtHonest" in _h:
+                out["valICtGap"] = round(float(out["valICt"]) - float(_h["valICtHonest"]), 3)
     return out
 
 
@@ -1809,7 +1928,8 @@ def _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D, UNIQ=None)
                  "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(n),
                  "featVer": featver, "probe": probe, "market": mk, "algo": algo,
                  "valIC": round(_ic, 5), "valRankIC": round(_ric, 5)}
-        model.update(_ic_block_fields(pva, Yva))
+        # [V33.366] 시장별 모델도 같은 자로 — 한 곳만 재면 비교가 안 된다.
+        model.update(_ic_block_fields(pva, Yva, ts=TSm[order][-nval:], horizon_ms=_HORIZON_MS))
         model.update(_uniq_fields(UWva))
         print(f"   {mk.upper()}: trees={len(trees)} eta={eta:.3f} valAcc={vacc:.3f} lb={vlb:.3f}(유효 {_neff}/{nval}) IC={_ic:.4f} RankIC={_ric:.4f}"
               + (f" blockIC={model['valICBlock']:.4f} t={model['valICt']:.2f}" if "valICt" in model else " (블록 부족)"))
@@ -2048,7 +2168,8 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None, U
         model = {"trees": trees, "eta": 1.0, "bias": bias, "valAcc": round(vacc, 4),
                  "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(N), "featVer": featver, "probe": probe,
                  "valIC": round(_ic, 5), "valRankIC": round(_ric, 5)}
-        model.update(_ic_block_fields(proba_lib, Yva, mkt=_mkt_of_X(Xva)))   # [V33.291]
+        model.update(_ic_block_fields(proba_lib, Yva, mkt=_mkt_of_X(Xva),
+                                      ts=TS[order[-nval:]], horizon_ms=_HORIZON_MS))   # [V33.291 · V33.366]
         model.update(_uniq_fields(UWva))
         if vaccW is not None: model["valAccW"] = round(vaccW, 4)
         print(f"{name}: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f}(유효 {_neff}/{nval}) IC={_ic:.4f} RankIC={_ric:.4f}"
@@ -2427,8 +2548,9 @@ def _train_and_upload_memo(BASE, KEY, HDR, X, Y, TS, PNL, featver, D, featnames=
         print("MEMO 홀드아웃 채점 %d건 — 건너뜀" % ph.size)
         return None
     acc = float(((ph >= 0.5).astype(np.float64) == yh).mean())
-    icf = _ic_block_fields(ph.tolist(), yh.tolist(), 5, mkh)
     th = Ta[ho_idx][ok]
+    # [V33.366] MEMO 도 같은 자로 — th 는 바로 아래에서 이미 쓰던 값이다(새로 만들지 않았다).
+    icf = _ic_block_fields(ph.tolist(), yh.tolist(), 5, mkh, ts=th, horizon_ms=_HORIZON_MS)
     span_d = int(max(0, round((float(th.max()) - float(th.min())) / day)))
     eff = int(span_d // int((cfg or {}).get("horizonDays", 10)))
     model.update(icf)
@@ -2874,7 +2996,8 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
              "valAcc": round(acc, 4), "valAccLB": round(lb, 4), "valN": int(n), "n": int(N),
              "posRate": round(pos_rate, 4), "horizonBars": 12, "probe": probe,
              "valIC": round(_sic, 5), "valRankIC": round(_sric, 5)}
-    model.update(_ic_block_fields(proba, Yva, mkt=_mkt_of_X(Xva)))   # [V33.291]
+    model.update(_ic_block_fields(proba, Yva, mkt=_mkt_of_X(Xva),
+                                  ts=TS[order[_vai]], horizon_ms=_HORIZON_MS))   # [V33.291 · V33.366]
     model.update(_uniq_fields(UWva))
     if "valICt" in model:
         print(f"   blockIC {model['valICBlock']:.4f} t {model['valICt']:.2f} (유의성 게이트용)")

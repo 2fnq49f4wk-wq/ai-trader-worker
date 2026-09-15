@@ -141,9 +141,11 @@ console.log("\n⑥ ★파이썬 학습기와 자가 같은가★ (외부 모델�
 {
   chk(/def _calc_ic_blocks\(pred, y, K=5, mkt=None\)/.test(PY),
     "파이썬 블록 IC 도 시장을 받는다", "★파이썬은 아직 섞어 잰다 — 외부 모델만 부풀린 자로 심사받는다★");
-  chk(/_ic_block_fields\(_p_ic, _y_ic, mkt=_m_ic\)/.test(PY), "DNN 이 시장을 넘긴다", "DNN 이 아직 섞어 잰다");
-  chk(/_ic_block_fields\(proba_lib, Yva, mkt=_mkt_of_X\(Xva\)\)/.test(PY), "부스터가 시장을 넘긴다", "부스터가 아직 섞어 잰다");
-  chk(/_ic_block_fields\(proba, Yva, mkt=_mkt_of_X\(Xva\)\)/.test(PY), "GBDT 가 시장을 넘긴다", "GBDT 가 아직 섞어 잰다");
+  /* [V33.366] 인자가 뒤에 더 붙어도(ts·horizon_ms) 뜻은 같다 — '시장을 넘기는가' 만 본다.
+     끝 괄호까지 고정하면 인자 하나 추가에 멀쩡한 코드가 실패한다(V33.260 이 겪은 그 모양). */
+  chk(/_ic_block_fields\(_p_ic, _y_ic, mkt=_m_ic[,)]/.test(PY), "DNN 이 시장을 넘긴다", "DNN 이 아직 섞어 잰다");
+  chk(/_ic_block_fields\(proba_lib, Yva, mkt=_mkt_of_X\(Xva\)[,)]/.test(PY), "부스터가 시장을 넘긴다", "부스터가 아직 섞어 잰다");
+  chk(/_ic_block_fields\(proba, Yva, mkt=_mkt_of_X\(Xva\)[,)]/.test(PY), "GBDT 가 시장을 넘긴다", "GBDT 가 아직 섞어 잰다");
   chk(/_set_mkt_cols\(featnames\)/.test(PY), "시장 원핫 열 위치를 학습 시작 때 한 번 잡는다", "열 위치를 안 잡는다");
 
   /* ★같은 데이터에 두 언어를 돌려 값을 맞춰 본다.★ 이 저장소가 변환정합성(convMaxDiff)에

@@ -554,7 +554,14 @@ try {
     .map((m) => m[1]).find((t) => t.includes("function downloadAiStatus"));
   if (!bodyS) { wbad++; console.error("  FAIL downloadAiStatus 를 담은 스크립트를 못 찾았다"); }
   else {
-    const fnSrc = bodyS.match(/function downloadJSON[\s\S]*?\n  \}\n/)[0]
+    /* [V33.366] 전달 경로가 여러 벌이 됐다(iOS 인앱은 a[download] 를 무시한다).
+       downloadJSON 만 떼어 오면 deliverFile 이 없어 ReferenceError 가 난다 —
+       ★전달 도우미부터 통째로★ 떼어 온다. */
+    const fnSrc = bodyS.match(/function _isIOSLike[\s\S]*?\n  \}\n/)[0]
+                + bodyS.match(/function _aDownload[\s\S]*?\n  \}\n/)[0]
+                + bodyS.match(/function _fileSheet[\s\S]*?\n  \}\n/)[0]
+                + bodyS.match(/function deliverFile[\s\S]*?\n  \}\n/)[0]
+                + bodyS.match(/function downloadJSON[\s\S]*?\n  \}\n/)[0]
                 + bodyS.match(/function downloadAiStatus[\s\S]*?\n  \}\n/)[0];
     const runCase = async (fetchImpl) => {
       let captured = null; const toasts = [];
@@ -562,8 +569,12 @@ try {
         toast: (m) => toasts.push(m), fetch: fetchImpl,
         Blob: class { constructor(parts) { captured = parts.join(""); } },
         URL: { createObjectURL: () => "blob:x", revokeObjectURL: () => {} },
-        document: { createElement: () => ({ click() {} }), body: { appendChild() {}, removeChild() {} }, getElementById: () => null },
-        navigator: { userAgent: "gate" }, window: {}, setTimeout: (f) => f(),
+        document: { createElement: () => ({ click() {}, setAttribute() {}, appendChild() {},
+                     addEventListener() {}, remove() {}, focus() {}, setSelectionRange() {} }),
+                    body: { appendChild() {}, removeChild() {} }, getElementById: () => null, execCommand: () => true },
+        // 데스크톱(비-iOS)로 둔다 — 이 절이 보려는 것은 ★수집 내용★ 이지 전달 경로가 아니다.
+        navigator: { userAgent: "gate", platform: "Win32", maxTouchPoints: 0 },
+        File: class {}, window: {}, setTimeout: (f) => f(),
         Date, JSON, Promise, String, Object, Array, Number, Math
       };
       const keys = Object.keys(g);

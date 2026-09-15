@@ -8,8 +8,8 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.365">
-<script src="/neural-observatory.js?v=33.365"></script>
+<meta name="lux-build" content="V33.366">
+<script src="/neural-observatory.js?v=33.366"></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -10272,13 +10272,114 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   //   ★읽기 전용★ — 기존 조회 엔드포인트만 부른다(새 서버부하 0, 대부분 SWR 캐시 히트).
   //   실패한 엔드포인트는 통째로 빠뜨리지 않고 error 를 그대로 담는다 —
   //   "무엇을 못 가져왔는가" 자체가 진단 정보다.
-  function downloadJSON(obj, filename) {
-    var blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json;charset=utf-8;' });
+  /* ══ [V33.366] ★다운로드가 폰에서는 한 번도 된 적이 없다★ ═══════════════════
+     이 화면을 실제로 쓰는 자리는 ★iPhone·카카오톡 인앱★ 이다 — 스냅샷의 userAgent 가
+     그렇고, 이 파일 13994 줄 주석이 이미 그 사실을 적어 뒀다. 그런데 파일 저장 경로는
+     `a[download]` 하나뿐이었다. ★iOS WKWebView 인앱 브라우저는 download 속성을 무시한다.★
+     탭해도 아무 일이 없거나 JSON 이 화면에 열리고 끝난다.
+     ★그런데 화면은 '다운로드 완료' 토스트를 띄웠다★ — 되지도 않은 일을 됐다고 말했다.
+     (A-7·H-1 과 같은 잘못이다: 값을 지어내지 않는 것과 결과를 지어내지 않는 것은 같은 일이다.)
+
+     ★왜 그냥 navigator.share 를 부르면 안 되나★ — share 는 ★사용자 제스처 안에서만★
+     허용된다. 그런데 수집은 5~15초가 걸리는 비동기다(실측: ml-status 15.2초). 제스처
+     창은 그 사이에 닫혀 NotAllowedError 가 난다. → 수집이 끝나면 ★버튼을 띄우고★,
+     그 버튼의 탭(=새 제스처) 안에서 저장·공유·복사를 한다. 탭이 한 번 더 들지만,
+     되는 것이 안 되는 것보다 낫다. 데스크톱은 종전 그대로 즉시 내려받는다(회귀 없음). */
+  function _isIOSLike() {
+    var ua = navigator.userAgent || '';
+    return /iP(hone|ad|od)/.test(ua) ||
+           (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
+  }
+  function _aDownload(blob, filename) {
     var url = URL.createObjectURL(blob);
     var link = document.createElement('a');
     link.href = url; link.download = filename;
     document.body.appendChild(link); link.click(); document.body.removeChild(link);
     setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+  }
+  /* 수집이 끝난 뒤 뜨는 전달 시트 — 여기의 버튼 탭이 ★새 제스처★ 라서 share 가 허용된다. */
+  function _fileSheet(text, filename, mime) {
+    var blob = new Blob([text], { type: mime });
+    var kb = Math.max(1, Math.round(text.length / 1024));
+    var old = document.getElementById('luxFileSheet'); if (old) old.remove();
+    var wrap = document.createElement('div');
+    wrap.id = 'luxFileSheet';
+    wrap.setAttribute('style', 'position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-end;' +
+      'justify-content:center;background:rgba(0,0,0,.55);padding:0 12px ' +
+      'calc(16px + env(safe-area-inset-bottom,0px))');
+    var card = document.createElement('div');
+    card.setAttribute('style', 'width:100%;max-width:420px;background:#14171c;color:#e8eaed;border-radius:16px;' +
+      'border:1px solid rgba(255,255,255,.10);padding:16px;font-size:14px;box-shadow:0 12px 40px rgba(0,0,0,.5)');
+    var h = document.createElement('div');
+    h.setAttribute('style', 'font-weight:700;margin-bottom:2px');
+    h.textContent = '수집 완료 — ' + kb.toLocaleString() + ' KB';
+    var sub = document.createElement('div');
+    sub.setAttribute('style', 'opacity:.62;font-size:12px;margin-bottom:12px;word-break:break-all');
+    sub.textContent = filename;
+    card.appendChild(h); card.appendChild(sub);
+    function mkBtn(label, style, fn) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.textContent = label;
+      b.setAttribute('style', 'display:block;width:100%;margin-top:8px;padding:13px 12px;border-radius:11px;' +
+        'font-size:15px;font-weight:650;border:1px solid rgba(255,255,255,.12);' +
+        'background:' + style + ';color:#e8eaed');
+      b.addEventListener('click', fn);
+      card.appendChild(b); return b;
+    }
+    var canShareFile = false;
+    try {
+      canShareFile = !!(navigator.canShare && navigator.share &&
+        navigator.canShare({ files: [new File([blob], filename, { type: mime })] }));
+    } catch (e) { canShareFile = false; }
+    if (canShareFile) {
+      mkBtn('📤 파일로 저장 · 보내기', '#2563eb', function () {
+        try {
+          navigator.share({ files: [new File([blob], filename, { type: mime })], title: filename })
+            ['catch'](function (e) {
+              if (e && e.name === 'AbortError') return;      // 사용자가 취소한 것 — 실패가 아니다
+              toast('공유 실패: ' + (e && e.message) + ' — 복사를 써 보세요');
+            });
+        } catch (e) { toast('공유 실패: ' + (e && e.message) + ' — 복사를 써 보세요'); }
+      });
+    }
+    mkBtn('📋 클립보드에 복사', 'rgba(255,255,255,.07)', function () {
+      var done = function () { toast('복사했다 — 붙여넣기로 쓸 수 있다'); };
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('style', 'position:fixed;top:0;left:0;opacity:0;pointer-events:none');
+      document.body.appendChild(ta);
+      try {
+        ta.focus(); ta.setSelectionRange(0, text.length);
+        var okc = false;
+        try { okc = document.execCommand('copy'); } catch (e) { okc = false; }
+        if (okc) { done(); }
+        else if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done)['catch'](function (e) {
+            toast('복사 실패: ' + (e && e.message));
+          });
+        } else { toast('이 브라우저에서는 복사가 막혀 있다'); }
+      } finally { document.body.removeChild(ta); }
+    });
+    mkBtn('🔗 새 창에서 열기(길게 눌러 저장)', 'rgba(255,255,255,.07)', function () {
+      var u = URL.createObjectURL(blob);
+      var w = window.open(u, '_blank');
+      if (!w) toast('팝업이 막혔다 — 복사를 써 보세요');
+      setTimeout(function () { URL.revokeObjectURL(u); }, 60000);
+    });
+    mkBtn('닫기', 'transparent', function () { wrap.remove(); });
+    wrap.appendChild(card);
+    wrap.addEventListener('click', function (ev) { if (ev.target === wrap) wrap.remove(); });
+    document.body.appendChild(wrap);
+  }
+  /** 파일 하나를 사람 손에 ★실제로★ 넘긴다. 반환값은 '어느 길로 넘겼나'. */
+  function deliverFile(text, filename, mime) {
+    var blob = new Blob([text], { type: mime });
+    if (_isIOSLike()) { _fileSheet(text, filename, mime); return 'sheet'; }
+    try { _aDownload(blob, filename); return 'download'; }
+    catch (e) { _fileSheet(text, filename, mime); return 'sheet'; }
+  }
+  function downloadJSON(obj, filename) {
+    return deliverFile(JSON.stringify(obj, null, 2), filename, 'application/json;charset=utf-8;');
   }
   function downloadAiStatus() {
     var SRC = [
@@ -10331,22 +10432,20 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       out.serverTs = (out.selfcheck && out.selfcheck.serverTs) || null;
       out.fetchErrors = nErr;
       var ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      downloadJSON(out, 'ai-status-' + ts + '.json');
-      toast(nErr ? ('AI 운영상태 다운로드 완료 (' + nErr + '개 항목 수집 실패 — 파일 안에 사유 기록)')
-                 : 'AI 운영상태 다운로드 완료');
+      var _how = downloadJSON(out, 'ai-status-' + ts + '.json');
+      /* [V33.366] ★'완료' 라고 말할 수 있을 때만 그렇게 말한다.★ 시트를 띄운 경우
+         파일은 ★아직 저장되지 않았다★ — 사용자가 시트에서 한 번 더 골라야 한다.
+         종전엔 그 경우에도 '다운로드 완료' 라고 했다(폰에서는 늘 그랬다). */
+      var _errTxt = nErr ? (' — ' + nErr + '개 항목 수집 실패(파일 안에 사유 기록)') : '';
+      toast(_how === 'sheet' ? ('수집 완료 — 저장 방법을 고르세요' + _errTxt)
+                             : ('AI 운영상태 다운로드 완료' + _errTxt));
     })['catch'](function(e){ toast('AI 운영상태 다운로드 실패: ' + (e && e.message)); });
   }
   function downloadCSV(csvText, filename) {
-    // Excel 한글 깨짐 방지용 BOM 추가
-    var blob = new Blob(['\uFEFF' + csvText], { type: 'text/csv;charset=utf-8;' });
-    var url = URL.createObjectURL(blob);
-    var link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    // Excel 한글 깨짐 방지용 BOM 추가.
+    // [V33.366] 로그 CSV 도 같은 자리에서 막혀 있었다 — 폰에서는 a[download] 가 무시된다.
+    //   전달 경로를 한 벌로 통일한다(두 벌이면 한쪽만 고쳐져 또 갈린다).
+    return deliverFile('\uFEFF' + csvText, filename, 'text/csv;charset=utf-8;');
   }
 
   function downloadTradesCSV(limit, filenamePrefix) {
@@ -19843,11 +19942,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.365">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.365">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.365">
-<link rel="stylesheet" href="/model-evidence.css?v=33.365.1">
-<script src="/model-evidence.js?v=33.365.1"></script>
-<script src="/workspace-ui.js?v=33.365"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.366">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.366">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.366">
+<link rel="stylesheet" href="/model-evidence.css?v=33.366.1">
+<script src="/model-evidence.js?v=33.366.1"></script>
+<script src="/workspace-ui.js?v=33.366"></script>
 </body>
 </html>

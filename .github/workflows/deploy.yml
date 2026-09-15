@@ -346,6 +346,14 @@ jobs:
       #   1,123,768건 중 서로 다른 행 2만건, 유효표본 210/220,000.
       - name: ML export pagination check
         run: node tools/check-export-paging.mjs
+      # [V33.366] 다운로드가 폰에서 한 번도 된 적이 없다 — iOS 인앱은 a[download] 를 무시하는데
+      #   경로가 그것 하나뿐이었고, 화면은 되지도 않은 일을 '다운로드 완료' 라 말했다.
+      - name: File delivery contract check
+        run: node tools/check-file-deliver.mjs
+      # [V33.366] 블록 IC 의 t 가 얼마나 정직한가 — 블록이 라벨 지평보다 짧으면 부풀려진다.
+      #   실력을 0 으로 둔 모의로 오통과율을 매번 다시 잰다(주장이 틀리면 여기서 깨진다).
+      - name: Block-IC honesty check
+        run: node tools/check-ic-honest.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,
