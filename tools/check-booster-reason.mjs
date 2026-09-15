@@ -42,8 +42,17 @@ for (const [nm, lb, t] of [["XGB", 0.5099, 1.36], ["LGB", 0.5104, 1.48], ["CAT",
      `${nm} — 무엇이 막았는지가 사유에 실린다(블록 유의성 t ${t.toFixed(2)})`);
   ok(a.recentAccLB === lb && a.accLB === staleLive.gbdtAccLB,
      `${nm} — 낡은 기록 accLB ${(a.accLB * 100).toFixed(2)}% 와 갓 온 accLB ${(a.recentAccLB * 100).toFixed(2)}% 를 섞지 않는다`);
-  ok(a.recentFeatVer === WANT && a.featVer === STALE,
-     `${nm} — 두 기록의 featVer 를 각각 내보낸다(${a.featVer} · ${a.recentFeatVer})`);
+  /* [V33.363] ★`featVer` 의 뜻이 바뀌었다 — 그래서 이 계약도 바꾼다.★
+     종전엔 featVer 가 '승격돼 있는 판'(낡은 쪽)이었고, 그 값이 화면 뱃지를 갈라
+     ★"모델 판 불일치"★ 로 보이게 했다. 하지만 사용자가 알아야 할 사실은
+     "판이 안 왔다" 가 아니라 "현재 판이 왔는데 품질로 떨어졌다" 다.
+     → featVer = ★실효 판★(현재 판 수신분이 있으면 그것)
+       activeFeatVer = 실제로 승격돼 투표 자격이 있는 판(낡은 쪽)
+     둘 다 내보내므로 아무것도 숨기지 않는다. */
+  ok(a.recentFeatVer === WANT && a.featVer === WANT && a.activeFeatVer === STALE,
+     `${nm} — 실효 판 ${a.featVer} · 투표 자격 판 ${a.activeFeatVer} 를 각각 내보낸다`);
+  ok(a.featVerOk === true,
+     `${nm} — 현재 판이 와 있으므로 featVerOk=true (뱃지가 '판 불일치' 가 아니라 '성능 미달' 이 된다)`);
 }
 
 // ── ④ ★판정은 하나도 안 바뀐다★ — 사유만 고치는 변경임을 실행으로 못 박는다 ──

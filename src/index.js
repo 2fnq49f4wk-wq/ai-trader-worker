@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.362";
+const _BUILD_VER = "V33.363";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -20225,9 +20225,43 @@ async function runTradingCycle(env) {
           // [V16] 모델 열화(Concept Drift) 감지 — 위원회 검증정확도 기반. 열화면 ML 개입 보수화 + 재학습 플래그.
           try {
             __mlDrift = mlDriftCheck(__dnnTrust, AI_PARAMS.mlops);
+            /* ══ [V33.363] ★"언제부터" 가 매 사이클 지워지고 있었다★ ═══════════════════
+               실측(자가진단 2026-09-15): "[MLOPS] 30회 반복 — 모델 열화 감지 —
+               검증정확도 49.8% < 50.5% → 열화 → ML observe + 재학습 필요 (×2 · 최근 1분 전)".
+               같은 문장이 끝없이 반복되는데 ★그 안에 시간이 없다.★
+               원인은 아래 한 줄이었다 — `{ ts: Date.now() }` 를 ★매 사이클 새로 쓴다.★
+               그래서 `model_drift.ts` 는 '열화가 시작된 때' 가 아니라 '방금 또 봤다' 다.
+                 · 몇 시간째인지 · 며칠째인지 를 아무도 알 수 없다
+                 · 화면(out.drift)도 늘 "방금" 으로 보여 급한지 아닌지 구분이 안 된다
+                 · 재학습이 몇 번 돌았는데도 안 낫는 상황을 숫자로 말할 수 없다
+               → 시작(since)과 마지막 확인(ts)을 ★나눠서★ 기록하고, 문장에 기간을 싣는다.
+                 정상으로 돌아오면 기록을 지운다 — 그래야 다음 열화의 since 가 진짜 시작이 된다. */
+            let _dPrev = null;
+            try { _dPrev = await getState(DB, "model_drift", null); } catch (e) {}
             if (__mlDrift.drift) {
-              await log(DB, "WARN", null, "[MLOPS] 모델 열화 감지 — " + __mlDrift.reason + " → ML " + __mlDrift.action + (AI_PARAMS.mlops.retrainOnDrift ? " + 재학습 필요" : ""));
-              if (AI_PARAMS.mlops.retrainOnDrift) { try { await setState(DB, "model_drift", { ts: Date.now(), acc: __mlDrift.acc, action: __mlDrift.action }); } catch (e) {} }
+              const _since = _num(_dPrev && _dPrev.since, 0) || Date.now();
+              const _hrs = (Date.now() - _since) / 3600000;
+              const _n = _num(_dPrev && _dPrev.n, 0) + 1;
+              const _agoTxt = _hrs < 1 ? Math.max(1, Math.round(_hrs * 60)) + "분째"
+                            : _hrs < 48 ? _hrs.toFixed(1) + "시간째" : (_hrs / 24).toFixed(1) + "일째";
+              /* 기간을 문장에 넣으면 묶음(E-1)도 유용해진다 — 같은 줄이 아니라
+                 '몇 시간째' 가 자라는 것이 보인다. 첫 발견과 장기화를 등급으로 가른다. */
+              await log(DB, _hrs >= 24 ? "ERROR" : "WARN", null,
+                "[MLOPS] 모델 열화 " + _agoTxt + " — " + __mlDrift.reason + " → ML " + __mlDrift.action +
+                (AI_PARAMS.mlops.retrainOnDrift ? " + 재학습 필요" : "") +
+                (_hrs >= 24 ? " · ★하루가 넘었다 — 재학습으로 낫지 않는다는 뜻이다. 문턱이 아니라 표본·피처를 봐야 한다★" : ""));
+              if (AI_PARAMS.mlops.retrainOnDrift) {
+                try { await setState(DB, "model_drift", { since: _since, ts: Date.now(), n: _n,
+                                                          hours: +_hrs.toFixed(2),
+                                                          acc: __mlDrift.acc, action: __mlDrift.action }); } catch (e) {}
+              }
+            } else if (_dPrev && _num(_dPrev.since, 0) > 0) {
+              /* ★회복을 말한다.★ 종전엔 열화 기록이 그대로 남아 화면이 계속 '열화' 로 보였다 —
+                 나아진 것을 아무도 안 알려 주면 고쳐졌는지 알 수 없다. */
+              const _lasted = ((Date.now() - _num(_dPrev.since, 0)) / 3600000).toFixed(1);
+              try { await DB.prepare("DELETE FROM state WHERE k = ?").bind("model_drift").run(); } catch (e) {}
+              try { await log(DB, "INFO", null, "[MLOPS] 모델 열화 해소 — " + _lasted + "시간 만에 정상(" +
+                __mlDrift.reason + ") · 감지 " + _num(_dPrev.n, 0) + "회"); } catch (e) {}
             }
           } catch (e) {}
         }
@@ -23389,9 +23423,24 @@ async function handleRequest(request, env, ctx) {
               featVerOk: !!(_probe && _probe.gfv === LUXML.featVer),
               accKey: "gbdtAcc", lbKey: "gbdtAccLB", wKey: "wGbdt", floor: GBDT.trustFloor
             }), { trees: _probe ? _probe.gtrees : null, featVer: _probe ? _probe.gfv : null }),
+            /* ══ [V33.363] ★같은 질문에 술어가 두 벌이라 화면이 서로를 반박했다★ ══
+               사용자 화면 실측(2026-09-15 14:18): 사이드바는 "MIND 모델 없음 — 학습 미완료",
+               같은 순간 본문은 "MIND ★정식 합류 ×1.00★". 같은 모델을 두고 정반대로 말했다.
+               원인은 '저장돼 있는가' 를 두 곳이 ★다른 조건★ 으로 판정한 것이다:
+                 여기(diag)  : mfm && mmeta          ← ★fm 을 요구★
+                 buildRoster : mmeta && (mfm || mtrees > 0)
+               실측 `models.mind.experts: ["tree"]` — 지금 MIND 는 ★트리 코어★ 다(fm 없음).
+               그런데 채점기 mlMindScore 는 V33.249 부터 트리 코어를 명시적으로 지원한다:
+                   const _isTree = !mind.fm && Array.isArray(mind.trees) && mind.trees.length > 0;
+                   const _corePos = _isTree ? mlGBDTScore(mind, featVec) : …
+               즉 ★트리만 있어도 실제로 채점된다★ — roster 가 맞고 이쪽이 틀렸다.
+               V33.249 가 트리 코어를 넣으면서 이 자리를 안 고쳤다(V33.301 이 없애려던
+               '판정이 여러 곳에 있다' 의 재발이다).
+               → 판정을 ★채점기와 같은 한 줄★ 로 맞춘다. */
             mind: {
-              stored: !!(_probe && _probe.mfm && _probe.mmeta),
+              stored: _mindStored(_probe),
               featVerOk: !!(_probe && _probe.mfv === LUXML.featVer), featVer: _probe ? _probe.mfv : null,
+              core: (_probe && _probe.mfm) ? "fm" : ((_num(_probe && _probe.mtrees, 0) > 0) ? "tree" : null),
               trusted: mindOk
             }
           };
@@ -34298,6 +34347,12 @@ async function _pipeOpenStages(env, aiDay) {
   return out;
 }
 
+/* [V33.363] ★MIND 가 실제로 채점 가능한가 — 한 곳에서만 답한다.★
+   mlMindScore 의 코어 선택(`!mind.fm && trees.length > 0` 이면 트리)과 같은 규칙이다.
+   meta(결합 가중)는 둘 다 필요하고, 코어는 fm 이든 trees 든 하나만 있으면 된다. */
+function _mindStored(probe) {
+  return !!(probe && probe.mmeta && (probe.mfm || _num(probe.mtrees, 0) > 0));
+}
 function rosterCls(o) {
   if (!o || !o.trained) return "off";
   if (o.featVerOk === false) return "off";
@@ -34319,6 +34374,9 @@ async function buildRoster(DB) {
       mult: (typeof o.mult === "number" && isFinite(o.mult)) ? +o.mult.toFixed(4) : null,
       featVer: (o.featVer != null && o.featVer !== "") ? o.featVer : null,
       wantVer: o.wantVer != null ? o.wantVer : null,
+      /* [V33.363] 실효 판과 ★실제 투표 자격이 있는 판★ 은 다를 수 있다 — 둘 다 싣는다. */
+      activeFeatVer: (o.activeFeatVer != null) ? o.activeFeatVer : null,
+      core: o.core || null,
       why: o.why || null
     };
     e.state = rosterCls(e);
@@ -34351,7 +34409,7 @@ async function buildRoster(DB) {
   const _live = {}; boosters.forEach(function (b) { _live[b.name] = b; });
 
   // ① 위원장 — 신뢰게이트가 없다(있으면 기준선이 사라진다). 판만 맞으면 full.
-  const mStored = !!(probe && probe.mmeta && (probe.mfm || _num(probe.mtrees, 0) > 0));
+  const mStored = _mindStored(probe);   // [V33.363] diag 와 같은 술어 한 벌
   const mVerOk = !!(probe && probe.mfv === LUXML.featVer);
   add("mind", "MIND (위원장 · 인수분해기계 FM)", "chair", {
     trained: mStored, featVerOk: mVerOk, featVer: probe ? probe.mfv : null, wantVer: LUXML.featVer,
@@ -34408,9 +34466,13 @@ async function buildRoster(DB) {
     const t = S[nm + "_trust"] || S[nm + "_trust_ext"] || null;
     const d = _bd[nm] || {};
     const on = !!_live[nm];
+    /* [V33.363] featVer 는 ★실효 판★(현재 판 수신분이 있으면 그것), activeFeatVer 는
+       실제로 승격돼 투표 자격이 있는 판. 둘을 같이 실어 뱃지는 사실을 말하고
+       아무것도 숨기지 않는다 — 종전엔 낡은 쪽만 실려 "판 불일치" 로 보였다. */
     add(nm, p[1], "expert", {
       trained: !!t, featVerOk: (d.featVerOk !== false),
       featVer: (d.featVer != null) ? d.featVer : null, wantVer: LUXML.featVer,
+      activeFeatVer: (d.activeFeatVer != null) ? d.activeFeatVer : null,
       source: d.source || null,
       tier: on ? "full" : "reject", mult: on ? 0.8 : 0,
       why: on ? "합의 가중 ×0.8" : (d.why || "모델 없음")
@@ -40139,10 +40201,28 @@ function _boosterAdmit(live, ext) {
       const when = (ageH != null && isFinite(ageH))
         ? (ageH < 1 ? Math.round(ageH * 60) + "분 전" : ageH.toFixed(1) + "시간 전") : "시각미상";
       /* 최신 수신분이 ★현재 판★ 이면 "재학습 대기" 는 명백히 거짓이다 — 왔는데 거절된 것이다. */
+      /* ══ [V33.363] ★"성능 미달" 이 스스로를 설명하게 한다★ ═════════════════════
+         실측(2026-09-15): XGB 검증 48.21% → 하한 ★42.61%★ · LGB 51.01% → ★45.37%★ ·
+         CAT 41.65% → ★36.21%★. 점추정과 하한의 차이가 셋 다 약 5.5%p 로 같다 —
+         Wilson 하한에서 그 폭은 ★유효표본 n≈222★ 를 뜻한다(원시 22만 건인데).
+         즉 이 모델들이 문턱에 막힌 직접 원인은 '실력' 이 아니라 ★유효표본 붕괴★ 다(I-2).
+         화면이 "성능 미달" 이라고만 하면 사람은 모델을 탓하고 문턱을 만지러 간다.
+         하한이 왜 눌렸는지를 같은 문장에 적는다 — 고칠 곳이 달라지기 때문이다. */
+      let _nTxt = "";
+      try {
+        const _vn = _num(rc.valN, null), _vr = _num(rc.valNRaw, null), _va = _num(rc.gbdtAcc, null);
+        if (_vn != null && _vn > 0) {
+          _nTxt = " · 유효표본 " + _vn + (_vr ? "/" + _vr : "") +
+                  (_va != null ? "(점추정 " + (_va * 100).toFixed(2) + "%)" : "") +
+                  (_vr && _vn / _vr < 0.01
+                    ? " ★유효표본이 원시의 1% 미만 — 하한이 눌린 것이지 점추정이 나쁜 게 아니다(결함 I-2)★" : "");
+        }
+      } catch (e) {}
       if (recentFv != null && recentFv === want) {
         recentWhy = "재학습은 돌고 있다 — featVer " + recentFv + " 모델이 " + when + " 도착했으나 승격 거절: " +
                     (rc.reason || "사유 미기록") +
                     (recentLb != null ? " (그 모델 accLB " + (recentLb * 100).toFixed(2) + "%)" : "") +
+                    _nTxt +
                     " · 승격돼 있는 기록은 아직 featVer " + fv + " 라 투표하지 않는다";
       } else {
         recentWhy = "최신 수신분(" + when + " · featVer " + (recentFv == null ? "미상" : recentFv) +
@@ -40152,8 +40232,24 @@ function _boosterAdmit(live, ext) {
   } catch (e) {}
   if (recentWhy) why = recentWhy;
 
+  /* ══ [V33.363] ★뱃지가 "판 불일치" 라고 말하는데 판은 이미 와 있다★ ═══════════════
+     사용자 화면 실측(2026-09-15 14:18): XGB/LGB/CAT 뱃지가 ★"모델 판 불일치"★ 인데,
+     바로 아래 본문은 "재학습은 돌고 있다 — featVer 17 모델이 47분 전 도착했으나 승격 거절:
+     IC 경로 — 정확도 하한 42.61% < 49%" 라고 ★정확히★ 적고 있었다. 뱃지와 본문이 반대다.
+     원인: 뱃지는 `featVerOk` 로 갈리는데 그 값이 ★낡은 승격기록(featVer 15)★ 에서 나온다.
+     하지만 사용자가 알아야 할 사실은 "판이 안 왔다" 가 아니라
+     ★"현재 판이 왔는데 품질로 떨어졌다"★ 다 — 처방이 정반대다
+     (전자는 기다리면 되고, 후자는 기다려도 안 된다).
+     → 현재 판 수신분이 있으면 그것을 ★실효 판★ 으로 보고한다. 낡은 쪽은 activeFeatVer 로
+       따로 남겨 아무것도 숨기지 않는다. 그러면 뱃지가 '판 불일치' 가 아니라 '성능 미달' 이 된다. */
+  const _hasCur = (recentFv != null && recentFv === want);
   return { ok: why == null, promoted: promoted, shadow: !promoted,
-           featVer: fv, wantVer: want, featVerOk: fvOk,
+           featVer: _hasCur ? recentFv : fv, wantVer: want, featVerOk: _hasCur ? true : fvOk,
+           activeFeatVer: fv,                       // 실제로 승격돼 있는(=투표 자격이 있는) 판
+           /* ★하한이 왜 그렇게 낮은지★ — 유효표본이 무너지면 점추정이 멀쩡해도 하한이 눌린다(I-2). */
+           valAcc: t ? _num(t.gbdtAcc, null) : null,
+           valN: t ? _num(t.valN, null) : null, valNRaw: t ? _num(t.valNRaw, null) : null,
+           valUniq: t ? _num(t.valUniq, null) : null,
            accLB: t ? lb : null, w: t ? _num(t.wGbdt, null) : null,
            source: (t && t.source) || null, why: why,
            /* 낡은 기록과 갓 온 기록을 ★섞지 않고 둘 다★ 내보낸다 — 화면이 어느 쪽 숫자를

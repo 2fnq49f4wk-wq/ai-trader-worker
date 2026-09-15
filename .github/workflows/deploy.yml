@@ -328,6 +328,10 @@ jobs:
       #   실패 18회가 전부 fetch 예산을 태웠다(A-5 의 굶주림과 같은 뿌리). 429/403 이면 회차를 접고 쉰다.
       - name: Social source rate-limit backoff check
         run: node tools/check-social-backoff.mjs
+      # [V33.363] 화면이 자기 자신을 반박했다 — 뱃지 "모델 판 불일치" / 본문 "featVer 17 이 도착했으나
+      #   승격 거절". 그리고 MIND 를 사이드바는 "모델 없음", 본문은 "정식 합류 ×1.00" 이라 했다.
+      - name: Roster truthfulness check
+        run: node tools/check-roster-truth.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,
