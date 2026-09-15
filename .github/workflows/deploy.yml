@@ -332,6 +332,14 @@ jobs:
       #   승격 거절". 그리고 MIND 를 사이드바는 "모델 없음", 본문은 "정식 합류 ×1.00" 이라 했다.
       - name: Roster truthfulness check
         run: node tools/check-roster-truth.mjs
+      # [V33.364] 열화 감지가 매번 ts 를 덮어써서 "언제부터 나빠졌는지" 가 사라졌다.
+      #   시작 시각(since)을 물려받아 지속시간을 말하고, 24시간을 넘기면 ERROR 로 올린다.
+      - name: Drift onset duration check
+        run: node tools/check-drift-onset.mjs
+      # [V33.364] 문턱 기록이 "마지막 사이클" 이 아니라 "백분위가 마지막으로 이긴 때" 였다.
+      #   실측: US 12.0시간 전 / KR 19.3시간 전 값을 화면이 '지금 적용 중' 이라 표시했다.
+      - name: Applied threshold record check
+        run: node tools/check-thr-applied.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

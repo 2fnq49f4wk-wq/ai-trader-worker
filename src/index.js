@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.363";
+const _BUILD_VER = "V33.364";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -22020,7 +22020,23 @@ async function runTradingCycle(env) {
                       const _floor = _fl.floor;
                       const _newThr = _clamp(Math.max(_floor, _pctThr), _floor, 0.9);
                       // 고정문턱보다 낮아질 때만 적용한다(문턱을 올려 거래를 더 막지는 않는다).
-                      if (_newThr < _thrAI) { _thrAI = _newThr; __thrWhy[market] = { thr: +_newThr.toFixed(4), pct: +_pctThr.toFixed(4), floor: +_floor.toFixed(4), src: _fl.src, n: _srt.length }; }
+                      /* ══ [V33.364] ★기록이 "마지막 사이클" 이 아니라 "마지막으로 이긴 때" 였다★ ══
+                         실측(운영 스냅샷 2026-09-15 01:49):
+                           US  지금 계산 floor 0.4500 / ★적용됐다고 표시된 값 0.4614 — 12.0시간 전★
+                           KR  지금 계산 floor 0.4665 / ★적용됐다고 표시된 값 0.4643 — 19.3시간 전★
+                         화면은 그 값을 `applied` 라 부르고 주석은 "엔진이 마지막 사이클에 실제로 쓴 값"
+                         이라 적었다. ★둘 다 사실이 아니다.★ 종전엔 이 기록이 `_newThr < _thrAI`
+                         안에서만 쓰였다 — 즉 ★백분위가 고정문턱을 밑돈 사이클★ 에만 남는다.
+                         그 조건이 안 맞으면 기록이 갱신되지 않고, 화면은 12~19시간 전 값을
+                         '지금 적용 중' 으로 보여 준다. 문턱은 돈이 걸린 값이라 이 오해가 비싸다.
+                         → 어느 갈래가 이겼든 ★매 사이클★ 실제 쓰는 값을 남긴다. 어느 길로 정해졌는지
+                           (path)도 함께 적어, 백분위가 안 먹은 것과 기록이 안 된 것을 구분한다. */
+                      const _thrBefore = _thrAI;
+                      if (_newThr < _thrAI) _thrAI = _newThr;
+                      __thrWhy[market] = { thr: +_thrAI.toFixed(4), pct: +_pctThr.toFixed(4),
+                                           floor: +_floor.toFixed(4), src: _fl.src, n: _srt.length,
+                                           path: (_newThr < _thrBefore) ? "pct" : "fixed",
+                                           pctThr: +_newThr.toFixed(4), fixedThr: +_thrBefore.toFixed(4) };
                     }
                   } catch (e) {}
                   if (!_md || !_md.allow || _md.observe || _md.abstain
@@ -23939,7 +23955,14 @@ async function handleRequest(request, env, ctx) {
           const _mkThr = async function (mkt) {
             const d = await getState(env.DB, "ai_pdist:" + mkt, null);
             const _fl = aiEntryFloor(_ps0, mkt, _ap);
-            const _why = await getState(env.DB, "ai_thr_why:" + mkt, null);   // 엔진이 마지막 사이클에 실제로 쓴 값
+            /* [V33.364] 이제 ★정말로★ 마지막 사이클 값이다(위 __thrWhy 주석 참조).
+               그래도 나이를 함께 낸다 — 사이클이 멈추면 이 값도 멈추는데, 그건 보여야 한다. */
+            let _why = await getState(env.DB, "ai_thr_why:" + mkt, null);
+            if (_why && _num(_why.ts, 0) > 0) {
+              const _ah = (Date.now() - _num(_why.ts, 0)) / 3600000;
+              _why = Object.assign({}, _why, { ageH: +_ah.toFixed(2),
+                stale: _ah > 1 ? "★" + _ah.toFixed(1) + "시간 전 기록 — 사이클이 이 시장을 안 돌고 있다는 뜻일 수 있다★" : null });
+            }
             const _base = { fixed: _num(_ap.threshold, 0.55), floor: +_fl.floor.toFixed(4), floorSrc: _fl.src,
                             floorFixed: _num(_ap.absFloor, 0.53), topPct: _num(_ap.topPct, 0.18), applied: _why || null };
             if (!d || !Array.isArray(d.v) || d.v.length < 200) return Object.assign({ n: d && d.v ? d.v.length : 0, thr: null }, _base);
@@ -50222,7 +50245,7 @@ export {
   stinBackfill, stinIntradayFeat, stinChartFeat, stinObserve, stinLabel, mlBuildFeatures,
   STIN, STIN_IFEAT_N, STIN_FEATVER, LUXML, _LIVE_ONLY_FEATS, _setR2ForTest, getBigState, _bigLoadStatus,
   _boosterAdmit, latestExternalReceipt, MCAP_RANK, _clipMid, mlRetireStaleFeatVer,
-  _socialBackoffMs, _socialBackoffLeftMs,
+  _socialBackoffMs, _socialBackoffLeftMs, mlDriftCheck,
   // [V33.105] 확률 계수 적합기 검증용 — tools/check-prob-fitters.mjs
   shockPriorFitNightly, decisionBlendFitNightly, _shockLogitShift, _coefShrink, SHOCKCAL,
   // [V33.193] 확률적/디플레이션 샤프 검증용 — tools/check-edge-stats.mjs
