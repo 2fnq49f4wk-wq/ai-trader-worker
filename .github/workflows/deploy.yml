@@ -324,6 +324,10 @@ jobs:
       #   419분째 대기인데 상류(v7 사망)를 아무도 지목하지 않았다.
       - name: Audit drift and stalled stage diagnosis check
         run: node tools/check-audit-drift.mjs
+      # [V33.362] StockTwits 가 429 를 주는데도 30종목을 끝까지 두드려 12성공/18실패였다.
+      #   실패 18회가 전부 fetch 예산을 태웠다(A-5 의 굶주림과 같은 뿌리). 429/403 이면 회차를 접고 쉰다.
+      - name: Social source rate-limit backoff check
+        run: node tools/check-social-backoff.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.361";
+const _BUILD_VER = "V33.362";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -44032,7 +44032,15 @@ const SOCIAL = {
   minLabeled: 5,             // Bullish/Bearish 라벨이 이만큼은 있어야 방향을 말한다
   redditSubs: "wallstreetbets+stocks+investing+StockMarket",
   redditFreshH: 6,           // Reddit 도 같은 신선도 기준
-  bufWindow: 3000            // 계수 측정용 관측 버퍼 크기
+  bufWindow: 3000,           // 계수 측정용 관측 버퍼 크기
+  /* [V33.362] ★rate limit 을 만나면 그 회차를 접고 쉰다★
+     실측(2026-09-15 01:49): StockTwits 가 HTTP 429 를 주는데도 30종목을 끝까지 두드려
+     ★12성공/18실패★ 가 났다. 실패한 18회도 전부 fetch 예산을 태웠고(A-5 가 바로 그
+     예산 굶주림 문제였다), 429 를 계속 두드리면 차단이 길어지기만 한다.
+     → 429/403 을 보면 즉시 그 회차를 접고, 아래 시간만큼 이 소스를 건너뛴다.
+       Retry-After 헤더가 오면 그 값을 쓴다(상대가 말해 준 시간을 무시할 이유가 없다). */
+  backoffMin: 20,            // 429/403 뒤 이만큼 쉰다(분)
+  backoffMaxMin: 120         // Retry-After 가 아무리 길어도 이 이상은 안 쉰다
 };
 const SOCIAL_SOURCES = [
   {
@@ -44111,6 +44119,32 @@ async function _socialHealth(DB, id, patch) {
     await setState(DB, "social_health", h);
   } catch (e) {}
 }
+/* ══ [V33.362] ★상대가 "그만" 이라고 하면 그만둔다 — 소스별 백오프★ ═══════════════
+   실측(2026-09-15 01:49): StockTwits HTTP 429 인데도 30종목을 끝까지 두드려
+   ★12성공/18실패★. 실패한 18회도 전부 fetch 예산을 태웠고(A-5 가 그 굶주림 문제였다),
+   429 를 계속 두드리면 차단만 길어진다. Reddit 도 같은 시각 403 이었다.
+   ★읽는 키와 쓰는 키를 한 곳에서 정한다★ — _socialHealth 는 h[id] 아래에 넣으므로
+   백오프도 h[id].until 이다. 처음엔 이걸 최상위로 읽어 백오프가 통째로 안 걸렸다. */
+async function _socialBackoffLeftMs(DB, id) {
+  try {
+    const h = (await getState(DB, "social_health", null)) || {};
+    const until = _num(h[id] && h[id].until, 0);
+    return until > Date.now() ? (until - Date.now()) : 0;
+  } catch (e) { return 0; }
+}
+/* HTTP 응답에서 쉴 시간을 정한다. Retry-After 가 오면 그 값을 존중하되 상한을 둔다. */
+function _socialBackoffMs(res) {
+  let ms = _num(SOCIAL.backoffMin, 20) * 60000;
+  try {
+    const ra = (res && res.headers && res.headers.get) ? res.headers.get("retry-after") : null;
+    if (ra) {
+      const sec = parseInt(ra, 10);
+      const v = isFinite(sec) ? sec * 1000 : (Date.parse(ra) - Date.now());
+      if (isFinite(v) && v > 0) ms = v;
+    }
+  } catch (e) {}
+  return Math.min(Math.max(ms, 60000), _num(SOCIAL.backoffMaxMin, 120) * 60000);
+}
 async function socialFetchStep(DB) {
   if (!SOCIAL.enabled) return null;
   try {
@@ -44131,11 +44165,24 @@ async function socialFetchStep(DB) {
     let stOk = 0, stFail = 0, rdN = 0, stMsgs = 0;
 
     // ── Reddit: 1회 fetch 로 전 종목 언급을 얻는다(가성비가 가장 높다) ──
-    try {
+    const _rdLeft = await _socialBackoffLeftMs(DB, "reddit");
+    if (_rdLeft > 0) {
+      /* [V33.362] Reddit 은 한 번 호출이라 예산 낭비는 작지만, 403 을 10분마다 계속
+         두드리는 것이 차단을 푸는 방법은 아니다. 실측에서 403 이 떠 있었다. */
+      await _socialHealth(DB, "reddit", { ok: false, err: "백오프 대기 " + Math.ceil(_rdLeft / 60000) + "분",
+                                          backoffLeftMin: Math.ceil(_rdLeft / 60000) });
+    } else try {
       const rsrc = SOCIAL_SOURCES.find(function (x) { return x.id === "reddit"; });
       __fetchBudget.used++;
       const rr = await fetch(rsrc.url(), { headers: { "User-Agent": "lux-trader/1.0 (research)" } });
-      if (!rr.ok) { await _socialHealth(DB, "reddit", { ok: false, http: rr.status, err: "http" }); }
+      if (!rr.ok) {
+        const _rw = (rr.status === 429 || rr.status === 403) ? _socialBackoffMs(rr) : 0;
+        await _socialHealth(DB, "reddit", { ok: false, http: rr.status, err: "http",
+                                            until: _rw ? (Date.now() + _rw) : 0,
+                                            backoffMin: _rw ? Math.ceil(_rw / 60000) : 0 });
+        if (_rw) { try { await log(DB, "WARN", null, "[SOCIAL] Reddit HTTP " + rr.status +
+          " — " + Math.ceil(_rw / 60000) + "분 쉰다(계속 두드려도 차단은 안 풀린다)"); } catch (e) {} }
+      }
       else {
         const rj = await rr.json();
         const parsed = rsrc.parse(rj, rdCut, uni, now0);
@@ -44145,7 +44192,7 @@ async function socialFetchStep(DB) {
           cur.rd = parsed.by[sy]; cur.rdTs = Date.now();
           await setState(DB, "social:" + sy, cur);
         }
-        await _socialHealth(DB, "reddit", { ok: true, http: 200, posts: parsed.posts, syms: rdN });
+        await _socialHealth(DB, "reddit", { ok: true, http: 200, posts: parsed.posts, syms: rdN, until: 0 });
       }
     } catch (e) { await _socialHealth(DB, "reddit", { ok: false, err: String((e && e.message) || e).slice(0, 80) }); }
 
@@ -44156,8 +44203,19 @@ async function socialFetchStep(DB) {
     for (let i = 0; i < SOCIAL.symsPerRound && i < us.length; i++) picked.push(us[(off + i) % us.length]);
     const ssrc = SOCIAL_SOURCES.find(function (x) { return x.id === "stocktwits"; });
     let lastErr = null, lastHttp = null, proc = 0;
+    /* [V33.362] ★쉬라고 한 시간은 지킨다.★ 지난 회차에 429/403 을 받았으면 그 시각까지
+       아예 시작하지 않는다 — 시작하면 또 30번 두드리고 또 차단이 연장된다. */
+    const _stLeft = await _socialBackoffLeftMs(DB, "stocktwits");
+    if (_stLeft > 0) {
+      const _left = Math.ceil(_stLeft / 60000);
+      await _socialHealth(DB, "stocktwits", { ok: false, done: 0, fail: 0,
+        err: "백오프 대기 " + _left + "분", backoffLeftMin: _left });
+      return "[SOCIAL] StockTwits 백오프 대기 " + _left + "분(rate limit) · Reddit 언급종목 " + rdN;
+    }
+    let _stLimited = null;     // 429/403 을 받은 순간의 상태
     for (const sy of picked) {
       if (fetchBudgetLeft() < 4) break;
+      if (_stLimited) break;   // ★한 번 막히면 그 회차는 접는다 — 종전엔 30번을 끝까지 두드렸다★
       proc++;
       try {
         // [V33.110] 페이지네이션 — 종목당 최대 pagesPerSym 장(30건/장).
@@ -44169,7 +44227,17 @@ async function socialFetchStep(DB) {
           __fetchBudget.used++;
           const r = await fetch(ssrc.url(sy, maxId), { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" } });
           lastHttp = r.status;
-          if (!r.ok) { if (pg === 0) { stFail++; lastErr = "http " + r.status; } break; }
+          if (!r.ok) {
+            if (pg === 0) { stFail++; lastErr = "http " + r.status; }
+            /* [V33.362] 429(과다요청)·403(차단)은 ★이 종목의 문제가 아니라 우리 쪽 문제★ 다.
+               다음 종목으로 넘어가 봤자 같은 답을 받고 예산만 태운다. 회차를 접는다.
+               Retry-After 가 오면 그 값을 존중한다(초 단위 또는 HTTP-date). */
+            if (r.status === 429 || r.status === 403) {
+              const _waitMs = _socialBackoffMs(r);
+              _stLimited = { status: r.status, untilMs: Date.now() + _waitMs, waitMin: Math.ceil(_waitMs / 60000) };
+            }
+            break;
+          }
           const js = await r.json();
           const p = ssrc.parse(js, cutoff, null, now0);
           pages++;
@@ -44195,9 +44263,20 @@ async function socialFetchStep(DB) {
       } catch (e) { stFail++; lastErr = String((e && e.message) || e).slice(0, 60); }
     }
     try { await setState(DB, "social_off", { v: (off + Math.max(1, proc)) % us.length, ts: Date.now() }); } catch (e) {}
-    await _socialHealth(DB, "stocktwits", { ok: stOk > 0, http: lastHttp, done: stOk, fail: stFail,
-                                            msgs: stMsgs, freshH: SOCIAL.freshH, err: lastErr });
-    return "[SOCIAL] StockTwits " + stOk + "성공/" + stFail + "실패 · 신선글 " + stMsgs + "건(" + SOCIAL.freshH + "h내)" +
+    await _socialHealth(DB, "stocktwits", Object.assign(
+      { ok: stOk > 0, http: lastHttp, done: stOk, fail: stFail,
+        msgs: stMsgs, freshH: SOCIAL.freshH, err: lastErr },
+      _stLimited ? { until: _stLimited.untilMs, backoffMin: _stLimited.waitMin } : { until: 0 }));
+    if (_stLimited) {
+      try { await log(DB, "WARN", null, "[SOCIAL] StockTwits HTTP " + _stLimited.status +
+        "(rate limit) — 이번 회차를 " + proc + "/" + picked.length + "종목에서 접고 " +
+        _stLimited.waitMin + "분 쉰다. 종전엔 막힌 뒤에도 남은 종목을 끝까지 두드려 예산만 태웠다" +
+        "(실측 12성공/18실패)"); } catch (e) {}
+    }
+    return "[SOCIAL] StockTwits " + stOk + "성공/" + stFail + "실패" +
+           (_stLimited ? "(HTTP " + _stLimited.status + " → " + _stLimited.waitMin + "분 백오프, " +
+                         (picked.length - proc) + "종목 건너뜀)" : "") +
+           " · 신선글 " + stMsgs + "건(" + SOCIAL.freshH + "h내)" +
            " · Reddit 언급종목 " + rdN + " (구간 " + off + "~" + ((off + proc) % us.length) + "/" + us.length + ")";
   } catch (e) { return "[SOCIAL] fail: " + (e && e.message); }
 }
@@ -50047,6 +50126,7 @@ export {
   stinBackfill, stinIntradayFeat, stinChartFeat, stinObserve, stinLabel, mlBuildFeatures,
   STIN, STIN_IFEAT_N, STIN_FEATVER, LUXML, _LIVE_ONLY_FEATS, _setR2ForTest, getBigState, _bigLoadStatus,
   _boosterAdmit, latestExternalReceipt, MCAP_RANK, _clipMid, mlRetireStaleFeatVer,
+  _socialBackoffMs, _socialBackoffLeftMs,
   // [V33.105] 확률 계수 적합기 검증용 — tools/check-prob-fitters.mjs
   shockPriorFitNightly, decisionBlendFitNightly, _shockLogitShift, _coefShrink, SHOCKCAL,
   // [V33.193] 확률적/디플레이션 샤프 검증용 — tools/check-edge-stats.mjs
@@ -50126,5 +50206,5 @@ export {
   scalpMaeFitNightly, scalpMaeMult, SCALPMAE,
   FIN_TOOLS, finToolsRun,
   // [V33.110] 소셜 멀티소스 검증용 — tools/check-social.mjs
-  SOCIAL, SOCIAL_SOURCES, socialScoreOf
+  SOCIAL, SOCIAL_SOURCES, socialScoreOf, socialFetchStep
 };
