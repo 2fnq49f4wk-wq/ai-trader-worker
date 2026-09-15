@@ -308,6 +308,14 @@ jobs:
       #   ANALYZE 한 뒤 EXPLAIN QUERY PLAN 으로 잰다(빈 표에서 재면 멀쩡한 쿼리를 오판한다).
       - name: D1 query plan check
         run: node --experimental-sqlite tools/check-d1-scan.mjs
+      # [V33.360] 운용상태 파일이 문장 중간(300자)에서 잘려 결론이 사라졌다.
+      #   머리·꼬리를 둘 다 남기게 고치고, D1 헤드룸·표본 풀 창을 상태에 실었다.
+      - name: Status detail and clipping check
+        run: node tools/check-status-detail.mjs
+      # [V33.360] 옛 featVer 승격 기록이 영원히 남아 activeFeatVer 가 15 로 보고됐다.
+      #   그리고 표본 상한에 닿으면 표본이 영구 삭제됐다 — R2 로 옮긴 뒤에 지운다.
+      - name: featVer retirement and R2 archive check
+        run: node tools/check-featver-retire.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

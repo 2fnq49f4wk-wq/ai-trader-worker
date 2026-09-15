@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.359";
+const _BUILD_VER = "V33.360";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -23133,6 +23133,8 @@ async function handleRequest(request, env, ctx) {
             let g = "기타";
             if (k.indexOf("st/intraday/") === 0) g = k === STIN.pendKey ? "단타 대기버퍼" : "단타 표본";
             else if (k.indexOf("hist/") === 0) g = "일봉 이력";
+            else if (k.indexOf("ml/archive/") === 0) g = "표본 보관함";   // [V33.360] 상한 초과분
+            else if (k.indexOf("ml/") === 0) g = "학습 스냅샷";
             else if (k.indexOf("big/") === 0) g = "대형모델";
             const e = groups[g] || (groups[g] = { n: 0, bytes: 0, newest: 0 });
             e.n++; e.bytes += _num(o.size, 0); if (ts > e.newest) e.newest = ts;
@@ -25874,6 +25876,9 @@ async function handleRequest(request, env, ctx) {
         ["stackepoch", function (DB) { return stackExpertEpochStamp(DB); }],
         // [V33.115] 표본 풀의 평균 고유도 — 수확 직후·전 학습기 앞. 아래 학습기들이 이 값으로
         //   유효표본수를 구해 Wilson 하한을 잰다(명목 n 을 쓰면 겹친 라벨을 독립으로 세게 된다).
+        /* [V33.360] 판이 지난 모델 기록 은퇴 — 학습기들 ★앞★ 에 둔다.
+           뒤에 두면 오늘 밤 학습·판정이 전부 옛 기록을 한 번 더 보고 지나간다. */
+        ["retirefv", function (DB) { return mlRetireStaleFeatVer(DB); }],
         ["pooluniq", function (DB) { return mlPoolUniqNightly(DB); }],
         ["l1", function (DB) { return mlTrainNightly(DB); }],
         // [V33.143] ★학습 시작 ‘전’ 에 동시검정 가족 크기를 센다.★
@@ -30812,7 +30817,7 @@ async function _miniLogisticTrain(DB, opts) {
   const _msg = await _run();
   try {
     await setState(DB, "train_note:" + opts.stateKey,
-      { msg: String(_msg == null ? "" : _msg).slice(0, 300), ok: /학습완료/.test(String(_msg || "")), ts: Date.now() });
+      { msg: _clipMid(_msg, 900), ok: /학습완료/.test(String(_msg || "")), ts: Date.now() });
   } catch (e) {}
   return _msg;
 }
@@ -31741,7 +31746,7 @@ async function memoTrainNightly(DB) {
   const _msg = await _run();
   try {
     await setState(DB, "train_note:memo_model",
-      { msg: String(_msg == null ? "" : _msg).slice(0, 300), ok: /^\[MEMO\] 원형 /.test(String(_msg || "")), ts: Date.now() });
+      { msg: _clipMid(_msg, 900), ok: /^\[MEMO\] 원형 /.test(String(_msg || "")), ts: Date.now() });
   } catch (e) {}
   return _msg;
 }
@@ -32956,6 +32961,23 @@ const _EV_START = 13;  // 이벤트 피처 시작 인덱스(가격피처 13개 �
 const _EV_END = 29;    // 이벤트 피처 끝(exclusive) — 이후는 [V4] 시장구조 피처(코드가 직접 계산)
 
 // _sigmoid/_clamp reuse the earlier top-level declarations (line ~5427/~7740) — ESM disallows duplicate top-level function names
+/* [V33.360] ★긴 진단 문장을 자를 땐 ★꼬리★ 를 버리면 안 된다.★
+   실측(운영 스냅샷 2026-09-15): `train_note` 4개가 정확히 300자에서 ★문장 중간★ 에 잘려
+   있었다 — flow "…잡음과 구별", xalpha "…잡음과", stack "…실측 70일 ·", memo "…→ 합류 ".
+   이 문장들은 앞에 '무엇을 학습했나'(표본·홀드아웃·엠바고·시장분리)를 적고
+   ★맨 끝에 결론★('→ 합류 보류 — 홀드아웃 t -0.39 < 1.65 …')을 적는 구조다.
+   그래서 뒤에서 자르면 ★정확히 결론만 사라진다★ — 파일을 열어 본 사람은
+   "왜 합류를 못 했나" 를 알 수 없고, 그게 이 스냅샷의 존재 이유다.
+   → 상한을 넉넉히 두되, 그래도 넘으면 ★가운데를 접는다.★ 머리(무엇을)와 꼬리(결론)를
+     둘 다 남기고, 몇 자를 접었는지 적는다(접은 사실을 숨기지 않는다). */
+function _clipMid(v, max) {
+  const s0 = (v == null) ? "" : String(v);
+  const m = Math.max(40, _num(max, 300));
+  if (s0.length <= m) return s0;
+  const tail = Math.max(24, Math.floor(m * 0.42));      // 결론이 들어갈 자리
+  const head = m - tail - 12;                            // 12 ≈ 접힘 표시 길이
+  return s0.slice(0, head) + " …(" + (s0.length - head - tail) + "자 접음)… " + s0.slice(s0.length - tail);
+}
 function _num(v, d) { return (typeof v === "number" && isFinite(v)) ? v : d; }
 
 // ── [V4] 시장구조 피처 13종 — 가격/거래량/시가만으로 계산(수확·라이브 동일 분포 보장) ──
@@ -34731,6 +34753,59 @@ function _uniqWeights(ts, syms, spanMs) {
 //   근사인 것을 숨기지 않는다: 정확한 슬라이스별 고유도가 필요한 곳(_miniLogisticTrain,
 //   Modal 트레이너)은 지금도 자기 홀드아웃에서 직접 센다.
 const POOLUNIQ = { sampleLimit: 20000, minN: 200, staleH: 72 };
+/* ══ [V33.360] ★판이 지난 모델 기록은 은퇴시킨다★ ═══════════════════════════════
+   실측(운영 스냅샷 2026-09-15 01:49) — XGB·LGB·CAT 이 전부 이 상태였다:
+     alt.roster.xgb : featVer ★15★ · wantVer 17 · featVerOk false · state "off"
+     externalTrain.xgb: activeFeatVer ★15★ · 그런데 방금 온 것은 featVer 17
+   승격돼 있는 기록(`<m>_trust`)이 옛 판에 얼어 있고, 새로 온 판은 품질 게이트에 막혀
+   섀도우에 쌓인다. 그러면 ★그 옛 기록은 영원히 그 자리에 남는다★ —
+   featVer 가 다르면 피처 배열이 다르므로 ★다시는 투표할 수 없는 모델★ 인데도.
+
+   남겨서 생기는 일(전부 실측에서 보인 것):
+     · 화면이 "판 불일치(featVer 15 ≠ 17)" 를 계속 말한다 — 고칠 방법이 없는 사실을 반복한다
+     · `activeFeatVer` 가 15 로 보고돼 "지금 무엇이 활성인가" 를 잘못 읽게 한다
+     · 본문(`<m>_model`)은 트리 수천 개짜리다 — 못 쓰는 모델이 R2/D1 자리를 계속 먹는다
+
+   ★지우는 것이 안전한 이유★: featVer 가 현재판과 다르면 `_boosterAdmit` 이 이미 막고 있어
+   투표 경로에 들어가지 못한다. 즉 지워도 ★거래 동작은 한 톨도 안 바뀐다★ —
+   바뀌는 것은 "없는 것을 있다고 말하지 않는다" 뿐이다.
+   ※ 섀도우(`_ext`)는 건드리지 않는다 — 그쪽은 방금 온 현재판이고, 다음 승격 후보다.
+   ※ 현재판이거나 판을 모르는 기록은 손대지 않는다(모르면 안 지운다). */
+const RETIRE_MODELS = ["xgb", "lgb", "cat", "gbdt_us", "gbdt_kr"];
+async function mlRetireStaleFeatVer(DB) {
+  const want = _num(LUXML.featVer, null);
+  if (!(want > 0)) return "[은퇴] 현재 판을 몰라 건너뜀";
+  const gone = [], kept = [];
+  for (const nm of RETIRE_MODELS) {
+    try {
+      const t = await getState(DB, nm + "_trust", null);
+      if (!t) continue;
+      const fv = _num(t.featVer, null);
+      if (fv == null) { kept.push(nm + "(판 미기록)"); continue; }   // 모르면 안 지운다
+      if (fv >= want) continue;                                      // 현재판 — 정상
+      /* 본문 먼저 지우고 기록을 지운다 — 순서를 뒤집으면 '기록은 없는데 본문만 남은'
+         상태가 생겨, 다음 사람이 그 본문을 보고 또 추측하게 된다. */
+      /* 본문은 R2(big/<키>.json) 또는 D1 청크(<키>:chunk:N) + 메타(<키>:meta) 셋 중 하나에 있다.
+         셋을 다 지운다 — 하나만 지우면 '메타는 R2 를 가리키는데 R2 엔 없는' 반쪽 상태가 남는다. */
+      try { const _R2 = _bigR2(); if (_R2) await _R2.delete("big/" + nm + "_model.json"); } catch (e) {}
+      try { await DB.prepare("DELETE FROM state WHERE k >= ? AND k < ?")
+              .bind(nm + "_model:chunk:", nm + "_model:chunk;").run(); } catch (e) {}
+      try { await DB.prepare("DELETE FROM state WHERE k = ?").bind(nm + "_model:meta").run(); } catch (e) {}
+      try { await DB.prepare("DELETE FROM state WHERE k = ?").bind(nm + "_model").run(); } catch (e) {}
+      try { await DB.prepare("DELETE FROM state WHERE k = ?").bind(nm + "_trust").run(); } catch (e) {}
+      gone.push(nm + "(featVer " + fv + ")");
+    } catch (e) { kept.push(nm + "(확인 실패)"); }
+  }
+  if (gone.length) {
+    try {
+      await log(DB, "WARN", null, "[판정리] 옛 판 모델 기록 은퇴 — " + gone.join(", ") +
+        " → 현재판 " + want + ". 이 모델들은 판이 달라 이미 투표하지 못하던 것이라 거래 동작은 안 바뀐다. " +
+        "새 판 모델이 품질 게이트를 통과하면 그때 다시 승격된다");
+    } catch (e) {}
+  }
+  return "[판정리] 현재판 " + want + " · 은퇴 " + gone.length + (gone.length ? "(" + gone.join(", ") + ")" : "") +
+         (kept.length ? " · 보류 " + kept.join(",") : "");
+}
 async function mlPoolUniqNightly(DB) {
   try {
     const H = _num((AI_PARAMS.prediction && AI_PARAMS.prediction.horizonDays), 10);
@@ -34759,10 +34834,33 @@ async function mlPoolUniqNightly(DB) {
     const w = _uniqWeights(ts, sy, span);
     let s = 0; for (const v of w) s += v;
     const uBar = _clamp(s / Math.max(1, w.length), 0.02, 1);
+    /* ══ [V33.360] ★고유도가 '왜' 그 값인지를 여기서 함께 낸다 (결함 I-2)★ ═══════════
+       실측: 유효표본이 한 회차 만에 7,379 → 210 으로 무너져 SEQ 가 위원회에서 빠지고
+       부스터 3종이 전부 거절됐다. 그런데 기록에는 uBar 한 숫자뿐이라 ★무엇이 달라졌는지★
+       밖에서 알 수가 없었다 — 그래서 또 추측하게 된다.
+       고유도는 두 가지가 정한다: ★창이 며칠인가★ 와 ★한 종목이 그 창에 몇 번 나오는가★.
+       그 둘은 ★이미 뽑아 온 같은 20,000행★ 으로 계산되므로 D1 비용이 0 이다.
+       (트레이너에도 같은 내역을 심었지만 그건 6시간마다다 — 이쪽은 매일 밤 답한다) */
+    let _lo = Infinity, _hi = -Infinity;
+    const _symN = new Map();
+    for (let i = 0; i < ts.length; i++) {
+      if (ts[i] > 0) { if (ts[i] < _lo) _lo = ts[i]; if (ts[i] > _hi) _hi = ts[i]; }
+      _symN.set(sy[i], (_symN.get(sy[i]) || 0) + 1);
+    }
+    const _spanD = (_hi > _lo) ? +((_hi - _lo) / 86400000).toFixed(1) : 0;
+    const _nSym = _symN.size;
+    const _perSym = +(rows.length / Math.max(1, _nSym)).toFixed(1);
+    let _maxPer = 0; for (const v of _symN.values()) if (v > _maxPer) _maxPer = v;
     await setState(DB, "ml_pool_uniq", { uBar: +uBar.toFixed(4), n: rows.length,
-                                         nEff: Math.round(s), spanDays: H, ts: Date.now() });
+                                         nEff: Math.round(s), spanDays: H, ts: Date.now(),
+                                         /* ★내역 — 이 네 값이 고유도를 설명한다★ */
+                                         windowDays: _spanD, nSym: _nSym, perSym: _perSym, maxPerSym: _maxPer,
+                                         conc: +(rows.length / Math.max(1, s)).toFixed(1),
+                                         oldest: _lo === Infinity ? null : _lo, newest: _hi === -Infinity ? null : _hi });
     return "[고유도] 평균 " + uBar.toFixed(3) + " — 표본 " + rows.length + "건이 실제로는 " +
-           Math.round(s) + "건어치 (라벨지평 " + H + "일)";
+           Math.round(s) + "건어치 (라벨지평 " + H + "일)" +
+           " · 창 " + _spanD + "일 · 종목 " + _nSym + "개 · 종목당 " + _perSym + "건(최다 " + _maxPer + ")" +
+           " · 평균동시성 " + (rows.length / Math.max(1, s)).toFixed(1) + "건";
   } catch (e) {
     try { await setState(DB, "ml_pool_uniq", { uBar: 1, n: 0, ts: Date.now(), err: String(e && e.message).slice(0, 120) }); } catch (e2) {}
     return "[고유도] 실패: " + (e && e.message);
@@ -41919,6 +42017,53 @@ async function aiSelfCheck(DB, env) {
       //   wrangler.toml 도 켜져 있으므로 "설정이 없다" 로는 설명되지 않는다.
       //   두 경로가 각자 본 값을 나란히 낸다 — 이게 다르면 원인은 설정이 아니라 실행맥락이다.
       R.r2BoundCron = await getState(DB, "r2_bind_probe", null);
+      /* ══ [V33.360] ★"D1 이 한계인가" 를 숫자로 답한다★ ══════════════════════════
+         종전 d1Size 는 표별 MB 만 냈다 — "많다/적다" 를 사람이 눈대중해야 했다.
+         실제로 물어봐야 하는 건 셋이다: ①상한까지 얼마 남았나 ②며칠 남았나
+         ③표본이 지워지기 시작했나. 그 셋을 여기서 낸다(추가 쿼리 0 — 있는 값만 쓴다). */
+      try {
+        const _ms = R.d1Size && R.d1Size.mlSamples;
+        let _tot = _num(R.data && R.data.samples, 0);
+        if (!(_tot > 0)) { try { _tot = _num((await _mlCountsCached(DB)).curTotal, 0); } catch (e) {} }
+        /* 하루 유입은 ★이미 있는 60초 공유 캐시★ 에서 가져온다(새 스캔을 만들지 않는다 — I-1 교훈).
+           cur7d 를 7 로 나눈다: 하루치(cur24)는 장·휴장에 따라 요동이 커서 '며칠 남았나' 의
+           분모로는 거칠다. 7일 평균이 그 답에 맞는 자다. 못 재면 null 로 두고 지어내지 않는다. */
+        let _perDay = 0;
+        try { const _cc = await _mlCountsCached(DB); _perDay = _num(_cc.cur7d, 0) > 0 ? Math.round(_num(_cc.cur7d, 0) / 7) : 0; } catch (e) {}
+        const _cap = _num(HARVEST.maxTotal, 0);
+        const _left = _cap > 0 ? (_cap - _tot) : null;
+        R.d1Headroom = {
+          rows: _tot || (_ms ? _ms.rows : null),
+          mb: R.d1Size ? R.d1Size.totalMb : null,
+          cap: _cap || null,
+          leftRows: _left,
+          /* ★며칠 남았나★ — 하루 유입으로 나눈다. 모르면 null(지어내지 않는다). */
+          daysLeft: (_left != null && _perDay > 0) ? +(_left / _perDay).toFixed(1) : null,
+          perDay: _perDay || null,
+          /* ★이미 지워지고 있나★ — 보관함이 생겼다면 상한에 닿았다는 뜻이다. */
+          note: (_left != null && _left <= 0)
+            ? "★상한 초과 — 오래된 표본이 R2 보관함으로 옮겨진 뒤 D1 에서 삭제되고 있다★"
+            : (_left != null && _perDay > 0 && _left / _perDay < 14)
+              ? "2주 안에 상한에 닿는다 — 닿으면 오래된 표본부터 R2 로 옮겨진다(삭제 전 보관)"
+              : "여유 있음"
+        };
+        /* ★풀의 시간 창★ — 고유도가 왜 그 값인지의 절반이 여기 있다(I-2).
+           pooluniq 가 이미 계산해 둔 값을 그대로 보여 준다(추가 비용 0). */
+        const _pu = await getState(DB, "ml_pool_uniq", null);
+        if (_pu) R.poolWindow = {
+          uBar: _num(_pu.uBar, null), nEff: _num(_pu.nEff, null), n: _num(_pu.n, null),
+          windowDays: _num(_pu.windowDays, null), nSym: _num(_pu.nSym, null),
+          perSym: _num(_pu.perSym, null), maxPerSym: _num(_pu.maxPerSym, null),
+          conc: _num(_pu.conc, null), ageH: _pu.ts ? +((Date.now() - _num(_pu.ts, 0)) / 3600000).toFixed(1) : null,
+          err: _pu.err || null,
+          why: _pu.err ? "고유도 계산이 실패했다 — uBar=1 로 떨어져 ★보정이 꺼진 상태★ 다"
+             : (_num(_pu.windowDays, 0) > 0 && _num(_pu.windowDays, 0) < 20)
+               ? "★창이 " + _pu.windowDays + "일뿐이다 — 겹침이 커져 유효표본이 무너진다★"
+               : (_num(_pu.perSym, 0) > 40)
+                 ? "★한 종목이 창 안에 " + _pu.perSym + "건 — 같은 사건을 여러 번 세고 있다★"
+                 : "정상 범위"
+        };
+      } catch (e) {}
       if (R.r2BoundCron && R.r2BoundNow && R.r2BoundCron.bigR2 === false) {
         R.errors.push("R2 바인딩이 ★경로마다 다르다★ — 이 요청(fetch)에서는 보이는데 크론에서는 안 보인다" +
           (R.r2BoundCron.envModels === false ? " (크론의 env.MODELS 자체가 없음)" : " (크론의 env.MODELS 는 있는데 _bigR2() 가 빔)") +
@@ -42690,9 +42835,45 @@ async function mlMarketHarvestNightly(DB, opts) {
          이제는 오래된 쪽부터 빠져 풀이 최근으로 기운다. 라벨 지평이 10일이고 상한이
          120만이라 남는 창은 여전히 수백 일이므로 학습에 필요한 다양성은 유지된다 —
          다만 ★이건 정책 변화다★. 원치 않으면 HARVEST.maxTotal 을 올려 폐기 자체를 미룰 것. */
-      if (over > 0) await DB.prepare(
-        "DELETE FROM ml_samples WHERE id IN (SELECT id FROM ml_samples WHERE featver=? AND strategy='hv' ORDER BY ts ASC LIMIT ?)"
-      ).bind(LUXML.featVer, over).run();
+      /* ══ [V33.360] ★지우기 전에 R2 로 옮긴다 — 표본을 영구히 버리지 않는다★ ══════
+         종전엔 상한을 넘으면 그냥 DELETE 였다. 한 번 지운 표본은 ★다시 만들 수 없다★ —
+         수확은 그날의 일봉·시간외 상태로 만들어진 것이라 과거를 재현할 수 없기 때문이다.
+         지금 총표본 1,123,768 / 상한 1,200,000 이라 ★곧 닿는다.★ 닿는 순간부터
+         가장 오래된 표본이 매일 밤 소리 없이 사라진다.
+         D1 은 용량이 아니라 ★쿼리당 CPU★ 가 한계였고(I-1), 보관 자체는 R2 가 맡으면 된다 —
+         R2 는 조건검색을 못 해 '학습용 저장소' 는 못 되지만 ★보관용★ 으로는 정확히 맞다.
+         → 지울 행을 먼저 읽어 R2 에 한 덩이로 붓고, 그다음에 D1 에서 지운다.
+           R2 쓰기가 실패하면 ★지우지 않는다★ — 보관을 못 했는데 원본을 버리면 안 된다. */
+      if (over > 0) {
+        let _arch = 0, _archNote = "";
+        try {
+          const _R2a = _bigR2();
+          const _old = ((await DB.prepare(
+            "SELECT id, ts, market, symbol, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver=? AND strategy='hv' ORDER BY ts ASC LIMIT ?"
+          ).bind(LUXML.featVer, over).all()) || {}).results || [];
+          if (!_old.length) { _archNote = "지울 행 없음"; }
+          else if (!_R2a) { _archNote = "R2 미바인딩 — 보관 못 함"; }
+          else {
+            const _k = "ml/archive/v" + LUXML.featVer + "/" + new Date().toISOString().slice(0, 10) +
+                       "-" + _num(_old[0].id, 0) + ".json";
+            await _R2a.put(_k, JSON.stringify({ fv: LUXML.featVer, ts: Date.now(), n: _old.length,
+              fromTs: _num(_old[0].ts, 0), toTs: _num(_old[_old.length - 1].ts, 0), rows: _old }));
+            _arch = _old.length; _archNote = _k;
+          }
+        } catch (e) { _archNote = "보관 실패: " + String((e && e.message) || e).slice(0, 80); }
+        if (_arch > 0) {
+          const _r = await DB.prepare(
+            "DELETE FROM ml_samples WHERE id IN (SELECT id FROM ml_samples WHERE featver=? AND strategy='hv' ORDER BY ts ASC LIMIT ?)"
+          ).bind(LUXML.featVer, _arch).run();
+          try { await log(DB, "INFO", null, "[표본상한] " + over + "건 초과 → R2 로 " + _arch +
+            "건 보관 후 D1 에서 " + ((_r && _r.meta && _r.meta.changes) || 0) + "건 삭제 · " + _archNote); } catch (e) {}
+        } else {
+          /* ★보관을 못 했으면 지우지 않는다.★ 상한을 조금 넘긴 채로 두는 쪽이
+             되돌릴 수 없는 삭제보다 낫다 — 다음 밤에 다시 시도한다. */
+          try { await log(DB, "ERROR", null, "[표본상한] " + over + "건 초과인데 R2 보관에 실패해 ★삭제하지 않았다★ — " +
+            _archNote + ". 표가 상한을 넘은 채로 자란다(R2 바인딩·용량 확인 필요)"); } catch (e) {}
+        }
+      }
     } catch (e) {}
     // [V12.102] 구 featVer 표본 능동 정리 가속 — 죽은 표본(현 학습이 절대 안 읽음)이 D1을 채워 신 featVer
     //   풀 성장·인서트를 방해하던 것. 밤당 80k→300k로 상향(≈1.2M을 4밤에 완전 정리). 단, 한 번의 대량
@@ -42737,8 +42918,10 @@ async function mlMarketHarvestNightly(DB, opts) {
         const _tb = _pr[0], _fv = _pr[1];
         if (_fv == null) continue;                        // 판을 모르면 손대지 않는다
         for (let _p = 0; _p < 2; _p++) {
+          /* [V33.360] ml_samples 와 같은 이유로 `!=` → `<` (I-1 참조).
+             `!=` 는 인덱스를 못 타 표 전체를 스캔한다 — 지울 게 없어도 매일 밤 전수 스캔이다. */
           const _r2 = await DB.prepare(
-            "DELETE FROM " + _tb + " WHERE id IN (SELECT id FROM " + _tb + " WHERE featver != ? ORDER BY id LIMIT 50000)"
+            "DELETE FROM " + _tb + " WHERE id IN (SELECT id FROM " + _tb + " WHERE featver < ? ORDER BY featver, ts LIMIT 50000)"
           ).bind(_fv).run();
           if (!(_r2 && _r2.meta && _r2.meta.changes)) break;
         }
@@ -46125,7 +46308,7 @@ async function _luxSelfCheck(DB) {
         const msg = String(row.message || "");
         const pre = (msg.match(/^\[([A-Z가-힣0-9-]+)\]/) || [])[1] || "기타";
         const sig = pre + "|" + _errType(msg);
-        if (!groups[sig]) groups[sig] = { pre: pre, level: row.level, n: 0, sample: msg.slice(0, 150), diag: _diagnoseLogMessage(msg) };
+        if (!groups[sig]) groups[sig] = { pre: pre, level: row.level, n: 0, sample: _clipMid(msg, 260), diag: _diagnoseLogMessage(msg) };
         groups[sig].n++;
         if (row.level === "ERROR") groups[sig].level = "ERROR";
       }
@@ -48471,7 +48654,9 @@ async function mlLabelCandidates(DB, priceLookup, opts) {
     // 구버전 잔여(labeled!=0) 정리 — 무한증식 방지(있으면 삭제).
     try { await DB.prepare("DELETE FROM ml_candidates WHERE labeled != 0").run(); } catch (e) {}
     // [V4] featVer 승격으로 라벨링 대상에서 영영 빠지는 구버전 후보 정리
-    try { await DB.prepare("DELETE FROM ml_candidates WHERE featver != ?").bind(LUXML.featVer).run(); } catch (e) {}
+    /* [V33.360] `!=` 는 idx_cand_open(featver, labeled, ts) 을 못 탄다 — ml_samples 와 같은 함정(I-1).
+       featVer 는 되감기지 않으므로 `<` 와 같은 집합이고, 그쪽은 인덱스 범위를 탄다. */
+    try { await DB.prepare("DELETE FROM ml_candidates WHERE featver < ?").bind(LUXML.featVer).run(); } catch (e) {}
     const maxAgeMs = ((opts && opts.maxHorizon) || 20) * 86400000;
     const now = Date.now();
     const rows = await DB.prepare(
@@ -49553,6 +49738,7 @@ export default {
             await _stg("stackepoch", async function () { return await stackExpertEpochStamp(env.DB); });
             // [V33.115] 표본 풀의 평균 고유도 — 수확 직후·전 학습기 앞에서 한 번만 잰다.
             //   아래 학습기 전부가 이 값으로 유효표본수를 구해 Wilson 하한을 잰다.
+            await _stg("retirefv", async function () { return await mlRetireStaleFeatVer(env.DB); });
             await _stg("pooluniq", async function () { return await mlPoolUniqNightly(env.DB); });
             // (3) 7단 학습 파이프라인(순서 고정: L1→노이즈→앙상블→MIND→DNN→GBDT)
             await _stg("l1", async function () { return await mlTrainNightly(env.DB); });
@@ -49729,7 +49915,7 @@ export {
   //   프로덕션 코드 경로에는 영향이 없다(named export 는 Worker 가 읽지 않는다).
   stinBackfill, stinIntradayFeat, stinChartFeat, stinObserve, stinLabel, mlBuildFeatures,
   STIN, STIN_IFEAT_N, STIN_FEATVER, LUXML, _LIVE_ONLY_FEATS, _setR2ForTest, getBigState, _bigLoadStatus,
-  _boosterAdmit, latestExternalReceipt, MCAP_RANK,
+  _boosterAdmit, latestExternalReceipt, MCAP_RANK, _clipMid, mlRetireStaleFeatVer,
   // [V33.105] 확률 계수 적합기 검증용 — tools/check-prob-fitters.mjs
   shockPriorFitNightly, decisionBlendFitNightly, _shockLogitShift, _coefShrink, SHOCKCAL,
   // [V33.193] 확률적/디플레이션 샤프 검증용 — tools/check-edge-stats.mjs
