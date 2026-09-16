@@ -81,6 +81,29 @@ for (const f of files) {
   ok([...selfGood.matchAll(rx)].length === 0, "자가시험: --detach 는 안 잡는다(오탐 없음)");
 }
 
+/* ══ [V33.373] ★도구 설치가 그 도구를 쓰는 게이트보다 앞인가★ ═══════════════════
+   파이썬으로 수학을 재현하는 게이트가 여럿인데 러너에는 numpy 가 없다.
+   이 저장소는 이 함정을 ★두 번★ 밟았다 — 두 번 다 "설치를 그 검사 바로 앞에" 두는
+   식으로 고쳐서, 나중에 앞쪽에 추가된 게이트가 또 걸렸다(V33.366 의 check-ic-honest 가
+   68단계, 설치가 111단계였다). 로컬엔 numpy 가 있어 ★CI 에서만★ 나는 실패였다.
+   순서를 사람 기억에 맡기지 않는다. */
+console.log("\n  — 도구 설치 순서 —");
+{
+  const wf = readFileSync(WF + "deploy.yml", "utf8");
+  const instAt = wf.indexOf("pip install --quiet --break-system-packages numpy");
+  const firstGate = wf.search(/^\s*run:\s*node[^\n]*tools\/check-/m);
+  ok(instAt > 0, "numpy 설치 단계가 있다(없으면 파이썬 재현 게이트가 전부 못 돈다)");
+  ok(instAt > 0 && firstGate > 0 && instAt < firstGate,
+     instAt < firstGate ? "numpy 설치가 ★첫 게이트보다 앞★ 이다 — 나중에 앞쪽에 게이트가 추가돼도 안전하다"
+                        : "★numpy 설치가 게이트보다 뒤다★ — 그 앞에 놓인 파이썬 게이트는 CI 에서만 실패한다");
+  // 파이썬을 부르는 게이트가 실제로 있는지 — 없으면 이 검사가 헛도는 것이다
+  const pyGates = readdirSync("tools")
+    .filter((f) => /^check-.*\.mjs$/.test(f))
+    .filter((f) => /python3/.test(readFileSync("tools/" + f, "utf8")));
+  console.log(`     파이썬을 부르는 게이트 ${pyGates.length}종`);
+  ok(pyGates.length > 0, `파이썬 재현 게이트가 ${pyGates.length}종 있다(이 순서 검사가 헛돌지 않는다)`);
+}
+
 // ── 한 달 러너 시간 추정 — 무료 한도(2,000분) 안인가 ──────────────────────────
 console.log("\n  — 한 달 러너 시간 추정 —");
 {
