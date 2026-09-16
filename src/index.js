@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.369";
+const _BUILD_VER = "V33.370";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -10513,8 +10513,9 @@ function _mlExportConfig(arch) {
            liveCtxIdx: LUXML.featNames.reduce(function (a, n, i) {
              if (_LIVE_ONLY_FEATS.has(n)) a.push(i); return a;
            }, []),
+           /* [V33.370] 중립값을 여기서 다시 적지 않는다 — _LIVE_ONLY_NEUTRAL 한 표만 본다. */
            liveCtxVal: LUXML.featNames.reduce(function (a, n, i) {
-             if (_LIVE_ONLY_FEATS.has(n)) a.push((n === "sigWeight" || n === "confluence") ? 1 : 0);
+             if (_LIVE_ONLY_FEATS.has(n)) a.push(_LIVE_ONLY_NEUTRAL[n]);
              return a;
            }, []),
            recencyHalfLifeDays: LUXML.recencyHalfLifeDays || 45, recencyFloor: LUXML.recencyFloor || 0.35,
@@ -33674,8 +33675,8 @@ function mlBuildFeatures(args) {
        한 곳에서만 덮어쓴다. 수확·라이브·반사실이 전부 이 함수를 지나므로,
        여기만 지나면 세 출처가 원리적으로 같은 분포가 된다. */
     if (LUXML.liveCtxNeutral !== false) {
-      f.sigWeight = 1; f.confluence = 1;
-      f.stratSwing = 0; f.stratDay = 0; f.stratMom = 0; f.stratMR = 0;
+      // [V33.370] 손으로 적던 여섯 줄을 지운다 — 트레이너에게 보내는 값과 ★같은 표★ 를 쓴다.
+      for (const _lk in _LIVE_ONLY_NEUTRAL) f[_lk] = _LIVE_ONLY_NEUTRAL[_lk];
     }
     // [V32.10] 이벤트/뉴스 16종은 featNames에서 제거됨(train/serve 스큐) — 채우는 루프 삭제.
     // [V4] 시장구조 13종
@@ -41233,9 +41234,26 @@ const FEAT_ROLES = {
 //   수확 지배 풀에서 상수가 돼 스큐를 유발했고, viz에서 '라이브 전용'으로 표기만 했었다. featVer13에서
 //   그 16종을 DNN 입력에서 아예 제거해 이제 모든 피처가 백필가능(수확·라이브 동일분포)이다. 남은 것은
 //   신호 컨텍스트(sigWeight/confluence/전략 원핫)뿐 — 수확에선 중립값이라 '라이브 컨텍스트'로만 표기.
-const _LIVE_ONLY_FEATS = new Set([
-  "sigWeight", "confluence", "stratSwing", "stratDay", "stratMom", "stratMR"
-]);
+/* ══ [V33.370] ★이름과 중립값을 한 곳에서만 정한다★ ═══════════════════════════
+   종전엔 같은 목록이 ★세 벌★ 이었다:
+     ① `_LIVE_ONLY_FEATS` 집합(여기)            — 트레이너에게 보낼 인덱스를 고르는 데 쓴다
+     ② `_mlExportConfig` 의 `(n==="sigWeight"||n==="confluence") ? 1 : 0` — 중립 ★값★
+     ③ `mlBuildFeatures` 안의 손으로 적은 여섯 줄 — 서빙에서 실제로 덮어쓰는 값
+   ①②③ 이 조금이라도 갈리면 ★학습이 본 값과 서빙이 내는 값이 달라진다.★
+   그게 정확히 V33.341 이 고쳤던 스큐이고, 다시 생기면 조용히 생긴다.
+
+   ★그 스큐가 얼마나 비싼지 실측했다★(트레이너와 같은 조건의 모의 학습:
+     AdamW lr 0.0025 · wd 1.5e-3 · 입력잡음 0.08):
+       중립화된 칸의 1층 가중치는 ★죽지 않는다★ — 정보칸과 같은 크기로 남는다
+       (잡음 0 이면 0.17 로 감쇠하지만, 입력잡음이 0.08 이면 0.31 로 정보칸과 동급).
+       그 상태에서 서빙이 그 칸에 1.0 을 넣으면 로짓이 평균 0.14 움직인다
+       → 확률로 약 ★3.6%p★. 부스터들이 1~2%p 를 두고 다투는 자리에서 이 크기는 크다.
+   그래서 세 벌을 한 벌로 접는다. 값을 바꾸지 않는다 — 오늘의 동작은 그대로다. */
+const _LIVE_ONLY_NEUTRAL = {
+  sigWeight: 1, confluence: 1,
+  stratSwing: 0, stratDay: 0, stratMom: 0, stratMR: 0
+};
+const _LIVE_ONLY_FEATS = new Set(Object.keys(_LIVE_ONLY_NEUTRAL));
 
 // ── [V9 시각화] 신경망 구조·가중치 강도를 프론트 시각화용으로 요약 반환 ──
 //   층 구조, 뉴런별 incoming-weight L2 norm(시드 평균, 0~1 정규화)=노드 강도, 위원회 신뢰가중.
@@ -50310,7 +50328,8 @@ export {
   // [V33.103] 단타 표본 파이프라인 로컬 검증용 — tools/check-scalp-pipeline.mjs 가 쓴다.
   //   프로덕션 코드 경로에는 영향이 없다(named export 는 Worker 가 읽지 않는다).
   stinBackfill, stinIntradayFeat, stinChartFeat, stinObserve, stinLabel, mlBuildFeatures,
-  STIN, STIN_IFEAT_N, STIN_FEATVER, LUXML, _LIVE_ONLY_FEATS, _setR2ForTest, getBigState, _bigLoadStatus,
+  STIN, STIN_IFEAT_N, STIN_FEATVER, LUXML, _LIVE_ONLY_FEATS, _LIVE_ONLY_NEUTRAL, _mlExportConfig,
+  _setR2ForTest, getBigState, _bigLoadStatus,
   _boosterAdmit, latestExternalReceipt, MCAP_RANK, _clipMid, mlRetireStaleFeatVer,
   _socialBackoffMs, _socialBackoffLeftMs, mlDriftCheck,
   // [V33.105] 확률 계수 적합기 검증용 — tools/check-prob-fitters.mjs

@@ -95,9 +95,15 @@ const bad = (m) => { fails++; console.error("  FAIL " + m); };
      (MLP 56.7% → 57.1%). 고치는 이유는 학습·검증·서빙이 같은 분포 위에 서야 하기 때문이다. */
   if (M.LUXML.liveCtxNeutral === true) ok("신호 컨텍스트 중립화가 켜져 있다");
   else bad("★중립화가 꺼져 있다★ — 수확 80% 에서 상수인 칸이 라이브에서만 값을 갖는다");
-  if (/f\.sigWeight = 1; f\.confluence = 1;/.test(S))
-    ok("피처 생성기 한 곳에서 덮어쓴다 — 수확·라이브·반사실이 전부 이 함수를 지난다");
-  else bad("★중립화가 피처 생성기에 없다★");
+  /* [V33.370] 앵커를 ★글자★ 에서 ★뜻★ 으로 옮긴다.
+     종전엔 `f.sigWeight = 1; f.confluence = 1;` 이라는 한 줄을 글자 그대로 찾았다.
+     V33.370 이 그 여섯 줄을 단일 출처 표(_LIVE_ONLY_NEUTRAL) 루프로 접자 멀쩡한 코드가
+     실패했다 — 이 저장소가 이미 여러 번 겪은 모양이다(V33.260 · check-market-fixed-effect).
+     여기서 볼 것은 "그 줄이 있는가" 가 아니라 "생성기가 한 곳에서 중립화하는가" 다.
+     값까지 맞는지는 check-live-only-feats 가 ★실제로 실행해★ 본다(거기가 본진이다). */
+  if (/if \(LUXML\.liveCtxNeutral !== false\) \{[\s\S]{0,240}?_LIVE_ONLY_NEUTRAL/.test(S))
+    ok("피처 생성기 한 곳에서 단일 출처 표로 덮어쓴다 — 수확·라이브·반사실이 전부 이 함수를 지난다");
+  else bad("★중립화가 피처 생성기에 없다(또는 단일 출처 표를 안 쓴다)★");
   if (/liveCtxIdx: LUXML\.featNames\.reduce/.test(S))
     ok("중립화할 칸 위치를 ★세어서★ 내려보낸다 — featNames 가 바뀌어도 안 어긋난다");
   else bad("★칸 위치를 손으로 적었거나 안 내려보낸다★");

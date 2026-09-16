@@ -14,7 +14,7 @@
 //   표본이 어차피 재각인되는 그 시점이 6칸을 뺄 수 있는 유일한 시점이기 때문이다.
 //   덫에 걸리면 우회하지 말고 ★6칸을 빼고 B4_FEATVER 를 지우는 것★ 이 정답이다.
 
-import { LUXML, _LIVE_ONLY_FEATS, mlBuildFeatures } from "../src/index.js";
+import { LUXML, _LIVE_ONLY_FEATS, _LIVE_ONLY_NEUTRAL, _mlExportConfig, mlBuildFeatures } from "../src/index.js";
 
 let fails = 0;
 const ok = (m) => console.log("  ok   " + m);
@@ -70,6 +70,62 @@ const live = [..._LIVE_ONLY_FEATS];
             live.filter((n) => stillDead.indexOf(n) < 0).join(", ") + " — 수확/라이브 분포가 갈린다");
     } else {
       ok("중립화가 꺼져 있다 — 6칸이 살아 있으므로 B-4 는 해당 없음");
+    }
+
+    /* ══ [V33.370] ★'불변' 만으로는 모자란다 — ★같은 값★ 이어야 한다.★ ═══════════
+       이 게이트의 종전 판은 6칸이 인자에 안 반응하는지만 봤다. 그래서 서빙 상수를
+       1 에서 0 으로 바꿔도 통과했다 — 트레이너는 여전히 1 로 눌러 학습하는데.
+       그 어긋남의 크기를 실측했다(트레이너와 같은 조건의 모의 학습):
+         중립화된 칸의 1층 가중치는 ★죽지 않는다★(입력잡음 0.08 이 살려 둔다 —
+         잡음 0 이면 0.17 로 감쇠, 0.08 이면 0.31 로 정보칸과 동급).
+         그 칸에 서빙이 1.0 을 넣으면 로짓이 평균 0.14 → 확률로 약 ★3.6%p★.
+       부스터들이 1~2%p 를 두고 다투는 자리라 이 크기는 무시할 수 없다. */
+    if (rows.length === 4 && LUXML.liveCtxNeutral !== false) {
+      const val = (row, n) => (Array.isArray(row) ? row[names.indexOf(n)] : row[n]);
+      const wrong = live.filter((n) => val(rows[0], n) !== _LIVE_ONLY_NEUTRAL[n]);
+      if (wrong.length === 0)
+        ok(`서빙이 쓰는 상수가 ★중립값 표와 정확히 같다★ (${live.map((n) => n + "=" + _LIVE_ONLY_NEUTRAL[n]).join(", ")})`);
+      else
+        bad("서빙 상수가 중립값 표와 다르다: " +
+            wrong.map((n) => `${n} 서빙 ${val(rows[0], n)} vs 표 ${_LIVE_ONLY_NEUTRAL[n]}`).join(", ") +
+            " — 학습이 본 값과 서빙이 내는 값이 갈린다(로짓 약 0.14/칸)");
+
+      /* 트레이너에게 ★실제로 내려보내는★ 값과도 맞는지 — 세 번째 사본이 다시 생기는 것을 막는다. */
+      const cfg = _mlExportConfig(null);
+      const idx = cfg.liveCtxIdx || [], vals = cfg.liveCtxVal || [];
+      const mismatch = idx.map((c, k) => ({ name: names[c], sent: vals[k], want: _LIVE_ONLY_NEUTRAL[names[c]] }))
+                          .filter((o) => o.sent !== o.want);
+      if (idx.length === live.length && mismatch.length === 0)
+        ok(`트레이너에게 내려보내는 중립값도 같은 표다 (${idx.length}칸)`);
+      else
+        bad(`익스포트 설정이 표와 다르다 — 칸수 ${idx.length}/${live.length} · ` +
+            mismatch.map((o) => `${o.name} 전송 ${o.sent} vs 표 ${o.want}`).join(", "));
+
+      /* ══ ★중립 상수를 바꾸는 것은 featVer 상향이 필요한 변경이다★ ═══════════════
+         표를 바꾸면 학습·서빙이 ★같이★ 바뀌므로 그 순간의 어긋남은 없다.
+         그런데 ★이미 승격돼 투표 중인 모델★ 은 옛 상수 위에서 학습됐다.
+         그 모델을 새 상수로 서빙하면 정확히 위에서 잰 스큐가 난다(로짓 약 0.14/칸).
+         그래서 값을 고정해 두고, 바꾸려면 featVer 를 올려 재학습하게 만든다. */
+      const PIN = { sigWeight: 1, confluence: 1, stratSwing: 0, stratDay: 0, stratMom: 0, stratMR: 0 };
+      const PIN_FV = 17;                     // 이 상수들이 각인된 판
+      if (LUXML.featVer <= PIN_FV) {
+        const moved = Object.keys(PIN).filter((n) => _LIVE_ONLY_NEUTRAL[n] !== PIN[n]);
+        const gone = Object.keys(PIN).filter((n) => !(n in _LIVE_ONLY_NEUTRAL));
+        if (moved.length === 0 && gone.length === 0)
+          ok(`중립 상수가 featVer ${PIN_FV} 각인값 그대로다 — 이미 승격된 모델이 배운 값과 같다`);
+        else
+          bad("★중립 상수가 바뀌었는데 featVer 가 그대로다★ — 이미 투표 중인 모델은 옛 상수로 학습됐다: " +
+              moved.map((n) => `${n} ${PIN[n]}→${_LIVE_ONLY_NEUTRAL[n]}`).concat(gone.map((n) => n + " 사라짐")).join(", ") +
+              ` · 바꾸려면 LUXML.featVer 를 ${PIN_FV} 위로 올려 재학습할 것`);
+      } else {
+        ok(`featVer ${LUXML.featVer} > ${PIN_FV} — 재각인된 판이라 중립 상수 변경이 허용된다(핀 갱신 필요)`);
+      }
+
+      // 표와 집합이 같은 것에서 나오는가(한 벌인지)
+      if (JSON.stringify([...live].sort()) === JSON.stringify(Object.keys(_LIVE_ONLY_NEUTRAL).sort()))
+        ok("집합과 중립값 표가 ★같은 한 벌★ 이다(이름이 두 곳에 따로 적혀 있지 않다)");
+      else
+        bad("집합과 중립값 표의 이름이 다르다 — 목록이 다시 두 벌이 됐다");
     }
   }
 }
