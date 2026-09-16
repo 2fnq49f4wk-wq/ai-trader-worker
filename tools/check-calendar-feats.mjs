@@ -73,6 +73,27 @@ console.log("\n② FOMC — 표는 표일 뿐, 밖은 모른다고 말해야 한
 
   chk(M._fomcCtx(D("2019-01-02")) === null, "표 밖(2019)은 null — 가장 가까운 날짜로 때우지 않는다",
     "★표 밖인데 값을 지어낸다★ — 2019년 표본에 2021년 회의가 붙는다");
+  /* [V33.374] ★표 ★이후★ 방향도 본다.★ 종전엔 '이전' 만 봤다(2019).
+     그 사이 400일 유예 구간에서 next 가 null 인데 호출부가 상한상수(45)로 채우고
+     fomcKnown 은 1 이었다 — 모르는 값을 안다고 말했다. 실측 2028-06: to=45 since=45 known=1.
+     "가장 가까운 날짜로 때우면 값이 아니라 거짓이다" 는 이 파일의 규칙 그대로다. */
+  {
+    const lastD = M.FOMC_DAYS[M.FOMC_DAYS.length - 1];
+    const after = (days) => D(lastD) + days * 86400000;
+    chk(M._fomcCtx(after(12)) === null,
+      "표 마지막 회의 이후는 null — '다음 회의' 를 지어내지 않는다",
+      "★표가 끝났는데 다음 회의를 안다고 한다★ — fomcTo 가 상한상수로 채워진다");
+    chk(M._fomcCtx(after(200)) === null, "한참 뒤도 null", "★유예 구간에서 값을 지어낸다★");
+    const f = M._calFeats(after(12));
+    chk(f.fomcKnown === 0 && f.fomcTo === 0 && f.fomcSince === 0,
+      "표 이후 피처 셋은 전부 0 + known=0 (모델이 무시한다)",
+      "표 이후인데 값이 실린다: " + JSON.stringify(f));
+    // ★표 안은 종전 그대로여야 한다 — 이 고침이 오늘 동작을 바꾸면 안 된다★
+    const inside = M._calFeats(D("2026-06-15"));
+    chk(inside.fomcKnown === 1 && inside.fomcTo === 2,
+      "표 안(2026-06-15)은 종전 그대로 known=1 · to=2 — 오늘 동작은 안 바뀐다",
+      "표 안 동작이 바뀌었다: " + JSON.stringify(inside));
+  }
   const c = M._fomcCtx(D("2026-06-17"));
   chk(c && c.since === 0, "발표 당일: 경과 0일", "발표 당일 경과일이 " + (c && c.since));
   const c2 = M._fomcCtx(D("2026-06-16"));

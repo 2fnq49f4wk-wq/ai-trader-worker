@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.373";
+const _BUILD_VER = "V33.374";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -13381,8 +13381,22 @@ function _fomcCtx(ms) {
   if (t < T[0] || t > T[T.length - 1] + 400 * 86400000) return null;   // ★표 밖이면 모른다★
   let prev = null, next = null;
   for (const x of T) { if (x <= t) prev = x; else { next = x; break; } }
+  /* ══ [V33.374] ★마지막 회의를 지나면 '다음 회의' 를 지어내고 있었다★ ═══════════
+     위 400일 유예는 표가 끝난 뒤에도 잠시 답을 주려는 것이었는데, 그 구간에서
+     next 가 null 이 되고 호출부(_calFeats)가 그 자리를 ★상한상수(clampDays 45)★ 로
+     채웠다. 그러면서 fomcKnown 은 1 이었다 — 즉 ★모르는 값을 안다고 말했다.★
+     실측(표 마지막 2027-12-08 기준):
+       2027-06  fomcTo=42 fomcSince=7  known=1   ← 표 안, 정상
+       2028-06  fomcTo=45 fomcSince=45 known=1   ← ★둘 다 상한. 지어낸 값이다★
+     이 파일의 주석이 바로 그것을 금지한다: "가장 가까운 날짜로 때우면 … 값이 아니라
+     거짓이다", "표 밖의 날짜는 ★모른다고 말한다★(fomcKnown=0)".
+     → 다음 회의를 모르면 그 구간은 통째로 모른다고 답한다. 모델은 known 을 보고
+       이 피처 셋을 무시한다(설계가 그렇게 돼 있다).
+     ※ 오늘(표가 2027-12 까지 있다)의 동작은 한 톨도 바뀌지 않는다 — 표 안이기 때문이다.
+       만료 자체는 check-calendar-feats 의 "표가 120일 뒤 끝난다" 가 미리 막는다. */
+  if (next == null) return null;
   return { since: prev == null ? null : Math.round((t - prev) / 86400000),
-           to: next == null ? null : Math.round((next - t) / 86400000) };
+           to: Math.round((next - t) / 86400000) };
 }
 /* 피처 6종. ★obsTs 가 없으면 값을 지어내지 않는다★ — 전부 0 + fomcKnown=0 으로 두고
    모델이 known 을 보고 그 구간을 무시하게 한다. 0 을 진짜 값처럼 섞으면

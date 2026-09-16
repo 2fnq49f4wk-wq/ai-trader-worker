@@ -386,6 +386,10 @@ jobs:
       #   (V33.341 liveSrcWeight · V33.260 dropout/l2 · F-2 mcap_shares). 래칫으로 막는다.
       - name: Dead config knob check
         run: node tools/check-dead-knobs.mjs
+      # [V33.374] 선언 없이 조용히 죽은 피처를 잡는다 — F-2(mcap_shares)가 그 유형이었다.
+      #   운영과 같은 모양의 인자(맥락·obsTs 포함)로 전 피처를 흔들어 상수·NaN 을 본다.
+      - name: Feature liveness check
+        run: node tools/check-feat-alive.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,
