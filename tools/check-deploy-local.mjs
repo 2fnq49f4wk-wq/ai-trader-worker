@@ -9,7 +9,10 @@
  *   V33.110 이후 R2 가 없으면 장중 표본 수집이 ★멈춘다★ — 조용히 우회하지 않는다.
  *   여기서 두 경로가 같은 일을 하는지 본다.
  */
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, readdirSync, writeFileSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 const SH = readFileSync("tools/deploy-local.sh", "utf8");
 const WF = readFileSync(".github/workflows/deploy.yml", "utf8");
 const TOML = readFileSync("wrangler.toml", "utf8");
@@ -49,17 +52,63 @@ ok(/git checkout -- wrangler\.toml/.test(SH) && /trap restore EXIT/.test(SH),
    "★배포 뒤(실패해도) wrangler.toml 을 원복한다★ — 풀린 상태가 커밋되면 안 된다");
 
 // ── ② 게이트 목록을 ★워크플로에서 읽는가★(손으로 적으면 언젠가 적게 돈다) ──────
-ok(/\.github\/workflows\/deploy\.yml/.test(SH) && /grep -oE 'node tools\/check-/.test(SH),
-   "★게이트 목록을 deploy.yml 에서 읽는다★ — 손으로 적으면 CI 보다 적게 돌게 된다");
-ok(/\$\{#GATES\[@\]\}" -gt 0 \]/.test(SH) || /-gt 0 \]/.test(SH),
-   "목록을 못 읽으면 배포하지 않는다(0종 통과를 '성공' 으로 읽지 않는다)");
+/* [V33.372] 게이트 실행이 verify-gates.sh 한 벌로 접혔다 — 계약도 그쪽을 본다.
+   (두 벌로 두면 한쪽만 고쳐져 적게 도는 날이 온다. 실제로 그랬다.) */
+const VG = readFileSync("tools/verify-gates.sh", "utf8");
+ok(/bash tools\/verify-gates\.sh/.test(SH), "배포 스크립트가 ★공용 게이트 러너★ 를 부른다(자기 목록을 따로 안 만든다)");
 ok(/게이트 실패 — 배포하지 않는다/.test(SH), "게이트가 하나라도 실패하면 배포하지 않는다");
-
-// 실제로 그 정규식이 지금 워크플로에서 게이트를 뽑아내는가 — 헛돌지 않는지 직접 센다
+ok(/\.github\/workflows\/deploy\.yml/.test(VG) && /run:/.test(VG),
+   "★게이트 목록을 deploy.yml 의 실행줄에서 읽는다★ — 손으로 적으면 CI 보다 적게 돌게 된다");
+ok(/VERIFY_GATES_LIST_ONLY/.test(VG), "러너에 ★목록 확인 모드★ 가 있다(검사가 자기 자신을 다시 부르지 않는다)");
 {
-  const found = new Set((WF.match(/node tools\/check-[A-Za-z0-9._-]+\.mjs/g) || []));
-  console.log(`\n     워크플로에서 뽑히는 게이트: ${found.size}종`);
-  ok(found.size >= 100, `수동 경로가 CI 와 같은 ${found.size}종을 돌린다`);
+  /* ★안전망을 실제로 발동시켜 본다.★ 평소엔 안 걸리는 분기라, 지워도 티가 안 난다 —
+     돌연변이 시험에서 실제로 안 잡혔다. 게이트 한 종을 뺀 워크플로 사본을 물려
+     러너가 ★멈추는지★ 를 직접 확인한다. */
+  const tmp = join(tmpdir(), "vg-wf-" + process.pid + ".yml");
+  const cut = WF.replace(/ {6}- name: Dead config knob check\n {8}run: node tools\/check-dead-knobs\.mjs\n/, "");
+  let tripped = false;
+  try {
+    writeFileSync(tmp, cut);
+    execFileSync("bash", ["tools/verify-gates.sh"],
+      { encoding: "utf8", env: Object.assign({}, process.env, { VERIFY_GATES_LIST_ONLY: "1", VERIFY_GATES_WF: tmp }) });
+  } catch (e) { tripped = /실행 목록에서 빠졌다/.test(String(e.stdout || "")); }
+  finally { try { unlinkSync(tmp); } catch (e) {} }
+  ok(cut !== WF && tripped,
+     "★게이트 한 종을 빼면 러너가 멈춘다★ — 초록불이 거짓이 되는 것을 막는 분기가 실제로 작동한다");
+}
+ok(/tools\/check-\*\.mjs/.test(VG) && /실행 목록에서 빠졌다/.test(VG),
+   "★tools/ 의 게이트 중 실행에서 빠진 것이 있으면 멈춘다★ — `node --experimental-sqlite …` 한 종이 조용히 빠졌던 자리다");
+ok(/0종 통과를 성공으로 읽지 않는다/.test(VG), "목록을 못 읽으면 배포하지 않는다");
+{
+  // 실제로 돌려 본다 — 문자열 검사만으로는 '헛도는 러너' 를 못 가른다
+  /* ★목록 확인 모드로만 부른다.★ 전부 돌리게 하면 러너가 이 게이트를 다시 불러
+     무한재귀가 된다(실제로 한 번 그렇게 만들어 120초를 태웠다). 여기서 볼 것은
+     "러너가 파일 전부를 실행 목록에 넣었는가" 이지 게이트의 통과 여부가 아니다. */
+  let out = "", okRun = true;
+  try {
+    out = execFileSync("bash", ["tools/verify-gates.sh"],
+                       { encoding: "utf8", env: Object.assign({}, process.env, { VERIFY_GATES_LIST_ONLY: "1" }) });
+  } catch (e) { okRun = false; out = String(e.stdout || ""); }
+  const m = /게이트 (\d+)종 실행 \(tools\/ 파일 (\d+)종 전부 포함\)/.exec(out);
+  ok(okRun && !!m && m[1] === m[2],
+     m ? `공용 러너가 ★파일 ${m[2]}종을 전부★ 돌린다(실행 ${m[1]}종)` : "공용 러너가 실행 수와 파일 수를 세지 않는다");
+}
+
+/* ★워크플로에 적힌 게이트 수 == tools/ 의 게이트 파일 수★ 인가.
+   종전 이 자리는 `node tools/check-…` 만 세어 135 를 얻고 "100 이상이면 통과" 로 넘겼다.
+   실제 파일은 136 종이고, 빠진 하나는 `node --experimental-sqlite tools/check-d1-scan.mjs`
+   였다 — node 와 경로 사이의 플래그 때문에 정규식이 못 잡았다.
+   느슨한 하한(>=100)은 그 한 종이 빠진 것을 영영 못 본다. 정확히 같은지를 본다. */
+{
+  const runLines = [...WF.matchAll(/^\s*run:\s*(node[^\n]*tools\/check-[A-Za-z0-9._-]+\.mjs[^\n]*)$/gm)]
+    .map((m) => m[1].trim());
+  const inWf = new Set(runLines.map((l) => (l.match(/tools\/check-[A-Za-z0-9._-]+\.mjs/) || [""])[0]));
+  const onDisk = new Set(readdirSync("tools").filter((f) => /^check-.*\.mjs$/.test(f)).map((f) => "tools/" + f));
+  const missing = [...onDisk].filter((f) => !inWf.has(f));
+  console.log(`\n     워크플로 실행줄 ${inWf.size}종 · tools/ 파일 ${onDisk.size}종`);
+  ok(missing.length === 0 && inWf.size === onDisk.size,
+     missing.length ? `★게이트 ${missing.length}종이 워크플로에 없다★: ${missing.join(", ")}`
+                    : `워크플로가 tools/ 의 ${onDisk.size}종을 전부 돌린다(느슨한 하한이 아니라 정확히 같다)`);
 }
 ok(/wrangler@latest deploy|wrangler deploy/.test(SH), "실제로 배포한다");
 

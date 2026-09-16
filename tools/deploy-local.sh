@@ -21,15 +21,11 @@ cd "$(dirname "$0")/.."
 restore() { git checkout -- wrangler.toml 2>/dev/null || true; }
 trap restore EXIT
 
-echo "① 게이트 — CI 와 ★같은 목록★ 을 워크플로에서 읽어 돌린다(적게 돌면 그게 구멍이다)"
-mapfile -t GATES < <(grep -oE 'node tools/check-[A-Za-z0-9._-]+\.mjs' .github/workflows/deploy.yml | sort -u)
-[ "${#GATES[@]}" -gt 0 ] || { echo "★게이트 목록을 못 읽었다 — 중단★"; exit 1; }
-fail=0
-for g in "${GATES[@]}"; do
-  if ! $g >/dev/null 2>&1; then echo "   ✗ $g"; fail=1; fi
-done
-[ "$fail" = "0" ] || { echo "★게이트 실패 — 배포하지 않는다★"; exit 1; }
-echo "   ✅ ${#GATES[@]}종 통과"
+# [V33.372] 게이트 실행은 ★한 벌★ 로 접었다 — 여기와 Cloudflare Workers Builds 가
+#   같은 스크립트를 쓴다. 두 벌이면 한쪽만 고쳐져 적게 도는 날이 온다(실제로 그랬다:
+#   이름만 뽑는 정규식이 `node --experimental-sqlite …` 한 종을 조용히 빼먹었다).
+echo "① 게이트"
+bash tools/verify-gates.sh || { echo "★게이트 실패 — 배포하지 않는다★"; exit 1; }
 
 echo "② R2 바인딩 활성화 — CI(deploy.yml 'Enable R2 binding')와 ★같은 sed·같은 확인★"
 sed -i \
