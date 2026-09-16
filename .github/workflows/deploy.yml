@@ -366,6 +366,10 @@ jobs:
       #   예약 워크플로가 GPU 학습을 붙잡고 기다리면 월 6,600분을 태운다(한도 2,000분).
       - name: CI runner budget check
         run: node tools/check-ci-budget.mjs
+      # [V33.369] CI 가 죽었을 때 쓰는 수동 배포 경로가 CI 와 어긋나지 않는지.
+      #   어긋나면 게이트를 덜 돌리거나 R2 없이 배포된다(장중 표본 수집이 멈춘다).
+      - name: Manual deploy path check
+        run: node tools/check-deploy-local.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,
