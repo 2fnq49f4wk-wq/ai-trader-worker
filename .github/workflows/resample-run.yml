@@ -30,7 +30,9 @@ concurrency:
 jobs:
   sweep:
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    # [V33.368] 330분(5.5시간)은 무료 한도 2,000분의 ★16%를 한 번에★ 태운다.
+    #   실제로 러너 시간 고갈이 2026-09-15 에 배포를 3판 연속 막았다. 120분으로 낮춘다.
+    timeout-minutes: 120
     name: 소급생성 반복 실행
     steps:
       - uses: actions/checkout@v4

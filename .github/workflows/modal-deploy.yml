@@ -44,6 +44,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # [V33.368] 수동 학습(run_now)은 사람이 로그를 보려고 부르는 것이라 스트리밍을 남긴다. 다만 상한은 건다.
+    timeout-minutes: 75
     name: modal deploy
     steps:
       - uses: actions/checkout@v4

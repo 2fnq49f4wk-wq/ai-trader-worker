@@ -28,6 +28,8 @@ concurrency:
 jobs:
   logs:
     runs-on: ubuntu-latest
+    # [V33.368] 로그 조회는 몇 초면 끝난다.
+    timeout-minutes: 10
     name: 워커 로그 읽기
     steps:
       - uses: actions/checkout@v4

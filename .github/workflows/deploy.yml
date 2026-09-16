@@ -19,6 +19,8 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     name: Deploy
+    # [V33.368] 러너 시간 상한 — 게이트 133종 실측 약 2분. 멎으면 여기서 끊는다.
+    timeout-minutes: 25
     steps:
       # [V33.310] 깊이 2 — check-stale-base 가 "버전이 뒤로 갔는가" 를 보려면 직전 커밋이
       #   필요하다. 기본값(깊이 1)이면 그 판정이 조용히 건너뛰어진다.
@@ -359,6 +361,11 @@ jobs:
       #   그러면서도 실패·무응답에 걸려 영영 안 열리는 일은 없는지 — 실제로 돌려 본다.
       - name: Boot first-paint check
         run: node tools/check-boot-paint.mjs
+      # [V33.368] ★게이트 133종을 전부 통과하고도 배포가 3판 연속 막혔다★ —
+      #   게이트가 코드만 보고 그 코드가 배포되는 길(러너 시간 예산)은 안 봤기 때문이다.
+      #   예약 워크플로가 GPU 학습을 붙잡고 기다리면 월 6,600분을 태운다(한도 2,000분).
+      - name: CI runner budget check
+        run: node tools/check-ci-budget.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

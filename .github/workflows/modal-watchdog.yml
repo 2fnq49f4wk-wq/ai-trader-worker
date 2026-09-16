@@ -38,6 +38,8 @@ jobs:
   watchdog:
     runs-on: ubuntu-latest
     name: 외부학습 신선도 감시
+    # [V33.368] 상한을 둔다 — 어떤 단계가 멎어도 러너 시간을 몰래 태우지 못한다.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -173,7 +175,17 @@ jobs:
           echo "최신 외부모델 ${{ steps.fresh.outputs.age }}h — 학습을 실행한다"
           # 배포를 먼저 해서 Modal 쪽 cron 도 함께 되살린다(스케줄이 멈춰 있었다면 이걸로 복구된다).
           modal deploy trainer/modal/modal_train.py
-          modal run trainer/modal/modal_train.py
+          # ══ [V33.368] ★--detach — 러너가 학습이 끝날 때까지 기다리지 않는다★ ══════════
+          #   종전 `modal run` 은 ★Modal GPU 학습이 끝날 때까지 블로킹★ 이다. 그동안 깃허브
+          #   러너는 아무 일도 안 하면서 과금된다. 실측: 이 워크플로 한 회 55분(12:03→12:58).
+          #   6시간마다 4회 = 하루 220분 = 월 6,600분. ★무료 한도 2,000분을 3배 넘긴다.★
+          #   실제로 2026-09-15 12:58 부터 ★모든 워크플로가 3~5초 만에 실패★ 하기 시작했고
+          #   (배포·Modal·예약 가리지 않고, 커밋과 무관한 예약 실행까지) 그 탓에
+          #   V33.365~367 이 ★커밋만 되고 배포되지 않았다★ — I-2 고침조차 운영에 안 올라갔다.
+          #   → --detach 는 요청만 걸고 즉시 빠진다. 학습은 Modal 쪽에서 그대로 끝까지 돈다.
+          #     한 회 55분 → 약 1~2분. 이 워크플로는 ★학습을 시작시키는 것★ 이 일이지
+          #     학습을 지켜보는 것이 일이 아니다(아래 요약이 이미 그렇게 적고 있었다).
+          modal run --detach trainer/modal/modal_train.py
 
       - name: 결과 요약
         if: always()
@@ -181,7 +193,8 @@ jobs:
           if [ "${{ steps.fresh.outputs.stale }}" = "true" ] || [ "${{ inputs.force }}" = "true" ]; then
             echo "### 🔧 외부학습 실행함 (최신모델 ${{ steps.fresh.outputs.age }}h)" >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "★이 워크플로의 성공이 학습 성공을 뜻하지는 않는다★ — 위 '학습 실행' 단계 로그와" >> "$GITHUB_STEP_SUMMARY"
+            echo "★이 워크플로는 학습을 ★시작★ 시킬 뿐이다(--detach)★ — 성공이 학습 성공을 뜻하지 않는다." >> "$GITHUB_STEP_SUMMARY"
+            echo "학습 진행·결과는 Modal 대시보드와" >> "$GITHUB_STEP_SUMMARY"
             echo "대시보드의 외부모델 나이를 함께 확인할 것. 다음 실행에서도 나이가 안 줄면 트레이너 자체 문제다." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "### ✅ 외부모델 신선함 (${{ steps.fresh.outputs.age }}h ≤ 14h) — 학습 생략" >> "$GITHUB_STEP_SUMMARY"
