@@ -1,15 +1,91 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" class="lux-booting">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<!-- ══ [V33.367] ★접속 직후 흰 화면을 없앤다★ ═══════════════════════════════════
+     증상: 인트로(별 로고)가 뜨기 ★전에★ 흰 화면이 먼저 보인다.
+     원인: 브라우저는 <head> 의 ★렌더링 차단 자원★ 을 다 받기 전에는 아무것도 못 칠한다.
+       그런데 배경색을 정하는 첫 <style> 이 59줄이고, 그 앞에 차단 자원이 둘 있었다 —
+         12줄  <script src="/neural-observatory.js">   (동기 스크립트: 파싱을 멈춘다)
+         58줄  <link ... fonts.googleapis.com>          (외부 오리진 스타일시트: DNS+TLS+수신)
+       그동안 브라우저는 ★기본 흰색★ 을 칠한다. 카카오톡 인앱처럼 느린 곳에서 특히 길다.
+     고침 셋:
+       ⑴ 이 임계 CSS 를 ★가장 앞★ 에 둔다 — 첫 페인트가 인트로 색이 된다.
+       ⑵ 폰트 스타일시트를 비차단으로 바꾼다(media=print → onload 로 되돌림).
+       ⑶ neural-observatory.js 에 defer — 이 파일의 NeuralObservatory 는 boot() 이후에만 쓴다.
+     ※ .lux-booting 은 인트로가 사라질 때 벗긴다. 그래서 라이트 테마의 오버스크롤 영역이
+       어두워지는 부작용이 없다(인트로 동안에만 적용된다). -->
+<style>html.lux-booting{background:#090c12}html.lux-booting body{background:#090c12}</style>
+<script>
+/* ══ [V33.367] ★부팅 준비 추적기 — 인트로가 도는 동안 전부 올린다★ ═══════════════
+   종전: 인트로를 ★고정 4.2초★ 뒤에 무조건 걷었다. 준비가 끝났는지는 보지 않았다.
+     그래서 인트로가 사라진 뒤에 "로딩 중…" 이 여기저기 남아 있었다 —
+     사용자가 "접속 애니메이션 이후에 내부 시스템이 로딩되는 것 같다" 고 한 게 이것이다.
+   지금: 각 시스템이 스스로 등록(need)하고 끝나면 알린다(done).
+     인트로는 ★애니메이션 최소시간★ 과 ★준비 완료★ 를 ★둘 다★ 만족해야 걷힌다.
+   ★반드시 지킬 것 — 걸려서 안 열리는 일은 없어야 한다.★
+     · 실패해도 done 을 부른다(성공이 아니라 ★끝남★ 을 세는 것이다).
+     · 그래도 안 오면 상한(CAP)에서 연다. 준비를 기다리다 못 여는 것이 더 나쁘다.
+   이 블록은 ★가장 앞★ 에 둔다 — 뒤에 오는 어떤 스크립트도 LUXBOOT 를 부를 수 있어야 한다. */
+window.LUXBOOT = (function () {
+  var MIN_MS = 4200;    // 인트로 애니메이션을 끝까지 보여준다(종전과 같은 길이)
+  var CAP_MS = 12000;   // 준비가 안 끝나도 이 시각에는 연다
+  var t0 = Date.now();
+  var pend = {}, total = 0, fin = 0, cbs = [], opened = false;
+  function paint() {
+    try {
+      var el = document.getElementById('luxBootProgress');
+      if (el) el.textContent = fin >= total ? '준비 완료' : ('시스템 준비 ' + fin + '/' + total);
+    } catch (e) {}
+  }
+  function check() {
+    if (opened) return;
+    if (total > 0 && fin < total) return;
+    if (Date.now() - t0 < MIN_MS) { setTimeout(check, Math.max(16, MIN_MS - (Date.now() - t0))); return; }
+    open('ready');
+  }
+  function open(why) {
+    if (opened) return;
+    opened = true;
+    var list = cbs; cbs = [];
+    for (var i = 0; i < list.length; i++) { try { list[i](why); } catch (e) {} }
+  }
+  setTimeout(function () { open('cap'); }, CAP_MS);
+  return {
+    need: function (name) { if (pend[name]) return; pend[name] = 1; total++; paint(); },
+    done: function (name) {
+      if (!pend[name] || pend[name] === 2) { return; }
+      pend[name] = 2; fin++; paint(); check();
+    },
+    whenReady: function (cb) { if (opened) { try { cb('ready'); } catch (e) {} } else cbs.push(cb); },
+    state: function () { return { total: total, done: fin, opened: opened, elapsed: Date.now() - t0 }; },
+    /* 약속 하나를 그대로 감싼다 — ★성공·실패 모두 done★ (실패가 부팅을 붙잡으면 안 된다) */
+    track: function (name, p) {
+      this.need(name);
+      var self = this, fire = function () { self.done(name); };
+      try { (p && p.then ? p : Promise.resolve()).then(fire, fire); } catch (e) { fire(); }
+      return p;
+    }
+  };
+})();
+/* 자원(이미지·스크립트·스타일)이 다 붙었는가 — 인트로 뒤에 레이아웃이 튀지 않게 한다. */
+LUXBOOT.need('자원');
+window.addEventListener('load', function () { LUXBOOT.done('자원'); });
+/* 글꼴 — 인트로가 걷힌 뒤 글자가 바뀌어 보이지 않게 한다(비차단 로딩의 대가를 여기서 치른다). */
+if (document.fonts && document.fonts.ready) {
+  LUXBOOT.need('글꼴');
+  document.fonts.ready.then(function () { LUXBOOT.done('글꼴'); },
+                            function () { LUXBOOT.done('글꼴'); });
+}
+</script>
 <!-- [V33.145] ★이 파일이 몇 번 판인지 스스로 안다.★
      증상: 배포가 성공했는데도 화면이 그대로다. 원인 후보 1순위는 ★브라우저가 옛 HTML 을 쓰는 것★
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.366">
-<script src="/neural-observatory.js?v=33.366"></script>
+<meta name="lux-build" content="V33.367">
+<script src="/neural-observatory.js?v=33.367" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -55,7 +131,11 @@ document.addEventListener('DOMContentLoaded',function(){
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Pinyon+Script&family=UnifrakturCook:wght@700&display=swap" rel="stylesheet">
+<!-- [V33.367] 렌더링을 막지 않게 받는다 — media="print" 로 받아 onload 에서 적용한다.
+     URL 에 display=swap 이 이미 있어 폰트가 늦어도 글자는 대체 글꼴로 먼저 보인다.
+     (JS 가 꺼진 환경을 위해 <noscript> 에 종전 방식을 남긴다) -->
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Pinyon+Script&family=UnifrakturCook:wght@700&display=swap" rel="stylesheet" media="print" onload="this.media='all';this.onload=null;">
+<noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Pinyon+Script&family=UnifrakturCook:wght@700&display=swap" rel="stylesheet"></noscript>
 <style>
 /* LUX-ENGINE · 완전 새 UI */
 :root{
@@ -94,7 +174,12 @@ body{
 }
 @keyframes skyGlow{0%{opacity:0;}40%{opacity:1;}100%{opacity:0.5;}}
 @media (prefers-reduced-motion:reduce){
-  .intro-star-logo,.intro-title,.intro-subtitle{
+  .intro-star-logo,.intro-title,.intro-boot{
+  margin-top:14px;font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+  color:rgba(255,255,255,.34);font-family:'IBM Plex Mono',ui-monospace,monospace;
+  opacity:0;animation:introLogoFade 1.2s ease forwards 1.4s;
+}
+.intro-subtitle{
     animation-duration:.01ms!important;animation-delay:0s!important;
     opacity:1;transform:none;filter:none;
   }
@@ -3495,6 +3580,8 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     <div class="intro-text-box">
       <div class="intro-title">LUX-ENGINE</div>
       <div class="intro-subtitle">Powered by <span class="blackletter">Blauenacht</span></div>
+      <!-- [V33.367] 인트로가 도는 동안 무엇이 준비되는지 보인다 — 멈춘 것과 구분된다. -->
+      <div class="intro-boot" id="luxBootProgress">시스템 준비 중</div>
     </div>
   </div>
 </div>
@@ -11383,23 +11470,39 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       window.__bootPainted = 1;
       try { var _bc = localStorage.getItem('bootBundle'); if (_bc) { var _bb = JSON.parse(_bc); if (_bb && _bb.state) _apply([_bb.state, _bb.trades || [], []]); } } catch(e){}
     }
-    Promise.all([api('/api/state'), api('/api/trades?limit=50'),
+    var _p0 = Promise.all([api('/api/state'), api('/api/trades?limit=50'),
                  _needAll ? api('/api/trades?limit=3000') : Promise.resolve(window.__allTradesCache || [])])
       .then(function(r){
         _apply(r);
         // 마지막 성공 스냅샷 저장(전체 거래내역 제외 — 용량 절약)
         try { localStorage.setItem('bootBundle', JSON.stringify({ state: r[0], trades: r[1] })); } catch(e){}
       })['catch'](function(e){ toast('로드 실패: '+e.message); });
+    /* [V33.367] ★첫 회차만★ 부팅 준비로 센다 — 이후 10초 폴링은 인트로와 무관하다.
+       실패해도 track 이 done 을 부른다(성공이 아니라 '끝남' 을 센다). */
+    if (window.LUXBOOT && !window.__luxBootTracked) { window.__luxBootTracked = 1; LUXBOOT.track('데이터', _p0); }
+    /* [V33.367] ★첫 회차에는 보조 패널도 부팅 준비에 넣는다.★ 이것들이 인트로 뒤에
+       "로딩 중…" 으로 남아 있던 장본인이다. 반환값이 약속이 아닐 수도 있으므로
+       track 이 알아서 감싼다(약속이 아니면 그 자리에서 끝난 것으로 센다). */
+    var _first = (window.LUXBOOT && !window.__luxPanelTracked);
+    if (_first) window.__luxPanelTracked = 1;
+    function _step(name, fn){
+      var r; try { r = fn(); } catch(e) { r = null; }
+      if (_first) LUXBOOT.track(name, r);
+      return r;
+    }
     // [COMMODITY] 원자재 패널은 별도 엔드포인트로 로드
-    loadCommodities();
+    _step('원자재', loadCommodities);
     // [V10.2] 엔진 파이프라인 상태 모니터
-    loadPipeline();
+    _step('파이프라인', loadPipeline);
     // [BONDS] 국채 패널 로드
-    loadBonds();
+    _step('국채', loadBonds);
     // [NEWS] 뉴스 로드
-    loadNews();
+    _step('뉴스', loadNews);
     // [MARKET INTEL] risk-on/off + 섹터뉴스 대시보드 카드
-    fetch('/api/diag').then(function(r){ return r.json(); }).then(function(d){ renderMarketIntel(d); })['catch'](function(){});
+    _step('시장심리', function(){
+      return fetch('/api/diag').then(function(r){ return r.json(); })
+        .then(function(d){ renderMarketIntel(d); })['catch'](function(){});
+    });
     // [개선] 로그는 모달 열렸을 때만 fetch (불필요한 폴링 제거)
   }
 
@@ -12768,22 +12871,32 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   window.llmViewDetail = llmViewDetail;
   window.llmClear = llmClear;
 
-  // LUX-ENGINE 오프닝 시퀀스 페이드아웃 및 자동 해제 로직
+  /* ══ [V33.367] 오프닝 시퀀스 — ★준비가 끝나야 걷는다★ ═══════════════════════════
+     종전엔 ★고정 4.2초★ 뒤에 무조건 걷었다. 준비 여부는 보지 않았으므로, 인트로가
+     사라진 화면에 "로딩 중…" 이 그대로 남아 있었다(사용자 지적 그대로다).
+     이제 LUXBOOT 가 애니메이션 최소시간과 준비 완료를 ★둘 다★ 만족할 때 연다.
+     탭하면 즉시 건너뛴다(기다리기 싫은 사람의 선택은 존중한다).
+     상한(12초)은 LUXBOOT 안에 있다 — 준비를 기다리다 못 여는 일은 없다. */
   (function(){
+    var removed = false;
     function removeIntro(){
+      if (removed) return; removed = true;
+      // ★배경 고정을 푼다★ — 라이트 테마의 오버스크롤이 어두워지지 않게(임계 CSS 주석 참조).
+      try { document.documentElement.classList.remove('lux-booting'); } catch(e){}
       var overlay = document.getElementById('lux-intro-overlay');
       if (!overlay) return;
       overlay.style.opacity = '0';
       overlay.style.pointerEvents = 'none';
       setTimeout(function(){ if (overlay && overlay.parentNode) overlay.remove(); }, 1200);
     }
-    // DOMContentLoaded에 의존하지 않고 무조건 실행 (이미 로드 완료된 경우에도 동작)
-    setTimeout(removeIntro, 4200);
+    window.__luxRemoveIntro = removeIntro;
+    if (window.LUXBOOT) LUXBOOT.whenReady(removeIntro);
+    else setTimeout(removeIntro, 4200);          // 추적기가 없으면 종전 동작 그대로
     // 사용자가 화면을 탭/클릭하면 즉시 스킵
     var ov = document.getElementById('lux-intro-overlay');
     if (ov) { ov.addEventListener('click', removeIntro); ov.addEventListener('touchstart', removeIntro); }
-    // 안전장치: 8초 후엔 강제 제거
-    setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&&o.parentNode) o.remove(); }, 8000);
+    // 최후 안전장치 — LUXBOOT 상한(12초)보다 뒤에 둔다.
+    setTimeout(function(){ removeIntro(); var o=document.getElementById('lux-intro-overlay'); if(o&&o.parentNode) o.remove(); }, 15000);
   })();
 
   // ════ [V60.1 FIX] 페이지 전환 + VISION 모듈을 메인 IIFE 안으로 병합 ════
@@ -13014,7 +13127,14 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 </script>
 <script>
 // (안전망) 인트로 오버레이 — 메인 스크립트가 죽어도 8초 후 강제 제거
-setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&&o.parentNode) o.remove(); }, 8000);
+/* [V33.367] 이 줄은 ★메인 스크립트가 통째로 죽었을 때★ 를 위한 최후 보루다.
+   종전 8초는 LUXBOOT 상한(12초)보다 앞이라, 준비를 기다리는 중에 인트로만 사라졌다.
+   상한 뒤로 미루고, 배경 고정도 같이 푼다(안 풀면 라이트 테마에서 어두운 띠가 남는다). */
+setTimeout(function(){
+  try { document.documentElement.classList.remove('lux-booting'); } catch(e){}
+  if (window.__luxRemoveIntro) { try { window.__luxRemoveIntro(); return; } catch(e){} }
+  var o=document.getElementById('lux-intro-overlay'); if(o&&o.parentNode) o.remove();
+}, 15000);
 </script>
 
 <!-- ═══════════ [V9] AI 두뇌 관측 — 신경망 시각화 ═══════════ -->
@@ -19329,6 +19449,8 @@ html:root .page > *{ flex-shrink:0; }
   function boot(){
     if(!BOOTED){
       BOOTED = true;
+      // [V33.367] 두뇌 관측 초기화도 부팅 준비에 넣는다 — 끝나면 아래에서 done 을 부른다.
+      try { if (window.LUXBOOT) LUXBOOT.need('두뇌'); } catch(e){}
       initDensity();
       railLoad();
       railBuild();
@@ -19336,6 +19458,7 @@ html:root .page > *{ flex-shrink:0; }
       buildMobileShell();
       setBrainView();   // 작동·구조 데이터를 함께 로드한다(V33.313 — 더 이상 전환하지 않는다)
       railGate();
+      try { if (window.LUXBOOT) LUXBOOT.done('두뇌'); } catch(e){}
       var pauseBtn = $id('nlvPause');
       if(pauseBtn) pauseBtn.addEventListener('click', function(){
         LIVE.paused = !LIVE.paused;
@@ -19942,11 +20065,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.366">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.366">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.366">
-<link rel="stylesheet" href="/model-evidence.css?v=33.366.1">
-<script src="/model-evidence.js?v=33.366.1"></script>
-<script src="/workspace-ui.js?v=33.366"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.367">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.367">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.367">
+<link rel="stylesheet" href="/model-evidence.css?v=33.367.1">
+<script src="/model-evidence.js?v=33.367.1"></script>
+<script src="/workspace-ui.js?v=33.367"></script>
 </body>
 </html>
