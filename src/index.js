@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.374";
+const _BUILD_VER = "V33.375";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -23086,6 +23086,9 @@ function mutationGuard(request, url, env) {
      그래도 ★기본 출처를 self 로 묶고 object/base 를 막는 것★ 만으로 주입면이 크게 준다.
      인라인을 걷어내는 건 별도 작업이라, 지금은 할 수 있는 것부터 건다. */
 const SECHDR = {
+  /* [V33.375] 공개 전환 뒤 추가 — 이 주소가 검색결과에 실리면 자물쇠가 아니라 안내판이 된다.
+     저장소가 공개라 링크가 어디로든 샐 수 있고, 크롤러는 링크 하나면 따라온다. */
+  "x-robots-tag": "noindex, nofollow, noarchive, nosnippet",
   "x-content-type-options": "nosniff",
   "x-frame-options": "SAMEORIGIN",
   "referrer-policy": "strict-origin-when-cross-origin",
@@ -23121,20 +23124,134 @@ function _safeEq(a, b) {
   return d === 0;
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   [V33.375] ★읽기 문(viewer gate) — 저장소를 공개로 돌린 뒤 남은 구멍을 막는다.★
+
+   2026-09-16 저장소를 공개로 전환했다(러너 시간 고갈로 배포가 4판 막혀서 — O-1/R-1).
+   그때 바뀐 것은 "코드가 보인다" 만이 아니다. ★이 워커의 주소를 알아내는 난이도★ 도 내려갔다.
+   그리고 이 대시보드에는 로그인이 없다. V33.193 의 mutationGuard 는 ★쓰기만★ 막는다 —
+   그 주석에 그렇게 적혀 있다("읽기(GET)에는 아무 영향이 없다"). 즉 주소를 아는 사람은
+   /api/state · /api/trades · /api/ai-positions · /api/download/* 로 보유종목·현금·체결이력을
+   전부 읽을 수 있었다. 공개 전에는 "주소를 모른다" 가 사실상 유일한 자물쇠였다.
+
+   ★그런데 이 문을 잘못 닫으면 사용자가 자기 화면에서 잠긴다.★ 사용자는 폰에서만 접속하고
+   로컬 복구 수단이 없다(이 판 전체의 전제다). 그래서 설계를 이렇게 한다:
+
+     ① ★VIEW_KEY 가 없으면 이 문은 존재하지 않는다.★ 지금 배포해도 오늘과 완전히 같이 돈다.
+        켜는 것은 Cloudflare 대시보드에서 시크릿을 넣는 순간이고, 끄는 것은 지우는 순간이다 —
+        코드를 되돌리거나 다시 배포할 필요가 없다. ★탈출구가 항상 폰에서 닿는 곳에 있다.★
+     ② 한 번 `?k=<키>` 로 들어오면 쿠키(HttpOnly·Secure·SameSite=Lax·180일)를 심고 주소창에서
+        키를 지운다. 폰에서 매번 키를 칠 필요가 없고, 주소가 어깨너머로 새지 않는다.
+     ③ TRAIN_KEY 도 통과시킨다 — CI 진단 워크플로(로그·프로브·자가진단)가 그 키로 읽는다.
+     ④ 거절은 rateLimitAuthFail 로 센다 — 키를 찍어 맞히려 하면 기존 한도에 걸려 잠긴다.
+
+   ※ 정직하게: 이건 ★자물쇠지 금고가 아니다.★ 코드가 공개라 공격자는 이 문의 모양을 안다.
+     막는 것은 "주소를 알아낸 사람이 그냥 읽어 가는 것" 이고, 못 막는 것은 "키를 아는 사람" 이다.
+     남이 소스를 받아 ★자기 복제본★ 을 배포하는 것도 못 막는다 — 공개 소스에서 그건 막을 수
+     있는 종류가 아니다. 이 문이 지키는 것은 ★이 인스턴스와 그 안의 돈·이력★ 이다.
+*/
+const VIEWGATE = {
+  cookie: "lux_view",
+  param: "k",
+  header: "x-view-key",
+  maxAgeSec: 60 * 60 * 24 * 180   // 180일 — 폰에서 한 번 열면 계속 열려 있다
+};
+function _cookieVal(request, name) {
+  try {
+    const raw = request.headers.get("cookie");
+    if (!raw) return "";
+    for (const part of String(raw).split(";")) {
+      const i = part.indexOf("=");
+      if (i < 0) continue;
+      if (part.slice(0, i).trim() === name) return decodeURIComponent(part.slice(i + 1).trim());
+    }
+  } catch (e) {}
+  return "";
+}
+function viewerGate(request, url, env) {
+  const want = (env && env.VIEW_KEY) || "";
+  if (!want) return null;            // ★미설정 = 무동작.★ 이 줄이 탈출구다 — 지우지 말 것.
+  const train = (env && env.TRAIN_KEY) || "";
+  const okKey = function (v) {
+    if (!v) return false;
+    return _safeEq(v, want) || (!!train && _safeEq(v, train));
+  };
+  if (okKey(_cookieVal(request, VIEWGATE.cookie))) return null;
+  const given = request.headers.get(VIEWGATE.header)
+             || request.headers.get("x-train-key")
+             || url.searchParams.get(VIEWGATE.param) || "";
+  if (okKey(given)) {
+    /* 문서 이동(주소창/링크)일 때만 쿠키를 심고 되돌려보낸다. API 호출을 302 로 돌리면
+       fetch 가 리다이렉트를 따라가며 조용히 다른 응답을 받는다 — 그쪽은 그냥 통과시킨다. */
+    const nav = request.method === "GET" && url.searchParams.has(VIEWGATE.param)
+      && (request.headers.get("sec-fetch-mode") === "navigate"
+          || String(request.headers.get("accept") || "").includes("text/html"));
+    if (!nav) return null;
+    const clean = new URL(url.toString());
+    clean.searchParams.delete(VIEWGATE.param);
+    return new Response(null, { status: 302, headers: {
+      "location": clean.pathname + clean.search,
+      "set-cookie": VIEWGATE.cookie + "=" + encodeURIComponent(String(given))
+        + "; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=" + VIEWGATE.maxAgeSec,
+      "cache-control": "no-store"
+    }});
+  }
+  rateLimitAuthFail(request);
+  const html = String(request.headers.get("accept") || "").includes("text/html");
+  /* 거절 화면은 ★아무것도 말하지 않는다★ — 판 번호도, 무엇이 있는지도. */
+  return new Response(
+    html ? '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+         + '<title>LUX</title><body style="margin:0;display:grid;place-items:center;height:100vh;'
+         + 'background:#090c12;color:#6b7686;font:14px/1.7 -apple-system,system-ui,sans-serif">'
+         + '<div>접근 키가 필요합니다.</div></body>'
+         : JSON.stringify({ error: "unauthorized" }),
+    { status: 401, headers: {
+        "content-type": html ? "text/html; charset=utf-8" : "application/json",
+        "cache-control": "no-store"
+    }});
+}
+
+/* [V33.375] CORS 를 한 곳에서 만든다 — 검사가 ★이 함수를 직접 돌려★ 값을 본다.
+   손으로 적힌 헤더 사전이 handleRequest 안에 묻혀 있으면 "누가 * 로 되돌려 놓았는가" 를
+   행동으로 확인할 방법이 없다. 이 저장소가 여러 번 겪은 모양이다(글자 검사는 못 잡는다). */
+function _corsFor(request, url) {
+  const h = {
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, X-Train-Key, X-View-Key",
+    "Vary": "Origin"
+  };
+  let org = "";
+  try { org = request.headers.get("origin") || ""; } catch (e) {}
+  try { if (org && new URL(org).host === url.host) h["Access-Control-Allow-Origin"] = org; } catch (e) {}
+  return h;
+}
+
 async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
   const path = url.pathname;
-  const cors = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type"
-  };
+  /* [V33.375] ★ACAO 를 '*' 에서 동일 출처로 좁힌다.★ 종전에는 ★아무 웹사이트의 스크립트나★
+     방문자의 브라우저를 통해 /api/state 를 읽고 ★응답 본문을 가져갈★ 수 있었다(쓰기는
+     V33.193 이 막았지만 읽기는 * 그대로였다 — 그 주석도 그렇게 적혀 있다).
+     이 대시보드는 워커가 직접 내려주는 ★동일 출처★ 라 CORS 헤더가 아예 필요 없다.
+     좁혀도 화면의 어떤 호출도 영향을 받지 않는다. curl·CI 도 CORS 와 무관하다
+     (CORS 는 브라우저만 지키는 규칙이다). Vary: Origin 은 캐시가 출처별로 갈라 두게 한다. */
+  const cors = _corsFor(request, url);
   // ★프리플라이트는 한도 밖에 둔다★ — 브라우저가 자동으로 보내는 것이라, 여기에 쓰기 비용을
   //   물리면 정상 사용자가 자기 예산을 프리플라이트로 태우게 된다.
   if (request.method === "OPTIONS") return new Response(null, { headers: cors });
   // [V33.190] 남용 방어 — 라우팅보다 먼저. 여기서 끊으면 D1 을 한 번도 안 건드린다.
   const _rl = rateLimit(request, path, cors);
   if (_rl) return _rl;
+  /* [V33.375] ★읽기 문 — 한도 뒤, 쓰기 문 앞.★ VIEW_KEY 가 없으면 null 을 돌려 아무 일도
+     하지 않는다(viewerGate 주석 ① 참조). 여기서 끊으면 D1 을 한 번도 안 건드린다. */
+  const _vg = viewerGate(request, url, env);
+  if (_vg) return _vg;
+  /* [V33.375] 크롤러에게 명시적으로 말한다. X-Robots-Tag 헤더와 ★둘 다★ 둔다 —
+     robots.txt 는 크롤이 시작되기 전에 읽히고, 헤더는 직접 링크로 들어온 것까지 덮는다. */
+  if (path === "/robots.txt") {
+    return new Response("User-agent: *\nDisallow: /\n",
+      { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=86400" } });
+  }
   /* [V33.193] ★권한 방어 — 한도 바로 뒤, 라우팅 앞.★ 상태를 바꾸는 요청은 이 워커 자신의
      페이지에서 왔거나 TRAIN_KEY 를 들고 있어야 한다(mutationGuard 주석 참조).
      읽기(GET)에는 아무 영향이 없다 — 대시보드는 공개 조회 그대로 동작한다. */
@@ -50354,6 +50471,8 @@ export {
   stinBackfill, stinIntradayFeat, stinChartFeat, stinObserve, stinLabel, mlBuildFeatures,
   STIN, STIN_IFEAT_N, STIN_FEATVER, LUXML, _LIVE_ONLY_FEATS, _LIVE_ONLY_NEUTRAL, _mlExportConfig,
   _setR2ForTest, getBigState, _bigLoadStatus,
+  // [V33.375] 읽기 문 — tools/check-viewer-gate.mjs 가 실제로 요청을 물려 본다.
+  viewerGate, VIEWGATE, _cookieVal, _corsFor, mutationGuard, SECHDR, _safeEq,
   _boosterAdmit, latestExternalReceipt, MCAP_RANK, _clipMid, mlRetireStaleFeatVer,
   _socialBackoffMs, _socialBackoffLeftMs, mlDriftCheck,
   // [V33.105] 확률 계수 적합기 검증용 — tools/check-prob-fitters.mjs

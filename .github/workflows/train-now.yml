@@ -170,11 +170,13 @@ jobs:
                 echo "연속 4회 실패 — 중단(재개지점 $FROM)" | tee -a trainlog.txt
                 # [V33.199] ★죽은 회차는 응답이 없다 — 범인 이름은 로그에서 집어 온다.★
                 #   워커는 단계 진입 직전에 "[수동트리거:all:START] <단계>" 를 남긴다.
-                #   마지막 START 가 곧 워커를 죽인 단계다. /api/logs 는 인증 없는 읽기 경로다.
+                #   마지막 START 가 곧 워커를 죽인 단계다.
+                #   [V33.375] 읽기 문이 켜져 있으면 키 없는 GET 은 401 이다 — 관리자 키로 읽는다.
                 echo "" | tee -a trainlog.txt
                 echo "── 워커 로그에서 마지막으로 진입한 단계를 확인한다 ──" | tee -a trainlog.txt
                 # pick-logs.mjs 는 ★파일★ 을 받는다(stdin 아님) — 받아서 파일로 두고 넘긴다.
-                curl -sS --max-time 60 "$URL/api/logs?limit=400" -o worklogs.json 2>/dev/null
+                curl -sS --max-time 60 -H "X-Train-Key: ${TRAIN_KEY:-}" \
+                     "$URL/api/logs?limit=400" -o worklogs.json 2>/dev/null
                 LAST=$(node tools/pick-logs.mjs worklogs.json '수동트리거:all:START' 200 2>/dev/null | tail -3)
                 if [ -n "$LAST" ]; then
                   echo "$LAST" | tee -a trainlog.txt

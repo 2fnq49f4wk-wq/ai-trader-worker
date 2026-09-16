@@ -70,11 +70,15 @@ jobs:
         env:
           URL: ${{ steps.url.outputs.url }}
           FILTER: ${{ inputs.filter }}
+          TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
           LIMIT: ${{ inputs.limit }}
         run: |
           set +e
           echo "GET $URL/api/logs?limit=$LIMIT  (필터: '${FILTER:-없음}')"
-          CODE=$(curl -sS --max-time 60 -o logs.json -w '%{http_code}' "$URL/api/logs?limit=$LIMIT")
+          # [V33.375] 읽기 문(VIEW_KEY)이 켜져 있으면 키 없는 GET 은 401 이다. 관리자 키로 읽는다.
+          #   VIEW_KEY 가 설정돼 있지 않으면 이 헤더는 무시된다 — 오늘과 동작이 같다.
+          CODE=$(curl -sS --max-time 60 -o logs.json -w '%{http_code}' \
+                 -H "X-Train-Key: ${TRAIN_KEY:-}" "$URL/api/logs?limit=$LIMIT")
           echo "HTTP $CODE"
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
           [ "$CODE" = "200" ] || exit 1

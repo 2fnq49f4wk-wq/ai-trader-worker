@@ -83,6 +83,7 @@ jobs:
         env:
           URL: ${{ steps.url.outputs.url }}
           PATHS: ${{ inputs.paths }}
+          TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
           TMO: ${{ inputs.timeout }}
           DUMP: ${{ inputs.dump }}
           PICK: ${{ inputs.pick }}
@@ -93,7 +94,8 @@ jobs:
           for p in $PATHS; do
             p=$(echo "$p" | xargs)          # 앞뒤 공백 제거
             [ -z "$p" ] && continue
-            OUT=$(curl -sS --max-time "$TMO" -o body.bin -w '%{http_code} %{time_total} %{size_download}' "$URL$p" 2>/dev/null)
+            OUT=$(curl -sS --max-time "$TMO" -o body.bin -w '%{http_code} %{time_total} %{size_download}' \
+                  -H "X-Train-Key: ${TRAIN_KEY:-}" "$URL$p" 2>/dev/null)
             RC=$?
             if [ $RC -ne 0 ]; then
               # ★타임아웃과 HTTP 오류를 구분해 적는다★ — 브라우저의 "Load failed" 가 못 하던 일이다.

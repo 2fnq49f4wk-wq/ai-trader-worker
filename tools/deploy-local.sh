@@ -54,8 +54,21 @@ if [ -z "$URL" ]; then
   echo "   ⚠️ 배포 출력에서 주소를 못 찾았다. 화면의 빌드 배너로 직접 확인할 것(기대 ${WANT})."
   exit 0
 fi
-GOT=$(curl -fsS --max-time 20 "$URL/api/selfcheck" 2>/dev/null \
-      | grep -oE '"build"[[:space:]]*:[[:space:]]*"[^"]*"' | grep -oE 'V[0-9.]+' | head -1)
+# [V33.375] 읽기 문(VIEW_KEY)이 켜져 있으면 키 없는 GET 은 401 이다. 손에 있는 키를 보낸다 —
+#   둘 다 없으면 헤더가 비고, VIEW_KEY 미설정 서버에서는 그래도 그냥 통과한다(문이 무동작).
+CODE=$(curl -sS --max-time 20 -o /tmp/lux-selfcheck.json -w '%{http_code}' \
+       -H "X-View-Key: ${VIEW_KEY:-}" -H "X-Train-Key: ${TRAIN_KEY:-}" \
+       "$URL/api/selfcheck" 2>/dev/null)
+if [ "$CODE" = "401" ]; then
+  # ★이걸 '배포 실패' 로 읽으면 안 된다.★ 서버는 살아 있고, 내가 못 들어간 것이다.
+  echo "   🔒 서버가 401 — 읽기 문이 켜져 있다(VIEW_KEY)."
+  echo "      VIEW_KEY=... 또는 TRAIN_KEY=... 를 넣고 다시 확인할 것:"
+  echo "        VIEW_KEY=<키> bash tools/deploy-local.sh"
+  echo "      ★배포 자체는 위 wrangler 출력을 볼 것 — 판 확인만 못 한 상태다.★"
+  exit 1
+fi
+GOT=$(grep -oE '"build"[[:space:]]*:[[:space:]]*"[^"]*"' /tmp/lux-selfcheck.json 2>/dev/null \
+      | grep -oE 'V[0-9.]+' | head -1)
 if [ "$GOT" = "$WANT" ]; then
   echo "   ✅ 서버가 ${GOT} 로 응답한다 — ★정말 올라갔다.★"
 else

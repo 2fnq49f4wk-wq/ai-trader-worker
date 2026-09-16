@@ -80,6 +80,7 @@ jobs:
       - name: 모델 신선도 확인
         id: fresh
         env:
+          TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
           WORKER_URL: ${{ steps.url.outputs.url }}
         run: |
           set +e
@@ -99,7 +100,9 @@ jobs:
             exit 0
           fi
           echo "확인 대상: $URL/api/ai/selfcheck"
-          BODY=$(curl -sS --max-time 30 "$URL/api/ai/selfcheck")
+          # [V33.375] 읽기 문(VIEW_KEY)이 켜져 있으면 키 없는 GET 은 401 이다 — 관리자 키로 읽는다.
+          #   VIEW_KEY 미설정이면 이 헤더는 무시된다(오늘과 동작이 같다).
+          BODY=$(curl -sS --max-time 30 -H "X-Train-Key: ${TRAIN_KEY:-}" "$URL/api/ai/selfcheck")
           RC=$?
           if [ $RC -ne 0 ] || [ -z "$BODY" ]; then
             # ★조회 실패는 '신선하다'가 아니다★ — 모르면 돌린다(안 도는 것이 더 큰 손해).
