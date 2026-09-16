@@ -101,6 +101,11 @@ assert oldest_required_age(p)==9999
 tree=ast.parse(pathlib.Path('trainer/modal/modal_train.py').read_text(encoding='utf-8'))
 ns={'_EMBARGO_MS':10*86400000,'_HORIZON_MS':10*86400000,'_uw_pick':lambda u,n,i:np.asarray(u)[i]}
 ns['MIN_PER_MARKET']=ast.literal_eval(next(n.value for n in tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='MIN_PER_MARKET' for t in n.targets)))
+# [V33.376] _split_ts 는 홀드아웃 크기를 _holdout_rows(+정책표 HOLDOUT)에 물어본다 —
+#   함수 하나만 떼어 오면 NameError 가 난다. ★같이 떼어 온다★(베끼지 않는다).
+ns['HOLDOUT']=ast.literal_eval(next(n.value for n in tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='HOLDOUT' for t in n.targets)))
+hrows=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='_holdout_rows')
+exec(compile(ast.Module(body=[hrows],type_ignores=[]),'hrows','exec'),ns)
 split=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='_split_ts')
 exec(compile(ast.Module(body=[split],type_ignores=[]),'split','exec'),ns)
 for name in ('_train_and_upload_boosters','_train_per_market'):

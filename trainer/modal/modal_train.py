@@ -453,25 +453,10 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     # [V33.341] 분할은 공용 헬퍼 한 곳에서 — 학습기마다 다른 자를 쓰지 않는다.
     #   (표본은 위에서 이미 ts 오름차순 정렬돼 있어 order 는 항등이다.)
     _ord, tr, cal, va, n_val, _emb = _split_ts(TS, val_frac, embargo_ms, min_val=20,
-                                               horizon_ms=_HORIZON_MS, cal_frac=0.10)
+                                               horizon_ms=_HORIZON_MS, cal_frac=0.10, tag="DNN")
     print(f"   분할: 학습 {len(tr)} · 보정 {len(cal)} · 검증 {len(va)} · 엠바고 {_emb/86400000:.0f}일")
-    # ══ [V33.366] ★홀드아웃이 '행의 20%' 로 정해진다 — 달력 기간이 통제되지 않는다.★ ══
-    #   블록 IC 유의성은 ★겹치지 않는 관측이 몇 개인가★ 로 정해지는데, 그 수는 행 수가
-    #   아니라 ★기간★ 에서 나온다. 그런데 분할은 기간을 보지 않는다. 그래서 "왜 t 가
-    #   안 서나" 를 물어도 로그가 답을 못 했다(G-2 가 icDf 11 만 보고 추정해야 했던 이유).
-    #   한 줄로 답하게 한다 — 지금 몇 일이고, 잘 보정된 검정을 하려면 몇 일이 필요한가.
-    try:
-        _hd_d = (float(TS[va].max()) - float(TS[va].min())) / 86400000.0
-        _blk_d = 2.0 * (_HORIZON_MS / 86400000.0)      # 정직한 블록 = 2×지평(측정 근거는 _calc_ic_blocks_time 주석)
-        _kk = int(_hd_d // _blk_d)
-        _need = _blk_d * 6                              # 블록 6개면 df=5 — t 1.65 의 명목값이 약 8%
-        print(f"   [홀드아웃] {_hd_d:.0f}일 · 검증 {len(va)}건 → 정직한 블록 {_kk}개"
-              f"(블록 {_blk_d:.0f}일 = 2×지평)"
-              + ("" if _kk >= 6 else
-                 f" — ★블록이 모자라 IC 유의성이 구조적으로 못 선다. 약 {_need:.0f}일이 필요하다"
-                 f"(valFrac 을 {min(0.6, max(0.2, 0.2*_need/max(1.0,_hd_d))):.2f} 쯤으로 올리면 그 근처다).★"))
-    except Exception as _e:
-        print("   [홀드아웃] 산출 실패(무시):", _e)
+    # [V33.376] 이 자리에 있던 V33.366 진단은 _split_ts 안으로 옮겼다 —
+    #   거기서 기간을 ★정하기★ 때문에, 재는 곳과 정하는 곳이 같아야 두 숫자가 안 갈린다.
     pos = Y[tr].sum()
     w_pos = len(tr) / (2 * pos) if pos > 0 else 1.0
     w_neg = len(tr) / (2 * (len(tr) - pos)) if (len(tr) - pos) > 0 else 1.0
@@ -945,12 +930,15 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             _stage(_nm, _fn)
 
         # ── [V33.205] 홀드아웃 경계를 워커에 알린다 ─────────────────────────────
-        #   위 모델들은 전부 ★시간순 뒤쪽 20%★ 를 홀드아웃으로 떼고 퍼지·엠바고를 건 뒤
+        #   위 모델들은 전부 ★시간순 뒤쪽★ 을 홀드아웃으로 떼고(V33.376 이후 그 크기는
+        #   행 비율이 아니라 ★달력 기간★ 으로 정해진다) 퍼지·엠바고를 건 뒤
         #   앞쪽만으로 학습한다. 즉 방금 올린 모델들은 그 구간을 ★학습한 적이 없다★ —
         #   워커가 지금 모델로 그 구간을 채점하면 그게 out-of-fold 예측이고, STACK 이
         #   요구하는 값이 정확히 그것이다. ★모델이 아니라 경계 시각 하나만 보낸다.★
         try:
             _oof_min_ts = int(TS[N - n_val])          # 홀드아웃 첫 표본의 관측 시각
+            #   (TS 는 표본을 ts 로 정렬한 뒤 만든 것이라 이 자리가 곧 홀드아웃 첫 표본이다 —
+            #    check-stack-oof 가 그 정렬을 지킨다.)
             _r = requests.post(BASE + "/api/stack-oof-window", params={"key": KEY}, headers=HDR,
                                data=json.dumps({"featVer": featver, "minTs": _oof_min_ts,
                                                 "n": int(n_val),
@@ -1056,7 +1044,7 @@ def _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ=None, 
 
     # 표준화는 ★학습 구간에서만★ 구한다(검증 통계가 새면 그만큼 낙관적으로 나온다)
     # Codex V33.349 / B-2: SEQ uses the same embargo and exact row indices as other models.
-    _order, _tri, _, _vai, n_val, _emb = _split_ts(TS, 0.2, _EMBARGO_MS, min_val=200, horizon_ms=_HORIZON_MS)
+    _order, _tri, _, _vai, n_val, _emb = _split_ts(TS, 0.2, _EMBARGO_MS, min_val=200, horizon_ms=_HORIZON_MS, tag="GBDT")
     _tri, _vai = _order[_tri], _order[_vai]  # indices into original X/sequence table
     tr_end = len(_tri)  # training count only, never a boundary into X
     mean = X[_tri].mean(axis=0); std = X[_tri].std(axis=0); std[std < 1e-9] = 1.0
@@ -1245,7 +1233,7 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ=None,
     if N < 400:
         print(f"{tag}: 표본 부족 {N} — 생략"); return
     # [V33.341] 엠바고 분할(공용 헬퍼) — 종전엔 경계를 안 비워 라벨 지평만큼 겹쳤다.
-    order, _tri, _cali, _vai, nval, _emb = _split_ts(TS, VALFRAC, _EMBARGO_MS, min_val=200, horizon_ms=_HORIZON_MS)
+    order, _tri, _cali, _vai, nval, _emb = _split_ts(TS, VALFRAC, _EMBARGO_MS, min_val=200, horizon_ms=_HORIZON_MS, tag=tag)
     Xs = X[order].astype(np.float64); Ys = Y[order].astype(np.float64)
     Xtr, Ytr = Xs[_tri], Ys[_tri]
     Xva, Yva = Xs[_vai], Ys[_vai]
@@ -1505,7 +1493,72 @@ def _uw_pick(UNIQ, n_total, idx):
 #   ※ 실측(시뮬레이션, 라벨지평 10일·표본 2.8만): 엠바고 0일과 10일의 검증정확도 차이는
 #     0.14%p 였다. 크지 않다 — 이걸 "성능이 4%p 뛴다" 로 팔지 않는다. 고치는 이유는
 #     ★같은 자로 재기 위해서★ 다. 모델마다 자가 다르면 그 위의 어떤 비교도 뜻이 없다.
-def _split_ts(TS, val_frac, embargo_ms, min_val=200, horizon_ms=0, cal_frac=0.0):
+# ══ [V33.376] ★홀드아웃을 '행의 20%' 가 아니라 ★달력 기간★ 으로 정한다.★ ══════════
+#
+#   G-2 가 남긴 진단: 위원 대부분이 못 드는 이유는 실력이 아니라 ★검정력★ 이었다.
+#     · XGB t 1.36 · LGB 1.48 · CAT 1.14 — 전부 1.65 바로 아래다.
+#     · 이유는 겹치지 않는 관측이 7~12개뿐이라는 것(`icDf 11`).
+#     · t = ICIR × √K 다. K 가 작으면 ★진짜 실력이 있어도 t 가 안 선다.★
+#
+#   그리고 K 는 행 수가 아니라 ★기간★ 에서 나온다(정직한 블록 = 2×라벨지평).
+#   그런데 분할은 기간을 한 번도 보지 않았다 — 행의 20% 를 떼고 끝이었다.
+#   표본이 아무리 늘어도(I-2 고침으로 실제로 크게 는다) 같은 20% 면 K 는 그대로다.
+#
+#   ★문턱은 건드리지 않는다.★ (B-6: "문턱을 낮춰 수를 늘리지 말 것.")
+#   늘리는 것은 ★관측 기간★ 이다 — G-2 가 적어 둔 바로 그 방향이다.
+#   그리고 이건 공짜가 아니라 ★더 엄한 시험★ 이다: 홀드아웃을 늘리면 모델은 더 긴
+#   기간에 걸쳐 ★일관되게★ 맞혀야 t 가 선다. 최근 몇 주만 맞히던 모델은 오히려 떨어진다.
+#
+#   ★비용도 정직하게 적는다.★ 홀드아웃은 시간축 ★뒤쪽★ 이다. 늘리면 학습이 그만큼
+#   최근을 못 본다. 그래서 두 개의 상한을 건다:
+#     · maxFrac — 행의 이 비율을 넘게 떼지 않는다.
+#     · trainSpanMult — 학습 기간이 홀드아웃 기간의 이 배는 남아야 늘린다
+#       (홀드아웃 기간 ≤ 전체 기간 / (1+배수) 와 같은 말이다).
+#   둘 중 먼저 걸리는 쪽에서 멈추고, 목표에 못 닿았으면 ★로그가 그렇게 말한다.★
+HOLDOUT = {
+    "minBlocks": 12,       # 정직한 블록(2×지평) 목표 개수 → df 11
+    "maxFrac": 0.33,       # 행 기준 상한
+    "trainSpanMult": 2.0,  # 학습 기간 ≥ 2 × 홀드아웃 기간
+}
+
+
+def _holdout_rows(ts_s, nval, horizon_ms, min_blocks=None, max_frac=None):
+    """정렬된 ts_s 에서 ★목표 기간★ 을 덮는 홀드아웃 행 수를 돌려준다.
+
+    돌려주는 것: (행 수, 진단 dict). 절대 줄이지 않는다 — 기존 nval 이 하한이다.
+    """
+    import numpy as np
+    n = len(ts_s)
+    mb = HOLDOUT["minBlocks"] if min_blocks is None else min_blocks
+    mf = HOLDOUT["maxFrac"] if max_frac is None else max_frac
+    blk = 2.0 * float(horizon_ms or 0)
+    info = {"blkMs": blk, "grew": False, "bound": "none", "target": mb}
+    if not blk or not mb or n < 400:
+        info["bound"] = "off"
+        return nval, info
+    total = float(ts_s[-1]) - float(ts_s[0])
+    need = float(mb) * blk
+    span_cap = total / (1.0 + float(HOLDOUT["trainSpanMult"]))   # 학습 기간을 지킨다
+    want_span = min(need, span_cap)
+    # ★한 행 더 잡는다.★ searchsorted 는 경계값 ★이상★ 인 첫 행을 주므로 그대로 쓰면
+    #   덮은 기간이 목표보다 ★조금 모자란다★ — 그 조금 때문에 블록이 12개가 아니라 11개가 된다.
+    _i = int(np.searchsorted(ts_s, float(ts_s[-1]) - want_span, side="left"))
+    want = int(n - max(0, _i - 1))
+    row_cap = int(n * mf)
+    out = min(max(want, nval), max(nval, row_cap))
+    info["grew"] = out > nval
+    if want_span < need - 1e-9:   info["bound"] = "trainSpan"
+    elif out < want:              info["bound"] = "rowCap"
+    else:                         info["bound"] = "target"
+    hs = float(ts_s[-1]) - float(ts_s[n - out])
+    info["spanDays"] = hs / 86400000.0
+    info["blocks"] = int(hs // blk) if blk else 0
+    info["totalDays"] = total / 86400000.0
+    return out, info
+
+
+def _split_ts(TS, val_frac, embargo_ms, min_val=200, horizon_ms=0, cal_frac=0.0,
+              min_blocks=None, max_frac=None, tag=""):
     """시간순 정렬 인덱스와 (학습, 보정, 검증) 인덱스를 돌려준다. 엠바고는 지평 이상으로 강제.
 
     ★보정(cal) 구간이 왜 필요한가★
@@ -1524,6 +1577,23 @@ def _split_ts(TS, val_frac, embargo_ms, min_val=200, horizon_ms=0, cal_frac=0.0)
     ts_s = np.asarray(TS, dtype=np.float64)[order]
     nval = max(min_val, int(n * val_frac))
     nval = min(nval, max(1, n - 1))
+    # [V33.376] 기간으로 한 번 더 본다 — 행 비율만으로는 K 가 통제되지 않는다.
+    nval, _hi = _holdout_rows(ts_s, nval, horizon_ms, min_blocks, max_frac)
+    nval = min(nval, max(1, n - 1))
+    try:
+        _t = ("[" + tag + "] ") if tag else ""
+        if _hi.get("bound") != "off":
+            _msg = (f"   {_t}[홀드아웃] {_hi['spanDays']:.0f}일 · {nval}건 → 정직한 블록 "
+                    f"{_hi['blocks']}개 / 목표 {_hi['target']}개 (전체 {_hi['totalDays']:.0f}일)")
+            if _hi["bound"] == "trainSpan":
+                _msg += " — ★학습 기간을 지키느라 여기서 멈췄다(표본 기간이 더 쌓여야 한다).★"
+            elif _hi["bound"] == "rowCap":
+                _msg += f" — ★행 상한({HOLDOUT['maxFrac']:.0%})에서 멈췄다.★"
+            elif _hi["blocks"] < _hi["target"]:
+                _msg += " — ★블록이 목표에 못 미친다: IC 유의성이 구조적으로 불리하다.★"
+            print(_msg)
+    except Exception:
+        pass
     emb = max(float(embargo_ms or 0), float(horizon_ms or 0))
     cut_ts = ts_s[n - nval] - emb
     idx = np.arange(n)
@@ -1830,7 +1900,7 @@ def _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D, UNIQ=None)
         Xm, Ym, TSm = X[sel], Y[sel], TS[sel]
         PNLm = PNL[sel] if PNL is not None and len(PNL) == len(Y) else None
     # [V33.341] 엠바고 분할(공용 헬퍼) — 종전엔 경계를 안 비워 라벨 지평만큼 겹쳤다.
-        order, _tri, _cali, _vai, nval, _emb = _split_ts(TSm, 0.2, _EMBARGO_MS, min_val=200, horizon_ms=_HORIZON_MS)
+        order, _tri, _cali, _vai, nval, _emb = _split_ts(TSm, 0.2, _EMBARGO_MS, min_val=200, horizon_ms=_HORIZON_MS, tag="시장별")
         Xs, Ys = Xm[order].astype(np.float64), Ym[order].astype(int)
         Xtr, Ytr = Xs[_tri], Ys[_tri]
         Xva, Yva = Xs[_vai], Ys[_vai]
@@ -2086,7 +2156,7 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None, U
     if N < 500:
         print(f"부스팅: 표본 부족 {N} — 생략"); return
     # [V33.341] 엠바고 분할(공용 헬퍼) — 종전엔 경계를 안 비워 라벨 지평만큼 겹쳤다.
-    order, _tri, _cali, _vai, nval, _emb = _split_ts(TS, 0.2, _EMBARGO_MS, min_val=200, horizon_ms=_HORIZON_MS)
+    order, _tri, _cali, _vai, nval, _emb = _split_ts(TS, 0.2, _EMBARGO_MS, min_val=200, horizon_ms=_HORIZON_MS, tag="부스팅")
     Xs = X[order].astype(np.float64); Ys = Y[order].astype(int)
     Xtr, Ytr = Xs[_tri], Ys[_tri]
     Xva, Yva = Xs[_vai], Ys[_vai]
@@ -2603,7 +2673,7 @@ def _train_and_upload_fm(BASE, KEY, HDR, X, Y, TS, PNL, featver, D, UNIQ=None):
     K = 8; L2W = 1e-3; L2V = 3e-3; EPOCHS = 80; SEEDS = 6
     # [V33.341] 엠바고 분할(공용 헬퍼) — 종전엔 경계를 안 비워 라벨 지평만큼 겹쳤다.
     order, _tri, _cali, _vai, _nv0, _emb = _split_ts(TS, 0.2, _EMBARGO_MS, min_val=60,
-                                                     horizon_ms=_HORIZON_MS, cal_frac=0.10)
+                                                     horizon_ms=_HORIZON_MS, cal_frac=0.10, tag="MIND")
     Xs = X[order].astype(np.float64); Ys = Y[order].astype(np.float64)
     Ps = np.abs(PNL[order].astype(np.float64))
     nval = len(_vai)
