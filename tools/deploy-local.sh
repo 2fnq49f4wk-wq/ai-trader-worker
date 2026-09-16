@@ -43,8 +43,27 @@ grep -q '^bucket_name = "ai-trader-models"' wrangler.toml || { echo "★bucket_n
 echo "   ✅ R2 바인딩 활성 확인 — 이게 없으면 장중 표본 수집이 멈춘다"
 
 echo "③ 배포"
-npx --yes wrangler@latest deploy
+npx --yes wrangler@latest deploy 2>&1 | tee /tmp/lux-deploy.log
 
-echo "④ wrangler.toml 원복(주석 상태로) — 저장소는 항상 주석 상태를 유지한다"
+echo "④ wrangler.toml 원복 — 저장소 상태를 손대지 않고 되돌린다"
 restore
-echo "✅ 배포 완료. 화면의 빌드 배너가 새 판으로 바뀌는지 확인할 것."
+
+# ══ ⑤ ★'명령이 성공했다' 와 '그게 살아 있다' 는 다르다★ ════════════════════════
+#   O-1 의 교훈이 정확히 이것이다 — push 는 4판 연속 성공했는데 배포는 한 번도 안 됐고,
+#   나는 그걸 "배포 완료" 라고 세 번 보고했다. 여기서는 ★서버에 물어봐서★ 확인한다.
+WANT=$(grep -oE '^const _BUILD_VER = "[^"]+"' src/index.js | grep -oE 'V[0-9.]+')
+URL=$(grep -oE 'https://[A-Za-z0-9._-]+\.workers\.dev' /tmp/lux-deploy.log | head -1)
+echo "⑤ 배포 확인 — 이 판이 정말 서버에서 도는가 (기대 ${WANT})"
+if [ -z "$URL" ]; then
+  echo "   ⚠️ 배포 출력에서 주소를 못 찾았다. 화면의 빌드 배너로 직접 확인할 것(기대 ${WANT})."
+  exit 0
+fi
+GOT=$(curl -fsS --max-time 20 "$URL/api/selfcheck" 2>/dev/null \
+      | grep -oE '"build"[[:space:]]*:[[:space:]]*"[^"]*"' | grep -oE 'V[0-9.]+' | head -1)
+if [ "$GOT" = "$WANT" ]; then
+  echo "   ✅ 서버가 ${GOT} 로 응답한다 — ★정말 올라갔다.★"
+else
+  echo "   🔴 서버는 '${GOT:-읽지 못함}' 이라고 답한다 — 기대 ${WANT}."
+  echo "      배포 명령은 끝났지만 ★반영되지 않았다.★ 위 wrangler 출력을 확인할 것."
+  exit 1
+fi
