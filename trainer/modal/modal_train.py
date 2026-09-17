@@ -259,24 +259,47 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             if anchor:
                 params["beforeTs"] = anchor
             # [V33.12] D1 과부하로 export가 한 번 실패하면 학습 전체가 죽었다 — 지수백오프 재시도.
+            # ══ [V33.382] ★같은 질의를 다시 던지는 재시도는 이 오류를 못 넘는다.★ ═══════
+            #   실측(run 35187993907, 2026-09-17 06:14):
+            #     RuntimeError: export 500: {"error":"D1_ERROR: D1 DB exceeded its CPU time
+            #                                limit and was reset."}
+            #   재시도 4회(5·10·20·40초)를 다 쓰고도 실패했다. 당연하다 — 실패 원인이
+            #   "질의 하나가 너무 비싸다" 인데 ★똑같이 비싼 질의★ 를 다시 보냈기 때문이다.
+            #   기다림은 일시적 혼잡에는 듣지만 ★질의 자체의 비용★ 에는 안 듣는다.
+            #
+            #   → 실패하면 ★페이지를 반으로 줄인다.★ D1 의 CPU 한도는 질의 단위라
+            #     20,000행을 10,000행으로 쪼개면 질의당 비용이 절반이 된다.
+            #   ※ 대가를 적는다: 페이지가 20,000 의 배수에서 벗어나면 워커의 R2 스냅샷
+            #     분기가 파트를 못 고르고 D1 경로로 떨어진다(V33.365 의 `offset % MLSNAP_PART`).
+            #     즉 그 회차의 수집은 느려진다. ★느린 수집이 죽은 50분보다 낫다.★
+            #     (애초에 이 오류가 났다는 것은 이미 D1 경로로 서빙되고 있었다는 뜻이기도 하다 —
+            #      R2 스냅샷이 살아 있으면 D1 CPU 한도에 닿지 않는다. 그쪽은 따로 볼 것.)
             j = None
-            for attempt in range(5):
+            for attempt in range(6):
                 try:
+                    params["limit"] = page
                     r = requests.get(BASE + "/api/ml-export", params=params, headers=HDR, timeout=180)
                     if r.status_code == 200:
                         j = r.json()
                         break
-                    if r.status_code in (429, 500, 502, 503, 504) and attempt < 4:
-                        wait = 5 * (2 ** attempt)
-                        print(f"  export {r.status_code} — {wait}s 후 재시도({attempt+1}/4)")
+                    _body = r.text[:200]
+                    if r.status_code in (429, 500, 502, 503, 504) and attempt < 5:
+                        # ★비싼 질의였다는 신호면 크기를 줄인다★ — 기다리기만 하면 또 같은 벽이다.
+                        _heavy = ("CPU time" in _body) or ("exceeded" in _body) or attempt >= 1
+                        if _heavy and page > 2000:
+                            page = max(2000, page // 2)
+                            print(f"  export {r.status_code} — ★페이지를 {page}행으로 줄여★ 다시 시도"
+                                  f"({attempt+1}/5) · 응답 {_body[:90]}")
+                        wait = 5 * (2 ** min(attempt, 3))
+                        print(f"  export {r.status_code} — {wait}s 후 재시도({attempt+1}/5)")
                         time.sleep(wait)
                         continue
-                    raise RuntimeError(f"export {r.status_code}: {r.text[:200]}")
+                    raise RuntimeError(f"export {r.status_code}: {_body}")
                 except requests.RequestException as e:
-                    if attempt >= 4:
+                    if attempt >= 5:
                         raise
-                    wait = 5 * (2 ** attempt)
-                    print(f"  export 통신오류({e}) — {wait}s 후 재시도({attempt+1}/4)")
+                    wait = 5 * (2 ** min(attempt, 3))
+                    print(f"  export 통신오류({e}) — {wait}s 후 재시도({attempt+1}/5)")
                     time.sleep(wait)
             if j is None:
                 raise RuntimeError("export 재시도 소진")
