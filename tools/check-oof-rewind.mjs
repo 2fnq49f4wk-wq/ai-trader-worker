@@ -25,7 +25,7 @@ let fails = 0;
 const chk = (c, ok, bad) => { if (c) console.log("  ok   " + ok); else { console.log("  FAIL " + bad); fails++; } };
 
 /* 핸들러의 판정부를 그대로 떼어 돌린다 — 규칙을 검사에 옮겨 적지 않는다. */
-const seg = /let _rewindOK = false, _oldest = 0;[\s\S]*?\n      \}\n/.exec(S);
+const seg = /let _rewindOK = false, _oldest = 0, _blockedBy = null;[\s\S]*?\n      \}\n/.exec(S);
 chk(!!seg, "되감기 판정부를 소스에서 떼어 왔다", "판정부를 못 찾는다 — 검사가 헛돈다");
 
 const DAY = 86400000, T0 = Date.parse("2026-08-01T00:00:00Z");
@@ -43,7 +43,12 @@ function run({ mt, pv, prevAt, models, trained }) {
 }
 
 const M = ["dnn", "gbdt", "boost", "mind"];
+/* [V33.377] ★한 모델이 앉을 수 있는 자리는 하나가 아니다.★ 승격되면 <name>_trust,
+   섀도우면 <name>_trust_ext 다. 종전 이 검사는 승격 자리만 흉내내서, 부스터가 몇 달째
+   섀도우라 `lgb_trust` 가 아예 없다는 ★운영의 실제 모양★ 을 한 번도 안 시험했다.
+   그래서 `oldestExpertAt: 0` 으로 매번 409 가 나는 것을 아무도 못 봤다. */
 const KEYS = { dnn: "dnn_trust", gbdt: "gbdt_model", boost: "lgb_trust", mind: "mind_model" };
+const SHADOW = { boost: "lgb_trust_ext", gbdt: "gbdt_trust_ext", mind: "mind_tree_ext" };
 const allAt = t => { const o = {}; for (const m of M) o[KEYS[m]] = t; return o; };
 
 console.log("\n① 전진(경계가 앞으로) — 종전대로 통과하는가");
@@ -88,12 +93,52 @@ console.log("\n④ 모르는 모델 이름이 섞이면 거부하는가");
     "★모르는 모델이 있어도 열어 준다★");
 }
 
+console.log("\n③-2 ★섀도우로만 존재하는 모델★ — 운영의 실제 모양(V33.377)");
+{
+  const prevAt = T0 - 30 * DAY;
+  /* 실측(run 35149059451): 부스터 3종이 `activated:false, shadow:true` 로 올라가
+     `lgb_trust` 는 존재하지 않는다. 승격 자리만 보면 언제나 0 → 언제나 409. */
+  const tr = allAt(T0); delete tr[KEYS.boost]; tr[SHADOW.boost] = T0;
+  const { r, out } = await run({ mt: T0 - 120 * DAY, pv: T0 - 60 * DAY, prevAt, models: M, trained: tr });
+  chk(r.rewindOK && out === null,
+    "★섀도우로만 있는 부스터도 '다시 학습됐다' 로 센다★ — 누출 방어가 묻는 것은 승격이 아니라 재적합이다",
+    "★섀도우 모델을 못 보고 거부한다 — STACK 이 영원히 전진표본을 못 받는다(실제로 그랬다)★");
+  // 그래도 낡으면 거부해야 한다 — 자리를 넓힌 것이지 문을 연 것이 아니다.
+  const tr2 = allAt(T0); delete tr2[KEYS.boost]; tr2[SHADOW.boost] = prevAt - DAY;
+  const { r: r2, out: o2 } = await run({ mt: T0 - 120 * DAY, pv: T0 - 60 * DAY, prevAt, models: M, trained: tr2 });
+  chk(!r2.rewindOK && o2 && o2.status === 409,
+    "섀도우 기록이 창보다 낡으면 그대로 거부한다(방어는 그대로다)",
+    "★섀도우면 낡아도 통과시킨다 — 자리를 넓히다가 문을 열어 버렸다★");
+  // 승격·섀도우 둘 다 있으면 ★더 최근★ 을 그 모델의 적합 시각으로 본다.
+  const tr3 = allAt(T0); tr3[KEYS.boost] = prevAt - DAY; tr3[SHADOW.boost] = T0;
+  const { r: r3 } = await run({ mt: T0 - 120 * DAY, pv: T0 - 60 * DAY, prevAt, models: M, trained: tr3 });
+  chk(r3.rewindOK,
+    "승격·섀도우가 둘 다 있으면 ★더 최근★ 쪽을 쓴다(옛 승격 기록이 새 섀도우를 덮지 않는다)",
+    "옛 승격 기록이 새 섀도우 적합을 덮는다");
+}
+
+console.log("\n③-3 거부가 ★누가 막았는지★ 를 말하는가");
+{
+  const prevAt = T0 - 30 * DAY;
+  const tr = allAt(T0); delete tr[KEYS.mind]; delete tr[SHADOW.mind];
+  const { out } = await run({ mt: T0 - 120 * DAY, pv: T0 - 60 * DAY, prevAt, models: M, trained: tr });
+  chk(out && out.status === 409 && String(out.body && out.body.blockedBy || "").indexOf("mind") === 0,
+    `거부 응답이 막은 모델 이름을 적는다(blockedBy=${out && out.body && out.body.blockedBy})`,
+    "★거부가 'oldestExpertAt: 0' 만 말한다 — 어느 모델이 문제인지 밖에서 알 수 없다(몇 달을 그렇게 놓쳤다)★");
+  chk(out && out.body && out.body.oldestExpertAt === null,
+    "기록이 없을 때 0 이 아니라 null 로 말한다('모른다' 와 '1970년' 은 다르다)",
+    "기록 없음을 0(=1970년)으로 말한다");
+}
+
 console.log("\n⑤ 판정이 min 인가 — max 면 낡은 전문가 하나를 놓친다");
 {
-  chk(/if \(t < _oldest\) _oldest = t;/.test(S),
+  chk(/if \(_newest < _oldest\) \{ _oldest = _newest;/.test(S),
     "가장 오래된 전문가를 기준으로 판정한다(min)", "★max 로 판정한다 — 낡은 전문가 하나가 묻힌다★");
-  chk(/_rewindOK = isFinite\(_oldest\) && _oldest > _num\(_prev && _prev\.ts, 0\);/.test(S),
-    "기준은 '창을 기록한 시각' 이다", "되감기 기준이 다른 값이다");
+  chk(/if \(t > _newest\) _newest = t;/.test(S),
+    "한 모델 안에서는 ★가장 최근★ 자리를 그 모델의 적합 시각으로 본다(max)",
+    "한 모델 안에서 min 을 쓴다 — 옛 자리가 새 적합을 덮는다");
+  chk(/_rewindOK = isFinite\(_oldest\) && _oldest > 0 && _oldest > _num\(_prev && _prev\.ts, 0\);/.test(S),
+    "기준은 '창을 기록한 시각' 이고, ★0(=모른다)은 통과가 아니다★", "되감기 기준이 다른 값이다");
   chk(/rewound: _rewindOK/.test(S) && /세대 교체로 경계를/.test(S),
     "되감았다는 사실이 응답과 로그에 남는다 — 조용히 열지 않는다", "되감기가 기록에 안 남는다");
 }

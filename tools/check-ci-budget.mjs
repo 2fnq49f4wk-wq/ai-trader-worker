@@ -69,7 +69,14 @@ for (const f of files) {
   ok(blocking.length === 0,
      `★${f} 는 예약으로 도는데 학습을 기다리지 않는다★ (modal run --detach)` +
      (blocking.length ? ` — 지금 ${blocking.length}건이 기다린다(한 회 55분)` : ""));
-  ok(/modal run --detach/.test(code), `${f} 가 --detach 로 학습을 걸고 빠진다`);
+  /* [V33.377] ★`--detach` 는 "즉시 빠진다" 를 뜻하지 않는다 — 실측이 그렇게 말한다.★
+     run 156·157·158 이 세 번 다 14분 49초에 cancelled 됐다(timeout 15분). --detach 가
+     보장하는 것은 "클라이언트가 끊겨도 앱은 산다" 이지 "클라이언트가 곧 끝난다" 가 아니다.
+     그래서 ★비동기 호출(.spawn)★ 을 요구한다 — 이건 핸들만 받고 즉시 돌아온다. */
+  ok(/\.spawn\(\)/.test(code) || /modal run --detach/.test(code),
+     `${f} 가 학습을 ★걸고 빠진다★ (.spawn() 또는 --detach)`);
+  ok(/\.spawn\(\)/.test(code),
+     `${f} 가 ★진짜 비동기 호출(.spawn)★ 을 쓴다 — --detach 는 붙어서 로그를 흘린다(실측 15분 컷)`);
 }
 
 // ── 자가시험: 이 검사가 실제로 블로킹 호출을 잡는가(헛돌지 않는가) ───────────────
@@ -112,8 +119,11 @@ console.log("\n  — 한 달 러너 시간 추정 —");
   const everyH = Number((cron.match(/\*\/(\d+)/) || [])[1] || 24);
   const perDay = Math.max(1, Math.round(24 / everyH));
   const wdCap = Number((wd.match(/timeout-minutes:\s*(\d+)/) || [])[1] || 0);
-  // --detach 면 실측 1~2분. 상한은 멎었을 때의 최악값이라 따로 본다.
-  const wdTypical = /modal run --detach/.test(wd) ? 2 : 55;
+  /* [V33.377] ★추정치를 낙관으로 적지 않는다.★ 종전엔 "--detach 면 2분" 이라고 적었는데
+     실측은 ★매번 상한(15분)까지 갔다★ — 그 숫자로 계산한 "월 240분" 은 거짓이었다.
+     기다리지 않는 호출(.spawn)이면 실측 1~2분이 맞고, 아니면 ★상한을 그대로 최악값★ 으로 쓴다
+     (멎으면 상한까지 가는 것이 관측된 동작이다). 모르면 나쁜 쪽으로 센다. */
+  const wdTypical = /\.spawn\(\)/.test(wd) ? 2 : Math.max(15, Number((wd.match(/timeout-minutes:\s*(\d+)/) || [])[1] || 55));
   const monthly = wdTypical * perDay * 30;
   console.log(`     워치독 ${cron} → 하루 ${perDay}회 × ${wdTypical}분 = 월 ${monthly.toLocaleString()}분 (상한 ${wdCap}분)`);
   ok(monthly <= 600,

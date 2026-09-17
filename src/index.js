@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.376";
+const _BUILD_VER = "V33.377";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -25890,25 +25890,65 @@ async function handleRequest(request, env, ctx) {
          학습됐을 때" 만 받는다. 그때만 옛 창이 낡은 세대의 것이 되기 때문이다.
          판정은 ★가장 오래된★ 전문가를 기준으로 한다(하나라도 안 바뀌었으면 그 모델에겐
          그 구간이 여전히 in-sample 이다) — 관대한 max 가 아니라 보수적인 min 이다. */
-      let _rewindOK = false, _oldest = 0;
+      /* ══ [V33.377] ★이 되감기는 ★구조적으로★ 성공할 수 없었다 — 실측으로 확인했다.★ ══
+         run 35149059451 (2026-09-16 21:40:45):
+           ⑪ STACK 경계 통지 실패 409: {"kept":…,"rejected":…,"oldestExpertAt":0,…}
+
+         `oldestExpertAt: 0` 이 답이다. 둘이 겹쳐 있었다:
+
+         ① ★섀도우로 올라간 부스터는 `<name>_trust` 에 저장되지 않는다.★ `<name>_trust_ext`
+            에 간다(V33.xxx 섀도우 경로). 그런데 이 표는 `boost: "lgb_trust"` 만 봤다.
+            부스터 3종은 몇 달째 섀도우라 `lgb_trust` 레코드가 ★아예 없다.★
+            없는 레코드는 `_num(undefined, 0)` → 0 → `_oldest = 0` → 언제나 거절.
+            ★그런데 섀도우 모델도 ★다시 학습된 것★ 이다.★ 누출 방어가 묻는 것은
+            "승격됐는가" 가 아니라 "그 창을 기록한 뒤 다시 적합됐는가" 다. 승격 여부로
+            그 질문에 답하면, 승격 안 된 모델은 영원히 옛 세대로 남는다 — 지금 그 상태다.
+         ② 기록이 ★없는★ 것과 기록이 ★오래된★ 것을 같은 0 으로 뭉갰다. 앞은 "모른다",
+            뒤는 "안 바뀌었다" 인데 응답은 둘 다 `oldestExpertAt: 0` 으로 말해서,
+            밖에서는 어느 모델이 문제인지 알 길이 없었다(그래서 몇 달을 못 봤다).
+
+         결과: STACK 은 홀드아웃 구간을 out-of-fold 로 채점할 길이 막혀 전진표본이
+         안 쌓였고, 화면에는 "합류 보류 — 홀드아웃 t -0.07" 로만 보였다.
+
+         ★방어는 그대로 둔다.★ 여전히 ★전원★ 이 창 기록 이후 재학습돼야 하고, 판정은
+         가장 오래된 쪽(min)이다. 고치는 것은 ★어디를 보는가★ 와 ★모를 때 뭐라고 말하는가★ 다. */
+      let _rewindOK = false, _oldest = 0, _blockedBy = null;
       if (_pv > 0 && _mt < _pv) {
-        const _KEY = { dnn: "dnn_trust", gbdt: "gbdt_model", mind: "mind_model",
-                       boost: "lgb_trust", xgb: "xgb_trust", lgb: "lgb_trust", cat: "cat_trust" };
+        /* 모델 하나가 여러 자리에 앉을 수 있다(승격=_trust, 섀도우=_trust_ext).
+           ★둘 중 더 최근★ 이 그 모델의 마지막 적합 시각이다. */
+        const _KEY = {
+          dnn:   ["dnn_trust"],
+          gbdt:  ["gbdt_model", "gbdt_trust", "gbdt_trust_ext"],
+          mind:  ["mind_model", "mind_tree_ext"],
+          boost: ["xgb_trust", "xgb_trust_ext", "lgb_trust", "lgb_trust_ext", "cat_trust", "cat_trust_ext"],
+          xgb:   ["xgb_trust", "xgb_trust_ext"],
+          lgb:   ["lgb_trust", "lgb_trust_ext"],
+          cat:   ["cat_trust", "cat_trust_ext"]
+        };
         const _names = Array.isArray(body.models) ? body.models.map(String) : [];
-        const _keys = [];
-        for (const nm of _names) { const k = _KEY[nm]; if (k) { if (_keys.indexOf(k) === -1) _keys.push(k); } else { _keys.length = 0; break; } }
-        if (_keys.length) {
+        let _ok = _names.length > 0;
+        const _all = [];
+        for (const nm of _names) { const ks = _KEY[nm]; if (!ks) { _ok = false; break; } for (const k of ks) if (_all.indexOf(k) === -1) _all.push(k); }
+        if (_ok) {
+          const _S = await getStates(env.DB, _all);
           _oldest = Infinity;
-          const _S = await getStates(env.DB, _keys);
-          for (const k of _keys) { const t = _num(_S[k] && _S[k].trainedAt, 0); if (t < _oldest) _oldest = t; }
-          // 창을 기록한 시각 이후에 ★전원★ 다시 학습됐는가.
-          _rewindOK = isFinite(_oldest) && _oldest > _num(_prev && _prev.ts, 0);
+          for (const nm of _names) {
+            /* 그 모델이 앉을 수 있는 자리 중 ★가장 최근★ 적합 시각. 자리가 하나도 없으면
+               '모른다' 이고, 모르면 되감지 않는다(보수적). 누가 막았는지는 말한다. */
+            let _newest = 0;
+            for (const k of _KEY[nm]) { const t = _num(_S[k] && _S[k].trainedAt, 0); if (t > _newest) _newest = t; }
+            if (_newest <= 0) { _oldest = 0; _blockedBy = nm + "(기록 없음)"; break; }
+            if (_newest < _oldest) { _oldest = _newest; _blockedBy = nm; }
+          }
+          _rewindOK = isFinite(_oldest) && _oldest > 0 && _oldest > _num(_prev && _prev.ts, 0);
         }
         if (!_rewindOK) {
           return Response.json({ ok: false, kept: _pv, rejected: _mt,
-            oldestExpertAt: isFinite(_oldest) ? _oldest : null, prevAt: _num(_prev && _prev.ts, 0),
+            oldestExpertAt: (isFinite(_oldest) && _oldest > 0) ? _oldest : null,
+            blockedBy: _blockedBy, models: _names, prevAt: _num(_prev && _prev.ts, 0),
             error: "경계를 뒤로 되돌리려면 그 창을 기록한 뒤 전문가가 전부 다시 학습돼 있어야 한다 — " +
-                   "아직 옛 세대 모델이 남아 있어 그 구간은 in-sample 이다(누출 방어)" },
+                   "아직 옛 세대 모델이 남아 있어 그 구간은 in-sample 이다(누출 방어)" +
+                   (_blockedBy ? " · 막은 모델: " + _blockedBy : "") },
             { status: 409, headers: cors });
         }
       }

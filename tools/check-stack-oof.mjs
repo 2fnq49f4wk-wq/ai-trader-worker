@@ -42,7 +42,11 @@ const no = (m) => { console.error("  FAIL " + m); bad++; };
   const i = src.indexOf('path === "/api/stack-oof-window"');
   if (i < 0) no("STACK-OOF: 경계 수신 엔드포인트가 없다");
   else {
-    const seg = src.slice(i, i + 2600);
+    /* [V33.377] ★고정 길이(2600자)로 잘라 보고 있었다.★ V33.377 이 그 핸들러에 주석을
+       더하자 찾던 줄이 창 밖으로 밀려나 멀쩡한 코드가 실패했다 — 이 저장소가 여러 번
+       겪은 모양이다. 핸들러의 ★끝★ 까지 본다(다음 라우트 직전). */
+    const _nx = src.indexOf('if (path === "', i + 40);
+    const seg = src.slice(i, _nx > i ? _nx : i + 6000);
     if (!/_mt < _pv/.test(seg))
       no("STACK-OOF: 경계가 과거로 되돌아가는 것을 막지 않는다 — 학습에 쓰인 구간이 열린다");
     else ok("경계는 단조 전진만 허용(과거로 되돌리면 409 로 거절)");

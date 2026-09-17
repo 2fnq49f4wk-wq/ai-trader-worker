@@ -64,17 +64,78 @@ STAGE_COST_DEFAULT = {"gbdt": 600, "boosters": 220, "markets": 450,
                       "mind": 900, "scalp": 300, "seq": 900, "memo": 600}
 
 
-def _rotate_plan(names, rotate_from):
-    """지난 회차가 예산에 끊긴 단계부터 시작하도록 목록을 회전한다.
+# ══ [V33.377] ★회전은 굶주림을 못 막았다 — 실측이 그렇게 말한다.★ ═══════════════
+#
+#   run 35149059451 (2026-09-16), 실제 로그:
+#     ⑤~⑩ 회전 — 지난 회차가 'mind' 에서 예산이 끊겼다. 거기부터 시작한다.
+#     ⏭ mind 생략 — 남은 예산 630s < 예상 1469s (다음 회차가 먼저 한다)
+#     ⏭ scalp 생략 · ⏭ seq 생략 · ⏭ gbdt 생략 · ⏭ markets 생략
+#     ⚠️ 예산으로 생략 5단계 — 다음 회차가 'mind' 부터 시작한다
+#
+#   ★교착이다.★ 커서는 "예산에 끊긴 첫 단계" 를 가리키는데, 그 단계를 맨 앞에 놓아도
+#   예산이 늘지는 않는다. mind 는 다음 회차에도 첫 번째로 잘리고, 커서는 또 mind 를
+#   가리킨다 — 영원히. 화면의 "GBDT 학습 27.2시간 전" 이 그 결과다.
+#
+#   왜 예산이 없나: ①수집 571s + ②DNN 6시드 2036s = 2607s 로 3300s 중 79% 가 사라진다.
+#   뒤 7단계가 나눠 쓸 것이 630s 뿐이라, 600s 를 넘는 단계는 ★구조적으로★ 못 돈다.
+#
+#   ※ 옛 게이트(check-trainer-budget)는 이 회전이 "6회차 안에 전 단계가 돈다" 고 확인해
+#     줬다. 그 시뮬레이션이 손으로 적은 옛 비용(mind 900s·남은 예산 1034s)을 썼기 때문이다.
+#     실측은 mind 1469s·남은 예산 630s 다. ★손으로 적은 숫자가 드리프트한 전형★ 이고,
+#     그래서 초록불이 거짓이었다. 게이트도 같이 고친다.
+#
+#   → 커서를 버리고 ★굶은 정도★ 로 정한다. 두 가지를 같이 한다:
+#     ① 순서: 마지막으로 성공한 지 오래된 단계부터 (커서가 아니라 측정값이다)
+#     ② 예산: 굶은 단계가 있으면 ★DNN 이 시드를 양보한다.★ 지금 DNN 은 wDnn=0 으로
+#        억제 중인데 예산의 79% 를 먹는다. 시드가 6→4 인 앙상블은 조금 시끄러울 뿐이고,
+#        27시간 묵은 GBDT 보다 낫다. 상한을 둬서 DNN 이 죽지는 않게 한다.
+STARVE = {
+    "maxAgeS": 20 * 3600,     # 이보다 오래 못 돈 단계 = 굶었다(크론 6시간 → 3회차 놓친 것)
+    "reserveCapFrac": 0.45,   # 예산의 이 비율을 넘게 DNN 에서 떼지 않는다
+    "dnnMinSeeds": 2,         # 예약 때문에 시드가 이 밑으로 내려가진 않는다
+    "topK": 2,                # 한 회차에 예약해 주는 굶은 단계 수(전부 예약하면 DNN 이 죽는다)
+}
 
-    회전이 없으면 예산이 모자란 뒤쪽 단계가 ★매 회차 같은 자리에서 잘려 영원히 안 돌다.★
-    실측에서 MIND 이후(단타·SEQ·MEMO)가 정확히 그 상태였다.
-    rotate_from 이 없거나 목록에 없으면 원래 순서 그대로."""
+
+def _stage_ages(store, names, now=None):
+    """단계별 '마지막으로 성공한 지 몇 초 지났나'. 한 번도 안 돌았으면 무한대."""
+    import time as _t
+    now = _t.time() if now is None else float(now)
+    try:
+        last = dict((store or {}).get("last_ok") or {})
+    except Exception:
+        last = {}
+    out = {}
+    for n in names:
+        t = last.get(n)
+        try:
+            out[n] = float("inf") if not t else max(0.0, now - float(t))
+        except Exception:
+            out[n] = float("inf")
+    return out
+
+
+def _starve_order(names, ages):
+    """오래 굶은 것부터. 동점이면 원래 순서 — 같은 입력이면 같은 순서여야 한다."""
     names = list(names)
-    if rotate_from in names:
-        k = names.index(rotate_from)
-        return names[k:] + names[:k]
-    return names
+    idx = {n: i for i, n in enumerate(names)}
+    return sorted(names, key=lambda n: (-ages.get(n, 0.0), idx[n]))
+
+
+def _starve_reserve(names, ages, costs, budget_s):
+    """DNN 이 양보해야 할 초. 굶은 단계 중 ★가장 오래된 topK★ 만 본다.
+
+    전부 예약하면 DNN 이 통째로 죽는다 — 그건 다른 방식의 같은 병이다.
+    상한(reserveCapFrac)이 마지막 방어다."""
+    hungry = [n for n in _starve_order(names, ages) if ages.get(n, 0.0) >= STARVE["maxAgeS"]]
+    if not hungry:
+        return 0
+    need = sum(int(costs.get(n, 600)) for n in hungry[:int(STARVE["topK"])])
+    try:
+        cap = float(budget_s) * float(STARVE["reserveCapFrac"])
+    except Exception:
+        cap = 0.0
+    return int(max(0, min(need, cap)))
 
 
 def _stage_fits(left_s, need_s):
@@ -132,17 +193,18 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
 
     _store = _trainer_state()
     _costs = dict(STAGE_COST_DEFAULT)
-    _rot0 = None
     if _store is not None:
         try:
             _costs.update({k: v for k, v in (_store.get("stage_cost") or {}).items() if v and v > 0})
         except Exception:
             pass
-        try:
-            _rot0 = _store.get("rotate_from")
-        except Exception:
-            _rot0 = None
     _ran, _skipped = [], []
+    _last_ok = {}
+    if _store is not None:
+        try:
+            _last_ok = dict(_store.get("last_ok") or {})
+        except Exception:
+            _last_ok = {}
 
     def _stage(name, fn):
         # 예산이 남아 있을 때만 돌린다. 못 돌리면 건너뛴 것을 기록한다.
@@ -160,6 +222,9 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             print(f"   {name} 예외(무시):", e)
         el = time.time() - t_s
         _ran.append(name)
+        # [V33.377] ★언제 마지막으로 돌았는지를 적는다★ — 다음 회차의 순서·예약이 이 값으로
+        #   정해진다. 커서 하나로는 교착이 났다(위 STARVE 주석의 실측 참조).
+        _last_ok[name] = int(time.time())
         # 실측을 적립한다 — 다음 회차의 예상치가 추측이 아니라 관측이 된다(여유 20%).
         _costs[name] = _next_cost(_costs.get(name), el)
         print(f"   · {name} {el:.0f}s · 남은 예산 {_left():.0f}s")
@@ -447,6 +512,20 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         _stage(target, _PLAN_BY[target])
         return {"ok": True, "target": target, "ran": _ran, "skipped": _skipped,
                 "note": "inspect individual upload/admission results"}
+    # ══ [V33.377] ★DNN 이 시드를 양보한다 — 뒤 단계가 굶지 않게.★ ═══════════════════
+    #   실측: ①수집 571s + ②DNN 6시드 2036s 로 3300s 중 79% 가 사라지고, 뒤 7단계가
+    #   630s 를 나눠 써야 했다. 600s 넘는 단계는 ★구조적으로★ 못 돈다(위 STARVE 주석).
+    #   그리고 지금 DNN 은 wDnn=0 으로 억제 중이다 — 위원회에 한 표도 안 넣으면서
+    #   예산의 79% 를 먹는다. 굶은 단계가 있으면 그만큼 미리 떼어 둔다.
+    #   ※ 상한(reserveCapFrac)과 최소 시드(dnnMinSeeds)가 DNN 을 죽이지 않게 막는다.
+    _DNN_RESERVE = _starve_reserve([n for n, _ in _PLAN],
+                                   _stage_ages({"last_ok": _last_ok}, [n for n, _ in _PLAN]),
+                                   _costs, JOB_TIMEOUT_S - JOB_MARGIN_S)
+    if _DNN_RESERVE > 0:
+        _hungry = [n for n, _ in _PLAN
+                   if _stage_ages({"last_ok": _last_ok}, [n])[n] >= STARVE["maxAgeS"]]
+        print(f"   [예산예약] 굶은 단계 {len(_hungry)}종({', '.join(_hungry)}) — "
+              f"DNN 이 {_DNN_RESERVE}s 를 양보한다(시드 최소 {STARVE['dnnMinSeeds']}개는 지킨다)")
     mw = np.clip(absp / pnl_scale, 0.3, 3.0) * np.where(HV > 0, hv_w, live_w) * recency * UNIQ
     print(f"   출처 가중: 수확 ×{hv_w} · 실거래 ×{live_w} (수확 {int((HV > 0).sum())} · 실거래 {int((HV <= 0).sum())}건)")
 
@@ -562,9 +641,13 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             #   ★모자란 앙상블이 없는 앙상블보다 낫다.★ 몇 개로 돌았는지는 seeds 로 올라간다.
             if sd > 0 and nets:
                 _per = (time.time() - _seed_t0) / sd
-                if not _stage_fits(_left(), _per * 1.15 + 240):   # 다음 시드 + 업로드/커밋 여유
-                    print(f"  ⏭ 시드 {sd+1}/{K} 이후 생략 — 남은 예산 {_left():.0f}s "
-                          f"< 시드당 {_per:.0f}s (앙상블 {len(nets)}개로 진행)")
+                # [V33.377] 예약분은 ★없는 셈 치고★ 판단한다 — 단, 최소 시드까지는 양보하지 않는다
+                #   (예약이 커도 DNN 이 통째로 사라지면 그건 같은 병의 반대 증상이다).
+                _res = _DNN_RESERVE if len(nets) >= STARVE["dnnMinSeeds"] else 0
+                if not _stage_fits(_left() - _res, _per * 1.15 + 240):   # 다음 시드 + 업로드/커밋 여유
+                    print(f"  ⏭ 시드 {sd+1}/{K} 이후 생략 — 남은 예산 {_left():.0f}s"
+                          + (f"(뒤 단계 예약 {_res}s 제외)" if _res else "")
+                          + f" < 시드당 {_per:.0f}s (앙상블 {len(nets)}개로 진행)")
                     break
             t0 = time.time(); nets.append(one_seed(1000 + sd * 7))
             print(f"  {tag + ' ' if tag else ''}시드 {sd+1}/{K} ({time.time()-t0:.1f}s)")
@@ -920,12 +1003,16 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         #     이 회차가 무엇을 학습했든 홀드아웃 경계는 같기 때문이다.
         _plan = list(_PLAN)
         _byname = dict(_plan)
-        _order = _rotate_plan([n for n, _ in _plan], _rot0)
-        if _order and _order[0] != _plan[0][0]:
-            print(f"⑤~⑩ 회전 — 지난 회차가 '{_rot0}' 에서 예산이 끊겼다. 거기부터 시작한다.")
+        # [V33.377] 커서가 아니라 ★굶은 정도★ 로 순서를 정한다(STARVE 주석의 실측 참조).
+        _names0 = [n for n, _ in _plan]
+        _ages = _stage_ages({"last_ok": _last_ok}, _names0)
+        _order = _starve_order(_names0, _ages)
         _plan = [(n, _byname[n]) for n in _order]
+        def _agetxt(a):
+            return "한 번도" if a == float("inf") else f"{a/3600:.0f}h"
         print(f"⑤~⑩ 후속 학습 {len(_plan)}단계 · 남은 예산 {_left():.0f}s "
               f"(예상 합계 {sum(_costs.get(n, 600) for n, _ in _plan)}s)")
+        print("   굶은 순서: " + " · ".join(f"{n}({_agetxt(_ages.get(n, 0.0))})" for n in _order))
         for _nm, _fn in _plan:
             _stage(_nm, _fn)
 
@@ -936,13 +1023,23 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         #   워커가 지금 모델로 그 구간을 채점하면 그게 out-of-fold 예측이고, STACK 이
         #   요구하는 값이 정확히 그것이다. ★모델이 아니라 경계 시각 하나만 보낸다.★
         try:
+            #   이 회차가 실제로 다시 적합한 모델 이름(워커 _KEY 의 이름 규약).
+            #   DNN 은 이 경로에서 항상 돌므로 언제나 포함된다.
+            _STAGE2OOF = {"gbdt": "gbdt", "mind": "mind", "boosters": "boost"}
+            _oof_models = ["dnn"] + [_STAGE2OOF[n] for n in _ran if n in _STAGE2OOF]
             _oof_min_ts = int(TS[N - n_val])          # 홀드아웃 첫 표본의 관측 시각
             #   (TS 는 표본을 ts 로 정렬한 뒤 만든 것이라 이 자리가 곧 홀드아웃 첫 표본이다 —
             #    check-stack-oof 가 그 정렬을 지킨다.)
             _r = requests.post(BASE + "/api/stack-oof-window", params={"key": KEY}, headers=HDR,
                                data=json.dumps({"featVer": featver, "minTs": _oof_min_ts,
                                                 "n": int(n_val),
-                                                "models": ["dnn", "gbdt", "boost", "mind"]}),
+                                                # [V33.377] ★이 회차가 실제로 다시 학습한 것만 적는다.★
+                                                #   종전엔 네 이름을 박아 보냈는데, 예산으로 gbdt·mind 가
+                                                #   생략된 회차에도 "다시 학습했다" 고 주장한 셈이다.
+                                                #   워커의 누출 방어는 그 주장을 믿고 판정한다 —
+                                                #   거짓 주장이 통과하면 in-sample 구간을 out-of-fold 로
+                                                #   채점하게 된다. 통과 못 해도 거짓말은 하지 않는다.
+                                                "models": _oof_models}),
                                timeout=60)
             if _r.status_code == 200:
                 print(f"⑪ STACK 홀드아웃 경계 통지 — minTs={_oof_min_ts} ({int(n_val)}건)")
@@ -961,7 +1058,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         if _store is not None:
             try:
                 _store["stage_cost"] = _costs
-                _store["rotate_from"] = _skipped[0] if _skipped else None
+                _store["last_ok"] = _last_ok
                 _store["last_run"] = {"ts": int(time.time()), "ran": _ran, "skipped": _skipped,
                                       "elapsed": int(time.time() - _T0), "n": int(N)}
             except Exception as e:
@@ -2562,7 +2659,14 @@ def _memo_score_all(model, Xh, MKTh, neighbors=8):
 
 def _train_and_upload_memo(BASE, KEY, HDR, X, Y, TS, PNL, featver, D, featnames=None, cfg=None,
                            SYM=None):
-    import numpy as np
+    # [V33.377] ★json·requests 가 빠져 있었다 — 그래서 MEMO 업로드가 ★한 번도★ 성공한 적이 없다.★
+    #   실측(run 35149059451, 2026-09-16 21:37:47):
+    #     MEMO 원형 128개 · 학습 160000행 · … · valAcc 50.2% · 블록IC 0.008 t 0.322 · probe 40건
+    #     MEMO 업로드 예외: name 'requests' is not defined
+    #   학습은 매 회차 멀쩡히 끝났고 마지막 POST 한 줄에서만 죽었다. 예외를 잡아 print 만 하고
+    #   None 을 돌려주므로 회차는 '성공' 으로 끝났다 — 그래서 아무도 몰랐다.
+    #   이 함수만 최상위 def 라 train_job 의 지역 import 를 클로저로 못 받는다(나머지 학습기는 받는다).
+    import numpy as np, json, requests
     c = dict(MEMO_CFG)
     c.update(cfg or {})
     Xa = np.asarray(X, dtype=np.float64)
@@ -3066,8 +3170,17 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
              "valAcc": round(acc, 4), "valAccLB": round(lb, 4), "valN": int(n), "n": int(N),
              "posRate": round(pos_rate, 4), "horizonBars": 12, "probe": probe,
              "valIC": round(_sic, 5), "valRankIC": round(_sric, 5)}
+    # [V33.377] ★이 줄은 실행되는 순간 죽었다 — 두 군데가 틀렸다.★
+    #   ① `_vai` 는 이 함수에 ★없다.★ 단타 분할은 `Xs[-nval:]` 슬라이스라 그런 이름이 없다
+    #      (스윙 학습기들의 `_split_ts` 반환값 이름을 그대로 베껴 온 자리다).
+    #      → `NameError: name '_vai' is not defined` 로 단타 업로드가 통째로 날아간다.
+    #   ② 지평도 틀렸다. `_HORIZON_MS` 는 ★스윙의 10일★ 이고 단타 라벨은 ★60분★ 이다
+    #      (바로 위 `horizon_ms`). 10일로 블록을 자르면 단타 홀드아웃(수일)에는 블록이
+    #      한 개도 안 들어가 IC 유의성이 아예 산출되지 않는다.
+    #   ★왜 몇 달을 몰랐나★ — 단타 단계가 예산에 밀려 ★한 번도 안 돌았다★(V33.377 굶주림).
+    #   즉 굶주림을 고치는 순간 이 줄이 터진다. 같이 고친다.
     model.update(_ic_block_fields(proba, Yva, mkt=_mkt_of_X(Xva),
-                                  ts=TS[order[_vai]], horizon_ms=_HORIZON_MS))   # [V33.291 · V33.366]
+                                  ts=TSs[-nval:], horizon_ms=horizon_ms))   # [V33.291 · V33.366 · V33.377]
     model.update(_uniq_fields(UWva))
     if "valICt" in model:
         print(f"   blockIC {model['valICBlock']:.4f} t {model['valICt']:.2f} (유의성 게이트용)")
