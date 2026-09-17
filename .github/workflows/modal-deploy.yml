@@ -36,17 +36,32 @@ on:
         type: string
         default: '2'
 
-# Codex V33.346: serialize manual/automatic recovery with the GitHub watchdog.
-concurrency:
-  group: modal-training
-  cancel-in-progress: false
+# ══ [V33.379] ★워크플로 전체를 한 그룹에 묶어 두었더니 배포가 조용히 사라졌다.★ ══════
+#   실측(2026-09-17): 04:30 에 시작된 학습(50분)이 modal-training 그룹을 잡고 있는 동안
+#     35183524091 (a865c81 · V33.377 푸시)  → cancelled
+#     35183933828 (내가 건 target=memo)      → cancelled
+#     35184243721 (a865c81)                  → cancelled
+#     35184328375 (9425dce · V33.378 푸시)  → cancelled
+#   GitHub 는 `cancel-in-progress: false` 에서도 ★대기열을 하나만★ 유지한다 —
+#   뒤에 들어온 실행이 앞에 대기 중이던 것을 밀어낸다.
+#   그 결과 ★V33.377·V33.378 의 트레이너 고침이 Modal 에 한 번도 올라가지 않았다.★
+#   (MEMO import · 단타 _vai 고침이 바로 그 안에 있다.) 그리고 실행은 'cancelled' 로만
+#   남아서 "누가 취소했나 보다" 로 읽힌다 — 실패 신호가 아니다. O-1 과 같은 병이다.
+#
+#   ★배포와 학습은 같은 자원이 아니다.★ `modal deploy` 는 20초짜리 멱등 연산이고
+#   학습을 기다릴 이유가 전혀 없다. 직렬화가 필요한 것은 ★학습★ 뿐이다.
+#   → 작업을 둘로 쪼개고, 동시성 그룹은 ★학습 작업에만★ 건다.
+#     이러면 trainer/modal/** 푸시는 학습이 도는 중에도 항상 배포된다.
+# (Codex V33.346 의 의도 — 수동/자동 복구 직렬화 — 는 train 작업에 그대로 남는다.)
 
 jobs:
+  # ── ① 배포 — ★동시성 그룹에 넣지 않는다.★ 학습이 돌든 말든 항상 올라가야 한다 ──
   deploy:
     runs-on: ubuntu-latest
-    # [V33.368] 수동 학습(run_now)은 사람이 로그를 보려고 부르는 것이라 스트리밍을 남긴다. 다만 상한은 건다.
-    timeout-minutes: 75
+    timeout-minutes: 10
     name: modal deploy
+    outputs:
+      ok: ${{ steps.sec.outputs.ok }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -73,8 +88,26 @@ jobs:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: modal deploy trainer/modal/modal_train.py
+
+  # ── ② 학습 — 여기만 직렬화한다(수동/자동 복구가 겹치면 안 된다) ──────────────────
+  train:
+    needs: deploy
+    if: needs.deploy.outputs.ok == 'true' && github.event_name == 'workflow_dispatch' && inputs.run_now
+    runs-on: ubuntu-latest
+    # [V33.368] 수동 학습(run_now)은 사람이 로그를 보려고 부르는 것이라 스트리밍을 남긴다. 다만 상한은 건다.
+    timeout-minutes: 75
+    name: modal train
+    concurrency:
+      group: modal-training
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install modal
+        run: pip install modal
       - name: Run training once now
-        if: steps.sec.outputs.ok == 'true' && github.event_name == 'workflow_dispatch' && inputs.run_now
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
@@ -95,7 +128,7 @@ jobs:
             modal run trainer/modal/modal_train.py --target "$TRAIN_TARGET" 2>&1 | tee run.log
           fi
       - name: Training summary
-        if: always() && steps.sec.outputs.ok == 'true' && github.event_name == 'workflow_dispatch' && inputs.run_now
+        if: always()
         run: |
           [ -f run.log ] || exit 0
           {
