@@ -422,6 +422,10 @@ jobs:
       #   "질의가 너무 비싸다" 는 오류에 ★같은 질의를 다시 던지는★ 재시도는 안 듣는다.
       - name: Export resilience contract
         run: node tools/check-export-resilience.mjs
+      # [V33.383] 정기 회차가 ★일을 끝낼 수 있는 크기인가★ — 크론은 도는데 뒤 단계가 굶어
+      #   "GBDT 학습 27.2시간 전" 이 나온 자리다. 주기를 늘리면 더 나빠진다는 것도 못 박는다.
+      - name: Cycle capacity contract
+        run: node tools/check-cycle-capacity.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

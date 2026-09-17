@@ -156,11 +156,29 @@ def _next_cost(prev_s, observed_s):
 
 
 def _trainer_state():
-    """회차 간에 남길 상태(회전 커서·단계 실측). 못 쓰면 None — 그때는 회전 없이 기본 순서."""
+    """회차 간에 남길 상태(단계 실측 · 마지막 성공 시각).
+
+    ══ [V33.383] ★이게 죽으면 스케줄러가 통째로 죽는다 — 그런데 조용히 죽는다.★ ══════
+      last_ok 가 안 남으면 매 회차 "전부 한 번도 안 돎" 으로 읽힌다. 그러면 굶주림 순서가
+      언제나 ★기본 순서★ 가 되고, 앞쪽 단계만 매번 돌고 뒤쪽은 영영 차례를 못 받는다 —
+      W-3 에서 고친 교착과 ★같은 모양★ 이 다른 원인으로 재발한다.
+      종전 코드는 예외가 났을 때만 한 줄 찍고 None 을 돌려줬다. 즉
+        · Dict 가 열리지만 ★쓰기가 안 남는★ 경우
+        · 아무 일 없이 잘 도는 경우
+      를 로그에서 구분할 수 없었다. 그래서 ★왕복으로 확인하고 결과를 반드시 찍는다.★
+    """
+    import time as _t
     try:
-        return modal.Dict.from_name("lux-trainer-state", create_if_missing=True)
+        d = modal.Dict.from_name("lux-trainer-state", create_if_missing=True)
+        _p = int(_t.time())
+        d["_probe"] = _p
+        if int(d.get("_probe", -1)) != _p:
+            print("   ⚠️ [상태저장소] 열렸지만 ★쓰기가 안 남는다★ — 시각 기반 회전으로 대체한다")
+            return None
+        print("   [상태저장소] 살아 있음 — 단계 실측·굶주림 순서가 회차 간에 이어진다")
+        return d
     except Exception as e:
-        print("   상태 저장소 없음(회전·실측 비활성):", e)
+        print("   ⚠️ [상태저장소] 없음 — 시각 기반 회전으로 대체한다:", e)
         return None
 
 
@@ -169,7 +187,19 @@ def _trainer_state():
     secrets=[modal.Secret.from_name("lux-dnn")],  # BASE_URL, TRAIN_KEY
     schedule=CRON,
     timeout=JOB_TIMEOUT_S,
-    gpu="T4",  # GPU 가속(20분→~2분). 12h마다 2분이라 월 크레딧 $1 수준(무료 $30 내).
+    # ══ [V33.383] ★이 주석은 60배 틀려 있었다 — 그래서 비용이 보이지 않았다.★ ═════
+    #   적혀 있던 말: "12h마다 2분이라 월 크레딧 $1 수준(무료 $30 내)".
+    #   실측(run 35182171750, 2026-09-17): ★한 회차 52.4분★ · 크론은 12h 가 아니라 ★6h★.
+    #     52.4분 × 4회/일 × 30일 = 104.8 GPU시간/월 → T4 기준 약 ★$62/월★.
+    #   즉 무료 크레딧 $30 을 이미 두 배 넘긴다. 주석이 옛 규모(표본 18만·2분)를 그대로
+    #   달고 있어서 아무도 안 봤다 — 이 저장소가 반복해 겪은 '손으로 적은 숫자의 드리프트' 다.
+    #
+    #   ★그리고 그 시간의 상당 부분은 GPU 를 안 쓴다.★ 표본 수집(571s)·부스터·단타·MEMO·
+    #   시장별은 전부 CPU 연산인데 T4 가 회차 내내 붙어 있다. 실측으로 GPU 를 실제로 쓰는
+    #   구간은 DNN·SEQ 뿐이고 그게 회차의 약 60% 다 — 나머지 40%(월 약 $25)는 놀고 있는 값이다.
+    #   함수를 GPU/CPU 로 쪼개면 줄일 수 있지만 표본을 두 번 받아야 하고, 방금 D1 이
+    #   CPU 한도로 무너진 참이라(Z-3) 추측으로 지금 넣지 않는다. 숫자만 남긴다.
+    gpu="T4",
 )
 def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
               depth_sweep: bool = False, sweep_seeds: int = 2, target: str = "all"):
@@ -1074,6 +1104,14 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         _names0 = [n for n, _ in _plan]
         _ages = _stage_ages({"last_ok": _last_ok}, _names0)
         _order = _starve_order(_names0, _ages)
+        # [V33.383] ★기억이 없으면 시각으로 돌린다.★ 상태 저장소가 죽으면 모든 단계가
+        #   "한 번도 안 돎"(무한대)으로 같아져 순서가 언제나 기본 순서가 된다 —
+        #   그러면 앞쪽만 매번 돌고 뒤쪽은 영영 차례를 못 받는다(W-3 교착의 재발).
+        #   크론 주기(6시간)로 나눈 회차 번호만큼 돌려 ★적어도 차례는 오게★ 한다.
+        if _store is None and len(_order) > 1:
+            _k = int(time.time() // (6 * 3600)) % len(_order)
+            _order = _order[_k:] + _order[:_k]
+            print(f"   ⚠️ 기억이 없어 ★시각 기반 회전★ 을 쓴다 — 이번 회차는 '{_order[0]}' 부터")
         _plan = [(n, _byname[n]) for n in _order]
         def _agetxt(a):
             return "한 번도" if a == float("inf") else f"{a/3600:.0f}h"
@@ -1117,6 +1155,24 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             print("⑪ STACK 경계 통지 예외(무시):", e)
 
         # ── 회차 마무리 — 무엇을 했고 무엇을 못 했는지 ★남긴다★ ──
+        # ══ [V33.383] ★회차가 일을 못 끝낸다는 사실을 숫자로 말하게 한다.★ ══════════
+        #   "몇 단계를 생략했다" 만으로는 ★전 단계가 한 바퀴 도는 데 며칠 걸리는지★ 를
+        #   알 수 없었다. 화면의 "GBDT 학습 27.2시간 전" 이 그 결과였는데, 로그는 그것을
+        #   예고하지 못했다. 남은 예산과 단계 비용으로 회전 주기를 바로 적는다.
+        try:
+            _tot = sum(int(_costs.get(n, 600)) for n, _ in _PLAN)
+            _used = time.time() - _T0
+            _percyc = max(1.0, float(sum(int(_costs.get(n, 600)) for n in _ran)))
+            _cyc = _tot / _percyc
+            print(f"   [회전주기] 후속 8단계 총량 {_tot}s · 이번 회차가 소화한 양 {int(_percyc)}s"
+                  f" → 전 단계 한 바퀴에 약 {_cyc:.1f}회차 = ★{_cyc * 6:.0f}시간★"
+                  f" (크론 6시간 · 회차 {_used/60:.0f}분)")
+            if _cyc * 6 > 24:
+                print("      ★하루가 넘는다 — 모델이 하루 이상 묵는다.★ 고칠 곳은 주기가 아니라"
+                      " ①회차 시간(timeout) ②DNN 시드 ③GPU/CPU 분리 중 하나다"
+                      " (주기를 늘리면 회차 수가 줄어 ★더 나빠진다★).")
+        except Exception as _e:
+            print("   [회전주기] 산출 실패(무시):", _e)
         if _skipped:
             print(f"⚠️ 예산으로 생략 {len(_skipped)}단계: {', '.join(_skipped)} "
                   f"— 다음 회차가 '{_skipped[0]}' 부터 시작한다")
