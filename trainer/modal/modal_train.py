@@ -681,6 +681,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         #   → τ* 는 학습 구간의 꼬리(cal)에서 고른다. 학습에서 뺐으니 예측이 부풀지 않고,
         #     엠바고가 검증과 갈라 놓으니 누출도 없다. 검증은 ★전부★ 채점에 쓴다.
         _cal_src = None
+        delta = 0.0   # [V33.378] τ* 로짓 시프트 — 아래 과적합 진단이 이 값을 되돌려 쓴다
         if _hasCal:
             with torch.no_grad():
                 _zc = torch.zeros(Xcal.shape[0], device=dev)
@@ -753,12 +754,39 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                 ztr = torch.zeros(Xtr.shape[0], device=dev)
                 for net in nets:
                     net.eval(); ztr += net(Xtr, False).squeeze(-1)
-                ptr = torch.sigmoid(ztr / len(nets)).cpu().numpy()
+                _ztr = (ztr / len(nets)).cpu().numpy()
+                ptr = 1.0 / (1.0 + np.exp(-_ztr))
                 ytr_np = Ytr.cpu().numpy()
             train_acc = float(((ptr >= 0.5) == (ytr_np > 0.5)).mean())
             gap = train_acc - acc
-            verdict = "과적합 경향(→표본·종류·규제↑ 필요)" if gap > 0.05 else "과적합 낮음(→신호·피처·라벨 품질이 병목)"
-            print(f"   [과적합진단] train {train_acc*100:.2f}% vs val {acc*100:.2f}% → 격차 {gap*100:+.2f}%p — {verdict}")
+            # ══ [V33.378] ★진단이 세 번째 경우를 몰라서 엉뚱한 처방을 내고 있었다.★ ══════
+            #   실측(run 35149059451): train 47.17% vs val 49.23% → 격차 ★-2.07%p★
+            #   그런데 분기는 둘뿐이라 "과적합 낮음(→신호·피처·라벨 품질이 병목)" 이라고 답했다.
+            #   격차가 ★음수★ 라는 것은 "과적합이 낮다" 가 아니라 ★학습집합조차 못 맞힌다★ 는 뜻이고
+            #   (게다가 train 47.2% 는 다수클래스 기준선 50.8% 보다도 낮다), 처방이 정반대다:
+            #   피처를 더 만들 일이 아니라 규제를 풀거나 보정 전이를 의심할 일이다.
+            #
+            #   ★그리고 그 음수가 진짜인지부터 가른다.★ τ* 는 ★보정구간★ 에서 정확도를 최대화하게
+            #   골라 마지막 층 bias 에 영구 반영된다(위 캘리브레이션). 학습구간은 그 구간과
+            #   양성비율이 다르므로, 같은 시프트를 학습구간에 걸면 정확도가 ★그 이유만으로★ 내려간다.
+            #   시프트를 되돌린 값(train_raw)을 같이 찍으면 둘을 구분할 수 있다:
+            #     · raw 도 낮다        → 진짜 과소적합(규제·용량·최적화 문제)
+            #     · raw 는 높은데 낮다 → 보정 전이 문제(τ* 가 학습구간에 안 맞는 것)
+            _tr_raw = float((((1.0 / (1.0 + np.exp(-(_ztr + float(delta))))) >= 0.5) == (ytr_np > 0.5)).mean())
+            _maj = float(max(ytr_np.mean(), 1 - ytr_np.mean()))
+            if gap > 0.05:
+                verdict = "과적합 경향(→표본·종류·규제↑ 필요)"
+            elif gap < -0.01:
+                if _tr_raw - train_acc > 0.01:
+                    verdict = (f"★보정 전이 문제★ — τ* 를 되돌리면 train {_tr_raw*100:.2f}% "
+                               f"(→τ* 를 학습구간 분포까지 보고 고를 것)")
+                else:
+                    verdict = (f"★과소적합★ — 학습집합조차 못 맞힌다(다수클래스 {_maj*100:.1f}%) "
+                               f"(→규제↓·용량·최적화. 피처를 더 만들 일이 아니다)")
+            else:
+                verdict = "과적합 낮음(→신호·피처·라벨 품질이 병목)"
+            print(f"   [과적합진단] train {train_acc*100:.2f}%(τ*되돌림 {_tr_raw*100:.2f}%) "
+                  f"vs val {acc*100:.2f}% → 격차 {gap*100:+.2f}%p — {verdict}")
         except Exception as _e:
             print("   [과적합진단] train acc 계산 실패:", _e)
         print(f"③ 앙상블 valAcc {acc*100:.2f}% (Wilson하한 {lb*100:.2f}%, n={n_eval})")

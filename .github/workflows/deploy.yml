@@ -406,6 +406,10 @@ jobs:
       #   `_vai` 미정의로 돌기만 하면 죽을 상태였다(굶주려서 안 돌아 안 드러났다).
       - name: Trainer scope contract
         run: node tools/check-trainer-scope.mjs
+      # [V33.378] 적합 진단이 ★고칠 곳★ 을 가리키는가 — 격차가 음수인데 "과적합 낮음
+      #   (→피처 품질이 병목)" 이라고 답해 처방이 정반대로 나가던 자리다.
+      - name: Fit diagnosis contract
+        run: node tools/check-fit-diagnosis.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,
