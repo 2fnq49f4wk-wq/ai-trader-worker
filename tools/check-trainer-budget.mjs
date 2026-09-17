@@ -40,7 +40,7 @@ fits = g["_stage_fits"]; nextcost = g["_next_cost"]
 order_of = g["_starve_order"]; ages_of = g["_stage_ages"]; reserve_of = g["_starve_reserve"]
 STARVE = g["STARVE"]
 DEFAULT = g["STAGE_COST_DEFAULT"]; TIMEOUT = g["JOB_TIMEOUT_S"]; MARGIN = g["JOB_MARGIN_S"]
-STAGES = ["gbdt", "boosters", "markets", "mind", "scalp", "seq", "memo"]
+STAGES = ["gbdt", "boosters", "markets", "mind", "scalp", "seq", "memo", "ablate"]
 
 out = {}
 out["defaults_cover_all"] = all(s in DEFAULT for s in STAGES)
@@ -50,7 +50,8 @@ out["margin_positive"] = MARGIN > 0 and MARGIN < TIMEOUT
 NOW = 1_000_000_000.0
 _st = {"last_ok": {"gbdt": NOW - 100 * 3600, "boosters": NOW - 1 * 3600,
                    "markets": NOW - 50 * 3600, "mind": NOW - 10 * 3600,
-                   "scalp": NOW - 2 * 3600, "seq": NOW - 3 * 3600}}   # memo 는 한 번도 안 돎
+                   "scalp": NOW - 2 * 3600, "seq": NOW - 3 * 3600,
+                   "ablate": NOW - 4 * 3600}}   # memo 만 한 번도 안 돎
 _ages = ages_of(_st, STAGES, now=NOW)
 r = order_of(STAGES, _ages)
 out["order_starvedfirst"] = r
@@ -128,7 +129,7 @@ out["cost_floor"] = nextcost(600, 1) == 30
 FETCH_S, SEED_S, DNN_TAIL_S, SEEDS = 571.0, 338.0, 55.0, 6
 # 실측 비용(예상치 ÷ 1.2 = 관측). memo·boosters 는 그 회차에 실제로 돈 시간.
 TRUE_COST = {"gbdt": 691, "boosters": 177, "markets": 424, "mind": 1224,
-             "scalp": 635, "seq": 642, "memo": 53}
+             "scalp": 635, "seq": 642, "memo": 53, "ablate": 333}
 HOUR = 3600.0
 CRON_S = 6 * HOUR          # Modal 크론 주기
 
@@ -289,7 +290,8 @@ ok(Math.max(...R.new_seeds) >= 4,
    `굶은 단계가 없는 회차에는 DNN 이 시드를 돌려받는다 (최대 ${Math.max(...R.new_seeds)}개)`);
 
 // ── 구조: 모든 단계가 예산 관문을 지나는가 ──
-const WANT = ["boosters", "gbdt", "markets", "memo", "mind", "scalp", "seq"];
+// [V33.380] ablate = 라벨 실험대(업로드 없음). 예산 관문을 거쳐야 하는 것은 같다.
+const WANT = ["ablate", "boosters", "gbdt", "markets", "memo", "mind", "scalp", "seq"];
 ok(R.train_job_found, "train_job 을 찾았다");
 ok(R.stage_calls >= 1, `단계 실행이 _stage() 관문을 통해 일어난다 (호출 지점 ${R.stage_calls})`);
 ok(JSON.stringify(R.staged_names) === JSON.stringify(WANT),

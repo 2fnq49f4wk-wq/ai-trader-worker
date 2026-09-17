@@ -414,6 +414,10 @@ jobs:
       #   고침이 실제로 그렇게 사라졌다(4개 실행 연속 cancelled). O-1 과 같은 병이다.
       - name: Modal deploy not blocked by training
         run: node tools/check-deploy-not-blocked.mjs
+      # [V33.380] 라벨 실험대가 ★재기만 하고 아무것도 안 바꾸는가★ —
+      #   "성능을 올린다" 는 명분으로 운영 라벨·승격 문턱이 조용히 움직이는 것을 막는다.
+      - name: Label bench contract
+        run: node tools/check-label-bench.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

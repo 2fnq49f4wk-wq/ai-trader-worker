@@ -61,7 +61,8 @@ JOB_TIMEOUT_S = 3600
 JOB_MARGIN_S = 300          # 마무리·업로드·정리 여유 — 이만큼 남기고 새 단계를 시작하지 않는다
 # 단계별 예상 소요(초) 기본값 — 위 실측에서 왔고, 실측이 쌓이면 그 값으로 대체된다.
 STAGE_COST_DEFAULT = {"gbdt": 600, "boosters": 220, "markets": 450,
-                      "mind": 900, "scalp": 300, "seq": 900, "memo": 600}
+                      "mind": 900, "scalp": 300, "seq": 900, "memo": 600,
+                      "ablate": 400}
 
 
 # ══ [V33.377] ★회전은 굶주림을 못 막았다 — 실측이 그렇게 말한다.★ ═══════════════
@@ -502,6 +503,10 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         # [V33.305] MEMO(원형 기억) — 워커 CPU 에서 가장 무거웠던 학습. 여기선 창 제약이 없다.
         ("memo", lambda: _train_and_upload_memo(BASE, KEY, HDR, X, Y, TS, PNL, featver, D,
                                                 featnames=featnames, cfg=cfg, SYM=SYM)),
+        # [V33.380] 라벨 실험대 — ★아무것도 업로드하지 않는다.★ "성능이 안 나온다" 의 원인이
+        #   모델인지 라벨인지를 같은 분할·같은 학습기로 재서 숫자로 답한다(_label_ablation 주석).
+        ("ablate", lambda: _label_ablation(X, PNL, TS, SYM, MKT, featver, D,
+                                           UNIQ=UNIQ, featnames=featnames)),
     ]
     _PLAN_BY = dict(_PLAN)
     # Codex V33.349: recover a timed-out tail stage without paying for DNN again.
@@ -2272,6 +2277,119 @@ def _train_double_ensemble(Xtr, Ytr, Xva, Yva, Wbase=None, K=4, bins_sr=10, bins
     vacc = float(((pv >= 0.5).astype(int) == Yva).mean())
     print(f"   DoubleEnsemble: 서브모델 {len(subs)}개 valAcc={vacc:.3f} (최종 피처 {len(subs[-1][1])}/{Dfeat})")
     return _predict, subs, {"valAcc": vacc}
+
+
+# ══ [V33.380] ★라벨 실험대 — "성능이 안 나온다" 의 원인을 ★재서★ 가른다.★ ═══════════
+#
+#   ★왜 필요한가 — 실측이 모델 문제가 아니라고 말한다.★
+#   같은 표본·같은 파이프라인에서:
+#       스윙(10일 sign(pnl))   DNN 49.3% · 부스터 52.2~52.5% · IC 0.003~0.032 · 고유도 0.033
+#       단타(60분 삼중배리어)  57.0%(하한 56.0%) · IC 0.207 · 고유도 0.333
+#   11층 MLP 와 부스팅 트리는 ★완전히 다른 모델족★ 인데 스윙에서 똑같이 작은 엣지로 수렴한다.
+#   두 모델족이 같은 벽에 부딪히면 그 벽은 모델이 아니라 ★라벨·지평★ 이다.
+#
+#   그리고 스윙 라벨에는 짚을 수 있는 결함이 있다 — ★데드밴드가 없다.★
+#   `sign(pnl)` 은 10일에 +0.02% 움직인 표본을 1, −0.02% 를 0 으로 놓는다. 둘은 경제적으로
+#   같고 통계적으로 구분 불가능한데, 모델 용량의 상당분이 그 띠에서 소모된다.
+#   그 띠가 표본의 몇 %인지에 따라 ★달성 가능한 정확도의 상한 자체★ 가 정해진다.
+#
+#   ★그래서 바꾸지 않고 잰다.★ (V33.260 이 깊이에 대해 한 것과 같은 규율:
+#   "근거 없이 반대로 밀지는 않는다 — 스윕이 실제로 재서 이긴 구성이 있으면 그것을 쓴다".)
+#   이 단계는 ★아무것도 업로드하지 않는다.★ 운영 라벨은 한 톨도 안 바뀐다.
+#   같은 분할·같은 학습기로 후보 라벨을 각각 학습해 ★숫자만★ 로그에 남긴다.
+#
+#   ※ 정직하게 읽는 법: 데드밴드 후보는 ★모집단이 다르다★(애매한 띠를 뺀다). 정확도가 높게
+#     나오는 것은 당연하고, 그 자체로 이겼다는 뜻이 아니다. 그래서 ★적용률(coverage)★ 을
+#     반드시 같이 적는다 — "표본의 40% 만 판정하고 60% 맞힌다" 와 "전부 판정하고 52% 맞힌다"
+#     중 무엇이 나은지는 ★기대수익★ 이 정하지, 정확도 한 숫자가 정하지 않는다.
+def _label_ablation(X, PNL, TS, SYM, MKT, featver, D, UNIQ=None, featnames=None):
+    import numpy as np, math
+    try:
+        import lightgbm as lgb
+    except Exception as e:
+        print("   [라벨실험] lightgbm 없음 — 생략:", e); return
+
+    N = len(PNL)
+    if N < 20000:
+        print(f"   [라벨실험] 표본 부족 {N} — 생략"); return
+    P = np.asarray(PNL, dtype=np.float64)
+    Xa = np.asarray(X, dtype=np.float64)
+    order, tri, _cal, vai, nval, _emb = _split_ts(TS, 0.2, _EMBARGO_MS, min_val=200,
+                                                  horizon_ms=_HORIZON_MS, tag="라벨실험")
+    Xs, Ps = Xa[order], P[order]
+    TSs = np.asarray(TS, dtype=np.float64)[order]
+    UWs = (np.asarray(UNIQ, dtype=np.float64)[order] if UNIQ is not None and len(UNIQ) == N
+           else np.ones(N, dtype=np.float64))
+
+    # 변동성 자 — atrPct 칸이 있으면 그걸 쓰고, 없으면 |pnl| 의 종목중앙값으로 대신한다.
+    _atr = None
+    try:
+        if featnames and "atrPct" in list(featnames):
+            _atr = np.abs(Xs[:, list(featnames).index("atrPct")].astype(np.float64))
+            if not np.isfinite(_atr).all() or float(np.nanmedian(_atr)) <= 0:
+                _atr = None
+    except Exception:
+        _atr = None
+
+    _absmed = float(np.median(np.abs(Ps))) or 1e-9
+
+    def _xs_demean(vals, ts):
+        """같은 날의 중앙값을 뺀다 — 시장 공통성분(베타)을 지운다."""
+        out = np.array(vals, dtype=np.float64)
+        day = np.floor(ts / 86400000.0)
+        for d in np.unique(day):
+            m = day == d
+            if m.sum() >= 5:
+                out[m] = out[m] - np.median(out[m])
+        return out
+
+    # 후보들 — (이름, 라벨, 사용마스크, 한 줄 설명)
+    cands = []
+    cands.append(("A 운영(sign)", (Ps > 0).astype(np.float64), np.ones(N, dtype=bool),
+                  "지금 쓰는 라벨. 데드밴드 없음"))
+    for _mult, _tag in ((0.25, "0.25×"), (0.50, "0.50×")):
+        thr = _mult * _absmed
+        cands.append((f"B 데드밴드 {_tag}중앙", (Ps > 0).astype(np.float64), np.abs(Ps) >= thr,
+                      f"|pnl| < {thr:.4f} 인 애매한 띠를 ★뺀다★"))
+    _xs = _xs_demean(Ps, TSs)
+    cands.append(("C 횡단면(당일중앙 차감)", (_xs > 0).astype(np.float64), np.ones(N, dtype=bool),
+                  "시장 공통성분을 뺀 상대수익의 부호"))
+    if _atr is not None:
+        _z = Ps / np.maximum(_atr, 1e-6)
+        _zthr = 0.25 * float(np.median(np.abs(_z)))
+        cands.append(("D 변동성정규화+데드밴드", (_z > 0).astype(np.float64), np.abs(_z) >= _zthr,
+                      "pnl/ATR% 로 재고 애매한 띠를 뺀다"))
+
+    print("   ── [라벨실험] ★아무것도 업로드하지 않는다 — 운영 라벨은 그대로다★ ──")
+    print(f"      {'후보':26s} {'적용률':>7s} {'다수클래스':>9s} {'valAcc':>8s} {'초과':>8s} {'IC':>8s} {'유효n':>8s}")
+    base_excess = None
+    for name, Yc, use, why in cands:
+        try:
+            tr = np.array([i for i in tri if use[i]], dtype=np.int64)
+            va = np.array([i for i in vai if use[i]], dtype=np.int64)
+            if tr.size < 5000 or va.size < 2000:
+                print(f"      {name:26s} 표본 부족(학습 {tr.size} · 검증 {va.size}) — 생략"); continue
+            ds = lgb.Dataset(Xs[tr], label=Yc[tr], weight=UWs[tr], free_raw_data=False)
+            bst = lgb.train({"objective": "binary", "learning_rate": 0.05, "num_leaves": 31,
+                             "min_data_in_leaf": 200, "feature_fraction": 0.8,
+                             "bagging_fraction": 0.8, "bagging_freq": 1,
+                             "verbose": -1, "seed": 7}, ds, num_boost_round=200)
+            pv = bst.predict(Xs[va])
+            yv = Yc[va]
+            acc = float(((pv >= 0.5) == (yv > 0.5)).mean())
+            maj = float(max(yv.mean(), 1 - yv.mean()))
+            ic, _ = _calc_ic(pv, yv)
+            neff = int(max(1, round(float(UWs[va].sum()))))
+            cov = float(use.mean())
+            exc = acc - maj
+            if base_excess is None: base_excess = exc
+            print(f"      {name:26s} {cov*100:6.1f}% {maj*100:8.1f}% {acc*100:7.1f}% "
+                  f"{exc*100:+7.2f}%p {ic:8.4f} {neff:8d}   ← {why}")
+        except Exception as e:
+            print(f"      {name:26s} 실패(무시): {e}")
+    print("      ★읽는 법★ 정확도 한 숫자로 비교하지 말 것 — 데드밴드 후보는 모집단이 다르다.")
+    print("      비교할 것은 ★다수클래스 대비 초과(%p)★ 이고, 적용률이 낮으면 그만큼 기회가 준다.")
+    print("      운영에 반영할지는 이 표를 보고 ★사람이★ 정한다(문턱을 낮추는 것과 다른 일이다).")
 
 
 def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None, UNIQ=None):
