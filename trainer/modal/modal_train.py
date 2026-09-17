@@ -182,8 +182,19 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     BASE = os.environ["BASE_URL"].rstrip("/")
     KEY = os.environ["TRAIN_KEY"]
     HDR = {"x-train-key": KEY}
-    if target not in ("all", "dnn", "seq", "mind", "memo", "boosters", "markets", "scalp"):
-        raise ValueError("unknown training target")
+    # [V33.381] ★손으로 적은 목록이 또 갈렸다 — 이번엔 실행이 즉시 죽었다.★
+    #   실측(run 35187653387, 2026-09-17 05:56): target=ablate 로 걸었더니
+    #   `ValueError: unknown training target` 으로 학습이 시작도 못 했다.
+    #   단계 이름이 ★세 곳★ 에 각각 적혀 있었기 때문이다:
+    #     ① 이 검증 튜플  ② _PLAN 표  ③ 워크플로의 target choice 목록
+    #   V33.380 이 ablate 를 ②③ 에만 넣고 ① 을 빼먹었다. 이 저장소가 반복해 밟는 함정이다
+    #   (한국주식 세 표 동기화 · 게이트 배선 누락 · STAGE_COST_DEFAULT …).
+    #   → 목록을 ★세지 않는다.★ 비용표(STAGE_COST_DEFAULT)가 단계의 단일 출처이므로
+    #     거기서 파생시킨다. 새 단계를 추가하면 비용을 적는 순간 자동으로 허용된다.
+    #     ("all"·"dnn" 은 단계가 아니라 모드라 따로 둔다.)
+    if target not in ("all", "dnn") and target not in STAGE_COST_DEFAULT:
+        raise ValueError("unknown training target: " + str(target)
+                         + " (allowed: all, dnn, " + ", ".join(sorted(STAGE_COST_DEFAULT)) + ")")
 
     # [V33.350] 예산 시계 — 이 함수가 시작한 시각이 기준이다(모듈 로드 시각이 아니다).
     _T0 = time.time()

@@ -295,7 +295,30 @@ const WANT = ["ablate", "boosters", "gbdt", "markets", "memo", "mind", "scalp", 
 ok(R.train_job_found, "train_job 을 찾았다");
 ok(R.stage_calls >= 1, `단계 실행이 _stage() 관문을 통해 일어난다 (호출 지점 ${R.stage_calls})`);
 ok(JSON.stringify(R.staged_names) === JSON.stringify(WANT),
-   `예산 관문에 등록된 단계가 7종 전부다: ${JSON.stringify(R.staged_names)}`);
+   `예산 관문에 등록된 단계가 ${WANT.length}종 전부다: ${JSON.stringify(R.staged_names)}`);
+/* ══ [V33.381] ★단계 이름이 세 곳에 따로 적혀 있어 실제로 갈렸다.★ ═══════════════
+   실측(run 35187653387): target=ablate 가 `unknown training target` 으로 즉시 죽었다 —
+   V33.380 이 _PLAN 과 워크플로에는 넣고 ★검증 튜플★ 에는 안 넣었다.
+   이제 검증은 STAGE_COST_DEFAULT 에서 파생된다. 그 사실과, 워크플로 목록이 같은지를 본다. */
+{
+  const wf = readFileSync(join(root, ".github/workflows/modal-deploy.yml"), "utf8");
+  const m = /options:\s*\[([^\]]+)\]/.exec(wf);
+  const opts = m ? m[1].split(",").map((x) => x.trim()).filter(Boolean) : [];
+  const stages = new Set(R.staged_names);
+  const optStages = opts.filter((o) => o !== "all" && o !== "dnn");
+  console.log(`
+     비용표 ${R.staged_names.length}종 · 워크플로 목록 ${optStages.length}종`);
+  ok(opts.includes("all") && opts.includes("dnn"), "워크플로 목록에 모드(all·dnn)가 있다");
+  ok(optStages.length === stages.size && optStages.every((o) => stages.has(o)),
+     optStages.length === stages.size && optStages.every((o) => stages.has(o))
+       ? `워크플로 target 목록이 단계 목록과 ★정확히 같다★ (${optStages.sort().join(", ")})`
+       : `★워크플로 목록이 단계와 어긋난다★ — 워크플로 ${JSON.stringify(optStages.sort())} vs 단계 ${JSON.stringify([...stages].sort())}`);
+  const _py = readFileSync(join(root, "trainer/modal/modal_train.py"), "utf8");
+  ok(/if target not in \("all", "dnn"\) and target not in STAGE_COST_DEFAULT:/.test(_py),
+     "★target 검증이 비용표에서 파생된다★ — 손으로 적은 튜플이 남아 있지 않다");
+  ok(!/if target not in \("all", "dnn", "seq"/.test(_py),
+     "옛 손목록이 지워졌다(남아 있으면 다음 단계에서 또 갈린다)");
+}
 ok(R.bypass_lines.length === 0,
    R.bypass_lines.length
      ? `관문을 우회해 학습 함수를 직접 부르는 곳이 있다 (줄 ${R.bypass_lines.join(", ")}) — 그 단계는 예산을 안 본다`

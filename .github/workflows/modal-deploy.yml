@@ -23,7 +23,10 @@ on:
         description: '학습 대상 — 시간 제한으로 못 끝낸 모델만 복구 가능'
         type: choice
         default: all
-        options: [all, dnn, seq, mind, memo, boosters, markets, scalp, ablate]
+        # [V33.381] ★단계 이름은 트레이너의 STAGE_COST_DEFAULT 가 단일 출처다.★
+        #   여기가 그것과 어긋나면 check-trainer-budget 이 배포를 막는다 —
+        #   실제로 gbdt 가 빠져 있어 GBDT 만 따로 복구할 길이 없었다(게이트가 잡았다).
+        options: [all, dnn, gbdt, seq, mind, memo, boosters, markets, scalp, ablate]
       # [V33.204] 10층(4,580,070) DNN 이 valAcc 49.3% 로 2층 폴백(53.3%)보다 낮게 측정됐다.
       #   깊이를 추측으로 정하지 않고 ★같은 표본·같은 분할·같은 시드★ 로 후보를 재서 고른다.
       #   기본은 꺼짐 — 정기 6시간 실행에서 후보를 셋씩 학습하면 Modal 크레딧($21/$30)을 넘긴다.
