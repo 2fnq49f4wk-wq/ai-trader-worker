@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.389";
+const _BUILD_VER = "V33.390";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -20582,12 +20582,58 @@ async function runTradingCycle(env) {
                 try {
                   const _pnlY = held.avg > 0 ? ((price - held.avg) / held.avg) * 100 : 0;
                   if (_pnlY > (_xc.minPnlForExit != null ? _xc.minPnlForExit : -3.0)) {   // 큰 손실은 하드손절에 위임
+                    /* ══ [V33.390] ★매수와 매도가 다른 위원회·다른 피처로 판단하고 있었다.★ ═══
+                       이 자리 주석은 "진입을 주도하는 위원회로 보유 포지션도 재평가" 라고 적혀
+                       있는데, 그때 위원은 셋(GBDT·DNN·MIND)이었다. 그 뒤 위원회는 아홉이 됐고
+                       ★이 호출만 안 따라왔다.★
+                         · seqFeat·flowFeat·xaFeat 를 안 넘긴다 → SEQ·FLOW·XALPHA 세 위원은
+                           청산 결정에 ★한 번도 참여한 적이 없다★(피처가 없으면 조용히 불참한다).
+                         · sectorCloses 를 안 넘긴다 → 미국 종목의 sectorRs20·sectorBeta 두 피처가
+                           청산 때만 중립이 된다. ★같은 종목·같은 순간에 진입과 다른 입력★ 이다.
+                         · shock·evCtx·portStats·이중헤드·techK·finalCal 도 전부 빠져 있었다.
+                       즉 매수는 아홉이 완전한 입력으로 정하고, 매도는 여섯이 결손 입력으로 정했다.
+                       한쪽만 고쳐지는 날이 온다던 그 날이 이미 와 있었다.
+                       ★주의★ 청산 문턱(committeeExitProb 0.42)은 ★옛 여섯 위원 분포★ 에서 관찰된
+                       값이다. 위원이 늘면 결합확률 분포가 바뀌므로 이 문턱은 다시 봐야 한다 —
+                       임의로 옮기지 않고 여기 적어 둔다(사람이 정할 자리). */
+                    let _secX = null;
+                    try {
+                      if (market === "us") {
+                        const _etfX = _SECTOR_ETF[getSectorGroup(symbol, mcfg)];
+                        if (_etfX) _secX = __secCache[_etfX] || null;
+                      }
+                    } catch (e) {}
                     const _fx = mlBuildFeatures({ closes: daily.closes, volumes: daily.volumes, opens: daily.opens,
-                      highs: daily.highs, lows: daily.lows, idxCloses: __idxCloses, xsPanel: __xsPanel, barsAgo: 0,
+                      highs: daily.highs, lows: daily.lows, idxCloses: __idxCloses, sectorCloses: _secX,
+                      xsPanel: __xsPanel, barsAgo: 0,
                       price: price, prevClose: daily.prevClose,
                       dayPct: daily.prevClose > 0 ? (price / daily.prevClose - 1) * 100 : 0,
                       regime: (regime && regime.regime) ? regime.regime : "NEUTRAL", strategy: "trend", market: market, ev: {}, obsTs: Date.now() });
-                    const _mdx = await _phaseRun("decide", function () { return mlDeepDecide(DB, _fx, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats }); });
+                    /* 세 위원의 입력을 여기서도 만든다. 보유 종목은 스캔 대상보다 훨씬 적어 비용이 작고,
+                       FLOW 는 ★noFetch★ 로만 부른다 — 캐시에 없으면 네트워크를 타지 않고 그냥 불참한다
+                       (청산 경로가 지갑을 여는 일은 없어야 한다). 못 만들면 `absent` 에 사유가 남는다. */
+                    let _xaX = null, _seqX = null, _flowX = null;
+                    try { if (XALPHA.enabled) _xaX = xalphaBuildFeat(symbol, __dailyCacheForFlow, __xaPanel); } catch (e) {}
+                    try {
+                      /* 사이클 총 예산을 ★진입 경로와 같이 쓴다★ — 청산이 먼저 예산을 다 태우면
+                         진입 쪽 SEQ 가 조용히 죽는다(반대도 마찬가지). 한 지갑을 둘이 나눠 쓴다. */
+                      if (__seqModel && _enrich.seqMs < _num(SEQML.maxCycleBudgetMs, 1500)) {
+                        const _sqX0 = Date.now();
+                        _seqX = seqBuildFeat({
+                          closes: daily.closes, volumes: daily.volumes, opens: daily.opens,
+                          highs: daily.highs, lows: daily.lows, days: daily.days,
+                          idxCloses: __idxCloses, sectorCloses: _secX, xsPanel: __xsPanel,
+                          regime: (regime && regime.regime) ? regime.regime : "NEUTRAL", market: market
+                        }, _fx, _num(__seqModel.L, SEQML.L), SEQML.maxSeqBudgetMs);
+                        _enrich.seqMs += Date.now() - _sqX0;
+                      }
+                    } catch (e) {}
+                    try {
+                      if (FLOWML.enabled && __flowModel && __flowModel.trusted)
+                        _flowX = await flowBuildFeat(DB, symbol, market, __dailyCacheForFlow,
+                          { noFetch: true, pre: __flowSideCache });
+                    } catch (e) {}
+                    const _mdx = await _phaseRun("decide", async function () { return await mlDeepDecide(DB, _fx, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, portStats: __portStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, seqFeat: _seqX, seqModel: __seqModel, flowFeat: _flowX, flowModel: __flowModel, xaFeat: _xaX, xaModel: __xaModel, stackModel: __stackModel, memoModel: __memoModel, dualBull: __dualBull, dualBear: __dualBear, dualShift: __dualShift, techK: __techK, finalCal: __finalCal }); });
                     // [V12.90] ★청산도 기술+뉴스 블렌드로 통일★ — 진입은 그래프 중심인데 청산이 위원회 원시
                     //   확률만 쓰면 기술적으로 강한 종목을 노이즈로 파는 모순. 진입과 동일 기준으로 통합확률 산출.
                     let _exitP = (_mdx && typeof _mdx.p === "number") ? _mdx.p : null;
@@ -40839,6 +40885,15 @@ async function mlDeepDecide(DB, featVec, opts) {
     //   폴백했다("하나 때문에 전부 막힘"). 이제 사용 가능한 전문가(mind·dnn·gbdt·rule)만으로 위원회를
     //   구성하고, 단 하나라도 있으면 결정을 낸다. MIND는 있으면 위원장, 없으면 나머지가 대행.
     const experts = [];
+    /* ══ [V33.390] ★위원이 왜 빠졌는지 아무 데도 안 적혀 있었다.★ ════════════════════
+       위원 조립부는 위원마다 try/catch 로 감싸는데, catch 가 ★전부 비어 있었다.★
+       그래서 셋을 구분할 방법이 없었다:
+         ① 승격을 못 해서 안 나온다  ② 피처를 안 받아서 못 나온다  ③ 던져서 빠졌다
+       화면의 `voting` 은 ★저장된 승격 상태★ 로 계산되므로, 실제로 표를 한 번도 못 던져도
+       계속 "가동 중" 이라고 말한다 — 그게 곧 거짓말이 된다.
+       → 빠진 위원과 사유를 여기 모아 결정 결과에 실어 보낸다. */
+    const _absent = {};
+    const _skip = function (name, why) { if (!_absent[name]) _absent[name] = why; };
     let mindScore = null, mindAccLB = 0.5, _committeeUnc = 0;
     if (mind) {
       mindScore = await mlMindScore(DB, mind, featVec, opts.ens);
@@ -40849,8 +40904,8 @@ async function mlDeepDecide(DB, featVec, opts) {
         experts.push({ name: "mind", p: mindScore.p, z: _logitD(mindScore.p), acc: mindAccLB,
                        ic: _icEffective({ valICBlock: mind.valICBlock, valICt: mind.valICt, valIC: mind.valIC, valN: mind.valN }) });
         _committeeUnc = mindScore.uncertainty || 0;
-      }
-    }
+      } else _skip("mind", "점수 null");
+    } else _skip("mind", "MIND 모델 없음(미학습·판 불일치·회귀가드 거부)");
 
     const trust = (opts.trust !== undefined) ? opts.trust : await _cycState(DB, "dnn_trust", null);
     // ── 전문가 위원회: mind(스태킹) + dnn(멀티시드 딥넷) + gbdt(부스팅트리) ──
@@ -40873,8 +40928,8 @@ async function mlDeepDecide(DB, featVec, opts) {
             const st = _dnnEnsembleStats(net.nets, xStd);
             pDnn = _clamp(st.p, 0.001, 0.999); dnnStd = st.std;
           } else pDnn = mlDNNScore(net, featVec);
-        } catch (e) { pDnn = null; }
-      }
+        } catch (e) { pDnn = null; _skip("dnn", "예외: " + ((e && e.message) || e)); }
+      } else _skip("dnn", "모델 로드 실패/판 불일치");
       if (pDnn != null) {
         const accBase = _num(trust.dnnAccLB, _num(trust.dnnAcc, 0.5));
         const accEff = 0.5 + (accBase - 0.5) / (1 + (DNN.disagreeK || 3.0) * dnnStd);  // 불일치↑ → 소프트맥스 가중↓
@@ -40887,8 +40942,8 @@ async function mlDeepDecide(DB, featVec, opts) {
         const _dnnIC = _icEffective(net) != null ? _icEffective(net) : _icEffective(trust);
         experts.push({ name: "dnn", p: pDnn, z: _logitD(pDnn), acc: accEff, ic: _dnnIC }); usedDnn = true;
         if (!mind) _committeeUnc = Math.max(_committeeUnc, dnnStd);  // [V12.62] MIND 없을 땐 DNN 시드불일치를 위원회 불확실성으로
-      }
-    }
+      } else _skip("dnn", "점수 null");
+    } else _skip("dnn", !trust ? "신뢰기록 없음" : (!trust.trusted ? "미승격" : "wDnn 0"));
     try {
       const gtrust = (opts.gbdtTrust !== undefined) ? opts.gbdtTrust : await _cycState(DB, "gbdt_trust", null);
       if (gtrust && gtrust.trusted && gtrust.wGbdt > 0) {
@@ -40897,8 +40952,9 @@ async function mlDeepDecide(DB, featVec, opts) {
         // [V33.77] 모델이 실어 온 valIC 를 그대로 위원회 가중에 쓴다(없으면 정확도 환산 폴백).
         const _gIC = _icEffective(gm) != null ? _icEffective(gm) : _icEffective(gtrust);   // [V33.91] 유효 IC
         if (pG != null) { experts.push({ name: "gbdt", p: pG, z: _logitD(pG), acc: _num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0.5)), ic: _gIC }); usedGbdt = true; }
-      }
-    } catch (e) {}
+        else _skip("gbdt", gm ? "점수 null" : "모델 로드 실패");
+      } else _skip("gbdt", !gtrust ? "신뢰기록 없음" : (!gtrust.trusted ? "미승격" : "wGbdt 0"));
+    } catch (e) { _skip("gbdt", "예외: " + ((e && e.message) || e)); }
     // [V32.65] ★부스터 합류(XGB/LGB/Cat)★ — 그동안 학습만 하고 안 쓰던 3모델을 위원회에 참여.
     //   트리계열 상관성으로 개별 4표가 MIND/DNN을 압도하지 않게, 셋을 정확도가중 '합의' 1표(boost)로 묶고
     //   가중 0.8로 소폭 감쇠(GBDT와 별개의 보조 관점). 검증바닥 통과 모델만.
@@ -40919,8 +40975,9 @@ async function mlDeepDecide(DB, featVec, opts) {
         }
         // [V33.94] wMul 제거 — IC 가중이 이미 신뢰도를 반영한다(손으로 0.8 을 또 곱하면 이중 계상).
         if (bw > 0 && bUsed > 0) { const pBoost = _clamp(_sigmoid(bz / bw), 0.001, 0.999); experts.push({ name: "boost", p: pBoost, z: _logitD(pBoost), acc: bAccMax, ic: bICMax }); }
-      }
-    } catch (e) {}
+        else _skip("boost", bUsed === 0 ? "부스터 3종이 전부 점수 null" : "가중 합 0");
+      } else _skip("boost", "승격 부스터 없음");
+    } catch (e) { _skip("boost", "예외: " + ((e && e.message) || e)); }
     /* ── [V33.267] SEQ(Transformer) 합류 ──────────────────────────────────
        다른 위원들은 전부 ★한 시점의 벡터★ 하나만 본다. 이 위원만 같은 종목의 최근 L 봉을
        순서대로 본다 — 정보가 며칠에 걸쳐 스며드는 구간(FOMC 전후·OpEx 주간)에서 다른
@@ -40937,10 +40994,10 @@ async function mlDeepDecide(DB, featVec, opts) {
             experts.push({ name: "seq", p: _sp, z: _logitD(_sp),
                            acc: _num(sm.valAccLB, 0.5), ic: _icEffective(sm),
                            tier: (sm.admitPath === "ic") ? "prov" : undefined });
-          }
-        }
-      }
-    } catch (e) {}
+          } else _skip("seq", pS == null ? "점수 null" : "확률이 0.5 — 기권");
+        } else _skip("seq", "모델 없음/미승격");
+      } else _skip("seq", "시퀀스 피처 미제공(호출부가 seqFeat 를 안 넘겼다)");
+    } catch (e) { _skip("seq", "예외: " + ((e && e.message) || e)); }
     // ── [V33.149] ★전문가의 name 은 식별자다 — 표시용 표식을 섞으면 안 된다★
     //   종전엔 잠정합류 위원의 name 에 "~" 를 붙여 화면에서 구분했다. 그런데 name 은
     //   ★세 곳에서 조회 키로 쓰인다★:
@@ -40964,10 +41021,10 @@ async function mlDeepDecide(DB, featVec, opts) {
           if (pF != null && Math.abs(pF - 0.5) > 1e-4) {
             experts.push({ name: "flow", p: pF, z: _logitD(pF),
                            acc: _num(fm.valAcc, 0.5), ic: _num(_icEffective(fm), 0) * _fa.mult, tier: _fa.tier });
-          }
-        }
-      }
-    } catch (e) {}
+          } else _skip("flow", pF == null ? "점수 null" : "확률이 0.5 — 기권");
+        } else _skip("flow", !fm ? "모델 없음" : (fm.featVer !== FLOWML.featVer ? "판 불일치" : "미승격"));
+      } else _skip("flow", "FLOW 피처 미제공(호출부가 flowFeat 를 안 넘겼다)");
+    } catch (e) { _skip("flow", "예외: " + ((e && e.message) || e)); }
     // ── [V33.79] XALPHA 전문가 합류 — 형식알파(WorldQuant 101) + 횡단면 랭크(JPX) ──
     try {
       if (opts.xaFeat && Array.isArray(opts.xaFeat)) {
@@ -40978,10 +41035,10 @@ async function mlDeepDecide(DB, featVec, opts) {
           if (pX != null && Math.abs(pX - 0.5) > 1e-4) {
             experts.push({ name: "xalpha", p: pX, z: _logitD(pX),
                            acc: _num(xm.valAcc, 0.5), ic: _num(_icEffective(xm), 0) * _xa.mult, tier: _xa.tier });
-          }
-        }
-      }
-    } catch (e) {}
+          } else _skip("xalpha", pX == null ? "점수 null" : "확률이 0.5 — 기권");
+        } else _skip("xalpha", !xm ? "모델 없음" : (xm.featVer !== XALPHA.featVer ? "판 불일치" : "미승격"));
+      } else _skip("xalpha", "XALPHA 피처 미제공(호출부가 xaFeat 를 안 넘겼다)");
+    } catch (e) { _skip("xalpha", "예외: " + ((e && e.message) || e)); }
     // ── [V33.92] MEMO 전문가 합류 — "비슷했던 과거 상황에서 실제로 어땠나"(비모수·국소) ──
     //   나머지 위원 전원이 전역 파라미터 하나로 모든 상황을 설명하는 모수적 모델이라,
     //   국소 구조를 보는 위원이 하나도 없었다. 앙상블 다양성 기여가 큰 자리다.
@@ -40993,9 +41050,9 @@ async function mlDeepDecide(DB, featVec, opts) {
         if (pM != null && Math.abs(pM - 0.5) > 1e-4) {
           experts.push({ name: "memo", p: pM, z: _logitD(pM),
                          acc: _num(mm2.valAcc, 0.5), ic: _num(_icEffective(mm2), 0) * _ma.mult, tier: _ma.tier });
-        }
-      }
-    } catch (e) {}
+        } else _skip("memo", pM == null ? "점수 null" : "확률이 0.5 — 기권");
+      } else _skip("memo", !mm2 ? "모델 없음" : (mm2.luxFeatVer !== LUXML.featVer ? "판 불일치" : "미승격"));
+    } catch (e) { _skip("memo", "예외: " + ((e && e.message) || e)); }
     // ── [V12.39 규칙엔진 전문가] 규칙엔진의 기술적 종합확률(taUpProb)을 위원회 정식 위원으로 합류 ──
     //   MIND 야간학습이 검증셋에서 측정한 규칙엔진 정확도(ruleAccLB)가 동전던지기(0.5)를 넘을 때만
     //   그 정확도의 소프트맥스 가중으로 투표. 규칙엔진이 AI 안에 "이식"되어 잘 맞는 국면엔 발언권이
@@ -41009,8 +41066,9 @@ async function mlDeepDecide(DB, featVec, opts) {
         pR = _clamp(_sigmoid(_logitD(pR) - _logitD(_rt)), 0.01, 0.99);
         if (Math.abs(pR - 0.5) > 1e-4) experts.push({ name: "rule", p: pR, z: _logitD(pR), acc: mind.ruleAccLB,
           ic: _icEffective({ valICBlock: mind.ruleICBlock, valICt: mind.ruleICt, valIC: mind.ruleIC, valN: mind.ruleValN }) });
-      }
-    } catch (e) {}
+        else _skip("rule", "확률이 0.5 — 기권");
+      } else _skip("rule", !mind ? "MIND 없음" : (_tiR < 0 ? "taUpProb 피처 없음" : "ruleAccLB ≤ 0.5"));
+    } catch (e) { _skip("rule", "예외: " + ((e && e.message) || e)); }
     if (!experts.length) return null;   // [V12.62] 쓸 전문가 0 → 하위 폴백(밴딧/규칙엔진)
     // [V32.59] ★적응형 앙상블★ — 야간 보정이 최근 라이브표본에서 잰 전문가별 실측정확도(expert_reliability)를
     //   정적 검증정확도와 블렌드해 소프트맥스 가중에 반영 → '요즘 잘 맞히는 모델'의 발언권↑(레짐 적응).
@@ -41316,13 +41374,19 @@ async function mlDeepDecide(DB, featVec, opts) {
     // [V33.149] tier 를 그대로 실어 보낸다 — 화면의 '잠정' 표식은 name 이 아니라 이 필드로 그린다.
     const _expOut = experts.map(function (ex) { return { name: ex.name, p: +ex.p.toFixed(3), acc: +ex.acc.toFixed(3),
       tier: ex.tier || null }; });
+    /* [V33.390] ★참석자만 적으면 결석을 영영 못 본다.★ 위원 정원(STACK_SLOTS)에서 참석자를 빼고,
+       사유를 못 적은 자리는 그렇게 적는다 — 빈칸을 남기면 다음 사람이 '없는 게 정상' 으로 읽는다. */
+    try {
+      for (const _nm of STACK_SLOTS) if (!experts.some(function (e2) { return e2.name === _nm; }) && !_absent[_nm])
+        _absent[_nm] = "사유 미기록(조립부가 이 자리를 안 지난다)";
+    } catch (e) {}
     // [V12.73] ★DI 기권 게이트★ (FreqAI Dissimilarity Index 이식) — 입력 피처가 학습분포에서 평균
     //   |z|>diThreshold 만큼 멀면(전례 없는 시장상황) 예측 신뢰 불가 → 기권. "모르는 건 모른다"가
     //   실전 자동매매 AI의 표준 안전장치(freqtrade DI_threshold와 동일 사상).
     if (_diVal != null && _diVal > ((typeof DNN !== "undefined" && DNN.diThreshold) || 2.2))
-      return { source: "deep", abstain: true, reason: "di_ood", di: +_diVal.toFixed(2), p: pCombined, uncertainty: unc, experts: _expOut };
-    if (unc > (typeof MIND !== "undefined" ? MIND.abstainStd : 0.16)) return { source: "deep", abstain: true, reason: "uncertain", p: pCombined, uncertainty: unc, experts: _expOut };
-    if (Math.abs(pCombined - 0.5) < (typeof MIND !== "undefined" ? MIND.abstainBand : 0.05)) return { source: "deep", abstain: true, reason: "ambiguous", p: pCombined, experts: _expOut };
+      return { source: "deep", abstain: true, reason: "di_ood", di: +_diVal.toFixed(2), p: pCombined, uncertainty: unc, experts: _expOut, absent: _absent };
+    if (unc > (typeof MIND !== "undefined" ? MIND.abstainStd : 0.16)) return { source: "deep", abstain: true, reason: "uncertain", p: pCombined, uncertainty: unc, experts: _expOut, absent: _absent };
+    if (Math.abs(pCombined - 0.5) < (typeof MIND !== "undefined" ? MIND.abstainBand : 0.05)) return { source: "deep", abstain: true, reason: "ambiguous", p: pCombined, experts: _expOut, absent: _absent };
     // [V7] 기대값(EV) 게이트: 통계 있으면 p·평균이익 − (1−p)·평균손실 > 0 로 판단
     //   (손익 비대칭 반영 — 고정 확률 임계보다 수익률 정렬적). 통계 없으면 종전 임계.
     let allow, evVal = null, _evSrc = null, _evThr = null;
@@ -41400,7 +41464,7 @@ async function mlDeepDecide(DB, featVec, opts) {
       //   전자는 논쟁 자리, 후자는 타임스톱만 소모하는 죽은 돈이다.
       if (_dual && (_dual.quadrant === "volatile" || _dual.quadrant === "dead")) _contested = true;
     } catch (e) {}
-    return { source: "deep", allow: (allow && !_contested), sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, evSrc: _evSrc, evThr: _evThr, experts: _expOut, shock: _shockOut, evPrior: _evPriorOut, stackFeat: _stackFeat, usedStack: _usedStack,
+    return { source: "deep", allow: (allow && !_contested), sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, evSrc: _evSrc, evThr: _evThr, experts: _expOut, absent: _absent, shock: _shockOut, evPrior: _evPriorOut, stackFeat: _stackFeat, usedStack: _usedStack,
              pPreCal2: +_pPreCal2.toFixed(4),
              bull: +_bull.toFixed(3), bear: +_bear.toFixed(3), conviction: +_conv.toFixed(3), conflict: +_conflict.toFixed(3), contested: _contested, dual: _dual };
   } catch (e) { return null; }
