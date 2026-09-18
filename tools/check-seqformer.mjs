@@ -324,8 +324,19 @@ console.log("\n⑩ ★용량을 말로 정하지 않는다★ — 재서 정하�
   const py3 = PY3.split("\n").filter(l => !/^\s*#/.test(l)).join("\n");
   chk(/def fit_seq\(dm_, Hh_, nl_/.test(py3) && /for \(cd, ch, cl\) in cands/.test(py3),
     "후보 구성들을 ★같은 표본·같은 분할★ 로 학습해 겨룬다", "구성이 하나뿐이다 — 크기를 고른 근거가 없다");
-  chk(/if best is None or r_\[0\] > best\[0\]/.test(py3),
-    "이기는 기준은 ★유효표본 Wilson 하한★ 이다(워커 승격 게이트와 같은 자)", "다른 자로 이긴 걸 고른다");
+  // [V33.388] 자만 같으면 되는 게 아니었다 — 종전엔 ★검증행★ 하한(r_[0])으로 후보를 고르고
+  //   그 값을 그대로 승격 점수로 올렸다(고른 자로 채점). 자(유효표본 Wilson 하한)는 그대로 두고
+  //   ★행만★ 보정구간으로 옮긴다(r_[5] = lbs_). 검증행은 채점에만 쓴다.
+  chk(!/if best is None or r_\[0\] > best\[0\]/.test(py3),
+    "승자를 ★검증행★ 하한으로 고르지 않는다", "검증행으로 고르고 그 검증행으로 채점한다 — 점수가 부푼다");
+  chk(/if best is None or r_\[5\] > best\[5\]/.test(py3),
+    "이기는 기준은 ★유효표본 Wilson 하한 × 보정행★ (워커 승격 게이트와 같은 자·다른 행)", "다른 자로 이긴 걸 고른다");
+  chk(/lbs_, _ = _lb\(_infer\(ca\), yca, neffc\)/.test(py3),
+    "선택근거(lbs_)가 ★보정구간 예측★ 에서 나온다", "이름만 바꾸고 검증행을 담았다");
+  chk(/cal_frac=0\.10,\s*tag="SEQ"/.test(PY3),
+    "SEQ 분할이 보정구간을 실제로 뗀다(cal_frac)", "보정구간이 비어 전부 검증으로 떨어진다");
+  chk(/★검증\(보정구간 \{len\(_cali\)\}건으로 모자라다 — 이 회차 SEQ 점수는 부풀어 있다\)★/.test(PY3),
+    "보정구간이 모자라면 ★부풀었다고 말한다★", "조용히 검증행으로 떨어진다");
   chk(/api\/seq-arch/.test(py3), "이긴 구성을 서버로 되돌려 준다(측정이 버려지지 않는다)", "측정하고 버린다 — V33.204 에서 그랬다");
   const ep = code.slice(code.indexOf('path === "/api/seq-arch"'), code.indexOf('path === "/api/seq-arch"') + 2600);
   /* ★메시지 문자열을 찾으면 안 된다.★ if 를 죽여도 문구는 남아 통과한다(그 변이가 실제로

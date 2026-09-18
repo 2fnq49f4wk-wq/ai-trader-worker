@@ -1438,8 +1438,12 @@ def _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ=None, 
 
     # 표준화는 ★학습 구간에서만★ 구한다(검증 통계가 새면 그만큼 낙관적으로 나온다)
     # Codex V33.349 / B-2: SEQ uses the same embargo and exact row indices as other models.
-    _order, _tri, _, _vai, n_val, _emb = _split_ts(TS, 0.2, _EMBARGO_MS, min_val=200, horizon_ms=_HORIZON_MS, tag="GBDT")
-    _tri, _vai = _order[_tri], _order[_vai]  # indices into original X/sequence table
+    # [V33.388] 태그가 "GBDT" 였다 — SEQ 의 홀드아웃 진단이 GBDT 것으로 보였다(로그만의 문제지만
+    #   두 학습기의 분할 크기를 비교할 때 사람이 틀린 줄을 읽게 된다).
+    #   cal_frac: 형상 스윕 승자를 ★검증행에서 고르지 않기 위해★ 보정구간을 뗀다(AE-3 와 같은 병).
+    _order, _tri, _cali, _vai, n_val, _emb = _split_ts(TS, 0.2, _EMBARGO_MS, min_val=200,
+                                                       horizon_ms=_HORIZON_MS, cal_frac=0.10, tag="SEQ")
+    _tri, _cali, _vai = _order[_tri], _order[_cali], _order[_vai]  # indices into original X/sequence table
     tr_end = len(_tri)  # training count only, never a boundary into X
     mean = X[_tri].mean(axis=0); std = X[_tri].std(axis=0); std[std < 1e-9] = 1.0
     Xn = np.clip((X - mean) / std, -6, 6).astype(np.float32)
@@ -1492,6 +1496,14 @@ def _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ=None, 
     yva = Y[_vai]
     uw = UNIQ[_vai] if (UNIQ is not None and len(UNIQ) == N) else np.ones(len(yva))
     neff = max(8, int(round(float(uw.sum()))))
+    # [V33.388] 형상 스윕의 ★선택근거★ 구간 — 학습 꼬리에서 떼었고 엠바고가 검증과 갈라 놓는다.
+    _hasCal = len(_cali) >= 200
+    ca = torch.tensor(_cali, device=dev) if _hasCal else va
+    yca = Y[_cali] if _hasCal else yva
+    _uwc = (UNIQ[_cali] if (UNIQ is not None and len(UNIQ) == N) else np.ones(len(yca))) if _hasCal else uw
+    neffc = max(8, int(round(float(_uwc.sum()))))
+    if not _hasCal:
+        print(f"⑨ [형상선택] 기준=★검증(보정구간 {len(_cali)}건으로 모자라다 — 이 회차 SEQ 점수는 부풀어 있다)★")
     ep = int(C.get("epochs", 12)); bs = 512
     pos = float(Y[_tri].sum()); wpos = tr_end / (2 * pos) if pos > 0 else 1.0
     wneg = tr_end / (2 * (tr_end - pos)) if (tr_end - pos) > 0 else 1.0
@@ -1512,18 +1524,27 @@ def _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ=None, 
                 torch.nn.utils.clip_grad_norm_(net_.parameters(), 1.0)
                 opt_.step()
         net_.eval()
-        with torch.no_grad():
-            pv_ = []
-            for b in range(0, len(va), 1024):
-                pv_.append(torch.sigmoid(net_(Xt[Si[va[b:b + 1024]]])).cpu().numpy())
-            p_ = np.concatenate(pv_)
-        a_ = float(((p_ >= 0.5) == (yva > 0.5)).mean())
-        z = 1.64; z2 = z * z; den = 1 + z2 / neff; cen = a_ + z2 / (2 * neff)
-        rad = z * math.sqrt((a_ * (1 - a_) + z2 / (4 * neff)) / neff)
-        lb_ = max(0.0, (cen - rad) / den)
+        def _infer(idx):
+            with torch.no_grad():
+                out = []
+                for b in range(0, len(idx), 1024):
+                    out.append(torch.sigmoid(net_(Xt[Si[idx[b:b + 1024]]])).cpu().numpy())
+            return np.concatenate(out)
+        def _lb(p, y, ne):
+            a = float(((p >= 0.5) == (y > 0.5)).mean())
+            z = 1.64; z2 = z * z; den = 1 + z2 / ne; cen = a + z2 / (2 * ne)
+            rad = math.sqrt((a * (1 - a) + z2 / (4 * ne)) / ne) * z
+            return max(0.0, (cen - rad) / den), a
+        p_ = _infer(va)
+        lb_, a_ = _lb(p_, yva, neff)
+        # [V33.388] ★선택은 보정행, 채점은 검증행★ — 자는 같다(유효표본 Wilson 하한).
+        lbs_ = lb_
+        if _hasCal:
+            lbs_, _ = _lb(_infer(ca), yca, neffc)
         npar = sum(pp.numel() for pp in net_.parameters())
-        print(f"⑨{tag} d{dm_}·헤드{Hh_}·{nl_}층 ({npar:,}p) → valAcc {a_*100:.2f}% 하한 {lb_*100:.2f}%")
-        return lb_, a_, p_, net_, npar
+        print(f"⑨{tag} d{dm_}·헤드{Hh_}·{nl_}층 ({npar:,}p) → [선택근거·보정] 하한 {lbs_*100:.2f}%"
+              f" · [기록·검증] valAcc {a_*100:.2f}% 하한 {lb_*100:.2f}%")
+        return lb_, a_, p_, net_, npar, lbs_
 
     # ── ★용량을 내가 고르지 않는다 — 재서 고른다.★ ────────────────────────────
     #   V33.267 은 d32·1층이었고 "이 과제에 충분하다" 는 근거가 없었다(그렇게 적었다).
@@ -1544,24 +1565,29 @@ def _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ=None, 
         except Exception as e:
             print(f"⑨ 후보 d{cd}·헤드{ch}·{cl}층 실패(건너뜀): {e}"); continue
         table.append({"d": cd, "heads": ch, "layers": cl, "accLB": round(r_[0], 4),
-                      "acc": round(r_[1], 4), "params": int(r_[4])})
-        if best is None or r_[0] > best[0]:
+                      "selLB": round(r_[5], 4), "acc": round(r_[1], 4), "params": int(r_[4])})
+        # [V33.388] 승자는 ★보정행 하한(r_[5])★ 으로 고른다 — 검증행 하한(r_[0])은 채점용이다.
+        if best is None or r_[5] > best[5]:
             best = r_; dm, Hh, NL = cd, ch, cl
     if best is None:
         print("⑨ SEQ 생략 — 후보를 하나도 학습하지 못했다"); return None
     if len(table) > 1:
-        table.sort(key=lambda r: -r["accLB"])
-        print("⑨ 스윕 순위: " + " | ".join(f"d{r['d']}h{r['heads']}x{r['layers']}층 {r['accLB']*100:.2f}%" for r in table))
+        table.sort(key=lambda r: -r["selLB"])
+        print("⑨ 스윕 순위(★보정행 하한으로 줄세웠다★): "
+              + " | ".join(f"d{r['d']}h{r['heads']}x{r['layers']}층 보정 {r['selLB']*100:.2f}%"
+                           f"/검증 {r['accLB']*100:.2f}%" for r in table))
         try:
             requests.post(BASE + "/api/seq-arch", params={"key": KEY}, headers=HDR, timeout=60,
                           data=json.dumps({"featVer": featver, "d": dm, "heads": Hh, "layers": NL,
                                            "table": table, "n": int(N)}))
         except Exception as e:
             print("⑨ seq-arch 업로드 예외(무시):", e)
-    lb, acc, pva, net, nparam = best
+    lb, acc, pva, net, nparam, _lbsel = best
     icf = _ic_block_fields(pva, yva, mkt=_mkt_of_X(X[_vai]), ts=TS[_vai],
                            horizon_ms=_HORIZON_MS)   # [V33.291/292 · V33.366]
-    print(f"⑨ SEQ 채택 d{dm}·헤드{Hh}·{NL}층 valAcc {acc*100:.2f}% 하한 {lb*100:.2f}% (유효 {neff}/{len(yva)})"
+    # [V33.388] 무엇으로 골랐는지(보정하한)와 무엇으로 채점했는지(검증하한)를 나란히 적는다.
+    print(f"⑨ SEQ 채택 d{dm}·헤드{Hh}·{NL}층 — 선택근거 보정하한 {_lbsel*100:.2f}%"
+          f" · valAcc {acc*100:.2f}% 하한 {lb*100:.2f}% (유효 {neff}/{len(yva)})"
           + (f" 블록IC {icf['valICBlock']:.4f} t {icf['valICt']:.2f}" if "valICt" in icf else ""))
 
     # ── 가중치를 워커 규약(row-major W[out][in])으로 내보낸다
