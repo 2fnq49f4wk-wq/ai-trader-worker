@@ -82,7 +82,17 @@ vm.runInContext(src.slice(start,src.indexOf('\n}',start)+2),recovery);
 const db={prepare:()=>({bind(){return this;},async first(){return {c:1000};}})};
 async function run(change){models=Object.fromEntries(keys.map(k=>[k,{source:'external',trainedAt:now-3600000,featVer:17}]));dispatched=0;change?.(models);await recovery._luxAutoRetrainModal({DB:db,GITHUB_TOKEN:'mock-only'});return dispatched;}
 assert.equal(await run(),0);assert.equal(await run(m=>m.xgb_trust.featVer=15),1);
-assert.equal(await run(m=>m.cat_trust.trainedAt=now-30*3600000),1);
+/* [V33.384] ★계약이 바뀌었다 — 그리고 그 변경이 이 판의 요점이다.★
+   종전: 외부 모델 ★하나라도★ 30h 묵으면 디스패치(= run_now 로 52분짜리 GPU 회차).
+   그런데 Modal 회차는 예산 안에서 단계를 ★회전★ 시키므로 가장 오래된 모델은 언제나
+   회전 주기(실측 24~31h)만큼 묵어 있다 → ★구조적으로 영구 트리거★ → 월 $106 청구.
+   실측 대조: 2026-09-01~18 에 $65.15 = 월 $108 환산. 계산이 청구서와 맞았다.
+   → 이제 판정은 ★가장 신선한★ 모델로 한다. 아래 두 줄이 그 계약이다.
+     ※ 안전망은 그대로다 — '모델 없음'·'판 불일치'·'전부 낡음' 은 여전히 즉시 디스패치다. */
+assert.equal(await run(m=>m.cat_trust.trainedAt=now-30*3600000),0,
+ '한 모델만 묵은 것은 회전이다 — 디스패치하면 회전이 비용을 부른다');
+assert.equal(await run(m=>{for(const k of keys) if(m[k]) m[k].trainedAt=now-30*3600000;}),1,
+ '전부 묵었으면 학습 자체가 안 도는 것이다 — 그때는 디스패치한다');
 assert.equal(await run(m=>delete m.lgb_trust),1);
 assert.equal(await run(m=>{m.xgb_trust.featVer=15;m.xgb_trust_ext={source:'external',trainedAt:now,featVer:17,trusted:false};}),0,
  'fresh rejected shadow proves training receipt, not admission');

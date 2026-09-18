@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.383";
+const _BUILD_VER = "V33.384";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -46950,6 +46950,15 @@ function latestExternalReceipt(live, shadow) {
   if (!shadow) return live;
   return _num(shadow.trainedAt, 0) > _num(live.trainedAt, 0) ? shadow : live;
 }
+/* [V33.384] 자동 재학습 트리거 정책 — 손으로 박힌 14 가 비용 폭주를 만들었다(아래 주석). */
+const MODALAUTO = {
+  // ★가장 신선한★ 외부 모델이 이보다 오래되면 "학습 자체가 안 돈다" 로 본다.
+  //   (가장 ★오래된★ 모델을 보면 회전 때문에 영구 참이 된다 — 아래 판정식 주석 참조.)
+  //   쿨다운 상수는 여기 두지 않는다 — 실제 쿨다운은 fvDispatched/checkTs 로 아래에서
+  //   집행된다. 여기 적어 두면 아무도 안 읽는 죽은 손잡이가 된다(check-dead-knobs 가 잡았다).
+  staleH: 14
+};
+
 async function _luxAutoRetrainModal(env) {
   try {
     const DB = env.DB;
@@ -46998,7 +47007,21 @@ async function _luxAutoRetrainModal(env) {
     // 정상 — 트리거 불필요. [V33.235] 건너뛴 사유도 함께 지운다(지금은 아무것도 못 하고 있는 게 아니다).
     // Codex V33.346: one fresh model cannot conceal missing, stale or incompatible peers.
     meta.oldestAgeH = +oldestAge.toFixed(1); meta.missingExt = missingExt; meta.staleFeatVer = staleFV;
-    if (anyExt && !missingExt && !staleFV && oldestAge <= 14) { meta.lastOk = now; meta.freshestAgeH = +freshestAge.toFixed(1); delete meta.lastSkip; try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }
+    /* ══ [V33.384] ★이 한 줄이 GPU 청구서를 만들고 있었다.★ ═══════════════════════════
+       조건이 ★가장 오래된★ 외부 모델(oldestAge)이었다. 그런데 Modal 회차는 예산 안에서
+       단계를 ★회전★ 시키므로, 가장 오래된 모델은 언제나 '회전 주기'(실측 24~31시간)만큼
+       묵어 있다 — 즉 14h 문턱은 ★구조적으로 영구 참★ 이다.
+       그래서 워커가 8시간 쿨다운마다 `run_now: true` 로 ★52분짜리 GPU 회차★ 를 계속 던졌다.
+         예약 크론 4회/일 + 자동 트리거 최대 3회/일 = 하루 최대 7회 × 52분
+         ≈ 월 180 GPU시간 → 약 $106/월.  실제: 9/1~18 에 $65.15 = 월 $108 환산. ★일치한다.★
+       굶주림(W-3)이 비용 폭주를 만드는 ★되먹임 고리★ 였다.
+
+       ★고치되 안전망은 날카롭게 남긴다.★ 두 가지는 전혀 다른 일이다:
+         · freshestAge 가 오래됐다  → ★학습 자체가 안 돈다★ (진짜 사고 — 트리거해야 한다)
+         · oldestAge 만 오래됐다    → 회전이 아직 그 단계 차례를 안 줬을 뿐 (정상 동작)
+       그래서 판정을 ★가장 신선한 모델★ 로 바꾼다. 없는 모델·판 불일치는 종전대로 즉시 트리거다.
+       oldestAge 는 계속 기록만 한다 — 회전이 느려진 것은 트리거가 아니라 예산으로 고칠 일이다. */
+    if (anyExt && !missingExt && !staleFV && freshestAge <= MODALAUTO.staleH) { meta.lastOk = now; meta.freshestAgeH = +freshestAge.toFixed(1); delete meta.lastSkip; try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }
     // 학습표본 충분 여부(부족하면 재학습해도 승격 안 됨 → 스킵)
     /* [V33.352] 여기는 자가진단이 아니라 ★재학습 디스패치★ 경로다(야간 1회). 공유 캐시를
        끌어오면 의존만 늘고 얻는 게 없어 종전대로 둔다 — C-2 는 selfcheck 안의 중복이 문제였다.
@@ -50511,6 +50534,8 @@ export {
   stinBackfill, stinIntradayFeat, stinChartFeat, stinObserve, stinLabel, mlBuildFeatures,
   STIN, STIN_IFEAT_N, STIN_FEATVER, LUXML, _LIVE_ONLY_FEATS, _LIVE_ONLY_NEUTRAL, _mlExportConfig,
   _setR2ForTest, getBigState, _bigLoadStatus,
+  // [V33.384] 자동 재학습 트리거 정책 — tools/check-retrain-loop.mjs 가 판정식을 직접 돌린다.
+  MODALAUTO,
   // [V33.375] 읽기 문 — tools/check-viewer-gate.mjs 가 실제로 요청을 물려 본다.
   viewerGate, VIEWGATE, _cookieVal, _corsFor, mutationGuard, SECHDR, _safeEq,
   _boosterAdmit, latestExternalReceipt, MCAP_RANK, _clipMid, mlRetireStaleFeatVer,

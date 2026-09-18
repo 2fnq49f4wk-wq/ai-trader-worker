@@ -34,7 +34,10 @@ const fn = S.slice(S.indexOf("async function _luxAutoRetrainModal"),
 
 // ── ② '정상 — 트리거 불필요' 가지도 사유를 지우는가 (여기가 실제로 걸린 곳) ──
 {
-  const i = fn.indexOf("anyExt && !missingExt && !staleFV && oldestAge <= 14");
+  /* [V33.384] 앵커를 ★글자★ 에서 ★뜻★ 으로 옮긴다. 조건이 oldestAge <= 14 에서
+     freshestAge <= MODALAUTO.staleH 로 바뀌었다(회전만으로 영구 트리거되던 비용 고리를
+     끊은 변경). 여기서 볼 것은 "어떤 값을 보는가" 가 아니라 ★정상 가지가 사유를 지우는가★ 다. */
+  const i = fn.indexOf("anyExt && !missingExt && !staleFV &&");
   chk(i >= 0, "'외부 학습 신선' 조기반환 가지가 있다", "조기반환 가지를 못 찾았다 — 이 검사의 전제가 깨졌다");
   const line = fn.slice(i, fn.indexOf("\n", fn.indexOf("return;", i)));
   chk(/delete meta\.lastSkip/.test(line),

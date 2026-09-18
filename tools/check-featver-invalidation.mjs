@@ -62,7 +62,7 @@ console.log("② 외부학습 신선도가 판을 보는가");
 {
   const fn = S.slice(S.indexOf("async function _luxAutoRetrainModal"), S.indexOf("const _TAG_LABEL_KO"));
   chk(fn.length > 200, "_luxAutoRetrainModal 을 찾았다", "함수를 못 찾았다 — 이 검사의 전제가 깨졌다");
-  const loop = fn.slice(fn.indexOf('for (const k of ["mind_model"'), fn.indexOf("anyExt && !missingExt && !staleFV && oldestAge"));
+  const loop = fn.slice(fn.indexOf('for (const k of ["mind_model"'), fn.indexOf("anyExt && !missingExt && !staleFV &&"));
   chk(/featVer/.test(loop),
     "신선도 집계가 featVer 를 본다",
     "trainedAt 만 본다 — 판을 올린 직후 낡은 모델 전부가 '신선' 으로 잡혀 재학습이 안 걸린다");

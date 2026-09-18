@@ -426,6 +426,10 @@ jobs:
       #   "GBDT 학습 27.2시간 전" 이 나온 자리다. 주기를 늘리면 더 나빠진다는 것도 못 박는다.
       - name: Cycle capacity contract
         run: node tools/check-cycle-capacity.mjs
+      # [V33.384] 자동 재학습 트리거가 ★자기 자신을 영구 발동★ 시키지 않는가 —
+      #   회전만으로 oldestAge 가 늘 14h 를 넘어 GPU 회차를 계속 부르던 것이 청구서의 원인이었다.
+      - name: Auto-retrain loop contract
+        run: node tools/check-retrain-loop.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,
