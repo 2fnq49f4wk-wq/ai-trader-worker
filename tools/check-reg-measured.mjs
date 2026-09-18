@@ -14,7 +14,7 @@ const ok = (m) => console.log("  ok   " + m);
 const no = (m) => { console.error("  FAIL " + m); bad++; };
 
 const FV = M.LUXML && M.LUXML.featVer;
-const REG = { dropout: 0.25, l2: 4.5e-4, mixupP: 0.1, inputNoise: 0.04 };
+const REG = { dropout: 0.25, l2: 4.5e-4, mixupP: 0.1, inputNoise: 0.04, dropTail: 2 };
 
 // ── ① 워커가 잰 규제를 ★실제로 꺼내 온다★ ────────────────────────────────────
 //   _dnnArchDecide 를 진짜로 돌린다. 문자열이 아니라 반환값을 본다.
@@ -77,23 +77,31 @@ const REG = { dropout: 0.25, l2: 4.5e-4, mixupP: 0.1, inputNoise: 0.04 };
       const f = new Function("body", "_num", "Response", "cors", blk + "\n return { reg: _reg };");
       try { return f(body, _num, Response, {}); } catch (e) { return { __threw: String(e) }; }
     };
-    const good = run({ reg: { dropout: 0.3, l2: 1e-3, mixupP: 0.2, inputNoise: 0.05 } });
-    if (!good || !good.reg || good.reg.dropout !== 0.3) no("측정규제: 정상 범위 reg 가 통과하지 못한다 " + JSON.stringify(good));
-    else ok("정상 범위 reg 는 그대로 저장값이 된다");
+    const good = run({ reg: { dropout: 0.3, l2: 1e-3, mixupP: 0.2, inputNoise: 0.05, dropTail: 2 } });
+    if (!good || !good.reg || good.reg.dropout !== 0.3 || good.reg.dropTail !== 2)
+      no("측정규제: 정상 범위 reg 가 통과하지 못한다 " + JSON.stringify(good));
+    else ok("정상 범위 reg 는 그대로 저장값이 된다(dropTail 포함)");
+
+    // 옛 트레이너는 dropTail 을 안 보낸다 — 없으면 0(전 층, 종전 동작)으로 읽어야 한다.
+    const noTail = run({ reg: { dropout: 0.3, l2: 1e-3, mixupP: 0.2, inputNoise: 0.05 } });
+    if (!noTail || !noTail.reg || noTail.reg.dropTail !== 0)
+      no("측정규제: dropTail 없는 옛 본문이 0(전 층)으로 안 떨어진다 — 옛 트레이너 업로드가 막힌다");
+    else ok("dropTail 없는 옛 본문 → 0(전 층, 종전 동작)");
 
     const absent = run({});
     if (!absent || absent.reg !== null) no("측정규제: reg 를 안 보낸 요청이 null 로 안 떨어진다(깊이만 올리는 경로가 막힌다)");
     else ok("reg 없는 요청은 null — 깊이만 올리는 경로가 살아 있다");
 
     // ★부분 채택 금지★ — 한 칸이 범위 밖이면 나머지도 안 쓴다. 섞으면 재 본 적 없는 조합이 된다.
-    for (const [k, v] of [["dropout", 0.95], ["l2", 0.9], ["mixupP", 1.7], ["inputNoise", -0.1], ["dropout", -0.01]]) {
-      const b = { reg: { dropout: 0.3, l2: 1e-3, mixupP: 0.2, inputNoise: 0.05 } };
+    for (const [k, v] of [["dropout", 0.95], ["l2", 0.9], ["mixupP", 1.7], ["inputNoise", -0.1],
+                          ["dropout", -0.01], ["dropTail", -1], ["dropTail", 25], ["dropTail", 1.5]]) {
+      const b = { reg: { dropout: 0.3, l2: 1e-3, mixupP: 0.2, inputNoise: 0.05, dropTail: 2 } };
       b.reg[k] = v;
       const r = run(b);
       if (!r || !r.__rejected || r.status !== 400)
         no(`측정규제: ${k}=${v} 가 거부되지 않는다 — 범위 검사가 새고 있다`);
     }
-    ok("범위 밖 5종(dropout·l2·mixupP·inputNoise, 양쪽 끝) 전부 400");
+    ok("범위 밖 8종(dropout·l2·mixupP·inputNoise·dropTail, 양쪽 끝·비정수) 전부 400");
 
     const missing = run({ reg: { dropout: 0.3, l2: 1e-3 } });
     if (!missing || !missing.__rejected)
@@ -119,7 +127,9 @@ ${blk.split("\n").map(l => "    " + l).join("\n")}
     return _reg_base
 import json
 out = {}
-out["good"]  = _decide({"regMeasured": {"dropout": 0.2, "l2": 3e-4, "mixupP": 0.1, "inputNoise": 0.03}})
+out["good"]  = _decide({"regMeasured": {"dropout": 0.2, "l2": 3e-4, "mixupP": 0.1, "inputNoise": 0.03, "dropTail": 2}})
+out["notail"]= _decide({"regMeasured": {"dropout": 0.2, "l2": 3e-4, "mixupP": 0.1, "inputNoise": 0.03}})
+out["badtl"] = _decide({"regMeasured": {"dropout": 0.2, "l2": 3e-4, "mixupP": 0.1, "inputNoise": 0.03, "dropTail": 99}})
 out["none"]  = _decide({})
 out["null"]  = _decide({"regMeasured": None})
 out["hi"]    = _decide({"regMeasured": {"dropout": 0.95, "l2": 3e-4, "mixupP": 0.1, "inputNoise": 0.03}})
@@ -133,9 +143,15 @@ print(json.dumps(out))
     try { r = JSON.parse(execFileSync("python3", ["-c", harness], { encoding: "utf8" })); }
     catch (e) { no("측정규제: 트레이너 수용 블록 실행 실패 — " + String(e).slice(0, 300)); r = null; }
     if (r) {
-      if (r.good.dropout !== 0.2 || r.good.l2 !== 3e-4)
+      if (r.good.dropout !== 0.2 || r.good.l2 !== 3e-4 || r.good.drop_tail !== 2)
         no("측정규제: 트레이너가 정상 regMeasured 를 안 쓴다 — 사다리가 그대로 덮어쓴다(고치기 전 동작)");
-      else ok("트레이너가 정상 regMeasured 로 사다리를 덮는다");
+      else ok("트레이너가 정상 regMeasured 로 사다리를 덮는다(dropTail 포함)");
+      if (r.notail.drop_tail !== 0)
+        no("측정규제: dropTail 없는 regMeasured 가 전 층(0)으로 안 떨어진다");
+      else ok("dropTail 없는 regMeasured → 전 층(종전 동작)");
+      if (r.badtl.dropout !== 0.50)
+        no("측정규제: dropTail=99 인데 사다리로 안 돌아간다 — 층 수를 넘는 값이 통과한다");
+      else ok("범위 밖 dropTail 은 통째로 거부(사다리 복귀)");
       for (const [k, why] of [["none", "필드 없음"], ["null", "null"], ["hi", "dropout 0.95"],
                               ["neg", "l2 음수"], ["part", "칸 빠짐"], ["junk", "dict 아님"]]) {
         if (r[k].dropout !== 0.50 || r[k].l2 !== 1.5e-3)
@@ -165,7 +181,7 @@ print(json.dumps(out))
   else ok("스윕 배수는 고정된 사다리에 걸린다(격자가 회차마다 이동하지 않는다)");
 
   // 지난 승자는 '현행' 으로 ★격자 안에서 방어★ 해야 한다 — 빠지면 한 번 진 값이 영구히 남는다.
-  const i2 = py.indexOf("reg_cands = []");
+  const i2 = py.indexOf("_tail2 = dict(_reg_ladder)");   // 후보 정의 전체(꼬리 후보 포함)를 본다
   const i3 = py.indexOf("_K_full = K", i2);
   const cb = i2 >= 0 && i3 >= 0 ? py.slice(i2, i3) : "";
   if (!/\("규제 현행", dict\(_reg_base\)\)/.test(cb))
@@ -174,6 +190,13 @@ print(json.dumps(out))
   if (!/\("규제 사다리", dict\(_reg_ladder\)\)/.test(cb))
     no("측정규제: 사다리가 후보에서 빠졌다 — 잰 값이 나쁠 때 돌아갈 기준선이 없다");
   else ok("사다리도 후보로 남는다(잰 값이 나쁘면 되돌아갈 수 있다)");
+  // ★위치 축★ — 세기만 흔들면 '꼬리에만 걸기' 는 영원히 재 보지 못한다.
+  if (!/\("드롭아웃 꼬리2", _tail2\)/.test(cb) || !/_tail2\["drop_tail"\] = 2/.test(cb))
+    no("측정규제: 드롭아웃 ★위치★ 후보가 격자에 없다 — 세기만 흔들면 전 층 p=0.5×BN 을 가를 수 없다");
+  else ok("드롭아웃 위치(꼬리2) 후보가 격자에 있다");
+  if (!/round\(d\["input_noise"\], 4\), int\(d\.get\("drop_tail", 0\)/.test(cb + blk))
+    no("측정규제: 중복제거 키에 drop_tail 이 없다 — 세기가 같으면 위치가 달라도 후보가 지워진다");
+  else ok("중복제거 키가 위치(drop_tail)까지 본다");
 }
 
 // ── ⑥ 스윕 승자가 ★실제로 올라간다★ ──────────────────────────────────────────
@@ -187,9 +210,9 @@ print(json.dumps(out))
   else if (!/_reg_win\["dropout"\]/.test(blk) || !/_reg_win\["l2"\]/.test(blk))
     no("측정규제: 업로드하는 reg 가 스윕 승자(_reg_win)에서 오지 않는다");
   else ok("스윕 규제 승자가 업로드 본문에 실린다");
-  for (const k of ["mixupP", "inputNoise"])
+  for (const k of ["mixupP", "inputNoise", "dropTail"])
     if (!blk.includes(`"${k}"`)) no(`측정규제: 업로드 reg 에 ${k} 가 빠졌다 — 워커가 부분 채택을 거부하므로 통째로 무시된다`);
-  ok("업로드 reg 가 네 칸을 모두 채운다(워커의 부분 채택 금지와 맞물린다)");
+  ok("업로드 reg 가 다섯 칸을 모두 채운다(워커의 부분 채택 금지와 맞물린다)");
 }
 
 // ── ⑦ 어느 쪽을 쓰는지 ★로그로 말한다★ ───────────────────────────────────────
@@ -197,6 +220,47 @@ print(json.dumps(out))
 if (!/print\(f"  ★규제는 ★잰 값★ 을 쓴다/.test(py))
   no("측정규제: 잰 값을 쓸 때 그 사실을 로그로 말하지 않는다 — 나중에 무엇이 성능을 바꿨는지 못 가린다");
 else ok("잰 값을 쓸 때 사다리와 나란히 찍어 둘을 가를 수 있다");
+
+// ── ⑧ 드롭아웃 위치가 forward 에서 ★실제로★ 먹는가 ──────────────────────────
+//   조건식을 소스에서 떼어 내 층 번호를 0..9 로 흘려 보낸다(torch 없이 조건만 판정한다).
+{
+  const m = py.match(/if train and dropout > 0 and \(drop_tail <= 0 or i >= _hid - drop_tail\):/);
+  if (!m) no("측정규제: forward 의 드롭아웃 층 선택 조건을 못 찾겠다 — 손잡이가 안 먹는다");
+  else {
+    const hit = (dt, n) => { const out = []; const hid = n - 1;
+      for (let i = 0; i < n - 1; i++) if (dt <= 0 || i >= hid - dt) out.push(i); return out; };
+    const all = hit(0, 12);                    // 11층 망: 은닉 11개(i=0..10)
+    if (all.length !== 11) no("측정규제: drop_tail=0 이 전 층이 아니다 — 종전 동작이 바뀐다");
+    else ok("drop_tail=0 → 전 은닉층(종전 동작과 완전히 동일)");
+    const t2 = hit(2, 12);
+    if (t2.length !== 2 || t2[1] !== 10) no("측정규제: drop_tail=2 가 마지막 두 은닉층이 아니다 " + JSON.stringify(t2));
+    else ok("drop_tail=2 → 마지막 두 은닉층에만 걸린다");
+    if (hit(99, 12).length !== 11) no("측정규제: drop_tail 이 층 수보다 크면 전 층이어야 한다(음수 인덱스 금지)");
+    else ok("drop_tail 이 층 수보다 커도 전 층에서 멈춘다");
+  }
+}
+
+// ── ⑨ BN 분산이동 진단이 ★러닝통계를 오염시키지 않는다★ ─────────────────────
+//   진단하러 들어가서 모델을 바꿔 놓으면, 그 뒤 업로드되는 모델이 진단 이전과 다른 모델이 된다.
+{
+  const i0 = py.indexOf("[BN진단] 러닝통계");
+  const blk = i0 >= 0 ? py.slice(Math.max(0, i0 - 2200), i0 + 400) : "";
+  if (!blk) no("측정규제: BN 분산이동 진단이 없다 — 전 층 드롭아웃×BN 을 가를 근거가 안 남는다");
+  else {
+    if (!/_m\.running_mean\.copy_\(_mu\)/.test(blk) || !/_m\.running_var\.copy_\(_v\)/.test(blk))
+      no("측정규제: BN 진단이 러닝통계를 되돌리지 않는다 — 진단이 업로드될 모델을 바꿔 버린다");
+    else ok("BN 진단이 러닝통계를 복원한다(진단이 모델을 안 바꾼다)");
+    if (!/_m\.num_batches_tracked\.fill_\(_nb\)/.test(blk))
+      no("측정규제: num_batches_tracked 를 안 되돌린다 — 러닝통계 갱신 속도가 달라진다");
+    else ok("num_batches_tracked 도 복원한다");
+    if (!/for _nt in nets:\n\s+_nt\.eval\(\)/.test(blk))
+      no("측정규제: BN 진단 뒤 eval() 로 안 되돌린다 — 뒤 단계가 배치통계로 돈다");
+    else ok("진단 뒤 eval() 복귀");
+    if (!/배포 점수 아님|transductive/.test(blk))
+      no("측정규제: 배치통계 값이 배포 점수가 아니라는 말이 없다 — 나중에 이 수치를 성적으로 읽는다");
+    else ok("배치통계는 진단용이라고 로그가 스스로 말한다");
+  }
+}
 
 console.log(bad ? `\n측정규제 게이트 실패 ${bad}건` : "\n측정규제 게이트 통과");
 process.exit(bad ? 1 : 0);

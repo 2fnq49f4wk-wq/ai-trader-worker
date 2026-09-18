@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.386";
+const _BUILD_VER = "V33.387";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -25866,12 +25866,17 @@ async function handleRequest(request, env, ctx) {
       if (_rb && typeof _rb === "object") {
         const _do = _num(_rb.dropout, null), _l2 = _num(_rb.l2, null),
               _mx = _num(_rb.mixupP, null), _nz = _num(_rb.inputNoise, null);
+        /* [V33.386] dropTail = 드롭아웃을 ★마지막 몇 개 은닉층에만★ 걸지(0 = 전 층, 종전 동작).
+           옛 트레이너는 이 칸을 안 보낸다 — 없으면 0 으로 읽어 종전과 같게 둔다. */
+        const _dt = _num(_rb.dropTail, 0);
         if (_do != null && _l2 != null && _mx != null && _nz != null &&
             _do >= 0 && _do <= 0.9 && _l2 >= 0 && _l2 <= 0.5 &&
-            _mx >= 0 && _mx <= 1 && _nz >= 0 && _nz <= 1)
-          _reg = { dropout: +_do.toFixed(4), l2: _l2, mixupP: +_mx.toFixed(4), inputNoise: +_nz.toFixed(4) };
+            _mx >= 0 && _mx <= 1 && _nz >= 0 && _nz <= 1 &&
+            _dt >= 0 && _dt <= 24 && Number.isInteger(_dt))
+          _reg = { dropout: +_do.toFixed(4), l2: _l2, mixupP: +_mx.toFixed(4),
+                   inputNoise: +_nz.toFixed(4), dropTail: _dt };
         else
-          return Response.json({ error: "reg 값이 범위를 벗어났다(dropout 0~0.9, l2 0~0.5, mixupP/inputNoise 0~1)" },
+          return Response.json({ error: "reg 값이 범위를 벗어났다(dropout 0~0.9, l2 0~0.5, mixupP/inputNoise 0~1, dropTail 정수 0~24)" },
             { status: 400, headers: cors });
       }
       const rec = { hidden: h, reg: _reg, lb: +_lb.toFixed(4), acc: _num(body.acc, null), auc: _num(body.auc, null),
@@ -25881,7 +25886,8 @@ async function handleRequest(request, env, ctx) {
                     ts: Date.now() };
       await setState(env.DB, DNNARCH.stateKey, rec);
       try { await log(env.DB, "INFO", null, "[DNN-ARCH] 구성 확정 " + h.join("-") +
-        (_reg ? " · 규제 do=" + _reg.dropout + " l2=" + _reg.l2 + " mix=" + _reg.mixupP + " noise=" + _reg.inputNoise
+        (_reg ? " · 규제 do=" + _reg.dropout + "@" + (_reg.dropTail ? "꼬리" + _reg.dropTail : "전층") +
+                " l2=" + _reg.l2 + " mix=" + _reg.mixupP + " noise=" + _reg.inputNoise
               : " · 규제 미측정(사다리 유지)") +
         " 하한 " + (rec.lb * 100).toFixed(2) + "% (표본 " + rec.n + ", 후보 " + rec.ranking.length + "종) — 다음 학습부터 이 구성으로 돈다"); } catch (e) {}
       return Response.json({ ok: true, arch: rec }, { headers: cors });

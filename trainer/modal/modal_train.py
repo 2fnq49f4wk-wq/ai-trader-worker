@@ -438,7 +438,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     if Nall < 60000:      dropout, l2, mixup_p, input_noise = 0.62, 5e-3, 0.35, 0.12   # 데이터 기근 → 매우 강한 규제
     elif Nall < 150000:   dropout, l2, mixup_p, input_noise = 0.55, 3e-3, 0.30, 0.10   # 중간 → 강한 규제
     else:                 dropout, l2, mixup_p, input_noise = 0.50, 1.5e-3, 0.25, 0.08  # 데이터 충분해도 규제 유지(과적합 방지)
-    _reg_ladder = dict(dropout=dropout, l2=l2, mixup_p=mixup_p, input_noise=input_noise)
+    _reg_ladder = dict(dropout=dropout, l2=l2, mixup_p=mixup_p, input_noise=input_noise, drop_tail=0)
     # ══ [V33.386] ★위 주석이 하겠다고 적은 일을 코드가 안 하고 있었다.★ ════════════════
     #   V33.260 은 "사다리를 기본값으로 두고, 스윕이 재서 이긴 구성이 있으면 그것을 쓴다"
     #   고 적었다. 그런데 스윕이 규제 축에서 이긴 값(_reg_win)은 ★그 실행 안에서만★ 쓰이고
@@ -451,10 +451,12 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         _rm = (cfg or {}).get("regMeasured") or None
         if isinstance(_rm, dict):
             _c = dict(dropout=float(_rm["dropout"]), l2=float(_rm["l2"]),
-                      mixup_p=float(_rm["mixupP"]), input_noise=float(_rm["inputNoise"]))
+                      mixup_p=float(_rm["mixupP"]), input_noise=float(_rm["inputNoise"]),
+                      drop_tail=int(_rm.get("dropTail", 0) or 0))
             # 범위 밖이면 조용히 쓰지 않는다 — 이상한 값으로 학습하느니 사다리가 낫다.
             if (0 <= _c["dropout"] <= 0.9 and 0 <= _c["l2"] <= 0.5
-                    and 0 <= _c["mixup_p"] <= 1 and 0 <= _c["input_noise"] <= 1):
+                    and 0 <= _c["mixup_p"] <= 1 and 0 <= _c["input_noise"] <= 1
+                    and 0 <= _c["drop_tail"] <= 24):
                 _reg_meas = _c
     except Exception:
         _reg_meas = None
@@ -464,7 +466,8 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         mixup_p, input_noise = _reg_base["mixup_p"], _reg_base["input_noise"]
         print(f"  ★규제는 ★잰 값★ 을 쓴다 — 사다리(do={_reg_ladder['dropout']} l2={_reg_ladder['l2']:.1e}"
               f" mix={_reg_ladder['mixup_p']} noise={_reg_ladder['input_noise']}) 대신"
-              f" 측정 승자(do={dropout} l2={l2:.1e} mix={mixup_p} noise={input_noise})")
+              f" 측정 승자(do={dropout} l2={l2:.1e} mix={mixup_p} noise={input_noise}"
+              f" 꼬리={_reg_base['drop_tail'] or '전층'})")
     # [V11.1] 배치·에폭도 데이터 규모에 맞춤 — 300k×에폭400×배치32면 GPU로도 timeout(3600s) 초과.
     #   대용량일수록 배치↑(스텝수↓)·에폭↓(1에폭당 갱신이 이미 많음). 조기종료가 최적점을 잡음.
     if Nall >= 150000:    batch, ep = 256, min(ep, 120)
@@ -670,6 +673,15 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         _r = reg or _reg_base
         dropout = _r["dropout"]; l2 = _r["l2"]
         mixup_p = _r["mixup_p"]; input_noise = _r["input_noise"]
+        # ══ [V33.386] ★드롭아웃을 ★몇 번째 층부터★ 걸지가 재 본 적 없는 축이다.★ ═══════
+        #   지금은 은닉 10층 전부에 p=0.5 를 건다. BatchNorm 과 같이 쓰면 알려진 부작용이 있다:
+        #   학습 중 BN 은 ★드롭아웃으로 흐트러진★ 입력의 통계를 러닝평균에 쌓는데, 평가 때는
+        #   드롭아웃이 꺼져 입력 분산이 달라진다 — 쌓아 둔 통계가 틀린 분포를 가리킨다.
+        #   층마다 이게 겹치면 깊을수록 커진다. 같은 표본에서 트리는 53~54%, 이 망은 47.3% 로
+        #   ★동전보다 낮다★ — 규제가 과한 것만으로는 잘 안 나오는 모양이다.
+        #   ★그래도 단정하지 않는다.★ 손잡이를 만들고 스윕이 ★재서★ 고르게 한다.
+        #   drop_tail = 0 → 전 층(종전 동작 그대로) · k>0 → ★마지막 k 개 은닉층에만★ 건다.
+        drop_tail = int(_r.get("drop_tail", 0) or 0)
 
         class MLP(nn.Module):
             def __init__(self):
@@ -685,7 +697,8 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                     if i < n - 1:
                         x = self.bns[i](x)                 # BatchNorm(선형 뒤·ReLU 앞) — 학습모드=배치통계, 평가모드=러닝통계
                         x = torch.relu(x)
-                        if train and dropout > 0:
+                        _hid = n - 1                      # 은닉층 개수(출력층 제외)
+                        if train and dropout > 0 and (drop_tail <= 0 or i >= _hid - drop_tail):
                             x = torch.nn.functional.dropout(x, p=dropout, training=True)
                 return x
 
@@ -770,6 +783,36 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             order = np.argsort(ps); ranks = np.empty_like(order, dtype=np.float64); ranks[order] = np.arange(1, len(ps) + 1)
             npos = ys.sum(); nneg = len(ys) - npos
             auc = float((ranks[ys > 0.5].sum() - npos * (npos + 1) / 2) / (npos * nneg)) if npos > 0 and nneg > 0 else 0.5
+            # ══ [V33.386] ★BN 이 쌓아 둔 통계가 틀린 분포를 가리키는지 잰다 — 비용 0 의 진단★
+            #   드롭아웃×BatchNorm 의 알려진 부작용: 학습 중 BN 은 드롭아웃으로 흐트러진 입력의
+            #   통계를 러닝평균에 쌓는데, 평가 때는 드롭아웃이 꺼져 입력 분산이 다르다.
+            #   두 값이 크게 갈리면 "규제가 과하다" 가 아니라 ★통계가 틀렸다★ 는 뜻이다.
+            #   ※ 배치통계 값은 ★배포 가능한 점수가 아니다★ — 검증집합 자신의 통계를 쓰므로
+            #     transductive 다. 오직 '갈리는가' 만 보는 진단이다. 게이트는 이 값을 안 본다.
+            try:
+                _bufs = []
+                for _nt in nets:
+                    for _m in _nt.modules():
+                        if isinstance(_m, nn.BatchNorm1d):
+                            _bufs.append((_m, _m.running_mean.clone(), _m.running_var.clone(),
+                                          int(_m.num_batches_tracked.item())))
+                _zb = torch.zeros(Xva.shape[0], device=dev)
+                for _nt in nets:
+                    _nt.train()                    # BN 만 배치통계로 — 드롭아웃은 forward(train=False) 로 끈다
+                    _zb += _nt(Xva, False).squeeze(-1)
+                for _nt in nets:
+                    _nt.eval()
+                for _m, _mu, _v, _nb in _bufs:     # ★진단이 러닝통계를 오염시키면 안 된다★ — 되돌린다
+                    _m.running_mean.copy_(_mu); _m.running_var.copy_(_v); _m.num_batches_tracked.fill_(_nb)
+                _pb = torch.sigmoid(_zb / len(nets)).cpu().numpy()
+                _acc_bn = float(((_pb >= 0.5) == (ys > 0.5)).mean())
+                _acc_rn = float(((ps >= 0.5) == (ys > 0.5)).mean())
+                print(f"   [BN진단] 러닝통계 {_acc_rn*100:.2f}% vs 배치통계 {_acc_bn*100:.2f}%"
+                      f" → 차이 {(_acc_bn - _acc_rn)*100:+.2f}%p (배치통계는 진단용·배포 점수 아님)"
+                      + ("  ★쌓아 둔 통계가 틀린 분포를 가리킨다 — 드롭아웃×BN 분산이동★"
+                         if (_acc_bn - _acc_rn) > 0.02 else ""))
+            except Exception as _e:
+                print("   [BN진단] 못 쟀다:", _e)
 
         # ── [V12.33 임계값 캘리브레이션] 31%형 겉보기 붕괴 수정 ──
         #   원인: 균형가중 학습 + 검증 라벨 쏠림 상황에서 고정 0.5 컷은 다수클래스보다 못한 정확도로 붕괴.
@@ -989,13 +1032,20 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             return dict(dropout=round(_reg_ladder["dropout"] * mul_do, 4),
                         l2=_reg_ladder["l2"] * mul_l2,
                         mixup_p=round(_reg_ladder["mixup_p"] * mul_mix, 4),
-                        input_noise=round(_reg_ladder["input_noise"] * mul_noise, 4))
+                        input_noise=round(_reg_ladder["input_noise"] * mul_noise, 4),
+                        drop_tail=int(_reg_ladder.get("drop_tail", 0) or 0))
         def _regkey(d):
-            return (round(d["dropout"], 4), round(d["l2"], 8), round(d["mixup_p"], 4), round(d["input_noise"], 4))
+            return (round(d["dropout"], 4), round(d["l2"], 8), round(d["mixup_p"], 4),
+                    round(d["input_noise"], 4), int(d.get("drop_tail", 0) or 0))
+        # [V33.386] ★드롭아웃 위치★ 도 후보로 넣는다 — 세기만 흔들면 '꼬리에만 걸기' 는 영원히
+        #   재 보지 못한다. 전 층 p=0.5 × BN 은 러닝통계를 틀린 분포로 몰 수 있다(위 [BN진단]).
+        #   세기는 사다리 그대로 두고 ★위치만★ 바꾼 점을 하나 넣어, 둘을 가를 수 있게 한다.
+        _tail2 = dict(_reg_ladder); _tail2["drop_tail"] = 2
         reg_cands = []
         for _t, _d in [("규제 현행", dict(_reg_base)), ("규제 사다리", dict(_reg_ladder)),
                        ("규제 완화", _reg(0.5, 0.3, 0.4, 0.5)),
-                       ("규제 최소", _reg(0.2, 0.1, 0.0, 0.0))]:
+                       ("규제 최소", _reg(0.2, 0.1, 0.0, 0.0)),
+                       ("드롭아웃 꼬리2", _tail2)]:
             if not any(_regkey(_d) == _regkey(_e) for _, _e in reg_cands):
                 reg_cands.append((_t, _d))
         _K_full = K
@@ -1021,7 +1071,8 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             r["tag"] = _dwin["tag"] + "+" + rtag; r["hidden"] = list(_dwin["hidden"]); r["reg"] = rcfg
             r["secs"] = round(time.time() - t0, 1)
             rank.append(r)
-            print(f"   · {r['tag']:20s} do={rcfg['dropout']} l2={rcfg['l2']:.1e} "
+            print(f"   · {r['tag']:20s} do={rcfg['dropout']}@{rcfg.get('drop_tail', 0) or '전층'} "
+                  f"l2={rcfg['l2']:.1e} "
                   f"mix={rcfg['mixup_p']} noise={rcfg['input_noise']} → "
                   f"valAcc {r['acc']*100:.2f}% 하한 {r['lb']*100:.2f}% AUC {r['auc']:.3f} ({r['secs']}s)")
         # ★하한(lb)으로 고른다★ — 워커 승격 게이트가 보는 값이다. 동률이면 valAcc, 그다음 작은 모델.
@@ -1052,7 +1103,8 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                 # [V33.386] ★규제 축 승자도 같이 올린다★ — 이게 없어서 규제 측정은 매번 버려졌다.
                 "reg": {"dropout": round(float(_reg_win["dropout"]), 4), "l2": float(_reg_win["l2"]),
                         "mixupP": round(float(_reg_win["mixup_p"]), 4),
-                        "inputNoise": round(float(_reg_win["input_noise"]), 4)},
+                        "inputNoise": round(float(_reg_win["input_noise"]), 4),
+                        "dropTail": int(_reg_win.get("drop_tail", 0) or 0)},
                 "ranking": [{"tag": r["tag"], "lb": round(r["lb"], 4), "acc": round(r["acc"], 4)} for r in rank]})
             print(f"②-S 구성 저장 {_ar.status_code}: {str(_ar.text)[:160]}")
         except Exception as _e:
