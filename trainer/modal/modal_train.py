@@ -655,6 +655,8 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     _hasCal = len(cal) >= 50
     Xcal = torch.tensor(Xn[cal], dtype=torch.float32, device=dev) if _hasCal else None
     Ycal = Y[cal] if _hasCal else None
+    # [V33.388] 조기중단도 이 구간에서 판단한다 — 아래 one_seed 주석 참고.
+    Ycal_t = torch.tensor(Y[cal], dtype=torch.float32, device=dev) if _hasCal else None
 
     # [V32.11] ★모델 축소 없이 강화 — BatchNorm★ 12층 평면 MLP는 정규화가 없어 깊이가 학습에 안 먹혔다
     #   (심층 degradation·기울기 불안정 → valAcc 정체의 구조적 원인). 각 은닉층에 BatchNorm을 넣어 깊은
@@ -714,6 +716,18 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             opt = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=l2)
             sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=ep, eta_min=lr * lr_floor)
             best, best_state, wait, patience = 1e9, None, 0, max(15, ep // 12)
+            # ══ [V33.388] ★조기중단이 승격 통계와 ★같은 행★ 을 보고 있었다.★ ═════════════
+            #   종전: 매 에폭 Xva 의 손실을 보고 가장 좋은 에폭의 가중치를 채택했다. 그런데
+            #   acc·Wilson 하한(=워커 승격 게이트가 보는 값)도 ★그 Xva★ 에서 나온다.
+            #   에폭 ~120 × 시드 K 판 중 검증에 제일 잘 맞는 판을 골라 그 검증으로 채점한 것이다
+            #   — 고른 자로 채점하면 점수가 부푼다. 이 저장소가 τ*(V33.341)와 IC 그룹(B-2)에서
+            #   이미 두 번 막은 것과 ★정확히 같은 종류★ 의 누출이다.
+            #   그런데 τ* 를 고르려고 떼어 둔 ★보정 구간★ 이 바로 옆에 있다 — 학습 꼬리에서 떼고
+            #   엠바고가 검증과 갈라 놓은 구간이다. 조기중단은 여기서 판단하면 된다.
+            #   검증 손실은 ★기록만★ 한다(선택에 안 쓴다) — 그래야 종전 방식이 가져가던
+            #   이득의 크기를 처음으로 잴 수 있다.
+            _esX, _esY = (Xcal, Ycal_t) if _hasCal else (Xva, Yva)
+            _va_at_pick, _va_best = None, 1e9
             ntr = Xtr.shape[0]
             for e in range(ep):
                 net.train(); perm = torch.randperm(ntr, device=dev)
@@ -737,17 +751,25 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                 sched.step()
                 net.eval()
                 with torch.no_grad():
-                    vl = nn.functional.binary_cross_entropy_with_logits(net(Xva, False).squeeze(-1), Yva).item()
+                    _vl_va = nn.functional.binary_cross_entropy_with_logits(
+                        net(Xva, False).squeeze(-1), Yva).item()          # ★기록 전용 — 선택에 안 쓴다★
+                    vl = (nn.functional.binary_cross_entropy_with_logits(
+                        net(_esX, False).squeeze(-1), _esY).item() if _hasCal else _vl_va)
+                if _vl_va < _va_best: _va_best = _vl_va
                 if vl < best - 1e-5:
                     best, wait = vl, 0
+                    _va_at_pick = _vl_va
                     best_state = {k: v.detach().clone() for k, v in net.state_dict().items()}
                 else:
                     wait += 1
                     if wait >= patience: break
             if best_state: net.load_state_dict(best_state)
+            if _va_at_pick is not None:
+                _es_log.append((_va_at_pick, _va_best))
             return net
 
         nets = []
+        _es_log = []          # [V33.388] (선택시점 검증손실, 전구간 최저 검증손실) — 편향 크기 기록
         _seed_t0 = time.time()
         for sd in range(K):
             # [V33.350] ★시드를 하나 더 돌릴 예산이 없으면 거기서 멈춘다 — 죽지 않는다.★
@@ -768,6 +790,18 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             t0 = time.time(); nets.append(one_seed(1000 + sd * 7))
             print(f"  {tag + ' ' if tag else ''}시드 {sd+1}/{K} ({time.time()-t0:.1f}s)")
 
+        # [V33.388] 조기중단 기준과 ★종전 방식이 가져가던 이득★ 을 같이 적는다.
+        #   전구간최저 = 매 에폭 검증손실의 최솟값 = ★종전 방식이 고르던 판★.
+        #   선택시점 = 보정구간으로 고른 판의 검증손실. 둘의 차이가 곧 누출분이다.
+        try:
+            if _es_log:
+                _pk = sum(a for a, _ in _es_log) / len(_es_log)
+                _bs = sum(b for _, b in _es_log) / len(_es_log)
+                print(f"   [조기중단] 기준={'보정구간(학습 꼬리·엠바고로 검증과 분리)' if _hasCal else '★검증(보정구간이 모자라 어쩔 수 없다 — 이 회차 점수는 부풀어 있다)★'}"
+                      f" · 검증손실 선택시점 {_pk:.4f} vs 전구간최저 {_bs:.4f}"
+                      f" → 종전 방식이 가져가던 이득 {(_pk - _bs):.4f}")
+        except Exception:
+            pass
         with torch.no_grad():
             zsum = torch.zeros(Xva.shape[0], device=dev)
             for net in nets:
@@ -978,7 +1012,24 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         except Exception: _ic_ts = None
         _icf = _ic_block_fields(_p_ic, _y_ic, mkt=_m_ic, ts=_ic_ts,
                                 horizon_ms=_hor_d * 86400000.0)   # [V33.291] 시장 고정효과 제거
-        out = {"nets": nets, "acc": acc, "lb": lb, "n_eval": n_eval, "dims": list(dims),
+        # ══ [V33.388] ★스윕 승자도 검증행에서 고르고 있었다.★ ════════════════════════
+        #   깊이·규제 후보를 lb(검증행)로 줄세워 이기는 구성을 고르고, 그 구성의 lb 를
+        #   그대로 승격 점수로 올렸다. 후보 수가 9개뿐이라 에폭 선택(600~1000판)보다는
+        #   훨씬 작지만, ★같은 종류★ 다. 자(유효표본 Wilson 하한)는 그대로 두고
+        #   ★행만★ 보정구간으로 옮긴다 — 워커 게이트와 같은 자로 겨루되, 채점표를 안 본다.
+        #   τ* 도 보정구간에서 골랐으므로 이 값에는 그만큼의 낙관이 남는다(후보 전체에
+        #   같은 방향으로 실리므로 순위는 보존된다). 검증행은 채점에만 쓴다.
+        _lb_sel = lb
+        try:
+            if _cal_src is not None:
+                _pc = np.clip(_cal_src[0], 1e-6, 1 - 1e-6)
+                _pc = 1.0 / (1.0 + np.exp(-(np.log(_pc / (1 - _pc)) - delta)))
+                _acc_c = float(((_pc >= 0.5) == (_cal_src[1] > 0.5)).mean())
+                # 유효표본도 검증행과 ★같은 규칙★ 으로 센다(906행 _dnn_uw 와 같은 색인 규약).
+                _lb_sel = wilson_lb(_acc_c, _neff_of(_uw_pick(UNIQ, len(Y), cal)))
+        except Exception as _e:
+            print("   [스윕선택] 보정구간 하한 계산 실패 — 검증 하한으로 고른다(누출 남음):", _e)
+        out = {"nets": nets, "acc": acc, "lb": lb, "lbSel": _lb_sel, "n_eval": n_eval, "dims": list(dims),
                "auc": auc, "base": base, "majority": majority,
                # [V33.350] ★고유도 가중을 여기 실어 보낸다.★ 업로드부가 _dnn_uw 를 직접
                #   참조했는데 그건 이 함수의 지역변수라 매 회차 NameError 가 났다
@@ -1062,9 +1113,11 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                   f"valAcc {r['acc']*100:.2f}% 하한 {r['lb']*100:.2f}% AUC {r['auc']:.3f} ({r['secs']}s)")
         # ★깊이 승자 위에서만 규제를 흔든다.★ 전조합(4×3=12)은 예산을 넘긴다 —
         #   두 축을 곱해서 재는 대신, 이긴 깊이에 대해서만 규제를 재는 좌표하강이다.
-        rank.sort(key=lambda r: (-r["lb"], -r["acc"], r["params"]))
+        # [V33.388] ★선택은 보정행(lbSel), 채점은 검증행(lb)★ — 자는 같다(유효표본 Wilson 하한).
+        rank.sort(key=lambda r: (-r["lbSel"], -r["acc"], r["params"]))
         _dwin = rank[0]
-        print(f"②-S 깊이 승자: {_dwin['tag']} (하한 {_dwin['lb']*100:.2f}%) — 이 깊이에서 규제를 잰다")
+        print(f"②-S 깊이 승자: {_dwin['tag']} (선택근거 보정하한 {_dwin['lbSel']*100:.2f}%"
+              f" · 기록 검증하한 {_dwin['lb']*100:.2f}%) — 이 깊이에서 규제를 잰다")
         for rtag, rcfg in reg_cands[1:]:      # '현행' 은 위에서 이미 쟀다
             t0 = time.time()
             r = fit_arch([D] + list(_dwin["hidden"]) + [1], rtag, reg=rcfg)
@@ -1076,11 +1129,12 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                   f"mix={rcfg['mixup_p']} noise={rcfg['input_noise']} → "
                   f"valAcc {r['acc']*100:.2f}% 하한 {r['lb']*100:.2f}% AUC {r['auc']:.3f} ({r['secs']}s)")
         # ★하한(lb)으로 고른다★ — 워커 승격 게이트가 보는 값이다. 동률이면 valAcc, 그다음 작은 모델.
-        rank.sort(key=lambda r: (-r["lb"], -r["acc"], r["params"]))
+        rank.sort(key=lambda r: (-r["lbSel"], -r["acc"], r["params"]))
         win = rank[0]
-        print(f"②-S 승자: {win['tag']} (하한 {win['lb']*100:.2f}%) — 2위 {rank[1]['tag']} "
-              f"하한 {rank[1]['lb']*100:.2f}% · 차이 {(win['lb']-rank[1]['lb'])*100:+.2f}%p")
-        if (win["lb"] - rank[1]["lb"]) < 0.005:
+        print(f"②-S 승자: {win['tag']} (보정하한 {win['lbSel']*100:.2f}% · 검증하한 {win['lb']*100:.2f}%)"
+              f" — 2위 {rank[1]['tag']} 보정하한 {rank[1]['lbSel']*100:.2f}%"
+              f" · 차이 {(win['lbSel']-rank[1]['lbSel'])*100:+.2f}%p")
+        if (win["lbSel"] - rank[1]["lbSel"]) < 0.005:
             print("   ⚠️ 1·2위 하한 차이가 0.5%p 미만 — 이 표본에서 둘을 가를 근거가 약하다"
                   "(다음 스윕에서 뒤집힐 수 있음). 작은 모델을 택했는지 위 정렬 규칙을 확인할 것.")
         hidden = win["hidden"]; dims = [D] + list(hidden) + [1]
@@ -1573,11 +1627,23 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ=None,
     if N < 400:
         print(f"{tag}: 표본 부족 {N} — 생략"); return
     # [V33.341] 엠바고 분할(공용 헬퍼) — 종전엔 경계를 안 비워 라벨 지평만큼 겹쳤다.
-    order, _tri, _cali, _vai, nval, _emb = _split_ts(TS, VALFRAC, _EMBARGO_MS, min_val=200, horizon_ms=_HORIZON_MS, tag=tag)
+    # [V33.388] 조기중단을 ★검증에서 하지 않는다★ — 아래 보정구간 주석 참고.
+    order, _tri, _cali, _vai, nval, _emb = _split_ts(TS, VALFRAC, _EMBARGO_MS, min_val=200,
+                                                     horizon_ms=_HORIZON_MS, cal_frac=0.10, tag=tag)
     Xs = X[order].astype(np.float64); Ys = Y[order].astype(np.float64)
     Xtr, Ytr = Xs[_tri], Ys[_tri]
     Xva, Yva = Xs[_vai], Ys[_vai]
-    print(f"   GBDT 분할: 학습 {len(_tri)} · 검증 {len(_vai)} · 엠바고 {_emb/86400000:.0f}일")
+    # ══ [V33.388] ★몇 그루에서 멈출지를 검증에서 고르고 그 검증으로 채점하고 있었다.★ ═════
+    #   MAXTREES=600 · PATIENCE=50 으로 검증 손실이 가장 낮은 그루 수(best_k)를 고른 뒤,
+    #   vacc·Wilson 하한을 ★그 같은 행★ 에서 냈다. 최대 600판 중 검증에 제일 맞는 판을 골라
+    #   그 검증으로 채점한 것이다 — 고른 자로 채점하면 점수가 부푼다.
+    #   → 학습 꼬리 보정구간에서 고른다. 검증은 채점에만 쓴다.
+    _hasCal = len(_cali) >= 200
+    Xes, Yes = (Xs[_cali], Ys[_cali]) if _hasCal else (Xva, Yva)
+    print(f"   GBDT 분할: 학습 {len(_tri)} · 보정 {len(_cali)} · 검증 {len(_vai)} · 엠바고 {_emb/86400000:.0f}일")
+    print("   [조기중단] 기준=" + ("보정구간(학습 꼬리·엠바고로 검증과 분리) — 검증은 채점에만 쓴다"
+                                 if _hasCal else
+                                 f"★검증(보정구간 {len(_cali)}건으로 모자라다 — 이 회차 {tag} 점수는 부풀어 있다)★"))
     # [V33.115] 검증구간 고유도 — 정렬 후 뒤 nval 개의 ★원본 인덱스★ 로 뽑아야 한다.
     UWva = _uw_pick(UNIQ, N, order[-nval:])
     Ntr = len(Ytr)
@@ -1645,7 +1711,7 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ=None,
         rec(node, np.arange(len(Xm)))
         return out
 
-    raw = np.full(Ntr, bias); vraw = np.full(nval, bias)
+    raw = np.full(Ntr, bias); eraw = np.full(len(Yes), bias)   # eraw = ★보정구간★ 누적(멈출 때 고르기)
     trees = []; best_vloss = 1e18; best_k = 0; wait = 0
     ncol = max(1, int(round(D * COLSAMPLE)))
     nrow = max(50, int(round(Ntr * SUBSAMPLE)))
@@ -1661,9 +1727,9 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ=None,
         tree = build(ridx, 0, grad, hess, cols)
         trees.append(tree)
         raw = raw + ETA * apply_tree(tree, Xtr)
-        vraw = vraw + ETA * apply_tree(tree, Xva)
-        vp = np.clip(sigmoid(vraw), 1e-6, 1 - 1e-6)
-        vloss = float(-np.mean(Yva * np.log(vp) + (1 - Yva) * np.log(1 - vp)))
+        eraw = eraw + ETA * apply_tree(tree, Xes)
+        vp = np.clip(sigmoid(eraw), 1e-6, 1 - 1e-6)
+        vloss = float(-np.mean(Yes * np.log(vp) + (1 - Yes) * np.log(1 - vp)))
         if vloss < best_vloss - 1e-5:
             best_vloss = vloss; best_k = len(trees); wait = 0
         else:
@@ -2240,16 +2306,22 @@ def _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D, UNIQ=None)
         Xm, Ym, TSm = X[sel], Y[sel], TS[sel]
         PNLm = PNL[sel] if PNL is not None and len(PNL) == len(Y) else None
     # [V33.341] 엠바고 분할(공용 헬퍼) — 종전엔 경계를 안 비워 라벨 지평만큼 겹쳤다.
-        order, _tri, _cali, _vai, nval, _emb = _split_ts(TSm, 0.2, _EMBARGO_MS, min_val=200, horizon_ms=_HORIZON_MS, tag="시장별")
+        # [V33.388] 조기중단·A/B 선택을 ★검증에서 하지 않는다★ — 아래 les 주석 참고.
+        order, _tri, _cali, _vai, nval, _emb = _split_ts(TSm, 0.2, _EMBARGO_MS, min_val=200,
+                                                         horizon_ms=_HORIZON_MS, cal_frac=0.10, tag="시장별")
         Xs, Ys = Xm[order].astype(np.float64), Ym[order].astype(int)
         Xtr, Ytr = Xs[_tri], Ys[_tri]
         Xva, Yva = Xs[_vai], Ys[_vai]
+        _hasCal = len(_cali) >= 200
+        Xes, Yes = (Xs[_cali], Ys[_cali]) if _hasCal else (Xva, Yva)
+        if not _hasCal:
+            print(f"   [조기중단] 기준=★검증(보정구간 {len(_cali)}건으로 모자라다 — 이 회차 {mk.upper()} 점수는 부풀어 있다)★")
         # [V33.115] 검증구간 고유도 — sel(부분집합) → order(정렬) 두 번 접혔으므로
         #   원본 인덱스로 되돌려서 뽑는다. 겹침은 같은 종목 안에서만 세므로 시장별로 나눠도 값이 같다.
         UWva = _uw_pick(UNIQ, len(Y), np.flatnonzero(sel)[order][-nval:])
 
         # 수익크기 가중(V33.75)을 시장별로 다시 산출 — 시장마다 변동성 스케일이 달라 공유하면 안 된다.
-        Wtr = None
+        Wtr = None; Wes = None
         if PNLm is not None:
             Ps = np.abs(PNLm[order])
             k = min(250, max(30, n // 10))
@@ -2258,6 +2330,7 @@ def _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D, UNIQ=None)
             W = W / W.mean()
             # Codex V33.346: weights must follow the same embargo indices as X/Y.
             Wtr = W[_tri]
+            Wes = W[_cali] if _hasCal else None
 
         print(f"   ── {mk.upper()} 전용 모델 (표본 {n}, 검증 {nval}) ──")
         # ★A/B★ 단일 LGBM 과 DoubleEnsemble 을 나란히 학습해 이 시장의 홀드아웃에서 이긴 쪽만 쓴다.
@@ -2270,32 +2343,38 @@ def _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D, UNIQ=None)
                   "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 1,
                   "min_data_in_leaf": 20, "lambda_l2": 3.0, "verbose": -1}
             _d1 = lgb.Dataset(Xtr, label=Ytr, weight=Wtr)
-            _d2 = lgb.Dataset(Xva, label=Yva, reference=_d1)
+            # ══ [V33.388] ★멈출 때도, A/B 승자도, 검증구간에서 고르고 있었다.★ ═══════════
+            #   600판 중 검증에 제일 잘 맞는 판을 고르고, 그 검증으로 단일 LGBM 과
+            #   DoubleEnsemble 의 승부까지 가린 뒤, 같은 검증으로 채점했다.
+            #   → 학습 꼬리 보정구간에서 고른다. 검증은 채점에만 쓴다.
+            _d2 = lgb.Dataset(Xes, label=Yes, weight=Wes, reference=_d1)
             _b = lgb.train(_p, _d1, num_boost_round=600, valid_sets=[_d2],
                            callbacks=[lgb.early_stopping(90, verbose=False)])
             _nit = _b.best_iteration or 600
             _pv = _b.predict(Xva, num_iteration=_nit)
             cand.append(("lgbm", lambda Z, _b=_b, _nit=_nit: _b.predict(Z, num_iteration=_nit),
-                         [(_b, np.arange(Xtr.shape[1]))], _pv, _nit))
+                         [(_b, np.arange(Xtr.shape[1]))], _pv, _nit, _b.predict(Xes, num_iteration=_nit)))
         except Exception as e:
             print("   단일 LGBM 실패:", e)
-        de = _train_double_ensemble(Xtr, Ytr, Xva, Yva, Wbase=Wtr)
+        de = _train_double_ensemble(Xtr, Ytr, Xes, Yes, Wbase=Wtr)
         if de is not None:
-            _pv2 = de[0](Xva)
-            cand.append(("double_ensemble", de[0], de[1], _pv2, None))
+            cand.append(("double_ensemble", de[0], de[1], de[0](Xva), None, de[0](Xes)))
         if not cand:
             continue
 
-        def _ic(pv):
+        def _ic_on(pv, yy):
             try:
-                c = np.corrcoef(pv, Yva)[0, 1]
+                c = np.corrcoef(pv, yy)[0, 1]
                 return 0.0 if not np.isfinite(c) else float(c)
             except Exception:
                 return 0.0
-        for nm, _, _, pv, _ in cand:
-            print(f"   {mk.upper()} 후보 {nm}: acc={float(((pv>=0.5).astype(int)==Yva).mean()):.4f} IC={_ic(pv):.4f}")
-        algo, predict, subs, _pvbest, _ = max(cand, key=lambda c: _ic(c[3]))
-        print(f"   {mk.upper()} 채택: {algo}")
+        # ★A/B 승자도 검증에서 고르지 않는다★ — 고른 자로 채점하면 이긴 쪽 점수만 부푼다.
+        #   검증 값은 ★사람이 읽는 기록★ 으로만 찍는다(선택에 안 쓴다).
+        for nm, _, _, pv, _, pe in cand:
+            print(f"   {mk.upper()} 후보 {nm}: [선택근거·보정] IC={_ic_on(pe, Yes):.4f}"
+                  f" · [기록·검증] acc={float(((pv>=0.5).astype(int)==Yva).mean()):.4f} IC={_ic_on(pv, Yva):.4f}")
+        algo, predict, subs, _pvbest, _, _ = max(cand, key=lambda c: _ic_on(c[5], Yes))
+        print(f"   {mk.upper()} 채택: {algo} (보정구간 IC 로 골랐다 — 검증은 채점에만 쓴다)")
 
         # 워커 트리 포맷으로 변환 — 서브모델들의 트리를 전부 이어붙이고 eta 로 평균을 낸다.
         #   워커 추론: raw = bias + Σ eta·leaf → sigmoid. 서브모델 평균은 eta = 1/K 로 표현된다.
@@ -2379,7 +2458,10 @@ def _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D, UNIQ=None)
 #     · ★기본값으로 쓰지 않는다★ — 시장별 학습에서 '단일 LGBM'과 나란히 학습해 그 시장의
 #       홀드아웃에서 실제로 이긴 쪽만 업로드한다(아래 _train_per_market 의 A/B).
 #     신뢰할 수 없는 개선을 믿고 갈아끼우지 않는다 — 그게 지난 두 달의 실패 패턴이었다.
-def _train_double_ensemble(Xtr, Ytr, Xva, Yva, Wbase=None, K=4, bins_sr=10, bins_fs=5,
+# [V33.388] 넷째·다섯째 인자는 ★조기중단 기준 구간★ 이다 — 채점 구간(검증)이 아니다.
+#   종전엔 호출부가 검증을 그대로 넘겨, 700판 중 검증에 제일 맞는 판을 고른 뒤 그 검증으로
+#   채점했다. 이름도 Xva 였어서 그 사실이 눈에 안 띄었다.
+def _train_double_ensemble(Xtr, Ytr, Xes, Yes, Wbase=None, K=4, bins_sr=10, bins_fs=5,
                            alpha1=1.0, alpha2=1.0, decay=1.0, fs_floor=0.70,
                            sample_ratios=(0.9, 0.85, 0.8, 0.75, 0.7)):
     """반환: (predict_proba(Xnew) -> np.ndarray, 서브모델 리스트, 정보 dict). lightgbm 없으면 None."""
@@ -2414,7 +2496,7 @@ def _train_double_ensemble(Xtr, Ytr, Xva, Yva, Wbase=None, K=4, bins_sr=10, bins
 
     for k in range(K):
         ds = lgb.Dataset(Xtr[:, feat_idx], label=Ytr, weight=w)
-        dv = lgb.Dataset(Xva[:, feat_idx], label=Yva, reference=ds)
+        dv = lgb.Dataset(Xes[:, feat_idx], label=Yes, reference=ds)
         # 학습곡선을 얻기 위해 표본별 손실을 여러 시점에서 기록한다(논문의 loss curve).
         snaps, curve = [], []
         bst = lgb.train(params, ds, num_boost_round=400, valid_sets=[dv],
@@ -2483,9 +2565,9 @@ def _train_double_ensemble(Xtr, Ytr, Xva, Yva, Wbase=None, K=4, bins_sr=10, bins
         import numpy as _np
         return _np.mean([b.predict(Xnew[:, fi]) for b, fi in subs], axis=0)
 
-    pv = _predict(Xva)
-    vacc = float(((pv >= 0.5).astype(int) == Yva).mean())
-    print(f"   DoubleEnsemble: 서브모델 {len(subs)}개 valAcc={vacc:.3f} (최종 피처 {len(subs[-1][1])}/{Dfeat})")
+    pv = _predict(Xes)
+    vacc = float(((pv >= 0.5).astype(int) == Yes).mean())   # ★보정구간 값 — 채점이 아니다★
+    print(f"   DoubleEnsemble: 서브모델 {len(subs)}개 보정acc={vacc:.3f} (최종 피처 {len(subs[-1][1])}/{Dfeat})")
     return _predict, subs, {"valAcc": vacc}
 
 
@@ -2609,11 +2691,26 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None, U
     if N < 500:
         print(f"부스팅: 표본 부족 {N} — 생략"); return
     # [V33.341] 엠바고 분할(공용 헬퍼) — 종전엔 경계를 안 비워 라벨 지평만큼 겹쳤다.
-    order, _tri, _cali, _vai, nval, _emb = _split_ts(TS, 0.2, _EMBARGO_MS, min_val=200, horizon_ms=_HORIZON_MS, tag="부스팅")
+    # ══ [V33.388] ★조기중단이 승격 통계와 ★같은 행★ 을 보고 있었다 — 세 부스터 전부.★ ══
+    #   종전: evals/valid_sets/eval_set 이 모두 ★검증구간★ 이었고, num_boost_round=1000 ·
+    #   patience=90 으로 그 위에서 best_iteration 을 골랐다. 그리고 acc·Wilson 하한·블록 IC
+    #   (=워커 승격 게이트가 보는 값 전부)를 ★그 같은 행★ 에서 냈다.
+    #   최대 1,000판 중 검증에 제일 잘 맞는 판을 골라 그 검증으로 채점한 것이다 —
+    #   고른 자로 채점하면 점수가 부푼다. DNN 의 τ*(V33.341)·SEQ 의 엠바고(B-2)에서
+    #   이미 두 번 막은 것과 ★정확히 같은 종류★ 의 누출인데, 부스터에만 남아 있었다.
+    #   → 학습 꼬리에서 보정구간을 떼어 ★거기서★ 멈출 때를 고른다(엠바고가 검증과 갈라 놓는다).
+    #     검증은 채점에만 쓴다. ★이 변경은 보고되는 숫자를 낮춘다 — 낮아진 쪽이 참이다.★
+    order, _tri, _cali, _vai, nval, _emb = _split_ts(TS, 0.2, _EMBARGO_MS, min_val=200,
+                                                     horizon_ms=_HORIZON_MS, cal_frac=0.10, tag="부스팅")
     Xs = X[order].astype(np.float64); Ys = Y[order].astype(int)
     Xtr, Ytr = Xs[_tri], Ys[_tri]
     Xva, Yva = Xs[_vai], Ys[_vai]
-    print(f"   부스팅 분할: 학습 {len(_tri)} · 검증 {len(_vai)} · 엠바고 {_emb/86400000:.0f}일")
+    _hasCal = len(_cali) >= 200
+    Xes, Yes = (Xs[_cali], Ys[_cali]) if _hasCal else (Xva, Yva)
+    print(f"   부스팅 분할: 학습 {len(_tri)} · 보정 {len(_cali)} · 검증 {len(_vai)} · 엠바고 {_emb/86400000:.0f}일")
+    print("   [조기중단] 기준=" + ("보정구간(학습 꼬리·엠바고로 검증과 분리) — 검증은 채점에만 쓴다"
+                                 if _hasCal else
+                                 "★검증(보정구간이 모자라 어쩔 수 없다 — 이 회차 부스터 점수는 부풀어 있다)★"))
     UWva = _uw_pick(UNIQ, N, order[-nval:])     # [V33.115] 검증구간 고유도
 
     # ── [V33.75] 변동성 스케일 크기가중 (Lim·Zohren·Roberts 2019 / Moskowitz·Ooi·Pedersen 2012) ──
@@ -2624,7 +2721,7 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None, U
     #   부스팅 분류기에서 그 취지를 옮기는 표준 방법이 '수익 크기 ÷ 변동성' 표본가중이다.
     #   변동성으로 나누는 이유는 시계열 모멘텀의 vol-scaling 과 같다 — 고변동 구간의 큰 수익이
     #   가중을 독식하지 않게 해, 위험조정 후 기여가 큰 표본에 학습을 집중시킨다.
-    Wtr = None; Wva = None
+    Wtr = None; Wva = None; Wes = None
     try:
         if PNL is not None and len(PNL) == N:
             Ps = np.abs(np.asarray(PNL, dtype=np.float64)[order])
@@ -2637,9 +2734,10 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None, U
             W = W / W.mean()                                # 평균 1로 정규화(학습률 영향 제거)
             # Codex V33.346: old slices retained embargo rows and broke all three libraries.
             Wtr, Wva = W[_tri], W[_vai]
+            Wes = W[_cali] if _hasCal else Wva
             print(f"   크기가중 적용: 평균 {W.mean():.2f} 최대 {W.max():.2f} (표본 {N})")
     except Exception as e:
-        print("   크기가중 생략:", e); Wtr = None; Wva = None
+        print("   크기가중 생략:", e); Wtr = None; Wva = None; Wes = None
 
     def _wout(n, x):
         while "w" not in n:
@@ -2705,12 +2803,14 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None, U
         import xgboost as xgb
         # [V32.15] 노이즈 큰 금융 holdout에서 depth5·patience30은 3~7트리에서 조기절단(≈랜덤)됐다.
         #   얕은트리(depth4)+강한 규제(min_child·λ↑)+더 큰 patience(60)로 신호가 드러날 시간을 준다.
-        dtr = xgb.DMatrix(Xtr, label=Ytr, weight=Wtr); dva = xgb.DMatrix(Xva, label=Yva, weight=Wva)
+        dtr = xgb.DMatrix(Xtr, label=Ytr, weight=Wtr)
+        # [V33.388] 멈출 때를 고르는 자리 — ★검증이 아니라 보정구간★ 이다.
+        des = xgb.DMatrix(Xes, label=Yes, weight=Wes)
         # [V32.66] 강화: eta 0.04→0.03, rounds 800→1000, patience 60→90(조기중단 지배) (저LR·다트리·조기중단)
         bst = xgb.train({"objective": "binary:logistic", "max_depth": 4, "eta": 0.03,
                          "lambda": 3.0, "min_child_weight": 8, "gamma": 0.1,
                          "subsample": 0.8, "colsample_bytree": 0.8, "base_score": 0.5},
-                        dtr, num_boost_round=1000, evals=[(dva, "v")],
+                        dtr, num_boost_round=1000, evals=[(des, "es")],
                         early_stopping_rounds=90, verbose_eval=False)
         def _pxgb(n):
             if "leaf" in n: return {"w": float(n["leaf"])}
@@ -2732,12 +2832,14 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None, U
     try:
         import lightgbm as lgb
         # [V32.15] 얕은트리(depth4·leaves16)+강한 규제(min_data 60)+patience 60 — 조기절단 방지.
-        ltr = lgb.Dataset(Xtr, label=Ytr, weight=Wtr); lva = lgb.Dataset(Xva, label=Yva, weight=Wva, reference=ltr)
+        ltr = lgb.Dataset(Xtr, label=Ytr, weight=Wtr)
+        # [V33.388] 멈출 때를 고르는 자리 — ★검증이 아니라 보정구간★ 이다.
+        les = lgb.Dataset(Xes, label=Yes, weight=Wes, reference=ltr)
         # [V32.66] 강화: lr 0.04→0.03, rounds 800→1000, patience 60→90(조기중단 지배)
         lbst = lgb.train({"objective": "binary", "max_depth": 4, "num_leaves": 16,
                           "learning_rate": 0.03, "bagging_fraction": 0.8, "bagging_freq": 1,
                           "feature_fraction": 0.8, "min_data_in_leaf": 60, "lambda_l2": 3.0, "verbose": -1},
-                         ltr, num_boost_round=1000, valid_sets=[lva],
+                         ltr, num_boost_round=1000, valid_sets=[les],
                          callbacks=[lgb.early_stopping(90, verbose=False)])
         def _plgb(n):
             if "leaf_value" in n: return {"w": float(n["leaf_value"])}
@@ -2759,7 +2861,8 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None, U
         # [V32.66] 강화: lr 0.04→0.03, iterations 800→1000, patience 60→90
         cb = CatBoostClassifier(depth=4, iterations=1000, learning_rate=0.03, l2_leaf_reg=6.0,
                                 random_seed=42, verbose=0, early_stopping_rounds=90, use_best_model=True)
-        cb.fit(Xtr, Ytr, sample_weight=Wtr, eval_set=(Xva, Yva))
+        # [V33.388] 멈출 때를 고르는 자리 — ★검증이 아니라 보정구간★ 이다.
+        cb.fit(Xtr, Ytr, sample_weight=Wtr, eval_set=(Xes, Yes))
         tf = tempfile.mktemp(suffix=".json"); cb.save_model(tf, format="json")
         cbj = json.load(open(tf)); os.remove(tf)
         ff = cbj["features_info"]["float_features"]
@@ -3461,14 +3564,33 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
         print(f"   경로 품질 가중 생략: {e}")
 
     import lightgbm as lgb
+    # ══ [V33.388] ★멈출 때를 검증구간에서 고르고 그 검증구간으로 채점하고 있었다.★ ═══════
+    #   num_boost_round=700 · patience=80 으로 검증 위에서 best_iteration 을 고른 뒤,
+    #   valAcc·Wilson 하한·블록 IC 를 ★그 같은 행★ 에서 냈다. 최대 700판 중 검증에 제일
+    #   잘 맞는 판을 골라 그 검증으로 채점한 것이다. 이 모델은 지금 위원회에 앉아 있다 —
+    #   그러니 더더욱 자가 정직해야 한다.
+    #   → 학습 꼬리 10% 를 보정구간으로 떼어 ★거기서★ 멈출 때를 고른다. tr_mask 가 이미
+    #     엠바고를 걷어냈으므로 이 꼬리는 검증과 지평만큼 떨어져 있다.
+    #   ★학습 표본이 10% 준다 — 그만큼은 대가다. 그리고 보고되는 숫자는 낮아진다.
+    #     낮아진 쪽이 참이다.★
+    _ncal = int(len(Ytr) * 0.10)
+    _hasCal = _ncal >= 200
+    if _hasCal:
+        Xes, Yes, Wes = Xtr[-_ncal:], Ytr[-_ncal:], Wtr[-_ncal:]
+        Xtr, Ytr, Wtr = Xtr[:-_ncal], Ytr[:-_ncal], Wtr[:-_ncal]
+    else:
+        Xes, Yes, Wes = Xva, Yva, None
+    print("   [조기중단] 기준=" + (f"보정구간 {_ncal}건(학습 꼬리·엠바고로 검증과 분리) — 검증은 채점에만 쓴다"
+                                 if _hasCal else
+                                 "★검증(보정구간이 모자라 어쩔 수 없다 — 이 회차 단타 점수는 부풀어 있다)★"))
     # 피처가 65 → 77 로 늘고 정보량이 실제로 커졌으므로 용량도 함께 키운다(과적합은 조기중단으로 통제).
     ltr = lgb.Dataset(Xtr, label=Ytr, weight=Wtr)
-    lva = lgb.Dataset(Xva, label=Yva, reference=ltr)
+    les = lgb.Dataset(Xes, label=Yes, weight=Wes, reference=ltr)
     bst = lgb.train({"objective": "binary", "max_depth": 5, "num_leaves": 31,
                      "learning_rate": 0.04, "min_data_in_leaf": 30, "verbose": -1,
                      "feature_fraction": 0.75, "bagging_fraction": 0.8, "bagging_freq": 1,
                      "lambda_l2": 1.0},
-                    ltr, num_boost_round=700, valid_sets=[lva],
+                    ltr, num_boost_round=700, valid_sets=[les],
                     callbacks=[lgb.early_stopping(80, verbose=False)])
     best = bst.best_iteration or 700
 

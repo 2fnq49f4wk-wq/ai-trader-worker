@@ -9,12 +9,35 @@ let bad = 0;
 const ok = (m) => console.log("  ok   " + m);
 const no = (m) => { console.error("  FAIL " + m); bad++; };
 
-// ── ① 같은 자로 잰다 — 선택 기준이 워커 승격 게이트와 같은 통계인가 ──────────
+// ── ① 같은 자로, ★다른 행에서★ 잰다 ────────────────────────────────────────
 //   워커는 '유효표본 Wilson 하한(accLB)' 으로 승격을 판정한다. 스윕이 valAcc 로 고르면
 //   "여기선 이겼는데 저기선 떨어지는" 모델을 고르게 된다 — 두 자가 다르면 비교가 무의미하다.
-if (!/rank\.sort\(key=lambda r: \(-r\["lb"\]/.test(src))
-  no("깊이스윕: 승자를 하한(lb)으로 고르지 않는다 — 워커 게이트와 다른 자로 재면 안 된다");
-else ok("승자 선택 기준 = 유효표본 Wilson 하한(워커 승격 게이트와 동일한 자)");
+// [V33.388] 그런데 자만 같으면 되는 게 아니었다. 종전엔 ★검증행★ 의 lb 로 후보를 줄세우고
+//   그 lb 를 그대로 승격 점수로 올렸다 — 고른 자로 채점한 것이다. 자는 그대로 두고
+//   ★행만★ 보정구간으로 옮긴다(lbSel). 검증행은 채점에만 쓴다.
+if (/rank\.sort\(key=lambda r: \(-r\["lb"\]/.test(src))
+  no("깊이스윕: 승자를 ★검증행★ 하한으로 고른다 — 고른 자로 채점하면 점수가 부푼다(lbSel 을 써야 한다)");
+else if (!/rank\.sort\(key=lambda r: \(-r\["lbSel"\]/.test(src))
+  no("깊이스윕: 승자를 하한으로 고르지 않는다 — 워커 게이트와 다른 자로 재면 안 된다");
+else ok("승자 선택 = 유효표본 Wilson 하한(같은 자) × ★보정행★(다른 행)");
+
+// lbSel 이 실제로 보정구간 예측에서 나오는가 — 이름만 바꾸고 검증행을 담으면 그대로 누출이다.
+{
+  const i0 = src.indexOf("_lb_sel = lb");
+  const i1 = src.indexOf('out = {"nets": nets', i0);
+  const blk = i0 >= 0 && i1 >= 0 ? src.slice(i0, i1) : "";
+  if (!blk) no("깊이스윕: lbSel 계산부를 못 찾겠다");
+  else if (!/_cal_src\[0\]/.test(blk) || !/_cal_src\[1\]/.test(blk))
+    no("깊이스윕: lbSel 이 보정구간 예측(_cal_src)에서 나오지 않는다 — 이름만 바뀐 검증행일 수 있다");
+  else if (/\bps\b|\bys\b/.test(blk.replace(/#.*$/gm, "")))
+    no("깊이스윕: lbSel 계산부가 검증행(ps/ys)을 만진다 — 선택에 채점행이 섞였다");
+  else if (!/wilson_lb\(/.test(blk))
+    no("깊이스윕: lbSel 이 Wilson 하한이 아니다 — 자가 달라지면 워커 게이트와 비교가 안 된다");
+  else ok("lbSel = 보정행 예측 × Wilson 하한(채점행을 안 만진다)");
+  if (!/delta/.test(blk))
+    no("깊이스윕: lbSel 이 τ* 시프트를 반영하지 않는다 — 업로드되는 모델과 다른 임계값으로 고르게 된다");
+  else ok("lbSel 이 τ* 시프트를 반영한다(업로드될 모델과 같은 임계값)");
+}
 
 // 동률일 때 큰 모델이 자동으로 이기면 안 된다(파라미터 오름차순이 마지막 키).
 if (!/-r\["acc"\], r\["params"\]\)/.test(src))
