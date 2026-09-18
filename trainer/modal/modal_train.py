@@ -438,7 +438,33 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     if Nall < 60000:      dropout, l2, mixup_p, input_noise = 0.62, 5e-3, 0.35, 0.12   # 데이터 기근 → 매우 강한 규제
     elif Nall < 150000:   dropout, l2, mixup_p, input_noise = 0.55, 3e-3, 0.30, 0.10   # 중간 → 강한 규제
     else:                 dropout, l2, mixup_p, input_noise = 0.50, 1.5e-3, 0.25, 0.08  # 데이터 충분해도 규제 유지(과적합 방지)
-    _reg_base = dict(dropout=dropout, l2=l2, mixup_p=mixup_p, input_noise=input_noise)
+    _reg_ladder = dict(dropout=dropout, l2=l2, mixup_p=mixup_p, input_noise=input_noise)
+    # ══ [V33.386] ★위 주석이 하겠다고 적은 일을 코드가 안 하고 있었다.★ ════════════════
+    #   V33.260 은 "사다리를 기본값으로 두고, 스윕이 재서 이긴 구성이 있으면 그것을 쓴다"
+    #   고 적었다. 그런데 스윕이 규제 축에서 이긴 값(_reg_win)은 ★그 실행 안에서만★ 쓰이고
+    #   /api/dnn-arch 에는 hidden 만 올라갔다 — 깊이 축에만 고쳐 붙인 것이다.
+    #   결과: 스윕이 "규제 완화가 낫다" 를 몇 번을 재도 다음 정기 회차는 언제나 사다리로
+    #   돌아온다. V33.204 에서 고쳤다던 ★측정이 버려지는 병★ 이 다른 축에 그대로 남아 있었다.
+    #   → 워커가 재서 이긴 규제를 regMeasured 로 내려보내면 그것을 쓴다. 없으면 사다리다.
+    _reg_meas = None
+    try:
+        _rm = (cfg or {}).get("regMeasured") or None
+        if isinstance(_rm, dict):
+            _c = dict(dropout=float(_rm["dropout"]), l2=float(_rm["l2"]),
+                      mixup_p=float(_rm["mixupP"]), input_noise=float(_rm["inputNoise"]))
+            # 범위 밖이면 조용히 쓰지 않는다 — 이상한 값으로 학습하느니 사다리가 낫다.
+            if (0 <= _c["dropout"] <= 0.9 and 0 <= _c["l2"] <= 0.5
+                    and 0 <= _c["mixup_p"] <= 1 and 0 <= _c["input_noise"] <= 1):
+                _reg_meas = _c
+    except Exception:
+        _reg_meas = None
+    _reg_base = dict(_reg_meas) if _reg_meas else dict(_reg_ladder)
+    if _reg_meas:
+        dropout, l2 = _reg_base["dropout"], _reg_base["l2"]
+        mixup_p, input_noise = _reg_base["mixup_p"], _reg_base["input_noise"]
+        print(f"  ★규제는 ★잰 값★ 을 쓴다 — 사다리(do={_reg_ladder['dropout']} l2={_reg_ladder['l2']:.1e}"
+              f" mix={_reg_ladder['mixup_p']} noise={_reg_ladder['input_noise']}) 대신"
+              f" 측정 승자(do={dropout} l2={l2:.1e} mix={mixup_p} noise={input_noise})")
     # [V11.1] 배치·에폭도 데이터 규모에 맞춤 — 300k×에폭400×배치32면 GPU로도 timeout(3600s) 초과.
     #   대용량일수록 배치↑(스텝수↓)·에폭↓(1에폭당 갱신이 이미 많음). 조기종료가 최적점을 잡음.
     if Nall >= 150000:    batch, ep = 256, min(ep, 120)
@@ -956,16 +982,22 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         #   방향에 근거가 있다: 같은 표본에서 트리는 53~54%, 이 망은 47.3% 다. 규제를 더 조이면
         #   이미 못 배우는 망을 더 못 배우게 할 뿐이다. 그래도 '완화가 낫다' 를 단정하지 않는다 —
         #   현행을 후보에 그대로 두고 ★같은 자로 붙인다.★ 현행이 이기면 현행이 남는다.
+        # [V33.386] 배수는 ★사다리★ 에 건다 — _reg_base 에 걸면 잰 값이 다음 스윕의 바닥이 되어
+        #   배수가 회차마다 곱해진다(0.5 → 0.25 → 0.125…). 격자가 스스로 걸어다니면 회차끼리
+        #   비교가 안 된다. 격자는 고정하고, 지난 승자는 '현행' 으로 ★같은 격자 안에서 방어★ 한다.
         def _reg(mul_do, mul_l2, mul_mix, mul_noise):
-            return dict(dropout=round(_reg_base["dropout"] * mul_do, 4),
-                        l2=_reg_base["l2"] * mul_l2,
-                        mixup_p=round(_reg_base["mixup_p"] * mul_mix, 4),
-                        input_noise=round(_reg_base["input_noise"] * mul_noise, 4))
-        reg_cands = [
-            ("규제 현행", dict(_reg_base)),
-            ("규제 완화", _reg(0.5, 0.3, 0.4, 0.5)),
-            ("규제 최소", _reg(0.2, 0.1, 0.0, 0.0)),
-        ]
+            return dict(dropout=round(_reg_ladder["dropout"] * mul_do, 4),
+                        l2=_reg_ladder["l2"] * mul_l2,
+                        mixup_p=round(_reg_ladder["mixup_p"] * mul_mix, 4),
+                        input_noise=round(_reg_ladder["input_noise"] * mul_noise, 4))
+        def _regkey(d):
+            return (round(d["dropout"], 4), round(d["l2"], 8), round(d["mixup_p"], 4), round(d["input_noise"], 4))
+        reg_cands = []
+        for _t, _d in [("규제 현행", dict(_reg_base)), ("규제 사다리", dict(_reg_ladder)),
+                       ("규제 완화", _reg(0.5, 0.3, 0.4, 0.5)),
+                       ("규제 최소", _reg(0.2, 0.1, 0.0, 0.0))]:
+            if not any(_regkey(_d) == _regkey(_e) for _, _e in reg_cands):
+                reg_cands.append((_t, _d))
         _K_full = K
         K = max(1, int(sweep_seeds))
         print(f"②-S 구성 스윕 — 깊이 {len(depth_cands)}종 × 시드 {K} · 같은 표본/분할/시드")
@@ -1017,6 +1049,10 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             _ar = requests.post(BASE + "/api/dnn-arch", params={"key": KEY}, headers=HDR, timeout=60, json={
                 "featVer": featver, "hidden": list(hidden), "lb": round(lb, 4), "acc": round(acc, 4),
                 "auc": round(_fin.get("auc") or 0, 4), "n": int(Nall),
+                # [V33.386] ★규제 축 승자도 같이 올린다★ — 이게 없어서 규제 측정은 매번 버려졌다.
+                "reg": {"dropout": round(float(_reg_win["dropout"]), 4), "l2": float(_reg_win["l2"]),
+                        "mixupP": round(float(_reg_win["mixup_p"]), 4),
+                        "inputNoise": round(float(_reg_win["input_noise"]), 4)},
                 "ranking": [{"tag": r["tag"], "lb": round(r["lb"], 4), "acc": round(r["acc"], 4)} for r in rank]})
             print(f"②-S 구성 저장 {_ar.status_code}: {str(_ar.text)[:160]}")
         except Exception as _e:

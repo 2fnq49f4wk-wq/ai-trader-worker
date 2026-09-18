@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.385";
+const _BUILD_VER = "V33.386";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -10493,7 +10493,10 @@ function _dnnArchDecide(archRec, dnnTrust, poolN) {
   } else {
     sweep = true; why = "측정값(" + hidden.join("-") + ")으로도 신뢰 문턱을 못 넘었다 — 다시 잰다";
   }
-  return { hidden: hidden, measured: measured, sweep: sweep, why: why };
+  /* [V33.386] 규제 승자도 같이 돌려준다 — hidden 만 돌려줘서 규제는 내려갈 길이 없었다.
+     ★깊이와 같은 판정(featVer 일치)을 탄다★ — 판이 바뀌면 둘 다 무효다. */
+  const reg = (A && A.reg && typeof A.reg === "object") ? A.reg : null;
+  return { hidden: hidden, reg: reg, measured: measured, sweep: sweep, why: why };
 }
 
 function _mlExportConfig(arch) {
@@ -10502,6 +10505,9 @@ function _mlExportConfig(arch) {
            /* 트레이너가 스스로 켜는 게 아니라 ★워커가 시킨다★ — 신뢰 상태를 아는 쪽이 워커다. */
            archSweep: !!(A && A.sweep), archSweepWhy: (A && A.why) || null,
            archMeasured: !!(A && A.measured),
+           /* [V33.386] ★잰 규제를 실제로 내려보낸다.★ 없으면 필드 자체를 안 보낸다 —
+              null 을 보내면 트레이너 쪽에서 "측정했는데 비었다" 와 구분이 안 된다. */
+           ...((A && A.reg) ? { regMeasured: A.reg } : {}),
            inputNoise: DNN.inputNoise, mixupP: DNN.mixupP, stdClip: DNN.stdClip, valFrac: DNN.valFrac,
            embargoDays: LUXML.embargoDays || 6, hvSrcWeight: (typeof HARVEST !== "undefined" ? HARVEST.srcWeight : 1),
            /* [V33.341] ★죽은 손잡이 하나를 살린다.★ liveSrcWeight 는 워커의 자체 학습기
@@ -25851,13 +25857,32 @@ async function handleRequest(request, env, ctx) {
           return Response.json({ error: "승자 하한(" + _lb.toFixed(4) + ")이 순위표 최상위(" + top.toFixed(4) + ")보다 낮다" },
             { status: 400, headers: cors });
       }
-      const rec = { hidden: h, lb: +_lb.toFixed(4), acc: _num(body.acc, null), auc: _num(body.auc, null),
+      /* ══ [V33.386] ★규제 축 승자를 받는다 — 이게 없어서 규제 측정이 매번 버려졌다.★ ══
+         V33.260 은 깊이 축만 저장하게 만들었다. 스윕은 규제도 같이 재는데 그 결과는
+         그 실행 안에서 쓰이고 사라졌다 — "잰 값을 쓴다" 던 주석이 절반만 참이었다.
+         ★범위 밖이면 통째로 버린다★(부분 채택은 재 본 적 없는 조합을 만든다). */
+      let _reg = null;
+      const _rb = body && body.reg;
+      if (_rb && typeof _rb === "object") {
+        const _do = _num(_rb.dropout, null), _l2 = _num(_rb.l2, null),
+              _mx = _num(_rb.mixupP, null), _nz = _num(_rb.inputNoise, null);
+        if (_do != null && _l2 != null && _mx != null && _nz != null &&
+            _do >= 0 && _do <= 0.9 && _l2 >= 0 && _l2 <= 0.5 &&
+            _mx >= 0 && _mx <= 1 && _nz >= 0 && _nz <= 1)
+          _reg = { dropout: +_do.toFixed(4), l2: _l2, mixupP: +_mx.toFixed(4), inputNoise: +_nz.toFixed(4) };
+        else
+          return Response.json({ error: "reg 값이 범위를 벗어났다(dropout 0~0.9, l2 0~0.5, mixupP/inputNoise 0~1)" },
+            { status: 400, headers: cors });
+      }
+      const rec = { hidden: h, reg: _reg, lb: +_lb.toFixed(4), acc: _num(body.acc, null), auc: _num(body.auc, null),
                     n: Math.max(0, Math.floor(_num(body.n, 0))), featVer: LUXML.featVer,
                     ranking: rk.map(function (r) { return { tag: String((r && r.tag) || "?").slice(0, 24),
                       lb: _num(r && r.lb, null), acc: _num(r && r.acc, null) }; }),
                     ts: Date.now() };
       await setState(env.DB, DNNARCH.stateKey, rec);
       try { await log(env.DB, "INFO", null, "[DNN-ARCH] 구성 확정 " + h.join("-") +
+        (_reg ? " · 규제 do=" + _reg.dropout + " l2=" + _reg.l2 + " mix=" + _reg.mixupP + " noise=" + _reg.inputNoise
+              : " · 규제 미측정(사다리 유지)") +
         " 하한 " + (rec.lb * 100).toFixed(2) + "% (표본 " + rec.n + ", 후보 " + rec.ranking.length + "종) — 다음 학습부터 이 구성으로 돈다"); } catch (e) {}
       return Response.json({ ok: true, arch: rec }, { headers: cors });
     }
