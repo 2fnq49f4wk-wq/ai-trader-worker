@@ -834,7 +834,18 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                 _ztr = (ztr / len(nets)).cpu().numpy()
                 ptr = 1.0 / (1.0 + np.exp(-_ztr))
                 ytr_np = Ytr.cpu().numpy()
-            train_acc = float(((ptr >= 0.5) == (ytr_np > 0.5)).mean())
+            # ══ [V33.385] ★이 비교는 성립하지 않았다 — 내가 V33.378 에서 틀렸다.★ ═══════
+            #   train_acc 는 ★가중 없이★ 전수 평균인데, 학습은 mw(|pnl|·출처·recency·고유도)
+            #   가중으로 한다. 즉 모델이 ★일부러 덜 보는★ 표본이 이 숫자를 지배한다.
+            #   실측 재현(반감기 45일·바닥 0.35·표본 7.4년): 학습표본의 ★97.2%★ 가 recency
+            #   바닥에 붙어 있다. 그 구간을 균등평균한 값을 "학습집합 정확도" 라고 부르고
+            #   검증(최근 240일)과 비교하면, 둘은 ★다른 문제를 푼 성적표★ 다.
+            #   → 학습과 ★같은 가중★ 으로 다시 잰다. 균등값도 같이 찍어 둘을 가를 수 있게 한다.
+            _mtr = mw[tr]
+            _hit = ((ptr >= 0.5) == (ytr_np > 0.5)).astype(np.float64)
+            train_acc_u = float(_hit.mean())                                   # 균등(종전 값)
+            _wsum = float(_mtr.sum())
+            train_acc = float((_hit * _mtr).sum() / _wsum) if _wsum > 0 else train_acc_u
             gap = train_acc - acc
             # ══ [V33.378] ★진단이 세 번째 경우를 몰라서 엉뚱한 처방을 내고 있었다.★ ══════
             #   실측(run 35149059451): train 47.17% vs val 49.23% → 격차 ★-2.07%p★
@@ -862,8 +873,21 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                                f"(→규제↓·용량·최적화. 피처를 더 만들 일이 아니다)")
             else:
                 verdict = "과적합 낮음(→신호·피처·라벨 품질이 병목)"
-            print(f"   [과적합진단] train {train_acc*100:.2f}%(τ*되돌림 {_tr_raw*100:.2f}%) "
-                  f"vs val {acc*100:.2f}% → 격차 {gap*100:+.2f}%p — {verdict}")
+            print(f"   [과적합진단] train {train_acc*100:.2f}%(가중·학습과 같은 자)"
+                  f" · 균등 {train_acc_u*100:.2f}% · τ*되돌림 {_tr_raw*100:.2f}%"
+                  f" vs val {acc*100:.2f}% → 격차 {gap*100:+.2f}%p — {verdict}")
+            # [V33.385] recency 손잡이가 이 규모에서 실제로 무슨 일을 하는지 같이 적는다.
+            #   이름은 '반감기 45일' 인데, 표본이 7.4년으로 늘자 바닥(0.35)에 붙은 옛 표본이
+            #   손실 가중의 대부분을 차지한다 — 손잡이가 규모 변화로 조용히 죽은 자리다.
+            try:
+                _rf = float(rec_floor)
+                _atfloor = float((recency[tr] <= _rf + 1e-9).mean())
+                _wfloor = float(recency[tr][recency[tr] <= _rf + 1e-9].sum() / max(1e-9, recency[tr].sum()))
+                print(f"   [최근성] 반감기 {hl_days:.0f}일 · 바닥 {_rf:.2f} → 학습표본의 "
+                      f"{_atfloor*100:.1f}% 가 바닥에 붙어 있고 그들이 가중의 {_wfloor*100:.1f}% 를 차지한다"
+                      + ("  ★이름과 달리 최근을 거의 안 당긴다★" if _wfloor > 0.8 else ""))
+            except Exception:
+                pass
         except Exception as _e:
             print("   [과적합진단] train acc 계산 실패:", _e)
         print(f"③ 앙상블 valAcc {acc*100:.2f}% (Wilson하한 {lb*100:.2f}%, n={n_eval})")
