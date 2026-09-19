@@ -46,15 +46,30 @@ else ok("동률 처리 — valAcc → 파라미터 적은 쪽(근거 없으면 �
 
 // ── ② 같은 조건에서 잰다 ────────────────────────────────────────────────
 //   후보마다 표본·분할·시드가 다르면 그 비교는 깊이가 아니라 운을 재는 것이다.
-//   Xtr/Xva 는 fit_arch 밖에서 한 번 만들어지고, 시드는 one_seed(1000 + sd*7) 로 고정이다.
+// [V33.392] ★계약을 정확히 다시 적는다.★ 종전엔 "Xtr 도 fit_arch 밖에서 만들어야 한다"
+//   였다. 그런데 ★표본 창★ 이 후보 축으로 들어오면서 후보마다 학습행이 달라야 한다 —
+//   그게 그 축의 목적이다. 공정함을 지키는 것은 학습행이 같은 것이 아니라:
+//     ① ★채점행(Xva)과 보정행(Xcal)이 모든 후보에게 동일할 것★ — 밖에서 1회.
+//     ② 학습행은 ★선언된 창(win_days)으로만★ 달라질 것. win_days=0 이면 tr 그대로.
+//   ①이 무너지면 비교가 무의미해지고, ②가 무너지면 창이 아니라 우연이 된다.
 {
   const iFit = src.indexOf("def fit_arch(");
-  const iSplit = src.indexOf("Xtr = torch.tensor(");
+  const iVa = src.indexOf("Xva = torch.tensor(");
+  const iCal = src.indexOf("Xcal = torch.tensor(");
   if (iFit < 0) no("깊이스윕: fit_arch 가 없다");
-  else if (iSplit < 0) no("깊이스윕: 학습/검증 분할을 찾을 수 없다");
-  else if (iSplit > iFit)
-    no("깊이스윕: 분할이 fit_arch 안에서 만들어진다 — 후보마다 다른 데이터를 보게 된다");
-  else ok("표본·분할은 fit_arch 밖에서 1회 — 후보 전원이 같은 데이터를 본다");
+  else if (iVa < 0 || iCal < 0) no("깊이스윕: 채점행·보정행 구성을 찾을 수 없다");
+  else if (iVa > iFit || iCal > iFit)
+    no("깊이스윕: 채점행(Xva)·보정행(Xcal)이 fit_arch 안에서 만들어진다 — 후보마다 다른 자로 채점하게 된다");
+  else ok("채점행·보정행은 fit_arch 밖에서 1회 — 후보 전원이 같은 자로 채점된다");
+  {
+    const _fb = src.slice(iFit, iFit + 9000);
+    if (!/_tri = tr\n/.test(_fb))
+      no("깊이스윕: 학습행이 기본값으로 tr 과 같지 않다 — 창을 안 쓸 때도 데이터가 달라질 수 있다");
+    else ok("창을 안 쓰면(win_days=0) 학습행은 tr 그대로");
+    if (!/if win_days > 0 and len\(va\):/.test(_fb))
+      no("깊이스윕: 학습행이 ★선언된 창★ 이외의 이유로 달라질 수 있다");
+    else ok("학습행은 선언된 창(win_days)으로만 달라진다");
+  }
   const fitBody = src.slice(iFit, iFit + 9000);
   if (!/one_seed\(1000 \+ sd \* 7\)/.test(fitBody))
     no("깊이스윕: 시드가 고정되어 있지 않다 — 깊이가 아니라 운을 재게 된다");

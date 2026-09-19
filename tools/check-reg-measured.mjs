@@ -14,7 +14,7 @@ const ok = (m) => console.log("  ok   " + m);
 const no = (m) => { console.error("  FAIL " + m); bad++; };
 
 const FV = M.LUXML && M.LUXML.featVer;
-const REG = { dropout: 0.25, l2: 4.5e-4, mixupP: 0.1, inputNoise: 0.04, dropTail: 2 };
+const REG = { dropout: 0.25, l2: 4.5e-4, mixupP: 0.1, inputNoise: 0.04, dropTail: 2, winDays: 1095 };
 
 // ── ① 워커가 잰 규제를 ★실제로 꺼내 온다★ ────────────────────────────────────
 //   _dnnArchDecide 를 진짜로 돌린다. 문자열이 아니라 반환값을 본다.
@@ -77,16 +77,16 @@ const REG = { dropout: 0.25, l2: 4.5e-4, mixupP: 0.1, inputNoise: 0.04, dropTail
       const f = new Function("body", "_num", "Response", "cors", blk + "\n return { reg: _reg };");
       try { return f(body, _num, Response, {}); } catch (e) { return { __threw: String(e) }; }
     };
-    const good = run({ reg: { dropout: 0.3, l2: 1e-3, mixupP: 0.2, inputNoise: 0.05, dropTail: 2 } });
-    if (!good || !good.reg || good.reg.dropout !== 0.3 || good.reg.dropTail !== 2)
+    const good = run({ reg: { dropout: 0.3, l2: 1e-3, mixupP: 0.2, inputNoise: 0.05, dropTail: 2, winDays: 1095 } });
+    if (!good || !good.reg || good.reg.dropout !== 0.3 || good.reg.dropTail !== 2 || good.reg.winDays !== 1095)
       no("측정규제: 정상 범위 reg 가 통과하지 못한다 " + JSON.stringify(good));
     else ok("정상 범위 reg 는 그대로 저장값이 된다(dropTail 포함)");
 
     // 옛 트레이너는 dropTail 을 안 보낸다 — 없으면 0(전 층, 종전 동작)으로 읽어야 한다.
     const noTail = run({ reg: { dropout: 0.3, l2: 1e-3, mixupP: 0.2, inputNoise: 0.05 } });
-    if (!noTail || !noTail.reg || noTail.reg.dropTail !== 0)
-      no("측정규제: dropTail 없는 옛 본문이 0(전 층)으로 안 떨어진다 — 옛 트레이너 업로드가 막힌다");
-    else ok("dropTail 없는 옛 본문 → 0(전 층, 종전 동작)");
+    if (!noTail || !noTail.reg || noTail.reg.dropTail !== 0 || noTail.reg.winDays !== 0)
+      no("측정규제: dropTail·winDays 없는 옛 본문이 0(종전 동작)으로 안 떨어진다 — 옛 트레이너 업로드가 막힌다");
+    else ok("dropTail·winDays 없는 옛 본문 → 0(종전 동작)");
 
     const absent = run({});
     if (!absent || absent.reg !== null) no("측정규제: reg 를 안 보낸 요청이 null 로 안 떨어진다(깊이만 올리는 경로가 막힌다)");
@@ -94,14 +94,15 @@ const REG = { dropout: 0.25, l2: 4.5e-4, mixupP: 0.1, inputNoise: 0.04, dropTail
 
     // ★부분 채택 금지★ — 한 칸이 범위 밖이면 나머지도 안 쓴다. 섞으면 재 본 적 없는 조합이 된다.
     for (const [k, v] of [["dropout", 0.95], ["l2", 0.9], ["mixupP", 1.7], ["inputNoise", -0.1],
-                          ["dropout", -0.01], ["dropTail", -1], ["dropTail", 25], ["dropTail", 1.5]]) {
-      const b = { reg: { dropout: 0.3, l2: 1e-3, mixupP: 0.2, inputNoise: 0.05, dropTail: 2 } };
+                          ["dropout", -0.01], ["dropTail", -1], ["dropTail", 25], ["dropTail", 1.5],
+                          ["winDays", -1], ["winDays", 4001], ["winDays", 365.5]]) {
+      const b = { reg: { dropout: 0.3, l2: 1e-3, mixupP: 0.2, inputNoise: 0.05, dropTail: 2, winDays: 1095 } };
       b.reg[k] = v;
       const r = run(b);
       if (!r || !r.__rejected || r.status !== 400)
         no(`측정규제: ${k}=${v} 가 거부되지 않는다 — 범위 검사가 새고 있다`);
     }
-    ok("범위 밖 8종(dropout·l2·mixupP·inputNoise·dropTail, 양쪽 끝·비정수) 전부 400");
+    ok("범위 밖 11종(dropout·l2·mixupP·inputNoise·dropTail·winDays, 양쪽 끝·비정수) 전부 400");
 
     const missing = run({ reg: { dropout: 0.3, l2: 1e-3 } });
     if (!missing || !missing.__rejected)
@@ -127,7 +128,8 @@ ${blk.split("\n").map(l => "    " + l).join("\n")}
     return _reg_base
 import json
 out = {}
-out["good"]  = _decide({"regMeasured": {"dropout": 0.2, "l2": 3e-4, "mixupP": 0.1, "inputNoise": 0.03, "dropTail": 2}})
+out["good"]  = _decide({"regMeasured": {"dropout": 0.2, "l2": 3e-4, "mixupP": 0.1, "inputNoise": 0.03, "dropTail": 2, "winDays": 1095}})
+out["badwin"]= _decide({"regMeasured": {"dropout": 0.2, "l2": 3e-4, "mixupP": 0.1, "inputNoise": 0.03, "dropTail": 2, "winDays": 99999}})
 out["notail"]= _decide({"regMeasured": {"dropout": 0.2, "l2": 3e-4, "mixupP": 0.1, "inputNoise": 0.03}})
 out["badtl"] = _decide({"regMeasured": {"dropout": 0.2, "l2": 3e-4, "mixupP": 0.1, "inputNoise": 0.03, "dropTail": 99}})
 out["none"]  = _decide({})
@@ -143,7 +145,11 @@ print(json.dumps(out))
     try { r = JSON.parse(execFileSync("python3", ["-c", harness], { encoding: "utf8" })); }
     catch (e) { no("측정규제: 트레이너 수용 블록 실행 실패 — " + String(e).slice(0, 300)); r = null; }
     if (r) {
-      if (r.good.dropout !== 0.2 || r.good.l2 !== 3e-4 || r.good.drop_tail !== 2)
+      if (r.badtl.dropout !== 0.50) { /* 위에서 따로 본다 */ }
+      if (r.badwin.dropout !== 0.50)
+        no("측정규제: winDays=99999 인데 사다리로 안 돌아간다 — 표본 기간을 넘는 창이 통과한다");
+      else ok("범위 밖 winDays 는 통째로 거부(사다리 복귀)");
+      if (r.good.dropout !== 0.2 || r.good.l2 !== 3e-4 || r.good.drop_tail !== 2 || r.good.win_days !== 1095)
         no("측정규제: 트레이너가 정상 regMeasured 를 안 쓴다 — 사다리가 그대로 덮어쓴다(고치기 전 동작)");
       else ok("트레이너가 정상 regMeasured 로 사다리를 덮는다(dropTail 포함)");
       if (r.notail.drop_tail !== 0)
@@ -194,9 +200,14 @@ print(json.dumps(out))
   if (!/\("드롭아웃 꼬리2", _tail2\)/.test(cb) || !/_tail2\["drop_tail"\] = 2/.test(cb))
     no("측정규제: 드롭아웃 ★위치★ 후보가 격자에 없다 — 세기만 흔들면 전 층 p=0.5×BN 을 가를 수 없다");
   else ok("드롭아웃 위치(꼬리2) 후보가 격자에 있다");
-  if (!/round\(d\["input_noise"\], 4\), int\(d\.get\("drop_tail", 0\)/.test(cb + blk))
-    no("측정규제: 중복제거 키에 drop_tail 이 없다 — 세기가 같으면 위치가 달라도 후보가 지워진다");
-  else ok("중복제거 키가 위치(drop_tail)까지 본다");
+  // ★표본 창★ — 7.4년을 균등하게 배우는 것 자체를 재는 축. 없으면 그 가설은 영원히 미검증이다.
+  if (!/\("표본창 3년", _w3y\)/.test(cb) || !/\("표본창 1\.5년", _w18m\)/.test(cb)
+      || !/_w3y\["win_days"\] = 1095/.test(cb) || !/_w18m\["win_days"\] = 548/.test(cb))
+    no("측정규제: 표본 창 후보가 격자에 없다 — '7.4년 균등 학습 vs 최근 240일 검증' 을 가릴 수 없다");
+  else ok("표본 창(3년·1.5년) 후보가 격자에 있다");
+  if (!/int\(d\.get\("drop_tail", 0\)/.test(cb + blk) || !/int\(d\.get\("win_days", 0\)/.test(cb + blk))
+    no("측정규제: 중복제거 키에 drop_tail·win_days 가 없다 — 세기가 같으면 위치·창이 달라도 후보가 지워진다");
+  else ok("중복제거 키가 위치(drop_tail)·창(win_days)까지 본다");
 }
 
 // ── ⑥ 스윕 승자가 ★실제로 올라간다★ ──────────────────────────────────────────
@@ -210,9 +221,9 @@ print(json.dumps(out))
   else if (!/_reg_win\["dropout"\]/.test(blk) || !/_reg_win\["l2"\]/.test(blk))
     no("측정규제: 업로드하는 reg 가 스윕 승자(_reg_win)에서 오지 않는다");
   else ok("스윕 규제 승자가 업로드 본문에 실린다");
-  for (const k of ["mixupP", "inputNoise", "dropTail"])
+  for (const k of ["mixupP", "inputNoise", "dropTail", "winDays"])
     if (!blk.includes(`"${k}"`)) no(`측정규제: 업로드 reg 에 ${k} 가 빠졌다 — 워커가 부분 채택을 거부하므로 통째로 무시된다`);
-  ok("업로드 reg 가 다섯 칸을 모두 채운다(워커의 부분 채택 금지와 맞물린다)");
+  ok("업로드 reg 가 여섯 칸을 모두 채운다(워커의 부분 채택 금지와 맞물린다)");
 }
 
 // ── ⑦ 어느 쪽을 쓰는지 ★로그로 말한다★ ───────────────────────────────────────
@@ -260,6 +271,52 @@ else ok("잰 값을 쓸 때 사다리와 나란히 찍어 둘을 가를 수 있�
       no("측정규제: 배치통계 값이 배포 점수가 아니라는 말이 없다 — 나중에 이 수치를 성적으로 읽는다");
     else ok("배치통계는 진단용이라고 로그가 스스로 말한다");
   }
+}
+
+// ── ⑩ 표본 창이 ★학습행에 실제로 걸리는가★ + 기근 방어 + 진단 정합 ─────────────
+{
+  const i0 = py.indexOf("win_days = int(_r.get(\"win_days\", 0) or 0)");
+  const i1 = py.indexOf("class MLP(nn.Module):", i0);
+  const blk = i0 >= 0 && i1 >= 0 ? py.slice(i0, i1) : "";
+  if (!blk) no("측정규제: 표본 창 적용부를 못 찾겠다");
+  else {
+    if (!/_sel = tr\[TS\[tr\] >= _cut\]/.test(blk))
+      no("측정규제: 창이 학습행(tr)을 시간으로 안 자른다 — 손잡이가 아무 일도 안 한다");
+    else ok("창이 학습행을 검증 시작 시점 기준으로 자른다");
+    if (!/_cut = float\(TS\[va\]\[0\]\)/.test(blk))
+      no("측정규제: 창 기준점이 ★검증 시작★ 이 아니다 — 후보마다 다른 자를 쓰게 된다");
+    else ok("창 기준점이 검증 시작 시점(후보 전원이 같은 자)");
+    if (!/len\(_sel\) >= max\(5000, int\(len\(tr\) \* 0\.08\)\)/.test(blk))
+      no("측정규제: 창이 표본을 과하게 줄여도 그대로 쓴다 — 창이 아니라 기근이 된다");
+    else ok("표본이 과하게 줄면 전체로 되돌린다(사유를 찍는다)");
+    if (!/_pos = float\(Y\[_tri\]\.sum\(\)\)/.test(blk))
+      no("측정규제: 클래스 균형 가중을 창 안에서 다시 안 잰다 — 창이 바뀌어도 가중이 안 따라온다");
+    else ok("클래스 균형 가중을 실제 학습행에서 다시 잰다");
+    for (const nm of ["Xtr", "Ytr", "Mtr"])
+      if (!new RegExp(nm + " = torch\\.tensor\\((?:Xn|Y|mw)\\[_tri\\]").test(blk))
+        no(`측정규제: ${nm} 가 창 적용 후 학습행(_tri)에서 안 나온다`);
+    ok("Xtr·Ytr·Mtr 가 전부 창 적용 후 학습행에서 나온다");
+  }
+  // 진단이 ★실제로 배운 행★ 을 보는가 — tr 을 그대로 보면 창을 쓸 때 다른 집합의 통계를 적는다
+  if (/_mtr = mw\[tr\]/.test(py) || /recency\[tr\]/.test(py))
+    no("측정규제: 과적합·최근성 진단이 창 적용 전 tr 을 본다 — 배운 적 없는 행의 통계를 적는다");
+  else ok("진단(가중 train acc·최근성)이 실제 학습행(_tri)을 본다");
+}
+
+// ── ⑪ 기저율·분포이동 진단 — "47.3%" 를 어느 자에 대고 읽는지 ────────────────
+{
+  if (!/print\(f"   \[기저율\] 학습 /.test(py))
+    no("측정규제: 기저율 진단이 없다 — 구간마다 기저율이 다르면 정확도 절대값은 뜻이 없다");
+  else ok("[기저율] 학습·보정·검증 세 구간을 나란히 적는다");
+  if (!/다수클래스 \{majority\*100:\.2f\}% → ★초과/.test(py))
+    no("측정규제: valAcc 를 다수클래스 대비 초과로 안 적는다 — 동전 아래인지 사람이 못 가린다");
+  else ok("valAcc 를 다수클래스 대비 초과(%p)로 같이 적는다");
+  if (!/print\(f"   \[분포이동\] 평균\|z\| 학습 /.test(py))
+    no("측정규제: 분포이동 진단이 없다 — 검증 분포가 밀렸는지(신경망만 손해 보는 자리) 못 본다");
+  else ok("[분포이동] 평균|z|·포화율·포화 상위 피처를 적는다");
+  if (!/_cl_va = float\(\(_zva >= std_clip - 1e-9\)\.mean\(\)\)/.test(py))
+    no("측정규제: 포화율을 stdClip 기준으로 안 잰다 — 다른 자로 재면 뜻이 없다");
+  else ok("포화율을 실제 stdClip 기준으로 잰다");
 }
 
 console.log(bad ? `\n측정규제 게이트 실패 ${bad}건` : "\n측정규제 게이트 통과");

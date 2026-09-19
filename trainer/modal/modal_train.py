@@ -438,7 +438,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     if Nall < 60000:      dropout, l2, mixup_p, input_noise = 0.62, 5e-3, 0.35, 0.12   # 데이터 기근 → 매우 강한 규제
     elif Nall < 150000:   dropout, l2, mixup_p, input_noise = 0.55, 3e-3, 0.30, 0.10   # 중간 → 강한 규제
     else:                 dropout, l2, mixup_p, input_noise = 0.50, 1.5e-3, 0.25, 0.08  # 데이터 충분해도 규제 유지(과적합 방지)
-    _reg_ladder = dict(dropout=dropout, l2=l2, mixup_p=mixup_p, input_noise=input_noise, drop_tail=0)
+    _reg_ladder = dict(dropout=dropout, l2=l2, mixup_p=mixup_p, input_noise=input_noise, drop_tail=0, win_days=0)
     # ══ [V33.386] ★위 주석이 하겠다고 적은 일을 코드가 안 하고 있었다.★ ════════════════
     #   V33.260 은 "사다리를 기본값으로 두고, 스윕이 재서 이긴 구성이 있으면 그것을 쓴다"
     #   고 적었다. 그런데 스윕이 규제 축에서 이긴 값(_reg_win)은 ★그 실행 안에서만★ 쓰이고
@@ -452,11 +452,13 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         if isinstance(_rm, dict):
             _c = dict(dropout=float(_rm["dropout"]), l2=float(_rm["l2"]),
                       mixup_p=float(_rm["mixupP"]), input_noise=float(_rm["inputNoise"]),
-                      drop_tail=int(_rm.get("dropTail", 0) or 0))
+                      drop_tail=int(_rm.get("dropTail", 0) or 0),
+                      win_days=int(_rm.get("winDays", 0) or 0))
             # 범위 밖이면 조용히 쓰지 않는다 — 이상한 값으로 학습하느니 사다리가 낫다.
             if (0 <= _c["dropout"] <= 0.9 and 0 <= _c["l2"] <= 0.5
                     and 0 <= _c["mixup_p"] <= 1 and 0 <= _c["input_noise"] <= 1
-                    and 0 <= _c["drop_tail"] <= 24):
+                    and 0 <= _c["drop_tail"] <= 24
+                    and 0 <= _c["win_days"] <= 4000):
                 _reg_meas = _c
     except Exception:
         _reg_meas = None
@@ -467,7 +469,8 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         print(f"  ★규제는 ★잰 값★ 을 쓴다 — 사다리(do={_reg_ladder['dropout']} l2={_reg_ladder['l2']:.1e}"
               f" mix={_reg_ladder['mixup_p']} noise={_reg_ladder['input_noise']}) 대신"
               f" 측정 승자(do={dropout} l2={l2:.1e} mix={mixup_p} noise={input_noise}"
-              f" 꼬리={_reg_base['drop_tail'] or '전층'})")
+              f" 꼬리={_reg_base['drop_tail'] or '전층'}"
+              f" 창={_reg_base.get('win_days', 0) or '전체'})")
     # [V11.1] 배치·에폭도 데이터 규모에 맞춤 — 300k×에폭400×배치32면 GPU로도 timeout(3600s) 초과.
     #   대용량일수록 배치↑(스텝수↓)·에폭↓(1에폭당 갱신이 이미 많음). 조기종료가 최적점을 잡음.
     if Nall >= 150000:    batch, ep = 256, min(ep, 120)
@@ -640,15 +643,47 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     _ord, tr, cal, va, n_val, _emb = _split_ts(TS, val_frac, embargo_ms, min_val=20,
                                                horizon_ms=_HORIZON_MS, cal_frac=0.10, tag="DNN")
     print(f"   분할: 학습 {len(tr)} · 보정 {len(cal)} · 검증 {len(va)} · 엠바고 {_emb/86400000:.0f}일")
+    # ══ [V33.392] ★"정확도 47.3%" 를 어느 자에 대고 읽어야 하는지가 없었다.★ ═════════════
+    #   같은 표본에서 트리는 53~54%, 이 망은 47.3% — ★동전보다 낮다.★ 동전보다 낮으려면
+    #   단순히 약한 게 아니라 뭔가가 ★뒤집혀 있어야★ 한다. 후보는 둘이고, 둘 다 여기서 잰다.
+    #
+    #   ① 기저율 이동 — 라벨이 10일 선행수익 부호다. 학습은 7.4년(대부분 상승장),
+    #      검증은 ★최근 240일★ 이다. 두 구간의 기저율이 다르면, 학습 구간의 사전확률을
+    #      배운 모델은 검증에서 ★구조적으로 동전 아래★ 로 간다. τ* 도 보정구간(학습 꼬리)
+    #      에서 고르므로 그 편향을 그대로 들고 검증으로 건너간다.
+    #      → 정확도는 ★다수클래스 대비 초과(%p)★ 로만 뜻이 있다. 세 구간을 나란히 적는다.
+    try:
+        def _br(ix):
+            return (float(Y[ix].mean()) if len(ix) else float("nan"))
+        _btr, _bcal, _bva = _br(tr), (_br(cal) if len(cal) else float("nan")), _br(va)
+        _mtrM, _mvaM = max(_btr, 1 - _btr), max(_bva, 1 - _bva)
+        _shift = abs(_bva - _btr)
+        print(f"   [기저율] 학습 {_btr*100:.2f}% · 보정 {_bcal*100:.2f}% · 검증 {_bva*100:.2f}%"
+              f" → 이동 {_shift*100:+.2f}%p · 다수클래스 기준선 학습 {_mtrM*100:.2f}% / 검증 {_mvaM*100:.2f}%"
+              + ("  ★기저율이 구간마다 다르다 — 정확도를 절대값으로 읽으면 안 된다★" if _shift > 0.03 else ""))
+    except Exception as _e:
+        print("   [기저율] 못 쟀다:", _e)
+    #   ② 분포이동 — 표준화는 ★학습 구간★ 평균·표준편차로 잡고(V33.115 누출수정) 검증에도
+    #      그 자를 쓴다. 옳다. 그런데 최근 240일의 분포가 밀려 있으면 검증행 z 가 통째로
+    #      밀리고, stdClip(±6)에 ★포화★ 된다. 트리는 단조변환에 불변이라 이 이동에 강하고
+    #      신경망은 아니다 — "같은 표본인데 트리만 잘한다" 의 표준적인 설명이다.
+    try:
+        _ztr = np.abs(Xn[tr]); _zva = np.abs(Xn[va])
+        _mz_tr, _mz_va = float(_ztr.mean()), float(_zva.mean())
+        _cl_tr = float((_ztr >= std_clip - 1e-9).mean()); _cl_va = float((_zva >= std_clip - 1e-9).mean())
+        _per = (np.abs(Xn[va]) >= std_clip - 1e-9).mean(axis=0)
+        _bad = np.argsort(-_per)[:5]
+        _nm = [f"{featnames[i] if i < len(featnames) else 'f'+str(i)}({_per[i]*100:.1f}%)"
+               for i in _bad if _per[i] > 0.01]
+        print(f"   [분포이동] 평균|z| 학습 {_mz_tr:.3f} → 검증 {_mz_va:.3f}"
+              f" (×{(_mz_va/max(1e-9,_mz_tr)):.2f}) · 포화율 {_cl_tr*100:.2f}% → {_cl_va*100:.2f}%"
+              + (("  포화 상위: " + ", ".join(_nm)) if _nm else "")
+              + ("  ★검증 분포가 밀려 있다 — 신경망만 손해 보는 자리다★"
+                 if (_mz_va > _mz_tr * 1.25 or _cl_va > _cl_tr * 3 + 0.005) else ""))
+    except Exception as _e:
+        print("   [분포이동] 못 쟀다:", _e)
     # [V33.376] 이 자리에 있던 V33.366 진단은 _split_ts 안으로 옮겼다 —
     #   거기서 기간을 ★정하기★ 때문에, 재는 곳과 정하는 곳이 같아야 두 숫자가 안 갈린다.
-    pos = Y[tr].sum()
-    w_pos = len(tr) / (2 * pos) if pos > 0 else 1.0
-    w_neg = len(tr) / (2 * (len(tr) - pos)) if (len(tr) - pos) > 0 else 1.0
-
-    Xtr = torch.tensor(Xn[tr], dtype=torch.float32, device=dev)
-    Ytr = torch.tensor(Y[tr], dtype=torch.float32, device=dev)
-    Mtr = torch.tensor(mw[tr], dtype=torch.float32, device=dev)
     Xva = torch.tensor(Xn[va], dtype=torch.float32, device=dev)
     Yva = torch.tensor(Y[va], dtype=torch.float32, device=dev)
     # [V33.341] τ* 전용 보정 구간 — 학습에서 뺐고, 엠바고가 검증과 갈라 놓는다.
@@ -684,6 +719,35 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         #   ★그래도 단정하지 않는다.★ 손잡이를 만들고 스윕이 ★재서★ 고르게 한다.
         #   drop_tail = 0 → 전 층(종전 동작 그대로) · k>0 → ★마지막 k 개 은닉층에만★ 건다.
         drop_tail = int(_r.get("drop_tail", 0) or 0)
+        # ══ [V33.392] ★표본 창 — 7.4년을 균등하게 배우고 최근 240일로 채점하고 있었다.★ ══
+        #   라벨은 10일 선행수익 부호다. 시장은 정상(stationary)이 아니고, 학습 구간은
+        #   7.4년인데 검증은 최근 240일이다. 게다가 recency 손잡이는 규모가 커지면서 죽어
+        #   (AB-2: 표본의 97.2% 가 바닥값에 붙어 가중의 95.2% 를 차지) ★사실상 균등가중★ 이다.
+        #   트리는 구간을 쪼개 최근 영역을 따로 설명할 수 있지만 전역 파라미터 하나로 모든
+        #   시대를 설명하는 이 망은 그럴 수 없다 — "같은 표본인데 트리만 잘한다" 의 후보다.
+        #   ★그래도 값을 내가 고르지 않는다.★ 창을 후보로 만들고 스윕이 ★재서★ 고른다.
+        #   win_days = 0 → 전체(종전 동작과 완전히 동일) · k>0 → 검증 시작 k일 전부터만 학습.
+        win_days = int(_r.get("win_days", 0) or 0)
+        _tri = tr
+        if win_days > 0 and len(va):
+            try:
+                _cut = float(TS[va][0]) - win_days * 86400000.0
+                _sel = tr[TS[tr] >= _cut]
+                # 표본이 너무 줄면 창이 아니라 기근이 된다 — 그럴 바엔 전체를 쓴다(사유를 찍는다).
+                if len(_sel) >= max(5000, int(len(tr) * 0.08)):
+                    _tri = _sel
+                else:
+                    print(f"   [표본창] {win_days}일 창이 {len(_sel)}건뿐 — 전체({len(tr)}건)로 되돌린다")
+            except Exception as _e:
+                print("   [표본창] 적용 실패 — 전체로 돈다:", _e)
+        # 클래스 균형 가중은 ★쓰는 행에서★ 다시 잰다. 창을 좁히면 기저율도 달라진다 —
+        # 전체 구간의 균형값을 그대로 쓰면 창이 바뀌어도 가중이 안 따라와 비교가 어긋난다.
+        _pos = float(Y[_tri].sum())
+        w_pos = len(_tri) / (2 * _pos) if _pos > 0 else 1.0
+        w_neg = len(_tri) / (2 * (len(_tri) - _pos)) if (len(_tri) - _pos) > 0 else 1.0
+        Xtr = torch.tensor(Xn[_tri], dtype=torch.float32, device=dev)
+        Ytr = torch.tensor(Y[_tri], dtype=torch.float32, device=dev)
+        Mtr = torch.tensor(mw[_tri], dtype=torch.float32, device=dev)
 
         class MLP(nn.Module):
             def __init__(self):
@@ -944,7 +1008,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             #   바닥에 붙어 있다. 그 구간을 균등평균한 값을 "학습집합 정확도" 라고 부르고
             #   검증(최근 240일)과 비교하면, 둘은 ★다른 문제를 푼 성적표★ 다.
             #   → 학습과 ★같은 가중★ 으로 다시 잰다. 균등값도 같이 찍어 둘을 가를 수 있게 한다.
-            _mtr = mw[tr]
+            _mtr = mw[_tri]   # [V33.392] 창을 쓰면 학습행이 다르다 — 실제 배운 행으로 잰다
             _hit = ((ptr >= 0.5) == (ytr_np > 0.5)).astype(np.float64)
             train_acc_u = float(_hit.mean())                                   # 균등(종전 값)
             _wsum = float(_mtr.sum())
@@ -984,8 +1048,8 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             #   손실 가중의 대부분을 차지한다 — 손잡이가 규모 변화로 조용히 죽은 자리다.
             try:
                 _rf = float(rec_floor)
-                _atfloor = float((recency[tr] <= _rf + 1e-9).mean())
-                _wfloor = float(recency[tr][recency[tr] <= _rf + 1e-9].sum() / max(1e-9, recency[tr].sum()))
+                _atfloor = float((recency[_tri] <= _rf + 1e-9).mean())
+                _wfloor = float(recency[_tri][recency[_tri] <= _rf + 1e-9].sum() / max(1e-9, recency[_tri].sum()))
                 print(f"   [최근성] 반감기 {hl_days:.0f}일 · 바닥 {_rf:.2f} → 학습표본의 "
                       f"{_atfloor*100:.1f}% 가 바닥에 붙어 있고 그들이 가중의 {_wfloor*100:.1f}% 를 차지한다"
                       + ("  ★이름과 달리 최근을 거의 안 당긴다★" if _wfloor > 0.8 else ""))
@@ -993,7 +1057,11 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                 pass
         except Exception as _e:
             print("   [과적합진단] train acc 계산 실패:", _e)
-        print(f"③ 앙상블 valAcc {acc*100:.2f}% (Wilson하한 {lb*100:.2f}%, n={n_eval})")
+        # [V33.392] ★다수클래스 대비 초과★ 를 같이 적는다 — 기저율이 구간마다 다르면
+        #   정확도 절대값은 뜻이 없다. 승격 게이트는 종전대로 lb 를 본다(자를 안 바꾼다).
+        print(f"③ 앙상블 valAcc {acc*100:.2f}% (Wilson하한 {lb*100:.2f}%, n={n_eval})"
+              f" · 다수클래스 {majority*100:.2f}% → ★초과 {(acc-majority)*100:+.2f}%p★"
+              + ("  (초과가 음수 — 동전보다 못하다. 기저율·분포이동 진단을 먼저 볼 것)" if acc < majority else ""))
         print(f"   진단: 기저율(양성비율) {base*100:.1f}% | 다수클래스 베이스라인 {majority*100:.1f}% | AUC {auc:.3f}")
         if acc < majority - 0.02:
             print("   ⚠️ 정확도가 '전부 다수클래스 찍기'보다 낮음 — 분포이동(최근 시장≠과거 패턴) 또는 과적합 신호")
@@ -1084,19 +1152,26 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                         l2=_reg_ladder["l2"] * mul_l2,
                         mixup_p=round(_reg_ladder["mixup_p"] * mul_mix, 4),
                         input_noise=round(_reg_ladder["input_noise"] * mul_noise, 4),
-                        drop_tail=int(_reg_ladder.get("drop_tail", 0) or 0))
+                        drop_tail=int(_reg_ladder.get("drop_tail", 0) or 0),
+                        win_days=int(_reg_ladder.get("win_days", 0) or 0))
         def _regkey(d):
             return (round(d["dropout"], 4), round(d["l2"], 8), round(d["mixup_p"], 4),
-                    round(d["input_noise"], 4), int(d.get("drop_tail", 0) or 0))
+                    round(d["input_noise"], 4), int(d.get("drop_tail", 0) or 0),
+                    int(d.get("win_days", 0) or 0))
         # [V33.386] ★드롭아웃 위치★ 도 후보로 넣는다 — 세기만 흔들면 '꼬리에만 걸기' 는 영원히
         #   재 보지 못한다. 전 층 p=0.5 × BN 은 러닝통계를 틀린 분포로 몰 수 있다(위 [BN진단]).
         #   세기는 사다리 그대로 두고 ★위치만★ 바꾼 점을 하나 넣어, 둘을 가를 수 있게 한다.
         _tail2 = dict(_reg_ladder); _tail2["drop_tail"] = 2
+        # [V33.392] ★표본 창★ 도 후보다 — 세기·위치만 흔들면 "7.4년을 균등하게 배우는 것"
+        #   자체는 영원히 재 보지 못한다. 세기는 사다리 그대로 두고 ★창만★ 바꾼 점 둘.
+        _w3y = dict(_reg_ladder); _w3y["win_days"] = 1095
+        _w18m = dict(_reg_ladder); _w18m["win_days"] = 548
         reg_cands = []
         for _t, _d in [("규제 현행", dict(_reg_base)), ("규제 사다리", dict(_reg_ladder)),
                        ("규제 완화", _reg(0.5, 0.3, 0.4, 0.5)),
                        ("규제 최소", _reg(0.2, 0.1, 0.0, 0.0)),
-                       ("드롭아웃 꼬리2", _tail2)]:
+                       ("드롭아웃 꼬리2", _tail2),
+                       ("표본창 3년", _w3y), ("표본창 1.5년", _w18m)]:
             if not any(_regkey(_d) == _regkey(_e) for _, _e in reg_cands):
                 reg_cands.append((_t, _d))
         _K_full = K
@@ -1125,6 +1200,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             r["secs"] = round(time.time() - t0, 1)
             rank.append(r)
             print(f"   · {r['tag']:20s} do={rcfg['dropout']}@{rcfg.get('drop_tail', 0) or '전층'} "
+                  f"창={rcfg.get('win_days', 0) or '전체'} "
                   f"l2={rcfg['l2']:.1e} "
                   f"mix={rcfg['mixup_p']} noise={rcfg['input_noise']} → "
                   f"valAcc {r['acc']*100:.2f}% 하한 {r['lb']*100:.2f}% AUC {r['auc']:.3f} ({r['secs']}s)")
@@ -1144,7 +1220,9 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
               f"do={_reg_win['dropout']} l2={_reg_win['l2']:.1e}")
         _fin = fit_arch(dims, win["tag"] + "/최종", reg=_reg_win)
         nets, acc, lb, n_eval = _fin["nets"], _fin["acc"], _fin["lb"], _fin["n_eval"]
-        print(f"③ 앙상블 valAcc {acc*100:.2f}% (Wilson하한 {lb*100:.2f}%, n={n_eval}) — {win['tag']}")
+        print(f"③ 앙상블 valAcc {acc*100:.2f}% (Wilson하한 {lb*100:.2f}%, n={n_eval}) — {win['tag']}"
+              f" · 다수클래스 {_fin.get('majority', 0.5)*100:.2f}%"
+              f" → ★초과 {(acc - _fin.get('majority', 0.5))*100:+.2f}%p★")
         sweep_note = {"winner": win["tag"], "reg": _reg_win, "ranking": [
             {"tag": r["tag"], "dims": r["dims"], "params": r["params"],
              "valAcc": round(r["acc"], 4), "lb": round(r["lb"], 4), "auc": round(r["auc"], 4)}
@@ -1158,7 +1236,8 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                 "reg": {"dropout": round(float(_reg_win["dropout"]), 4), "l2": float(_reg_win["l2"]),
                         "mixupP": round(float(_reg_win["mixup_p"]), 4),
                         "inputNoise": round(float(_reg_win["input_noise"]), 4),
-                        "dropTail": int(_reg_win.get("drop_tail", 0) or 0)},
+                        "dropTail": int(_reg_win.get("drop_tail", 0) or 0),
+                        "winDays": int(_reg_win.get("win_days", 0) or 0)},
                 "ranking": [{"tag": r["tag"], "lb": round(r["lb"], 4), "acc": round(r["acc"], 4)} for r in rank]})
             print(f"②-S 구성 저장 {_ar.status_code}: {str(_ar.text)[:160]}")
         except Exception as _e:

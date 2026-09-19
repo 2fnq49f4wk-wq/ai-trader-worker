@@ -90,7 +90,15 @@ ok(/τ\*되돌림/.test(PY), "두 값을 ★함께★ 찍는다 — 읽는 사�
    (V33.378 에서 내가 이 비교를 근거로 '과소적합' 이라고 적었다 — 그 근거가 틀렸다.) */
 ok(/_hit \* _mtr\)\.sum\(\) \/ _wsum/.test(PY),
    "★학습 정확도를 학습과 ★같은 가중★ 으로 잰다★ — 균등평균은 다른 문제를 푼 성적이다");
-ok(/_mtr = mw\[tr\]/.test(PY), "그 가중이 실제 학습에 쓴 mw[tr] 바로 그것이다(다시 만들지 않는다)");
+/* [V33.392] 종전엔 `mw[tr]` 을 문자열로 못 박았다. 표본 창이 축으로 들어오면서 실제로
+   배운 행은 _tri(창 적용 후)다 — 계약의 뜻은 "★실제로 학습에 쓴 그 가중★" 이지
+   "tr" 이라는 이름이 아니다. 뜻으로 적고, ★Mtr 을 만든 바로 그 색인★ 인지까지 본다. */
+{
+  const _m = PY.match(/_mtr = mw\[(\w+)\]/);
+  const _M = PY.match(/Mtr = torch\.tensor\(mw\[(\w+)\]/);
+  ok(!!_m && !!_M && _m[1] === _M[1],
+     `그 가중이 실제 학습에 쓴 mw[${_m ? _m[1] : "?"}] 바로 그것이다(Mtr 과 같은 색인 · 다시 만들지 않는다)`);
+}
 ok(/train_acc_u = float\(_hit\.mean\(\)\)/.test(PY) && /균등 \{train_acc_u\*100/.test(PY),
    "균등값도 함께 찍는다 — 둘이 갈리면 그 자체가 정보다");
 ok(/gap = train_acc - acc/.test(PY) && PY.indexOf("train_acc = float((_hit * _mtr)") < PY.indexOf("gap = train_acc - acc"),
