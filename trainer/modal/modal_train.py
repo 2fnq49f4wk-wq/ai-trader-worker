@@ -399,7 +399,21 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     D = len(featnames)
     hidden = list(cfg["hidden"])
     dims = [D] + hidden + [1]
-    K = SEEDS_OVERRIDE or cfg.get("seeds", 4)   # [성능강화] 6시드 앙상블
+    # ══ [V33.396] ★워커가 보낸 seeds 는 한 번도 쓰인 적이 없다.★ ═════════════════════
+    #   `SEEDS_OVERRIDE or cfg.get("seeds", 4)` — SEEDS_OVERRIDE 는 6, 즉 ★항상 참★ 이라
+    #   오른쪽은 평가조차 되지 않는다. V33.260 이 dropout·l2 에서 잡은 것과 같은 모양이고,
+    #   증상은 더 나쁘다: 화면이 "파라미터 = 넷당 × DNN.seeds(4)" 로 그려서 ★실제 6시드
+    #   앙상블의 2/3 만★ 적고 있었다. 보내는 쪽과 쓰는 쪽이 다른 값을 믿고 있었다.
+    #   → 워커 값이 있으면 그것을 쓰고, 없을 때만 상수로 떨어진다(측정·설정이 우선).
+    #     범위를 벗어난 값은 무시한다 — 이상한 수로 학습하느니 상수가 낫다.
+    _k_cfg = 0
+    try:
+        _k_cfg = int(cfg.get("seeds", 0) or 0)
+        if not (2 <= _k_cfg <= 8): _k_cfg = 0
+    except Exception:
+        _k_cfg = 0
+    K = _k_cfg or SEEDS_OVERRIDE
+    print(f"   시드 {K}개 — 출처 {'워커 설정(cfg.seeds)' if _k_cfg else f'트레이너 상수(SEEDS_OVERRIDE={SEEDS_OVERRIDE})'}")
     ep = max(epochs, cfg.get("epochs", 0))
     dropout = cfg.get("dropout", 0.42); l2 = cfg.get("l2", 9e-4)
     lr = cfg.get("lr", 0.0025); lr_floor = cfg.get("lrFloorFrac", 0.08)
@@ -1285,6 +1299,24 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     #   → seq/memo 와 ★같은 자★ 로 probe 를 싣는다. 표준화 ★전★ 원본 x 를 실어 워커의
     #     mean/std·클리핑 경로까지 같이 검증한다. 그리고 여기서도 ★접힌 가중치로 직접 재현해★
     #     오차를 찍는다 — 업로드 전에 원인을 알 수 있어야 한다.
+    # ══ [V33.396] ★워커가 문턱을 보내 주는데 트레이너는 그걸 안 보고 있었다.★ ═══════════
+    #   trustFloor·icFloor 는 워커의 승격 게이트 상수다. 매 회차 wire 를 타고 오는데
+    #   트레이너는 한 번도 읽지 않았다 — 그래서 로그가 "valAcc 47.30%" 라고만 하고
+    #   ★그게 통과인지 미달인지★ 는 워커 로그를 따로 봐야 알 수 있었다.
+    #   같은 회차 안에서 답이 나와야 한다. 판정은 워커가 한다 — 여기선 ★예고★ 만 적는다.
+    try:
+        _tf = float(cfg.get("trustFloor", 0.505) or 0.505)
+        _icf = float(cfg.get("icFloor", 0.015) or 0.015)
+        _icb = float(_fin.get("valICBlock") or 0.0)
+        _ict = _fin.get("valICt")
+        print(f"   [승격예고] 하한 {lb*100:.2f}% vs 정확도 문턱 {_tf*100:.2f}%"
+              f" → {'통과' if lb >= _tf else f'★미달 {(_tf-lb)*100:.2f}%p★'}"
+              f" · 블록IC {_icb:.4f} vs 문턱 {_icf:.4f}"
+              + (f" · t {float(_ict):.2f}" if _ict is not None else " · t 미보고")
+              + "   (최종 판정은 워커가 한다 — 이 줄은 예고다)")
+    except Exception as _e:
+        print("   [승격예고] 못 적었다:", _e)
+
     probe = []
     try:
         _nprobe = min(64, len(va))
