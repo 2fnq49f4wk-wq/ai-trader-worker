@@ -1274,6 +1274,53 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             bl.append(np.round(b, 5).tolist())
         js_nets.append({"W": Wl, "b": bl, "dims": dims})
 
+    # ══ [V33.394] ★DNN 만 변환정합 검사가 없었다 — 변환이 제일 위험한 모델인데.★ ══════════
+    #   GBDT·단타·SEQ·MEMO 는 전부 업로드 때 probe 로 "워커 추론이 이 확률을 재현하는가" 를
+    #   확인하고, 못 하면 승격을 거부한다. DNN 만 없었다. 그런데 DNN 은 ★두 번★ 변환된다:
+    #     ① BatchNorm 접기  relu(BN(Wx+b)) → relu(W'x+b')   (a = gamma/sqrt(var+eps) 를 곱한다)
+    #     ② τ* 를 마지막 층 bias 에 굽는다
+    #   게다가 접은 계수를 ★소수 5자리로 반올림★ 해서 보낸다. a 가 크면 W' 도 커져 상대오차는
+    #   작지만, gamma 가 작아 a 가 작으면 W' 가 1e-6 수준이 되어 ★통째로 0 이 된다★ —
+    #   그 채널이 조용히 사라진다. 아무도 재지 않았다.
+    #   → seq/memo 와 ★같은 자★ 로 probe 를 싣는다. 표준화 ★전★ 원본 x 를 실어 워커의
+    #     mean/std·클리핑 경로까지 같이 검증한다. 그리고 여기서도 ★접힌 가중치로 직접 재현해★
+    #     오차를 찍는다 — 업로드 전에 원인을 알 수 있어야 한다.
+    probe = []
+    try:
+        _nprobe = min(64, len(va))
+        if _nprobe >= 8:
+            _rs = np.random.RandomState(20260919)
+            _pi = np.sort(_rs.choice(len(va), size=_nprobe, replace=False))
+            _rows = va[_pi]
+            with torch.no_grad():
+                _xb = torch.tensor(Xn[_rows], dtype=torch.float32, device=dev)
+                _zs = torch.zeros(len(_rows), device=dev)
+                for _nt in nets:
+                    _nt.eval(); _zs += _nt(_xb, False).squeeze(-1)
+                _pt = torch.sigmoid(_zs / len(nets)).cpu().numpy()
+            probe = [{"x": X[int(r)].astype(np.float64).round(6).tolist(), "p": float(_pt[k])}
+                     for k, r in enumerate(_rows)]
+            # ★접힌·반올림된 가중치로 같은 행을 다시 채점한다★ — 워커가 할 계산을 그대로 흉내 낸다.
+            _zn = np.zeros(len(_rows), dtype=np.float64)
+            _xn = np.clip((X[_rows].astype(np.float64) - mean) / std, -std_clip, std_clip)
+            for _jn in js_nets:
+                _h = _xn
+                _nl = len(_jn["W"])
+                for _li in range(_nl):
+                    _h = _h @ np.asarray(_jn["W"][_li], dtype=np.float64).T + np.asarray(_jn["b"][_li], dtype=np.float64)
+                    if _li < _nl - 1: _h = np.maximum(_h, 0.0)
+                _zn += _h[:, 0]
+            _pn = 1.0 / (1.0 + np.exp(-(_zn / len(js_nets))))
+            _mdiff = float(np.max(np.abs(_pn - _pt)))
+            _zeroed = int(sum(int((np.asarray(w, dtype=np.float64) == 0).sum()) for jn in js_nets for w in jn["W"]))
+            _total = int(sum(int(np.asarray(w, dtype=np.float64).size) for jn in js_nets for w in jn["W"]))
+            print(f"   [변환정합] 접기+반올림 후 최대 확률차 {_mdiff:.6f} (probe {len(probe)}행)"
+                  f" · 반올림으로 0 이 된 가중치 {_zeroed}/{_total} ({_zeroed/max(1,_total)*100:.3f}%)"
+                  + ("  ★워커가 다른 모델을 돌리게 된다 — 업로드는 하되 승격은 막힌다★" if _mdiff > 0.02 else ""))
+    except Exception as _e:
+        print("   [변환정합] probe 생성 실패 — 업로드는 계속한다(워커가 정합 미확인으로 처리):", _e)
+        probe = []
+
     if dry:
         print("--dry: 업로드 생략")
         return {"ok": True, "valAcc": acc, "uploaded": False, "depthSweep": sweep_note}
@@ -1316,7 +1363,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     #   워커가 valN(명목) 대신 valNEff 로 Wilson 하한을 재게 하려면 이 값이 있어야 한다.
     _dnn_meta = {"featVer": featver, "mean": mean.tolist(), "std": std.tolist(), "dims": dims,
                  "seeds": len(js_nets), "valAcc": round(acc, 4), "valAccLB": round(lb, 4),
-                 "valN": n_eval, "n": N}
+                 "valN": n_eval, "n": N, "probe": probe}
     # [V33.262] 블록 IC 를 함께 올린다 — 워커의 승격 판정에 ★정확도 말고 다른 자★ 가 하나 더 생겼다.
     #   부스터가 이미 쓰던 그 자다(같은 함수·같은 문턱). 없으면 워커는 정확도 경로만 본다.
     # [V33.292] accBase(무실력 정확도)도 같이 올린다 — 워커의 정확도 문턱 기준점이다.

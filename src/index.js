@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.393";
+const _BUILD_VER = "V33.394";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -24391,8 +24391,15 @@ async function handleRequest(request, env, ctx) {
           accLB: _dnnLB, floor: _num(DNN.trustFloor, 0.505),
           voting: !!(dnnT && dnnT.trusted && _num(dnnT.wDnn, 0) > 0),
           mult: dnnT ? _num(dnnT.wDnn, 0) : null,
-          why: (dnnT && dnnT.trusted)
-                 ? ("신뢰 통과" + (_dnnLB != null && _mindLB != null && _dnnLB < _mindLB
+          /* [V33.394] 정합 오차를 사유에 붙인다 — 이 값이 없으면 "검증 47.3%" 가 이 워커가
+             실제로 계산하는 값이라는 보장이 화면 어디에도 없다. */
+          why: (dnnT && dnnT.probeMaxDiff != null && dnnT.probeMaxDiff > _num(DNN.probeTol, 0.02))
+                 ? ("★변환정합 실패★ 최대 확률차 " + dnnT.probeMaxDiff + " — 워커가 돌리는 모델이 검증받은 모델과 다르다")
+               : (dnnT && dnnT.trusted)
+                 ? ("신뢰 통과"
+                    + (dnnT.probeMaxDiff != null ? " · 정합 오차 " + dnnT.probeMaxDiff + "(probe " + _num(dnnT.probeN, 0) + "행)"
+                                                 : " · 정합 미확인(구버전 학습기)")
+                    + (_dnnLB != null && _mindLB != null && _dnnLB < _mindLB
                       ? " · 하한 " + (_dnnLB * 100).toFixed(1) + "% 는 위원장(" + (_mindLB * 100).toFixed(1) +
                         "%)보다 낮아 지분이 그만큼 줄어 있다(문턱이 아니라 가중치 문제)" : ""))
                  : ((dnnT && dnnT.reason) || "미학습"),
@@ -25178,6 +25185,11 @@ async function handleRequest(request, env, ctx) {
           trust.admitPath = _ad.path; trust.admitWhy = _ad.why;
           trust.valICt = _icT; trust.valICBlock = _num(_vs.valICBlock, null);
         }
+        /* [V33.394] 정합 결과를 trust 에 남긴다 — 화면이 "몇 %p 어긋나는 모델인가" 를
+           말할 수 있어야 한다. probe 가 없던 회차는 null 이고, 그것도 사실로 적는다. */
+        trust.probeMaxDiff = _num(_vs.probeMaxDiff, null);
+        trust.probeN = Math.max(0, Math.floor(_num(_vs.probeN, 0)));
+        if (_vs.probeWhy) trust.probeWhy = String(_vs.probeWhy).slice(0, 160);
         await setState(env.DB, "dnn_trust", trust);
         try { await log(env.DB, "INFO", null, "[DNN] 외부업로드 저장 " + (saveInfo.bytes / 1048576).toFixed(1) + "MB/" + saveInfo.chunks + "청크 valAcc=" + (valAcc * 100).toFixed(1) + "% wDnn=" + trust.wDnn); } catch (e) {}
         return Response.json({ ok: true, saved: saveInfo, trust: trust, activated: trust.trusted,
@@ -25208,6 +25220,13 @@ async function handleRequest(request, env, ctx) {
              valAcc 를 인자로 넘기는 이유가 그것이다(V33.170 이 스코프로 8일치를 버린 그 자리).
              처음엔 커밋에서 body.valICt 를 읽게 썼다가 같은 함정에 다시 빠질 뻔했다. */
           valICt: _num(body.valICt, null), valICBlock: _num(body.valICBlock, null),
+          /* [V33.394] 정합 probe 는 ★여기(begin)★ 로 온다 — 커밋 본문에는 가중치만 오고
+             성적도 probe 도 없다(V33.170·V33.262 가 배운 것과 같은 자리다). 행 수를 묶어
+             스테이징이 비대해지지 않게 한다(64행 × 80피처 ≈ 60KB). */
+          probe: (Array.isArray(body.probe) ? body.probe : []).slice(0, 64).map(function (pr) {
+            return { x: (Array.isArray(pr && pr.x) ? pr.x.map(function (v) { return _num(v, 0); }) : null),
+                     p: _num(pr && pr.p, null) };
+          }).filter(function (pr) { return pr.x && pr.x.length === D && pr.p != null; }),
           n: Math.max(0, Math.floor(_num(body.n, 0))), ts: Date.now() });
         return Response.json({ ok: true, staged: "begin", seeds: seeds }, { headers: cors });
       }
@@ -25258,7 +25277,57 @@ async function handleRequest(request, env, ctx) {
         catch (e) { return Response.json({ error: "저장 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
         // 스테이징 정리
         try { await env.DB.prepare("DELETE FROM state WHERE k = 'dnn_stage' OR (k >= 'dnn_stage:net:' AND k < 'dnn_stage:net;')").run(); } catch (e) {}
-        return await _finishImport(saveInfo, stg.valAcc, stg.valAccLB, stg.valN, stg);
+        /* ══ [V33.394] ★변환정합 검증 — 이 워커가 정말 그 모델을 돌리는가.★ ══════════════
+           GBDT·단타·SEQ·MEMO 는 업로드 때 이 검사를 하고 못 넘기면 거부한다. DNN 만 없었다.
+           그런데 DNN 은 BatchNorm 접기 + τ* bias 접기 + 소수 5자리 반올림을 거쳐서 온다 —
+           변환이 제일 많은 모델이 검사가 하나도 없었다. 그러면 "검증 47.3%" 가 이 워커가
+           실제로 계산하는 값이라는 보장이 어디에도 없다.
+           ★여기서는 거부가 아니라 억제다★ — 이 경로는 37MB 를 스트리밍으로 이미 저장했고
+           (객체로 파싱하면 OOM 이라 그렇게 설계돼 있다), 되돌리면 학습 회차가 통째로 날아간다.
+           저장은 하되 ★투표는 못 하게★ 하고 사유를 남긴다(정확도 미달과 같은 처리다). */
+        let _probeDiff = null, _probeN = 0, _probeWhy = null;
+        try {
+          const _pb = Array.isArray(stg.probe) ? stg.probe : [];
+          if (_pb.length >= 8) {
+            const _m = await mlDNNLoad(env.DB);
+            if (!_m) _probeWhy = "정합 미확인 — 저장 직후 모델을 다시 못 읽었다";
+            else {
+              let _md = 0;
+              for (const pr of _pb) {
+                const _sp = mlDNNScore(_m, pr.x);
+                if (_sp == null) { _md = Infinity; break; }
+                const _d = Math.abs(_sp - _num(pr.p, 0));
+                if (_d > _md) _md = _d;
+              }
+              _probeDiff = isFinite(_md) ? +_md.toFixed(6) : null;
+              _probeN = _pb.length;
+              if (!isFinite(_md)) _probeWhy = "정합 실패 — 워커 추론이 확률을 못 냈다";
+              else if (_md > _num(DNN.probeTol, 0.02))
+                _probeWhy = "★정합 실패★ 최대 확률차 " + _md.toFixed(4) + " > " + _num(DNN.probeTol, 0.02) +
+                            " — 이 워커가 돌리는 모델이 검증받은 모델과 다르다(접기·반올림 확인 필요)";
+            }
+          } else {
+            _probeWhy = "정합 미확인 — probe 미동봉(구버전 학습기)";
+          }
+        } catch (e) { _probeWhy = "정합 미확인 — 검사 중 예외: " + ((e && e.message) || e); }
+        if (_probeWhy && _probeDiff != null && _probeDiff > _num(DNN.probeTol, 0.02)) {
+          /* 저장은 그대로 두고 ★승격만 막는다.★ 모델을 지우지 않는 이유: 다음 사람이
+             무엇이 어긋났는지 들여다볼 수 있어야 한다. */
+          /* trainedAt·featVer 를 같이 남긴다 — 이 기록도 ★외부 모델 기록★ 이라 화면이 나이와
+             판을 읽는다. 빠지면 "나이 null" 이 되어 성공 경로와 다른 말을 하게 된다
+             (check-eval-cost ⑧ 이 이걸 잡았다). */
+          await setState(env.DB, "dnn_trust", { wDnn: 0, trusted: false, source: "external",
+            featVer: LUXML.featVer, trainedAt: Date.now(),
+            dnnAcc: stg.valAcc, dnnAccLB: stg.valAccLB, probeMaxDiff: _probeDiff, probeN: _probeN,
+            reason: _probeWhy, ts: Date.now() });
+          try { await log(env.DB, "ERROR", null, "[DNN] " + _probeWhy); } catch (e) {}
+          return Response.json({ ok: true, stored: true, trusted: false, probeMaxDiff: _probeDiff,
+            probeN: _probeN, note: _probeWhy }, { headers: cors });
+        }
+        try { if (_probeDiff != null) await log(env.DB, "INFO", null,
+          "[DNN] 변환정합 OK — 최대 확률차 " + _probeDiff + " (probe " + _probeN + "행)"); } catch (e) {}
+        return await _finishImport(saveInfo, stg.valAcc, stg.valAccLB, stg.valN,
+          Object.assign({}, stg, { probeMaxDiff: _probeDiff, probeN: _probeN, probeWhy: _probeWhy }));
       }
 
       // ════════ 기존 단발 업로드(소형·수동용) ════════
@@ -39769,6 +39838,11 @@ const DNN = {
                          //   중 풀이 150~300 사이일 때 DNN도 함께 참여. 과적합은 신뢰게이트(valAccLB≥trustFloor)가
                          //   방어(미달 모델은 wDnn=0 자동 억제). 본 학습기는 Modal GPU — Worker는 폴백.
   stdClip: 6,            // [V9.1] 윈저화 표준화 클램프(±σ) — 팬테일 이상치 안정화
+  /* [V33.394] ★변환정합 허용오차★ — 트레이너가 검증한 확률을 이 워커가 재현하는가.
+     DNN 은 BatchNorm 접기 + τ* bias 접기 + 소수 5자리 반올림을 거쳐 여기 온다.
+     GBDT·단타·SEQ 는 예전부터 같은 검사를 했고 DNN 만 없었다 — 변환이 제일 위험한 모델인데.
+     0.02 는 반올림 잡음(1e-4 수준)보다 훨씬 크고, 구조적 불일치는 확실히 걸러내는 자리다. */
+  probeTol: 0.02,
   valFrac: 0.2,
   trustFloor: 0.505,     // 검증정확도 이 미만이면 신뢰 0
   /* [V33.262] IC 경로로 들어온 모델의 지분 배수. 정확도로 이긴 게 아니라 ★순위 능력★ 으로
