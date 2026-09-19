@@ -133,5 +133,47 @@ else ok("종전 방식이 가져가던 이득을 매 회차 숫자로 적는다"
   else ok("검증손실은 기록 전용(선택에 안 쓴다)이라고 코드가 스스로 말한다");
 }
 
+// ── ⑥ ★워커 자체 학습기도 같은 병이었다★ ────────────────────────────────────
+//   V33.388 은 Modal 8곳만 고쳤다. 워커의 폴백 DNN·GBDT 는 그대로였는데, 이게 그냥 남는
+//   문제가 아니다: 워커 폴백의 accLB 는 ★외부(Modal) 모델의 accLB 와 맞대어★ 어느 쪽을
+//   쓸지 정하는 데 쓰인다(dnn 재학습 경로). 한쪽만 정직해지면 그 비교가 기울어져,
+//   정직해진 외부 모델이 부푼 폴백에 밀려난다 — 고치다 만 것이 안 고친 것보다 나쁜 자리다.
+{
+  const js = fs.readFileSync("src/index.js", "utf8");
+  // 워커 DNN: 조기중단 집합이 홀드아웃(val)이 아니라 학습 꼬리에서 온다
+  const i0 = js.indexOf("const _esSet = _innerVal || val;");
+  if (i0 < 0) no("조기중단누출(워커): DNN 이 내부검증을 안 뗀다 — 홀드아웃으로 멈추고 그 홀드아웃으로 채점한다");
+  else {
+    const blk = js.slice(Math.max(0, i0 - 900), i0 + 200);
+    if (!/_innerVal = train\.slice\(train\.length - _ni\)/.test(blk) || !/train = train\.slice\(0, train\.length - _ni\)/.test(blk))
+      no("조기중단누출(워커): DNN 내부검증을 학습에서 ★빼지 않는다★ — 같은 행으로 배우고 멈출 때를 고른다");
+    else ok("워커 DNN — 학습 꼬리에서 내부검증을 떼고 홀드아웃은 채점 전용");
+    if (!/_dnnTrainOne\(train, _esSet,/.test(js))
+      no("조기중단누출(워커): _dnnTrainOne 이 내부검증을 안 받는다 — 손잡이를 만들고 안 쓴 꼴");
+    else ok("워커 DNN 학습 호출이 내부검증으로 멈춘다");
+    if (!/★내부검증을 못 뗐다\(표본 부족\) — 이 회차 dnnLB 는 부풀어 있다★/.test(js))
+      no("조기중단누출(워커): 내부검증을 못 뗐을 때 조용히 넘어간다 — 부푼 점수를 부풀었다고 말해야 한다");
+    else ok("워커 DNN — 내부검증을 못 뗐으면 그 회차가 부풀었다고 말한다");
+  }
+  // 워커 GBDT: innerStop 이 실제로 train 을 잘라 val 을 덮는가 + 새는 호출부 두 곳이 그걸 켜는가
+  const iG = js.indexOf("if (opts.innerStop && train.length >= 80)");
+  if (iG < 0) no("조기중단누출(워커): _gbdtFit 에 innerStop 이 없다 — 폴드/홀드아웃 검증으로 트리 수를 고른다");
+  else {
+    const blk = js.slice(iG, iG + 400);
+    if (!/val = train\.slice\(train\.length - _ni\)/.test(blk) || !/train = train\.slice\(0, train\.length - _ni\)/.test(blk))
+      no("조기중단누출(워커): innerStop 이 train 을 안 자르고 val 도 안 덮는다 — 이름만 있는 옵션이다");
+    else ok("워커 GBDT — innerStop 이 학습 꼬리를 떼어 val 을 덮는다(넘어온 val 은 채점 전용)");
+  }
+  for (const [pat, why] of [
+    [/_gbdtFit\(ftr, fvl, \{ maxTrees: GBDT\.cvMaxTrees, deadline: cvDeadline, innerStop: true \}\)/, "CV 폴드"],
+    [/_gbdtFit\(tr, vl, \{ deadline: cvDeadline, innerStop: true \}\)/, "홀드아웃 폴백"],
+  ]) if (!pat.test(js)) no(`조기중단누출(워커): GBDT ${why} 호출이 innerStop 을 안 켠다 — 그 구간 정확도가 부푼다`);
+  ok("워커 GBDT 새던 호출부 2곳(CV 폴드·홀드아웃 폴백)이 innerStop 을 켠다");
+  // 메타모델 경로는 ★이미★ 제대로 된 내부셋을 넘긴다 — 거기까지 켜면 두 번 뗀다.
+  if (/_gbdtFit\(_tr, _in, \{ D: D,[^}]*innerStop/.test(js))
+    no("조기중단누출(워커): 메타모델 경로에 innerStop 을 켰다 — 이미 내부셋을 넘기는 곳이라 두 번 뗀다");
+  else ok("이미 내부셋을 넘기는 메타모델 경로는 안 건드렸다");
+}
+
 console.log(bad ? `\n조기중단 누출 게이트 실패 ${bad}건` : "\n조기중단 누출 게이트 통과");
 process.exit(bad ? 1 : 0);

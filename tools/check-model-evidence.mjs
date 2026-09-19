@@ -76,10 +76,30 @@ const params = (D, hidden) => {
   chk(DNNW.dropout < DNN.dropout,
     `작은 망에 맞춰 드롭아웃을 낮췄다(${DNN.dropout} → ${DNNW.dropout})`,
     "작은 망에 대형 망용 드롭아웃을 그대로 쓴다 — 이번엔 과소적합한다");
-  chk(/_dnnTrainOne\(train, val, dims, deadline, warm, DNNW\)/.test(src)
-      && /function _dnnTrainOne\(train, val, dims, deadline, warm, hp\)/.test(src),
-    "학습 하이퍼파라미터가 인자로 전달된다 — 워커와 GPU 가 서로의 값을 안 쓴다",
-    "_dnnTrainOne 이 아직 전역 DNN 상수를 직접 읽는다 — 분리가 절반만 된 것이다");
+  /* [V33.391] 이 계약의 뜻은 ★하이퍼파라미터를 인자로 받는다★ 이지 "둘째 인자가 val" 이
+     아니다. 조기중단 누출을 고치며 둘째 인자가 내부검증(_esSet)으로 바뀌었는데, 문자열을
+     통째로 못 박아 둔 탓에 뜻과 무관한 이유로 실패했다 — 계약을 뜻으로 적는다.
+     대신 ★hp 배선★ 은 종전보다 더 좁게 본다: 여섯째 인자가 DNNW 여야 하고,
+     함수 본문이 전역 DNN 상수를 직접 읽으면 안 된다. */
+  {
+    // ★정의부(function _dnnTrainOne(...))가 아니라 ★호출부★ 를 봐야 한다 — 정의부가 먼저
+    //   걸려서 언제나 (val, hp) 로 읽히면 이 계약은 아무것도 안 지키는 검사가 된다.
+    const _call = src.match(/=\s*_dnnTrainOne\(train, (\w+), dims, deadline, warm, (\w+)\)/);
+    const _def = /function _dnnTrainOne\(train, val, dims, deadline, warm, hp\)/.test(src);
+    chk(!!_call && _call[2] === "DNNW" && _def,
+      "학습 하이퍼파라미터가 인자로 전달된다 — 워커와 GPU 가 서로의 값을 안 쓴다",
+      "_dnnTrainOne 이 아직 전역 DNN 상수를 직접 읽는다 — 분리가 절반만 된 것이다");
+    /* 둘째 인자는 ★멈출 때를 고르는 집합★ 이다. 그게 채점용 홀드아웃(val)이면
+       고른 자로 채점하게 된다 — V33.391 이 고친 그 누출이다. */
+    chk(!!_call && _call[1] !== "val",
+      "조기중단 집합이 채점용 홀드아웃이 아니다(내부검증을 따로 뗀다)",
+      "_dnnTrainOne 이 채점용 홀드아웃으로 멈춘다 — 고른 자로 채점하면 점수가 부푼다");
+    const _i = src.indexOf("function _dnnTrainOne(");
+    const _b = _i >= 0 ? src.slice(_i, src.indexOf("\n}", _i)) : "";
+    chk(_b.length > 0 && !/\bDNN\.[a-zA-Z]/.test(_b),
+      "_dnnTrainOne 본문이 전역 DNN 상수를 직접 안 읽는다",
+      "_dnnTrainOne 본문이 전역 DNN 을 직접 읽는다 — hp 인자가 무의미해진다");
+  }
 }
 
 // ── ①-b 파라미터 수를 ★세어서★ 말하는가 (화면이 "3M" 을 외우고 있었다) ───

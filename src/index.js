@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.390";
+const _BUILD_VER = "V33.391";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -24335,7 +24335,13 @@ async function handleRequest(request, env, ctx) {
        그리고 이 표는 ★서버가 만든다★. 화면이 조각을 모아 조립하면 V33.195 에서 겪은
        "같은 값을 두 화면이 다르게 부르는" 사고가 그대로 재발한다 — 사실표는 한 곳에서 나온다. */
     if (path === "/api/nn-viz" && (url.searchParams.get("model") || "") === "overview") {
-      const _ov = { kind: "overview", ts: Date.now(), featVer: LUXML.featVer };
+      /* [V33.391] ★inputDim 을 안 실어 보내고 있었다.★ 전체 구조 화면의 첫 칸이
+         `d.inputDim!=null ? d.inputDim : '—'` 로 그려지는데 서버가 이 칸을 한 번도
+         채운 적이 없다 — 그래서 그 화면은 늘 "★—차원★ · 피처 판 N" 이라고 적었다.
+         모델 탭들은 전부 inputDim 을 싣는데(mlLinearVizData·mlMemoVizData 등) 전체
+         구조만 빠져 있었다. 손으로 세지 않는다 — featNames 길이가 곧 입력 차원이다. */
+      const _ov = { kind: "overview", ts: Date.now(), featVer: LUXML.featVer,
+                    inputDim: LUXML.featNames.length };
       const _g = async function (k) { try { return await getState(env.DB, k, null); } catch (e) { return null; } };
       const _pc = function (x) { return (typeof x === "number" && isFinite(x)) ? +(x * 100).toFixed(1) : null; };
       const [mindM, dnnT, gT, stackM, cal, oofW, bfCur, oofCur] = await Promise.all([
@@ -39561,6 +39567,12 @@ async function mlLinearVizData(DB, name) {
       // ── [V33.209] 결합 헤드 ── 이 모델이 ★선형인지 비선형인지★ 와, 무엇에 이겨서 그렇게 됐는지.
       //   화면이 계수 막대만 그리면 헤드가 gbdt/mlp 일 때 ★쓰이지도 않는 계수★ 를 보여주게 된다.
       head: m.head || "lin", heads: Array.isArray(m.heads) ? m.heads : null,
+      /* [V33.391] ★모델이 들고 있고 화면이 그리는데, 이 층이 안 넘겨 주고 있었다.★
+         headDegenerate 는 "0.5 문턱에서 후보 넷이 전부 다수 클래스로 붕괴했다" 는 뜻이고
+         (그래서 정확도로는 헤드를 못 고르고 IC 로 고른다), 화면에는 그 경고를 그리는
+         코드가 ★이미 있다★(d.headDegenerate). 그런데 이 응답에 안 실려서 그 경고는
+         한 번도 뜬 적이 없다 — 헤드 선택이 퇴화했는지를 사람이 알 길이 없었다. */
+      headDegenerate: !!m.headDegenerate,
       headK: _num(m.headK, null), tMinBase: _num(m.tMinBase, null),
       // [V33.218] 혼합 지분과 그 근거 — 화면이 "왜 이 비율인가" 를 말할 수 있어야 한다.
       blendW: Array.isArray(m.blendW) ? m.blendW : null, blendBaseLoss: _num(m.blendBaseLoss, null),
@@ -40294,6 +40306,21 @@ async function mlDNNTrainNightly(DB) {
     }
     const val = all.slice(N - nVal);
     if (train.length < 60) { await setState(DB, "dnn_trust", { wDnn: 0, trusted: false, reason: "train" }); return "\u27F3 " + "[DNN] 훈련셋 부족"; }
+    /* ══ [V33.391] ★조기중단이 채점표를 보고 멈추고 있었다 — 워커 폴백도 같았다.★ ═══════
+       V33.388 이 Modal 학습기 8곳에서 고친 것과 같은 병이 여기 남아 있었다:
+       _dnnTrainOne 이 val 손실로 최적 에폭을 고르고, 바로 아래에서 ★그 같은 val★ 로
+       dnnAcc·dnnLB 를 낸다. 고른 자로 채점하면 점수가 부푼다.
+       ★이번엔 그냥 두면 더 나쁘다.★ 40335 행이 이 dnnLB 를 외부(Modal) 모델의 accLB 와
+       ★맞대어★ 어느 쪽을 쓸지 정한다. 한쪽만 정직해지면 그 비교가 기울어져,
+       정직해진 외부 모델이 부푼 폴백에 밀려난다 — 내 수정이 만든 새 비대칭이다.
+       → _mlpFit 이 이미 쓰는 방식 그대로: 학습 꼬리 15% 를 내부검증으로 떼고
+         홀드아웃은 건드리지 않는다. 표본이 모자라면 종전대로 돌되 그 사실을 적는다. */
+    let _innerVal = null;
+    {
+      const _ni = Math.max(20, Math.floor(train.length * 0.15));
+      if (train.length - _ni >= 60) { _innerVal = train.slice(train.length - _ni); train = train.slice(0, train.length - _ni); }
+    }
+    const _esSet = _innerVal || val;
 
     // 층 구조 [D, ...hidden, 1] — 멀티시드 앙상블(서로 다른 초기화·셔플 K개 → 로짓 평균)
     const dims = [D].concat(DNNW.hidden).concat([1]);   // [V33.191] 워커 폴백 구조(GPU 는 DNN.hidden)
@@ -40308,13 +40335,14 @@ async function mlDNNTrainNightly(DB) {
     for (let sd = 0; sd < K; sd++) {
       if (sd > 0 && Date.now() > deadline) break;   // CPU 예산 소진 — 최소 1개는 보장
       const warm = warmNets ? warmNets[sd % warmNets.length] : null;   // [V11] 여러 밤에 걸쳐 이어학습
-      const one = _dnnTrainOne(train, val, dims, deadline, warm, DNNW);
+      const one = _dnnTrainOne(train, _esSet, dims, deadline, warm, DNNW);   // [V33.391] 멈출 때는 내부검증
       if (one) nets.push(one);
     }
     if (!nets.length) { await setState(DB, "dnn_trust", { wDnn: 0, trusted: false, reason: "nan" }); return "[DNN] 수치불안정 감지 — 미사용"; }
 
     // 검증 정확도(앙상블: 로짓 평균) + Wilson 신뢰하한
     let correct = 0;
+    if (!_innerVal) console.log("[DNN] ★내부검증을 못 뗐다(표본 부족) — 이 회차 dnnLB 는 부풀어 있다★");
     for (const t of val) { const p = _dnnEnsembleP(nets, t.x); if ((p >= 0.5 ? 1 : 0) === t.y) correct++; }
     const dnnAcc = correct / val.length;
     // [V33.115] 유효표본수로 하한을 잰다 — 외부(Modal) 업로드와 같은 자를 써야 공정 비교다.
@@ -41792,7 +41820,7 @@ function _gbdtBuild(hp, grad, hess, idx, depth, cols, imp) {
 
 // [V4] 부스팅 1회 학습(조기종료는 val 있을 때만) — CV와 최종학습이 공유.
 //   opts: {maxTrees, deadline, fixedTrees(조기종료 대신 고정 트리수), collectImp}
-function _gbdtFit(train, val, opts) {
+function _gbdtFit(train, val, opts) {   // [V33.391] innerStop 이면 train 꼬리를 내부검증으로 떼고 val 은 안 본다
   opts = opts || {};
   // [V33.209] 차원은 호출자가 정한다. 종전엔 LUXML(65) 로 못박혀 있어 STACK(16차원) 같은
   //   ★다른 판의 표본★ 에는 쓸 수 없었다 — 히스토그램 컷을 없는 열까지 만들려다 undefined 를 읽는다.
@@ -41806,6 +41834,17 @@ function _gbdtFit(train, val, opts) {
      후보 자체가 밤마다 흔들리면 "비선형이 이겼다" 가 모델 성질이 아니라 그 밤의 난수가 된다.
      → 씨앗을 주면 결정적으로 돈다. 안 주면 종전 그대로(Math.random) — 기존 호출부는 무변화. */
   const _rand = (typeof opts.rng === "function") ? opts.rng : Math.random;
+  /* ══ [V33.391] ★멈출 트리 수를 채점표에서 고르고 있었다.★ ═══════════════════════════
+     호출부가 넘긴 val 로 best_nTrees 를 고르고, 호출부는 ★그 같은 val★ 로 정확도를 냈다
+     (CV 폴드도 홀드아웃 폴백도 똑같다). 600그루 중 그 val 에 제일 맞는 그루 수를 골라
+     그 val 로 채점한 것이다 — V33.388 이 Modal 에서 고친 것과 같은 병이다.
+     → innerStop 을 주면 ★학습 꼬리★ 에서 내부검증을 떼어 거기서 멈춘다. 넘어온 val 은
+       채점 전용이 되어 이 함수가 손대지 않는다. 옵션을 안 주면 종전과 한 글자도 안 달라진다
+       (메타모델 경로는 이미 제대로 된 내부셋을 넘기고 있어 두 번 뗄 이유가 없다). */
+  if (opts.innerStop && train.length >= 80) {
+    const _ni = Math.max(20, Math.floor(train.length * 0.15));
+    if (train.length - _ni >= 60) { val = train.slice(train.length - _ni); train = train.slice(0, train.length - _ni); }
+  }
   const X = train.map(function (d) { return d.x; });
   const hp = _gbdtHistPrep(X, D);   // [V12.49] 히스토그램 컷·bin 인덱스 — fit당 1회(트리마다 재사용)
   let pos = 0; for (const t of train) pos += t.y;
@@ -41960,7 +41999,7 @@ async function mlGBDTTrainNightly(DB) {
       if (Date.now() > cvDeadline - 1000) break;   // 최종학습 시간 확보
       const ftr = fd.train.map(function (i) { return data[i]; });
       const fvl = fd.val.map(function (i) { return data[i]; });
-      const m = _gbdtFit(ftr, fvl, { maxTrees: GBDT.cvMaxTrees, deadline: cvDeadline });
+      const m = _gbdtFit(ftr, fvl, { maxTrees: GBDT.cvMaxTrees, deadline: cvDeadline, innerStop: true });   // [V33.391] 폴드 검증으로 멈추면 그 폴드 OOF 가 부푼다
       treeCounts.push(m.nTrees);
       for (const d of fvl) { const p = mlGBDTScore(m, d.x); if (p != null && (p >= 0.5 ? 1 : 0) === d.y) { oofCorrect++; } oofN++; }
     }
@@ -41979,7 +42018,7 @@ async function mlGBDTTrainNightly(DB) {
       if (tr.length < 60) tr = data.slice(0, N - nVal);
       const vl = data.slice(N - nVal);
       if (tr.length < 60) { await setState(DB, "gbdt_trust", { wGbdt: 0, trusted: false, reason: "train" }); return "\u27F3 " + "[GBDT] 훈련셋 부족"; }
-      const m = _gbdtFit(tr, vl, { deadline: cvDeadline });   // [V12.49] 홀드아웃도 CV 몫만 — 최종학습 절반 보장
+      const m = _gbdtFit(tr, vl, { deadline: cvDeadline, innerStop: true });   // [V12.49] 홀드아웃도 CV 몫만 — 최종학습 절반 보장 / [V33.391] 멈출 때는 내부검증
       let c = 0; for (const d of vl) { const p = mlGBDTScore(m, d.x); if (p != null && (p >= 0.5 ? 1 : 0) === d.y) c++; }
       acc = c / Math.max(1, vl.length); valN = vl.length; cvMode = "홀드아웃";
       fixedTrees = Math.max(20, m.nTrees);
