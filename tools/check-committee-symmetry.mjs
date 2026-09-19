@@ -134,5 +134,58 @@ else {
   else ok("청산 SEQ 가 진입과 같은 사이클 예산을 나눠 쓴다");
 }
 
+// ── ⑥ ★누가 정했는지★ 가 기록되는가 (V33.395) ──────────────────────────────
+//   가중은 exp(icTemp × IC), icTemp=60, IC 상한 0.25 다. 두 위원의 IC 가 0.1 벌어지면
+//   exp(6)=403배 — 한 명이 결합확률을 통째로 끌고 갈 수 있다. 그게 틀렸다는 게 아니다
+//   (V33.77 이 일부러 그렇게 만들었다). 문제는 ★그 사실이 안 적힌다★ 는 것이었다:
+//   화면은 "위원 6명 투표 중" 이라고 하는데 실제로는 한 명이 97% 일 수 있었다.
+{
+  const i0 = src.indexOf("let _wShare = null;");
+  /* ★앵커를 잘못 잡았었다★ — 처음엔 `if (!experts.length) return null;` 보다 앞이어야 한다고
+     썼는데, 그 줄은 위원 조립이 끝나는 자리라 선언이 그 뒤인 게 정상이다. 봐야 할 것은
+     ★_wShare 를 실제로 쓰는 첫 자리★ 보다 앞이냐다(TDZ 정밀검사는 check-order 가 한다). */
+  const i1 = src.indexOf("_wShare = {}");
+  if (i0 < 0) no("지분기록: 실현 지분(_wShare)을 안 만든다 — '몇 명 투표' 와 '누가 정했나' 를 못 가른다");
+  else {
+    if (i1 < 0 || i0 > i1) no("지분기록: _wShare 선언이 첫 사용보다 뒤다 — TDZ 위험(V33.90 과 같은 자리)");
+    else ok("_wShare 선언이 첫 사용보다 앞에 있다");
+    const blk = src.slice(i0, i0 + 6000);
+    if (!/_wShare\[e2\.name\] = \+\(e2\.w \/ wsum\)\.toFixed\(4\)/.test(blk))
+      no("지분기록: 지분이 ★실제 결합에 쓴 가중(w/wsum)★ 에서 안 나온다");
+    else ok("지분이 실제 결합 가중에서 나온다(다시 만들지 않는다)");
+  }
+  if (!/w: \(_wShare && _wShare\[ex\.name\] != null\)/.test(src))
+    no("지분기록: 결정 결과의 위원 목록에 지분이 안 실린다");
+  else ok("결정 결과의 위원마다 실현 지분이 실린다");
+  {   /* ★반환 경로가 넷이다★ — 하나만 빼도 그 경로(기권·DI·모호)에서 지배 기록이 사라진다.
+         처음엔 존재만 봤다가 돌연변이 S2 가 통과했다(첫 하나만 지워도 나머지가 걸렸다). */
+    const nExp = (src.match(/experts: _expOut/g) || []).length;
+    const nDom = (src.match(/experts: _expOut, absent: _absent, dominant: _domin/g) || []).length;
+    if (nExp === 0 || nDom !== nExp)
+      no(`지분기록: 위원 목록을 싣는 반환 ${nExp}곳 중 ${nDom}곳만 dominant 를 싣는다 — 빠진 경로에서 기록이 사라진다`);
+    else ok(`위원 목록을 싣는 반환 ${nExp}곳 전부가 지배 위원 요약을 싣는다`);
+  }
+  {   /* 판정을 ★소스에서 떼어 내★ 경계에서 돌린다. 지역 사본으로 흉내 내면 소스가 바뀌어도
+         게이트가 통과한다 — 돌연변이 S4 가 정확히 그렇게 빠져나갔다. */
+    const m = src.match(/if \(_top && (_wShare\[_top\] >= [\d.]+(?: && experts\.length > 1)?)\)/);
+    if (!m) no("지분기록: 지배 판정식을 소스에서 못 떼어 내겠다");
+    else {
+      // eslint-disable-next-line no-new-func
+      const dom = new Function("_wShare", "_top", "experts", "return !!(" + m[1] + ");");
+      const T = "a";
+      const run = (share, n) => dom({ [T]: share }, T, { length: n });
+      if (!(run(0.9, 2) === true && run(0.8999, 2) === false))
+        no("지분기록: 지배 판정이 90% 경계에서 안 갈린다");
+      else ok("지배 판정이 90% 경계에서 정확히 갈린다(소스에서 떼어 낸 식)");
+      if (run(1, 1) !== false)
+        no("지분기록: ★단일 위원을 지배로 센다★ — 혼자면 100%인 게 당연하다(경보가 늘 울린다)");
+      else ok("단일 위원은 지배로 안 센다");
+    }
+  }
+  if (!/IC 가중 결합 시점의 지분/.test(src))
+    no("지분기록: 이 지분이 ★어느 시점★ 값인지 안 적는다 — 절사평균·STACK 뒤 값으로 오독된다");
+  else ok("지분이 'IC 가중 결합 시점' 값이라고 코드가 스스로 말한다");
+}
+
 console.log(bad ? `\n위원회 대칭 게이트 실패 ${bad}건` : "\n위원회 대칭 게이트 통과");
 process.exit(bad ? 1 : 0);

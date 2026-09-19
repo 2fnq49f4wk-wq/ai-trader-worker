@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.394";
+const _BUILD_VER = "V33.395";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -41214,6 +41214,14 @@ async function mlDeepDecide(DB, featVec, opts) {
       for (const nm of STACK_SLOTS) _stackFeat.push(_byName[nm] ? 1 : 0);   // 참여 여부 마스크
     } catch (e) { _stackFeat = null; }
 
+    /* [V33.395] ★위원회라고 부르는데 누가 실제로 정했는지는 아무 데도 안 적혔다.★
+       가중은 exp(icTemp × IC) 이고 icTemp=60 · IC 상한 0.25 다. 두 위원의 IC 가 0.1 만
+       벌어져도 exp(6) = 403배 차이가 난다 — 한 명이 결합확률을 통째로 끌고 갈 수 있는
+       구조다(그게 틀렸다는 말이 아니다. V33.77 이 ★일부러★ 그렇게 만들었다).
+       문제는 그 사실이 ★기록되지 않는다★ 는 것이다: 화면은 "위원 6명 투표 중" 이라고
+       적는데 실제로는 한 명이 97% 일 수 있고, 둘을 구분할 방법이 없었다.
+       → 실현된 지분을 결정 결과에 싣는다. 판정은 한 글자도 안 바꾼다 — 기록만 붙인다. */
+    let _wShare = null;
     let pCombined = experts[0].p;        // 단일 전문가면 그 확률 그대로
     if (experts.length > 1) {
       // ══ [V33.77] ★위원회 가중을 정확도에서 IC 로 바꾼다★ ══
@@ -41261,6 +41269,9 @@ async function mlDeepDecide(DB, featVec, opts) {
         _wl.push({ w: w, z: ex.z, name: ex.name });
       }
       pCombined = _clamp(_sigmoid(zsum / (wsum || 1)), 0.001, 0.999);
+      try {
+        if (wsum > 0) { _wShare = {}; for (const e2 of _wl) _wShare[e2.name] = +(e2.w / wsum).toFixed(4); }
+      } catch (e) {}
       // [V33.79] ★절사평균 안전장치★ (Jane Street Market Prediction 우승 해법의 블렌딩 기법)
       //   가중평균은 한 전문가가 폭주하면(버그·분포 이탈·학습 붕괴) 그 극단값이 결합확률을
       //   그대로 끌고 간다. 대회 우승 해법들은 모델을 모아 ★가운데 60%만 평균★ 내는 절사평균을
@@ -41481,7 +41492,22 @@ async function mlDeepDecide(DB, featVec, opts) {
     const unc = Math.max(_baseUnc, _expDisagree);   // 합의도 반영 유효 불확실성
     // [V33.149] tier 를 그대로 실어 보낸다 — 화면의 '잠정' 표식은 name 이 아니라 이 필드로 그린다.
     const _expOut = experts.map(function (ex) { return { name: ex.name, p: +ex.p.toFixed(3), acc: +ex.acc.toFixed(3),
+      /* [V33.395] 실현 지분 — "몇 명이 투표했나" 가 아니라 ★누가 정했나★ 를 말한다.
+         단일 위원이면 1(그 한 명이 전부다). 절사평균·STACK 이 뒤에서 확률을 더 손보므로
+         이 값은 ★IC 가중 결합 시점의 지분★ 이다 — 그렇게 읽어야 한다. */
+      w: (_wShare && _wShare[ex.name] != null) ? _wShare[ex.name] : (experts.length === 1 ? 1 : null),
       tier: ex.tier || null }; });
+    /* 한 명이 결합을 끌고 갔으면 그 사실을 ★한 줄로★ 남긴다 — 숫자를 읽을 사람이 항상
+       지분표를 훑지는 않는다. 판정에는 안 쓴다(기록 전용). */
+    let _domin = null;
+    try {
+      if (_wShare) {
+        let _top = null;
+        for (const k in _wShare) if (!_top || _wShare[k] > _wShare[_top]) _top = k;
+        if (_top && _wShare[_top] >= 0.9 && experts.length > 1)
+          _domin = { name: _top, share: _wShare[_top], n: experts.length };
+      }
+    } catch (e) {}
     /* [V33.390] ★참석자만 적으면 결석을 영영 못 본다.★ 위원 정원(STACK_SLOTS)에서 참석자를 빼고,
        사유를 못 적은 자리는 그렇게 적는다 — 빈칸을 남기면 다음 사람이 '없는 게 정상' 으로 읽는다. */
     try {
@@ -41492,9 +41518,9 @@ async function mlDeepDecide(DB, featVec, opts) {
     //   |z|>diThreshold 만큼 멀면(전례 없는 시장상황) 예측 신뢰 불가 → 기권. "모르는 건 모른다"가
     //   실전 자동매매 AI의 표준 안전장치(freqtrade DI_threshold와 동일 사상).
     if (_diVal != null && _diVal > ((typeof DNN !== "undefined" && DNN.diThreshold) || 2.2))
-      return { source: "deep", abstain: true, reason: "di_ood", di: +_diVal.toFixed(2), p: pCombined, uncertainty: unc, experts: _expOut, absent: _absent };
-    if (unc > (typeof MIND !== "undefined" ? MIND.abstainStd : 0.16)) return { source: "deep", abstain: true, reason: "uncertain", p: pCombined, uncertainty: unc, experts: _expOut, absent: _absent };
-    if (Math.abs(pCombined - 0.5) < (typeof MIND !== "undefined" ? MIND.abstainBand : 0.05)) return { source: "deep", abstain: true, reason: "ambiguous", p: pCombined, experts: _expOut, absent: _absent };
+      return { source: "deep", abstain: true, reason: "di_ood", di: +_diVal.toFixed(2), p: pCombined, uncertainty: unc, experts: _expOut, absent: _absent, dominant: _domin };
+    if (unc > (typeof MIND !== "undefined" ? MIND.abstainStd : 0.16)) return { source: "deep", abstain: true, reason: "uncertain", p: pCombined, uncertainty: unc, experts: _expOut, absent: _absent, dominant: _domin };
+    if (Math.abs(pCombined - 0.5) < (typeof MIND !== "undefined" ? MIND.abstainBand : 0.05)) return { source: "deep", abstain: true, reason: "ambiguous", p: pCombined, experts: _expOut, absent: _absent, dominant: _domin };
     // [V7] 기대값(EV) 게이트: 통계 있으면 p·평균이익 − (1−p)·평균손실 > 0 로 판단
     //   (손익 비대칭 반영 — 고정 확률 임계보다 수익률 정렬적). 통계 없으면 종전 임계.
     let allow, evVal = null, _evSrc = null, _evThr = null;
@@ -41572,7 +41598,7 @@ async function mlDeepDecide(DB, featVec, opts) {
       //   전자는 논쟁 자리, 후자는 타임스톱만 소모하는 죽은 돈이다.
       if (_dual && (_dual.quadrant === "volatile" || _dual.quadrant === "dead")) _contested = true;
     } catch (e) {}
-    return { source: "deep", allow: (allow && !_contested), sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, evSrc: _evSrc, evThr: _evThr, experts: _expOut, absent: _absent, shock: _shockOut, evPrior: _evPriorOut, stackFeat: _stackFeat, usedStack: _usedStack,
+    return { source: "deep", allow: (allow && !_contested), sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, evSrc: _evSrc, evThr: _evThr, experts: _expOut, absent: _absent, dominant: _domin, shock: _shockOut, evPrior: _evPriorOut, stackFeat: _stackFeat, usedStack: _usedStack,
              pPreCal2: +_pPreCal2.toFixed(4),
              bull: +_bull.toFixed(3), bear: +_bear.toFixed(3), conviction: +_conv.toFixed(3), conflict: +_conflict.toFixed(3), contested: _contested, dual: _dual };
   } catch (e) { return null; }
