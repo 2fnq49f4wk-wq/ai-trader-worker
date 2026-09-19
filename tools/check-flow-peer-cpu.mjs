@@ -142,22 +142,46 @@ console.log("① 값이 완전히 같은가 — 옛 구현과 대조");
 
 console.log("\n② 실제로 빨라졌는가");
 {
-  const cache = mkCache(300, 250, 320, 777);
-  const syms = Object.keys(cache).slice(0, 60);
-  const run = async (fn, warm) => {
-    if (warm) for (const sy of syms) await fn(sy);
-    const t0 = Date.now();
-    for (const sy of syms) await fn(sy);
-    return Date.now() - t0;
-  };
+  /* ══ [V33.393] ★이 측정이 배포를 막았다 — 계약이 아니라 러너의 기분을 재고 있었다.★ ══
+     실측(CI run 35417376999): 옛 22ms → 새 16ms = 1.4배 → 실패 → 배포 중단.
+     같은 코드가 이 기계에서는 35ms → 14ms = 2.5배다. 틀린 것은 코드가 아니라 ★측정★ 이다:
+       ① 예열이 없었다 — 먼저 도는 옛 경로가 JIT 비용을 혼자 뒤집어쓰거나 그 반대가 된다.
+       ② 20ms 규모에서 ±3ms 스케줄러 잡음이 배수를 1.4~2.6 사이로 흔든다.
+       ③ 1회 측정이라 그 잡음을 걸러낼 방법이 없었다.
+     계약("캐시가 실제로 값을 한다")은 옳다 — 문턱을 낮추지 않고 ★측정을 고친다★:
+       · ★별도 캐시★ 로 양쪽을 예열한다(측정 대상 메모를 미리 채우면 새 경로를 과대평가한다)
+       · 종목 수를 늘려 측정을 ±잡음보다 훨씬 크게 만든다
+       · 여러 번 재고 ★최솟값★ 을 쓴다(최솟값은 스케줄러 잡음에 로버스트한 추정량이다)
+       · 새 경로는 ★매 회 새 객체★ 로 잰다 — 메모 구축 비용을 항상 포함시킨다(공짜로 안 준다) */
   const mkOf = (sy) => (/\.(KS|KQ)$/.test(sy) ? "kr" : "us");
-  const tOld = await run(async (sy) => oldPeerFeat(sy, mkOf(sy), cache), false);
-  // 새 구현은 사이클 캐시를 공유한다 — 운영과 같은 조건(같은 dailyCache 로 여러 종목)
-  const tNew = await run(async (sy) => M.flowPeerFeat(null, sy, mkOf(sy), cache), false);
+  const base = mkCache(300, 250, 320, 777);
+  const syms = Object.keys(base).slice(0, 200);
+  {  // 예열 — 측정 대상이 아닌 별도 캐시로만
+    const w = mkCache(120, 100, 320, 4242), ws = Object.keys(w).slice(0, 40);
+    for (let r = 0; r < 2; r++) {
+      for (const sy of ws) oldPeerFeat(sy, mkOf(sy), w);
+      for (const sy of ws) await M.flowPeerFeat(null, sy, mkOf(sy), { ...w });
+    }
+  }
+  const REPS = 3;
+  let tOld = Infinity, tNew = Infinity;
+  const _reps = [];
+  for (let r = 0; r < REPS; r++) {
+    const cOld = { ...base };                       // 같은 데이터, 새 객체 — 조건을 맞춘다
+    let t = Date.now();
+    for (const sy of syms) oldPeerFeat(sy, mkOf(sy), cOld);
+    const a = Date.now() - t;
+    const cNew = { ...base };                       // ★메모가 항상 차갑다★ — 구축 비용 포함
+    t = Date.now();
+    for (const sy of syms) await M.flowPeerFeat(null, sy, mkOf(sy), cNew);
+    const b = Date.now() - t;
+    tOld = Math.min(tOld, a); tNew = Math.min(tNew, b); _reps.push(`${a}/${b}`);
+  }
   const ratio = tOld / Math.max(1, tNew);
-  console.log(`       종목 ${syms.length}개 · 유니버스 ${Object.keys(cache).length}개 — 옛 ${tOld}ms → 새 ${tNew}ms (${ratio.toFixed(1)}배)`);
+  console.log(`       종목 ${syms.length}개 · 유니버스 ${Object.keys(base).length}개 · ${REPS}회 최솟값`
+    + ` — 옛 ${tOld}ms → 새 ${tNew}ms (${ratio.toFixed(1)}배) · 회차별 옛/새 ${_reps.join(" ")}`);
   chk(tNew < tOld, `빨라졌다 (${ratio.toFixed(1)}배)`, `★안 빨라졌다 — 옛 ${tOld}ms · 새 ${tNew}ms★`);
-  chk(ratio >= 1.5, `${ratio.toFixed(1)}배 빨라졌다`,
+  chk(ratio >= 1.5, `${ratio.toFixed(1)}배 빨라졌다 (예열 후 ${REPS}회 최솟값)`,
     `배수가 ${ratio.toFixed(1)} 뿐 — 캐시가 안 먹고 있다`);
   /* ★여기서 정직해야 한다★ — 이 배수는 순수 CPU 몫이고, 운영의 6,737ms 는 그것만이
      아니었다. 아래 ⑥이 진짜 큰 몫(D1 왕복)을 검사한다. 이 항목만 보고
