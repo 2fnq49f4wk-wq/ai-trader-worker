@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.397";
+const _BUILD_VER = "V33.398";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -34240,6 +34240,59 @@ function _tToZ(t, df) {
    한 시장뿐인 블록에서는 상수를 빼는 것이라 ★값이 안 변한다★ — 뺄 게 없으면 아무 일도 없다.
    mkeys 를 안 주면 종전과 완전히 같다(기존 호출자 전부 그대로 동작한다).
    섞어 잰 값도 함께 돌려준다(icPooled/blockICPooled/tPooled) — 바뀐 폭을 눈으로 봐야 한다. */
+/* ══ [V33.398] ★정확도 하한이 "독립 관측" 을 잘못 세고 있었다 — 개혁.★ ═══════════════
+   ■ 무엇이 있었나 (사용자 화면 실측 2026-09-21)
+       워커 GBDT  검증 9,000행 · 유효 432 · 하한 70.4% → 위원회 지분 0.71
+       Modal LGB  검증 276,251행 · 유효 8,442 · 하한 51.1% → 지분 0.20
+     같은 라벨인데 23%p 차이다. 산수를 해 보면 답이 나온다:
+       9,000행 ÷ 종목 600 = 종목당 15봉 ≈ 15거래일.  라벨 지평 10일.
+       → ★겹치지 않는 시간블록이 1.5개★ 다. 그 15일 동안 시장이 올랐다는 ★사실 하나★ 다.
+       276,251행 쪽은 같은 계산으로 블록 46개 — 진짜로 여러 사건을 본 것이다.
+
+   ■ 왜 유효표본(432)이 그걸 못 걸렀나
+     고유도(de Prado)는 ★같은 종목 안에서만★ 겹침을 센다. 그 주석이 그렇게 적혀 있다:
+       "다른 종목의 같은 기간은 상관은 있어도 같은 사건이 아니다"
+     횡단면 수익에는 맞는 말이지만 ★방향성 라벨★ 에는 틀리다. 600종목이 같은 10일 동안
+     같이 오르면 그건 600개 관측이 아니라 ★한 개★ 다. Wilson 하한을 432 로 재면
+     "15일치 시장 방향" 이 70.4% 의 확신으로 둔갑한다.
+
+   ■ 고치는 방향 — 자를 바꾼다(문턱이 아니라)
+     이 저장소는 ★IC 에 대해서는 이미 이렇게 한다★ — 블록 IC, t = ICIR×√K.
+     정확도만 안 하고 있었다. 같은 규율을 정확도에 적용한다:
+       ① 검증행을 라벨 지평 길이의 ★겹치지 않는 시간블록★ 으로 나눈다
+       ② 블록마다 정확도를 재고, ★블록 간 산포★ 로 표준오차를 낸다(t 분포, 자유도 K−1)
+       ③ 블록이 모자라면 "못 쟀다" 다 — 못 잰 것을 통과로 읽지 않는다
+     블록이 많은 모델(Modal 46개)은 거의 그대로고, 블록이 1~2개인 모델은 하한이 무너진다.
+     그게 맞다 — 그 모델은 애초에 한 사건만 본 것이다. */
+const BLKACC = { tMul: 1.64, minBlocks: 4 };   // 90% 단측 · 블록 4개 미만이면 '못 쟀다'
+function _blockAccLB(hits, ts, horizonMs) {
+  try {
+    const n = Math.min(hits.length, ts.length);
+    if (!(n >= 8) || !(horizonMs > 0)) return { lb: null, k: 0, why: "표본·지평 부족" };
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < n; i++) { const t = _num(ts[i], 0); if (t > 0) { if (t < lo) lo = t; if (t > hi) hi = t; } }
+    if (!(isFinite(lo) && isFinite(hi) && hi > lo)) return { lb: null, k: 0, why: "시각 없음" };
+    const span = hi - lo;
+    const K = Math.floor(span / horizonMs);
+    if (K < BLKACC.minBlocks)
+      return { lb: null, k: Math.max(0, K), why: "겹치지 않는 블록 " + Math.max(0, K) + "개 < " + BLKACC.minBlocks +
+                                                 " — 이 검증 구간은 사건 하나에 가깝다(못 쟀다)" };
+    const sum = new Float64Array(K), cnt = new Float64Array(K);
+    for (let i = 0; i < n; i++) {
+      const t = _num(ts[i], 0); if (!(t > 0)) continue;
+      let b = Math.floor((t - lo) / horizonMs); if (b >= K) b = K - 1; if (b < 0) b = 0;
+      sum[b] += (hits[i] ? 1 : 0); cnt[b] += 1;
+    }
+    const acc = []; for (let b = 0; b < K; b++) if (cnt[b] >= 8) acc.push(sum[b] / cnt[b]);
+    if (acc.length < BLKACC.minBlocks)
+      return { lb: null, k: acc.length, why: "채워진 블록 " + acc.length + "개 < " + BLKACC.minBlocks + " (못 쟀다)" };
+    let m = 0; for (const a of acc) m += a; m /= acc.length;
+    let v = 0; for (const a of acc) v += (a - m) * (a - m);
+    v /= Math.max(1, acc.length - 1);                       // 블록 간 분산(표본분산)
+    const se = Math.sqrt(v / acc.length);                   // 블록 평균의 표준오차
+    return { lb: _clamp(m - BLKACC.tMul * se, 0, 1), k: acc.length, mean: m, se: se, why: null };
+  } catch (e) { return { lb: null, k: 0, why: "계산 실패: " + ((e && e.message) || e) }; }
+}
 function _icBlockStats(pv, yv, K, keys, mkeys) {
   try {
     const n = Math.min(pv.length, yv.length);
@@ -40435,12 +40488,18 @@ async function mlDNNTrainNightly(DB) {
     // 검증 정확도(앙상블: 로짓 평균) + Wilson 신뢰하한
     let correct = 0;
     if (!_innerVal) console.log("[DNN] ★내부검증을 못 뗐다(표본 부족) — 이 회차 dnnLB 는 부풀어 있다★");
-    for (const t of val) { const p = _dnnEnsembleP(nets, t.x); if ((p >= 0.5 ? 1 : 0) === t.y) correct++; }
+    const _bHitD = [], _bTsD = [];   // [V33.398] 블록 기준 하한용 — 적중·시각
+    for (const t of val) { const p = _dnnEnsembleP(nets, t.x); const _ok = ((p >= 0.5 ? 1 : 0) === t.y);
+      if (_ok) correct++; _bHitD.push(_ok ? 1 : 0); _bTsD.push(_num(t.ts, 0)); }
     const dnnAcc = correct / val.length;
     // [V33.115] 유효표본수로 하한을 잰다 — 외부(Modal) 업로드와 같은 자를 써야 공정 비교다.
     const _uBar = await mlPoolUniqGet(DB);
     const _dnnNEff = _effN(val.length, _uBar);
-    const dnnLB = _wilsonLB(dnnAcc, _dnnNEff);
+    let dnnLB = _wilsonLB(dnnAcc, _dnnNEff);
+    /* [V33.398] 행이 아니라 ★사건★ 을 센다 — GBDT 와 같은 규율(위 _blockAccLB 주석). */
+    const _horD = Math.max(1, _num((AI_PARAMS.prediction && AI_PARAMS.prediction.horizonDays) || 10, 10)) * 86400000;
+    const _blkD = _blockAccLB(_bHitD, _bTsD, _horD);
+    if (_blkD.lb != null && _blkD.lb < dnnLB) dnnLB = +_blkD.lb.toFixed(4);
 
     const net = { nets: nets, mean: mean, std: std, featVer: LUXML.featVer,
                   valAcc: +dnnAcc.toFixed(4), valAccLB: +dnnLB.toFixed(4), valN: _dnnNEff,
@@ -40481,6 +40540,14 @@ async function mlDNNTrainNightly(DB) {
       if (_lbNomD >= DNN.trustFloor && dnnLB < DNN.trustFloor)
         trust.reason = "고유도보정: 명목 하한 " + (_lbNomD * 100).toFixed(1) + "% 는 통과인데 유효 하한 " +
                        (dnnLB * 100).toFixed(1) + "% 로 미달 (유효 " + _num(net.valN, 0) + "/" + _num(net.valNRaw, 0) + ")";
+    }
+    trust.blockAccLB = (_blkD.lb != null) ? +_blkD.lb.toFixed(4) : null;
+    trust.blockK = _num(_blkD.k, 0);
+    if (_blkD.lb == null) {
+      /* [V33.398] 못 쟀으면 승격하지 않는다 — 못 잰 것을 통과로 읽지 않는다. */
+      trust.reason = "블록 기준 못 쟀다 — " + (_blkD.why || "블록 부족");
+      await setState(DB, "dnn_trust", trust);
+      return "[DNN] " + trust.reason;
     }
     if (dnnLB >= DNN.trustFloor && dnnLB >= _dnnBase + (DNN.trustBaselineMargin || 0)) {
       /* [V33.397] 영점을 각자의 무실력 정확도로. _dnnBase 는 바로 위에서 이 풀로 쟀다. */
@@ -42155,13 +42222,16 @@ async function mlGBDTTrainNightly(DB) {
     const embargoMs = (LUXML.embargoDays || 6) * 86400000;
     const folds = _purgedFolds(data.map(function (d) { return d.ts; }), GBDT.cvFolds || 3, embargoMs);
     let oofCorrect = 0, oofN = 0, treeCounts = [];
+    const _bHit = [], _bTs = [];   // [V33.398] 검증행의 적중·시각 — 블록 기준 하한을 내려면 필요하다
     for (const fd of folds) {
       if (Date.now() > cvDeadline - 1000) break;   // 최종학습 시간 확보
       const ftr = fd.train.map(function (i) { return data[i]; });
       const fvl = fd.val.map(function (i) { return data[i]; });
       const m = _gbdtFit(ftr, fvl, { maxTrees: GBDT.cvMaxTrees, deadline: cvDeadline, innerStop: true });   // [V33.391] 폴드 검증으로 멈추면 그 폴드 OOF 가 부푼다
       treeCounts.push(m.nTrees);
-      for (const d of fvl) { const p = mlGBDTScore(m, d.x); if (p != null && (p >= 0.5 ? 1 : 0) === d.y) { oofCorrect++; } oofN++; }
+      for (const d of fvl) { const p = mlGBDTScore(m, d.x); const _ok = (p != null && (p >= 0.5 ? 1 : 0) === d.y);
+        if (_ok) { oofCorrect++; } oofN++;
+        _bHit.push(_ok ? 1 : 0); _bTs.push(_num(d.ts, 0)); }   // [V33.398] 블록 정확도용
     }
     // CV 불가 시 종전 홀드아웃 폴백
     let acc, valN, cvMode;
@@ -42179,7 +42249,8 @@ async function mlGBDTTrainNightly(DB) {
       const vl = data.slice(N - nVal);
       if (tr.length < 60) { await setState(DB, "gbdt_trust", { wGbdt: 0, trusted: false, reason: "train" }); return "\u27F3 " + "[GBDT] 훈련셋 부족"; }
       const m = _gbdtFit(tr, vl, { deadline: cvDeadline, innerStop: true });   // [V12.49] 홀드아웃도 CV 몫만 — 최종학습 절반 보장 / [V33.391] 멈출 때는 내부검증
-      let c = 0; for (const d of vl) { const p = mlGBDTScore(m, d.x); if (p != null && (p >= 0.5 ? 1 : 0) === d.y) c++; }
+      let c = 0; for (const d of vl) { const p = mlGBDTScore(m, d.x); const _ok = (p != null && (p >= 0.5 ? 1 : 0) === d.y);
+        if (_ok) c++; _bHit.push(_ok ? 1 : 0); _bTs.push(_num(d.ts, 0)); }   // [V33.398] 블록 정확도용
       acc = c / Math.max(1, vl.length); valN = vl.length; cvMode = "홀드아웃";
       fixedTrees = Math.max(20, m.nTrees);
     }
@@ -42188,6 +42259,17 @@ async function mlGBDTTrainNightly(DB) {
     let valNRaw = valN;
     valN = _effN(valN, _uBar);
     let accLB = _wilsonLB(acc, valN);
+    /* ══ [V33.398] ★행을 세지 말고 사건을 세라.★ ═════════════════════════════════════
+       고유도는 ★같은 종목 안에서만★ 겹침을 센다. 600종목이 같은 10일을 함께 오르면
+       그건 600개 관측이 아니라 한 개다 — 방향성 라벨에서는 그 가정이 틀린다.
+       라벨 지평 길이의 ★겹치지 않는 시간블록★ 으로 나눠 블록 간 산포로 하한을 다시 잰다.
+       ★하한은 더 정직해지기만 한다★ — 둘 중 작은 값을 쓴다(느슨해지는 방향은 없다). */
+    const _hor = Math.max(1, _num((AI_PARAMS.prediction && AI_PARAMS.prediction.horizonDays) || 10, 10)) * 86400000;
+    const _blk = _blockAccLB(_bHit, _bTs, _hor);
+    let _blkWhy = _blk.why || null;
+    if (_blk.lb != null) {
+      if (_blk.lb < accLB) accLB = +_blk.lb.toFixed(4);
+    }
 
     // ── 최종 모델: 전체 표본, CV가 정한 트리 수로 학습 + 피처 중요도 수집 ──
     const model = _gbdtFit(data, null, { fixedTrees: fixedTrees, deadline: deadline, collectImp: true });
@@ -42267,6 +42349,18 @@ async function mlGBDTTrainNightly(DB) {
       if (_lbNom >= GBDT.trustFloor && accLB < GBDT.trustFloor)
         trust.reason = "고유도보정: 명목 하한 " + (_lbNom * 100).toFixed(1) + "% 는 통과인데 유효 하한 " +
                        (accLB * 100).toFixed(1) + "% 로 미달 (유효 " + _num(model.valN, 0) + "/" + _num(model.valNRaw, 0) + ")";
+    }
+    /* [V33.398] 블록이 모자라 ★못 쟀으면 승격하지 않는다.★ 못 잰 것을 통과로 읽으면
+       "15일치 시장 방향" 이 실력으로 둔갑한다 — 지금 화면의 GBDT 74% 가 정확히 그것이다.
+       IC 경로가 이미 같은 규율을 쓴다(블록 부족 → pending). 정확도만 예외일 이유가 없다. */
+    trust.blockAccLB = (_blk.lb != null) ? +_blk.lb.toFixed(4) : null;
+    trust.blockK = _num(_blk.k, 0);
+    if (_blk.lb == null) {
+      trust.reason = "블록 기준 못 쟀다 — " + (_blkWhy || "블록 부족") +
+        " (행 " + _num(model.valNRaw, 0) + "개는 같은 사건을 여러 번 센 것이다)";
+      await setState(DB, "gbdt_trust", trust);
+      try { await log(DB, "INFO", null, "[GBDT] " + trust.reason); } catch (e) {}
+      return "[GBDT] " + trust.reason;
     }
     if (accLB >= GBDT.trustFloor && accLB >= _gBase + (DNN.trustBaselineMargin || 0)) {
       /* [V33.397] ★영점을 각자의 무실력 정확도로.★ 이 모델은 D1 9,000행에서 재고
@@ -50821,6 +50915,7 @@ export {
   mlPermutationTest, mlGroupedPermutationTest, _corrClusters, mlBanditContext,
   mlBanditNoiseNightly, LUXNOISE, LUXBANDIT,
   memoScore, memoTrainNightly, MEMOML,
+  _blockAccLB, BLKACC,   // [V33.398] 블록 정확도 하한 — 게이트가 실제로 돌려 본다
   _dnnArchDecide, DNNARCH, DNN, DNNW,   // [V33.260] 측정-반영 고리 검사
   _dnnAdmit,                        // [V33.262] DNN 승격 판정(정확도 길 · IC 길)
   optMicroFromChain, _bsDeltaGamma, OPTMICRO,   // [V33.264] 옵션 미시구조
