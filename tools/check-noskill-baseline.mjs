@@ -117,11 +117,81 @@ console.log("\n⑥ 게이트가 실제로 이 기준점을 쓰는가 · 트레�
     ["GBDT", /const _gAccFloor = _accFloor\(GBDT\.trustFloor, _num\(body\.accBase, null\)\);/],
     ["MIND(외부 FM)", /_mLB >= _accFloor\(MIND\.trustFloor, _num\(body\.accBase, null\)\)/],
     ["MIND(단발)", /vLB >= _accFloor\(MIND\.trustFloor, _num\(body\.accBase, null\)\)/],
-    ["DNN", /_dnnAdmit\(valAccLB, _icT, mindLB, _num\(_vs\.accBase, null\)\)/],
-    ["SEQ", /_dnnAdmit\(lb, icT, 0\.5, _num\(body\.accBase, null\)\)/],
+    /* [V33.397] 호출을 문자열 통째로 못 박아 뒀더니, 지분 영점을 고치며 인자가 하나 늘었을 때
+       ★뜻과 무관한 이유로★ 실패했다(이 저장소가 check-model-evidence 에서 이미 겪은 그 실수다).
+       계약의 뜻은 "게이트가 무실력 기준점을 본다" 이지 "인자가 넷" 이 아니다 — 넷째 인자가
+       accBase 인지만 본다. 대신 ★더 좁게★: 다섯째(mindBase)까지 넘기는지도 아래에서 확인한다. */
+    ["DNN", /_dnnAdmit\(valAccLB, _icT, mindLB, _num\(_vs\.accBase, null\)[,)]/],
+    ["SEQ", /_dnnAdmit\(lb, icT, 0\.5, _num\(body\.accBase, null\)[,)]/],
     ["단타", /_clamp\(_num\(body\.accBase, 0\), 0, 0\.9\)/]
   ];
   for (const [nm, re] of want) chk(re.test(S), `${nm} 게이트가 무실력 기준점을 본다`, `★${nm} 게이트가 아직 종전 기준점이다★`);
+
+  /* ══ [V33.397] ★문턱만 고치고 지분은 안 고쳐져 있었다.★ ═══════════════════════════
+     V33.292 가 accBase 를 받아 ★문턱★ 에 반영했는데, ★지분★ 은 끝까지 `exp(T×(lb−0.5))`
+     였다. 0.5 가 무실력인 것은 기저율이 50% 일 때뿐이다. 실측(2026-09-21):
+       GBDT 하한 70.4%·Worker(D1 9,000행) → 지분 0.7106
+       LGB  하한 51.1%·Modal(276,251행)   → 지분 0.1955
+     승격 조건 accLB ≥ base+0.015 를 통과했으므로 GBDT 의 base ≤ 0.689 가 이미 증명돼 있다.
+     그 구간에서 실제 실력은 1.5~5.4%p 인데 0.5 영점으로는 20.4%p 로 읽혀 위원회의 71% 를 갖는다.
+     softmax 는 이동불변이라 ★base 가 서로 같으면 아무것도 안 바뀐다★ — 문제는 워커 풀과
+     Modal 풀의 기저율이 다른데 같은 영점을 쓴 것이다. */
+  chk(/function _skillExp\(lb, base, temp\)/.test(S),
+    "지분 계산에 무실력 영점을 쓰는 공용 함수가 있다",
+    "★지분이 여전히 0.5 를 영점으로 쓴다 — 쏠린 풀의 다수클래스가 실력으로 읽힌다★");
+  {
+    /* ★기록용 줄은 빼고 센다.★ 교정 전 값(wGbdtRaw05·wDnnRaw05)을 남기려고 옛 식을 그대로
+       한 줄 더 쓰는데, 그 줄은 판정에 안 쓰인다. 변수명(_o/_om)으로 거르려다 내부 변수명
+       (gLB·mindLB)이 잡혔다 — ★줄 단위로★ 판별해야 한다. */
+    /* ★`\w+ - 0.5` 로 좁게 썼다가 `_num(mindLB, 0.5) - 0.5` 를 놓쳤다★(돌연변이 N4).
+       괄호 안이 무엇이든 `trustTemp * (… - 0.5)` 모양이면 전부 센다. */
+    const left = S.split("\n")
+      .filter((ln) => /Math\.exp\((?:DNN|GBDT)\.trustTemp \* \([^)]*(?:\)[^)]*)*- 0\.5\)/.test(ln))
+      .filter((ln) => !/const _o = |Raw05/.test(ln))
+      .map((ln) => ln.trim().slice(0, 70));
+    chk(left.length === 0,
+      "판정에 쓰는 지분식에 0.5 영점이 남아 있지 않다",
+      `★0.5 영점이 아직 ${left.length}곳 남았다 — 한쪽만 고치면 그 자리만 부푼다 ▸ ${left.join(" ▸ ")}★`);
+  }
+  chk(/_dnnAdmit\(accLB, icT, mindLB, accBase, mindBase\)/.test(S),
+    "_dnnAdmit 이 자기 영점과 ★위원장의 영점★ 을 둘 다 받는다",
+    "★위원장 쪽 영점을 안 받는다 — 한쪽만 교정하면 비교가 더 틀어진다★");
+  for (const [nm, re] of [
+    ["분할커밋", /_dnnAdmit\(valAccLB, _icT, mindLB, _num\(_vs\.accBase, null\), _fMindBase\)/],
+    ["단발업로드", /_dnnAdmit\(dnnLB, _num\(body\.valICt, null\), mindLB, _num\(body\.accBase, null\), _uMindBase\)/],
+  ]) chk(re.test(S), `${nm} 경로가 위원장 영점을 넘긴다`, `★${nm} 경로가 위원장 영점을 안 넘긴다★`);
+  /* ★부풀었던 크기를 기록으로 남기는가★ — 안 남기면 "얼마나 고쳐졌나" 를 영영 못 잰다. */
+  /* ★개수를 센다★ — 존재만 보면 두 곳 중 하나만 지워도 통과한다(돌연변이 N7).
+     지분을 확정하는 자리마다 교정 전 값이 같이 남아야 "얼마나 부풀었었나" 를 잴 수 있다. */
+  {
+    const nW = (S.match(/wGbdtRaw05/g) || []).length, nD = (S.match(/wDnnRaw05/g) || []).length;
+    const nSites = (S.match(/_skillExp\((?:accLB|gLB|dnnLB), /g) || []).length;
+    chk(nW >= 2 && nD >= 1 && (nW + nD) >= nSites,
+      `교정 전(0.5 영점) 지분을 ${nW + nD}곳에 남긴다 — 지분 확정 ${nSites}곳을 덮는다`,
+      `★교정 전 값이 ${nW + nD}곳뿐이다(지분 확정 ${nSites}곳) — 개선 폭을 증명할 수 없다★`);
+  }
+  /* ★경계 동작★ — base 를 모르면 0.5 로 떨어져 종전과 한 글자도 다르지 않아야 한다. */
+  {
+    const m = S.match(/function _skillExp\(lb, base, temp\) \{([\s\S]*?)\n\}/);
+    if (!m) chk(false, "", "_skillExp 본문을 못 떼어 내겠다");
+    else {
+      const _num = (v, d) => (typeof v === "number" && isFinite(v) ? v : d);
+      const _clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+      // eslint-disable-next-line no-new-func
+      const f = new Function("lb", "base", "temp", "_num", "_clamp", m[1] );
+      const g = (lb, base) => f(lb, base, 12, _num, _clamp);
+      const same = Math.abs(g(0.704, null) - Math.exp(12 * (0.704 - 0.5))) < 1e-12
+                && Math.abs(g(0.704, 0.5) - Math.exp(12 * (0.704 - 0.5))) < 1e-12;
+      chk(same, "base 를 모르거나 0.5 면 종전 값과 ★비트 단위로 같다★(무변경 보장)",
+        "★base 가 없을 때 종전과 달라진다 — 조용한 동작 변경이다★");
+      chk(g(0.704, 0.68) < g(0.704, 0.55),
+        "무실력 기준점이 높을수록 지분이 작아진다(실력 = 하한 − 무실력)",
+        "★기준점이 지분에 반영되지 않는다★");
+      chk(Math.abs(g(0.9, 0.2) - g(0.9, 0.5)) < 1e-12,
+        "이상한 base(0.5 미만)는 0.5 로 잘린다 — 영점을 내려 지분을 부풀릴 수 없다",
+        "★base 를 낮춰 지분을 부풀릴 수 있다★");
+    }
+  }
   chk(/valAccBase: _accBase/.test(S), "워커 자체학습도 무실력 기준점을 남긴다", "워커 학습이 기준점을 안 남긴다");
   chk(/def _no_skill_acc\(y, mkt=None\)/.test(PY), "파이썬도 같은 값을 낸다", "★파이썬에 없다 — 외부 모델은 기준점을 못 받는다★");
   chk(/out\["accBase"\] = round\(_ab, 4\)/.test(PY), "블록 IC 를 내는 자리에서 함께 낸다(두 자가 갈라지지 않는다)", "따로 계산한다");

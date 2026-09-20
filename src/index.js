@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.396";
+const _BUILD_VER = "V33.397";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -25167,8 +25167,8 @@ async function handleRequest(request, env, ctx) {
       const _finishImport = async function (saveInfo, valAcc, valAccLB, valN, valStat) {
         const _vs = valStat || {};
         __dnnMemCache = null;
-        let mindLB = 0.5;
-        try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
+        let mindLB = 0.5, _fMindBase = null;   // [V33.397] 위원장의 무실력 영점
+        try { const mm = await mlMindLoad(env.DB); if (mm) { mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); _fMindBase = _num(mm.valAccBase, null); } } catch (e) {}
         // [V33.175] ★"학습 21시간 전"이 아무 의미가 없던 마지막 조각★
         //   신뢰(trust) 레코드에 trainedAt 이 없어 운영화면의 외부모델 나이가 전부 null 이었다.
         //   그래서 워치독의 신선도 계산도 항상 9999(=낡음)로 떨어져, 주소를 고쳐도 6시간마다
@@ -25180,13 +25180,14 @@ async function handleRequest(request, env, ctx) {
         // [V33.262] 판정은 _dnnAdmit 한 곳에만 있다 — 아래 단발 업로드 경로도 같은 함수를 쓴다.
         {
           const _icT = _num(_vs.valICt, null);
-          const _ad = _dnnAdmit(valAccLB, _icT, mindLB, _num(_vs.accBase, null));   // [V33.292]
+          const _ad = _dnnAdmit(valAccLB, _icT, mindLB, _num(_vs.accBase, null), _fMindBase);   // [V33.292] · [V33.397] 영점
           trust.wDnn = _ad.wDnn; trust.trusted = _ad.trusted;
           trust.admitPath = _ad.path; trust.admitWhy = _ad.why;
           trust.valICt = _icT; trust.valICBlock = _num(_vs.valICBlock, null);
         }
         /* [V33.394] 정합 결과를 trust 에 남긴다 — 화면이 "몇 %p 어긋나는 모델인가" 를
            말할 수 있어야 한다. probe 가 없던 회차는 null 이고, 그것도 사실로 적는다. */
+        trust.accBase = _num(_vs.accBase, null);   // [V33.397] 무실력 영점 — 지분 계산의 근거
         trust.probeMaxDiff = _num(_vs.probeMaxDiff, null);
         trust.probeN = Math.max(0, Math.floor(_num(_vs.probeN, 0)));
         if (_vs.probeWhy) trust.probeWhy = String(_vs.probeWhy).slice(0, 160);
@@ -25361,15 +25362,15 @@ async function handleRequest(request, env, ctx) {
       try { saveInfo = await setBigState(env.DB, "dnn_model", net); } catch (e) { return Response.json({ error: "저장 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
       __dnnMemCache = null;
       // ── 신뢰게이트: mind 대비 Wilson 하한 비교(야간학습과 동일 로직) ──
-      let mindLB = 0.5;
-      try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
+      let mindLB = 0.5, _uMindBase = null;   // [V33.397] 위원장의 무실력 영점
+      try { const mm = await mlMindLoad(env.DB); if (mm) { mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); _uMindBase = _num(mm.valAccBase, null); } } catch (e) {}
       let trust = { wDnn: 0, trusted: false, dnnAcc: net.valAcc, dnnAccLB: net.valAccLB, mindAcc: mindLB, source: "external",
                     featVer: LUXML.featVer,   // [V33.245] 동상
                     trainedAt: Date.now(),
                     valN: net.valN, valNRaw: net.valNRaw, valUniq: net.valUniq };
       // [V33.262] 위 분할커밋 경로와 ★같은 판정 함수★ 를 쓴다. 규칙을 두 곳에 적으면 갈라진다.
       {
-        const _ad = _dnnAdmit(dnnLB, _num(body.valICt, null), mindLB);
+        const _ad = _dnnAdmit(dnnLB, _num(body.valICt, null), mindLB, _num(body.accBase, null), _uMindBase);   // [V33.397] 영점
         trust.wDnn = _ad.wDnn; trust.trusted = _ad.trusted;
         trust.admitPath = _ad.path; trust.admitWhy = _ad.why;
         trust.valICt = _num(body.valICt, null); trust.valICBlock = _num(body.valICBlock, null);
@@ -25598,8 +25599,8 @@ async function handleRequest(request, env, ctx) {
         ? (convMaxDiff <= 0.03 && selfAcc != null && selfAcc > 0.02 && selfAcc < 0.999)
         : ((selfAcc != null) && (selfAcc > 0.02 && selfAcc < 0.98) && (Math.abs(selfAcc - gAcc) <= 0.20));
       // 트러스트 계산(라이브 GBDT와 동일 로직).
-      let mindLB = 0.5;
-      try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
+      let mindLB = 0.5, _gMindBase = null;   // [V33.397] 위원장의 무실력 영점도 같이 읽는다
+      try { const mm = await mlMindLoad(env.DB); if (mm) { mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); _gMindBase = _num(mm.valAccBase, null); } } catch (e) {}
       let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, gbdtAccLB: model.valAccLB, mindAcc: mindLB, source: "external", featVer: LUXML.featVer, trainedAt: Date.now(), selfAcc: selfAcc != null ? +selfAcc.toFixed(4) : null, selfN: selfN, convMaxDiff: convMaxDiff != null ? +convMaxDiff.toFixed(4) : null, convN: convN,
         valN: model.valN, valNRaw: model.valNRaw, valUniq: model.valUniq };
       trust.valIC = _vIC; trust.valRankIC = _vRIC;
@@ -25660,8 +25661,14 @@ async function handleRequest(request, env, ctx) {
       trust.accFloorUsed = +_gAccFloor.toFixed(4);
       trust.icTMinUsed = _icTMin;
       if ((_passAcc || _passIC) && !_icBlockWhy) {
-        const eG = Math.exp(GBDT.trustTemp * (gLB - 0.5)), eM = Math.exp(GBDT.trustTemp * (mindLB - 0.5));
+        /* [V33.397] 영점을 각자의 무실력 정확도로 — 둘 다 없으면 0.5 라 종전과 같다. */
+        const eG = _skillExp(gLB, _num(body.accBase, null), GBDT.trustTemp);
+        const eM = _skillExp(mindLB, _gMindBase, GBDT.trustTemp);
         trust.wGbdt = +(eG / (eG + eM)).toFixed(4); trust.trusted = true;
+        {
+          const _o = Math.exp(GBDT.trustTemp * (gLB - 0.5)), _om = Math.exp(GBDT.trustTemp * (mindLB - 0.5));
+          trust.wGbdtRaw05 = +(_o / (_o + _om)).toFixed(4);   // 교정 전 값 — 부풀었던 크기를 남긴다
+        }
         trust.passedBy = _passAcc ? (_passIC ? "acc+ic" : "acc") : "ic";
       }
       if (!trust.trusted && !trust.reason) trust.reason = "정확도 하한 " + gLB.toFixed(4) + " < " + _gAccFloor.toFixed(4) +
@@ -40455,10 +40462,10 @@ async function mlDNNTrainNightly(DB) {
     try { await log(DB, "INFO", null, "[DNN] 저장 " + (_saveInfo.bytes / 1024 / 1024).toFixed(1) + "MB / " + _saveInfo.chunks + "청크"); } catch (e) {}
 
     // ── 신뢰블렌드: mind(스태킹) 대비 — [V4] 양쪽 다 Wilson 하한으로 공정 비교 ──
-    let mindLB = 0.5;
+    let mindLB = 0.5, _wMindBase = null;   // [V33.397] 위원장의 무실력 영점
     try {
       const mm = await mlMindLoad(DB);
-      if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30));
+      if (mm) { mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); _wMindBase = _num(mm.valAccBase, null); }
     } catch (e) {}
     // [V12.54] 절대실력 게이트 — MIND 상대비교 폐기(위 config 주석 참조). 다수클래스 기저를 넘고
     //   trustFloor를 넘으면 위원회 합류. wDnn은 참고용(실제 표는 mlDeepDecide가 결정시 재계산).
@@ -40476,10 +40483,16 @@ async function mlDNNTrainNightly(DB) {
                        (dnnLB * 100).toFixed(1) + "% 로 미달 (유효 " + _num(net.valN, 0) + "/" + _num(net.valNRaw, 0) + ")";
     }
     if (dnnLB >= DNN.trustFloor && dnnLB >= _dnnBase + (DNN.trustBaselineMargin || 0)) {
-      const eD = Math.exp(DNN.trustTemp * (dnnLB - 0.5));
-      const eM = Math.exp(DNN.trustTemp * (mindLB - 0.5));
+      /* [V33.397] 영점을 각자의 무실력 정확도로. _dnnBase 는 바로 위에서 이 풀로 쟀다. */
+      const eD = _skillExp(dnnLB, _dnnBase, DNN.trustTemp);
+      const eM = _skillExp(mindLB, _wMindBase, DNN.trustTemp);
       trust.wDnn = +(eD / (eD + eM)).toFixed(4);
       trust.trusted = true;
+      trust.skill = +(dnnLB - _clamp(_num(_dnnBase, 0.5), 0.5, 0.9)).toFixed(4);
+      {
+        const _o = Math.exp(DNN.trustTemp * (dnnLB - 0.5)), _om = Math.exp(DNN.trustTemp * (mindLB - 0.5));
+        trust.wDnnRaw05 = +(_o / (_o + _om)).toFixed(4);
+      }
     }
     /* [V33.338] ★이건 폴백이다 — 그렇게 말하고, 그만큼만 발언한다.★
        사용자 지적: "dnn 또 12층에서 4층됐는데". featVer 를 올릴 때마다 GPU 모델(은닉 10층·
@@ -40539,7 +40552,35 @@ function _accFloor(base, noSkill) {
   if (b == null || !isFinite(b)) return f;
   return Math.max(f, _clamp(b, 0.5, 0.9));
 }
-function _dnnAdmit(accLB, icT, mindLB, accBase) {
+/* ══ [V33.397] ★지분을 0.5 로부터의 거리로 줬다 — 그건 실력이 아니다.★ ═══════════════
+   위원 지분은 전부 `exp(trustTemp × (accLB − 0.5))` 로 계산한다. 0.5 를 ★영점★ 으로
+   박아 둔 식이다. 그런데 0.5 가 무실력인 것은 기저율이 50% 일 때뿐이다.
+   V33.292 가 이미 그 사실을 알고 `accBase`(무실력 정확도)를 받아 ★문턱★ 에 반영했는데,
+   ★지분★ 에는 끝내 반영하지 않았다 — 반쪽만 고쳐져 있었다.
+
+   ■ 왜 그냥 두면 안 되는가 (실측 2026-09-21 화면)
+     GBDT  하한 70.4% · ★Worker★ · 검증 유효 432/9,000(D1 풀)      → 지분 0.7106
+     LGB   하한 51.1% ·  Modal   · 276,251 행                      → 지분 0.1955
+     Cat   하한 50.3% ·  Modal   · 276,251 행                      → 지분 0.1812
+     역산: MIND 하한 0.6291, trustTemp 12 — 이 식으로 LGB 0.1950·Cat 0.1804 가 재현된다
+           (실측 0.1955·0.1812, 오차 5e-4 · 8e-4). 메커니즘은 이것이 맞다.
+     승격 조건 `accLB ≥ base + 0.015` 를 통과했으므로 ★GBDT 의 base ≤ 0.689★ 가 이미
+     증명돼 있다. 같은 라벨에서 Modal 부스터 셋이 50.3~51.2% 인데 GBDT 만 18%p 실력이라는
+     해석은 그 셋과 양립하지 않는다 — base 는 상단(0.65~0.689) 쪽이다.
+     그 구간에서 실력은 1.5~5.4%p 인데, 0.5 를 영점으로 쓰면 ★20.4%p★ 로 읽혀
+     위원회의 71% 를 가져간다. 교정하면 0.32~0.43 이 된다.
+
+   ■ softmax 는 이동불변이다 — 그래서 ★base 가 서로 같으면 아무것도 안 바뀐다.★
+     문제는 base 가 다를 때다: 워커 GBDT 는 D1 9,000행, Modal 모델은 276,251행 —
+     ★다른 풀, 다른 기저율★ 인데 같은 영점으로 비교해 왔다.
+     base 를 모르면 0.5 로 떨어지므로 ★종전 동작과 한 글자도 다르지 않다.★ */
+function _skillExp(lb, base, temp) {
+  const _b = _num(base, null);
+  const _z = (_b != null && isFinite(_b)) ? _clamp(_b, 0.5, 0.9) : 0.5;   // 무실력 영점
+  const _s = _num(lb, 0.5) - _z;                                          // 실력 = 하한 − 무실력
+  return Math.exp(_num(temp, 12) * _clamp(_s, -1, 1));
+}
+function _dnnAdmit(accLB, icT, mindLB, accBase, mindBase) {
   const _acc = _num(accLB, 0);
   const _t = (icT == null) ? null : _num(icT, null);
   const _fl = _accFloor(DNN.trustFloor, accBase);
@@ -40560,7 +40601,8 @@ function _dnnAdmit(accLB, icT, mindLB, accBase) {
     else _why += " · 블록IC t " + _t.toFixed(2) + " < " + _tMin + "(IC 경로 미달)";
     return { trusted: false, wDnn: 0, path: null, why: _why };
   }
-  const eD = Math.exp(DNN.trustTemp * (_acc - 0.5)), eM = Math.exp(DNN.trustTemp * (_num(mindLB, 0.5) - 0.5));
+  /* [V33.397] 영점을 각자의 무실력 정확도로 — 둘 다 모르면 0.5 라 종전과 같다. */
+  const eD = _skillExp(_acc, accBase, DNN.trustTemp), eM = _skillExp(_num(mindLB, 0.5), mindBase, DNN.trustTemp);
   const w = eD / (eD + eM);
   return { trusted: true, path: accPath ? "acc" : "ic",
            wDnn: +(icPath ? w * _num(DNN.icPathWeightMult, 0.35) : w).toFixed(4),
@@ -41014,7 +41056,9 @@ async function mlDeepDecide(DB, featVec, opts) {
         mindAccLB = (typeof mind.valAccLB === "number") ? mind.valAccLB
           : ((typeof mind.valAcc === "number") ? _wilsonLB(mind.valAcc, _num(mind.valN, 30)) : 0.5);
         // [V33.93] 측정된 IC 를 넘긴다(없으면 null → 정확도 환산 폴백, 상한 0.10 유지).
+        /* [V33.397] base(무실력 정확도)를 같이 싣는다 — 지분은 0.5 가 아니라 이 값에서 잰다. */
         experts.push({ name: "mind", p: mindScore.p, z: _logitD(mindScore.p), acc: mindAccLB,
+                       base: _num(mind.valAccBase, null),
                        ic: _icEffective({ valICBlock: mind.valICBlock, valICt: mind.valICt, valIC: mind.valIC, valN: mind.valN }) });
         _committeeUnc = mindScore.uncertainty || 0;
       } else _skip("mind", "점수 null");
@@ -41053,7 +41097,8 @@ async function mlDeepDecide(DB, featVec, opts) {
         //   STACK·이중헤드)가 통째로 죽고 밴딧/규칙엔진으로 폴백해 왔다. V33.77 부터 존재한 버그다.
         // [V33.91] 점추정 IC 대신 '유의성으로 수축된 유효 IC' 를 위원회 가중에 넘긴다.
         const _dnnIC = _icEffective(net) != null ? _icEffective(net) : _icEffective(trust);
-        experts.push({ name: "dnn", p: pDnn, z: _logitD(pDnn), acc: accEff, ic: _dnnIC }); usedDnn = true;
+        experts.push({ name: "dnn", p: pDnn, z: _logitD(pDnn), acc: accEff, ic: _dnnIC,
+                       base: _num(trust.accBase, _num(trust.base, null)) }); usedDnn = true;
         if (!mind) _committeeUnc = Math.max(_committeeUnc, dnnStd);  // [V12.62] MIND 없을 땐 DNN 시드불일치를 위원회 불확실성으로
       } else _skip("dnn", "점수 null");
     } else _skip("dnn", !trust ? "신뢰기록 없음" : (!trust.trusted ? "미승격" : "wDnn 0"));
@@ -41064,7 +41109,8 @@ async function mlDeepDecide(DB, featVec, opts) {
         const pG = gm ? mlGBDTScore(gm, featVec) : null;
         // [V33.77] 모델이 실어 온 valIC 를 그대로 위원회 가중에 쓴다(없으면 정확도 환산 폴백).
         const _gIC = _icEffective(gm) != null ? _icEffective(gm) : _icEffective(gtrust);   // [V33.91] 유효 IC
-        if (pG != null) { experts.push({ name: "gbdt", p: pG, z: _logitD(pG), acc: _num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0.5)), ic: _gIC }); usedGbdt = true; }
+        if (pG != null) { experts.push({ name: "gbdt", p: pG, z: _logitD(pG), acc: _num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0.5)), ic: _gIC,
+                           base: _num(gtrust.base, _num(gtrust.accBase, null)) }); usedGbdt = true; }
         else _skip("gbdt", gm ? "점수 null" : "모델 로드 실패");
       } else _skip("gbdt", !gtrust ? "신뢰기록 없음" : (!gtrust.trusted ? "미승격" : "wGbdt 0"));
     } catch (e) { _skip("gbdt", "예외: " + ((e && e.message) || e)); }
@@ -41259,7 +41305,10 @@ async function mlDeepDecide(DB, featVec, opts) {
       const _icOf = function (ex) {
         let base;
         if (typeof ex.ic === "number" && isFinite(ex.ic)) base = _clamp(ex.ic, -0.05, 0.25);
-        else base = _clamp((Math.min(_accBlend(ex), _cap) - 0.5) / 0.4, -0.02, 0.10);   // 정확도 → IC 근사(현실범위)
+        /* [V33.397] 정확도 → IC 환산도 ★0.5 가 아니라 그 모델의 무실력 정확도★ 에서 잰다.
+           기저율이 60% 인 풀에서 61% 를 낸 모델은 실력 1%p 지 11%p 가 아니다.
+           ex.base 가 없으면 0.5 로 떨어져 종전과 같다. */
+        else base = _clamp((Math.min(_accBlend(ex), _cap) - _clamp(_num(ex.base, 0.5), 0.5, 0.9)) / 0.4, -0.02, 0.10);
         const adj = _expRegIC(base, _expRegTbl, ex.name, _regBucket);
         return _clamp((typeof adj === "number" && isFinite(adj)) ? adj : base, -0.05, 0.25);
       };
@@ -41269,7 +41318,7 @@ async function mlDeepDecide(DB, featVec, opts) {
       for (const ex of experts) {
         const w = _useIC
           ? (ex.wMul || 1) * Math.exp(_icT * _icOf(ex))
-          : (ex.wMul || 1) * Math.exp(T * (Math.min(_accBlend(ex), _cap) - 0.5));
+          : (ex.wMul || 1) * _skillExp(Math.min(_accBlend(ex), _cap), ex.base, T);   // [V33.397] 영점 = 무실력 정확도
         wsum += w; zsum += w * ex.z;
         _wl.push({ w: w, z: ex.z, name: ex.name });
       }
@@ -42191,10 +42240,13 @@ async function mlGBDTTrainNightly(DB) {
     await setState(DB, "gbdt_model", model);
 
     // 신뢰: mind 대비 — [V4] 양쪽 다 Wilson 하한으로
-    let mindLB = 0.5;
+    let mindLB = 0.5, _mindBase = null;
     try {
       const mm = await mlMindLoad(DB);
-      if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30));
+      if (mm) {
+        mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30));
+        _mindBase = _num(mm.valAccBase, null);   // [V33.397] 위원장의 무실력 영점
+      }
     } catch (e) {}
     // [V12.54] 절대실력 게이트 — MIND 상대비교 폐기(DNN config 주석 참조).
     let _gPos = 0; for (const d of data) _gPos += (d.y ? 1 : 0);
@@ -42217,10 +42269,20 @@ async function mlGBDTTrainNightly(DB) {
                        (accLB * 100).toFixed(1) + "% 로 미달 (유효 " + _num(model.valN, 0) + "/" + _num(model.valNRaw, 0) + ")";
     }
     if (accLB >= GBDT.trustFloor && accLB >= _gBase + (DNN.trustBaselineMargin || 0)) {
-      const eG = Math.exp(GBDT.trustTemp * (accLB - 0.5));
-      const eM = Math.exp(GBDT.trustTemp * (mindLB - 0.5));
+      /* [V33.397] ★영점을 각자의 무실력 정확도로.★ 이 모델은 D1 9,000행에서 재고
+         MIND 는 Modal 276,251행에서 잰다 — 다른 풀이면 기저율도 다르다. 같은 0.5 를
+         영점으로 쓰면 "쏠린 풀에서 다수클래스를 찍는 것" 이 실력으로 읽힌다. */
+      const eG = _skillExp(accLB, _gBase, GBDT.trustTemp);
+      const eM = _skillExp(mindLB, _mindBase, GBDT.trustTemp);
       trust.wGbdt = +(eG / (eG + eM)).toFixed(4);
       trust.trusted = true;
+      trust.skill = +(accLB - _clamp(_num(_gBase, 0.5), 0.5, 0.9)).toFixed(4);
+      trust.mindBase = _num(_mindBase, null);
+      /* 교정 전 값을 같이 남긴다 — ★얼마나 부풀어 있었는지★ 를 다음 사람이 숫자로 본다. */
+      {
+        const _o = Math.exp(GBDT.trustTemp * (accLB - 0.5)), _om = Math.exp(GBDT.trustTemp * (mindLB - 0.5));
+        trust.wGbdtRaw05 = +(_o / (_o + _om)).toFixed(4);
+      }
     }
     await setState(DB, "gbdt_trust", trust);
     return "[GBDT] trees=" + model.nTrees + " n=" + N + " OOF=" + (acc * 100).toFixed(1) + "%(하한 " + (accLB * 100).toFixed(1) +
