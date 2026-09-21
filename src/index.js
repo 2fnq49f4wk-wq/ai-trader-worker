@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.408";
+const _BUILD_VER = "V33.409";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -30916,6 +30916,20 @@ function _mlpProb(m, z) {
    필요한 기간은 결국 expertAdmit 의 minBlocks × 라벨 지평이므로 그 둘에서 계산한다.
    지평(predictionHorizonDays)이 10→15 로 바뀌는 날 상수 60 은 조용히 부족해지고,
    위원들은 다시 '아직 못 쟀다' 로 돌아간다 — 이 저장소가 방금 겪은 그 사고다. */
+/* ══ [V33.409] ★데드밴드 — 라벨이 코인 던지기인 행을 학습에서 뺀다★ ═══════════════════
+   flow/xalpha 라벨은 `pnl_pct > 0` 이라 10일에 ±0.02% 움직인 행까지 1/0 으로 굳는다.
+   그 띠는 배울 것이 없는데 학습 용량을 먹는다 — 화면의 홀드아웃 블록IC t 가
+   FLOW −0.59 · XALPHA −0.89 로 ★부호가 반대★ 인 것이 그 결과다.
+   ★학습에만 건다 — 홀드아웃은 한 행도 안 건드린다.★ 그래야 게이트가 재는 모집단이
+   운영에서 채점당하는 모집단과 같고, 좋아진 수치가 진짜가 된다(검증 하한 불변).
+   문턱은 ★시장별★ |pnl| 중앙값의 k 배다(C2 의 교훈 — 시장을 섞으면 artifact 가 생긴다). */
+const DEADBAND = {
+  enabled: true,
+  k: 0.25,            // 문턱 = k × 시장별 |pnl| 중앙값 — 실험대 D 가 쓴 배수와 같다
+  minMarketN: 200,    // 이보다 얇은 시장은 자기 중앙값을 못 믿는다 → 공통 중앙값
+  minKeepFrac: 0.5,   // 학습행의 절반은 남아야 쓴다
+  minKeepN: 400       // 남는 행의 절대 하한 — 둘 중 ★큰★ 쪽을 쓴다
+};
 const MINIHOLD = {
   holdCap: 9000,        // 홀드아웃에서 읽을 최대 행(기간은 12칸 균등추출로 지킨다)
   holdBuckets: 12,
@@ -31228,8 +31242,32 @@ async function _miniLogisticTrain(DB, opts) {
     //   (b) Wilson 하한이 √n 만큼 과신해 '정확도 게이트'가 헐거워진다.
     //   → 동시성(concurrency)의 역수를 표본 가중으로 쓰고, 통계의 n 은 가중합(유효표본)으로 센다.
     const uw = _uniqWeights(T, S, _num(opts.labelSpanMs, AI_PARAMS.predictionHorizonDays * 86400000));
+    /* ══ [V33.409] ★라벨이 코인 던지기인 행에 학습 용량을 쓰고 있었다 — 데드밴드★ ═════════
+       flow/xalpha 의 라벨은 적재 시점에 `pnl_pct > 0 ? 1 : 0` 로 굳는다. 그래서 10일에
+       +0.02% 움직인 행이 1, −0.02% 가 0 이다 — 경제적으로 같고 통계적으로 구분 불가능한데
+       모델 용량의 상당분이 그 띠에서 소모된다. 화면 실측이 그 결과다:
+         FLOW 홀드아웃 블록IC t ★−0.59★ · XALPHA ★−0.89★ — 약한 게 아니라 부호가 반대다.
+       Modal 실험대가 같은 진단을 ml_samples 에서 측정했다(V33.405):
+         A 운영(sign) +2.26%p / IC 0.0663 → D 변동성정규화+데드밴드 ★+3.12%p / 0.0872★
+
+       ★그런데 그 숫자를 그대로 베끼면 안 된다.★ 실험대 자신이 경고를 적어 두었다 —
+       "데드밴드 후보는 ★모집단이 다르다★(애매한 띠를 뺀다). 정확도가 높게 나오는 것은
+        당연하고, 그 자체로 이겼다는 뜻이 아니다."  맞는 말이다. 그래서 더 엄하게 쓴다:
+
+       ★데드밴드는 학습에만 건다. 홀드아웃은 한 행도 안 건드린다.★
+         · 학습  = 애매한 띠를 뺀 행으로 배운다(용량을 신호에 쓴다)
+         · 검증  = 종전 그대로 ★전 구간★ 에서 잰다 — 게이트·문턱·모집단이 전부 불변이다
+       그러면 홀드아웃 블록IC 가 오르는 것은 모집단이 바뀌어서가 아니라 ★진짜로 나아진 것★ 이고,
+       운영에서 모델이 실제로 채점당하는 모집단과도 같다. (검증 하한은 한 톨도 안 낮춘다.)
+
+       문턱은 ★시장별★ 로 잡는다 — V33.399/405 의 C2 가 "시장을 섞으면 artifact 가 생긴다" 를
+       측정으로 보였다(횡단면 +2.03 → +0.89%p). 중앙값은 ★학습행만★ 으로 잰다(누출 금지).
+       그리고 너무 많이 버리면 쓰지 않는다 — 잣대를 고치려다 학습을 굶기지 않는다. */
+    const _db = _deadbandMask(P, MK, ntr, opts.minN, opts.deadband);
+    let _dbNote = _db.note, _dbDrop = 0;
+    if (_db.mask) { for (let i = 0; i < ntr; i++) if (!_db.mask[i]) { uw[i] = 0; _dbDrop++; } }
     let sumWtr = 0; for (let i = 0; i < ntr; i++) sumWtr += uw[i];
-    if (!(sumWtr > 0)) { for (let i = 0; i < N; i++) uw[i] = 1; sumWtr = ntr; }
+    if (!(sumWtr > 0)) { for (let i = 0; i < N; i++) uw[i] = 1; sumWtr = ntr; _dbNote = "무효(가중합 0 — 되돌림)"; }
     const w = new Array(D).fill(0); let b = 0;
     const lr = 0.08, epochs = 220, lam = _num(opts.l2, 1) / Math.max(1, sumWtr);
     for (let ep = 0; ep < epochs; ep++) {
@@ -31596,6 +31634,10 @@ async function _miniLogisticTrain(DB, opts) {
                _num(MINIHOLD.holdBuckets, 12) + "칸 · 실측 " + _calSpanD + "일 · 엠바고 " +
                _num(AI_PARAMS.predictionHorizonDays, 10) + "일]"
              : (_calWhy ? " 달력홀드아웃못함[" + _calWhy + "]" : "")) +
+           /* [V33.409] ★적용률을 반드시 같이 적는다.★ 실험대가 못 박은 규율이다 —
+              데드밴드는 학습 모집단을 바꾸므로, 몇 %를 실제로 썼는지 없이는 수치를 못 읽는다.
+              (검증은 전 구간 그대로라 홀드아웃 수치 자체는 종전과 같은 자로 잰 값이다.) */
+           " 데드밴드[" + _dbNote + "]" +
            /* [V33.291] 시장 고정효과를 빼기 전 값도 적는다 — 게이트가 보는 숫자가 왜 달라졌는지
               로그 한 줄로 답해야 한다(안 적으면 "갑자기 t 가 떨어졌다" 로만 보인다). */
            (_st.mktFixed && _st.blockICPooled != null && _mkN > 1
@@ -34662,6 +34704,58 @@ function _blockAccLB(hits, ts, horizonMs) {
    ★창을 만들어 놓고 여전히 못 재면 고친 것이 아니다★ — b 의 블록 수를 실제로 확인하고,
    못 채우면 달력 분할을 포기해 호출부가 종전 행 기반으로 물러서게 한다.
    학습이 굶거나(minTrain) 한쪽이 얇으면 마찬가지로 포기한다. */
+/* ══ [V33.409] ★데드밴드 마스크★ — 라벨이 코인 던지기인 학습행을 골라낸다 ═══════════
+   ★학습행(0..ntr)만 본다. 홀드아웃은 한 행도 읽지 않는다.★ 그것이 이 함수의 계약이다 —
+   홀드아웃을 건드리면 검증 모집단이 바뀌어 게이트가 부풀고, 그건 "검증 하한을 낮추는" 것과
+   같다. 그래서 인자로 ntr 까지만 받고, 그 너머는 애초에 볼 수 없게 해 두었다.
+   문턱 = k × ★시장별★ |pnl| 중앙값 (C2 의 교훈: 시장을 섞으면 artifact 가 생긴다).
+   중앙값도 학습행만으로 잰다(누출 금지). 너무 많이 버리면 ★쓰지 않는다★ — 잣대를 고치려다
+   학습을 굶기지 않는다. 돌려주는 mask 가 null 이면 호출부는 아무것도 바꾸지 않는다. */
+function _deadbandMask(P, MK, ntr, minN, enable) {
+  const out = { mask: null, keep: 0, thr: null, note: "끔" };
+  try {
+    if (!DEADBAND.enabled || enable === false || !(ntr > 0)) return out;
+    const _byMk = new Map();
+    for (let i = 0; i < ntr; i++) {                 // ★학습행만★
+      const _m = (MK && MK[i]) || "?";
+      if (!_byMk.has(_m)) _byMk.set(_m, []);
+      _byMk.get(_m).push(Math.abs(_num(P[i], 0)));
+    }
+    const _med = function (a) {
+      if (!a.length) return 0;
+      const b = a.slice().sort(function (x, y) { return x - y; });
+      const h = b.length >> 1;
+      return b.length % 2 ? b[h] : (b[h - 1] + b[h]) / 2;
+    };
+    const _pool = [];
+    for (const a of _byMk.values()) for (const v of a) _pool.push(v);
+    const _poolMed = _med(_pool);
+    const _thr = new Map();
+    for (const [m, a] of _byMk) {
+      // 시장 표본이 얇으면 그 시장의 중앙값은 못 믿는다 → 공통값으로 물러선다
+      _thr.set(m, _num(DEADBAND.k, 0.25) * (a.length >= _num(DEADBAND.minMarketN, 200) ? _med(a) : _poolMed));
+    }
+    const _mask = new Uint8Array(ntr);
+    let _keep = 0;
+    for (let i = 0; i < ntr; i++) {
+      const t = _num(_thr.get((MK && MK[i]) || "?"), 0);
+      if (!(t > 0) || Math.abs(_num(P[i], 0)) >= t) { _mask[i] = 1; _keep++; }
+    }
+    const _floor = Math.max(_num(DEADBAND.minKeepN, 400),
+                            Math.ceil(ntr * _num(DEADBAND.minKeepFrac, 0.5)));
+    if (!(_keep >= _floor && _keep >= _num(minN, 0))) {
+      out.note = "보류(남는 학습행 " + _keep + " < " + Math.max(_floor, _num(minN, 0)) + ")";
+      return out;                                   // ★쓰지 않는다★
+    }
+    /* 한 행도 안 빠졌으면 "100% 적용" 이라 적지 않는다 — 그건 적용이 아니라 ★미적용★ 이다.
+       (|pnl| 중앙값이 0 인 표본에서 문턱이 0 이 되는 경우가 그렇다. 안전하지만 정직하게 적는다.) */
+    if (_keep >= ntr) { out.note = "미적용(문턱 0 — 뺄 행이 없다)"; return out; }
+    out.mask = _mask; out.keep = _keep; out.thr = _thr;
+    out.note = "학습만 " + (_keep * 100 / Math.max(1, ntr)).toFixed(0) + "% 적용(" +
+               (ntr - _keep) + "행 제외 · k=" + _num(DEADBAND.k, 0.25) + "×시장중앙)";
+    return out;
+  } catch (e) { out.mask = null; out.note = "계산 실패"; return out; }
+}
 function _gbdtCalSplit(data, horizonDays, minTrain, minSide) {
   const out = { a: null, b: null, mode: null, need: 0, why: "" };
   try {
@@ -51464,6 +51558,7 @@ export {
   memoScore, memoTrainNightly, MEMOML,
   _blockAccLB, BLKACC,   // [V33.398] 블록 정확도 하한 — 게이트가 실제로 돌려 본다
   _gbdtCalSplit,   // [V33.408] 달력 고정 홀드아웃 분할 — 게이트가 실제로 돌려 본다
+  DEADBAND, _deadbandMask,   // [V33.409] 데드밴드 — 게이트가 상수를 실제로 읽는다
   _dnnArchDecide, DNNARCH, DNN, DNNW,   // [V33.260] 측정-반영 고리 검사
   _dnnAdmit,                        // [V33.262] DNN 승격 판정(정확도 길 · IC 길)
   optMicroFromChain, _bsDeltaGamma, OPTMICRO,   // [V33.264] 옵션 미시구조
