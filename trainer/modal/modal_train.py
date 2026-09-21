@@ -624,7 +624,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         # [V33.380] 라벨 실험대 — ★아무것도 업로드하지 않는다.★ "성능이 안 나온다" 의 원인이
         #   모델인지 라벨인지를 같은 분할·같은 학습기로 재서 숫자로 답한다(_label_ablation 주석).
         ("ablate", lambda: _label_ablation(X, PNL, TS, SYM, MKT, featver, D,
-                                           UNIQ=UNIQ, featnames=featnames)),
+                                           UNIQ=UNIQ, featnames=featnames, Xn=Xn, MW=mw)),
     ]
     _PLAN_BY = dict(_PLAN)
     # Codex V33.349: recover a timed-out tail stage without paying for DNN again.
@@ -696,6 +696,67 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                  if (_mz_va > _mz_tr * 1.25 or _cl_va > _cl_tr * 3 + 0.005) else ""))
     except Exception as _e:
         print("   [분포이동] 못 쟀다:", _e)
+    # ══ [V33.399] ★달력 칸이 학습구간에서 상수라면, 그건 피처가 아니라 상수다.★ ═════════
+    #   위 [분포이동] 이 2026-09-20 회차에서 포화 상위를 이렇게 찍었다:
+    #     fomcTo(15.9%) · fomcSince(13.8%) · opexQuad(13.5%) · opexToNext(12.9%) · sectorBeta(11.7%)
+    #   ±6σ 를 검증행의 1/6 이 넘으려면 ★학습구간의 그 칸이 사실상 한 점★ 이어야 한다.
+    #   원인 하나는 워커에서 고쳤다(FOMC 표가 2021-01 시작 — 표본 바닥 2020-05 보다 늦어
+    #   가장 오래된 258일이 fomcTo=0·fomcSince=0 이었다. V33.399 가 2020 을 넣었다).
+    #   ★고쳤는지 확인할 숫자★ 가 있어야 한다 — 다음 회차가 이 줄로 답한다.
+    try:
+        _calnm = ["opexToNext", "opexWeek", "opexQuad", "fomcTo", "fomcSince", "fomcKnown"]
+        _ci = [list(featnames).index(n) for n in _calnm if n in list(featnames)]
+        if _ci:
+            _ki = list(featnames).index("fomcKnown") if "fomcKnown" in list(featnames) else -1
+            if _ki >= 0:
+                _utr = float((X[tr][:, _ki] <= 0.5).mean()); _uva = float((X[va][:, _ki] <= 0.5).mean())
+                print(f"   [달력결측] fomcKnown=0 비율 — 학습 {_utr*100:.2f}% · 검증 {_uva*100:.2f}%"
+                      + ("  ★학습구간이 달력을 거의 못 본다 — 표 커버리지를 의심하라★" if _utr > 0.10 else ""))
+            _parts = []
+            for n in _calnm:
+                if n not in list(featnames): continue
+                j = list(featnames).index(n)
+                _c = X[tr][:, j]
+                _vals, _cnt = np.unique(_c, return_counts=True)
+                _parts.append(f"{n} σ{float(_c.std()):.3f}/최빈{float(_cnt.max())/max(1,len(_c))*100:.0f}%")
+            print("   [달력분포] 학습구간 " + " · ".join(_parts))
+    except Exception as _e:
+        print("   [달력결측] 못 쟀다:", _e)
+    # ══ [V33.399] ★퇴화칸 자동 중립화 — 손으로 적던 목록을 측정으로 바꾼다.★ ═══════════
+    #   V33.341 은 "수확이 만들 수 없는 칸"(sigWeight·confluence·전략원핫)을 ★손으로★
+    #   적어 중립화했다. 그 진단은 옳았지만 목록이 손이라 새 칸이 생기면 조용히 빠진다.
+    #   지금 잡는 것은 같은 병의 다른 얼굴이다: 학습구간에서 한 점에 몰린 칸은
+    #   가르칠 것이 없는데, 표준화가 그 작은 σ 로 나누는 바람에 ★검증행만 ±6σ 로 튄다.★
+    #   트리는 단조변환에 불변이라 무해하고 신경망만 손해 본다(이 파일이 이미 적어 둔 비대칭).
+    #   ★없는 신호를 지우는 것이지 있는 신호를 지우는 게 아니다★ — 기준을 둘 다 요구한다:
+    #     ① 학습행의 90% 이상이 한 값에 몰려 있다(가르칠 분산이 없다)
+    #     ② 그런데 검증행의 5% 이상이 ±stdClip 에 포화한다(입력이 실제로 튀고 있다)
+    #   중립화는 ★σ 를 키워서★ 한다 — Xn 을 0 으로 덮으면 서빙(워커)은 여전히 실값을 넣어
+    #   학습·서빙이 갈라진다. mean/std 는 업로드에 실려 워커가 ★같은 자★ 로 표준화하므로,
+    #   σ 를 키우면 학습·검증·서빙 세 곳이 한 번에 같이 중립이 된다.
+    try:
+        _neu = []
+        if len(tr) > 0 and len(va) > 0:
+            _satv = (np.abs(Xn[va]) >= std_clip - 1e-9).mean(axis=0)
+            for j in range(X.shape[1]):
+                _c = X[tr][:, j]
+                _vals, _cnt = np.unique(_c, return_counts=True)
+                _mode = float(_cnt.max()) / max(1, len(_c))
+                if _mode >= 0.90 and float(_satv[j]) >= 0.05:
+                    _neu.append((j, _mode, float(_satv[j])))
+        if _neu:
+            for j, _m, _sv in _neu:
+                std[j] = 1e9
+            Xn = np.clip((X - mean) / std, -std_clip, std_clip)
+            _nm2 = ", ".join(f"{featnames[j] if j < len(featnames) else 'f'+str(j)}"
+                             f"(최빈 {_m*100:.0f}% · 포화 {_sv*100:.1f}%)" for j, _m, _sv in _neu[:8])
+            print(f"   [퇴화칸] {len(_neu)}칸 중립화 — {_nm2}")
+            print("      (학습구간이 한 값에 몰려 가르칠 분산이 없는데 검증행만 ±6σ 로 튀던 칸이다.")
+            print("       σ 를 키워 중립화했다 — 업로드된 자를 워커도 쓰므로 서빙까지 같이 중립이다.)")
+        else:
+            print("   [퇴화칸] 없음 — 모든 칸이 학습구간에서 분산을 갖는다")
+    except Exception as _e:
+        print("   [퇴화칸] 못 했다(그대로 진행):", _e)
     # [V33.376] 이 자리에 있던 V33.366 진단은 _split_ts 안으로 옮겼다 —
     #   거기서 기간을 ★정하기★ 때문에, 재는 곳과 정하는 곳이 같아야 두 숫자가 안 갈린다.
     Xva = torch.tensor(Xn[va], dtype=torch.float32, device=dev)
@@ -2778,7 +2839,7 @@ def _train_double_ensemble(Xtr, Ytr, Xes, Yes, Wbase=None, K=4, bins_sr=10, bins
 #     나오는 것은 당연하고, 그 자체로 이겼다는 뜻이 아니다. 그래서 ★적용률(coverage)★ 을
 #     반드시 같이 적는다 — "표본의 40% 만 판정하고 60% 맞힌다" 와 "전부 판정하고 52% 맞힌다"
 #     중 무엇이 나은지는 ★기대수익★ 이 정하지, 정확도 한 숫자가 정하지 않는다.
-def _label_ablation(X, PNL, TS, SYM, MKT, featver, D, UNIQ=None, featnames=None):
+def _label_ablation(X, PNL, TS, SYM, MKT, featver, D, UNIQ=None, featnames=None, Xn=None, MW=None):
     import numpy as np, math
     try:
         import lightgbm as lgb
@@ -2819,38 +2880,75 @@ def _label_ablation(X, PNL, TS, SYM, MKT, featver, D, UNIQ=None, featnames=None)
                 out[m] = out[m] - np.median(out[m])
         return out
 
-    # 후보들 — (이름, 라벨, 사용마스크, 한 줄 설명)
+    # ══ [V33.399] ★이 실험대는 라벨만 재고 있었다 — 그런데 더 큰 숫자가 표에 있었다.★ ═══
+    #   2026-09-20 회차: 여기의 ★A 운영(sign)★ — 평범한 LightGBM 200라운드 — 이
+    #   다수클래스 대비 ★+1.46%p★ 를 냈다. 같은 표본·같은 분할에서 운영 앙상블(DNN 6시드
+    #   + 부스터 3종 + 스태킹)은 ★+0.17%p★ 였다. ★8.6배 차이다.★
+    #   라벨을 바꾸기 전에 답해야 할 질문은 "어느 라벨이냐" 가 아니라
+    #   ★"왜 우리 스택이 기준선보다 8.6배 못하냐"★ 다. 후보를 축 하나 더 늘려 가른다:
+    #     · 전처리 — 운영은 표준화+±6σ 클립(Xn)을 먹인다. 기준선은 원값(X)이다.
+    #     · 가중   — 운영은 |pnl|·출처·최근성·고유도를 곱한 mw. 기준선은 고유도만.
+    #   둘 다 같은 학습기로 재면 "모델이 문제냐 / 먹인 것이 문제냐" 가 한 표에서 갈린다.
+    #   ※ 여전히 ★아무것도 업로드하지 않는다★ — 운영 설정은 이 표를 보고 사람이 정한다.
+    _Xn = np.asarray(Xn, dtype=np.float64)[order] if Xn is not None and len(Xn) == N else None
+    _MW = np.asarray(MW, dtype=np.float64)[order] if MW is not None and len(MW) == N else None
+    _Ysign = (Ps > 0).astype(np.float64)
+    _all = np.ones(N, dtype=bool)
+
+    # 후보들 — (이름, 라벨, 사용마스크, 한 줄 설명, 입력행렬(None=원값), 가중(None=고유도))
     cands = []
-    cands.append(("A 운영(sign)", (Ps > 0).astype(np.float64), np.ones(N, dtype=bool),
-                  "지금 쓰는 라벨. 데드밴드 없음"))
+    cands.append(("A 운영(sign)", _Ysign, _all, "지금 쓰는 라벨. 데드밴드 없음", None, None))
+    if _Xn is not None:
+        cands.append(("A′ +운영전처리", _Ysign, _all,
+                      "A 와 라벨·가중 같음. ★입력만★ 표준화+±6σ 클립(운영과 동일)", _Xn, None))
+    if _MW is not None:
+        cands.append(("A″ +운영가중", _Ysign, _all,
+                      "A 와 라벨·입력 같음. ★가중만★ |pnl|·출처·최근성·고유도(운영과 동일)", None, _MW))
+    if _Xn is not None and _MW is not None:
+        cands.append(("A‴ +둘 다(운영 그대로)", _Ysign, _all,
+                      "운영이 DNN 에 먹이는 것과 같은 입력·가중. 남는 차이는 ★모델뿐★", _Xn, _MW))
     for _mult, _tag in ((0.25, "0.25×"), (0.50, "0.50×")):
         thr = _mult * _absmed
-        cands.append((f"B 데드밴드 {_tag}중앙", (Ps > 0).astype(np.float64), np.abs(Ps) >= thr,
-                      f"|pnl| < {thr:.4f} 인 애매한 띠를 ★뺀다★"))
+        cands.append((f"B 데드밴드 {_tag}중앙", _Ysign, np.abs(Ps) >= thr,
+                      f"|pnl| < {thr:.4f} 인 애매한 띠를 ★뺀다★", None, None))
     _xs = _xs_demean(Ps, TSs)
-    cands.append(("C 횡단면(당일중앙 차감)", (_xs > 0).astype(np.float64), np.ones(N, dtype=bool),
-                  "시장 공통성분을 뺀 상대수익의 부호"))
+    cands.append(("C 횡단면(당일중앙 차감)", (_xs > 0).astype(np.float64), _all,
+                  "시장 공통성분을 뺀 상대수익의 부호", None, None))
+    # [V33.399] C 는 미국·한국·원자재를 ★한 UTC 날짜 바구니★ 에 넣고 중앙값을 뺐다.
+    #   장이 다른 시장을 섞으면 '같은 날' 이 같은 날이 아니다. 시장별로 나눠 다시 잰다 —
+    #   C 가 이겼던 것이 진짜 횡단면인지, 시장 섞임이 만든 것인지 이 줄이 가른다.
+    _MKTs = np.asarray(MKT)[order] if MKT is not None and len(MKT) == N else None
+    if _MKTs is not None and len(set(_MKTs.tolist())) > 1:
+        _xs2 = np.array(Ps, dtype=np.float64)
+        for _m in np.unique(_MKTs):
+            _sel = (_MKTs == _m)
+            if _sel.sum() >= 100:
+                _xs2[_sel] = _xs_demean(Ps[_sel], TSs[_sel])
+        cands.append(("C2 횡단면(시장별)", (_xs2 > 0).astype(np.float64), _all,
+                      "같은 시장·같은 날 안에서만 중앙값을 뺀다", None, None))
     if _atr is not None:
         _z = Ps / np.maximum(_atr, 1e-6)
         _zthr = 0.25 * float(np.median(np.abs(_z)))
         cands.append(("D 변동성정규화+데드밴드", (_z > 0).astype(np.float64), np.abs(_z) >= _zthr,
-                      "pnl/ATR% 로 재고 애매한 띠를 뺀다"))
+                      "pnl/ATR% 로 재고 애매한 띠를 뺀다", None, None))
 
     print("   ── [라벨실험] ★아무것도 업로드하지 않는다 — 운영 라벨은 그대로다★ ──")
     print(f"      {'후보':26s} {'적용률':>7s} {'다수클래스':>9s} {'valAcc':>8s} {'초과':>8s} {'IC':>8s} {'유효n':>8s}")
     base_excess = None
-    for name, Yc, use, why in cands:
+    for name, Yc, use, why, Xc, Wc in cands:
         try:
+            _Xc = Xs if Xc is None else Xc
+            _Wc = UWs if Wc is None else Wc
             tr = np.array([i for i in tri if use[i]], dtype=np.int64)
             va = np.array([i for i in vai if use[i]], dtype=np.int64)
             if tr.size < 5000 or va.size < 2000:
                 print(f"      {name:26s} 표본 부족(학습 {tr.size} · 검증 {va.size}) — 생략"); continue
-            ds = lgb.Dataset(Xs[tr], label=Yc[tr], weight=UWs[tr], free_raw_data=False)
+            ds = lgb.Dataset(_Xc[tr], label=Yc[tr], weight=_Wc[tr], free_raw_data=False)
             bst = lgb.train({"objective": "binary", "learning_rate": 0.05, "num_leaves": 31,
                              "min_data_in_leaf": 200, "feature_fraction": 0.8,
                              "bagging_fraction": 0.8, "bagging_freq": 1,
                              "verbose": -1, "seed": 7}, ds, num_boost_round=200)
-            pv = bst.predict(Xs[va])
+            pv = bst.predict(_Xc[va])
             yv = Yc[va]
             acc = float(((pv >= 0.5) == (yv > 0.5)).mean())
             maj = float(max(yv.mean(), 1 - yv.mean()))
