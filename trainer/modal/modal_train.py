@@ -414,6 +414,43 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         raise
     except Exception as _e:
         print("   [표본위생] 산출 실패(무시):", _e)
+    # ══ [V33.401] ★같은 관측을 두 번 세지 않는다.★ ════════════════════════════════════
+    #   위 [표본위생] 은 중복을 ★세기만★ 했다(50% 넘게 중복이면 중단, 그 아래면 통과).
+    #   실측(2026-09-21 회차): 서로 다른 표본 825,027/1,200,068 = ★31.3% 가 중복★ 인데
+    #   문턱(50%)에 안 걸려 그대로 학습에 들어갔다. "세고 있으니 괜찮다" 가 아니다 —
+    #   중복은 조용히 ★고유도를 무너뜨린다★:
+    #     [고유도내역] 평가창 240일 · 종목 1037개 · ★종목당 266.4건★ · 평균동시성 32.7건
+    #     → 종목당 1.6건/거래일. 라벨 지평 10일이면 동시성 ≈ 1.6×10×2 = 32 (실측 32.7)
+    #     → 고유도 0.031 → 유효표본 8,442/276,251 → Wilson 하한이 ★0.89%p★ 깎인다
+    #   그리고 중복은 ★최근 구간에 몰린다★ — featVer 승격이 부른 전량 재수확이 매일 도는
+    #   프런티어 수확과 겹치기 때문이다. 하필 그 구간이 ★홀드아웃★ 이다.
+    #   즉 "피처판을 올렸더니 검증 신뢰도가 무너졌다" 의 기계적 원인이 여기다.
+    #
+    #   ★버리는 기준은 '완전히 같은 행' 이다.★ (ts, 종목, 시장, 라벨, pnl, 피처벡터 전부)
+    #   같은 봉·같은 종목의 두 행은 전략이 달라도 독립 관측이 아니다 — 같은 미래를 본다.
+    #   느슨한 키(ts,종목만)로 지우면 진짜로 다른 행까지 버릴 수 있으니 그렇게 하지 않는다.
+    try:
+        _seen, _uniq, _dropped = set(), [], 0
+        for s_ in samples:
+            _x = s_.get("x")
+            _k = (s_.get("ts"), s_.get("s"), s_.get("m"), s_.get("y"), s_.get("pnl"),
+                  tuple(_x) if isinstance(_x, list) else None)
+            if _k in _seen:
+                _dropped += 1
+                continue
+            _seen.add(_k)
+            _uniq.append(s_)
+        if _dropped:
+            _before = len(samples)
+            samples = _uniq
+            print(f"   [중복제거] 완전히 같은 행 {_dropped:,}건 버림 — {_before:,} → {len(samples):,}건"
+                  f" ({_dropped/max(1,_before)*100:.1f}%)")
+            print("      (같은 봉·같은 종목의 두 행은 전략이 달라도 ★독립 관측이 아니다★ —"
+                  " 같은 미래를 본다. 남기면 고유도가 무너지고 Wilson 하한이 깎인다.)")
+        else:
+            print("   [중복제거] 완전히 같은 행 없음")
+    except Exception as _e:
+        print("   [중복제거] 실패(그대로 진행):", _e)
     _set_mkt_cols(featnames)   # [V33.291] 시장 원핫 열 위치 — IC 에서 시장 고정효과를 빼는 데 쓴다
     if not samples:
         print("표본 0 — 종료"); return {"ok": False, "reason": "no samples"}
@@ -1127,9 +1164,23 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             #     · raw 는 높은데 낮다 → 보정 전이 문제(τ* 가 학습구간에 안 맞는 것)
             _tr_raw = float((((1.0 / (1.0 + np.exp(-(_ztr + float(delta))))) >= 0.5) == (ytr_np > 0.5)).mean())
             _maj = float(max(ytr_np.mean(), 1 - ytr_np.mean()))
-            if gap > 0.05:
+            # ══ [V33.401] ★바로 위 [기저율] 이 "절대값으로 읽지 말라" 고 적어 두고,
+            #   이 진단이 정확히 그렇게 하고 있었다.★ 같은 함수 안에서 모순이다.
+            #   실측(2026-09-21 회차): train 58.84% vs val 50.73% → "격차 +8.11%p 과적합 경향".
+            #   그런데 두 구간의 다수클래스가 다르다 — 학습 55.61% / 검증 50.42%.
+            #     학습 초과 = 58.84 − 55.61 = +3.23%p (가중)
+            #     균등 초과 = 54.17 − 55.61 = ★−1.44%p★ (자기 학습집합조차 못 맞힌다)
+            #     검증 초과 = 50.73 − 50.42 = +0.31%p
+            #   즉 "8%p 과적합" 이 아니라 ★학습 실력 자체가 3%p★ 이고 그중 0.3%p 만 남는다.
+            #   처방이 정반대다 — 규제를 더 걸 자리가 아니라 ★배우질 못하고 있는★ 자리다.
+            #   → 판정은 ★각자의 다수클래스 대비 초과★ 로 한다. 원래 숫자도 같이 남긴다.
+            _exTr = train_acc - _maj
+            _exTrU = train_acc_u - _maj
+            _exVa = acc - float(majority)
+            _exGap = _exTr - _exVa
+            if _exGap > 0.05:
                 verdict = "과적합 경향(→표본·종류·규제↑ 필요)"
-            elif gap < -0.01:
+            elif _exGap < -0.01:
                 if _tr_raw - train_acc > 0.01:
                     verdict = (f"★보정 전이 문제★ — τ* 를 되돌리면 train {_tr_raw*100:.2f}% "
                                f"(→τ* 를 학습구간 분포까지 보고 고를 것)")
@@ -1138,9 +1189,14 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                                f"(→규제↓·용량·최적화. 피처를 더 만들 일이 아니다)")
             else:
                 verdict = "과적합 낮음(→신호·피처·라벨 품질이 병목)"
-            print(f"   [과적합진단] train {train_acc*100:.2f}%(가중·학습과 같은 자)"
-                  f" · 균등 {train_acc_u*100:.2f}% · τ*되돌림 {_tr_raw*100:.2f}%"
-                  f" vs val {acc*100:.2f}% → 격차 {gap*100:+.2f}%p — {verdict}")
+            print(f"   [과적합진단] train {train_acc*100:.2f}%(가중) · 균등 {train_acc_u*100:.2f}%"
+                  f" · τ*되돌림 {_tr_raw*100:.2f}% vs val {acc*100:.2f}%"
+                  f" → 날것 격차 {gap*100:+.2f}%p")
+            print(f"   [과적합진단·초과] ★각자의 다수클래스 대비★ — 학습 {_exTr*100:+.2f}%p"
+                  f"(균등 {_exTrU*100:+.2f}%p · 기준 {_maj*100:.2f}%)"
+                  f" vs 검증 {_exVa*100:+.2f}%p(기준 {float(majority)*100:.2f}%)"
+                  f" → 실력 격차 {_exGap*100:+.2f}%p — {verdict}"
+                  + ("  ★균등 초과가 음수 — 자기 학습집합조차 다수클래스만 못하다★" if _exTrU < 0 else ""))
             # [V33.385] recency 손잡이가 이 규모에서 실제로 무슨 일을 하는지 같이 적는다.
             #   이름은 '반감기 45일' 인데, 표본이 7.4년으로 늘자 바닥(0.35)에 붙은 옛 표본이
             #   손실 가중의 대부분을 차지한다 — 손잡이가 규모 변화로 조용히 죽은 자리다.

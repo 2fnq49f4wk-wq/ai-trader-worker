@@ -26,7 +26,11 @@ const ok = (c, m) => { n++; if (c) console.log("  ok   " + m); else { fails++; c
 
 /* 판정부를 소스에서 그대로 떼어 온다 — 옮겨 적으면 언젠가 갈라진다.
    (고정 길이로 자르지 않는다: 시작·끝 표지로 찾는다. V33.289·V33.377 의 교훈.) */
-const A = PY.indexOf("            if gap > 0.05:");
+/* [V33.401] 앵커가 `gap` → `_exGap` 으로 바뀌었다. 판정 기준이 ★날것 정확도 차이★ 에서
+   ★각자의 다수클래스 대비 초과★ 로 바뀌었기 때문이다(바로 위 [기저율] 이 "절대값으로 읽지
+   말라" 고 적어 두고 이 진단이 정확히 그렇게 하고 있었다). 계약을 이름이 아니라 뜻으로
+   다시 적는다 — 아래 시험표가 그 뜻을 검사한다. */
+const A = PY.indexOf("            if _exGap > 0.05:");
 const B = PY.indexOf('            print(f"   [과적합진단]', A);
 ok(A > 0 && B > A, "판정 분기를 소스에서 떼어 왔다");
 if (A < 0 || B < 0) { console.error("\n✗ 판정부를 못 찾는다 — 검사가 헛돈다"); process.exit(1); }
@@ -35,19 +39,23 @@ const BRANCH = PY.slice(A, B).split("\n").map((l) => l.replace(/^            /, 
 const script = `
 import json
 BRANCH = ${JSON.stringify(BRANCH)}
-def judge(gap, train_acc, tr_raw, maj):
-    g = {"gap": gap, "train_acc": train_acc, "_tr_raw": tr_raw, "_maj": maj}
+def judge(ex_gap, train_acc, tr_raw, maj):
+    g = {"_exGap": ex_gap, "train_acc": train_acc, "_tr_raw": tr_raw, "_maj": maj}
     exec(BRANCH, {}, g)
     return g["verdict"]
 out = {
-  # ① 진짜 과적합
+  # ① 진짜 과적합 — 학습 실력이 검증보다 훨씬 크다
   "overfit":  judge(0.12, 0.62, 0.62, 0.508),
-  # ② 실측 그대로 — 음수 격차, τ* 되돌려도 여전히 낮다 → 과소적합
+  # ② 실측 그대로 — 실력 격차가 음수, τ* 되돌려도 여전히 낮다 → 과소적합
   "measured": judge(-0.0207, 0.4717, 0.4750, 0.508),
   # ③ 음수인데 τ* 되돌리면 확 오른다 → 보정 전이 문제
   "caltrans": judge(-0.0207, 0.4717, 0.5400, 0.508),
-  # ④ 격차가 거의 0 — 종전 문구 그대로(무해성)
+  # ④ 실력 격차가 거의 0 — 종전 문구 그대로(무해성)
   "flat":     judge(0.005, 0.5300, 0.5300, 0.508),
+  # ⑤ [V33.401] ★2026-09-21 실측★ — 날것 격차는 +8.11%p 지만
+  #    학습 다수클래스 55.61% / 검증 50.42% 를 빼면 실력 격차는 +2.92%p 다.
+  #    종전 판정은 "과적합 경향(규제↑)" 이었고, 그건 정반대 처방이었다.
+  "baserate": judge(0.0292, 0.5884, 0.5884, 0.5561),
 }
 print(json.dumps(out, ensure_ascii=False))
 `;
@@ -58,7 +66,7 @@ catch (e) { console.error("  ✗ FAIL 판정부 실행 실패: " + String(e.stdo
 finally { try { unlinkSync(tmp); } catch (e) {} }
 
 console.log("");
-for (const k of ["overfit", "measured", "caltrans", "flat"]) console.log(`     ${k.padEnd(9)} → ${R[k]}`);
+for (const k of ["overfit", "measured", "caltrans", "flat", "baserate"]) console.log(`     ${k.padEnd(9)} → ${R[k]}`);
 console.log("");
 
 ok(/과적합 경향/.test(R.overfit), "격차가 크게 양수면 ★과적합★ 이라고 한다(종전 동작 그대로)");
@@ -70,6 +78,16 @@ ok(/보정 전이/.test(R.caltrans),
    "τ* 를 되돌리면 정확도가 오르는 경우는 ★보정 전이 문제★ 로 따로 말한다");
 ok(!/과소적합/.test(R.caltrans), "그 경우를 과소적합과 섞지 않는다 — 고칠 곳이 다르다");
 ok(/신호·피처·라벨/.test(R.flat), "격차가 거의 0 이면 종전 문구 그대로다(무해성)");
+/* ══ [V33.401] ★판정이 기저율을 보는가 — 실측으로 뒤집히는 자리★ ══════════════════ */
+ok(!/과적합 경향/.test(R.baserate),
+   "★실측(학습 58.84% vs 검증 50.73%)에서 '과적합 경향' 이라고 하지 않는다★ — 두 구간의 다수클래스가 다르다(55.61% vs 50.42%)");
+ok(/신호·피처·라벨/.test(R.baserate),
+   "그 경우 ★실력 격차 2.92%p★ 로 읽어 '신호·피처·라벨 품질이 병목' 이라고 한다(규제를 더 걸 자리가 아니다)");
+/* 판정이 실제로 _exGap 에 반응하는가 — 이름만 바꾸고 gap 을 계속 보면 이 둘이 같아진다. */
+ok(/_exTr = train_acc - _maj/.test(PY) && /_exVa = acc - float\(majority\)/.test(PY),
+   "초과를 ★각자의 다수클래스★ 로 계산한다(학습은 _maj, 검증은 majority)");
+ok(/_exGap = _exTr - _exVa/.test(PY), "실력 격차 = 학습 초과 − 검증 초과");
+ok(/과적합진단·초과/.test(PY), "초과 기준 숫자를 로그에 따로 남긴다 — 날것 격차도 함께 남긴다");
 ok(/다수클래스/.test(R.measured), "과소적합 판정에 ★비교 기준(다수클래스)★ 을 같이 적는다");
 
 /* τ* 되돌린 값을 ★실제로 계산해서★ 찍는가 — 안 그러면 위 분기가 항상 같은 쪽으로 간다. */

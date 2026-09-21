@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.400";
+const _BUILD_VER = "V33.401";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -31099,6 +31099,52 @@ async function _miniLogisticTrain(DB, opts) {
     for (let j = 0; j < D; j++) mean[j] /= Math.max(1, ntr);
     for (let i = 0; i < ntr; i++) for (let j = 0; j < D; j++) std[j] += (X[i][j] - mean[j]) * (X[i][j] - mean[j]);
     for (let j = 0; j < D; j++) { std[j] = Math.sqrt(std[j] / Math.max(1, ntr)); if (!(std[j] > 1e-6)) std[j] = 1; }
+    /* ══ [V33.401] ★퇴화칸 중립화 — 워커 쪽에는 이 방어가 없었다.★ ═══════════════════════
+       V33.400 이 Modal(DNN)에 넣은 것과 ★같은 병·같은 처방★ 이다. 그런데 이 트레이너를 쓰는
+       위원(FLOW·XALPHA·STACK·이중헤드)은 오히려 더 심하게 앓고 있다 — 소급생성이 아예
+       ★상수를 적어 넣기 때문★ 이다. altSampleBackfill 의 FLOW 벡터를 그대로 옮기면:
+
+         [peerRet5, peerRet20, peerDisp, peerRel5, peerCorrAvg, peerLead,
+          0, 0, 0, 0, 0, 0, 0]   ← ★13칸 중 7칸이 하드코딩 0★
+
+       공매도·내부자·기관·풋콜 6칸 + posAvail 마스크다. 실거래 표본에는 진짜 값이 들어가는데
+       실거래는 120만 중 ★68건★ 이다. 즉 학습구간에서 그 7칸은 사실상 상수이고,
+       서빙에서는 라이브 값이 들어온다. flowScore 는 (v−mean)/std 를 ±4 로 클램프하므로
+       σ 가 작은 칸은 ★들어오는 즉시 ±4 로 슬램★ 된다 — 학습에서 한 번도 본 적 없는 자리다.
+       V33.104 가 이 위험을 정확히 적어 뒀다("0 은 중립이 아니라 결측이다"). 마스크까지
+       달아 뒀는데, 그 마스크마저 상수라 모델이 쓸 수가 없다.
+
+       ★가르칠 분산이 없는 칸을 지우는 것이지 있는 신호를 지우는 게 아니다.★ 두 조건 모두:
+         ① 학습행의 90% 이상이 한 값에 몰려 있다(가르칠 분산이 없다)
+         ② 홀드아웃행의 5% 이상이 ±4 클램프에 붙는다(입력이 실제로 튀고 있다)
+       중립화는 ★σ 를 키워서★ 한다 — flowScore·stackScore 가 저장된 std 로 같은 식을 쓰므로
+       σ 하나만 키우면 학습·홀드아웃·서빙이 한 번에 같이 중립이 된다(Z 를 0 으로 덮으면
+       서빙은 여전히 실값을 넣어 고치려던 스큐를 ★새로 만든다★ — Modal 쪽과 같은 함정). */
+    const _degen = [];
+    try {
+      /* ★홀드아웃은 nvalStart 부터다 — ntr 이 아니다.★ 둘 사이는 퍼징으로 잘라낸
+         ★학습행★ 이고, 라벨이 검증 구간과 겹쳐 적합값 쪽으로 끌린 다른 모집단이다
+         (V33.155 가 그것을 진짜 홀드아웃에 섞지 말라고 경계를 못 박았다).
+         처음 이 블록을 i=ntr 로 썼고 check-purge 가 잡았다 — 그 게이트가 옳다. */
+      if (ntr > 0 && N > nvalStart) {
+        for (let j = 0; j < D; j++) {
+          const _cnt = new Map();
+          let _mode = 0;
+          for (let i = 0; i < ntr; i++) {
+            const k = X[i][j];
+            const c = (_cnt.get(k) || 0) + 1; _cnt.set(k, c);
+            if (c > _mode) _mode = c;
+          }
+          const _ms = _mode / ntr;
+          if (_ms < 0.90) continue;
+          let _sat = 0;
+          for (let i = nvalStart; i < N; i++) if (Math.abs((X[i][j] - mean[j]) / std[j]) >= 4 - 1e-9) _sat++;
+          const _sr = _sat / Math.max(1, N - nvalStart);
+          if (_sr >= 0.05) _degen.push({ j: j, mode: +_ms.toFixed(4), sat: +_sr.toFixed(4) });
+        }
+        for (const d of _degen) std[d.j] = 1e9;
+      }
+    } catch (e) {}
     const Z = X.map(function (x) { return x.map(function (v, j) { return _clamp((v - mean[j]) / std[j], -4, 4); }); });
     // ══ [V33.114] ★표본 고유도(de Prado, AFML 4장) — 겹치는 라벨을 한 건으로 세지 않는다★ ══
     //   수확은 ★매 봉★ 을 표본으로 만들고 라벨 지평은 10일이다. 즉 이웃한 표본끼리
@@ -31393,6 +31439,9 @@ async function _miniLogisticTrain(DB, opts) {
          valAcc 옆에 이 값이 없으면 "52% 면 좋은 건가" 를 아무도 못 답한다. */
       // [V33.300] 유의성을 ★잴 수 있었는지★ 의 근거 — 블록 수(슬라이스)가 아니라 관측 기간이다.
       valICspanD: _hSpanD, valICeff: _effB,
+      /* [V33.401] 어떤 칸을 ★왜★ 껐는지 남긴다. 안 남기면 "FLOW 가 6차원 모델이 됐다" 를
+         아무도 모르고, 다음 사람이 13차원인 줄 알고 해석한다. 이름은 화면이 붙인다. */
+      degenCols: _degen.length ? _degen : null,
       valAccBase: _accBase != null ? +_accBase.toFixed(4) : null,
       valAccBasePooled: _accBasePool != null ? +_accBasePool.toFixed(4) : null,
       valICPooled: _st.icPooled != null ? +_st.icPooled.toFixed(5) : null,
@@ -31430,7 +31479,17 @@ async function _miniLogisticTrain(DB, opts) {
         : null,
       trusted: _trusted };
     await setState(DB, opts.stateKey, model);
-    return "[" + opts.tag + "] 학습완료 표본 " + N + " valAcc " + (acc * 100).toFixed(1) + "%" +
+    return "[" + opts.tag + "] 학습완료 표본 " + N +
+           /* [V33.401] 무엇을 껐는지 ★로그가 먼저★ 말한다. 화면만 알고 로그가 모르면
+              "왜 갑자기 좋아졌나/나빠졌나" 를 다음 회차에 아무도 못 되짚는다. */
+           (_degen.length
+             ? " · ★퇴화칸 " + _degen.length + "/" + D + " 중립화[" +
+               _degen.map(function (d) {
+                 const _nm = (opts.featNames && opts.featNames[d.j]) ? opts.featNames[d.j] : ("f" + d.j);
+                 return _nm + "(최빈 " + (d.mode * 100).toFixed(0) + "%·포화 " + (d.sat * 100).toFixed(0) + "%)";
+               }).join(", ") + "]★"
+             : "") +
+           " valAcc " + (acc * 100).toFixed(1) + "%" +
            /* [V33.292] 정확도는 ★무엇에 대비해서★ 인지 없이는 못 읽는다. 실력 없이 얻는 값을 옆에 적는다. */
            (_accBase != null ? "(무실력 " + (_accBase * 100).toFixed(1) + "%" +
              (_accBasePool != null && Math.abs(_accBase - _accBasePool) > 0.002
@@ -31493,7 +31552,7 @@ async function flowTrainNightly(DB) {
   if (!FLOWML.enabled) return null;
   return await _miniLogisticTrain(DB, {
     table: "flow_samples", stateKey: "flow_model", tag: "FLOW",
-    featVer: FLOWML.featVer, D: FLOWML.featNames.length,
+    featVer: FLOWML.featVer, D: FLOWML.featNames.length, featNames: FLOWML.featNames,
     minN: FLOWML.minTrainSamples, window: FLOWML.trainWindow,
     l2: FLOWML.l2, icFloor: FLOWML.icFloor
   });
@@ -32574,7 +32633,7 @@ async function dualHeadTrainNightly(DB) {
   for (const side of ["bull", "bear"]) {
     const r = await _miniLogisticTrain(DB, {
       table: "ml_samples", stateKey: "dual_" + side + "_model", tag: "DUAL-" + side.toUpperCase(),
-      featVer: LUXML.featVer, D: LUXML.featNames.length,
+      featVer: LUXML.featVer, D: LUXML.featNames.length, featNames: LUXML.featNames,
       minN: DUALHEAD.minTrainSamples, window: DUALHEAD.trainWindow,
       l2: DUALHEAD.l2, icFloor: DUALHEAD.icFloor,
       // [V33.251] 비선형 헤드 경합을 켠다 — 선형이 기본값이고, 이기려면 블록 IC 하한에서 이겨야 한다.
@@ -33124,6 +33183,9 @@ async function stackTrainNightly(DB) {
   return await _miniLogisticTrain(DB, {
     table: "stack_samples", stateKey: "stack_model", tag: "STACK",
     featVer: STACKML.featVer, D: STACK_SLOTS.length * 2,
+    /* [V33.401] STACK 입력은 슬롯마다 (p, 가용) 두 칸이다 — 이름을 여기서 만든다.
+       퇴화칸 로그가 "f7" 이 아니라 "seq.p" 라고 말해야 사람이 읽을 수 있다. */
+    featNames: STACK_SLOTS.reduce(function (a, n) { a.push(n + ".p", n + ".on"); return a; }, []),
     minN: STACKML.minTrainSamples, window: STACKML.trainWindow,
     l2: STACKML.l2, icFloor: STACKML.icFloor,
     // [V33.209] ★비선형 헤드 경합을 켜는 곳은 여기 하나다.★ STACK 만 켠다 —
@@ -33426,7 +33488,7 @@ async function xalphaTrainNightly(DB) {
   if (!XALPHA.enabled) return null;
   return await _miniLogisticTrain(DB, {
     table: "xalpha_samples", stateKey: "xalpha_model", tag: "XALPHA",
-    featVer: XALPHA.featVer, D: XALPHA.featNames.length,
+    featVer: XALPHA.featVer, D: XALPHA.featNames.length, featNames: XALPHA.featNames,
     minN: XALPHA.minTrainSamples, window: XALPHA.trainWindow,
     l2: XALPHA.l2, icFloor: XALPHA.icFloor,
     // 횡단면 알파 — 유의성은 '일별 횡단면 IC 의 시계열'(ICIR)로 잰다. 위 _icBlockStats 주석 참조.
@@ -51008,6 +51070,7 @@ export {
   _calFeats, _opexCtx, _fomcCtx, FOMC_DAYS, _thirdFriday,   // [V33.265] 달력 사건
   FOMC_EMERGENCY, FOMC_CANCELLED, CAL_COVER_FROM,           // [V33.399] 예외 선언표 · 커버 하한
   _calRestampSamples,                                       // [V33.400] 달력 소급 재각인
+  flowScore,                                                // [V33.401] 워커 퇴화칸 서빙정합 검사
   LSM, lsmAmericanPut, lsmExitValue, _lsmCore, _lsmLstsq,   // [V33.268] 최적정지(Longstaff-Schwartz)
   mlSeqVizData, _seqVizFrom,        // [V33.269] SEQ 3D 관측 데이터(순수부는 검사가 직접 돌린다)
   seqFormerScore, SEQML, seqBuildFeat, _seqRosterRow,   // [V33.267] 시퀀스 Transformer(채점·입력조립·명단)
