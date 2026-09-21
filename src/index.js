@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.402";
+const _BUILD_VER = "V33.403";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -31775,7 +31775,18 @@ async function altSampleBackfill(DB, opts) {
        (기간과 밀도는 다른 문제다. V33.182 의 문구가 기간만 보고 "더 쌓이면 된다" 고 말한 이유다)
        크론은 10분마다 거래 사이클과 예산을 나눠 쓰므로 6 이 맞다. 수동 스윕은 그 제약이 없다. */
     const _bDates = Math.max(1, Math.min(60, _num(cfg.batchDates, ALTBF.batchDates)));
-    const days = Object.keys(byDay).sort().slice(0, _bDates);
+    /* ══ [V33.403] ★닿지 않는 날짜가 배치 예산을 먹어 회차당 0건이 나왔다.★ ═══════════════
+       종전엔 여기서 ★가장 오래된 6일★ 을 잘라 놓고 루프를 돌았다. 그런데 이 소급은
+       daily: 캐시(≈320봉)가 닿는 날짜에만 표본을 만들 수 있고, 커서는 id 순으로 도는데
+       ml_samples 의 id 는 ts 순이 아니다(판갈이 캐치업이 옛 봉을 나중에 적재한다).
+       그래서 배치에 닿지 않는 옛 날짜만 6개 들어오면 ★그 회차는 0건을 만들고 끝난다★ —
+       예산은 '일을 얼마나 할까' 를 묶는 장치인데, ★일을 안 한 날짜★ 가 그 예산을 먹었다.
+       → 자른 뒤에 도는 대신 ★전부 훑되 실제로 처리한 날짜만★ 예산에 센다.
+       V33.187 의 규칙은 그대로다 — 건너뛴 날짜도 lastId 를 올리므로 ★커서는 반드시 전진한다.★
+       훑는 비용(날짜당 우주 슬라이스)도 공짜가 아니라 상한을 따로 둔다. */
+    const _daysAll = Object.keys(byDay).sort();
+    const _scanCapDays = Math.min(_daysAll.length, Math.max(_bDates * 10, _bDates));
+    const days = _daysAll.slice(0, _scanCapDays);
 
     /* [V33.187] ★배치 종목별 일봉 선로드를 걷어냈다.★ 여기서 만든 dailyAll 은 ★한 번도 읽히지
        않는다★ — 아래 스냅샷(snap)은 전부 universe 에서 만든다. 그런데 이 루프는 배치에 등장한
@@ -31806,6 +31817,9 @@ async function altSampleBackfill(DB, opts) {
     //   모두 얇아 XALPHA 만 통째로 실패한다. 그런데 커서는 그대로 전진해 그 행들은 영영 안 돌아온다.
     //   원인을 로그가 스스로 말하게 한다 — 다음 수확 한 번이면 가설이 사실인지 갈린다.
     let xThinUS = 0, xThinKR = 0, xNull = 0;
+    // [V33.403] 닿는 날짜 / 못 닿는 날짜 — 이 회차가 무엇을 영구히 버렸는지 센다.
+    let _dayThin = 0, _lostRows = 0, _thinNewest = null, _thinOldest = null, _okOldest = null;
+    let _snapMin = null, _snapMax = null;
     const _panelW = function (p) { return (p && Array.isArray(p.alphas) && Array.isArray(p.alphas[0])) ? p.alphas[0].length : 0; };
     // [V33.186] 날짜 수를 올리면 한 회차가 길어진다 — 마감시한을 두어 워커 시간예산을 넘지 않게 한다.
     //   중간에 멈춰도 커서는 ★처리한 날짜까지만★ 오르므로(아래 lastId) 다음 회차가 이어받는다.
@@ -31820,8 +31834,9 @@ async function altSampleBackfill(DB, opts) {
        (deadlineMs 도 계속 받는다. 예전 호출자가 있으면 그대로 동작한다.) */
     const _lm = _num(cfg.loopMs, 0);
     const _dl = _lm > 0 ? (Date.now() + _lm) : _num(cfg.deadlineMs, 0);
-    let _dDone = 0;
+    let _dDone = 0, _dProc = 0;
     for (const dk of days) {
+      if (_dProc >= _bDates) break;                              // ★처리한 날짜★ 만 예산에 센다
       if (_dl && _dDone > 0 && Date.now() > _dl) break;
       _dDone++;
       const list = byDay[dk];
@@ -31838,7 +31853,28 @@ async function altSampleBackfill(DB, opts) {
           volumes: _sliceTo(u.volumes, idx)
         };
       }
-      if (Object.keys(snap).length < 20) { for (const r of list) lastId = Math.max(lastId, r.id); skipped += list.length; continue; }
+      /* ══ [V33.403] ★여기서 잃는 표본이 영영 안 돌아오는데 아무도 세지 않았다.★ ══════════
+         이 소급생성은 패널을 ★daily: 캐시(≈320봉)★ 로 만든다(배치당 D1 1회 — 의도된 비용 설계).
+         그런데 ml_samples 는 ★2,320일★ 을 덮는다. 그 차이만큼의 과거 날짜는 snap 이 얇아져
+         통째로 건너뛰고, ★커서는 그대로 전진한다★ — 그 행들의 XALPHA·FLOW 표본은 영구 손실이다.
+         게다가 ml_samples 의 id 는 ts 순이 아니다(판갈이 캐치업이 옛 봉을 나중에 적재한다).
+         그래서 "오래된 표본부터 처리" 라는 커서의 전제와 달리, ★최근에 적재된 옛 날짜★ 가
+         닿지 않는 구간으로 계속 들어온다.
+         고치기 전에 크기를 알아야 한다 — 닿는 날짜와 못 닿는 날짜를 갈라 세어 로그가 답하게 한다.
+         (V33.178 이 '패널부족' 을 세기 시작해 XALPHA 0건의 이유를 밝힌 것과 같은 방식이다.) */
+      const _snapN = Object.keys(snap).length;
+      _snapMin = _snapMin == null ? _snapN : Math.min(_snapMin, _snapN);
+      _snapMax = _snapMax == null ? _snapN : Math.max(_snapMax, _snapN);
+      if (_snapN < 20) {
+        _dayThin++;
+        _lostRows += list.length;
+        if (!_thinNewest || dk > _thinNewest) _thinNewest = dk;
+        if (!_thinOldest || dk < _thinOldest) _thinOldest = dk;
+        for (const r of list) lastId = Math.max(lastId, r.id);
+        skipped += list.length; continue;
+      }
+      if (!_okOldest || dk < _okOldest) _okOldest = dk;
+      _dProc++;                                                   // 여기부터가 ★실제로 한 일★ 이다
       const panelUS = XALPHA.enabled ? xalphaBuildPanel(snap, "us") : null;
       const panelKR = XALPHA.enabled ? xalphaBuildPanel(snap, "kr") : null;
       for (const r of list) {
@@ -31874,8 +31910,16 @@ async function altSampleBackfill(DB, opts) {
       fDone: FLOWML.enabled ? Math.max(fDone, lastId) : fDone, fvF: FLOWML.featVer,
       xDone: XALPHA.enabled ? Math.max(xDone, lastId) : xDone, fvX: XALPHA.featVer,
       ts: Date.now() });
-    return "[ALT-BF] 날짜 " + _dDone + "/" + days.length + "일 처리 — XALPHA +" + madeX + " / FLOW +" + madeF +
+    return "[ALT-BF] 날짜 " + _dProc + "처리/" + _dDone + "훑음/" + _daysAll.length + "일 — XALPHA +" + madeX + " / FLOW +" + madeF +
            " (건너뜀 " + skipped + ", 커서 " + lastId + ")" +
+           /* [V33.403] ★영구 손실을 소리내어 말한다.★ 커서가 전진하므로 이 행들은 다시 안 온다. */
+           (_dayThin
+             ? " · ★우주 미도달 " + _dayThin + "일 · 표본 " + _lostRows + "건 영구손실" +
+               (_thinOldest ? " (" + _thinOldest + (_thinNewest !== _thinOldest ? "~" + _thinNewest : "") + ")" : "") +
+               " — daily: 캐시(≈320봉)가 그 날짜에 안 닿는다★"
+             : "") +
+           (_snapMin != null ? " · 우주폭 " + _snapMin + "~" + _snapMax + "종목" +
+             (_okOldest ? " (닿은 가장 오래된 날 " + _okOldest + ")" : "") : "") +
            // [V33.178] XALPHA 가 0 건일 때 ★왜★ 를 함께 적는다(위 주석 참조).
            ((xThinUS || xThinKR || xNull)
              ? " · XALPHA 실패내역: 패널부족 US " + xThinUS + " / KR " + xThinKR +
@@ -51124,6 +51168,7 @@ export {
   _calRestampSamples,                                       // [V33.400] 달력 소급 재각인
   flowScore,                                                // [V33.401] 워커 퇴화칸 서빙정합 검사
   _mktBeatsPooled,                                          // [V33.402] 시장전용 승격 비교
+  XALPHA, FLOWML,                                           // [V33.403] 소급 도달범위 검사
   LSM, lsmAmericanPut, lsmExitValue, _lsmCore, _lsmLstsq,   // [V33.268] 최적정지(Longstaff-Schwartz)
   mlSeqVizData, _seqVizFrom,        // [V33.269] SEQ 3D 관측 데이터(순수부는 검사가 직접 돌린다)
   seqFormerScore, SEQML, seqBuildFeat, _seqRosterRow,   // [V33.267] 시퀀스 Transformer(채점·입력조립·명단)

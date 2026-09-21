@@ -188,10 +188,42 @@ const mkUni = (n, bars) => {
   chk(!/dailyAll/.test(bfCode),
     "소급생성에 읽히지 않는 일봉 선로드가 없다(회차당 수백 건의 조회를 태우던 자리)",
     "altSampleBackfill 에 dailyAll 선로드가 되살아났다 — 아무도 안 읽는데 예산만 먹는다");
-  const guard = (bf.match(/for \(const dk of days\)[\s\S]{0,80}?break;/) || [""])[0];
-  chk(/_dDone > 0/.test(guard),
-    "마감시한은 한 날짜를 끝낸 뒤부터 본다 — 커서가 반드시 전진한다",
-    "날짜 루프가 첫머리에서 무조건 빠져나올 수 있다 — 커서가 안 올라 스윕이 제자리를 돈다");
+  /* ══ [V33.403] ★계약을 "첫 break 가 마감시한이다" 가 아니라 뜻으로 적는다.★ ═══════════
+     지켜야 할 것(V33.187): ★날짜 루프는 첫 순회에서 빠져나갈 수 없다★ — 그래야 lastId 가
+     올라 커서가 전진하고 스윕이 끝난다. 종전 검사는 그것을 "루프 머리 80자 안의 break 에
+     _dDone > 0 이 있다" 로 확인했는데, 그건 ★break 가 하나뿐일 때만★ 성립하는 대리 지표다.
+     V33.403 이 예산 가드(_dProc >= _bDates)를 그 앞에 넣자 멀쩡한 코드가 실패로 읽혔다.
+     → 루프 머리의 ★모든★ 이탈 조건을 뽑아, 초기값에서 ★전부 거짓★ 인지 실제로 계산한다.
+       이쪽이 더 강하다 — 앞으로 어떤 가드가 추가돼도 같은 규칙으로 검사된다. */
+  const loopAt = bfCode.indexOf("for (const dk of days)");
+  const head = bfCode.slice(loopAt, loopAt + 360);
+  const guards = [];
+  {
+    const re = /if \(([^)]*(?:\([^)]*\))?[^)]*)\)\s*break;/g;
+    let mm;
+    while ((mm = re.exec(head)) !== null) guards.push(mm[1].trim());
+  }
+  chk(guards.length > 0, "루프 머리의 이탈 조건 " + guards.length + "개를 뽑았다: " + guards.join(" | "),
+    "이탈 조건을 못 찾는다 — 검사가 헛돈다");
+  {
+    // 초기값: 아직 아무 날짜도 안 했고(_dProc=_dDone=0), 마감시한은 ★이미 지났다★(최악의 경우)
+    let firstExit = null;
+    for (const g of guards) {
+      let v = null;
+      try {
+        v = new Function("_dProc", "_dDone", "_bDates", "_dl", "Date",
+          "return !!(" + g + ");")(0, 0, 6, 1, { now: function () { return 1e15; } });
+      } catch (e) { v = "평가불가:" + e.message; }
+      if (v === true) { firstExit = g; break; }
+      if (typeof v !== "boolean") { firstExit = g + " (" + v + ")"; break; }
+    }
+    chk(firstExit === null,
+      "초기값(_dProc=0·_dDone=0·마감 이미 지남)에서 ★어느 조건도 참이 아니다★ — 한 날짜는 반드시 끝낸다",
+      "★루프가 첫 순회에서 빠져나갈 수 있다: " + firstExit + " — 커서가 안 올라 스윕이 제자리를 돈다★");
+  }
+  // 예산이 1 이어도 최소 한 날짜는 돈다(예산을 0 으로 못 만든다)
+  chk(/Math\.max\(1, Math\.min\(60, _num\(cfg\.batchDates/.test(bfCode),
+    "날짜 예산은 최소 1 로 바닥이 막혀 있다", "★예산이 0 이 될 수 있다 — 아무 날짜도 안 돈다★");
   chk(/const _lm = _num\(cfg\.loopMs, 0\);/.test(bf) && /_lm > 0 \? \(Date\.now\(\) \+ _lm\)/.test(bf),
     "예산을 날짜 루프 시작 시점부터 잰다(loopMs) — 준비 시간이 일할 시간을 잡아먹지 않는다",
     "loopMs 경로가 없다 — 절대 마감시각이면 준비 단계가 길 때 루프 몫이 0 이 된다");
