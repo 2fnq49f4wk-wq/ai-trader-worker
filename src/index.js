@@ -2616,6 +2616,17 @@ const SECTOR_GROUP_MAP = {
   "025900.KQ": "RESOURCES",
 };
 // 종목 → 그룹 (cfg에 추가 매핑 있으면 우선). 미매핑은 OTHER.
+/* ══ [V33.407] ★AI 가 못 설 때 규칙엔진이 신규매수를 해도 되는가 — 한 곳에서만 답한다.★
+   세 경로(메인·CM·대체시장)가 각자 판단하면 언젠가 갈라진다. 이 저장소가 반복해 당한 병이다.
+   반환 true = 규칙엔진 신규매수 허용. ★청산과는 무관하다★ — 청산은 어느 모드에서도 돈다. */
+function ruleEntryAllowed(aiReady) {
+  try {
+    if (aiReady) return false;          // AI 가동 중 — 규칙 진입은 애초에 폐기된다(종전 동작)
+    const _a = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
+    return _a.emergencyFallback === true;   // 명시적으로 켠 경우에만 비상 매수
+  } catch (e) { return false; }
+}
+
 function getSectorGroup(symbol, cfg) {
   if (cfg && cfg.sectorGroupMapAdd && cfg.sectorGroupMapAdd[symbol]) return cfg.sectorGroupMapAdd[symbol];
   return SECTOR_GROUP_MAP[symbol] || "OTHER";
@@ -3033,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.406";
+const _BUILD_VER = "V33.407";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -3526,7 +3537,17 @@ const AI_PARAMS = {
   //     매일 재학습(train-now/야간 파이프라인)되어 스스로 갱신된다. 아래는 그 정책의 운용 스위치.
   autonomy: {
     enabled: true,           // AI 자율운용 활성(끄면 규칙엔진 상시 운용 + AI는 게이트 보조)
-    emergencyFallback: true, // AI 미준비 시 규칙엔진으로 비상 매매(false면 미준비 시 신규진입 관망)
+    /* ══ [V33.407] ★이 손잡이는 선언만 있고 읽는 코드가 한 줄도 없었다.★ ═══════════════
+       주석은 "false 면 미준비 시 신규진입 관망" 이라고 ★동작을 약속★ 하는데, 저장소 전체에서
+       이 키를 읽는 곳이 없었다(check-dead-knobs 는 AI_PARAMS 를 '설명용 레지스트리' 로
+       통째 면제해 못 잡았다 — 그 면제가 너무 넓었다. 같은 판에서 좁힌다).
+       그래서 AI 가 못 설 때 규칙엔진이 ★항상★ 신규매수를 했고, 사용자 관측대로
+       "AI 없는 규칙 버전이 작동해 처참한 성적" 이 나왔다.
+       ★사용자 지시(2026-09-22): AI 가 작동 못할 때 규칙 모델은 보유 종목의 폭락·폭등 매도
+         외에는 작동하지 않는다.★ → 기본을 끔으로 두고, 이 판에서 실제로 배선한다.
+       ※ 청산·손절·트레일링·크래시게이트는 ★어느 모드에서도 그대로★ 다(위 autonomy 주석).
+          이 스위치는 ★신규 진입★ 에만 걸린다. 게이트가 그 경계를 검사한다. */
+    emergencyFallback: false, // AI 미준비 시 규칙엔진 비상 매수 — 끔(청산은 항상 유지)
     minPickP: 0.58,          // 야간 스캔 AI픽 중 이 성공확률 이상만 자율 진입 후보 풀에 포함
     // [V12.74] Qlib TopkDropout 벤치마킹 — 보유종목 중 위원회 점수 최하위(p≤topkDropP)이고 AI픽
     //   풀에도 없는 종목을 사이클당 최대 topkDropN개 회전 청산(턴오버 통제된 포트폴리오 리밸런싱).
@@ -18612,7 +18633,9 @@ async function runCommodityCycle(env, forceTrade) {
 
       // === STEP 2: swing 매수 신호 평가 ===
       if (positions[posKey]) continue;   // 이미 보유 중이면 추가 매수 안 함
-      if (_aiReadyCM) continue;          // [V12.106] AI 가동중 — 규칙엔진 신규매수 비상폴백 아님, 스킵
+      /* [V33.407] AI 가동중이면 종전대로 스킵. ★AI 미가동이어도 비상폴백이 꺼져 있으면 스킵★ —
+         청산(위 STEP 1)은 이미 지났으므로 폭락·폭등 매도는 그대로 돈다. */
+      if (!ruleEntryAllowed(_aiReadyCM)) continue;
       const signals = evaluateBuySignals_swing(price, dayPct, daily, cfg);
       if (!signals || signals.length === 0) continue;
 
@@ -18896,7 +18919,7 @@ async function runAltSleeveCycle(env, key) {
       }
       if (positions[posKey]) continue;
       if (!_canExec) continue;     // [V33.10] 체결 불가 시간 — 시세만 갱신하고 주문은 내지 않는다
-      if (_aiReadyAlt) continue;   // [V12.106] AI 가동중 — 규칙엔진 신규매수 비상폴백 아님, 스킵
+      if (!ruleEntryAllowed(_aiReadyAlt)) continue;   // [V33.407] 위와 같은 규칙(청산은 이미 지났다)
       const signals = evaluateBuySignals_swing(price, dayPct, dd, cfg);
       if (!signals || signals.length === 0) continue;
       let best = signals[0];
@@ -20139,6 +20162,12 @@ async function runTradingCycle(env) {
       let _evalBaseDone = 0;   // [V33.50] 트리거 승격분을 제외한 '라운드로빈 진도' 카운터
       const _evalSeen = new Set();   // [V33.171] 이번 사이클에 실제로 평가한 회전 좌표들
       const __candLog = [];   // [V12.130] 후보 신호를 모아 사이클 끝에 1회만 기록(D1 write 절감)
+      /* ══ [V33.407] ★"한국장 거래가 거의 없다" 를 한 줄로 답하게 한다.★ ═══════════════════
+         지금은 단계마다 사유가 흩어져 있어 "어디서 끊겼나" 를 코드로 추적해야 한다.
+         평가 → 후보 → 매수시도 → 체결 을 시장별로 세어 [EVAL] 한 줄에 붙인다.
+         후보가 0 이면 막힌 곳은 ★상류★(신호·AI픽·평가 커버리지)이고,
+         후보는 많은데 체결이 0 이면 ★하류★(위원회·사전검사·예산)다 — 처방이 정반대다. */
+      let __funCand = 0, __funTry = 0, __funBuy = 0;
       // [성능] 평가 중 quote 지표 갱신을 종목당 D1 write(saveQuote) 대신 batch로 모아
       //   루프 끝에 일괄 커밋 → 종목당 ~419ms였던 평가 속도를 ms 단위로 단축(커버리지 확대 가능).
       const evalQuoteStmts = [];
@@ -20394,6 +20423,7 @@ async function runTradingCycle(env) {
       } catch (e) {}
       // [V12.71] ★AI 자율운용 컨트롤러★ 사이클 시작 시 1회 결정 — 운용 주체(AI vs 규칙 폴백)와 AI 후보 풀.
       let __aiReady = false, __aiPickPool = null, __aiRotated = 0;   // [V12.74] TopkDropout 회전 카운터
+      let __ruleEntryBlocked = 0;   // [V33.407] AI 미가동 중 막은 규칙 진입 후보 수 — 조용히 막지 않는다
       let __autoDisabled = null;   // [V12.75] 자가치유 — 자가평가가 차단한 저성과 진입전략 Set
       try {
         const _auto = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
@@ -21085,6 +21115,18 @@ async function runTradingCycle(env) {
             //   보조로 상승추세 사전필터 — 최종 허용/차단·사이즈는 아래 위원회(mlDeepDecide + metaHardFilter)가 결정.
             // Codex V33.329: the independently evaluated intraday path was being erased here.
             if (_ap && _ap.enabled && __aiReady) stratResults = stratResults.filter(function(sr){ return sr.strategy === "scalp"; });
+            /* ══ [V33.407] ★AI 가 못 서면 규칙엔진도 신규진입을 하지 않는다.★ ═══════════════
+               종전엔 __aiReady 가 false 면 stratResults 를 ★그대로 두어★ 규칙엔진이 매수했다.
+               그게 사용자가 관측한 "AI 없는 규칙 버전이 작동해 처참한 성적" 의 경로다.
+               ★scalp 도 같이 막는다★ — 위 필터가 AI 가동 시 scalp 를 살려 두는 것은
+               "위원회가 최종 허용/차단을 한다"(V12.71 주석)는 전제 위에서다. AI 가 못 서면
+               그 전제가 사라지므로 scalp 만 예외일 이유가 없다.
+               ※ ★청산은 한 톨도 안 건드린다★ — 폭락·폭등 매도, 손절, 트레일링, 크래시게이트는
+                 이 블록보다 앞(청산 단계)에서 이미 돌았고 그 경로는 그대로다. */
+            if (!__aiReady && !ruleEntryAllowed(__aiReady) && stratResults.length) {
+              __ruleEntryBlocked += stratResults.length;
+              stratResults = [];
+            }
             if (_ap && _ap.enabled && __aiReady && stratResults.length === 0 && !heldSymbols.has(symbol)
                 && !crashGate.blockNew && canTrade && aiPrimaryUsed < (_ap.maxPerCycle || 8)
                 && closes.length >= 55) {
@@ -21322,6 +21364,7 @@ async function runTradingCycle(env) {
           // [V24] 한 종목당 한 사이클 1회만 매수 (다중전략 동시 진입 과집중 방지)
           //   가장 강한 신호 1개만 채택. 같은 종목이 swing+mom+mr 다 떠도 1번만 산다.
           let boughtThisSymbol = false;
+          if (stratResults.length) { __funCand++; __funTry += stratResults.length; }   // [V33.407] 깔때기
           for (const sr of stratResults) {
             if (boughtThisSymbol) break;
             const strategy = sr.strategy;
@@ -22398,7 +22441,7 @@ async function runTradingCycle(env) {
               if (actuallySpent > epsilon) {
                 if (market === "cm") cycleSpent.cm += actuallySpent;
                 else cycleSpent[market][_bk] += actuallySpent;
-                bought++;
+                bought++; __funBuy++;   // [V33.407] 깔때기 — 실제 체결
                 boughtThisSymbol = true;
                 heldSymbols.add(symbol);
                 strategiesHeldNow.add(strategy);
@@ -22479,7 +22522,19 @@ async function runTradingCycle(env) {
       try {
         await log(DB, "INFO", null, "[EVAL] " + market.toUpperCase() + " 평가 " + evalProcessed + "/" + fetched.length +
           "종목(" + (fetched.length ? (evalProcessed / fetched.length * 100).toFixed(0) : "0") + "%)" +
-          (evalTimedOut ? " TIME-CAP" : " 완주"));
+          (evalTimedOut ? " TIME-CAP" : " 완주") +
+          /* [V33.407] ★조용히 막지 않는다.★ AI 가 못 서서 규칙 진입을 막았으면 몇 건인지 적는다 —
+             안 적으면 "왜 거래가 없나" 를 다시 코드로 추적하게 된다(청산은 그대로 돈다). */
+          (__ruleEntryBlocked > 0
+            ? " · ★AI 미가동으로 규칙 신규진입 " + __ruleEntryBlocked + "건 차단(청산은 정상)★"
+            : (!__aiReady ? " · AI 미가동(규칙 진입 후보 없음 · 청산은 정상)" : "")) +
+          /* [V33.407] ★깔때기 한 줄.★ 후보 0 = 상류 막힘(신호·AI픽·커버리지),
+             후보는 있는데 체결 0 = 하류 막힘(위원회·사전검사·예산). 처방이 정반대다. */
+          " · 깔때기 평가 " + evalProcessed + " → 후보종목 " + __funCand +
+            "(신호 " + __funTry + ") → 체결 " + __funBuy +
+            (__funCand === 0 && evalProcessed > 0 ? "  ★후보 0 — 상류(신호·AI픽·커버리지)에서 끊겼다★"
+             : (__funCand > 0 && __funBuy === 0 ? "  ★후보는 있는데 체결 0 — 하류(위원회·사전검사·예산)에서 끊겼다★" : "")) +
+            (__aiPickPool ? " · AI픽풀 " + __aiPickPool.size + "종목" : " · AI픽풀 없음"));
       } catch (e) {}
       // [V33.172] ★"어디에 시간이 갔나"를 매 사이클 한 줄로 남긴다★
       //   평가가 450종목 → 34종목으로 주저앉은 원인을 찾는 데 3주치 커밋을 뒤져야 했다.
@@ -51321,6 +51376,7 @@ export {
   FOMC_EMERGENCY, FOMC_CANCELLED, CAL_COVER_FROM,           // [V33.399] 예외 선언표 · 커버 하한
   _calRestampSamples,                                       // [V33.400] 달력 소급 재각인
   ALTBF,                                                    // [V33.406] 프런티어 소급 설정
+  ruleEntryAllowed,                                         // [V33.407] AI 미가동 시 규칙 진입 허용 판정
   flowScore,                                                // [V33.401] 워커 퇴화칸 서빙정합 검사
   _mktBeatsPooled,                                          // [V33.402] 시장전용 승격 비교
   XALPHA, FLOWML,                                           // [V33.403] 소급 도달범위 검사

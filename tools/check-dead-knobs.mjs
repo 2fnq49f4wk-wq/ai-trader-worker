@@ -93,6 +93,54 @@ ok(revived.length === 0,
   ok(vague.length === 0, `목록의 모든 항목에 이유가 적혀 있다 (${Object.keys(KNOWN).length}개)`);
 }
 
+/* ══ [V33.407] ★AI_PARAMS 면제가 너무 넓어 '죽은 스위치' 를 통째로 숨기고 있었다.★ ══════
+   AI_PARAMS 는 스스로 "설명용 레지스트리" 라고 선언하고, 숫자 항목이 구현부 상수를 ★비추는★
+   것은 실제로 정상이다. 그래서 DOC_ONLY 로 면제했다.
+   그런데 ★불리언은 설명이 아니라 스위치다.★ 실제 사고:
+     AI_PARAMS.autonomy.emergencyFallback — 주석은 "false 면 미준비 시 신규진입 관망" 이라고
+     ★동작을 약속★ 하는데 읽는 코드가 한 줄도 없었다. AI 가 못 설 때 규칙엔진이 ★항상★
+     신규매수를 했고, 사용자가 "AI 없는 규칙 버전이 작동해 처참한 성적" 으로 관측했다.
+   → 숫자 면제는 그대로 두고, ★불리언만★ 읽히는지 본다. 안 읽히면 이유를 적어야 통과한다.
+     (이유 없이 목록에 넣지 않는다 — 위 KNOWN 과 같은 규율) */
+const BOOL_KNOWN = {
+  /* 여기에 넣으려면 ★왜 안 읽혀도 되는지★ 를 적어야 한다. 하나하나 실물을 확인하고 적었다. */
+  "ensembleDynamic": "표기용 — 자기 주석이 그렇게 말한다(\"동적가중은 항상 켜짐(소프트맥스 하드코딩) — 이 플래그로 못 끔\"). 구현이 무조건 켜져 있다",
+  "krEnabled":       "표기용 — 한국어 감성은 ★무조건★ 돈다(SENTI_LEX 에 한글 항목이 있고 V12.76 이 조사/어미 접두 매칭을 넣었다). ⚠️ false 로 바꿔도 안 꺼진다 — 끄는 기능이 필요하면 sentimentScore 에 배선해야 한다",
+  "gnnEnabled":      "미구현 — 종목간 동조화 GNN 은 이름만 있고 구현부가 없다. 기본 false 라 켜도 아무 일도 안 일어난다(켜는 순간 조용히 무시된다는 뜻이기도 하다)",
+};
+{
+  const m = /const AI_PARAMS = \{/.exec(S);
+  ok(!!m, "AI_PARAMS 를 찾았다");
+  if (m) {
+    let d = 0, i = m.index + m[0].length - 1, b = -1;
+    for (let j = i; j < S.length; j++) { if (S[j] === "{") d++; else if (S[j] === "}") { d--; if (!d) { b = j; break; } } }
+    const body = strip(S.slice(i, b + 1));
+    const outside = strip(S.slice(0, i) + S.slice(b + 1));
+    /* 불리언 리프만 뽑는다 — `키: true` / `키: false`. 주석은 이미 걷어냈다. */
+    const bools = [];
+    const re = /(^|[\{,\s])([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(true|false)\s*(,|\}|$)/gm;
+    let mm;
+    while ((mm = re.exec(body)) !== null) if (bools.indexOf(mm[2]) < 0) bools.push(mm[2]);
+    ok(bools.length >= 5, `AI_PARAMS 안의 불리언 스위치 ${bools.length}개를 뽑았다`);
+    const dead = bools.filter(function (k) {
+      if (BOOL_KNOWN[k]) return false;
+      // 바깥에서 `.키` 로 읽거나 "키" 로 참조하면 살아 있다
+      return !(new RegExp("\\." + k + "\\b|[\"']" + k + "[\"']").test(outside));
+    });
+    if (dead.length) for (const k of dead) console.log("       AI_PARAMS…" + k);
+    ok(dead.length === 0,
+      dead.length === 0
+        ? "AI_PARAMS 의 불리언 스위치가 전부 ★읽힌다★ — 동작을 약속하고 아무것도 안 하는 스위치가 없다"
+        : `★AI_PARAMS 에 읽히지 않는 불리언 스위치 ${dead.length}개 — 동작을 약속하고 아무것도 안 한다★`);
+    // 목록이 낡는 것도 거짓말이다 — 이유를 적어 둔 키가 실제로 읽히면 목록에서 빼야 한다
+    const stale = Object.keys(BOOL_KNOWN).filter(function (k) {
+      return new RegExp("\\." + k + "\\b").test(outside);
+    });
+    ok(stale.length === 0, stale.length === 0
+      ? "예외 목록이 사실과 맞다" : `★예외 목록의 ${stale.join(", ")} 은 이제 읽힌다 — 목록에서 빼야 한다★`);
+  }
+}
+
 // 자가시험 — 이 검사가 실제로 죽은 키를 찾아내는가(헛돌지 않는가)
 {
   const probe = "const _GATE_SELFTEST_OBJ = {\n  aliveKey: 1,\n  deadKey: 2\n};\nconst _x = _GATE_SELFTEST_OBJ.aliveKey;\n";
