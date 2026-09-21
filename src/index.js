@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.405";
+const _BUILD_VER = "V33.406";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -31680,7 +31680,12 @@ function stackScore(model, featVec) {
 //    과거 표본을 채점하면 그 모델들이 바로 그 표본으로 학습돼 있어 in-sample 확률이 나온다.
 //    실제보다 훨씬 잘 맞는 값으로 메타모델을 가르치게 되고, 라이브에서 무너진다.
 //    STACK 만은 새 거래로 정직하게 모아야 한다.
-const ALTBF = { batchDates: 6, maxPerRun: 1200, minIdx: 30 };
+/* [V33.406] frontierDays·frontierMax — ★최근 구간은 소급 커서를 기다리지 않는다.★
+   근거는 아래 altSampleBackfill 의 [V33.406] 주석(전진검증이 구조적으로 불가능했던 이유). */
+/* frontierMax 는 ★하루치 행보다 넉넉히 커야 한다.★ 워터마크는 '날짜가 완결됐을 때만'
+   오르는데(아래 주석), 한 날짜가 상한에 잘리면 그 날짜는 영영 완결로 안 읽혀 ★교착★ 이 된다.
+   유니버스 ~1,040종목 × 전략 중복을 감안해 5,000 으로 둔다(하루치의 4배 이상). */
+const ALTBF = { batchDates: 6, maxPerRun: 1200, minIdx: 30, frontierDays: 30, frontierMax: 5000, frontierDateCap: 3 };
 
 // ts(ms) → 종가배열 인덱스. 오늘이 마지막 봉이라는 가정 하에 거래일 수만큼 되돌린다.
 /* [V33.213] ★비율 근사(252/365)가 자기가 내건 무결성 규칙을 어기고 있었다.★
@@ -31758,19 +31763,58 @@ async function altSampleBackfill(DB, opts) {
     const st = { lastId: Math.min(FLOWML.enabled ? fDone : Infinity, XALPHA.enabled ? xDone : Infinity),
                  made: _num(_st0.made, 0) };
     if (!isFinite(st.lastId)) st.lastId = 0;
+    /* ══ [V33.406] ★신규 위원은 전진검증을 구조적으로 못 모으고 있었다.★ ══════════════
+       화면 실측(2026-09-22 08:09):
+         FLOW   합류 보류 · 홀드아웃 t −0.59 · 전진 표본 ★0/400★ · 고른 행 ★0★ < 배치하한 30
+         XALPHA 합류 보류 · 홀드아웃 t −0.89 · 전진 표본 ★0/400★ · 고른 행 ★0★
+         STACK  합류 보류 · 전진 표본 0/400 · (기준 관측시각 2026-09-17 이후 ·
+                ★과거표본 3000건 제외★)          ← 행은 있는데 ★전부 과거★ 였다
+         MEMO   전진 표본 16,086/400             ← ml_samples 를 직접 읽는 쪽은 찬다
+       전진검증의 조건은 `id > 체크포인트 AND ★ts > 학습셋 최대 관측시각★` 이다(icForwardCheck).
+       그런데 이 소급생성은 원본 ml_samples 행의 ★과거 봉 날짜★ 를 물려준다(V33.173 이
+       퍼징을 고치려고 의도적으로 그렇게 했다 — 그 고침 자체는 옳다).
+       두 규칙이 만나면 ★새 표본의 ts 가 언제나 과거★ 라 전진창을 영원히 못 채운다.
+       신선한 ts 는 실거래 청산 경로뿐인데 그건 전 시스템 통틀어 ★68건★ 이다.
+       ★문턱 문제가 아니다 — 생산 구조 문제다.★
+
+       고침: 소급 커서(과거)와 ★프런티어(최근)★ 를 나눈다.
+         · 프런티어 = 최근 frontierDays 일. 자기 워터마크(fwdTs)로 매 회차 새 행만 집는다.
+           수확이 매일 붙이는 프런티어 봉이 곧바로 FLOW·XALPHA 표본이 되어 ts 가 신선하다.
+         · 소급 커서는 ★프런티어 구간을 건드리지 않는다★ (ts < 경계) — 두 경로가 겹치지
+           않으므로 같은 행을 두 번 만들지 않는다. 경계 하나로 소유권이 갈린다.
+       ※ 최근 구간은 daily: 캐시가 확실히 닿으므로 V33.403 의 '우주 미도달' 문제도 없다. */
+    const _frFrom = Date.now() - Math.max(1, _num(ALTBF.frontierDays, 30)) * 86400000;
+    const _fwdDone0 = _num(_st0.fwdTs, 0);
+    const _fwdFloor = Math.max(_fwdDone0, _frFrom);
+    let _frRows = [];
+    try {
+      _frRows = (await DB.prepare(
+        "SELECT id, ts, market, symbol, pnl_pct FROM ml_samples WHERE featver = ? AND ts > ? ORDER BY ts ASC LIMIT ?"
+      ).bind(LUXML.featVer, _fwdFloor, Math.max(50, _num(ALTBF.frontierMax, 900))).all()).results || [];
+    } catch (e) { _frRows = []; }
+    /* 과거 커서는 ★경계 앞쪽만★ 본다 — 프런티어가 소유한 구간을 다시 만들지 않는다. */
     const rows = (await DB.prepare(
-      "SELECT id, ts, market, symbol, pnl_pct FROM ml_samples WHERE id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
-    ).bind(_num(st.lastId, 0), LUXML.featVer, ALTBF.maxPerRun).all()).results || [];
-    if (!rows.length) return "[ALT-BF] 남은 표본 없음 (FLOW커서 " + fDone + " XALPHA커서 " + xDone +
-                             ", 누적생성 " + _num(st.made, 0) + ")";
+      "SELECT id, ts, market, symbol, pnl_pct FROM ml_samples WHERE id > ? AND featver = ? AND ts < ? ORDER BY id ASC LIMIT ?"
+    ).bind(_num(st.lastId, 0), LUXML.featVer, _frFrom, ALTBF.maxPerRun).all()).results || [];
+    if (!rows.length && !_frRows.length)
+      return "[ALT-BF] 남은 표본 없음 (FLOW커서 " + fDone + " XALPHA커서 " + xDone +
+             " · 프런티어 워터마크 " + (_fwdDone0 > 0 ? new Date(_fwdDone0).toISOString().slice(0, 10) : "없음") +
+             ", 누적생성 " + _num(st.made, 0) + ")";
 
     // 날짜(YYYY-MM-DD)별로 묶는다 — 횡단면 패널을 날짜마다 한 번만 만들기 위해서.
     const byDay = {};
-    for (const r of rows) {
-      const d = new Date(_num(r.ts, 0));
-      const key = d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0") + "-" + String(d.getUTCDate()).padStart(2, "0");
-      (byDay[key] = byDay[key] || []).push(r);
-    }
+    const _dk = function (ts) {
+      const d = new Date(_num(ts, 0));
+      return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0") + "-" + String(d.getUTCDate()).padStart(2, "0");
+    };
+    /* [V33.406] 프런티어 날짜를 ★먼저★ 넣고 따로 표시해 둔다 — 아래에서 예산을 먼저 준다.
+       과거 커서가 예산을 다 먹으면 신선한 표본이 또 안 생기고, 그게 지금 상태다. */
+    const _frDays = new Set();
+    /* ★프런티어 행은 과거 커서(lastId)를 올리면 안 된다.★ ml_samples 의 id 는 ts 순이
+       아니라(캐치업이 옛 봉을 나중에 적재) 최근 행의 id 가 클 수 있고, 그걸로 커서를 올리면
+       ★아직 안 만든 과거 행을 통째로 건너뛴다★ — 영구 손실이다. 표식을 달아 갈라 둔다. */
+    for (const r of _frRows) { r._fr = 1; const k = _dk(r.ts); _frDays.add(k); (byDay[k] = byDay[k] || []).push(r); }
+    for (const r of rows) { const k = _dk(r.ts); (byDay[k] = byDay[k] || []).push(r); }
     /* [V33.186] ★회차당 날짜 수를 수동 경로에서 올릴 수 있게 한다.★
        실측: 재소급 스윕 160회차를 돌렸는데 커서가 회차당 +6 밖에 안 올랐다. batchDates=6 이
        회차마다 ★날짜 6개★ 만 처리하는데, 과거 구간은 날짜당 행이 몇 개뿐이라 6행만 훑고 끝난다.
@@ -31788,7 +31832,13 @@ async function altSampleBackfill(DB, opts) {
        → 자른 뒤에 도는 대신 ★전부 훑되 실제로 처리한 날짜만★ 예산에 센다.
        V33.187 의 규칙은 그대로다 — 건너뛴 날짜도 lastId 를 올리므로 ★커서는 반드시 전진한다.★
        훑는 비용(날짜당 우주 슬라이스)도 공짜가 아니라 상한을 따로 둔다. */
-    const _daysAll = Object.keys(byDay).sort();
+    /* [V33.406] ★프런티어 날짜가 먼저 선다.★ 오래된 순으로 세우면 과거 커서가 예산을
+       다 먹고 신선한 표본은 또 안 생긴다 — 그게 지금 상태를 만든 구조다.
+       대신 프런티어에도 상한(frontierDateCap)을 둬서 과거 소급이 굶지 않게 한다. */
+    const _frList = Object.keys(byDay).filter(function (k) { return _frDays.has(k); }).sort();
+    const _hiList = Object.keys(byDay).filter(function (k) { return !_frDays.has(k); }).sort();
+    const _frCap = Math.max(1, Math.min(_num(ALTBF.frontierDateCap, 3), _bDates));
+    const _daysAll = _frList.slice(0, _frCap).concat(_hiList);
     const _scanCapDays = Math.min(_daysAll.length, Math.max(_bDates * 10, _bDates));
     const days = _daysAll.slice(0, _scanCapDays);
 
@@ -31823,6 +31873,7 @@ async function altSampleBackfill(DB, opts) {
     let xThinUS = 0, xThinKR = 0, xNull = 0;
     // [V33.403] 닿는 날짜 / 못 닿는 날짜 — 이 회차가 무엇을 영구히 버렸는지 센다.
     let _dayThin = 0, _lostRows = 0, _thinNewest = null, _thinOldest = null, _okOldest = null;
+    let _frTsSeen = 0, _frMadeX = 0, _frMadeF = 0;   // [V33.406] 프런티어 워터마크·생산량
     let _snapMin = null, _snapMax = null;
     const _panelW = function (p) { return (p && Array.isArray(p.alphas) && Array.isArray(p.alphas[0])) ? p.alphas[0].length : 0; };
     // [V33.186] 날짜 수를 올리면 한 회차가 길어진다 — 마감시한을 두어 워커 시간예산을 넘지 않게 한다.
@@ -31882,18 +31933,21 @@ async function altSampleBackfill(DB, opts) {
       const panelUS = XALPHA.enabled ? xalphaBuildPanel(snap, "us") : null;
       const panelKR = XALPHA.enabled ? xalphaBuildPanel(snap, "kr") : null;
       for (const r of list) {
-        lastId = Math.max(lastId, r.id);
+        if (r._fr) { _frTsSeen = Math.max(_frTsSeen, _num(r.ts, 0)); }
+        else lastId = Math.max(lastId, r.id);       // [V33.406] 과거 커서는 과거 행만 올린다
         const sy = r.symbol, mk = String(r.market || "us");
         if (!sy || !snap[sy]) { skipped++; continue; }
-        if (XALPHA.enabled && _num(r.id, 0) > xDone) {
+        /* [V33.406] 프런티어는 자기 워터마크(ts)로 중복을 막으므로 id 커서를 보지 않는다 —
+           id 커서로 거르면 최근 행의 id 가 이미 커서 아래일 때 조용히 안 만들어진다. */
+        if (XALPHA.enabled && (r._fr || _num(r.id, 0) > xDone)) {
           const _pn = mk === "kr" ? panelKR : panelUS;
           const f = xalphaBuildFeat(sy, snap, _pn);
-          if (f) { await xalphaLogSample(DB, mk, sy, f, _num(r.pnl_pct, 0), _num(r.ts, 0)); madeX++; }   // [V33.173] 원본 행의 관측 시각
+          if (f) { await xalphaLogSample(DB, mk, sy, f, _num(r.pnl_pct, 0), _num(r.ts, 0)); madeX++; if (r._fr) _frMadeX++; }   // [V33.173] 원본 행의 관측 시각
           // [V33.178] 실패 사유를 갈라 센다 — '패널이 얇아서' 와 '그 밖의 이유' 는 처방이 다르다.
           else if (_panelW(_pn) < XALPHA.minPanel) { if (mk === "kr") xThinKR++; else xThinUS++; }
           else xNull++;
         }
-        if (FLOWML.enabled && _num(r.id, 0) > fDone) {
+        if (FLOWML.enabled && (r._fr || _num(r.id, 0) > fDone)) {
           // 포지셔닝(공매도·내부자·풋콜)은 시점 데이터라 과거 값을 알 수 없다 → 0(중립).
           //   피어 그래프만으로도 6/12 차원이 채워지고, 그 부분은 완전히 정직한 소급 계산이다.
           const peer = await flowPeerFeat(DB, sy, mk, snap);
@@ -31904,17 +31958,43 @@ async function altSampleBackfill(DB, opts) {
                         g(peer, "peerRel5"), g(peer, "peerCorrAvg"), g(peer, "peerLead"),
                         0, 0, 0, 0, 0, 0, 0];
             await flowLogSample(DB, mk, sy, fv, _num(r.pnl_pct, 0), _num(r.ts, 0));   // [V33.173] 원본 행의 관측 시각
-            madeF++;
+            madeF++; if (r._fr) _frMadeF++;
           }
         }
+      }
+    }
+    /* [V33.406] ★프런티어 워터마크는 날짜 경계로 올린다.★ 행 단위로 올리면, 한 날짜가
+       LIMIT 에 잘렸을 때 그 날의 나머지 행이 `ts > 워터마크` 에 안 걸려 영영 안 만들어진다.
+       그리고 질의가 ★잘렸으면★(가져온 수 = 상한) 마지막 날짜는 통째로 미완일 수 있으므로
+       그 앞 날짜까지만 올린다 — 다음 회차가 그 날짜를 처음부터 다시 집는다. */
+    let _fwdTs = _fwdDone0, _fwdStuck = null;
+    if (_frTsSeen > 0) {
+      const _truncated = _frRows.length >= Math.max(50, _num(ALTBF.frontierMax, 5000));
+      const _doneDays = _frList.slice(0, _frCap).filter(function (k) { return !_truncated || k !== _frList[_frList.length - 1]; });
+      if (_doneDays.length) {
+        const _lastDay = _doneDays[_doneDays.length - 1];
+        const _dEnd = Date.parse(_lastDay + "T00:00:00Z") + 86400000 - 1;
+        if (isFinite(_dEnd) && _dEnd > _fwdTs) _fwdTs = _dEnd;
+      } else {
+        /* ★완결로 읽을 날짜가 하나도 없다 = 워터마크가 안 오른다 = 다음 회차가 같은 행을
+           또 집는다.★ frontierMax 가 하루치보다 작으면 여기서 영원히 맴돈다 — 조용히 돌지
+           않게 사유를 남긴다(V33.187 이 과거 커서에서 배운 것과 같은 교착이다). */
+        _fwdStuck = "프런티어 워터마크 정지 — 후보 " + _frRows.length + "행이 상한(" +
+                    _num(ALTBF.frontierMax, 5000) + ")에 잘려 완결 날짜가 없다. frontierMax 를 올려야 한다";
       }
     }
     await setState(DB, "alt_bf_cursor", {
       lastId: lastId, made: _num(st.made, 0) + madeX + madeF,
       fDone: FLOWML.enabled ? Math.max(fDone, lastId) : fDone, fvF: FLOWML.featVer,
       xDone: XALPHA.enabled ? Math.max(xDone, lastId) : xDone, fvX: XALPHA.featVer,
+      fwdTs: _fwdTs,
       ts: Date.now() });
     return "[ALT-BF] 날짜 " + _dProc + "처리/" + _dDone + "훑음/" + _daysAll.length + "일 — XALPHA +" + madeX + " / FLOW +" + madeF +
+           /* [V33.406] ★전진검증을 채우는 것은 이 숫자뿐이다.★ 0 이면 신규 위원은 영원히 보류다. */
+           " · ★프런티어 XALPHA +" + _frMadeX + " / FLOW +" + _frMadeF +
+             " (최근 " + _num(ALTBF.frontierDays, 30) + "일 · 후보 " + _frRows.length + "행 · 워터마크 " +
+             (_fwdTs > 0 ? new Date(_fwdTs).toISOString().slice(0, 10) : "없음") + ")★" +
+           (_fwdStuck ? " · ⚠️★" + _fwdStuck + "★" : "") +
            " (건너뜀 " + skipped + ", 커서 " + lastId + ")" +
            /* [V33.403] ★영구 손실을 소리내어 말한다.★ 커서가 전진하므로 이 행들은 다시 안 온다. */
            (_dayThin
@@ -51240,6 +51320,7 @@ export {
   _calFeats, _opexCtx, _fomcCtx, FOMC_DAYS, _thirdFriday,   // [V33.265] 달력 사건
   FOMC_EMERGENCY, FOMC_CANCELLED, CAL_COVER_FROM,           // [V33.399] 예외 선언표 · 커버 하한
   _calRestampSamples,                                       // [V33.400] 달력 소급 재각인
+  ALTBF,                                                    // [V33.406] 프런티어 소급 설정
   flowScore,                                                // [V33.401] 워커 퇴화칸 서빙정합 검사
   _mktBeatsPooled,                                          // [V33.402] 시장전용 승격 비교
   XALPHA, FLOWML,                                           // [V33.403] 소급 도달범위 검사
