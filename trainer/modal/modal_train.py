@@ -709,8 +709,31 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                    if _stage_ages({"last_ok": _last_ok}, [n])[n] >= STARVE["maxAgeS"]]
         print(f"   [예산예약] 굶은 단계 {len(_hungry)}종({', '.join(_hungry)}) — "
               f"DNN 이 {_DNN_RESERVE}s 를 양보한다(시드 최소 {STARVE['dnnMinSeeds']}개는 지킨다)")
-    mw = np.clip(absp / pnl_scale, 0.3, 3.0) * np.where(HV > 0, hv_w, live_w) * recency * UNIQ
+    # ══ [V33.405] ★크기 가중이 실력의 절반을 먹고 있었다 — 실험대가 잰 숫자다.★ ═══════════
+    #   2026-09-21 회차 라벨실험대(같은 표본·같은 분할·같은 학습기 LightGBM 200R):
+    #     A  운영(sign) · 가중 = 고유도만        → 초과 ★+2.26%p★ · IC 0.0663
+    #     A″ +운영가중(|pnl|·출처·최근성·고유도) → 초과 ★+1.21%p★ · IC 0.0482
+    #   같은 로그가 나머지 인자를 스스로 지운다:
+    #     [최근성] 학습표본의 ★100.0%★ 가 바닥에 붙어 있다 → recency 는 상수다
+    #     출처 가중: 수확 1,085,539 · ★실거래 68건★        → where(...) 도 사실상 상수다
+    #   상수 배수는 가중적합을 바꿀 수 없다. 그러므로 −1.05%p 는 ★|pnl| 크기 가중★ 이다 —
+    #   추론이 아니라 산수다.
+    #   왜 해로운가: 이 모델의 일은 ★부호 분류★ 인데 |pnl| 가중은 "많이 움직인 표본" 에
+    #   발언권을 몰아준다. 크게 움직인 구간은 변동성이 큰 구간이고 ★가장 예측하기 어려운★
+    #   구간이다. 즉 가장 안 맞는 표본에 가장 큰 가중을 주고 있었다.
+    #   → 손잡이로 뺀다. 워커 설정이 유일한 출처이고(cfg.pnlWeight), 기본은 ★끔★ 이다.
+    #     상수 or cfg 단락(V33.396 AL-1)을 되풀이하지 않도록 ★설정을 먼저★ 읽는다.
+    _pw_cfg = (cfg or {}).get("pnlWeight", None)
+    _pw_on = bool(_pw_cfg) if _pw_cfg is not None else False
+    if _pw_on:
+        _wmag = np.clip(absp / pnl_scale, 0.3, 3.0)
+    else:
+        _wmag = np.ones(N, dtype=np.float64)
+    mw = _wmag * np.where(HV > 0, hv_w, live_w) * recency * UNIQ
     print(f"   출처 가중: 수확 ×{hv_w} · 실거래 ×{live_w} (수확 {int((HV > 0).sum())} · 실거래 {int((HV <= 0).sum())}건)")
+    print(f"   [크기가중] |pnl| 가중 {'켬' if _pw_on else '★끔★'}"
+          f" — 출처 {'워커 설정(cfg.pnlWeight)' if _pw_cfg is not None else '기본값(설정 미수신)'}"
+          + ("" if _pw_on else "  (실험대 실측: 켜면 초과 +2.26%p → +1.21%p 로 절반이 깎였다)"))
 
     # [V33.341] 분할은 공용 헬퍼 한 곳에서 — 학습기마다 다른 자를 쓰지 않는다.
     #   (표본은 위에서 이미 ts 오름차순 정렬돼 있어 order 는 항등이다.)
@@ -2973,6 +2996,13 @@ def _label_ablation(X, PNL, TS, SYM, MKT, featver, D, UNIQ=None, featnames=None,
     _MW = np.asarray(MW, dtype=np.float64)[order] if MW is not None and len(MW) == N else None
     _Ysign = (Ps > 0).astype(np.float64)
     _all = np.ones(N, dtype=bool)
+    # [V33.405] 고유도 × |pnl| 만 — 다른 인자 없이 크기 가중 하나만 격리한 자.
+    _PNLW = None
+    try:
+        _ap = np.abs(Ps); _sc = float(np.median(_ap)) or 1.0
+        _PNLW = UWs * np.clip(_ap / (_sc if _sc > 1e-6 else 1.0), 0.3, 3.0)
+    except Exception:
+        _PNLW = None
 
     # 후보들 — (이름, 라벨, 사용마스크, 한 줄 설명, 입력행렬(None=원값), 가중(None=고유도))
     cands = []
@@ -2986,6 +3016,11 @@ def _label_ablation(X, PNL, TS, SYM, MKT, featver, D, UNIQ=None, featnames=None,
     if _Xn is not None and _MW is not None:
         cands.append(("A‴ +둘 다(운영 그대로)", _Ysign, _all,
                       "운영이 DNN 에 먹이는 것과 같은 입력·가중. 남는 차이는 ★모델뿐★", _Xn, _MW))
+    # [V33.405] ★A″ 는 |pnl|·출처·최근성을 한데 묶어 쟀다 — 어느 것이 먹었는지는 산수로만 알았다.
+    #   여기서 |pnl| 만 따로 곱해 ★측정으로★ 확정한다(나머지가 상수라는 주장까지 같이 검증된다).
+    if _PNLW is not None:
+        cands.append(("A⁗ +크기가중만", _Ysign, _all,
+                      "고유도 × ★|pnl| 크기★ 만. A 와의 차이가 곧 크기 가중의 값어치다", None, _PNLW))
     for _mult, _tag in ((0.25, "0.25×"), (0.50, "0.50×")):
         thr = _mult * _absmed
         cands.append((f"B 데드밴드 {_tag}중앙", _Ysign, np.abs(Ps) >= thr,
