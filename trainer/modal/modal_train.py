@@ -256,6 +256,28 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         except Exception:
             _last_ok = {}
 
+    # ══ [V33.400] ★진행 기록을 끝에서만 적고 있었다 — 컨테이너가 죽으면 통째로 사라진다.★ ═══
+    #   실측(2026-09-21 회차): 00:45:32 "Container terminated due to preemption" —
+    #   Modal 문서가 ★정상 동작★ 이라고 적어 둔 그 선점이다. 재시작은 같은 입력으로 다시 돈다.
+    #   그런데 last_ok·stage_cost 는 함수 맨 끝에서 한 번만 저장한다. 그래서 1차 시도에서
+    #   성공한 단계(표본수집 4.5분 + DNN 19분 + 업로드)가 ★기록상 없던 일★ 이 되고,
+    #   재시작이 처음부터 다시 했다. 그 대가:
+    #     1차 00:21→00:45 DNN 업로드 완료 ✅  → 선점
+    #     2차 00:45→01:15 표본 14.5분 + DNN 19분 다시 ★같은 일을 두 번★
+    #          01:15→01:35 SEQ·markets
+    #          01:36 GitHub 75분 상한으로 강제 종료 — ★라벨 실험대가 표 머리글만 찍고 잘렸다★
+    #   _stage 의 주석이 이미 그 걱정을 적어 뒀다("죽으면 그때까지의 성공까지 실패로 묻히고").
+    #   예외는 막아 뒀는데 ★컨테이너 사망★ 은 안 막혀 있었다 — 그게 이 판의 구멍이다.
+    #   → 단계가 끝날 때마다 적는다. 쓰기는 딕셔너리 한 번이라 비용이 없다.
+    def _persist_progress():
+        if _store is None:
+            return
+        try:
+            _store["stage_cost"] = _costs
+            _store["last_ok"] = _last_ok
+        except Exception as e:
+            print("   진행 저장 실패(무시 — 회차 끝에 다시 시도한다):", e)
+
     def _stage(name, fn):
         # 예산이 남아 있을 때만 돌린다. 못 돌리면 건너뛴 것을 기록한다.
         # 죽는 것과 건너뛰는 것은 다르다 — 죽으면 그때까지의 성공까지 실패로 뭻히고
@@ -278,6 +300,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         # 실측을 적립한다 — 다음 회차의 예상치가 추측이 아니라 관측이 된다(여유 20%).
         _costs[name] = _next_cost(_costs.get(name), el)
         print(f"   · {name} {el:.0f}s · 남은 예산 {_left():.0f}s")
+        _persist_progress()
 
     # ── 1) 표본 내려받기 ──
     def fetch_all():

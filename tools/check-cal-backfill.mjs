@@ -106,8 +106,27 @@ console.log("\n③~⑤ 되살리지 않아야 할 것은 되살리지 않는가"
       && M._calBackfillX(new Array(OLDW).fill(0), null) === null,
     "ts 가 없으면 기권한다 — Date.now() 로 때우지 않는다(V33.265 금지사항)",
     "★ts 가 없는데도 되살린다 — 과거 표본에 오늘 달력이 붙는다★");
-  chk(!/_calBackfillX[\s\S]{0,600}Date\.now\(\)/.test(code),
-    "복원기 안에 Date.now() 가 없다", "★복원기가 Date.now() 를 쓴다★");
+  /* ══ [V33.400] ★고정 폭 창은 ★다음 함수★ 를 문다.★ ═══════════════════════════════
+     종전엔 `_calBackfillX` 이름 뒤 600자를 통째로 봤다. _calBackfillX 는 한 줄짜리
+     위임 함수라 그 창의 대부분이 ★그 다음에 오는 것★ 이다. V33.400 이 바로 뒤에
+     _calRestampSamples 를 놓자, 그 주석의 "Date.now() 로 때우지 않는다" 라는 ★금지 문구★
+     를 잡아 멀쩡한 코드를 실패로 읽었다 — 규칙을 지킨다고 적은 글이 위반의 증거가 됐다.
+     (같은 날 내가 check-cal-restamp 에 똑같은 실수를 했고 거기서도 이렇게 고쳤다.)
+     → 이름이 아니라 ★본문★ 을 본다. 중괄호를 세서 함수가 끝나는 자리를 찾는다.
+     _calBackfillX 는 _featBackfillX 로 위임하므로 둘 다 본다(위임 뒤에 숨을 수 없다). */
+  const _body = (name) => {
+    const i = code.indexOf("function " + name);
+    if (i < 0) return "";
+    let d = 0, k = code.indexOf("{", i), e = k;
+    for (; e < code.length; e++) { const c = code[e]; if (c === "{") d++; else if (c === "}") { d--; if (d === 0) break; } }
+    return code.slice(k, e + 1);
+  };
+  const _bB = _body("_calBackfillX"), _bF = _body("_featBackfillX");
+  chk(_bB.length > 10 && _bF.length > 200,
+    "복원기 본문을 떼어냈다(_calBackfillX " + _bB.length + "자 · 위임처 _featBackfillX " + _bF.length + "자)",
+    "본문 추출이 깨졌다 — 이 검사는 아무것도 안 보고 있다");
+  chk(!/Date\.now\(\)/.test(_bB) && !/Date\.now\(\)/.test(_bF),
+    "복원기 본문(위임처 포함)에 Date.now() 가 없다", "★복원기가 Date.now() 를 쓴다★");
   // 판 밖 날짜(FOMC 표 이전)는 값이 아니라 ★결측 표식★ 으로 정직하게 표시돼야 한다.
   const preTable = M._calBackfillX(new Array(OLDW).fill(0), Date.parse("2015-05-05T14:30:00Z"));
   chk(preTable && preTable[names.indexOf("fomcKnown")] === 0,

@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.399";
+const _BUILD_VER = "V33.400";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -13521,6 +13521,59 @@ function _featBackfillX(x, ts, dsVals) {
 }
 // 종전 이름 보존 — 호출부(단타 표본 내보내기)와 게이트가 이 이름으로 계약을 건다.
 function _calBackfillX(x, ts) { return _featBackfillX(x, ts, null); }
+
+/* ══ [V33.400] ★달력 6칸을 내보내기 직전에 ts 로 다시 각인한다.★ ═══════════════════
+   V33.399 는 FOMC 표가 2021-01 에서 시작하는 것을 원인으로 보고 2020 을 넣었다.
+   그리고 같은 판에 심은 진단이 ★자릿수가 틀렸다★ 고 답했다(2026-09-21 회차):
+
+     [달력결측] fomcKnown=0 비율 — 학습 ★99.88%★ · 검증 52.50%
+     [달력분포] 학습구간 opexToNext σ0.568/최빈100% · opexWeek σ0.016/최빈100%
+                · opexQuad σ0.029/최빈100% · fomcTo σ0.886/최빈100%
+                · fomcSince σ0.991/최빈100% · fomcKnown σ0.035/최빈100%
+
+   258일(11%)이 아니라 ★학습행의 거의 전부★ 다. 그리고 원인이 표가 아니라는 증거가
+   같은 줄에 있다 — ★opexToNext 도 최빈 100%★ 다. _opexCtx 는 유효한 ts 만 있으면
+   어떤 날짜든 산술로 계산된다(표가 필요 없다). 그것이 상수라는 것은
+   ★수확 당시 obsTs 가 없었다★ 는 뜻이고, 그래서 여섯 칸이 전부 0 으로 박혔다.
+
+   ★그런데 이 여섯 칸은 되살릴 수 있다.★ V33.265 가 그 자리에 적어 둔 그대로다:
+   "날짜만 있으면 과거를 전부 재구성할 수 있다." 행은 자기 관측시각(ts)을 들고 있고,
+   _calBackfillX 는 이미 그 ts 로 달력을 계산해 옛 판 표본을 되살리고 있다 —
+   ★같은 계약을 현재 판 행에도 적용한다.★ 근사가 아니라 원래 값과 같은 값이다.
+
+   왜 수확기가 아니라 여기인가: 저장된 120만 행은 이미 0 으로 박혀 있다. 수확기를
+   고쳐도 앞으로 들어올 행만 산다. 여기서 하면 ★D1 경로와 R2 스냅샷 경로가 같은 함수★ 를
+   지나므로 두 출처가 갈라지지 않고, 표를 늘릴 때마다 스냅샷을 다시 만들 필요도 없다.
+
+   안전장치:
+     · ts 가 2000년 이전(0·결측)이면 손대지 않는다 — Date.now() 로 때우지 않는다.
+     · 달력 6종이 featNames 의 그 자리가 아니면 ★아무것도 안 한다★.
+     · 제대로 찍힌 행에는 ★멱등★ 이다(같은 _calFeats 를 같은 ts 로 다시 계산한다).
+       라이브 행은 ts == obsTs 이므로 값이 바뀌지 않는다.
+     · 바꾼 수·건드린 수·포기한 수를 응답에 싣는다 — 조용히 아무것도 안 하면 그게 보인다. */
+function _calRestampSamples(arr) {
+  const out = { n: 0, changed: 0, skipped: 0 };
+  try {
+    const names = LUXML.featNames, D = names.length;
+    const C = CAL_FEATS.length, S = DS_FEATS.length;
+    const base = D - S - C;
+    if (base < 0) return out;
+    for (let i = 0; i < C; i++) if (names[base + i] !== CAL_FEATS[i]) return out;
+    for (const sm of (arr || [])) {
+      if (!sm || !Array.isArray(sm.x) || sm.x.length !== D) continue;
+      const ts = _num(sm.ts, 0);
+      if (!(ts > CAL_MIN_TS)) { out.skipped++; continue; }
+      const c = _calFeats(ts);
+      let ch = 0;
+      for (let i = 0; i < C; i++) {
+        const v = _num(c[CAL_FEATS[i]], 0);
+        if (sm.x[base + i] !== v) { sm.x[base + i] = v; ch = 1; }
+      }
+      out.n++; out.changed += ch;
+    }
+  } catch (e) {}
+  return out;
+}
 
 /* ══ [V33.334] DMA · 스토캐스틱 슬로우 — 피처화와 소급 ════════════════════════
    달력 6종(_calFeats/_calBackfillX)과 ★같은 부류★ 다: 지금만 알 수 있는 값이 아니라
@@ -25007,9 +25060,13 @@ async function handleRequest(request, env, ctx) {
               /* [V33.365] 다음 커서를 함께 낸다 — 이게 있어야 R2 로 시작한 수집이 중간에
                  D1 로 떨어져도 ★같은 자리에서★ 이어진다(둘 다 ts DESC, id DESC 한 순서다). */
               const _bn = (Array.isArray(_snap.bounds) && _snap.bounds[_part]) ? _snap.bounds[_part] : null;
+              /* [V33.400] ★두 경로가 같은 함수를 지난다.★ 스냅샷을 만들 때가 아니라 내보낼 때
+                 하는 이유가 여기다 — R2 를 다시 만들지 않아도 D1 경로와 값이 같아진다. */
+              const _rs = _calRestampSamples(_arr);
               return Response.json({ featVer: LUXML.featVer, featNames: LUXML.featNames, total: _snap.total,
                 offset: offset, returned: _arr.length, anchorTs: _snap.anchorTs, source: "r2",
                 nextCursorTs: _bn ? _num(_bn.t, 0) : null, nextCursorId: _bn ? _num(_bn.i, 0) : null,
+                calRestamped: _rs.n, calRestampChanged: _rs.changed, calRestampSkipped: _rs.skipped,
                 config: _mlExportConfig(_arch), samples: _arr }, { headers: cors });
             }
           }
@@ -25054,10 +25111,12 @@ async function handleRequest(request, env, ctx) {
         out.push({ ts: _num(r.ts, 0), m: String(r.market || "us"), s: String(r.symbol || ""),
                    x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(r), pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" ? 1 : 0 });
       }
+      const _rs = _calRestampSamples(out);   // [V33.400] 달력 6칸을 ts 로 다시 각인(멱등)
       const _last = raw.length ? raw[raw.length - 1] : null;
       return Response.json({
         featVer: LUXML.featVer, featNames: LUXML.featNames, total: total, offset: offset, returned: out.length, anchorTs: anchorTs,
         nextCursorTs: _last ? _num(_last.ts, 0) : null, nextCursorId: _last ? _num(_last.id, 0) : null,
+        calRestamped: _rs.n, calRestampChanged: _rs.changed, calRestampSkipped: _rs.skipped,
         config: _mlExportConfig(_arch),
         samples: out
       }, { headers: cors });
@@ -50948,6 +51007,7 @@ export {
   _dnnStdVec,                                              // [V33.399] 퇴화칸 중립화 서빙정합 검사
   _calFeats, _opexCtx, _fomcCtx, FOMC_DAYS, _thirdFriday,   // [V33.265] 달력 사건
   FOMC_EMERGENCY, FOMC_CANCELLED, CAL_COVER_FROM,           // [V33.399] 예외 선언표 · 커버 하한
+  _calRestampSamples,                                       // [V33.400] 달력 소급 재각인
   LSM, lsmAmericanPut, lsmExitValue, _lsmCore, _lsmLstsq,   // [V33.268] 최적정지(Longstaff-Schwartz)
   mlSeqVizData, _seqVizFrom,        // [V33.269] SEQ 3D 관측 데이터(순수부는 검사가 직접 돌린다)
   seqFormerScore, SEQML, seqBuildFeat, _seqRosterRow,   // [V33.267] 시퀀스 Transformer(채점·입력조립·명단)
