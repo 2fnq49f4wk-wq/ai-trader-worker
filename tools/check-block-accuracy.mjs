@@ -64,11 +64,18 @@ function mkt(days, syms, pUp, noise, seed) {
 }
 
 // ── ③ ★하한은 더 정직해지기만 한다★ — 느슨해지는 방향이 없어야 한다 ───────────
-for (const [nm, re] of [
-  ["GBDT", /if \(_blk\.lb != null\) \{\s*\n\s*if \(_blk\.lb < accLB\) accLB = \+_blk\.lb\.toFixed\(4\);/],
-  ["DNN", /if \(_blkD\.lb != null && _blkD\.lb < dnnLB\) dnnLB = \+_blkD\.lb\.toFixed\(4\);/],
-]) if (!re.test(S)) no(`블록정확도: ${nm} 가 블록 하한을 '둘 중 작은 값' 으로 쓰지 않는다 — 느슨해질 수 있다`);
-ok("GBDT·DNN 둘 다 '더 작은 하한' 만 채택한다(느슨해지는 방향 없음)");
+/* [V33.408] 글자가 아니라 ★뜻★ 으로 잰다 — V33.408 이 이 자리를 τ* 뒤로 옮기면서
+   옛 고정 문구가 깨졌다. 계약은 그대로다: "블록 하한을 채택하는 곳은 한 군데뿐이고,
+   그 자리는 ★더 작을 때만★ 갈아 끼운다." 그래서 대입 자리를 세고 가드를 확인한다. */
+for (const [nm, lbv, accv] of [["GBDT", "_blk", "accLB"], ["DNN", "_blkD", "dnnLB"]]) {
+  const asg = [...S.matchAll(new RegExp(accv + " = \\+" + lbv + "\\.lb\\.toFixed\\(4\\);", "g"))];
+  if (asg.length !== 1) { no(`블록정확도: ${nm} 가 블록 하한을 ${asg.length} 곳에서 채택한다 — 한 곳이어야 순서가 안 되살아난다`); continue; }
+  const pre = S.slice(Math.max(0, asg[0].index - 300), asg[0].index);
+  const g = new RegExp("if \\(" + lbv + "\\.lb != null && " + lbv + "\\.lb < " + accv + "\\)[\\s\\S]{0,120}$");
+  if (!g.test(pre)) no(`블록정확도: ${nm} 가 블록 하한을 '둘 중 작은 값' 으로 쓰지 않는다 — 느슨해질 수 있다`);
+  if (new RegExp(lbv + "\\.lb > " + accv).test(pre)) no(`블록정확도: ${nm} 에 하한을 ★올려 쓰는★ 방향이 생겼다`);
+}
+ok("GBDT·DNN 둘 다 '더 작은 하한' 만, ★한 자리에서만★ 채택한다(느슨해지는 방향 없음)");
 
 // ── ④ 못 쟀으면 ★승격을 막는가★ — 못 잰 것을 통과로 읽지 않는다 ────────────────
 {
@@ -85,11 +92,16 @@ ok("GBDT·DNN 둘 다 '더 작은 하한' 만 채택한다(느슨해지는 방�
   ok("두 경로 모두 '못 쟀다' 사유를 기록에 남긴다");
   /* ★그 값이 정말 _blockAccLB 에서 오는가★ — 상수로 바꿔치기하면 검사가 통째로 무의미해진다
      (돌연변이 B6 가 그렇게 빠져나갔다). */
-  for (const [nm, re] of [
-    ["GBDT", /const _blk = _blockAccLB\(_bHit, _bTs, _hor\);/],
-    ["DNN", /const _blkD = _blockAccLB\(_bHitD, _bTsD, _horD\);/],
-  ]) if (!re.test(S)) no(`블록정확도: ${nm} 의 블록 하한이 _blockAccLB 호출에서 오지 않는다`);
-  ok("두 경로의 블록 하한이 실제 _blockAccLB 호출에서 나온다");
+  /* [V33.408] GBDT 는 τ* 가 이기면 ★calB 로 다시 잰다★ — 그래서 대입이 한 번이 아니다.
+     계약을 다시 세운다: "_blk / _blkD 에 들어가는 값은 ★전부★ _blockAccLB 호출에서 온다."
+     상수를 한 군데라도 끼워 넣으면(돌연변이 B6) 여기서 걸린다. */
+  for (const [nm, lbv] of [["GBDT", "_blk"], ["DNN", "_blkD"]]) {
+    const asg = [...S.matchAll(new RegExp("(?:const |let |)\\b" + lbv + " = ([^;\\n]+);", "g"))];
+    if (!asg.length) { no(`블록정확도: ${nm} 의 블록 하한 대입을 못 찾는다`); continue; }
+    const bad = asg.filter(m => !/^_blockAccLB\(/.test(m[1].trim()));
+    if (bad.length) no(`블록정확도: ${nm} 의 블록 하한이 _blockAccLB 아닌 데서 온다 — ${bad.map(b => b[1].trim()).join(" / ")}`);
+  }
+  ok("두 경로의 블록 하한이 ★대입마다 전부★ 실제 _blockAccLB 호출에서 나온다");
   /* 적중·시각이 ★검증행에서★ 모이는가 — 빈 배열을 넘기면 언제나 '못 쟀다' 가 되어
      겉보기엔 안전하지만 실제로는 아무 모델도 승격 못 한다(조용한 마비). */
   for (const re of [/_bHit\.push\(_ok \? 1 : 0\); _bTs\.push\(_num\(d\.ts, 0\)\)/,

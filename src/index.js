@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.407";
+const _BUILD_VER = "V33.408";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -34651,6 +34651,56 @@ function _blockAccLB(hits, ts, horizonMs) {
     return { lb: _clamp(m - BLKACC.tMul * se, 0, 1), k: acc.length, mean: m, se: se, why: null };
   } catch (e) { return { lb: null, k: 0, why: "계산 실패: " + ((e && e.message) || e) }; }
 }
+/* ══ [V33.408] ★달력 고정 홀드아웃 분할★ — 잴 수 있는 창을 만든다 ═══════════════════
+   수확은 한 봉 날짜에 전 종목을 함께 쌓는다. 그래서 "마지막 30% 행" 은 표본 수가 커도
+   ★달력으로는 짧다★ (9,000행 = 600종목 × 15거래일). 라벨 지평이 10일이면 겹치지 않는
+   블록이 1개뿐이라 사건 기반 하한을 ★영원히 못 잰다★.
+   여기서는 행이 아니라 ★날짜★ 로 자른다. 기간은 ★채점 구간 기준★ 으로 잡는다 —
+   전체를 반으로 나누면 채점 쪽이 절반이 되어 블록이 모자란다(그 자리에서 한 번 틀렸다).
+     채점(b)  = 마지막 (minBlocks + 2) × 지평 일   ← 여기서 하한과 블록을 잰다
+     τ* 선택(a) = 그 앞 b 의 절반                    ← 블록이 필요 없다(임계값만 고른다)
+   ★창을 만들어 놓고 여전히 못 재면 고친 것이 아니다★ — b 의 블록 수를 실제로 확인하고,
+   못 채우면 달력 분할을 포기해 호출부가 종전 행 기반으로 물러서게 한다.
+   학습이 굶거나(minTrain) 한쪽이 얇으면 마찬가지로 포기한다. */
+function _gbdtCalSplit(data, horizonDays, minTrain, minSide) {
+  const out = { a: null, b: null, mode: null, need: 0, why: "" };
+  try {
+    const _side = Math.max(1, _num(minSide, 20));
+    const _hd = Math.max(1, _num(horizonDays, 10));
+    const _needB = (_num(BLKACC.minBlocks, 4) + 2) * _hd;     // 채점 구간
+    const _needA = Math.max(_hd, Math.floor(_needB / 2));     // τ* 선택 구간
+    const _need = _needA + _needB;
+    out.need = _need;
+    if (!Array.isArray(data) || data.length < 2) { out.why = "표본 없음"; return out; }
+    const _tsMax = _num(data[data.length - 1].ts, 0), _tsMin = _num(data[0].ts, 0);
+    if (!(_tsMax > 0 && _tsMin > 0)) { out.why = "시각 없음"; return out; }
+    const _spanD = (_tsMax - _tsMin) / 86400000;
+    const _minSpan = _need + _num(MINIHOLD.minTrainDays, 30);
+    if (!(_spanD >= _minSpan)) {
+      out.why = "이력 " + Math.round(_spanD) + "일 < 필요 " + Math.round(_minSpan) + "일"; return out;
+    }
+    const _cut = _tsMax - _need * 86400000;                   // 홀드아웃 시작
+    const _mid = _tsMax - _needB * 86400000;                  // τ* 선택 / 채점 경계
+    const _hold = data.filter(function (d) { return _num(d.ts, 0) >= _cut; });
+    const _a = _hold.filter(function (d) { return _num(d.ts, 0) < _mid; });
+    const _b = _hold.filter(function (d) { return _num(d.ts, 0) >= _mid; });
+    if (!(_a.length >= _side && _b.length >= _side)) {
+      out.why = "한쪽이 얇다(" + _a.length + "/" + _b.length + ")"; return out;
+    }
+    const _trN = data.length - _hold.length;
+    if (!(_trN >= _num(minTrain, 0))) {
+      out.why = "학습 굶김(" + _trN + " < " + _num(minTrain, 0) + ")"; return out;
+    }
+    /* ★채점 구간이 실제로 측정 가능한가★ — 여기서 확인하지 않으면 고친 시늉만 한 것이다. */
+    const _bK = Math.floor((_num(_b[_b.length - 1].ts, 0) - _num(_b[0].ts, 0)) / (_hd * 86400000));
+    if (!(_bK >= _num(BLKACC.minBlocks, 4))) {
+      out.why = "채점 구간 블록 " + _bK + "개 < " + _num(BLKACC.minBlocks, 4) + " — 여전히 못 잰다";
+      return out;
+    }
+    out.a = _a; out.b = _b; out.mode = "달력" + _needA + "+" + _needB + "일";
+    return out;
+  } catch (e) { out.why = "계산 실패: " + ((e && e.message) || e); return out; }
+}
 function _icBlockStats(pv, yv, K, keys, mkeys) {
   try {
     const n = Math.min(pv.length, yv.length);
@@ -42659,11 +42709,16 @@ async function mlGBDTTrainNightly(DB) {
        라벨 지평 길이의 ★겹치지 않는 시간블록★ 으로 나눠 블록 간 산포로 하한을 다시 잰다.
        ★하한은 더 정직해지기만 한다★ — 둘 중 작은 값을 쓴다(느슨해지는 방향은 없다). */
     const _hor = Math.max(1, _num((AI_PARAMS.prediction && AI_PARAMS.prediction.horizonDays) || 10, 10)) * 86400000;
-    const _blk = _blockAccLB(_bHit, _bTs, _hor);
+    /* ══ [V33.408] ★여기서 적용하면 아래 τ* 단계가 도로 올려버린다.★ ═══════════════════
+       V33.398 은 이 자리에서 accLB = min(accLB, blockLB) 를 했다. 그런데 바로 아래
+       임계값 캘리브레이션이 `if (accLBC > accLB) accLB = accLBC` 로 ★행 수 기반 Wilson
+       하한★ 을 다시 얹는다 — 블록 보정이 통째로 지워진다.
+       그래서 V33.398 을 배포하고도 화면의 GBDT 하한이 ★70.1%★ 로 살아 있었다
+       (검증 유효 433/9,000 · 고유도 0.05 — 사건으로 세면 1~2개다).
+       ★재는 것과 적용하는 것을 분리한다★ — 여기서는 재 두기만 하고,
+       accLB 가 ★확정된 뒤★(τ* 포함)에 한 번만 최소값을 씌운다. */
+    let _blk = _blockAccLB(_bHit, _bTs, _hor);
     let _blkWhy = _blk.why || null;
-    if (_blk.lb != null) {
-      if (_blk.lb < accLB) accLB = +_blk.lb.toFixed(4);
-    }
 
     // ── 최종 모델: 전체 표본, CV가 정한 트리 수로 학습 + 피처 중요도 수집 ──
     const model = _gbdtFit(data, null, { fixedTrees: fixedTrees, deadline: deadline, collectImp: true });
@@ -42680,8 +42735,25 @@ async function mlGBDTTrainNightly(DB) {
       const nCal = Math.min(data.length, Math.max(40, Math.floor(data.length * 0.3)));
       const half = Math.floor(nCal / 2);
       if (half >= 20 && nCal - half >= 20) {
-        const calA = data.slice(data.length - nCal, data.length - nCal + half);   // data는 ts 오름차순
-        const calB = data.slice(data.length - nCal + half);
+        /* ══ [V33.408] ★행의 마지막 %로 자르면 잴 수 없는 창이 나온다.★ ═══════════════════
+           종전 calB = "마지막 30% 의 뒤 절반" 이다. 수확은 한 봉 날짜에 전 종목을 함께 쌓으므로
+           9,000행이 ★15거래일★ 밖에 안 된다 — 라벨 지평 10일이면 겹치지 않는 블록이 1개다.
+           그러면 위 블록 하한이 "못 쟀다" 가 되어 GBDT 는 ★영원히 승격 불가★ 가 된다.
+           ★표에는 재료가 있는데 안 읽은 것이다★ — V33.326 이 FLOW·XALPHA·STACK 에 대해
+           정확히 이 진단을 하고 달력 고정으로 고쳤다. 같은 처방을 여기에 쓴다.
+           목표 기간 = (minBlocks + 2) × 라벨지평 — 블록을 넉넉히 확보해 ★잴 수 있게★ 한다.
+           달력 분할이 학습을 굶기면(학습행이 최소표본 미만) 종전 행 기반으로 물러선다. */
+        let calA, calB, _calMode = "행기반";
+        {
+          const _hd = Math.max(1, _num((AI_PARAMS.prediction && AI_PARAMS.prediction.horizonDays) || 10, 10));
+          const _sp = _gbdtCalSplit(data, _hd, GBDT.minTrainSamples, 20);
+          if (_sp.a && _sp.b) { calA = _sp.a; calB = _sp.b; _calMode = _sp.mode; }
+          else {
+            _calMode = "행기반(" + (_sp.why || "") + ")";
+            calA = data.slice(data.length - nCal, data.length - nCal + half);   // data는 ts 오름차순
+            calB = data.slice(data.length - nCal + half);
+          }
+        }
         const psA = calA.map(function (d) { const p = mlGBDTScore(model, d.x); return p == null ? 0.5 : p; });
         const sorted = psA.slice().sort(function (a, b) { return a - b; });
         let bestTau = 0.5, bestAcc = -1;
@@ -42693,13 +42765,36 @@ async function mlGBDTTrainNightly(DB) {
         bestTau = _clamp(bestTau, 1e-4, 1 - 1e-4);
         const delta = Math.log(bestTau / (1 - bestTau));
         model.bias -= delta;   // 임계값을 bias에 영구 반영(추론 0.5 컷 = τ* 컷)
-        let ce = 0; for (const d of calB) { const p = mlGBDTScore(model, d.x); if (((p >= 0.5) ? 1 : 0) === d.y) ce++; }
+        /* [V33.408] τ* 가 이기면 accLB 는 ★calB★ 에서 나온다 — 그러면 블록도 calB 에서 세야
+           "하한이 자기가 주장하는 모집단에서 재어진다". 다른 구간의 블록을 씌우면 또 딴 자다. */
+        let ce = 0; const _bHitC = [], _bTsC = [];
+        for (const d of calB) { const p = mlGBDTScore(model, d.x); const _okC = ((p >= 0.5) ? 1 : 0) === d.y;
+          if (_okC) ce++; _bHitC.push(_okC ? 1 : 0); _bTsC.push(_num(d.ts, 0)); }
         const _calNEff = _effN(calB.length, _uBar);
         const accC = ce / calB.length, accLBC = _wilsonLB(accC, _calNEff);
-        if (accLBC > accLB) { acc = accC; accLB = accLBC; valN = _calNEff; valNRaw = calB.length; cvMode += "+τ*"; }
-        calNote = " τ*=" + bestTau.toFixed(3);
+        if (accLBC > accLB) {
+          acc = accC; accLB = accLBC; valN = _calNEff; valNRaw = calB.length; cvMode += "+τ*";
+          // [V33.408] 하한의 출처가 calB 로 바뀌었으니 ★블록도 calB 로 다시 잰다.★
+          _blk = _blockAccLB(_bHitC, _bTsC, _hor);
+          _blkWhy = _blk.why || null;
+        }
+        calNote = " τ*=" + bestTau.toFixed(3) + " 홀드아웃=" + _calMode +
+                  "(" + calB.length + "행/" +
+                  Math.round((_num(calB[calB.length - 1].ts, 0) - _num(calB[0].ts, 0)) / 86400000) + "일)";
       }
     } catch (e) { calNote = ""; }
+
+    /* ══ [V33.408] ★accLB 가 확정된 뒤에 ★한 번만★ 블록 최소값을 씌운다.★ ═══════════════
+       V33.398 의 의도("행이 아니라 사건을 세라")는 옳았고, 틀린 것은 ★자리★ 였다 —
+       위에서 씌운 최소값을 τ* 단계가 도로 올려서 화면의 70.1% 가 살아남았다.
+       하한은 ★더 정직해지기만 한다★ — 둘 중 작은 값을 쓴다(느슨해지는 방향은 없다).
+       _blk 는 바로 위에서 ★accLB 를 만든 그 구간★ 으로 재어져 있다(τ* 가 이겼으면 calB). */
+    if (_blk.lb != null && _blk.lb < accLB) {
+      const _before = accLB;
+      accLB = +_blk.lb.toFixed(4);
+      _blkWhy = "행 기반 " + (_before * 100).toFixed(1) + "% → 사건 기반 " + (accLB * 100).toFixed(1) +
+                "% (겹치지 않는 블록 " + _num(_blk.k, 0) + "개)";
+    }
 
     model.featVer = LUXML.featVer; model.valAcc = +acc.toFixed(4); model.valAccLB = +accLB.toFixed(4);
     model.valN = valN; model.valNRaw = valNRaw; model.valUniq = +_uBar.toFixed(4);
@@ -51368,6 +51463,7 @@ export {
   mlBanditNoiseNightly, LUXNOISE, LUXBANDIT,
   memoScore, memoTrainNightly, MEMOML,
   _blockAccLB, BLKACC,   // [V33.398] 블록 정확도 하한 — 게이트가 실제로 돌려 본다
+  _gbdtCalSplit,   // [V33.408] 달력 고정 홀드아웃 분할 — 게이트가 실제로 돌려 본다
   _dnnArchDecide, DNNARCH, DNN, DNNW,   // [V33.260] 측정-반영 고리 검사
   _dnnAdmit,                        // [V33.262] DNN 승격 판정(정확도 길 · IC 길)
   optMicroFromChain, _bsDeltaGamma, OPTMICRO,   // [V33.264] 옵션 미시구조
