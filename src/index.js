@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.401";
+const _BUILD_VER = "V33.402";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -25764,18 +25764,34 @@ async function handleRequest(request, env, ctx) {
       // [V33.76] ★시장 전용 모델 비교승격★ 통합 모델보다 나쁜 전용 모델이 라이브를 차지하면
       //   분리학습이 오히려 성능을 떨어뜨린다. 통합 gbdt_model 의 검증하한을 넘을 때만 승격하고,
       //   못 넘으면 섀도우에 남긴다 → 추론은 mlGBDTLoad 폴백으로 통합 모델을 계속 쓴다.
+      /* ══ [V33.402] ★두 개의 하한을 맞대 놓고 비교하고 있었다 — 같은 자가 아니다.★ ════════
+         실측(2026-09-21 회차):
+           gbdt_kr  하한 52.93% · KR 검증 194,212행(유효 6,680) · 블록IC 0.0669 ★t 4.01★
+           → {"activated": false, "shadow": true, "trusted": true, "sane": true}
+         셋 다 통과인데 승격이 안 됐다. 막은 것이 바로 이 비교다. 통합 gbdt_model 의
+         하한이 ★70.4%★ 였기 때문이다 — 그런데 그 70.4% 는 V33.398(AN-1)이
+         "검증 9,000행 = 종목당 15봉 ≈ ★겹치지 않는 블록 1.5개★" 라고 밝힌 바로 그 숫자다.
+         15일 동안 시장이 올랐다는 ★사건 하나★ 가, 22개 블록·t 4.01 로 잰 모델을 막고 있었다.
+
+         문제는 둘이고 둘 다 이 저장소가 이미 다른 자리에서 고친 것이다:
+           ① ★기저율이 다르다★ — gbdt_kr 은 KR 행에서, 통합은 전 시장에서 쟀다.
+              V33.397(AM-1)이 "0.5 로부터의 거리는 실력이 아니다" 로 고친 것과 같은 병이,
+              여기선 모델 대 모델 비교에서 되풀이된다. → ★각자의 무실력 기준점 대비 초과★ 로 잰다.
+           ② ★못 잰 기준이 거부권을 갖고 있었다★ — 통합 모델의 기준점이나 사건 수를 모르면
+              비교가 성립하지 않는데, 종전 코드는 그 상태에서 ★막는 쪽★ 으로 기울었다.
+              이 저장소의 규율은 반대다: "못 쟀으면 통과로 읽지 않는다"(AN-1).
+              그 규율은 대칭이어야 한다 — 못 잰 기준은 ★이겼다고도 읽지 않는다.★
+         ※ 문턱은 한 글자도 안 내렸다. 바꾼 것은 ★무엇을 무엇과 비교하는가★ 하나다. */
       let _cmpNote = "";
       if (promote && (_mname === "gbdt_us" || _mname === "gbdt_kr")) {
         try {
           const _pooled = await getState(env.DB, "gbdt_model", null);
-          const _pLB = (_pooled && _pooled.featVer === LUXML.featVer)
-            ? _num(_pooled.valAccLB, _wilsonLB(_num(_pooled.valAcc, 0.5), _num(_pooled.valN, 30))) : null;
-          if (_pLB != null && gLB < _pLB) {
-            promote = false;
-            _cmpNote = " (통합모델 하한 " + (_pLB * 100).toFixed(1) + "% 미달 → 승격보류, 통합 모델 계속 사용)";
-          } else if (_pLB != null) {
-            _cmpNote = " (통합모델 " + (_pLB * 100).toFixed(1) + "% 초과)";
-          }
+          const _pTrust = await getState(env.DB, "gbdt_trust", null);
+          const _r = _mktBeatsPooled(gLB, _num(body.accBase, null), _pooled, _pTrust,
+                                     !!(_pooled && _pooled.featVer === LUXML.featVer),
+                                     _num((typeof BLKACC !== "undefined" && BLKACC.minBlocks) || 4, 4));
+          if (_r.block) promote = false;
+          _cmpNote = " (" + _r.why + ")";
         } catch (e) {}
       }
       try {
@@ -34801,6 +34817,38 @@ async function icFamilyStamp(DB) {
 
 // [V33.138] 위원 자격과 가중 배수를 함께 돌려준다. 화면·로그가 같은 함수를 쓰므로
 //   "왜 안 들어왔나" 와 "얼마나 실렸나" 가 서로 어긋날 수 없다.
+/* ══ [V33.402] 시장전용 모델이 통합 모델을 이겼는가 — ★판정을 한 곳에 모은다★ ═══════
+   요청 핸들러 안에 인라인으로 두면 게이트가 동작을 확인할 길이 없어 "있는가" 만 보게 된다.
+   이 저장소가 반복해 당한 그 실수라, 순수 함수로 빼서 게이트가 ★실제로 돌려 보게★ 한다.
+   반환: { block: bool, why: string } — block 이면 승격 보류(통합 모델 계속 사용). */
+function _mktBeatsPooled(gLB, gBase, pooled, pooledTrust, sameVer, minK) {
+  try {
+    const _pBlk = (pooledTrust && pooledTrust.blockAccLB != null) ? _num(pooledTrust.blockAccLB, null) : null;
+    const _pK = (pooledTrust && pooledTrust.blockK != null) ? _num(pooledTrust.blockK, null) : null;
+    const _pLB = sameVer && pooled
+      ? (_pBlk != null ? _pBlk
+         : _num(pooled.valAccLB, _wilsonLB(_num(pooled.valAcc, 0.5), _num(pooled.valN, 30))))
+      : null;
+    const _pBase = (sameVer && pooled) ? _num(pooled.valAccBase, null) : null;
+    const _mk = _num(minK, 4);
+    if (_pLB == null) return { block: false, why: "통합 대비비교 생략: 통합모델 없음/판 불일치 → 막지 않는다" };
+    if (_pBase == null || gBase == null)
+      return { block: false, why: "통합 대비비교 생략: 무실력 기준점 미측정(" +
+               (_pBase == null ? "통합" : "전용") + ") — 두 하한은 서로 다른 자다 → 막지 않는다" };
+    if (_pBlk == null && _pK == null)
+      return { block: false, why: "통합 대비비교 생략: 통합모델 하한이 사건 수로 검증되지 않았다 → 막지 않는다" };
+    if (_pK != null && _pK < _mk)
+      return { block: false, why: "통합 대비비교 생략: 통합모델 블록 " + _pK + "개 < " + _mk +
+               " — 아직 못 잰 값이다 → 막지 않는다" };
+    const _gEx = _num(gLB, 0) - _num(gBase, 0), _pEx = _pLB - _pBase;
+    if (_gEx < _pEx)
+      return { block: true, why: "실력 초과 " + (_gEx * 100).toFixed(2) + "%p < 통합 " +
+               (_pEx * 100).toFixed(2) + "%p → 승격보류, 통합 모델 계속 사용" };
+    return { block: false, why: "실력 초과 " + (_gEx * 100).toFixed(2) + "%p ≥ 통합 " +
+             (_pEx * 100).toFixed(2) + "%p" };
+  } catch (e) { return { block: false, why: "대비비교 실패 → 막지 않는다" }; }
+}
+
 function expertAdmit(m) {
   try {
     const P = ICGATE.provisional || {};
@@ -34812,13 +34860,17 @@ function expertAdmit(m) {
     const fwdT = (typeof m.fwdICt === "number" && isFinite(m.fwdICt)) ? m.fwdICt : null;
     const fwdN = _num(m.fwdN, 0);
 
-    /* ★전진 IC 가 음수면 여기서 끝난다★ — 학습 밖에서 방향이 반대라는 직접 증거다.
-       ⚠️ 미해결 결함 B-3 — docs/OPEN-DEFECTS.md : 이 가드는 fwdReady(전진표본 ≥ minForward 400)
-       일 때만 작동한다. 그 미만이면 ★측정된 음수 IC 를 통째로 버리고★ 홀드아웃만으로 잠정합류할 수 있다
-       (XALPHA 전진 IC −0.039 가 그 경우였다). "부족한 증거" 와 "반대 방향 증거" 를 같이 취급하는 셈이다. */
+    /* ★전진 IC 가 음수면 여기서 끝난다★ — 학습 밖에서 방향이 반대라는 직접 증거다. */
     if (fwdReady && fwdIC != null && fwdIC <= ICGATE.forwardFloor)
       return { admit: false, mult: 0, tier: "reject",
                why: "전진 IC " + fwdIC.toFixed(4) + " ≤ 0 — 학습 밖에서 방향이 반대다(문턱 문제가 아니다)" };
+    /* [V33.402] ★여기 있던 B-3 경고문을 지운다 — 그 구멍은 이미 막혀 있었다.★
+       그 문구는 "fwdReady 미만이면 측정된 음수 IC 를 통째로 버린다" 고 적어 두었는데,
+       V33.355 가 아래 잠정 경사로에서 정확히 그것을 고쳤다(fwdIC 의 ★부호가 경사로의
+       방향을 정한다★ — 음수면 표본이 찰수록 0 으로 내려가 위 하드 리젝과 이어진다).
+       낡은 경고는 없는 구멍을 있다고 말한다. 실제로 이 문구를 믿고 같은 고침을 한 번 더
+       넣을 뻔했고, 그랬다면 ★이중 처벌★ 이 됐다. 고쳐진 것은 고쳐졌다고 적는다
+       (docs/OPEN-DEFECTS.md 의 B-3 항목도 같이 닫는다). */
 
     // [V33.188] 블록 수 부족은 ★'못 미쳤다' 가 아니라 '아직 못 쟀다' 다★ (ICGATE.minBlocks 주석).
     //   trusted 지름길보다 앞에 둔다 — 사흘치로 얻은 유의성으로 정식 합류시키면 안 된다.
@@ -51071,6 +51123,7 @@ export {
   FOMC_EMERGENCY, FOMC_CANCELLED, CAL_COVER_FROM,           // [V33.399] 예외 선언표 · 커버 하한
   _calRestampSamples,                                       // [V33.400] 달력 소급 재각인
   flowScore,                                                // [V33.401] 워커 퇴화칸 서빙정합 검사
+  _mktBeatsPooled,                                          // [V33.402] 시장전용 승격 비교
   LSM, lsmAmericanPut, lsmExitValue, _lsmCore, _lsmLstsq,   // [V33.268] 최적정지(Longstaff-Schwartz)
   mlSeqVizData, _seqVizFrom,        // [V33.269] SEQ 3D 관측 데이터(순수부는 검사가 직접 돌린다)
   seqFormerScore, SEQML, seqBuildFeat, _seqRosterRow,   // [V33.267] 시퀀스 Transformer(채점·입력조립·명단)
