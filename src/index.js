@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.403";
+const _BUILD_VER = "V33.404";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -43628,20 +43628,36 @@ async function mlMarketHarvestNightly(DB, opts) {
     //   단계별 카운터를 로그로 뽑는다. 0건일 때도 반드시 진단 문자열을 반환한다.
     const _hv = { cand: 0, candD: 0, candH: 0, stMade: 0, prologueMs: 0, symShort: 0, bars: 0, rejEntry: 0, rejLabel: 0, rejPrice: 0, budgetHit: 0 };  // [V12.103] 예산 override(캐치업 수확용)
     const idxCache = {};   // [V7] 시장별 지수 일봉(상대강도용) — 1회 로드
+    const idxDays = {};    // [V33.404] 지수 봉별 날짜 — 있으면 ★날짜로★ 정렬한다(봉 수 세기 아님)
+    /* [V33.404] ★어느 방식으로 맞췄고 몇 건이 빈손이었나.★ 안 세면 "지수 피처가 죽었다" 를
+       다시 추측으로 알아내야 한다(이번에도 Modal 의 [퇴화칸] 을 보고서야 알았다). */
+    const _hvAlign = { idxDate: 0, idxCount: 0, idxMiss: 0, idxNull: 0,
+                       secDate: 0, secCount: 0, secMiss: 0, secNull: 0 };
+    const _hvNow = Date.now();
     for (const mk of ["us", "kr", "cm"]) {
       try {
         let ic = null;
         if (HARVEST.useDeepHistory) {   // [V18] alpha 정렬용 딥 지수 우선(있으면 딥, 없으면 320봉 폴백)
           const isym = mk === "us" ? "^GSPC" : (mk === "kr" ? "^KS11" : "GC=F");
           const hd = await histGet(DB, isym);
-          if (hd && Array.isArray(hd.closes) && hd.closes.length >= 300) ic = hd.closes;
+          if (hd && Array.isArray(hd.closes) && hd.closes.length >= 300) {
+            ic = hd.closes;
+            /* [V33.404] ★날짜를 버리고 있었다.★ 딥이력은 days(에폭 이후 일수)를 싣고 오는데
+               여기서 closes 만 꺼내 썼다. 그래서 아래 정렬이 ★봉 수를 세어 뒤로 가는★ 수밖에
+               없었고, 종목과 지수의 거래일 수가 다르면(KR 종목은 네이버·^KS11 은 야후라
+               길이가 다르다) 옛 봉에서 idxEnd 가 0 이하로 내려가 ★지수 상대 피처가 통째로
+               폴백★ 됐다. V33.217 이 소급생성에서 고친 것과 같은 병이다:
+               "봉 날짜가 있으면 추정하지 않는다." */
+            if (Array.isArray(hd.days) && hd.days.length === hd.closes.length) idxDays[mk] = hd.days;
+          }
         }
         idxCache[mk] = ic || await _mlLoadIndexCloses(DB, mk);
       } catch (e) { idxCache[mk] = null; }
     }
     // [V20] 섹터 ETF 종가 캐시(1회) — 섹터-상대강도 피처용. 딥(hist:) 우선.
     const secCache = {};
-    try { for (const etf of Object.keys(_SECTOR_ETF).map(function (g) { return _SECTOR_ETF[g]; })) { let sd = await histGet(DB, etf); if (!sd) sd = await getState(DB, "daily:" + etf, null); secCache[etf] = (sd && Array.isArray(sd.closes)) ? sd.closes : null; } } catch (e) {}
+    const secDays = {};   // [V33.404] 섹터 ETF 봉별 날짜 — 지수와 같은 이유
+    try { for (const etf of Object.keys(_SECTOR_ETF).map(function (g) { return _SECTOR_ETF[g]; })) { let sd = await histGet(DB, etf); if (!sd) sd = await getState(DB, "daily:" + etf, null); secCache[etf] = (sd && Array.isArray(sd.closes)) ? sd.closes : null; if (sd && Array.isArray(sd.days) && Array.isArray(sd.closes) && sd.days.length === sd.closes.length) secDays[etf] = sd.days; } } catch (e) {}
     let xsPanel = null; try { xsPanel = await getState(DB, "xs_panel", null); } catch (e) {}   // [V21] 횡단면 랭크 패널(1회)
     // [V33.13] 종목 루프가 쓰는 두 가지를 미리 한 번에 읽는다 — 루프 안의 D1 왕복을 없애기 위함.
     //   daily: 전량(1쿼리)과 hist_meta 전량(1쿼리, 행이 작음). 이 둘만으로 "읽을 필요 있는 종목"을
@@ -43786,16 +43802,52 @@ async function mlMarketHarvestNightly(DB, opts) {
           if (!(c > maRef) || rsi < (HARVEST.rsiLo || 28) || rsi > (HARVEST.rsiHi || 82)) { _hv.rejEntry++; continue; }
         }
         const dayPct = (i > 0 && closes[i - 1] > 0) ? (c / closes[i - 1] - 1) * 100 : 0;
-        // [V7] 지수 과거정렬: 봉 i 시점 = 지수 끝에서 (L-1-i)봉 전 — 지수/섹터도 동일 고정창 적용(끝 정렬 유지)
+        /* ══ [V33.404] ★지수·섹터를 봉 수로 맞추면 안 된다 — 달력이 다르다.★ ══════════════
+           종전: "봉 i 시점 = 지수 끝에서 (L−1−i)봉 전". 두 계열이 ★같은 거래일 집합★ 을
+           가질 때만 참이다. 실제로는 다르다 — KR 종목 딥이력은 네이버, ^KS11 은 야후라
+           길이가 애초에 안 맞고(V32.5), 휴장일도 시장·종목마다 어긋난다.
+           어긋나면 옛 봉일수록 idxEnd 가 작아지고 결국 0 이하로 내려가 ★idxHist = null★ 이
+           된다. 그러면 지수 상대 피처가 전부 폴백값으로 채워진다. 그 폴백은 무해하지 않다:
+             rs20·rs60·corrIdx·rsiRel·idxTrend·idxVol·idxMom20·sectorRs20 → 0
+             ★betaIdx·volRatioRel·sectorBeta → 1★ · idxRsi → 0.5
+           베타 1 은 ★실제로 나올 수 있는 값★ 이라 "모른다" 와 구별이 안 된다 —
+           달력의 fomcTo=0 과 같은 충돌이고, 실측 [퇴화칸] 이 rs20·sectorRs20·sectorBeta 를
+           "학습 최빈 100%" 로 찍은 것이 그 흔적이다.
+           → 날짜가 있으면 ★날짜로 찾는다★(_altBarIdx — 소급생성과 같은 함수, 두 벌이 되지 않게).
+             없으면 종전 봉 수 세기로 떨어진다(옛 캐시용 다리). 어느 쪽을 썼는지 센다. */
+        const _barTs = (Array.isArray(dd.days) && dd.days.length === closes.length && dd.days[i] != null)
+                         ? _num(dd.days[i], 0) * 86400000 : null;
         const idxAll = idxCache[mkt];
-        const idxEnd = idxAll ? (idxAll.length - (L - 1 - i)) : 0;
+        let idxEnd = 0;
+        if (idxAll) {
+          const _idD = idxDays[mkt];
+          if (_barTs && _idD) {
+            const _k = _altBarIdx(idxAll.length, _barTs, _hvNow, _idD);
+            idxEnd = _k >= 0 ? _k + 1 : 0;                 // slice 끝은 배타적
+            if (_k >= 0) _hvAlign.idxDate++; else _hvAlign.idxMiss++;
+          } else {
+            idxEnd = idxAll.length - (L - 1 - i);
+            _hvAlign.idxCount++;
+          }
+        }
         const idxHist = (idxAll && idxEnd > 0) ? idxAll.slice(Math.max(0, idxEnd - HIST_CAP), idxEnd) : null;
+        if (!idxHist) _hvAlign.idxNull++;
         // [V20] 섹터 ETF 과거정렬(봉 i) — US만. 그룹→ETF→캐시(수확·라이브 동일 계산).
         let secHist = null;
         if (mkt === "us") {
-          const _sc = secCache[_SECTOR_ETF[getSectorGroup(sym, null)]];
-          const secEnd = _sc ? (_sc.length - (L - 1 - i)) : 0;
-          if (_sc && secEnd > 0) secHist = _sc.slice(Math.max(0, secEnd - HIST_CAP), secEnd);
+          const _etf = _SECTOR_ETF[getSectorGroup(sym, null)];
+          const _sc = secCache[_etf];
+          if (_sc) {
+            const _sdD = secDays[_etf];
+            let secEnd;
+            if (_barTs && _sdD) {
+              const _k2 = _altBarIdx(_sc.length, _barTs, _hvNow, _sdD);
+              secEnd = _k2 >= 0 ? _k2 + 1 : 0;
+              if (_k2 >= 0) _hvAlign.secDate++; else _hvAlign.secMiss++;
+            } else { secEnd = _sc.length - (L - 1 - i); _hvAlign.secCount++; }
+            if (secEnd > 0) secHist = _sc.slice(Math.max(0, secEnd - HIST_CAP), secEnd);
+          }
+          if (!secHist) _hvAlign.secNull++;
         }
         // [V12.43 국면피처 복원] regime:"NEUTRAL" 하드코딩 탓에 regBull/regBear가 79k 전 표본에서
         //   상수 0(죽은 입력)이었다 — 모델이 "지금이 강세장인가 약세장인가"를 배울 수 없던 원인.
@@ -44054,6 +44106,12 @@ async function mlMarketHarvestNightly(DB, opts) {
     } catch (e) {}   // [V33.334] _migPend 면 통째로 건너뛴다 — ml_samples_st 도 이관 대상이다
     const _diagHv = "cand=" + _hv.cand + "(일봉" + (_hv.candD||0) + "+딥" + (_hv.candH||0) + ") 처리=" + scanned + " 봉=" + _hv.bars +
       " [탈락 진입조건=" + _hv.rejEntry + " 라벨=" + _hv.rejLabel + " 가격=" + _hv.rejPrice + " 봉수미달=" + _hv.symShort + "]" +
+      /* [V33.404] 지수·섹터를 ★날짜로★ 맞췄는지 ★봉 수로★ 맞췄는지, 그리고 몇 건이 빈손이었는지.
+         빈손이면 그 봉의 지수 상대 피처가 전부 폴백(rs20=0 · betaIdx=1 …)으로 채워진다. */
+      " [정렬 지수 날짜=" + _hvAlign.idxDate + " 봉수=" + _hvAlign.idxCount +
+        " 범위밖=" + _hvAlign.idxMiss + " ★빈손=" + _hvAlign.idxNull + "★" +
+        " · 섹터 날짜=" + _hvAlign.secDate + " 봉수=" + _hvAlign.secCount +
+        " 범위밖=" + _hvAlign.secMiss + " ★빈손=" + _hvAlign.secNull + "★]" +
       " 단타표본=" + _hv.stMade + " 준비=" + _hv.prologueMs + "ms 총=" + (Date.now() - _hvT0) + "ms/" + (opts.budgetMs || HARVEST.budgetMs || 45000) + "ms" +
       (_hv.budgetHit ? " 예산중단=" + _hv.budgetHit : "");
     // [V33.58] 탈락 사유까지 실어 보낸다 — 캐치업 쿨다운이 원인별로 판단할 수 있게.
