@@ -79,11 +79,33 @@ ok("GBDT·DNN 둘 다 '더 작은 하한' 만, ★한 자리에서만★ 채택�
 
 // ── ④ 못 쟀으면 ★승격을 막는가★ — 못 잰 것을 통과로 읽지 않는다 ────────────────
 {
-  for (const [nm, re] of [
-    ["GBDT", /if \(_blk\.lb == null\) \{[\s\S]{0,400}?setState\(DB, "gbdt_trust", trust\);[\s\S]{0,200}?return/],
-    ["DNN", /if \(_blkD\.lb == null\) \{[\s\S]{0,300}?setState\(DB, "dnn_trust", trust\);[\s\S]{0,120}?return/],
-  ]) if (!re.test(S)) no(`블록정확도: ${nm} 가 '못 쟀다' 인데 승격 경로로 계속 간다`);
-  ok("못 쟀으면 두 경로 모두 그 자리에서 멈춘다");
+  /* [V33.413] ★고정폭 창을 쓰지 않는다.★ 종전엔 "null 분기부터 400자 안에 setState+return 이
+     있는가" 로 봤는데, 그 분기에 정직한 코드(하한을 null 로 돌리고 사유를 적는 일)를 더하자
+     창을 넘어가 깨졌다 — 계약이 아니라 ★길이★ 를 재고 있었던 것이다.
+     계약을 다시 세운다: "null 분기는 ★자기 블록 안에서★ 기록하고 반환한다. 그 블록을 빠져나가
+     승격 계산(wGbdt·wDnn 대입)에 닿지 않는다." 블록은 중괄호 균형으로 정확히 잘라낸다. */
+  const blockAt = (src, needle) => {
+    const i = src.indexOf(needle);
+    if (i < 0) return null;
+    let d = 0;
+    for (let k = src.indexOf("{", i); k < src.length && k > 0; k++) {
+      if (src[k] === "{") d++;
+      else if (src[k] === "}") { d--; if (!d) return src.slice(i, k + 1); }
+    }
+    return null;
+  };
+  for (const [nm, needle, key, wkey] of [
+    ["GBDT", "if (_blk.lb == null) {", "gbdt_trust", "wGbdt"],
+    ["DNN", "if (_blkD.lb == null) {", "dnn_trust", "wDnn"],
+  ]) {
+    const b = blockAt(S, needle);
+    if (!b) { no(`블록정확도: ${nm} 의 '못 쟀다' 분기를 못 찾는다`); continue; }
+    if (!(b.includes(`setState(DB, "${key}", trust)`) && /return/.test(b)))
+      no(`블록정확도: ${nm} 가 '못 쟀다' 인데 기록하고 멈추지 않는다`);
+    if (new RegExp("trust\\." + wkey + "\\s*=\\s*[^0]").test(b))
+      no(`블록정확도: ${nm} 의 '못 쟀다' 분기가 지분을 준다 — 못 잰 것을 통과로 읽는다`);
+  }
+  ok("못 쟀으면 두 경로 모두 ★그 블록 안에서★ 기록하고 멈춘다(지분을 주지 않는다)");
   /* ★사유를 남기는가★ — 멈추기만 하고 이유가 없으면 화면이 "미학습" 으로 뭉갠다(돌연변이 B5). */
   for (const [nm, re] of [
     ["GBDT", /if \(_blk\.lb == null\) \{[\s\S]{0,200}?trust\.reason = "블록 기준 못 쟀다/],

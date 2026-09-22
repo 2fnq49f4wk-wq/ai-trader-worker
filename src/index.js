@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.412";
+const _BUILD_VER = "V33.413";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -31516,6 +31516,12 @@ async function _miniLogisticTrain(DB, opts) {
     const _hSpanD = _holdSpanDays(T, nvalStart, N);
     const _effB = _effBlocks(_hSpanD, _num(opts.labelSpanMs, AI_PARAMS.predictionHorizonDays * 86400000));
     const ic = _num(_st.ic, 0);
+    /* [V33.413] ★풀드와 블록의 부호가 갈리는가★ — 갈리면 그건 잡음이 아니라 구조다.
+       그리고 ★어느 칸이 종목을 가리키는가★ — 학습 구간에서만 잰다(홀드아웃을 안 본다). */
+    //   ic = 풀드(전 구간 한 번에) · _st.blockIC = 날짜 안에서만. 이름을 헷갈리면 진단이 거꾸로 된다.
+    const _simp = (_st.blockIC != null) ? _simpsonNote(ic, _st.blockIC) : "";
+    let _wss = null;
+    try { _wss = _withinSymbolShare(X, S, D, 0, ntr); } catch (e) {}
     // [V33.89] 기저확률(양성비율)을 함께 저장한다 — 이중헤드 사분면 경계를 절대값이 아니라
     //   각 헤드의 기저확률 기준으로 잡기 위해서다. 문턱을 절대값으로 두면 라벨 희소도가 다른
     //   두 헤드(예: 상승 30% vs 하락 22%)에 같은 잣대를 대는 셈이 된다.
@@ -31678,7 +31684,19 @@ async function _miniLogisticTrain(DB, opts) {
            /* [V33.409] ★적용률을 반드시 같이 적는다.★ 실험대가 못 박은 규율이다 —
               데드밴드는 학습 모집단을 바꾸므로, 몇 %를 실제로 썼는지 없이는 수치를 못 읽는다.
               (검증은 전 구간 그대로라 홀드아웃 수치 자체는 종전과 같은 자로 잰 값이다.) */
-           " 데드밴드[" + _dbNote + "]" + _speakNote(_speak) +
+           " 데드밴드[" + _dbNote + "]" + _speakNote(_speak) + _simp +
+           /* [V33.413] ★칸이 종목을 가리키면 같은 날 순위가 언제나 같다 — 그건 고르는 게 아니라 외운 것이다.★
+              이름까지 적는다(번호만 적으면 아무도 안 고친다). */
+           ((_wss && _wss.staticN > 0)
+             ? " ★정적칸 " + _wss.staticN + "/" + D + "★[" +
+               (_wss.cols.map(function (v, j) { return { v: v, j: j }; })
+                         .filter(function (o) { return o.v < 0.05; })
+                         .slice(0, 6)
+                         .map(function (o) {
+                           return ((opts.featNames && opts.featNames[o.j]) || ("칸" + o.j)) + " " + (o.v * 100).toFixed(0) + "%";
+                         }).join(" · ")) +
+               " — 시간이 설명하는 몫이 거의 0 이다(종목 고정값)]"
+             : (_wss && _wss.cols.length ? " 정적칸 0/" + D : "")) +
            /* [V33.291] 시장 고정효과를 빼기 전 값도 적는다 — 게이트가 보는 숫자가 왜 달라졌는지
               로그 한 줄로 답해야 한다(안 적으면 "갑자기 t 가 떨어졌다" 로만 보인다). */
            (_st.mktFixed && _st.blockICPooled != null && _mkN > 1
@@ -34878,6 +34896,84 @@ function _speakNote(sp) {
            "%) · 적용률 " + (sp.cov * 100).toFixed(1) + "% · 발언 " + sp.n + "건 · 블록 " + sp.k + "개]";
   } catch (e) { return " 발언점[표기실패]"; }
 }
+/* ══ [V33.413] ★"잡음과 구별 안 된다" 를 ★왜★ 로 바꾼다 — 두 가지 진단 ═══════════════
+   실측(회차 35671199889)이 숫자 한 쌍에 답을 숨기고 있었다:
+       FLOW   풀드 IC ★+0.0155★   블록 IC ★−0.0589★   t −1.00
+       XALPHA 풀드 IC ★+0.0268★   블록 IC ★−0.0438★   t −1.38
+   ★부호가 반대다.★ 이건 잡음이 아니라 ★구조★ 다 — 전형적인 심프슨 역설이다.
+   풀드 IC 는 전 구간을 한 번에 상관시키므로 ★날짜 사이★ 의 공변동(오르는 날엔 예측도 높고
+   수익도 높다)을 실력으로 센다. 블록 IC 는 ★날짜 안에서★ 만 센다.
+   둘의 부호가 갈리면 뜻은 하나다 — ★그 날짜 안에서는 종목을 못 고른다.★
+   매매는 같은 날 여러 종목 중에 고르는 일이므로, 실제로 필요한 것은 블록 쪽이다.
+
+   그러면 왜 날짜 안에서 못 고르나. 가장 흔한 원인은 ★칸이 종목을 가리키고 있을 때★ 다:
+   피처가 종목마다 다르되 시간에 따라 거의 안 변하면(공매도비율·기관보유·내부자 같은
+   월 단위 갱신 자료가 그렇다), 모델 출력이 사실상 ★종목 고정값★ 이 된다.
+   그러면 같은 날의 순위는 언제나 같은 순위고, 그건 "고르는 것" 이 아니라 ★외운 것★ 이다.
+   학습 구간에서 잘 나간 종목을 외우면 홀드아웃에서 ★음수★ 가 된다 — 지금 모양 그대로다.
+
+   ★재기만 한다.★ 고치는 것은 원인이 확인된 다음이다(피처를 지우거나 바꾸는 것은
+   이 진단이 어느 칸을 가리키는지 보고 정한다). 여기서는 숫자를 내놓는다. */
+function _withinSymbolShare(X, S, D, idxFrom, idxTo) {
+  const out = { cols: [], staticN: 0, n: 0 };
+  try {
+    const a = Math.max(0, _num(idxFrom, 0)), b = Math.min(X.length, _num(idxTo, X.length));
+    if (!(b - a >= 50) || !(D > 0)) return out;
+    // 종목별 합/개수 → 종목 내 평균, 그리고 전체 평균
+    const g = new Map();
+    for (let i = a; i < b; i++) {
+      const k = S[i] || "?";
+      let o = g.get(k);
+      if (!o) { o = { n: 0, sum: new Float64Array(D) }; g.set(k, o); }
+      o.n++;
+      const x = X[i];
+      for (let j = 0; j < D; j++) o.sum[j] += _num(x[j], 0);
+    }
+    if (g.size < 5) return out;                       // 종목이 몇 개 없으면 나눌 수 없다
+    const tot = new Float64Array(D);
+    let nAll = 0;
+    for (const o of g.values()) { nAll += o.n; for (let j = 0; j < D; j++) tot[j] += o.sum[j]; }
+    const gmean = new Float64Array(D);
+    for (let j = 0; j < D; j++) gmean[j] = tot[j] / Math.max(1, nAll);
+    // 총분산 = 종목내분산 + 종목간분산 (분산분해)
+    const vWithin = new Float64Array(D), vBetween = new Float64Array(D);
+    for (const o of g.values()) {
+      for (let j = 0; j < D; j++) {
+        const m = o.sum[j] / Math.max(1, o.n);
+        vBetween[j] += o.n * (m - gmean[j]) * (m - gmean[j]);
+      }
+    }
+    for (let i = a; i < b; i++) {
+      const k = S[i] || "?", o = g.get(k), x = X[i];
+      for (let j = 0; j < D; j++) {
+        const m = o.sum[j] / Math.max(1, o.n);
+        vWithin[j] += (_num(x[j], 0) - m) * (_num(x[j], 0) - m);
+      }
+    }
+    out.n = nAll;
+    for (let j = 0; j < D; j++) {
+      const t = vWithin[j] + vBetween[j];
+      const share = t > 1e-12 ? vWithin[j] / t : 0;   // 시간(종목 내)이 설명하는 몫
+      out.cols.push(+share.toFixed(4));
+      if (share < 0.05) out.staticN++;                // 사실상 종목 고정값 — 종목을 가리키는 칸
+    }
+    return out;
+  } catch (e) { return out; }
+}
+/* 심프슨 진단 한 줄 — 풀드와 블록의 부호가 갈리면 그 뜻을 ★말로★ 적는다.
+   숫자 두 개만 던지면 다음 사람이 또 "잡음인가 보다" 로 읽는다. */
+function _simpsonNote(icPooled, icBlock) {
+  try {
+    const p = _num(icPooled, 0), b = _num(icBlock, 0);
+    if (!(Math.abs(p) > 1e-6 && Math.abs(b) > 1e-6)) return "";
+    if (p > 0 && b < 0)
+      return " ★날짜 사이에서만 맞는다★(풀드 " + p.toFixed(4) + " > 0 > 블록 " + b.toFixed(4) +
+             ") — 같은 날 종목을 고르는 일에는 쓸 수 없다. 칸이 종목을 가리키고 있을 때 나는 모양이다";
+    if (p < 0 && b > 0)
+      return " (풀드 " + p.toFixed(4) + " < 0 < 블록 " + b.toFixed(4) + " — 날짜 안에서는 맞는데 전체로는 틀린다)";
+    return "";
+  } catch (e) { return ""; }
+}
 function _deadbandMask(P, MK, ntr, minN, enable) {
   const out = { mask: null, keep: 0, thr: null, note: "끔" };
   try {
@@ -34929,7 +35025,19 @@ function _gbdtCalSplit(data, horizonDays, minTrain, minSide) {
     const _side = Math.max(1, _num(minSide, 20));
     const _hd = Math.max(1, _num(horizonDays, 10));
     const _needB = (_num(BLKACC.minBlocks, 4) + 2) * _hd;     // 채점 구간
-    const _needA = Math.max(_hd, Math.floor(_needB / 2));     // τ* 선택 구간
+    /* ══ [V33.413] ★고르는 쪽은 블록이 필요 없다 — 그래서 길 이유도 없다.★ ═══════════════
+       V33.408 은 τ* 선택 구간에 채점 구간의 ★절반★ 을 줬다. 그런데 그 구간이 하는 일은
+       임계값 하나를 고르는 것뿐이고, 거기엔 ★행★ 이 필요하지 안 ★날짜★ 가 필요하지 않다.
+       블록이 필요한 것은 ★재는 쪽★ 뿐이다(V33.412 가 발언점에서 이미 같은 결론에 닿았다).
+
+       그 30일이 실제로 GBDT 를 막고 있었다 — 실측(회차 35671199889):
+         [GBDT] 블록 기준 못 쟀다 — 겹치지 않는 블록 ★2개★ < 4
+       달력 분할이 요구하는 이력은 needA(30) + needB(60) + minTrainDays(30) = ★120일★ 인데
+       ml_samples 의 최근 trainWindow 구간은 달력으로 ★약 100일★ 이다. 그래서 달력 분할이
+       한 번도 안 걸리고 종전 행 기반(30%)으로 물러섰고, 그건 2블록짜리 창이었다.
+       → 고르는 쪽을 ★라벨 지평 한 칸★ 으로 줄인다. 필요 이력 120일 → ★100일★.
+       ★채점 구간은 한 칸도 안 줄인다★ — 60일·6블록 그대로다(문턱을 깎는 것이 아니다). */
+    const _needA = _hd;                                       // τ* 선택 구간 — 행만 있으면 된다
     const _need = _needA + _needB;
     out.need = _need;
     if (!Array.isArray(data) || data.length < 2) { out.why = "표본 없음"; return out; }
@@ -42604,7 +42712,12 @@ async function mlDNNVizData(DB) {
           hiddenLayers: _hn, expectedHidden: DNN.hidden.length, fallback: _fb,
           acc: trust ? +_num(trust.dnnAccLB, _num(trust.dnnAcc, 0)).toFixed(3) : null, w: trust ? _num(trust.wDnn, 0) : 0, trusted: !!(trust && trust.trusted) });
       }
-      if (gtrust) committeeC.push({ name: "GBDT", role: "부스팅트리", acc: +_num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0)).toFixed(3), w: _num(gtrust.wGbdt, 0), trusted: !!gtrust.trusted });
+      // [V33.413] 캐시 경로도 같은 규율 — 못 쟀으면 숫자를 만들지 않는다(두 곳이 갈리면 사고다)
+      if (gtrust) committeeC.push({ name: "GBDT", role: "부스팅트리",
+        acc: (gtrust.gbdtAccLB == null && gtrust.accLBWhy) ? null
+             : +_num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0)).toFixed(3),
+        accWhy: gtrust.accLBWhy || null,
+        w: _num(gtrust.wGbdt, 0), trusted: !!gtrust.trusted });
       { const _sr = _seqRosterRow(strust); if (_sr) committeeC.push(_sr); }
       return Object.assign({}, _cachedHeavy, {
         kind: "dnn",
@@ -42674,7 +42787,14 @@ async function mlDNNVizData(DB) {
     committee.push({ name: "DNN", role: "은닉 " + _hidN + "층 딥넷" + (_isFallback ? "(★워커 폴백★ — GPU 망 미탑재)" : "(GPU)"),
       hiddenLayers: _hidN, expectedHidden: DNN.hidden.length, fallback: _isFallback,
       acc: trust ? +_num(trust.dnnAccLB, _num(trust.dnnAcc, 0)).toFixed(3) : null, w: trust ? _num(trust.wDnn, 0) : 0, trusted: !!(trust && trust.trusted) });
-    if (gtrust) committee.push({ name: "GBDT", role: "부스팅트리", acc: +_num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0)).toFixed(3), w: _num(gtrust.wGbdt, 0), trusted: !!gtrust.trusted });
+    /* [V33.413] 하한을 못 쟀으면 ★위원회 표에도 숫자를 만들어 내지 않는다.★
+       종전엔 gbdtAccLB 가 null 이면 gbdtAcc(행 기반 관측 정확도)로 떨어졌는데,
+       그건 "못 쟀다" 옆에 또 다른 숫자를 세우는 일이라 같은 오해를 만든다. */
+    if (gtrust) committee.push({ name: "GBDT", role: "부스팅트리",
+      acc: (gtrust.gbdtAccLB == null && gtrust.accLBWhy) ? null
+           : +_num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0)).toFixed(3),
+      accWhy: gtrust.accLBWhy || null,
+      w: _num(gtrust.wGbdt, 0), trusted: !!gtrust.trusted });
     { const _sr = _seqRosterRow(strust); if (_sr) committee.push(_sr); }
     // [V11] 3M이 실제 거래결정에 기여 중인가? 신뢰게이트 통과(trusted & wDnn>0) 여부 = 실동작 여부.
     const active = !!(trust && trust.trusted && _num(trust.wDnn, 0) > 0);
@@ -43002,12 +43122,63 @@ async function mlGBDTTrainNightly(DB) {
         labelFn: function (r) { return _labelOfRow(r); }
       });
     } catch (e) {}
-    /* [V33.410] id 를 함께 읽는다 — 다음 밤 전진검증이 "학습에 안 쓰인 행" 을 집합적으로
-       정확히 고르는 기준(maxId)이 여기서 나온다. 종전 질의엔 id 가 없어 그 자가 없었다. */
-    const rows = await DB.prepare(
-      "SELECT id, ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
-    ).bind(LUXML.featVer, LUXML.trainWindow).all();
-    const raw = (rows && rows.results) ? rows.results : [];
+    /* ══ [V33.413] ★달력 길이를 행 수에 인질로 잡히지 않게 한다★ ═══════════════════════
+       종전엔 `ORDER BY ts DESC LIMIT trainWindow` 한 방이었다. 그러면 ★관측 기간이
+       행 예산의 부산물★ 이 된다 — 수확이 하루에 몇 종목을 넣느냐에 따라 창이 늘었다 줄었다 한다.
+       실측(회차 35671549153 → 35671199889)이 그 결과다: 60,000행이 달력으로 ★약 100일★ 이라
+       달력 분할(필요 100일)이 아슬아슬하게 걸리거나 안 걸리고, 안 걸리면 행 기반 30% 로
+       물러서서 ★2블록★ 짜리 창이 된다 → "블록 기준 못 쟀다" 로 GBDT 가 영구 미승격이 된다.
+
+       ★이 저장소는 이미 답을 갖고 있다★ — _miniLogisticTrain(MEMO·FLOW·XALPHA·STACK)은
+       홀드아웃을 ★날짜로★ 따로 긁고 학습을 그 앞에서 따로 긁는다. GBDT 만 한 방 질의였다.
+       같은 구조로 맞춘다:
+         · 홀드아웃 = 마지막 (needA+needB)일 을 칸으로 나눠 고르게 — ★기간은 지키되 행은 묶는다★
+         · 학습     = 그 앞(엠바고 뗀 뒤)에서 종전대로 최근 trainWindow 행
+       그러면 합친 구간의 달력 길이가 ★학습 구간 + 70일★ 이 되어 분할이 넉넉히 성립한다.
+       질의가 실패하거나 이력이 짧으면 ★종전 한 방 질의로 물러선다★(회귀 안전).
+       [V33.410] id 를 함께 읽는다 — maxId(전진검증 기준)의 출처다. */
+    const _GCOLS = "SELECT id, ts, feat, label, pnl_pct, strategy FROM ml_samples";
+    let raw = [], _gCalWhy = null;
+    {
+      const _hd = Math.max(1, _num((AI_PARAMS.prediction && AI_PARAMS.prediction.horizonDays) || 10, 10));
+      const _holdD = _hd + (_num(BLKACC.minBlocks, 4) + 2) * _hd;      // needA + needB (= 70일)
+      const _embMs = _hd * 86400000;
+      try {
+        const _r = await DB.prepare("SELECT MAX(ts) mx, MIN(ts) mn FROM ml_samples WHERE featver = ?")
+          .bind(LUXML.featVer).first();
+        const _tsMax = _num(_r && _r.mx, 0), _tsMin = _num(_r && _r.mn, 0);
+        const _spanD = (_tsMax > 0 && _tsMin > 0) ? (_tsMax - _tsMin) / 86400000 : 0;
+        const _needSpan = _holdD + _num(MINIHOLD.minTrainDays, 30);
+        if (_spanD >= _needSpan) {
+          const _cut = _tsMax - _holdD * 86400000;
+          const _B = Math.max(2, Math.floor(_num(MINIHOLD.holdBuckets, 12)));
+          const _per = Math.max(1, Math.floor(_num(MINIHOLD.holdCap, 9000) / _B));
+          const _step = (_holdD * 86400000) / _B;
+          const _hold = [];
+          for (let b = _B - 1; b >= 0; b--) {        // 최신 칸부터 — 이어 붙이면 전체가 ts DESC 다
+            const _a = Math.floor(_cut + b * _step), _z = Math.floor(_cut + (b + 1) * _step) + 1;
+            const r2 = await DB.prepare(
+              _GCOLS + " WHERE featver = ? AND ts >= ? AND ts < ? ORDER BY ts DESC LIMIT ?"
+            ).bind(LUXML.featVer, _a, _z, _per).all();
+            for (const x of ((r2 && r2.results) || [])) _hold.push(x);
+          }
+          const r3 = await DB.prepare(
+            _GCOLS + " WHERE featver = ? AND ts < ? ORDER BY ts DESC LIMIT ?"
+          ).bind(LUXML.featVer, _cut - _embMs, LUXML.trainWindow).all();
+          const _tr = (r3 && r3.results) || [];
+          /* 학습이 굶으면 안 된다 — 잣대를 고치려다 모델을 죽이는 건 고친 게 아니다. */
+          if (_hold.length >= 150 && _tr.length >= GBDT.minTrainSamples) raw = _hold.concat(_tr);
+          else _gCalWhy = "홀드아웃 " + _hold.length + "행 · 학습 " + _tr.length + "행 — 부족";
+        } else {
+          _gCalWhy = "이력 " + Math.round(_spanD) + "일 < 필요 " + Math.round(_needSpan) + "일";
+        }
+      } catch (e) { _gCalWhy = "달력질의 실패: " + ((e && e.message) || e); }
+    }
+    if (!raw.length) {                                  // ★종전 경로로 물러선다★(회귀 안전)
+      const rows = await DB.prepare(_GCOLS + " WHERE featver = ? ORDER BY ts DESC LIMIT ?")
+        .bind(LUXML.featVer, LUXML.trainWindow).all();
+      raw = (rows && rows.results) ? rows.results : [];
+    }
     const nowTs = Date.now();
     let _ckMaxId = 0, _ckMaxTs = 0;
     const data = [];
@@ -43247,6 +43418,21 @@ async function mlGBDTTrainNightly(DB) {
     if (_blk.lb == null) {
       trust.reason = "블록 기준 못 쟀다 — " + (_blkWhy || "블록 부족") +
         " (행 " + _num(model.valNRaw, 0) + "개는 같은 사건을 여러 번 센 것이다)";
+      /* ══ [V33.413] ★못 쟀다고 해놓고 그 숫자를 화면에 올리면 안 된다★ ═══════════════════
+         사용자 관측: "gbdt 검증하한 오류난 것 같다." 맞는 지적이다 — 화면이
+         ★"하한 70.1%" 와 "못 쟀다" 를 나란히★ 띄우고 있었다. 자기모순이다.
+         원인은 단순하다: 이 경로는 승격만 막고 trust.gbdtAccLB 는 ★행 기반 Wilson★ 을
+         그대로 담아 내보냈다 — V33.408 이 방금 "이 숫자는 같은 사건을 여러 번 센 것" 이라고
+         판정한 바로 그 값이다. 막았으면 ★내보내지도 말아야 한다.★
+         → 하한은 ★없음(null)★ 이다. 행 기반 값은 진단용 별도 칸에 이름을 붙여 남긴다 —
+           버리지는 않되, 누구도 그것을 판정으로 오해할 수 없게 한다.
+         (거래 경로는 원래 trusted·wGbdt 로 막혀 있어 영향이 없었다. 잘못된 것은 ★표시★ 였고,
+          표시가 틀리면 사람이 틀린 판단을 한다 — 그래서 이것도 결함이다.) */
+      trust.gbdtAccLBRow = trust.gbdtAccLB;          // 진단용: 행 기반이었다면 얼마였나
+      trust.gbdtAccLB = null;                        // ★판정 불가 — 숫자를 만들지 않는다★
+      trust.accLBWhy = "사건 기반으로 못 쟀다(블록 " + _num(_blk.k, 0) + "개 < " +
+                       _num(BLKACC.minBlocks, 4) + ") — 행 기반 " +
+                       ((_num(trust.gbdtAccLBRow, 0)) * 100).toFixed(1) + "% 는 같은 사건을 여러 번 센 값이다";
       await setState(DB, "gbdt_trust", trust);
       try { await log(DB, "INFO", null, "[GBDT] " + trust.reason); } catch (e) {}
       return "[GBDT] " + trust.reason;
@@ -51863,7 +52049,8 @@ export {
   mlBanditNoiseNightly, LUXNOISE, LUXBANDIT,
   memoScore, memoTrainNightly, MEMOML,
   _blockAccLB, BLKACC,   // [V33.398] 블록 정확도 하한 — 게이트가 실제로 돌려 본다
-  _gbdtCalSplit, _fwdTrustNote, FWDLED, _speakPoint, _speakNote, _speakSplit, SPEAK,   // [V33.408/410/411] 달력 고정 홀드아웃 분할 — 게이트가 실제로 돌려 본다
+  _gbdtCalSplit, _fwdTrustNote, FWDLED, _speakPoint, _speakNote, _speakSplit, SPEAK,
+  _withinSymbolShare, _simpsonNote,   // [V33.413] "잡음과 구별 안 됨" 을 ★왜★ 로 바꾸는 두 진단   // [V33.408/410/411] 달력 고정 홀드아웃 분할 — 게이트가 실제로 돌려 본다
   DEADBAND, _deadbandMask,   // [V33.409] 데드밴드 — 게이트가 상수를 실제로 읽는다
   _dnnArchDecide, DNNARCH, DNN, DNNW,   // [V33.260] 측정-반영 고리 검사
   _dnnAdmit,                        // [V33.262] DNN 승격 판정(정확도 길 · IC 길)

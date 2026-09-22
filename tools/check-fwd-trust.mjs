@@ -117,9 +117,17 @@ console.log("\n③ ★체크포인트를 남기는가★ — 없으면 전진검
       "전진검증이 그 작은 키를 ★실제로 읽어 합친다★",
       "★체크포인트를 쓰기만 하고 안 읽는다 — 죽은 키다★");
   }
-  chk(/"SELECT id, ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = \? ORDER BY ts DESC LIMIT \?"/.test(GB),
-    "GBDT 질의가 ★id 를 읽는다★ — maxId 의 출처다",
-    "★GBDT 질의에 id 가 없다 — maxId 가 0 이 되어 전진검증이 약한 기준으로 내려앉는다★");
+  /* [V33.413] GBDT 질의가 한 방에서 ★날짜 기반 두 질의★ 로 바뀌었다(달력 길이를 행 예산에서
+     떼어내려고). 계약은 그대로다: "GBDT 가 읽는 ★모든★ 질의가 id 를 함께 읽는다" —
+     한 군데라도 빠지면 그 경로에서 maxId 가 0 이 되어 전진검증이 조용히 약한 기준으로 내려앉는다. */
+  {
+    const qs = [...GB.matchAll(/SELECT[^"]*FROM ml_samples/g)].map(m => m[0]);
+    chk(qs.length > 0, "GBDT 의 ml_samples 질의를 찾았다(" + qs.length + "개)", "★질의를 못 찾는다★");
+    const bad = qs.filter(q => !/\bid\b/.test(q) && !/MAX\(ts\)/.test(q));
+    chk(bad.length === 0,
+      "그 질의 ★전부★ id 를 읽는다 — maxId 의 출처다",
+      "★id 없는 질의가 " + bad.length + "개 있다 — 그 경로에서 maxId 가 0 이 되어 전진검증이 약한 기준으로 내려앉는다: " + bad.join(" ⁄ ") + "★");
+  }
   // ★읽은 자리에서 센다★ — 저장 시점까지 raw 가 살아 있기를 기대하면 나중에 조용히 깨진다
   for (const [nm, body] of [["GBDT", GB], ["DNN", DN]]) {
     const li = body.indexOf("if (_a > _ckMaxId)") >= 0 ? body.indexOf("if (_a > _ckMaxId)") : body.indexOf("if (_rid > _ckMaxId)");

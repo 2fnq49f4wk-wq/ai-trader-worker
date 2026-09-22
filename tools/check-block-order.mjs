@@ -73,8 +73,12 @@ console.log("\n④ ★막기만 하지 않는가★ — 잴 수 있는 창을 �
 {
   // 글자가 아니라 ★분할 함수를 돌려서★ 확인한다 — 창을 몰래 좁히면 여기서 잡힌다.
   const D = 86400000, hd = 10;
-  const needB = (M.BLKACC.minBlocks + 2) * hd;          // 채점 구간
-  const need = Math.max(hd, Math.floor(needB / 2)) + needB;
+  const needB = (M.BLKACC.minBlocks + 2) * hd;          // 채점 구간 — ★여기는 안 줄인다★
+  /* [V33.413] 고르는 쪽(τ* 선택)은 ★블록이 필요 없다★ — 임계값 하나를 고를 뿐이다.
+     종전엔 채점 구간의 절반을 줬는데, 그 30일이 실측 이력(약 100일)을 못 닿게 해
+     GBDT 를 영구 미승격으로 묶고 있었다. 고르는 쪽만 지평 한 칸으로 줄였다.
+     ★계약은 "채점 구간이 안 줄었다" 이지 "전체가 90일이다" 가 아니다.★ */
+  const need = hd + needB;
   const mk = (days) => {                      // 하루에 600종목씩 쌓이는 실제 수확 모양
     const t0 = Date.parse("2026-01-01T00:00:00Z"), a = [];
     for (let d = 0; d < days; d++) for (let i = 0; i < 600; i++) a.push({ ts: t0 + d * D, y: i & 1, x: [] });
@@ -110,7 +114,7 @@ console.log("\n④ ★막기만 하지 않는가★ — 잴 수 있는 창을 �
   // 라벨 지평이 바뀌면 기간도 따라와야 한다 — 상수를 박으면 여기서 어긋난다
   {
     const hd2 = 20, needB2 = (M.BLKACC.minBlocks + 2) * hd2;
-    const want2 = Math.max(hd2, Math.floor(needB2 / 2)) + needB2;
+    const want2 = hd2 + needB2;
     const sp2h = M._gbdtCalSplit(mk(want2 + M.MINIHOLD.minTrainDays + 40), hd2, M.GBDT.minTrainSamples, 20);
     chk(sp2h.need === want2,
       "라벨 지평 " + hd2 + "일이면 기간도 " + sp2h.need + "일로 ★따라 늘어난다★",
@@ -145,8 +149,18 @@ console.log("\n⑤ 하한은 ★더 정직해지기만★ 하는가 (느슨해�
   chk(/accLB = \+_blk\.lb\.toFixed\(4\);/.test(blk) && !/_blk\.lb > accLB/.test(blk),
     "작을 때만 갈아 끼운다 — 블록 하한이 높다고 올려 쓰지 않는다",
     "★블록 하한이 높으면 올려 쓴다 — 느슨해지는 방향이 생겼다★");
-  chk(/if \(_blk\.lb == null\) \{[\s\S]{0,320}return "\[GBDT\] " \+ trust\.reason;/.test(S),
-    "못 쟀으면 ★승격하지 않는다★(종전 규율 유지)", "★못 잰 것을 통과로 읽는다★");
+  /* [V33.413] 고정폭 창(320자)이 정직한 코드를 더하자 깨졌다 — 길이가 아니라 ★계약★ 을 잰다:
+     "못 쟀다 분기는 자기 블록 안에서 사유를 적고 반환한다. 지분을 주지 않는다." */
+  {
+    const i = S.indexOf("if (_blk.lb == null) {");
+    let d = 0, b = "";
+    for (let k = S.indexOf("{", i); k < S.length && k > 0; k++) {
+      if (S[k] === "{") d++; else if (S[k] === "}") { d--; if (!d) { b = S.slice(i, k + 1); break; } }
+    }
+    chk(b.length > 0 && /return "\[GBDT\] " \+ trust\.reason;/.test(b) && !/trust\.wGbdt\s*=\s*[^0]/.test(b),
+      "못 쟀으면 ★그 블록 안에서 사유를 적고 멈춘다★(지분을 주지 않는다)",
+      "★못 잰 것을 통과로 읽는다(반환이 없거나 지분을 준다)★");
+  }
 }
 
 console.log(fails === 0 ? "\n✓ 블록 하한 적용순서 검사 통과" : "\n✗ " + fails + "건 실패");
