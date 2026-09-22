@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.416";
+const _BUILD_VER = "V33.417";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -5391,6 +5391,44 @@ const MARKET_HOURS = {
   kr: { pre: [480, 540], regular: [540, 930], post: [930, 1200], quoteTail: 0 }
 };
 
+/* ══ [V33.417] ★미국 23시간 장★ — 2026-12-06 부터 (사용자 지시) ═══════════════════════
+   ■ 무엇이 바뀌고 무엇이 안 바뀌는가 — 이 구분이 이 변경의 전부다
+     ★정규장은 그대로 09:30~16:00 ET 다.★ 늘리지 않는다. 이유:
+       · ★공식 종가★ 가 거기서 난다. 일봉·라벨·수익률·dayPct 가 전부 그 종가에 걸려 있다.
+       · minutesToClose(마감 전 노출 축소)·quoteTail(공식 종가 프린트 대기)도 그 창의 함수다.
+       · 정규장을 23시간으로 적으면 "마감까지 남은 분" 이 23시간이 되고, 종가는 영영 안 온다.
+     ★23시간은 정규장이 늘어나는 것이 아니라 시간외가 넓어지는 것이다.★
+
+   ■ 창 모양 (20:00 ET → 다음날 19:00 ET · 19:00~20:00 유지보수 중단)
+       일 20:00~24:00 ┐
+       월 00:00~09:30 ┘ 야간   → pre
+       월 09:30~16:00           → regular (그대로)
+       월 16:00~19:00           → post
+       월 19:00~20:00           → CLOSED (유지보수)
+       월 20:00~24:00           → post(야간 시작) … 목요일 저녁까지
+       금 16:00~19:00           → post · ★금요일 저녁 야간은 없다★ (토요일로 안 넘어간다)
+
+   ■ ★돈을 거는 창은 넓히지 않는다.★
+     preTrade/postTrade 를 종전값으로 ★명시★ 한다. 안 적으면 pre/post 로 떨어져서
+     23시간이 통째로 거래창이 된다 — 이 파일이 이미 적어 둔 원칙 그대로다:
+       "보는 것과 돈을 거는 것은 다른 문제다."
+     야간 호가는 얇고, 슬리피지·신선도 가정(A-3/A-4)이 그 구간에서도 맞는지 ★아직 안 쟀다.★
+     재고 나서 넓힌다. 그때까지는 ★관측만★ 한다. */
+const MARKET_HOURS_23H_FROM = "2026-12-06";   // 이 날짜(미국 현지)부터 아래 창을 쓴다
+const MARKET_HOURS_US_23H = {
+  regular: [570, 960],                          // ★안 바꾼다★ — 공식 종가·일봉·라벨의 뿌리
+  // 야간(전날 저녁부터 이어진 구간) — 월~금 00:00~09:30
+  pre: [{ a: 0, b: 570, days: [1, 2, 3, 4, 5] }],
+  post: [
+    { a: 960, b: 1140, days: [1, 2, 3, 4, 5] },  // 16:00~19:00 (월~금)
+    { a: 1200, b: 1440, days: [0, 1, 2, 3, 4] }  // 20:00~24:00 (일~목 저녁 — ★금요일 저녁 없음★)
+  ],
+  // ★거래창은 종전 그대로★ — 넓히려면 야간 스프레드·슬리피지를 먼저 재야 한다
+  preTrade: [420, 570],
+  postTrade: [960, 1200],
+  quoteTail: 10
+};
+
 /* 날짜별 예외. 키는 그 시장 현지 날짜 "YYYY-MM-DD".
    규칙으로 뽑을 수 있는 날(추수감사절 다음날)도 ★적어 둔다★ — 규칙을 두 벌 만들면
    그 둘이 갈라지고, 이 표는 사람이 읽고 확인할 수 있어야 한다.
@@ -5426,9 +5464,16 @@ function marketLocalDate(t) {
 }
 /* 오늘 이 시장의 창. 예외가 있으면 그것이 이긴다(부분 지정도 허용 — 나머지는 기본값). */
 function marketWindows(market, now) {
-  const base = MARKET_HOURS[market];
+  let base = MARKET_HOURS[market];
   if (!base) return null;
   const t = marketLocalTime(market, now);
+  /* [V33.417] 23시간 장 시행일부터 미국 창을 갈아 끼운다. ★날짜로 스스로 바뀐다★ —
+     사람이 그날 배포를 기억해야 하는 구조로 두면 그날 조용히 틀린다.
+     날짜 비교는 "YYYY-MM-DD" 문자열 사전순으로 충분하다(같은 자리수·0 패딩). */
+  if (market === "us") {
+    const _d = marketLocalDate(t);
+    if (_d && _d >= MARKET_HOURS_23H_FROM) base = MARKET_HOURS_US_23H;
+  }
   const sp = (MARKET_HOURS_SPECIAL[market] || {})[marketLocalDate(t)];
   const pick = function (k) { return (sp && sp[k]) || base[k]; };
   const out = sp
@@ -5441,18 +5486,62 @@ function marketWindows(market, now) {
   out.postTrade = (sp && (sp.postTrade || sp.post)) || base.postTrade || out.post;
   return out;
 }
-function _inWin(min, w) { return !!(w && min >= w[0] && min < w[1]); }
+/* ══ [V33.417] ★23시간 장은 자정을 넘는다 — 한 구간으로는 못 적는다★ ═══════════════════
+   사용자 지시: "12월 6일부터 미국장 23시간 열린다. 대비해서 시스템을 고쳐라."
+   종전 창은 `[시작분, 끝분]` 하나였고 판정은 `min >= a && min < b` 였다.
+   23시간(20:00 ET → 다음날 19:00 ET, 19~20시 유지보수 중단)은 그 틀에 안 들어간다:
+     · 자정을 넘는다 → 한 구간으로 못 적는다
+     · 중간에 구멍(유지보수)이 있다 → 여러 구간이 필요하다
+     · 일요일 저녁에 열리고 금요일 저녁엔 안 연다 → ★구간마다 요일이 다르다★
+   → 창을 ★여러 구간 + 구간별 요일★ 로 넓힌다. 자정 넘김은 "저녁 구간 + 다음날 새벽 구간"
+     두 조각으로 적으면 되므로 ★감싸기(wrap) 자체가 필요 없다★ — 감싸기는 비교가 뒤집혀
+     실수하기 쉬운 표현이라 쓰지 않는다.
+   표기(셋 다 허용 — 종전 코드는 그대로 돈다):
+     [a, b]                              한 구간, 요일은 기본(월~금)
+     [[a, b], [c, d]]                    여러 구간
+     [{ a, b, days: [0,1,2,3,4] }, …]    구간마다 요일 지정(0=일 … 6=토) */
+function _winParts(w) {
+  if (!w) return [];
+  if (Array.isArray(w) && w.length === 2 && typeof w[0] === "number" && typeof w[1] === "number")
+    return [{ a: w[0], b: w[1], days: null }];
+  if (Array.isArray(w)) {
+    const out = [];
+    for (const p of w) {
+      if (!p) continue;
+      if (Array.isArray(p) && p.length === 2) out.push({ a: p[0], b: p[1], days: null });
+      else if (typeof p === "object" && typeof p.a === "number") out.push({ a: p.a, b: p.b, days: p.days || null });
+    }
+    return out;
+  }
+  return [];
+}
+/* day 를 안 넘기면 요일 제한이 있는 구간은 ★맞지 않는 것으로 본다★ —
+   "모르면 열려 있다" 가 아니라 "모르면 닫혀 있다" 가 이 시스템의 안전한 기본값이다. */
+function _inWin(min, w, day) {
+  const parts = _winParts(w);
+  for (const p of parts) {
+    if (!(min >= p.a && min < p.b)) continue;
+    const ds = p.days || [1, 2, 3, 4, 5];          // 지정이 없으면 종전대로 월~금
+    if (day == null) { if (p.days) continue; return true; }
+    if (ds.indexOf(day) >= 0) return true;
+  }
+  return false;
+}
 function _isWeekday(t) { return !!(t && t.day >= 1 && t.day <= 5); }
 
 /* 지금 세션 — "PRE" / "REGULAR" / "POST" / "CLOSED". 모든 세션 판정의 뿌리다. */
 function marketSessionNow(market, now) {
   const t = marketLocalTime(market, now);
-  if (!_isWeekday(t)) return "CLOSED";
+  if (!t) return "CLOSED";
   const w = marketWindows(market, now);
   if (!w) return "CLOSED";
-  if (_inWin(t.totalMin, w.regular)) return "REGULAR";
-  if (_inWin(t.totalMin, w.pre)) return "PRE";
-  if (_inWin(t.totalMin, w.post)) return "POST";
+  /* [V33.417] ★요일 관문을 통째로 앞에 두지 않는다.★ 23시간 장은 ★일요일 저녁★ 에 열리고
+     ★금요일 저녁★ 엔 안 연다 — "평일이면 열림" 이라는 가정이 더는 성립하지 않는다.
+     요일은 이제 ★구간마다★ 붙어 있고, _inWin 이 그걸 본다.
+     (요일 지정이 없는 구간은 종전대로 월~금이므로 기존 시장은 동작이 안 바뀐다) */
+  if (_inWin(t.totalMin, w.regular, t.day)) return "REGULAR";
+  if (_inWin(t.totalMin, w.pre, t.day)) return "PRE";
+  if (_inWin(t.totalMin, w.post, t.day)) return "POST";
   return "CLOSED";
 }
 
@@ -5469,8 +5558,9 @@ function minutesToClose(market, now) {
   const w = marketWindows(market, now);
   const t = marketLocalTime(market, now);
   if (!w || !_isWeekday(t)) return null;   // 원자재·채권은 거래시간 구조가 달라 적용하지 않는다
-  if (!_inWin(t.totalMin, w.regular)) return null;
-  return w.regular[1] - t.totalMin;
+  if (!_inWin(t.totalMin, w.regular, t.day)) return null;
+  const _rp = _winParts(w.regular).filter(function (p) { return t.totalMin >= p.a && t.totalMin < p.b; })[0];
+  return _rp ? (_rp.b - t.totalMin) : null;
 }
 
 // [V9.0] 가격 갱신 전용 창 — UI/휴장판정용 isMarketOpen과 분리.
@@ -5483,7 +5573,13 @@ function isQuoteRefreshWindow(market, now) {
   const w = marketWindows(market, now);
   const t = marketLocalTime(market, now);
   if (!w || !_isWeekday(t)) return false;
-  return t.totalMin >= w.regular[0] && t.totalMin < w.regular[1] + _num(w.quoteTail, 0);
+  /* [V33.417] 여러 구간을 허용하므로 ★그 구간의 끝★ 에 quoteTail 을 붙인다(첫 구간 고정 아님). */
+  const _tail = _num(w.quoteTail, 0);
+  for (const p of _winParts(w.regular)) {
+    const ds = p.days || [1, 2, 3, 4, 5];
+    if (ds.indexOf(t.day) >= 0 && t.totalMin >= p.a && t.totalMin < p.b + _tail) return true;
+  }
+  return false;
 }
 
 // [프리/애프터마켓] 시간외 시세 갱신 창 — 정규장 밖이지만 가격(시간외)만 실시간 갱신(거래는 안 함).
@@ -5591,8 +5687,8 @@ function extTradeSession(market, cfg, now) {
   const t = marketLocalTime(market, now);
   const w = marketWindows(market, now);
   if (!t || !w || !_isWeekday(t)) return null;
-  if (m.pre && _inWin(t.totalMin, w.preTrade)) return "pre";
-  if (m.post && _inWin(t.totalMin, w.postTrade)) return "post";
+  if (m.pre && _inWin(t.totalMin, w.preTrade, t.day)) return "pre";
+  if (m.post && _inWin(t.totalMin, w.postTrade, t.day)) return "post";
   return null;
 }
 
@@ -5792,7 +5888,7 @@ function sessionElapsedFraction(market, now) {
      그날 기준으로는 1.0 에 가깝다). 당일봉 거래량 환산이 그만큼 어긋난다. */
   const w = marketWindows(market, now);
   const t = marketLocalTime(market, now);
-  if (!w || !_isWeekday(t) || !_inWin(t.totalMin, w.regular)) return null;
+  if (!w || !_inWin(t.totalMin, w.regular, t.day)) return null;
   const span = w.regular[1] - w.regular[0];
   if (!(span > 0)) return null;
   return Math.max(0, Math.min(1, (t.totalMin - w.regular[0]) / span));
@@ -19284,7 +19380,7 @@ async function runTradingCycle(env) {
         const _m = new Date().getUTCMinutes();
         const _tw = marketWindows(market, null);
         const _lt = marketLocalTime(market, null);
-        const _inTradeWin = !!(_tw && _lt && (_inWin(_lt.totalMin, _tw.preTrade) || _inWin(_lt.totalMin, _tw.postTrade)));
+        const _inTradeWin = !!(_tw && _lt && (_inWin(_lt.totalMin, _tw.preTrade, _lt.day) || _inWin(_lt.totalMin, _tw.postTrade, _lt.day)));
         if (_m % (_inTradeWin ? 2 : 6) !== 0) continue;
       }
       const positions = await getPositions(DB, market);  // key: "SYM::strategy"
@@ -37382,7 +37478,7 @@ async function stinBackfill(DB, opts) {
         // [V33.351] 개장 시각은 marketWindows 한 곳에서 — 수능일이면 10:00 이다.
         const k = marketLocalTime("kr", new Date());
         const w = marketWindows("kr", new Date());
-        return !!(k && w && _isWeekday(k) && k.totalMin >= w.regular[0]);
+        return !!(k && w && _isWeekday(k) && k.totalMin >= _winParts(w.regular)[0].a);
       } catch (e) { return true; }   // 판정 못 하면 종전대로 시도한다(막지 않는다)
     }();
     /* [V33.246] 실패를 세기만 하고 ★이유를 안 남겨★ 이 진단에 로그 왕복이 한 번 더 들었다.
@@ -52192,6 +52288,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
+export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
      실제로 돌린다. 두 고침 다 "성적으로만 드러나는" 종류라 문장으로는 못 지킨다. */
