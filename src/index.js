@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.410";
+const _BUILD_VER = "V33.411";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -30923,6 +30923,20 @@ function _mlpProb(m, z) {
    ★학습에만 건다 — 홀드아웃은 한 행도 안 건드린다.★ 그래야 게이트가 재는 모집단이
    운영에서 채점당하는 모집단과 같고, 좋아진 수치가 진짜가 된다(검증 하한 불변).
    문턱은 ★시장별★ |pnl| 중앙값의 k 배다(C2 의 교훈 — 시장을 섞으면 artifact 가 생긴다). */
+/* ══ [V33.411] ★사용자 요구: 모든 모델이 60% 이상★ ═══════════════════════════════════
+   정직하게 그 요구를 만족시키는 방법은 하나뿐이다 — ★못 맞히는 건에는 기권한다.★
+   이 저장소가 이미 측정해 둔 벽이 그 이유다(라벨 실험대):
+     스윙 10일 sign → 어떤 모델족이든 49~52.5% 에 수렴 · 단타 60분 삼중배리어 → 57%
+   전 구간 10일 방향에서 60% 는 모델을 고쳐서 될 일이 ★아니다.★
+   그러나 매매는 모든 종목을 맞힐 필요가 없다. 확신하는 구간만 잡으면 된다.
+   ★그 대신 적용률을 반드시 함께 본다★ — 60% 인데 2% 만 발언하면 위원이 아니라 침묵이다. */
+const SPEAK = {
+  enabled: true,
+  target: 0.60,        // ★사용자 지정★ — 발언 구간 ★블록(사건) 기반★ 하한이 이 이상
+  minCoverage: 0.10,   // 그런데 이만큼은 발언해야 위원 노릇이다
+  minSpeakN: 200,      // 발언 표본 절대 하한
+  calMargin: 0.02      // 캘리브레이션에선 여유를 더 요구한다(홀드아웃에서 내려앉는 게 정상)
+};
 const DEADBAND = {
   enabled: true,
   k: 0.25,            // 문턱 = k × 시장별 |pnl| 중앙값 — 실험대 D 가 쓴 배수와 같다
@@ -31536,7 +31550,29 @@ async function _miniLogisticTrain(DB, opts) {
     const _fwdPass = !!(_fwd && _fwd.ready && _num(_fwd.ic, -1) > ICGATE.forwardFloor
                        && _num(_fwd.t, -9) >= ICGATE.forwardTMin);
     const _trusted = _holdPass && _fwdPass;
-    const model = { w: w, b: b, mean: mean, std: std, featVer: opts.featVer, baseRate: +_base.toFixed(4),
+    /* ══ [V33.411] ★발언점★ — "60% 를 어느 적용률에서 낼 수 있는가" 를 숫자로 답한다.
+       문턱은 ★홀드아웃 앞절반★ 에서 고르고 ★뒤절반★ 에서 잰다(GBDT 의 τ* 와 같은 분할).
+       학습행으로 고르면 in-sample 확신이라 문턱이 미덥지 않고, 홀드아웃 전체로 고르면
+       고른 자리에서 재는 셈이라 선택 편향이 생긴다 — 시간순 반으로 가르는 것이 맞다.
+       ★평가 절반은 문턱을 고르는 데 안 쓰였다.★ 그리고 이 값은 ★기존 게이트를 안 건드린다★ —
+       valAcc·valAccLB·블록IC 는 종전 그대로 전 구간에서 잰 값이다. */
+    let _speak = null;
+    try {
+      const _hv = N - nvalStart;
+      if (_hv >= 2 * _num(SPEAK.minSpeakN, 200)) {
+        const _mid = nvalStart + Math.floor(_hv / 2);
+        const _pA = [], _yA = [], _pB = [], _yB = [], _tB = [];
+        for (let i = nvalStart; i < _mid; i++) { _pA.push(_num(pv[i - nvalStart], 0.5)); _yA.push(Y[i]); }
+        for (let i = _mid; i < N; i++) { _pB.push(_num(pv[i - nvalStart], 0.5)); _yB.push(Y[i]); _tB.push(_num(T[i], 0)); }
+        _speak = _speakPoint(_pA, _yA, _pB, _yB, _tB,
+                             _num(opts.labelSpanMs, AI_PARAMS.predictionHorizonDays * 86400000), SPEAK);
+      } else {
+        _speak = { ok: false, tau: null, cov: 0, acc: null, lb: null, n: 0, k: 0,
+                   target: _num(SPEAK.target, 0.6),
+                   why: "홀드아웃 " + _hv + "행 — 문턱 고르기/재기로 반씩 가르기엔 부족" };
+      }
+    } catch (e) {}
+    const model = { speak: _speak, w: w, b: b, mean: mean, std: std, featVer: opts.featVer, baseRate: +_base.toFixed(4),
       // [V33.114] valN 은 ★유효표본수★ 다(고유도 가중합). 이 값이 Wilson 하한의 n 이 되고,
       //   화면·전진검증도 같은 값을 본다. 명목 nval 은 valNRaw 로 따로 남겨 비교 가능하게 둔다.
       valAcc: +acc.toFixed(4), valIC: +ic.toFixed(5), valN: _nEff, valNRaw: nval, valUniq: _uBar,
@@ -31637,7 +31673,7 @@ async function _miniLogisticTrain(DB, opts) {
            /* [V33.409] ★적용률을 반드시 같이 적는다.★ 실험대가 못 박은 규율이다 —
               데드밴드는 학습 모집단을 바꾸므로, 몇 %를 실제로 썼는지 없이는 수치를 못 읽는다.
               (검증은 전 구간 그대로라 홀드아웃 수치 자체는 종전과 같은 자로 잰 값이다.) */
-           " 데드밴드[" + _dbNote + "]" +
+           " 데드밴드[" + _dbNote + "]" + _speakNote(_speak) +
            /* [V33.291] 시장 고정효과를 빼기 전 값도 적는다 — 게이트가 보는 숫자가 왜 달라졌는지
               로그 한 줄로 답해야 한다(안 적으면 "갑자기 t 가 떨어졌다" 로만 보인다). */
            (_st.mktFixed && _st.blockICPooled != null && _mkN > 1
@@ -34723,6 +34759,97 @@ function _fwdTrustNote(ft) {
            " · " + _num(ft.days, 0) + "일 · 표본 " + _num(ft.n, 0) +
            (ft.ready ? "" : " · 미완") + " ★재기만 함(판정 불변)★]";
   } catch (e) { return " 전진신뢰[표기실패]"; }
+}
+/* ══ [V33.411] ★"모든 모델 60% 이상" 을 ★정직하게★ 만드는 유일한 길 — 기권 ═══════════
+   사용자 요구: "신뢰도가 50%밖에 안 된다. 최소한 모든 모델이 60% 이상 나오게 설계해라."
+   그 요구는 옳다. 50% 짜리 위원이 실제 돈에 표를 던지고 있으면 안 된다.
+   그런데 ★어떻게★ 60% 를 만드느냐에 정직한 길과 부정한 길이 있다.
+
+   ■ 부정한 길(쓰지 않는다)
+     · 검증 하한을 낮춘다 — 사용자가 명시적으로 금지했고 B-6 도 금지한다.
+     · 데드밴드를 세게 걸어 애매한 행을 홀드아웃에서도 뺀다 — 모집단을 바꿔 숫자만 올린다.
+       (V33.409 가 바로 그걸 피하려고 데드밴드를 ★학습에만★ 걸었다.)
+     · 상관된 행을 독립으로 세어 하한을 부풀린다 — V33.408 의 70.1% 가 그 산수였다.
+
+   ■ 정직한 길 — ★모든 건을 맞히려 들지 말고, 못 맞히는 건에는 기권한다★
+     이 저장소가 스스로 측정해 둔 벽이 있다(라벨 실험대):
+         스윙(10일 sign)      DNN 49.3% · 부스터 52.2~52.5% · IC 0.003~0.032
+         단타(60분 삼중배리어) ★57.0%(하한 56.0%)★ · IC 0.207
+     "완전히 다른 모델족이 같은 벽에 부딪히면 그 벽은 모델이 아니라 ★라벨·지평★ 이다."
+     즉 ★전 구간 10일 방향에서 60%★ 는 모델을 고쳐서 될 일이 아니다.
+     그러나 매매 시스템은 모든 종목을 매일 맞힐 필요가 ★없다★ — 확신하는 건만 잡으면 된다.
+     실험대 자신이 그 규율을 적어 두었다:
+       "표본의 40%만 판정하고 60% 맞힌다" 와 "전부 판정하고 52% 맞힌다" 중 무엇이 나은지는
+        ★기대수익★ 이 정하지, 정확도 한 숫자가 정하지 않는다 — 그래서 ★적용률을 같이 적는다.★
+
+   ■ 그래서 이 함수의 계약
+     ① 문턱 τ 는 ★학습(캘리브레이션) 구간에서만★ 고른다 — 홀드아웃은 고르는 데 안 쓴다.
+     ② 그 τ 를 ★고정★ 한 채 홀드아웃에서 잰다 — 선택 편향이 없다.
+     ③ 하한은 ★사건 기반(블록)★ 이다(V33.398·408). 상관된 행을 독립으로 세지 않는다.
+     ④ ★적용률을 항상 함께★ 돌려준다. 60% 인데 2% 만 발언하면 그건 위원이 아니라 침묵이다.
+     ⑤ 목표를 못 맞추면 ★못 맞췄다고 말한다★ — 문턱을 깎아서 맞추지 않는다.
+   ═══════════════════════════════════════════════════════════════════════════════ */
+function _speakPoint(pCal, yCal, pHold, yHold, tsHold, horizonMs, cfg) {
+  const C = cfg || {};
+  const target = _num(C.target, 0.60), minCov = _num(C.minCoverage, 0.10);
+  const minN = _num(C.minSpeakN, 200), margin = _num(C.calMargin, 0.02);
+  const out = { tau: null, cov: 0, covCal: 0, acc: null, lb: null, n: 0, k: 0,
+                ok: false, target: target, why: "" };
+  try {
+    const nc = Math.min(pCal.length, yCal.length);
+    if (nc < minN) { out.why = "캘리브레이션 표본 " + nc + " < " + minN; return out; }
+    /* ① 후보 문턱은 ★캘리브레이션의 |p−0.5| 분위수★ 다. 거기서 목표를 넘는 것 중
+          ★가장 낮은(=적용률이 가장 큰)★ 것을 고른다 — 필요 이상으로 입을 막지 않는다.
+          캘리브레이션에서는 목표에 여유(margin)를 더 요구한다: 그 구간에서 고른 문턱이라
+          홀드아웃에서 조금 내려앉는 것이 정상이기 때문이다. */
+    const conf = [];
+    for (let i = 0; i < nc; i++) conf.push(Math.abs(_num(pCal[i], 0.5) - 0.5));
+    const srt = conf.slice().sort(function (a, b) { return a - b; });
+    let best = null;
+    for (let q = 0; q <= 90; q += 2) {                 // 적용률 100% → 10% 방향으로 훑는다
+      const t = srt[Math.min(srt.length - 1, Math.floor(q / 100 * srt.length))];
+      let hit = 0, n = 0;
+      for (let i = 0; i < nc; i++) {
+        if (conf[i] < t) continue;
+        n++; if (((_num(pCal[i], 0.5) >= 0.5) ? 1 : 0) === yCal[i]) hit++;
+      }
+      if (n < minN) break;                             // 더 올리면 표본이 없다
+      if (hit / n >= target + margin) { best = { t: t, cov: n / nc, acc: hit / n }; break; }
+    }
+    if (!best) { out.why = "캘리브레이션에서 목표 " + (target * 100).toFixed(0) + "% 를 어떤 문턱으로도 못 넘었다"; return out; }
+    out.tau = +best.t.toFixed(6); out.covCal = +best.cov.toFixed(4);
+    /* ② 고정된 τ 로 ★홀드아웃★ 을 잰다 — 여기서 고르지 않았으므로 선택 편향이 없다. */
+    const nh = Math.min(pHold.length, yHold.length);
+    const bh = [], bt = [];
+    let hit = 0;
+    for (let i = 0; i < nh; i++) {
+      if (Math.abs(_num(pHold[i], 0.5) - 0.5) < best.t) continue;
+      const ok = ((_num(pHold[i], 0.5) >= 0.5) ? 1 : 0) === yHold[i];
+      if (ok) hit++;
+      bh.push(ok ? 1 : 0); bt.push(_num(tsHold ? tsHold[i] : 0, 0));
+    }
+    out.n = bh.length; out.cov = nh > 0 ? +(bh.length / nh).toFixed(4) : 0;
+    if (!(bh.length >= minN)) { out.why = "발언 표본 " + bh.length + " < " + minN + " (적용률 " + (out.cov * 100).toFixed(1) + "%)"; return out; }
+    out.acc = +(hit / bh.length).toFixed(4);
+    /* ③ ★하한은 사건 기반★ — 상관된 행을 독립으로 세면 V33.408 의 70.1% 가 다시 난다. */
+    const blk = _blockAccLB(bh, bt, horizonMs);
+    if (blk.lb == null) { out.why = "발언 구간을 블록으로 못 쟀다(" + (blk.why || "") + ")"; return out; }
+    out.lb = +blk.lb.toFixed(4); out.k = _num(blk.k, 0);
+    /* ④⑤ 판정 — ★목표와 적용률을 둘 다★ 넘어야 한다. 못 넘으면 못 넘었다고 말한다. */
+    if (out.lb < target) { out.why = "발언 구간 하한 " + (out.lb * 100).toFixed(1) + "% < 목표 " + (target * 100).toFixed(0) + "%"; return out; }
+    if (out.cov < minCov) { out.why = "적용률 " + (out.cov * 100).toFixed(1) + "% < 최소 " + (minCov * 100).toFixed(0) + "% — 60% 라도 이건 위원이 아니라 침묵이다"; return out; }
+    out.ok = true; out.why = null;
+    return out;
+  } catch (e) { out.why = "계산 실패: " + ((e && e.message) || e); return out; }
+}
+/* [V33.411] 발언점을 사람이 읽는 한 줄로 — ★적용률을 빼고 적지 않는다.★ */
+function _speakNote(sp) {
+  try {
+    if (!sp) return " 발언점[없음]";
+    if (!sp.ok) return " 발언점[미달 · " + (sp.why || "?") + (sp.lb != null ? " · 적용률 " + (sp.cov * 100).toFixed(1) + "%" : "") + "]";
+    return " 발언점[★" + (sp.lb * 100).toFixed(1) + "%★ 하한(관측 " + (sp.acc * 100).toFixed(1) +
+           "%) · 적용률 " + (sp.cov * 100).toFixed(1) + "% · 발언 " + sp.n + "건 · 블록 " + sp.k + "개]";
+  } catch (e) { return " 발언점[표기실패]"; }
 }
 function _deadbandMask(P, MK, ntr, minN, enable) {
   const out = { mask: null, keep: 0, thr: null, note: "끔" };
@@ -41066,9 +41193,27 @@ async function mlDNNTrainNightly(DB) {
     // 검증 정확도(앙상블: 로짓 평균) + Wilson 신뢰하한
     let correct = 0;
     if (!_innerVal) console.log("[DNN] ★내부검증을 못 뗐다(표본 부족) — 이 회차 dnnLB 는 부풀어 있다★");
-    const _bHitD = [], _bTsD = [];   // [V33.398] 블록 기준 하한용 — 적중·시각
+    const _bHitD = [], _bTsD = [], _pD = [], _yD = [];
     for (const t of val) { const p = _dnnEnsembleP(nets, t.x); const _ok = ((p >= 0.5 ? 1 : 0) === t.y);
-      if (_ok) correct++; _bHitD.push(_ok ? 1 : 0); _bTsD.push(_num(t.ts, 0)); }
+      if (_ok) correct++; _bHitD.push(_ok ? 1 : 0); _bTsD.push(_num(t.ts, 0));
+      _pD.push(_num(p, 0.5)); _yD.push(t.y); }
+    /* [V33.411] ★발언점★ — 홀드아웃 앞절반에서 문턱을 고르고 뒤절반에서 잰다.
+       평가 절반은 문턱 선택에 안 쓰였다. ★기존 게이트(dnnAcc·dnnLB)는 안 건드린다.★ */
+    let _speak = null;
+    try {
+      const _hv = _pD.length, _need2 = 2 * _num(SPEAK.minSpeakN, 200);
+      if (_hv >= _need2) {
+        const _m2 = Math.floor(_hv / 2);
+        _speak = _speakPoint(_pD.slice(0, _m2), _yD.slice(0, _m2),
+                             _pD.slice(_m2), _yD.slice(_m2), _bTsD.slice(_m2),
+                             Math.max(1, _num((AI_PARAMS.prediction && AI_PARAMS.prediction.horizonDays) || 10, 10)) * 86400000,
+                             SPEAK);
+      } else {
+        _speak = { ok: false, tau: null, cov: 0, acc: null, lb: null, n: 0, k: 0,
+                   target: _num(SPEAK.target, 0.6),
+                   why: "홀드아웃 " + _hv + "행 < " + _need2 + " — 반씩 가르기엔 부족" };
+      }
+    } catch (e) {}
     const dnnAcc = correct / val.length;
     // [V33.115] 유효표본수로 하한을 잰다 — 외부(Modal) 업로드와 같은 자를 써야 공정 비교다.
     const _uBar = await mlPoolUniqGet(DB);
@@ -41088,6 +41233,7 @@ async function mlDNNTrainNightly(DB) {
        ts 는 "어제 모델이 있는가", maxId/maxTs 는 "학습에 안 쓰였고 미래다" 를 거는 자다.
        ★이 줄이 없으면 전진검증이 영원히 null 이다★ — 지금까지 GBDT·DNN 이 그랬다. */
     net.ts = net.trainedAt; net.maxId = _ckMaxId; net.maxTs = _ckMaxTs;
+    net.speak = _speak;   // [V33.411] ★재기만 한다★ — 발언 게이트는 숫자를 보고 배선한다
     /* ★재기만 한다★ — 아래 승격 판정(trust)은 이 값을 한 줄도 안 읽는다.
        (check-fwd-trust 가 그 경계를 계약으로 확인한다) */
     net.fwdTrust = _fwdTrust
@@ -41176,7 +41322,7 @@ async function mlDNNTrainNightly(DB) {
     const arch = dims.join("-") + "×" + nets.length;
     return "[DNN] arch=" + arch + " n=" + N + " valAcc=" + (dnnAcc * 100).toFixed(1) + "%(하한 " + (dnnLB * 100).toFixed(1) +
            "%) vs mind하한 " + (mindLB * 100).toFixed(1) + "% → wDnn=" + trust.wDnn +
-           (trust.trusted ? " (신뢰)" : " (자동억제=0)") + _fwdTrustNote(net.fwdTrust);
+           (trust.trusted ? " (신뢰)" : " (자동억제=0)") + _fwdTrustNote(net.fwdTrust) + _speakNote(net.speak);
   } catch (e) {
     // [V9.2] 에러 메시지·발생시각 저장 → 다음 진단 가능(관측성). 로그에도 남김.
     const _em = (e && e.message) ? String(e.message).slice(0, 200) : "unknown";
@@ -42908,7 +43054,7 @@ async function mlGBDTTrainNightly(DB) {
     //   GBDT에도 배선: 시간순 최신 홀드아웃 앞절반에서 원(raw)정확도 최대 τ*를 찾아 model.bias 에 굽고
     //   (→ Worker의 0.5 추론이 캘리브레이션을 그대로 반영), τ* 선택에 안 쓴 뒤절반으로 정직하게 평가해
     //   그 정확도를 신뢰게이트에 쓴다(선택 편향 없는 홀드아웃).
-    let calNote = "";
+    let calNote = "", _speak = null;
     try {
       const nCal = Math.min(data.length, Math.max(40, Math.floor(data.length * 0.3)));
       const half = Math.floor(nCal / 2);
@@ -42945,9 +43091,17 @@ async function mlGBDTTrainNightly(DB) {
         model.bias -= delta;   // 임계값을 bias에 영구 반영(추론 0.5 컷 = τ* 컷)
         /* [V33.408] τ* 가 이기면 accLB 는 ★calB★ 에서 나온다 — 그러면 블록도 calB 에서 세야
            "하한이 자기가 주장하는 모집단에서 재어진다". 다른 구간의 블록을 씌우면 또 딴 자다. */
-        let ce = 0; const _bHitC = [], _bTsC = [];
+        let ce = 0; const _bHitC = [], _bTsC = [], _pC = [], _yC = [];
         for (const d of calB) { const p = mlGBDTScore(model, d.x); const _okC = ((p >= 0.5) ? 1 : 0) === d.y;
-          if (_okC) ce++; _bHitC.push(_okC ? 1 : 0); _bTsC.push(_num(d.ts, 0)); }
+          if (_okC) ce++; _bHitC.push(_okC ? 1 : 0); _bTsC.push(_num(d.ts, 0));
+          _pC.push(p == null ? 0.5 : p); _yC.push(d.y); }
+        /* [V33.411] ★발언점★ — 문턱은 calA(캘리브레이션)에서 고르고 calB(홀드아웃)에서 잰다.
+           bias 가 방금 구워졌으므로 calA 를 ★다시★ 채점한다(psA 는 굽기 전 값이라 못 쓴다). */
+        try {
+          const _pA = calA.map(function (d) { const q = mlGBDTScore(model, d.x); return q == null ? 0.5 : q; });
+          const _yA = calA.map(function (d) { return d.y; });
+          _speak = _speakPoint(_pA, _yA, _pC, _yC, _bTsC, _hor, SPEAK);
+        } catch (e) {}
         const _calNEff = _effN(calB.length, _uBar);
         const accC = ce / calB.length, accLBC = _wilsonLB(accC, _calNEff);
         if (accLBC > accLB) {
@@ -42982,6 +43136,10 @@ async function mlGBDTTrainNightly(DB) {
        maxId/maxTs 는 "학습에 안 쓰였고 미래다" 를 둘 다 거는 자다(V33.178).
        ★이 세 줄이 없으면 전진검증이 영원히 null 을 돌려준다★ — 지금까지 그랬다. */
     model.ts = model.trainedAt; model.maxId = _ckMaxId; model.maxTs = _ckMaxTs;
+    /* [V33.411] ★재기만 한다★ — 이 판은 "60% 가 어느 적용률에서 가능한가" 를 숫자로 답하는
+       것까지다. 발언 게이트를 지금 배선하면, 적용률이 2% 로 나오는 모델이 위원회에서
+       사실상 사라져 시스템이 조용히 멈출 수 있다. 숫자를 보고 배선한다(V33.410 과 같은 규율). */
+    model.speak = _speak;
     /* ★재기만 한다★ — 이 값은 기록·화면용이고 아래 승격 판정은 한 줄도 안 읽는다.
        (check-fwd-trust 가 그 경계를 계약으로 확인한다) */
     model.fwdTrust = _fwdTrust
@@ -43060,7 +43218,7 @@ async function mlGBDTTrainNightly(DB) {
     }
     await setState(DB, "gbdt_trust", trust);
     return "[GBDT] trees=" + model.nTrees + " n=" + N + " OOF=" + (acc * 100).toFixed(1) + "%(하한 " + (accLB * 100).toFixed(1) +
-           "%, " + cvMode + calNote + ") vs mind하한 " + (mindLB * 100).toFixed(1) + "% → wGbdt=" + trust.wGbdt + (trust.trusted ? " (신뢰)" : " (억제)") + _fwdTrustNote(model.fwdTrust);
+           "%, " + cvMode + calNote + ") vs mind하한 " + (mindLB * 100).toFixed(1) + "% → wGbdt=" + trust.wGbdt + (trust.trusted ? " (신뢰)" : " (억제)") + _fwdTrustNote(model.fwdTrust) + _speakNote(model.speak);
   } catch (e) {
     const _em = (e && e.message) ? String(e.message).slice(0, 200) : "unknown";
     try { await setState(DB, "gbdt_trust", { wGbdt: 0, trusted: false, reason: "err", err: _em, errAt: Date.now() }); } catch (e2) {}
@@ -51654,7 +51812,7 @@ export {
   mlBanditNoiseNightly, LUXNOISE, LUXBANDIT,
   memoScore, memoTrainNightly, MEMOML,
   _blockAccLB, BLKACC,   // [V33.398] 블록 정확도 하한 — 게이트가 실제로 돌려 본다
-  _gbdtCalSplit, _fwdTrustNote, FWDLED,   // [V33.408/410] 달력 고정 홀드아웃 분할 — 게이트가 실제로 돌려 본다
+  _gbdtCalSplit, _fwdTrustNote, FWDLED, _speakPoint, _speakNote, SPEAK,   // [V33.408/410/411] 달력 고정 홀드아웃 분할 — 게이트가 실제로 돌려 본다
   DEADBAND, _deadbandMask,   // [V33.409] 데드밴드 — 게이트가 상수를 실제로 읽는다
   _dnnArchDecide, DNNARCH, DNN, DNNW,   // [V33.260] 측정-반영 고리 검사
   _dnnAdmit,                        // [V33.262] DNN 승격 판정(정확도 길 · IC 길)
