@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.415";
+const _BUILD_VER = "V33.416";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -35133,15 +35133,23 @@ function _gbdtCalSplit(data, horizonDays, minTrain, minSide) {
     if (!(_spanD >= _minSpan)) {
       out.why = "이력 " + Math.round(_spanD) + "일 < 필요 " + Math.round(_minSpan) + "일"; return out;
     }
-    const _cut = _tsMax - _need * 86400000;                   // 홀드아웃 시작
     const _mid = _tsMax - _needB * 86400000;                  // τ* 선택 / 채점 경계
-    const _hold = data.filter(function (d) { return _num(d.ts, 0) >= _cut; });
-    const _a = _hold.filter(function (d) { return _num(d.ts, 0) < _mid; });
-    const _b = _hold.filter(function (d) { return _num(d.ts, 0) >= _mid; });
+    /* ══ [V33.416] ★고르는 쪽을 날짜 창으로 잡으면 창이 비면 통째로 실패한다★ ═══════════
+       실측(회차 35796753007): 홀드아웃=행기반 ★(한쪽이 얇다(0/7555))★ —
+       calA 로 잡은 10일 창에 표본이 ★한 줄도 없었다.★ 수확·소급 적재는 날짜별로 고르지 않아
+       중간에 빈 구간이 생긴다. 그러면 달력 분할이 통째로 무산되고 행 기반으로 물러선다.
+       ★고르는 쪽은 날짜가 필요 없다★ — 임계값 하나를 고를 뿐이므로 ★행★ 만 있으면 된다
+       (V33.412·413 이 이미 두 번 닿은 결론이다. 여기가 세 번째 자리였다).
+       → 채점 쪽(_b)은 ★날짜로★ 그대로 자르고(블록이 필요하다),
+         고르는 쪽(_a)은 그 경계 ★바로 앞의 행★ 을 세어서 가져온다. 빌 수가 없다. */
+    const _b = data.filter(function (d) { return _num(d.ts, 0) >= _mid; });
+    const _before = data.filter(function (d) { return _num(d.ts, 0) < _mid; });
+    const _aWant = Math.max(_side * 10, 500);
+    const _a = _before.slice(Math.max(0, _before.length - _aWant));
     if (!(_a.length >= _side && _b.length >= _side)) {
       out.why = "한쪽이 얇다(" + _a.length + "/" + _b.length + ")"; return out;
     }
-    const _trN = data.length - _hold.length;
+    const _trN = _before.length - _a.length;
     if (!(_trN >= _num(minTrain, 0))) {
       out.why = "학습 굶김(" + _trN + " < " + _num(minTrain, 0) + ")"; return out;
     }
@@ -35151,7 +35159,8 @@ function _gbdtCalSplit(data, horizonDays, minTrain, minSide) {
       out.why = "채점 구간 블록 " + _bK + "개 < " + _num(BLKACC.minBlocks, 4) + " — 여전히 못 잰다";
       return out;
     }
-    out.a = _a; out.b = _b; out.mode = "달력" + _needA + "+" + _needB + "일";
+    out.a = _a; out.b = _b;
+    out.mode = "채점 달력" + _needB + "일/고르기 " + _a.length + "행";
     return out;
   } catch (e) { out.why = "계산 실패: " + ((e && e.message) || e); return out; }
 }
@@ -43381,9 +43390,19 @@ async function mlGBDTTrainNightly(DB) {
     const _gbFitT0 = Date.now();
     const model = _gbdtFit(data, null, { fixedTrees: fixedTrees, deadline: _finalDL, collectImp: true });
     const _gbFitMs = Date.now() - _gbFitT0;
-    const _gbTimeNote = " 시간[적재 " + Math.round(_gbLoadMs / 1000) + "s · CV " +
+    /* ══ [V33.416] ★이 시계는 CPU 시간을 못 잰다 — 워커의 Date.now() 는 I/O 때만 움직인다.★
+       실측이 그걸 그대로 보여줬다: 적재 7s(질의 있음) · CV ★0s★ · 최종 ★0s★ —
+       CV 가 폴드마다 나무 ~160그루를 세우고도 0ms 로 찍혔다. 계측이 틀린 게 아니라
+       ★순수 계산 중에는 시계가 멈춰 있다.★
+       ★그래서 이 저장소의 CPU 예산 가드는 순수 계산을 못 막는다★ — deadline 은 I/O 로
+       시계가 밀렸을 때만 문다. 나무 0개 사고가 정확히 그 모양이었다: 적재(I/O)가 300초를
+       밀어 시계를 deadline 너머로 보냈고, 최종 적합은 첫 줄에서 break 했다.
+       그래서 finalMinMs 는 ★Date.now() 기준으로 다시 잡는다★ — 그게 유일하게 듣는 방법이다.
+       숫자를 그대로 두되 ★무엇을 재는지★ 를 이름에 적는다(안 적으면 "CV 가 안 돌았다" 로 읽는다). */
+    const _gbTimeNote = " 시간[I/O기준 · 적재 " + Math.round(_gbLoadMs / 1000) + "s · CV " +
                         Math.round(_gbCvMs / 1000) + "s · 최종 " + Math.round(_gbFitMs / 1000) +
-                        "s · 나무 " + _num(model.nTrees, 0) + "그루/목표 " + fixedTrees + "]";
+                        "s · ★순수계산은 워커 시계가 안 움직인다(0s = 계측 불가, 미실행 아님)★" +
+                        " · 나무 " + _num(model.nTrees, 0) + "그루/목표 " + fixedTrees + "]";
 
     // ── [V12.65] ★임계값 캘리브레이션★ GBDT '작동 안 함(영구 억제)' 근본원인 수정 ──
     //   GBDT는 균형가중(wPos/wNeg) 부스팅으로 결정경계가 0.5에서 밀리는데, OOF/홀드아웃 정확도를
