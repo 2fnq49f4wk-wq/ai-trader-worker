@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.414";
+const _BUILD_VER = "V33.415";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -42956,6 +42956,9 @@ const GBDT = {
   //   업계 기준 좋은 모델 IC 0.02~0.08 구간이 의미 있게 분리되도록 잡은 값.
   icTemp: 60,
   // [V12.54] trustSlack 제거 — MIND 상대비교 게이트 폐기로 죽은 파라미터가 됨.
+  /* [V33.415] 최종 적합에 ★반드시★ 남겨 줄 시간. CV 가 예산을 다 먹거나 적재가 길어져도
+     이만큼은 준다 — 안 그러면 나무 0개가 나오고 화면이 "모델 없음" 이 된다. */
+  finalMinMs: 25000,
   trainBudgetMs: 90000, // [V12.42] 25s→90s — trainWindow 60000 확대 후 25s로는 트리 20개만 자라
                         //   시장국면 피처 4종에 중요도 87%가 편중(개별종목 피처 전멸)되던 문제.
                         //   V12.40 단계별 체크포인트로 gbdt 스테이지가 단독 invocation에서 돌므로 안전.
@@ -43222,6 +43225,7 @@ async function mlGBDTTrainNightly(DB) {
        그러면 합친 구간의 달력 길이가 ★학습 구간 + 70일★ 이 되어 분할이 넉넉히 성립한다.
        질의가 실패하거나 이력이 짧으면 ★종전 한 방 질의로 물러선다★(회귀 안전).
        [V33.410] id 를 함께 읽는다 — maxId(전진검증 기준)의 출처다. */
+    const _gbT0 = Date.now();      // [V33.415] 적재 시작 — 아래에서 적재/CV/최종 시간을 갈라 적는다
     const _GCOLS = "SELECT id, ts, feat, label, pnl_pct, strategy FROM ml_samples";
     let raw = [], _gCalWhy = null;
     {
@@ -43295,6 +43299,9 @@ async function mlGBDTTrainNightly(DB) {
     const pnlScale = (absP[Math.floor(absP.length / 2)] || 1) > 1e-6 ? (absP[Math.floor(absP.length / 2)] || 1) : 1;
     for (const d of data) d.mw = _clamp(Math.abs(d.pnl) / pnlScale, 0.3, 3.0) * (d.hv ? HARVEST.srcWeight : (LUXML.liveSrcWeight || 1)) * _recencyW(d.ts, nowTs);
 
+    /* [V33.415] ★326초가 어디로 갔는지 재서 적는다.★ 종전엔 단계 총시간만 있어서
+       적재가 오래 걸린 건지 CV 가 먹은 건지 ★추측할 수밖에 없었다.★ 추측은 두 번이면 사고다. */
+    const _gbLoadMs = Date.now() - _gbT0;
     const _gbStart = Date.now();
     const deadline = _gbStart + (GBDT.trainBudgetMs || 18000);
     // [V12.49] ★예산 배분 수정★ 기존엔 CV가 deadline-4000까지 통째로 쓸 수 있어 최종학습이
@@ -43316,6 +43323,7 @@ async function mlGBDTTrainNightly(DB) {
         if (_ok) { oofCorrect++; } oofN++;
         _bHit.push(_ok ? 1 : 0); _bTs.push(_num(d.ts, 0)); }   // [V33.398] 블록 정확도용
     }
+    const _gbCvMs = Date.now() - _gbStart;   // [V33.415] CV 가 실제로 먹은 시간
     // CV 불가 시 종전 홀드아웃 폴백
     let acc, valN, cvMode;
     let fixedTrees = 0;
@@ -43360,7 +43368,22 @@ async function mlGBDTTrainNightly(DB) {
     let _blkWhy = _blk.why || null;
 
     // ── 최종 모델: 전체 표본, CV가 정한 트리 수로 학습 + 피처 중요도 수집 ──
-    const model = _gbdtFit(data, null, { fixedTrees: fixedTrees, deadline: deadline, collectImp: true });
+    /* ══ [V33.415] ★최종 적합은 굶으면 안 된다 — 굶으면 나무 0개가 나온다★ ═══════════════
+       실측(회차 35688362304): [GBDT] ★trees=0★ · 단계 전체 ★326초★(예산은 90초).
+       _gbdtFit 의 마감 검사는 루프 ★맨 위★ 라, 최종 적합이 시작될 때 이미 deadline 이
+       지나 있으면 ★한 그루도 못 세우고★ 끝난다. V33.414 가 그런 모델의 ★저장★ 은 막았지만,
+       막기만 하면 GBDT 는 영원히 "모델 없음" 이다 — 화면이 지금 그렇게 떠 있다
+       (roster 의 gStored 는 ★gtrees > 0★ 으로 판정하므로 나무 0개 = 모델 없음).
+       ★막는 것과 되게 하는 것은 다른 일이다.★ 여기서 되게 만든다:
+       CV 가 예산을 다 먹었든 적재가 오래 걸렸든, 최종 적합에는 ★지금부터★ 최소 시간을 준다.
+       (절대 시각 deadline 은 이미 지났을 수 있다 — 그래서 Date.now() 기준으로 다시 잡는다) */
+    const _finalDL = Math.max(deadline, Date.now() + _num(GBDT.finalMinMs, 25000));
+    const _gbFitT0 = Date.now();
+    const model = _gbdtFit(data, null, { fixedTrees: fixedTrees, deadline: _finalDL, collectImp: true });
+    const _gbFitMs = Date.now() - _gbFitT0;
+    const _gbTimeNote = " 시간[적재 " + Math.round(_gbLoadMs / 1000) + "s · CV " +
+                        Math.round(_gbCvMs / 1000) + "s · 최종 " + Math.round(_gbFitMs / 1000) +
+                        "s · 나무 " + _num(model.nTrees, 0) + "그루/목표 " + fixedTrees + "]";
 
     // ── [V12.65] ★임계값 캘리브레이션★ GBDT '작동 안 함(영구 억제)' 근본원인 수정 ──
     //   GBDT는 균형가중(wPos/wNeg) 부스팅으로 결정경계가 0.5에서 밀리는데, OOF/홀드아웃 정확도를
@@ -43454,7 +43477,7 @@ async function mlGBDTTrainNightly(DB) {
        "못 쟀으면 승격 안 한다" 와 같은 규율을 여기에도 적용한다 — ★못 세웠으면 저장 안 한다.★ */
     if (!model.trees || model.trees.length === 0) {
       const _why = "최종 적합이 나무를 한 그루도 못 세웠다(예산 " + _num(GBDT.trainBudgetMs, 18000) +
-                   "ms · 적재 후 남은 시간 부족 · 표본 " + N + "행) — ★상수 모델을 저장하지 않는다★" +
+                   "ms · 표본 " + N + "행)" + _gbTimeNote + " — ★상수 모델을 저장하지 않는다★" +
                    "(보고된 " + (acc * 100).toFixed(1) + "% 는 CV 폴드 모델의 값이라 이 물건을 설명하지 않는다)";
       await setState(DB, "gbdt_trust", { wGbdt: 0, trusted: false, gbdtAccLB: null,
                                          accLBWhy: _why, reason: _why, featVer: LUXML.featVer,
@@ -43567,7 +43590,7 @@ async function mlGBDTTrainNightly(DB) {
     }
     await setState(DB, "gbdt_trust", trust);
     return "[GBDT] trees=" + model.nTrees + " n=" + N + " OOF=" + (acc * 100).toFixed(1) + "%(하한 " + (accLB * 100).toFixed(1) +
-           "%, " + cvMode + calNote + ") vs mind하한 " + (mindLB * 100).toFixed(1) + "% → wGbdt=" + trust.wGbdt + (trust.trusted ? " (신뢰)" : " (억제)") + _fwdTrustNote(model.fwdTrust) + _speakNote(model.speak);
+           "%, " + cvMode + calNote + ") vs mind하한 " + (mindLB * 100).toFixed(1) + "% → wGbdt=" + trust.wGbdt + (trust.trusted ? " (신뢰)" : " (억제)") + _fwdTrustNote(model.fwdTrust) + _speakNote(model.speak) + _gbTimeNote;
   } catch (e) {
     const _em = (e && e.message) ? String(e.message).slice(0, 200) : "unknown";
     try { await setState(DB, "gbdt_trust", { wGbdt: 0, trusted: false, reason: "err", err: _em, errAt: Date.now() }); } catch (e2) {}

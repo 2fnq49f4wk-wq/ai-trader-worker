@@ -84,8 +84,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.414">
-<script src="/neural-observatory.js?v=33.414" defer></script>
+<meta name="lux-build" content="V33.415">
+<script src="/neural-observatory.js?v=33.415" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -6018,34 +6018,64 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       // [V9.11] 단, 주말·휴장으로 신선표본이 거의 0이 되면(전종목 필터 탈락) 전체(최근 알려진 등락)로 폴백
       //   — breadth 막대와 동일한 버그·동일한 수정(신선도 필터 자체는 유지, 폴백만 추가).
       var _freshLimit = Date.now() - 24 * 3600 * 1000;
-      function collectMovers(requireFresh){
+      /* ══ [V33.415] ★한 시장이 조용히 사라지고 있었다 — 미국이 안 보인다는 그 증상★ ══
+         종전은 US·KR 을 ★한 통에 넣고★ 등락률로 줄 세웠다. 거기에 문제가 둘 겹쳤다:
+          ① 신선도 폴백이 ★전체 기준★ 이었다. 한국장이 열려 있고 미국장이 닫혀 있으면
+             미국 시세는 24시간을 넘겨 탈락하는데, 한국 것만으로 10개가 채워지므로
+             "표본 부족" 폴백이 ★발동하지 않는다.★ → 미국이 통째로 빠진다.
+          ② 설령 살아남아도 코스닥은 하루 ±30% 가 흔하다. 한 통에 섞어 줄 세우면
+             변동성이 큰 시장이 상·하위 20칸을 ★독식★ 한다.
+         → 시장별로 ★따로 모으고 · 따로 폴백하고 · 자리를 나눠 준다.★
+           한쪽에 자료가 없으면 남는 자리는 다른 쪽이 채운다(칸을 비우지 않는다).
+         q.market 은 워치리스트 시세가 ★이미 싣고 있다★ — 없던 정보를 만들지 않는다. */
+      var MOVER_SLOT = 10;                 // 시장당 자리(표당 US 10 + KR 10 = 종전과 같은 20줄)
+      function collectMovers(mkt, requireFresh){
         return Object.keys(lastQuotes).map(function(sym){
           var q = lastQuotes[sym];
           if (!q || typeof q.dayPct !== 'number' || !(q.price > 0)) return null;
+          var m = q.market || (/\.(KS|KQ)$/.test(sym) ? 'kr' : 'us');
+          if (mkt && m !== mkt) return null;
           if (requireFresh && q.ts && q.ts < _freshLimit) return null;
-          return { sym: sym, q: q };
+          return { sym: sym, q: q, mkt: m };
         }).filter(Boolean);
       }
-      var all = collectMovers(true);
-      if (all.length < 10) all = collectMovers(false);
-      var sorted = all.slice().sort(function(a, b){ return b.q.dayPct - a.q.dayPct; });
+      function byMarket(mkt){
+        var a = collectMovers(mkt, true);
+        if (a.length < 5) a = collectMovers(mkt, false);   // ★시장마다 따로★ 물러선다
+        return a.sort(function(x, y){ return y.q.dayPct - x.q.dayPct; });
+      }
+      var mvUS = byMarket('us'), mvKR = byMarket('kr');
+      /* 상승·하락 각각 시장별로 자리를 나눈다. 한쪽이 모자라면 다른 쪽이 그만큼 더 가져간다. */
+      function pickSide(top){
+        var cut = function(arr, n){ return top ? arr.slice(0, n) : arr.slice(-n).reverse(); };
+        var nU = Math.min(MOVER_SLOT, mvUS.length), nK = Math.min(MOVER_SLOT, mvKR.length);
+        var spare = (MOVER_SLOT - nU) + (MOVER_SLOT - nK);
+        if (spare > 0) {
+          var addU = Math.min(spare, mvUS.length - nU); nU += addU; spare -= addU;
+          nK += Math.min(spare, mvKR.length - nK);
+        }
+        return cut(mvUS, nU).concat(cut(mvKR, nK))
+          .sort(function(x, y){ return top ? (y.q.dayPct - x.q.dayPct) : (x.q.dayPct - y.q.dayPct); });
+      }
       function moverRow(it, isUp) {
         var held = (heldMap.us && heldMap.us[it.sym]) || (heldMap.kr && heldMap.kr[it.sym]);
         var sig = held ? 'HELD' : (isUp ? 'Top Gainer' : 'Top Loser');
         var cls = it.q.dayPct >= 0 ? 'pos' : 'neg';
         // [V65] KR은 티커 대신 종목명 표시
-        var isKR = /\.(KS|KQ)$/.test(it.sym);
+        var isKR = (it.mkt ? it.mkt === 'kr' : /\.(KS|KQ)$/.test(it.sym));
         var disp = isKR ? (it.q.name || DYNAMIC_NAMES[it.sym] || it.sym.replace(/\.(KS|KQ)$/,'')) : it.sym;
+        // [V33.415] 어느 시장인지 보이게 — 섞어 보여주므로 이게 없으면 읽는 사람이 헷갈린다
+        var flag = isKR ? '\uD83C\uDDF0\uD83C\uDDF7' : '\uD83C\uDDFA\uD83C\uDDF8';
         // [V12.68] data-sym + 더블클릭/더블탭 시 종목상세로. 힌트 title도 표시.
         return '<tr data-sym="'+escapeHtml(it.sym)+'" style="cursor:pointer;" title="더블클릭(더블탭) → 종목상세">'+
-          '<td><span class="fv-tick" title="'+escapeHtml(it.sym)+'">'+escapeHtml(disp)+'</span></td>'+
+          '<td><span class="fv-tick" title="'+escapeHtml(it.sym)+'">'+flag+' '+escapeHtml(disp)+'</span></td>'+
           '<td class="right">'+fmtNum(it.q.price)+'</td>'+
           '<td class="right '+cls+'">'+(it.q.dayPct>=0?'+':'')+fmtNum(it.q.dayPct,2)+'%</td>'+
           '<td class="fv-sig">'+sig+'</td></tr>';
       }
       // [V80] 14 → 20개 — 맵 카드(줌바 포함 ~414px) 길이에 맞춤
-      g.innerHTML = sorted.slice(0, 20).map(function(it){ return moverRow(it, true); }).join('') || '<tr><td colspan="4" class="empty">—</td></tr>';
-      l.innerHTML = sorted.slice(-20).reverse().map(function(it){ return moverRow(it, false); }).join('') || '<tr><td colspan="4" class="empty">—</td></tr>';
+      g.innerHTML = pickSide(true).map(function(it){ return moverRow(it, true); }).join('') || '<tr><td colspan="4" class="empty">—</td></tr>';
+      l.innerHTML = pickSide(false).map(function(it){ return moverRow(it, false); }).join('') || '<tr><td colspan="4" class="empty">—</td></tr>';
       bindDblTapDetail(g); bindDblTapDetail(l);   // [V12.68] 더블클릭/더블탭 → 종목상세 (위임, 1회 바인딩)
     }
     // ④ 헤드라인 — 섹터 뉴스 플랫 리스트
@@ -20071,11 +20101,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.414">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.414">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.414">
-<link rel="stylesheet" href="/model-evidence.css?v=33.414.1">
-<script src="/model-evidence.js?v=33.414.1"></script>
-<script src="/workspace-ui.js?v=33.414"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.415">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.415">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.415">
+<link rel="stylesheet" href="/model-evidence.css?v=33.415.1">
+<script src="/model-evidence.js?v=33.415.1"></script>
+<script src="/workspace-ui.js?v=33.415"></script>
 </body>
 </html>
