@@ -142,6 +142,29 @@ console.log("\n④ ★적용률을 빼고 적지 않는가★ · ★침묵을 �
   }
 }
 
+console.log("\n④-2 ★가르고 나서도 재는 쪽이 블록을 지키는가★ (DUAL 실측이 드러낸 자리)");
+{
+  /* 실측: [DUAL-BULL] 홀드아웃 65일·겹치지 않는 관측 6개 → 반으로 가르니 ★3개 < 4★ 라
+     "발언 구간을 블록으로 못 쟀다". 고르는 쪽은 블록이 필요 없는데 반씩 나눠 준 탓이다. */
+  const n = 6000, ts = [];
+  for (let i = 0; i < n; i++) ts.push(T0 + Math.floor(i / 87) * D);   // 약 69일치
+  const off = M._speakSplit(n, ts, M.SPEAK.calFrac, M.SPEAK.minSpeakN);
+  chk(off > 0, "가르는 자리를 잡는다 (offset " + off + ")", "★못 가른다★");
+  const evalDays = (ts[n - 1] - ts[off]) / D, calDays = (ts[off] - ts[0]) / D;
+  const evalK = Math.floor(evalDays / 10);
+  chk(evalK >= M.BLKACC.minBlocks,
+    "재는 쪽이 " + Math.round(evalDays) + "일 → 블록 " + evalK + "개 ≥ 최소 " + M.BLKACC.minBlocks +
+    "개 (고르는 쪽 " + Math.round(calDays) + "일)",
+    "★재는 쪽이 " + Math.round(evalDays) + "일 → 블록 " + evalK + "개로 최소에 못 미친다 — 반씩 가른 그 버그다★");
+  chk(calDays < evalDays,
+    "고르는 쪽이 재는 쪽보다 ★작다★ — 블록이 필요한 쪽에 몰아준다",
+    "★고르는 쪽이 더 크거나 같다 — 블록이 필요 없는 쪽에 낭비한다★");
+  // 날짜가 두 쪽에 걸치면 안 된다
+  chk(ts[off - 1] !== ts[off], "경계가 ★날짜 사이★ 에 있다 — 같은 날이 두 쪽에 안 걸친다",
+    "★같은 날짜가 고르는 쪽과 재는 쪽에 걸쳐 있다 — 문턱이 재는 쪽을 엿본다★");
+  chk(M._speakSplit(50, null, 0.25, 200) === -1, "표본이 모자라면 ★안 가른다★", "★모자라도 가른다★");
+}
+
 console.log("\n⑤ ★기존 게이트를 한 톨도 안 건드렸는가★ (발언점은 덧붙인 자이지 대체가 아니다)");
 {
   const floors = { GBDT: M.GBDT.trustFloor, DNN: M.DNN.trustFloor, MIND: M.MIND.trustFloor };

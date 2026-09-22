@@ -24,6 +24,9 @@ const S = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
 const M = await import("../src/index.js");
 let fails = 0;
 const chk = (c, ok, bad) => { if (c) console.log("  ok   " + ok); else { console.log("  FAIL " + bad); fails++; } };
+/* 주석·문자열을 지우는 도구 — 계약은 ★코드★ 에 대한 것이지 설명글에 대한 것이 아니다. */
+const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+const noStr = (t) => t.replace(/"(?:[^"\\\n]|\\.)*"/g, '""').replace(/'(?:[^'\\\n]|\\.)*'/g, "''");
 const fn = (name) => {                        // 함수 본문만 잘라낸다(중괄호 균형)
   const i = S.indexOf("async function " + name + "(");
   if (i < 0) return "";
@@ -57,9 +60,23 @@ console.log("\n② ★배포된 모델을 채점하는가★ — 방금 만든 �
   chk(di > 0 && ds > di,
     "DNN: 전진검증이 ★저장보다 앞★ 에 있다 — 덮어쓰기 전의 모델을 잰다",
     "★DNN 전진검증이 저장 뒤다 — 새 모델을 재게 된다★");
-  chk(/loadFn: function \(\) \{ return prevModelEarly; \}/.test(DN),
-    "DNN 은 ★이미 읽어 둔★ 배포 모델을 넘긴다(21MB·53청크를 두 번 안 읽는다)",
-    "★DNN 이 모델을 다시 읽거나 getState 로 읽는다 — 청크 모델은 null 이라 조용히 아무 일도 안 한다★");
+  /* [V33.412] 글자가 아니라 ★뜻★ 으로 — loadFn 본문이 바뀌었다(체크포인트 병합이 붙었다).
+     계약은 그대로다: "★이미 읽어 둔★ 배포 모델을 넘긴다. 21MB 를 다시 읽지도, getState 로
+     읽지도 않는다(청크 모델은 getState 가 null 이라 조용히 아무 일도 안 하게 된다)." */
+  {
+    const i = DN.indexOf("loadFn: function ()");
+    let d = 0, end = i;
+    for (let k = DN.indexOf("{", i); k < DN.length && k > 0; k++) {
+      if (DN[k] === "{") d++; else if (DN[k] === "}") { d--; if (!d) { end = k + 1; break; } }
+    }
+    const body = i > 0 ? DN.slice(i, end) : "";
+    chk(body.includes("prevModelEarly"),
+      "DNN 은 ★이미 읽어 둔★ 배포 모델을 넘긴다(21MB·53청크를 두 번 안 읽는다)",
+      "★DNN loadFn 이 배포 모델을 안 쓴다★");
+    chk(body.length > 0 && !/getState\(|getBigState\(|mlDNNLoad\(/.test(body),
+      "loadFn 안에서 모델을 ★다시 읽지 않는다★",
+      "★loadFn 이 모델을 다시 읽는다 — getState 면 청크 모델이라 null 이 되어 조용히 아무 일도 안 한다★");
+  }
   chk(/const prev = \(typeof o\.loadFn === "function"\) \? await o\.loadFn\(\) : await getState\(DB, o\.stateKey, null\);/.test(S),
     "icForwardCheck 가 loadFn 을 쓰고, 없으면 ★종전 getState★ 로 물러선다(회귀 안전)",
     "★loadFn 배선이 없거나 종전 경로를 깨뜨렸다★");
@@ -71,6 +88,35 @@ console.log("\n③ ★체크포인트를 남기는가★ — 없으면 전진검
     "GBDT 가 ts·maxId·maxTs 를 남긴다", "★GBDT 체크포인트가 없다 — 내일도 모레도 null 이다★");
   chk(/net\.ts = net\.trainedAt; net\.maxId = _ckMaxId; net\.maxTs = _ckMaxTs;/.test(DN),
     "DNN 이 ts·maxId·maxTs 를 남긴다", "★DNN 체크포인트가 없다★");
+  /* [V33.412] ★실측이 드러낸 구멍★ (회차 35671199889):
+       [DNN] 워커 자가학습 46.5% ≤ 외부 49.9% — 외부 모델 유지(덮어쓰기 생략)
+     이 경로는 setBigState 를 ★통째로 건너뛴다★ → 체크포인트가 영영 저장 안 된다.
+     V33.410 이 고치려던 "전진검증이 영원히 null" 이 그 경로에서 그대로 재현되고 있었다. */
+  {
+    const er = DN.indexOf('return "[DNN] 워커 자가학습 "');
+    const sv = DN.indexOf('setBigState(DB, "dnn_model", net)');
+    /* ★조기 반환 블록 안★ 을 정확히 본다 — 파일 앞쪽의 정상 저장용 기록이 잡히면
+       "조기 반환에도 있다" 가 거짓으로 통과한다(첫 판이 실제로 그랬다). */
+    const ifStart = DN.lastIndexOf('if (prevModelEarly && prevModelEarly.source === "external"', er);
+    const block = (ifStart > 0 && er > ifStart) ? DN.slice(ifStart, er) : "";
+    chk(block.indexOf('setState(DB, "dnn_ckpt"') > 0,
+      "DNN 이 ★조기 반환 블록 안에서★ 체크포인트를 남긴다(작은 전용 키)",
+      "★조기 반환 경로에 체크포인트가 없다 — 외부 모델이 유지되는 밤마다 전진검증이 영원히 null 이다★");
+    chk((DN.match(/setState\(DB, "dnn_ckpt"/g) || []).length >= 2,
+      "정상 저장 경로에도 체크포인트를 남긴다(두 경로 모두)",
+      "★한쪽 경로에만 남긴다★");
+    chk(sv > 0 && er < sv, "조기 반환이 21MB 저장보다 앞이다(확인)", "구조가 바뀌었다 — 이 검사를 다시 세울 것");
+    /* ★외부 모델에는 maxId 를 붙이면 안 된다★ — Modal 이 무엇으로 학습했는지 워커는 모른다.
+       주석을 먼저 지운다: "maxId 를 안 넣는다" 라고 ★적어 둔 설명★ 이 코드로 읽혀
+       거짓양성이 났다(같은 실수를 ④ 에서 한 번 했다). 계약은 코드에 대한 것이다. */
+    const seg = strip(block);
+    chk(/src: "external"/.test(seg) && !/maxId/.test(seg),
+      "외부 모델 경로는 ★업로드 시각만★ 기준으로 둔다(maxId 를 안 붙인다 — 워커는 Modal 의 학습셋을 모른다)",
+      "★외부 모델에 워커의 maxId 를 붙인다 — Modal 이 이미 본 행을 전진표본으로 셀 수 있다★");
+    chk(/loadFn: function \(\) \{[\s\S]{0,200}Object\.assign\(\{\}, prevModelEarly, _ck\)/.test(DN),
+      "전진검증이 그 작은 키를 ★실제로 읽어 합친다★",
+      "★체크포인트를 쓰기만 하고 안 읽는다 — 죽은 키다★");
+  }
   chk(/"SELECT id, ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = \? ORDER BY ts DESC LIMIT \?"/.test(GB),
     "GBDT 질의가 ★id 를 읽는다★ — maxId 의 출처다",
     "★GBDT 질의에 id 가 없다 — maxId 가 0 이 되어 전진검증이 약한 기준으로 내려앉는다★");
@@ -89,12 +135,6 @@ console.log("\n④ ★재기만 하는가★ — 이 값이 어떤 판정에도 
   /* 계약을 ★뺄셈★ 으로 잰다: 허용된 자리를 지우고 나서 fwdTrust 가 한 글자라도 남으면
      그건 아무도 승인하지 않은 읽기다. 문맥 창으로 훑으면 주석·대입 우변까지 걸려
      거짓양성이 나온다(첫 판이 그랬다) — 지우고 남는 것을 보는 편이 정확하다. */
-  const strip = (t) => t
-    .replace(/\/\*[\s\S]*?\*\//g, " ")                 // 블록 주석
-    .replace(/\/\/[^\n]*/g, " ");                        // 줄 주석
-  /* 문자열 리터럴도 지운다 — 로그 문구 "… → wDnn=" 의 `wDnn=` 이 ★판정식★ 으로 읽혀
-     거짓양성이 났다. 판정은 문자열 안에 살 수 없으므로 지우는 것이 옳다. */
-  const noStr = (t) => t.replace(/"(?:[^"\\\n]|\\.)*"/g, '""').replace(/'(?:[^'\\\n]|\\.)*'/g, "''");
   const allowed = (t, obj) => t
     // ① icForwardCheck 결과를 지역변수에 받는 자리(호출 인자 블록 포함)
     .replace(/_fwdTrust = await icForwardCheck\(DB, \{[\s\S]*?\}\);/g, " ")

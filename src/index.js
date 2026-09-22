@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.411";
+const _BUILD_VER = "V33.412";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -30935,7 +30935,10 @@ const SPEAK = {
   target: 0.60,        // ★사용자 지정★ — 발언 구간 ★블록(사건) 기반★ 하한이 이 이상
   minCoverage: 0.10,   // 그런데 이만큼은 발언해야 위원 노릇이다
   minSpeakN: 200,      // 발언 표본 절대 하한
-  calMargin: 0.02      // 캘리브레이션에선 여유를 더 요구한다(홀드아웃에서 내려앉는 게 정상)
+  calMargin: 0.02,     // 캘리브레이션에선 여유를 더 요구한다(홀드아웃에서 내려앉는 게 정상)
+  /* [V33.412] ★고르는 쪽은 블록이 필요 없다★ — 블록이 필요한 건 재는 쪽뿐이다.
+     반씩 가르면 블록도 반이 되어 못 잰다(DUAL 실측: 6개 → 3개 < 4). 고르는 쪽은 최소한만. */
+  calFrac: 0.25
 };
 const DEADBAND = {
   enabled: true,
@@ -31559,8 +31562,10 @@ async function _miniLogisticTrain(DB, opts) {
     let _speak = null;
     try {
       const _hv = N - nvalStart;
-      if (_hv >= 2 * _num(SPEAK.minSpeakN, 200)) {
-        const _mid = nvalStart + Math.floor(_hv / 2);
+      const _tsH = []; for (let i = nvalStart; i < N; i++) _tsH.push(_num(T[i], 0));
+      const _off = _speakSplit(_hv, _tsH, _num(SPEAK.calFrac, 0.25), _num(SPEAK.minSpeakN, 200));
+      if (_off > 0) {
+        const _mid = nvalStart + _off;
         const _pA = [], _yA = [], _pB = [], _yB = [], _tB = [];
         for (let i = nvalStart; i < _mid; i++) { _pA.push(_num(pv[i - nvalStart], 0.5)); _yA.push(Y[i]); }
         for (let i = _mid; i < N; i++) { _pB.push(_num(pv[i - nvalStart], 0.5)); _yB.push(Y[i]); _tB.push(_num(T[i], 0)); }
@@ -31569,7 +31574,7 @@ async function _miniLogisticTrain(DB, opts) {
       } else {
         _speak = { ok: false, tau: null, cov: 0, acc: null, lb: null, n: 0, k: 0,
                    target: _num(SPEAK.target, 0.6),
-                   why: "홀드아웃 " + _hv + "행 — 문턱 고르기/재기로 반씩 가르기엔 부족" };
+                   why: "홀드아웃 " + _hv + "행 — 문턱 고르기/재기로 가르기엔 부족" };
       }
     } catch (e) {}
     const model = { speak: _speak, w: w, b: b, mean: mean, std: std, featVer: opts.featVer, baseRate: +_base.toFixed(4),
@@ -34789,6 +34794,28 @@ function _fwdTrustNote(ft) {
      ④ ★적용률을 항상 함께★ 돌려준다. 60% 인데 2% 만 발언하면 그건 위원이 아니라 침묵이다.
      ⑤ 목표를 못 맞추면 ★못 맞췄다고 말한다★ — 문턱을 깎아서 맞추지 않는다.
    ═══════════════════════════════════════════════════════════════════════════════ */
+/* [V33.412] ★홀드아웃을 반으로 가르면 블록도 반이 된다★ — 실측이 그걸 바로 보여줬다:
+     [DUAL-BULL] … 블록IC 0.3438 t 4.91 (홀드아웃 65일, 겹치지 않는 관측 6개)
+     발언점[미달 · 발언 구간을 블록으로 못 쟀다(★겹치지 않는 블록 3개 < 4★)]
+   6개를 반으로 가르니 3개가 됐다. ★문턱을 고르는 쪽은 블록이 필요 없다★(임계값만 고른다) —
+   블록이 필요한 것은 ★재는 쪽★ 뿐이다. 그러니 반씩 나눌 이유가 없다.
+   → 고르는 쪽에 최소한만 주고 나머지를 전부 재는 쪽에 준다. 경계는 ★시각★ 으로 잡는다
+     (행으로 자르면 하루에 수백 종목이 쌓이는 이 표에서 날짜가 안 맞는다). */
+function _speakSplit(n, ts, calFrac, minCal) {
+  try {
+    if (!(n > 0)) return -1;
+    const _f = _clamp(_num(calFrac, 0.25), 0.05, 0.6);
+    const _mc = Math.max(1, _num(minCal, 200));
+    let i = Math.max(_mc, Math.floor(n * _f));
+    if (i >= n) return -1;
+    if (ts && ts.length === n) {
+      // 같은 날짜가 두 쪽에 걸치지 않게 ★날짜 경계★ 까지 민다
+      const _t = _num(ts[i], 0);
+      while (i < n && _num(ts[i], 0) === _t) i++;
+    }
+    return (i > 0 && i < n) ? i : -1;
+  } catch (e) { return -1; }
+}
 function _speakPoint(pCal, yCal, pHold, yHold, tsHold, horizonMs, cfg) {
   const C = cfg || {};
   const target = _num(C.target, 0.60), minCov = _num(C.minCoverage, 0.10);
@@ -41066,10 +41093,19 @@ async function mlDNNTrainNightly(DB) {
     try {
       /* ★이미 메모리에 있는 모델을 쓴다★ — prevModelEarly 는 이 함수 맨 앞에서 읽은
          ★지금 배포돼 있는★ DNN 이다. 여기서 다시 읽으면 21MB·53청크를 두 번 읽는다. */
+      /* [V33.412] 체크포인트는 ★21MB 모델 안이 아니라 작은 전용 키★ 에 산다.
+         이유는 실측이다(회차 35671199889): 워커 자가학습이 외부보다 나쁘면
+         "외부 모델 유지(덮어쓰기 생략)" 로 ★조기 반환★ 하는데, 그 경로는 setBigState 를
+         통째로 건너뛴다 → 체크포인트가 영영 저장되지 않는다. V33.410 이 고치려던
+         "전진검증이 영원히 null" 이 그 경로에서 ★그대로 재현★ 되고 있었다. */
+      const _ck = await getState(DB, "dnn_ckpt", null);
       _fwdTrust = await icForwardCheck(DB, {
         stateKey: "dnn_model", table: "ml_samples", featVer: LUXML.featVer,
         sampleFeatVer: LUXML.featVer, hasInsTs: true,
-        loadFn: function () { return prevModelEarly; },
+        loadFn: function () {
+          if (!prevModelEarly) return null;
+          return (_ck && _ck.featVer === LUXML.featVer) ? Object.assign({}, prevModelEarly, _ck) : prevModelEarly;
+        },
         scoreFn: function (m, v) { const p = mlDNNScore(m, v); return p == null ? null : p; },
         labelFn: function (r) { return _labelOfRow(r); }
       });
@@ -41201,9 +41237,9 @@ async function mlDNNTrainNightly(DB) {
        평가 절반은 문턱 선택에 안 쓰였다. ★기존 게이트(dnnAcc·dnnLB)는 안 건드린다.★ */
     let _speak = null;
     try {
-      const _hv = _pD.length, _need2 = 2 * _num(SPEAK.minSpeakN, 200);
-      if (_hv >= _need2) {
-        const _m2 = Math.floor(_hv / 2);
+      const _hv = _pD.length;
+      const _m2 = _speakSplit(_hv, _bTsD, _num(SPEAK.calFrac, 0.25), _num(SPEAK.minSpeakN, 200));
+      if (_m2 > 0) {
         _speak = _speakPoint(_pD.slice(0, _m2), _yD.slice(0, _m2),
                              _pD.slice(_m2), _yD.slice(_m2), _bTsD.slice(_m2),
                              Math.max(1, _num((AI_PARAMS.prediction && AI_PARAMS.prediction.horizonDays) || 10, 10)) * 86400000,
@@ -41211,7 +41247,7 @@ async function mlDNNTrainNightly(DB) {
       } else {
         _speak = { ok: false, tau: null, cov: 0, acc: null, lb: null, n: 0, k: 0,
                    target: _num(SPEAK.target, 0.6),
-                   why: "홀드아웃 " + _hv + "행 < " + _need2 + " — 반씩 가르기엔 부족" };
+                   why: "홀드아웃 " + _hv + "행 — 문턱 고르기/재기로 가르기엔 부족" };
       }
     } catch (e) {}
     const dnnAcc = correct / val.length;
@@ -41233,6 +41269,11 @@ async function mlDNNTrainNightly(DB) {
        ts 는 "어제 모델이 있는가", maxId/maxTs 는 "학습에 안 쓰였고 미래다" 를 거는 자다.
        ★이 줄이 없으면 전진검증이 영원히 null 이다★ — 지금까지 GBDT·DNN 이 그랬다. */
     net.ts = net.trainedAt; net.maxId = _ckMaxId; net.maxTs = _ckMaxTs;
+    // [V33.412] 같은 값을 작은 키에도 남긴다 — 다음 밤이 21MB 를 안 열고도 읽는다.
+    try {
+      await setState(DB, "dnn_ckpt", { ts: net.ts, maxId: _ckMaxId, maxTs: _ckMaxTs,
+                                       featVer: LUXML.featVer, src: "worker", at: Date.now() });
+    } catch (e) {}
     net.speak = _speak;   // [V33.411] ★재기만 한다★ — 발언 게이트는 숫자를 보고 배선한다
     /* ★재기만 한다★ — 아래 승격 판정(trust)은 이 값을 한 줄도 안 읽는다.
        (check-fwd-trust 가 그 경계를 계약으로 확인한다) */
@@ -41248,6 +41289,16 @@ async function mlDNNTrainNightly(DB) {
     //   운용상 차이는 없지만, 다음 Modal 실행 때 웜스타트/비교 기준으로 더 나은 쪽이 유용하다).
     if (prevModelEarly && prevModelEarly.source === "external" &&
         _num(prevModelEarly.valAccLB, 0) >= dnnLB) {
+      /* [V33.412] ★이 경로도 체크포인트를 남긴다.★ 유지되는 것은 ★외부★ 모델이므로
+         워커가 읽은 maxId 를 그 모델의 적합 경계로 쓰면 안 된다 — Modal 이 무엇으로
+         학습했는지 워커는 모른다. 대신 ★외부 모델의 업로드 시각★ 을 기준으로 둔다:
+         그 뒤에 ★도착한★ 행(ins_ts)은 그 모델에게 진짜 out-of-sample 이다.
+         maxId 를 일부러 안 넣는다 — 넣으면 icForwardCheck 가 id 경로로 가서
+         "Modal 이 봤을 수도 있는 행" 을 전진표본으로 셀 수 있다. */
+      try {
+        await setState(DB, "dnn_ckpt", { ts: _num(prevModelEarly.trainedAt, 0), featVer: LUXML.featVer,
+                                         src: "external", at: Date.now() });
+      } catch (e) {}
       return "[DNN] 워커 자가학습 " + (dnnAcc * 100).toFixed(1) + "% ≤ 외부 " +
              (_num(prevModelEarly.valAccLB, 0) * 100).toFixed(1) + "% — 외부 모델 유지(덮어쓰기 생략)";
     }
@@ -51812,7 +51863,7 @@ export {
   mlBanditNoiseNightly, LUXNOISE, LUXBANDIT,
   memoScore, memoTrainNightly, MEMOML,
   _blockAccLB, BLKACC,   // [V33.398] 블록 정확도 하한 — 게이트가 실제로 돌려 본다
-  _gbdtCalSplit, _fwdTrustNote, FWDLED, _speakPoint, _speakNote, SPEAK,   // [V33.408/410/411] 달력 고정 홀드아웃 분할 — 게이트가 실제로 돌려 본다
+  _gbdtCalSplit, _fwdTrustNote, FWDLED, _speakPoint, _speakNote, _speakSplit, SPEAK,   // [V33.408/410/411] 달력 고정 홀드아웃 분할 — 게이트가 실제로 돌려 본다
   DEADBAND, _deadbandMask,   // [V33.409] 데드밴드 — 게이트가 상수를 실제로 읽는다
   _dnnArchDecide, DNNARCH, DNN, DNNW,   // [V33.260] 측정-반영 고리 검사
   _dnnAdmit,                        // [V33.262] DNN 승격 판정(정확도 길 · IC 길)
