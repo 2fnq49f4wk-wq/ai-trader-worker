@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.413";
+const _BUILD_VER = "V33.414";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -30938,7 +30938,10 @@ const SPEAK = {
   calMargin: 0.02,     // 캘리브레이션에선 여유를 더 요구한다(홀드아웃에서 내려앉는 게 정상)
   /* [V33.412] ★고르는 쪽은 블록이 필요 없다★ — 블록이 필요한 건 재는 쪽뿐이다.
      반씩 가르면 블록도 반이 되어 못 잰다(DUAL 실측: 6개 → 3개 < 4). 고르는 쪽은 최소한만. */
-  calFrac: 0.25
+  calFrac: 0.25,
+  /* [V33.414] ★무실력 대비★ 여유 — 절대 60% 만 보면 쏠린 라벨에서 무능이 실력으로 읽힌다.
+     기존 승격 게이트가 쓰는 DNN.trustBaselineMargin 과 같은 값으로 맞춘다(자를 하나로). */
+  baseMargin: 0.015
 };
 const DEADBAND = {
   enabled: true,
@@ -31522,6 +31525,52 @@ async function _miniLogisticTrain(DB, opts) {
     const _simp = (_st.blockIC != null) ? _simpsonNote(ic, _st.blockIC) : "";
     let _wss = null;
     try { _wss = _withinSymbolShare(X, S, D, 0, ntr); } catch (e) {}
+    /* ══ [V33.414] ★정적 칸을 빼면 나아지는가 — 주장하지 말고 ★재서★ 답한다★ ═══════════
+       실측: FLOW ★정적칸 8/13★(shortPctFloat·shortRatio·shortChg 는 시간 설명 몫 ★0%★).
+       그 칸들은 종목마다 다르되 ★시간에 안 변한다★ → 모델이 내놓는 종목 순위가 언제나 같다.
+       그러면 학습 구간에서 잘 나간 종목을 ★외우는★ 것이고, 홀드아웃에서 음수가 된다.
+       ★그렇다고 지우는 게 답이라고 단정하면 그것도 추측이다★ — 같은 날 안에서는 그 칸들도
+       종목 사이에 값이 다르므로, 진짜 횡단면 신호를 담고 있을 수도 있다.
+       → 같은 표본·같은 분할·같은 학습기로 ★정적 칸만 중립화한 팔★ 을 하나 더 돌려 숫자를 남긴다.
+         (V33.401 의 중립화와 같은 뜻 — 표준화 칸을 0 으로 두면 그 칸은 학습·추론 양쪽에서 죽는다)
+       ★아무것도 바꾸지 않는다. 운영 모델은 그대로다★ — 다음 판이 이 숫자를 보고 정한다. */
+    let _altNote = "";
+    try {
+      if (_wss && _wss.staticN > 0 && _wss.staticN < D && (N - nvalStart) >= 100) {
+        const _kill = _wss.cols.map(function (v) { return v < 0.05 ? 1 : 0; });
+        const _w2 = new Array(D).fill(0); let _b2 = 0;
+        let _sw = 0; for (let i = 0; i < ntr; i++) _sw += uw[i];
+        if (_sw > 0) {
+          const _lr = 0.08, _ep = 220, _lam = _num(opts.l2, 1) / Math.max(1, _sw);
+          for (let e = 0; e < _ep; e++) {
+            const _gw = new Array(D).fill(0); let _gb = 0;
+            for (let i = 0; i < ntr; i++) {
+              let z = _b2;
+              for (let j = 0; j < D; j++) if (!_kill[j]) z += _w2[j] * Z[i][j];
+              const pp = 1 / (1 + Math.exp(-_clamp(z, -30, 30)));
+              const er = (pp - Y[i]) * uw[i];
+              for (let j = 0; j < D; j++) if (!_kill[j]) _gw[j] += er * Z[i][j];
+              _gb += er;
+            }
+            for (let j = 0; j < D; j++) if (!_kill[j]) _w2[j] -= _lr * (_gw[j] / _sw + _lam * _w2[j]);
+            _b2 -= _lr * (_gb / _sw);
+          }
+          const _pv2 = [];
+          for (let i = nvalStart; i < N; i++) {
+            let z = _b2;
+            for (let j = 0; j < D; j++) if (!_kill[j]) z += _w2[j] * Z[i][j];
+            _pv2.push(1 / (1 + Math.exp(-_clamp(z, -30, 30))));
+          }
+          const _st2 = _icBlockStats(_pv2, yv, 5, _blkKeys, _mkKeys);
+          if (_st2 && _st2.blockIC != null) {
+            _altNote = " ★정적칸빼면★[블록IC " + _num(_st2.blockIC, 0).toFixed(4) +
+                       " t " + _num(_st2.t, 0).toFixed(2) + " · 지금 " +
+                       (_st.blockIC != null ? _num(_st.blockIC, 0).toFixed(4) : "?") +
+                       " · ★보고만 한다(운영 모델은 그대로)★]";
+          }
+        }
+      }
+    } catch (e) {}
     // [V33.89] 기저확률(양성비율)을 함께 저장한다 — 이중헤드 사분면 경계를 절대값이 아니라
     //   각 헤드의 기저확률 기준으로 잡기 위해서다. 문턱을 절대값으로 두면 라벨 희소도가 다른
     //   두 헤드(예: 상승 30% vs 하락 22%)에 같은 잣대를 대는 셈이 된다.
@@ -31684,7 +31733,7 @@ async function _miniLogisticTrain(DB, opts) {
            /* [V33.409] ★적용률을 반드시 같이 적는다.★ 실험대가 못 박은 규율이다 —
               데드밴드는 학습 모집단을 바꾸므로, 몇 %를 실제로 썼는지 없이는 수치를 못 읽는다.
               (검증은 전 구간 그대로라 홀드아웃 수치 자체는 종전과 같은 자로 잰 값이다.) */
-           " 데드밴드[" + _dbNote + "]" + _speakNote(_speak) + _simp +
+           " 데드밴드[" + _dbNote + "]" + _speakNote(_speak) + _simp + _altNote +
            /* [V33.413] ★칸이 종목을 가리키면 같은 날 순위가 언제나 같다 — 그건 고르는 게 아니라 외운 것이다.★
               이름까지 적는다(번호만 적으면 아무도 안 고친다). */
            ((_wss && _wss.staticN > 0)
@@ -34838,8 +34887,22 @@ function _speakPoint(pCal, yCal, pHold, yHold, tsHold, horizonMs, cfg) {
   const C = cfg || {};
   const target = _num(C.target, 0.60), minCov = _num(C.minCoverage, 0.10);
   const minN = _num(C.minSpeakN, 200), margin = _num(C.calMargin, 0.02);
+  const bMar = _num(C.baseMargin, 0.015);
+  /* ══ [V33.414] ★60% 는 절대값으로 쓰면 뜻이 없다 — 실측이 그걸 증명했다★ ══════════════
+     [DUAL-BULL] 발언점[★68.4%★ 하한 · 적용률 100%]  ←  그런데 ★무실력 74.7%★
+     즉 아무것도 안 하고 다수클래스만 찍어도 74.7% 다. 68.4% 는 그보다 ★6.3%p 낮다.★
+     그런데도 내 판정은 "목표 60% 통과" 였다. ★내가 만든 그 함정에 내가 빠졌다★ —
+     "숫자만 60% 로 만들지 않겠다" 고 써 놓고, 기저율을 안 보면 정확히 그 일이 벌어진다.
+     쏠린 라벨(상승 74.7%)에서는 60% 가 ★실력의 증거가 아니라 무능의 증거★ 다.
+     → 문턱은 ★둘 중 큰 쪽★ 이다: max(사용자 목표, 발언 구간 무실력 + 여유).
+       그리고 무실력은 ★발언 구간에서★ 다시 잰다 — 기권하면 그 구간의 기저율도 달라진다. */
   const out = { tau: null, cov: 0, covCal: 0, acc: null, lb: null, n: 0, k: 0,
-                ok: false, target: target, why: "" };
+                base: null, need: null, ok: false, target: target, why: "" };
+  const _maj = function (ys) {                      // 다수클래스 비율 = 실력 없이 도달 가능한 정확도
+    let p = 0; for (let i = 0; i < ys.length; i++) p += (ys[i] ? 1 : 0);
+    const m = ys.length ? p / ys.length : 0.5;
+    return Math.max(m, 1 - m);
+  };
   try {
     const nc = Math.min(pCal.length, yCal.length);
     if (nc < minN) { out.why = "캘리브레이션 표본 " + nc + " < " + minN; return out; }
@@ -34859,9 +34922,19 @@ function _speakPoint(pCal, yCal, pHold, yHold, tsHold, horizonMs, cfg) {
         n++; if (((_num(pCal[i], 0.5) >= 0.5) ? 1 : 0) === yCal[i]) hit++;
       }
       if (n < minN) break;                             // 더 올리면 표본이 없다
-      if (hit / n >= target + margin) { best = { t: t, cov: n / nc, acc: hit / n }; break; }
+      /* ★기저율도 그 문턱 안에서 다시 잰다★ — 기권하면 남는 구간의 쏠림이 달라진다. */
+      const ys = []; for (let i = 0; i < nc; i++) if (conf[i] >= t) ys.push(yCal[i]);
+      const need = Math.max(target, _maj(ys) + bMar);
+      if (hit / n >= need + margin) { best = { t: t, cov: n / nc, acc: hit / n, need: need }; break; }
     }
-    if (!best) { out.why = "캘리브레이션에서 목표 " + (target * 100).toFixed(0) + "% 를 어떤 문턱으로도 못 넘었다"; return out; }
+    if (!best) {
+      const _b0 = _maj(yCal.slice(0, nc));
+      out.base = +_b0.toFixed(4);
+      out.why = "캘리브레이션에서 문턱 " + (Math.max(target, _b0 + bMar) * 100).toFixed(1) +
+                "%(목표 " + (target * 100).toFixed(0) + "% vs 무실력 " + (_b0 * 100).toFixed(1) +
+                "%+여유 중 큰 쪽)를 어떤 문턱으로도 못 넘었다";
+      return out;
+    }
     out.tau = +best.t.toFixed(6); out.covCal = +best.cov.toFixed(4);
     /* ② 고정된 τ 로 ★홀드아웃★ 을 잰다 — 여기서 고르지 않았으므로 선택 편향이 없다. */
     const nh = Math.min(pHold.length, yHold.length);
@@ -34880,8 +34953,18 @@ function _speakPoint(pCal, yCal, pHold, yHold, tsHold, horizonMs, cfg) {
     const blk = _blockAccLB(bh, bt, horizonMs);
     if (blk.lb == null) { out.why = "발언 구간을 블록으로 못 쟀다(" + (blk.why || "") + ")"; return out; }
     out.lb = +blk.lb.toFixed(4); out.k = _num(blk.k, 0);
-    /* ④⑤ 판정 — ★목표와 적용률을 둘 다★ 넘어야 한다. 못 넘으면 못 넘었다고 말한다. */
-    if (out.lb < target) { out.why = "발언 구간 하한 " + (out.lb * 100).toFixed(1) + "% < 목표 " + (target * 100).toFixed(0) + "%"; return out; }
+    /* ④⑤ 판정 — ★목표·무실력·적용률★ 셋을 다 넘어야 한다. 못 넘으면 못 넘었다고 말한다. */
+    out.base = +_maj(yHold.filter(function (v, i) {
+      return Math.abs(_num(pHold[i], 0.5) - 0.5) >= best.t;
+    })).toFixed(4);
+    out.need = +Math.max(target, _num(out.base, 0.5) + bMar).toFixed(4);
+    if (out.lb < out.need) {
+      out.why = "발언 구간 하한 " + (out.lb * 100).toFixed(1) + "% < 문턱 " + (out.need * 100).toFixed(1) +
+                "% (목표 " + (target * 100).toFixed(0) + "% vs ★무실력 " + (_num(out.base, 0) * 100).toFixed(1) +
+                "%★+여유 중 큰 쪽)" +
+                (_num(out.base, 0) > target ? " — 쏠린 라벨이라 60% 는 실력의 증거가 아니다" : "");
+      return out;
+    }
     if (out.cov < minCov) { out.why = "적용률 " + (out.cov * 100).toFixed(1) + "% < 최소 " + (minCov * 100).toFixed(0) + "% — 60% 라도 이건 위원이 아니라 침묵이다"; return out; }
     out.ok = true; out.why = null;
     return out;
@@ -34893,7 +34976,9 @@ function _speakNote(sp) {
     if (!sp) return " 발언점[없음]";
     if (!sp.ok) return " 발언점[미달 · " + (sp.why || "?") + (sp.lb != null ? " · 적용률 " + (sp.cov * 100).toFixed(1) + "%" : "") + "]";
     return " 발언점[★" + (sp.lb * 100).toFixed(1) + "%★ 하한(관측 " + (sp.acc * 100).toFixed(1) +
-           "%) · 적용률 " + (sp.cov * 100).toFixed(1) + "% · 발언 " + sp.n + "건 · 블록 " + sp.k + "개]";
+           "%) · 무실력 " + ((_num(sp.base, 0)) * 100).toFixed(1) + "% · 문턱 " +
+           ((_num(sp.need, 0)) * 100).toFixed(1) + "% · 적용률 " + (sp.cov * 100).toFixed(1) +
+           "% · 발언 " + sp.n + "건 · 블록 " + sp.k + "개]";
   } catch (e) { return " 발언점[표기실패]"; }
 }
 /* ══ [V33.413] ★"잡음과 구별 안 된다" 를 ★왜★ 로 바꾼다 — 두 가지 진단 ═══════════════
@@ -43151,7 +43236,9 @@ async function mlGBDTTrainNightly(DB) {
         const _needSpan = _holdD + _num(MINIHOLD.minTrainDays, 30);
         if (_spanD >= _needSpan) {
           const _cut = _tsMax - _holdD * 86400000;
-          const _B = Math.max(2, Math.floor(_num(MINIHOLD.holdBuckets, 12)));
+          /* 왕복 수도 비용이다 — 칸을 절반으로 줄인다(70일을 6칸이면 칸당 약 12일,
+             고르게 뽑는다는 목적은 그대로 달성된다). */
+          const _B = Math.max(2, Math.floor(_num(MINIHOLD.holdBuckets, 12) / 2));
           const _per = Math.max(1, Math.floor(_num(MINIHOLD.holdCap, 9000) / _B));
           const _step = (_holdD * 86400000) / _B;
           const _hold = [];
@@ -43162,9 +43249,15 @@ async function mlGBDTTrainNightly(DB) {
             ).bind(LUXML.featVer, _a, _z, _per).all();
             for (const x of ((r2 && r2.results) || [])) _hold.push(x);
           }
+          /* [V33.414] ★달력으로 가르는 것이 데이터량을 늘리는 일이 되면 안 된다.★
+             첫 판은 홀드아웃(6,903행)을 trainWindow(60,000) ★위에★ 얹어 67,653행이 됐고,
+             적재가 길어져 최종 적합이 예산을 넘겨 ★나무 0개★ 로 끝났다(위 가드 참조).
+             총량을 종전과 같게 묶는다 — 바뀌는 것은 ★어느 날짜를 보느냐★ 이지 양이 아니다. */
+          const _trLimit = Math.max(_num(GBDT.minTrainSamples, 120),
+                                    _num(LUXML.trainWindow, 60000) - _hold.length);
           const r3 = await DB.prepare(
             _GCOLS + " WHERE featver = ? AND ts < ? ORDER BY ts DESC LIMIT ?"
-          ).bind(LUXML.featVer, _cut - _embMs, LUXML.trainWindow).all();
+          ).bind(LUXML.featVer, _cut - _embMs, _trLimit).all();
           const _tr = (r3 && r3.results) || [];
           /* 학습이 굶으면 안 된다 — 잣대를 고치려다 모델을 죽이는 건 고친 게 아니다. */
           if (_hold.length >= 150 && _tr.length >= GBDT.minTrainSamples) raw = _hold.concat(_tr);
@@ -43350,6 +43443,25 @@ async function mlGBDTTrainNightly(DB) {
                 "% (겹치지 않는 블록 " + _num(_blk.k, 0) + "개)";
     }
 
+    /* ══ [V33.414] ★나무가 0개인 모델은 모델이 아니다 — 저장하지 않는다★ ═════════════════
+       실측(회차 35688362304): [GBDT] ★trees=0★ n=67653 OOF=48.6%(하한 47.0%)
+       _gbdtFit 의 마감 검사는 루프 ★맨 위★ 에 있다. 최종 적합이 시작될 때 이미 예산이
+       지나 있으면 ★한 그루도 못 세우고 break★ 한다 — 그래도 모델은 저장됐다.
+       그 모델은 mlGBDTScore 에서 ★상수(bias)★ 만 돌려준다. 그런데 화면에 실리는 정확도는
+       ★CV 폴드(진짜 나무를 세운 모델들)★ 에서 나온 값이다 —
+       ★저장된 물건과 보고된 숫자가 서로 다른 것을 가리킨다.★
+       승격은 다른 이유로 막혔지만(47.0% < 50.5%), 막힌 이유가 우연히 맞았을 뿐이다.
+       "못 쟀으면 승격 안 한다" 와 같은 규율을 여기에도 적용한다 — ★못 세웠으면 저장 안 한다.★ */
+    if (!model.trees || model.trees.length === 0) {
+      const _why = "최종 적합이 나무를 한 그루도 못 세웠다(예산 " + _num(GBDT.trainBudgetMs, 18000) +
+                   "ms · 적재 후 남은 시간 부족 · 표본 " + N + "행) — ★상수 모델을 저장하지 않는다★" +
+                   "(보고된 " + (acc * 100).toFixed(1) + "% 는 CV 폴드 모델의 값이라 이 물건을 설명하지 않는다)";
+      await setState(DB, "gbdt_trust", { wGbdt: 0, trusted: false, gbdtAccLB: null,
+                                         accLBWhy: _why, reason: _why, featVer: LUXML.featVer,
+                                         trainedAt: Date.now() });
+      try { await log(DB, "ERROR", null, "[GBDT] " + _why); } catch (e) {}
+      return "[GBDT] " + _why;
+    }
     model.featVer = LUXML.featVer; model.valAcc = +acc.toFixed(4); model.valAccLB = +accLB.toFixed(4);
     model.valN = valN; model.valNRaw = valNRaw; model.valUniq = +_uBar.toFixed(4);
     model.n = N; model.trainedAt = Date.now();

@@ -97,6 +97,86 @@ console.log("\n② ★영원히 못 재게 두지 않는다★ (BC-2) — 문턱
     "★학습 표본 보호가 없다★");
 }
 
+console.log("\n②-2 ★나무 0개 모델은 저장하지 않는다★ (BD-1 — 실측이 잡은 자리)");
+{
+  /* 실측(회차 35688362304): [GBDT] ★trees=0★ n=67653 OOF=48.6%(하한 47.0%)
+     _gbdtFit 의 마감 검사는 루프 ★맨 위★ 라, 최종 적합 시작 시 이미 예산이 지나 있으면
+     한 그루도 못 세우고 break 한다 — 그래도 모델은 저장됐다. 그 모델은 상수만 돌려주는데
+     화면의 정확도는 ★CV 폴드 모델★ 의 값이다: 저장된 물건과 보고된 숫자가 다른 것을 가리킨다. */
+  const g = S.slice(S.indexOf("async function mlGBDTTrainNightly("));
+  const iGuard = g.indexOf("if (!model.trees || model.trees.length === 0) {");
+  const iSave = g.indexOf('await setState(DB, "gbdt_model", model)');
+  chk(iGuard > 0, "나무 0개를 ★검사한다★", "★나무가 0개여도 그대로 저장한다 — 상수 모델이 위원이 된다★");
+  chk(iGuard > 0 && iSave > iGuard,
+    "그 검사가 ★저장보다 앞★ 이다", "★검사가 저장 뒤다 — 이미 저장된 뒤에 막아도 소용없다★");
+  if (iGuard > 0) {
+    let d = 0, blk = "";
+    for (let k = g.indexOf("{", iGuard); k < g.length && k > 0; k++) {
+      if (g[k] === "{") d++; else if (g[k] === "}") { d--; if (!d) { blk = g.slice(iGuard, k + 1); break; } }
+    }
+    chk(/return "\[GBDT\] " \+ _why;/.test(blk), "그 자리에서 ★멈춘다★", "★멈추지 않고 계속 간다★");
+    chk(/gbdtAccLB: null/.test(blk),
+      "하한을 ★null★ 로 둔다 — CV 폴드 숫자를 이 물건의 성적처럼 내보내지 않는다",
+      "★CV 폴드에서 나온 숫자를 저장 안 된 모델의 성적으로 내보낸다★");
+    chk(/trusted: false/.test(blk) && !/wGbdt: [^0]/.test(blk), "지분을 주지 않는다", "★지분을 준다★");
+  }
+  // 적재량이 늘어나면 같은 일이 또 난다 — 총량을 종전과 같게 묶는가
+  chk(/_num\(LUXML\.trainWindow, 60000\) - _hold\.length/.test(g),
+    "달력 분할이 ★데이터량을 늘리지 않는다★ — 학습 한도에서 홀드아웃만큼 뺀다",
+    "★홀드아웃을 trainWindow 위에 얹는다 — 적재가 길어져 최종 적합이 예산을 넘긴다(trees=0 의 원인)★");
+}
+
+console.log("\n②-3 ★60% 를 절대값으로 쓰지 않는가★ (BD-2 — 내가 만든 함정에 내가 빠졌다)");
+{
+  /* 실측: [DUAL-BULL] 발언점[★68.4%★ · 적용률 100%] — 그런데 ★무실력 74.7%★ 다.
+     다수클래스만 찍어도 74.7% 인데 68.4% 를 "목표 60% 통과" 로 판정했다.
+     쏠린 라벨에서 60% 는 ★실력의 증거가 아니라 무능의 증거★ 다. */
+  const D2 = 86400000, T0 = Date.parse("2026-01-01T00:00:00Z");
+  const mk = (n, acc, pos, seed) => {
+    let s2 = seed || 7;
+    const r = () => (s2 = (s2 * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    const p = [], y = [], t = [];
+    for (let i = 0; i < n; i++) {
+      const truth = r() < pos ? 1 : 0, ok = r() < acc;
+      p.push(ok ? (truth ? 0.8 : 0.2) : (truth ? 0.2 : 0.8));
+      y.push(truth); t.push(T0 + Math.floor(i / 80) * D2);
+    }
+    return { p, y, t };
+  };
+  const A = mk(6000, 0.684, 0.747, 11), B = mk(6000, 0.684, 0.747, 22);
+  const r = M._speakPoint(A.p, A.y, B.p, B.y, B.t, 10 * D2, M.SPEAK);
+  chk(!r.ok, "무실력 74.7% 구간의 68.4% 모델을 ★미달로 잡는다★ — " + (r.why || "").slice(0, 60),
+    "★무실력보다 낮은 모델을 '목표 60% 통과' 로 내보낸다 — 숫자만 60% 로 만드는 그 함정이다★");
+  chk(/무실력/.test(r.why || ""), "사유에 ★무실력★ 을 적는다", "★왜 미달인지 기저율을 안 적는다★");
+  // 기저율이 낮은 구간에서는 종전대로 60% 가 문턱이다(과하게 막지 않는가)
+  const C1 = mk(6000, 0.70, 0.50, 33), C2 = mk(6000, 0.70, 0.50, 44);
+  const r2 = M._speakPoint(C1.p, C1.y, C2.p, C2.y, C2.t, 10 * D2, M.SPEAK);
+  chk(r2.ok, "기저율 50% 구간의 70% 모델은 ★통과한다★(과하게 막지 않는다) — " +
+    (r2.ok ? "하한 " + (r2.lb * 100).toFixed(1) + "% · 무실력 " + (r2.base * 100).toFixed(1) + "%" : r2.why),
+    "★실력이 있는 모델까지 막는다(" + (r2.why || "") + ")★");
+  chk(M.SPEAK.baseMargin > 0, "무실력 대비 여유 " + M.SPEAK.baseMargin + " 가 살아 있다",
+    "★여유가 0 이다 — 무실력과 동률이면 통과한다★");
+  /* ★두 구간의 쏠림이 다르면?★ 캘리브레이션은 균형(50%)인데 홀드아웃이 쏠려 있으면(85%),
+     고르는 쪽 검사는 통과하고 ★재는 쪽만★ 남는다. 거기가 절대 60% 면 무능이 통과한다.
+     (돌연변이 D5 가 정확히 이 자리로 빠져나갔다 — 앞 관문이 가려 주고 있었을 뿐이다.) */
+  {
+    const cal = mk(6000, 0.70, 0.50, 55);        // 고르는 쪽: 균형 · 실력 있음
+    const hol = mk(6000, 0.66, 0.85, 66);        // 재는 쪽: 크게 쏠림 → 무실력 85%
+    const r3 = M._speakPoint(cal.p, cal.y, hol.p, hol.y, hol.t, 10 * D2, M.SPEAK);
+    chk(!r3.ok,
+      "고르는 쪽이 균형이어도 ★재는 쪽의 쏠림★ 을 다시 본다 — " + (r3.why || "").slice(0, 70),
+      "★재는 쪽 무실력(85%)을 안 보고 절대 60% 로 통과시킨다 — 앞 관문이 가려 준 자리다★");
+    chk(r3.base == null || r3.base > 0.7 || /무실력/.test(r3.why || ""),
+      "그 판정이 ★재는 쪽 기저율★ 을 근거로 삼는다",
+      "★기저율을 안 적는다★");
+  }
+  chk(/const need = Math\.max\(target, _maj\(ys\) \+ bMar\);/.test(S),
+    "캘리브레이션 쪽도 ★둘 중 큰 쪽★ 을 문턱으로 쓴다",
+    "★고르는 쪽은 절대 60% 만 본다 — 거기서 이미 잘못 고른다★");
+  chk(/무실력 " \+ \(\(_num\(sp\.base, 0\)\) \* 100\)/.test(S),
+    "표기에 ★무실력★ 과 ★문턱★ 을 같이 적는다", "★하한만 적어 60% 가 좋아 보이게 둔다★");
+}
+
 console.log("\n③ ★'잡음과 구별 안 됨' 을 '왜' 로 바꾼다★ (BC-3)");
 {
   // 실측: FLOW 풀드 +0.0155 / 블록 −0.0589 — 부호가 갈린다. 잡음이 아니라 구조다.
@@ -129,6 +209,38 @@ console.log("\n③ ★'잡음과 구별 안 됨' 을 '왜' 로 바꾼다★ (BC-
     "로그가 정적 칸 수와 ★이름★ 을 적는다(번호만 적으면 아무도 안 고친다)",
     "★정적 칸을 안 적거나 번호만 적는다★");
   chk(/_speakNote\(_speak\) \+ _simp \+/.test(S), "심프슨 진단이 학습완료 줄에 실린다", "★진단을 만들고 안 싣는다★");
+}
+
+console.log("\n③-2 ★정적 칸을 빼면 나아지는가 — 주장하지 말고 잰다★ (BD-3)");
+{
+  const g = S.slice(S.indexOf("async function _miniLogisticTrain("));
+  chk(/_altNote = " ★정적칸빼면★\[블록IC "/.test(g),
+    "정적 칸을 중립화한 ★팔★ 을 하나 더 돌려 숫자를 남긴다",
+    "★정적 칸을 짚어 놓고 '빼면 나아진다' 를 재지 않는다 — 다음 판이 또 추측한다★");
+  chk(/보고만 한다\(운영 모델은 그대로\)/.test(g),
+    "그 팔이 ★보고만 한다★ 고 로그에 못 박는다(운영 모델을 안 바꾼다)",
+    "★실험 팔인지 운영 변경인지 로그가 구분 안 된다★");
+  // ★운영 경로가 안 바뀌었는가★ — 실험 팔이 모델·게이트에 닿으면 안 된다
+  const noStr = t => t.replace(/"(?:[^"\\\n]|\\.)*"/g, '""').replace(/'(?:[^'\\\n]|\\.)*'/g, "''");
+  /* ★문장 단위로 본다.★ 문맥 창을 뜨면 자른 자리가 낱말 가운데라 `_gb = 0` 의 "b = 0" 이
+     `\bb\s*=` 에 걸리는 식의 거짓양성이 난다(실제로 한 번 났다).
+     계약은 "실험 팔의 값이 ★운영 이름에 대입되지 않는다★" 이므로 대입문만 보면 된다. */
+  const gg = noStr(strip(g));
+  const stmts = gg.split(/[;\n]/);
+  const OPER = /^\s*(?:const |let |var )?(model(?:\.\w+)?|w|b|pv|acc|ic|_bIC|_tv|_st|valAcc|valIC)\s*=[^=]/;
+  const leak = stmts.filter(st => /_w2|_b2|_pv2|_st2/.test(st) && OPER.test(st))
+                    .map(st => st.trim().slice(0, 90));
+  chk(leak.length === 0,
+    "실험 팔(_w2·_pv2·_st2)이 ★운영 이름에 대입되지 않는다★",
+    "★실험 팔이 운영 경로에 닿는다: " + leak.slice(0, 1).join("") + "★");
+  // 그리고 실험 팔은 ★자기 변수에만★ 쓴다 — 운영 변수를 덮어쓰지 않는가(반대 방향도 확인)
+  chk(!/(?:^|[;\n])\s*(?:model|pv|acc|_st|_bIC)\b[^;\n]*=\s*_(?:w2|b2|pv2|st2)\b/.test(gg),
+    "운영 변수가 실험 팔에서 값을 받지 않는다", "★운영 변수가 실험 팔 값을 받는다★");
+  chk(/if \(_wss && _wss\.staticN > 0 && _wss\.staticN < D/.test(g),
+    "정적 칸이 없거나 ★전부★ 정적이면 안 돌린다(빈 모델을 만들지 않는다)",
+    "★정적 칸이 0개거나 D개여도 돌린다 — 뜻 없는 숫자를 만든다★");
+  chk(/_st2 && _st2\.blockIC != null/.test(g),
+    "그 팔도 ★블록(사건) 기반★ 으로만 적는다", "★행 기반 숫자를 적는다★");
 }
 
 console.log("\n④ ★문턱은 한 톨도 안 건드렸는가★");
