@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.409";
+const _BUILD_VER = "V33.410";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -34711,6 +34711,19 @@ function _blockAccLB(hits, ts, horizonMs) {
    문턱 = k × ★시장별★ |pnl| 중앙값 (C2 의 교훈: 시장을 섞으면 artifact 가 생긴다).
    중앙값도 학습행만으로 잰다(누출 금지). 너무 많이 버리면 ★쓰지 않는다★ — 잣대를 고치려다
    학습을 굶기지 않는다. 돌려주는 mask 가 null 이면 호출부는 아무것도 바꾸지 않는다. */
+/* [V33.410] 전진신뢰도를 사람이 읽는 한 줄로. ★이 문자열은 로그·화면용이다 —
+   어떤 게이트도 이 값을 읽지 않는다(그게 1단계의 계약이다).★ */
+function _fwdTrustNote(ft) {
+  try {
+    if (!ft) return " 전진신뢰[아직없음]";
+    if (ft.ic == null || ft.t == null)
+      return " 전진신뢰[쌓는중 " + _num(ft.days, 0) + "일/" + _num(FWDLED.minDays, 3) + "일 · 표본 " +
+             _num(ft.n, 0) + (ft.why ? " · " + String(ft.why).slice(0, 60) : "") + "]";
+    return " 전진신뢰[블록IC " + _num(ft.ic, 0).toFixed(4) + " t " + _num(ft.t, 0).toFixed(2) +
+           " · " + _num(ft.days, 0) + "일 · 표본 " + _num(ft.n, 0) +
+           (ft.ready ? "" : " · 미완") + " ★재기만 함(판정 불변)★]";
+  } catch (e) { return " 전진신뢰[표기실패]"; }
+}
 function _deadbandMask(P, MK, ntr, minN, enable) {
   const out = { mask: null, keep: 0, thr: null, note: "끔" };
   try {
@@ -35629,7 +35642,11 @@ const FWDLED = {
 async function icForwardCheck(DB, opts) {
   try {
     const o = opts || {};
-    const prev = await getState(DB, o.stateKey, null);
+    /* [V33.410] ★모델을 어떻게 읽는지는 모델마다 다르다★ — DNN 은 21MB 라 청크(big state)에
+       살고, getState("dnn_model") 은 ★null 을 돌려준다.★ 그대로 두면 이 검사가 조용히
+       아무것도 안 하고 "원장 없음" 만 영원히 적는다(이 저장소의 단골 사고 모양이다).
+       → 읽는 법을 호출부가 넘길 수 있게 한다. 안 넘기면 종전 그대로 getState 다. */
+    const prev = (typeof o.loadFn === "function") ? await o.loadFn() : await getState(DB, o.stateKey, null);
     if (!prev || !(_num(prev.ts, 0) > 0)) return null;         // 어제 모델이 없으면 전진검증 불가
     if (o.featVer != null && prev.featVer !== o.featVer) return null;
     // ══ [V33.104] ★전진검증이 영원히 0/400 이던 이유 — ts 의 의미가 표마다 다르다★ ══
@@ -40913,6 +40930,23 @@ async function mlDNNTrainNightly(DB) {
        ※ 검증 분할은 아래에서 ts 정렬 후 ★뒤쪽(최근)★ 을 쓰므로 walk-forward 성질은 그대로다. */
     const _dnnRead = Math.min(LUXML.trainWindow, (DNNW.dnnMaxSamples || 6000) * 2 + 1000);
     const _nRecent = Math.max(200, Math.floor(_dnnRead * _num(DNNW.recentFrac, 0.5)));
+    /* [V33.410] ★배포된 DNN 의 '지금' 신뢰도를 잰다 — 재기만 한다.★
+       GBDT 와 같은 이유다(그 자리 주석 참조): 위원회 지분은 학습하던 밤에 얼어붙은
+       하한에서 나오는데, 배포 후 성적을 보는 곳이 없었다. 재료(icForwardCheck·fwd_ledger)는
+       이미 있었고 잠정 위원에게만 걸려 있었다. ★어떤 판정도 바꾸지 않는다★ —
+       검정력이 생기기 전에 규칙을 만들면 3일치로 현직을 죽이게 된다. */
+    let _fwdTrust = null;
+    try {
+      /* ★이미 메모리에 있는 모델을 쓴다★ — prevModelEarly 는 이 함수 맨 앞에서 읽은
+         ★지금 배포돼 있는★ DNN 이다. 여기서 다시 읽으면 21MB·53청크를 두 번 읽는다. */
+      _fwdTrust = await icForwardCheck(DB, {
+        stateKey: "dnn_model", table: "ml_samples", featVer: LUXML.featVer,
+        sampleFeatVer: LUXML.featVer, hasInsTs: true,
+        loadFn: function () { return prevModelEarly; },
+        scoreFn: function (m, v) { const p = mlDNNScore(m, v); return p == null ? null : p; },
+        labelFn: function (r) { return _labelOfRow(r); }
+      });
+    } catch (e) {}
     const _COLS = "SELECT id, ts, feat, label, pnl_pct, strategy FROM ml_samples ";
     const _seen = new Set();
     const raw = [];
@@ -40946,7 +40980,13 @@ async function mlDNNTrainNightly(DB) {
     raw.sort(function (a, b) { return _num(b.ts, 0) - _num(a.ts, 0); });
     const nowTs = Date.now();
     const data = [];
+    /* [V33.410] 체크포인트는 ★읽은 자리에서 바로★ 센다 — 저장 시점까지 raw 가 살아 있기를
+       기대하면, 나중에 누가 메모리 해제(raw[i] = null · GBDT 가 하는 그 패턴)를 넣는 순간
+       maxId 가 조용히 0 이 되고 전진검증이 소리 없이 약한 기준으로 내려앉는다. */
+    let _ckMaxId = 0, _ckMaxTs = 0;
     for (let i = raw.length - 1; i >= 0; i--) {
+      const _a = _num(raw[i].id, 0); if (_a > _ckMaxId) _ckMaxId = _a;
+      const _b = _num(raw[i].ts, 0); if (_b > _ckMaxTs) _ckMaxTs = _b;
       let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
       data.push({ ts: _num(raw[i].ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(raw[i]), pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
@@ -41044,6 +41084,18 @@ async function mlDNNTrainNightly(DB) {
                   valNRaw: val.length, valUniq: +_uBar.toFixed(4),
                   dims: dims, n: N, trainedAt: Date.now(), source: "worker",
                   warmResumed: !!warmNets };   // [V11] 웜스타트 여부(누적학습 추적)
+    /* [V33.410] 다음 밤이 ★이 모델★ 을 채점할 수 있게 체크포인트를 남긴다.
+       ts 는 "어제 모델이 있는가", maxId/maxTs 는 "학습에 안 쓰였고 미래다" 를 거는 자다.
+       ★이 줄이 없으면 전진검증이 영원히 null 이다★ — 지금까지 GBDT·DNN 이 그랬다. */
+    net.ts = net.trainedAt; net.maxId = _ckMaxId; net.maxTs = _ckMaxTs;
+    /* ★재기만 한다★ — 아래 승격 판정(trust)은 이 값을 한 줄도 안 읽는다.
+       (check-fwd-trust 가 그 경계를 계약으로 확인한다) */
+    net.fwdTrust = _fwdTrust
+      ? { ic: _fwdTrust.blockIC != null ? _fwdTrust.blockIC : _fwdTrust.ic, t: _fwdTrust.t,
+          n: _fwdTrust.n, days: _fwdTrust.days, ready: !!_fwdTrust.ready,
+          why: _fwdTrust.why || null, at: Date.now() }
+      : { ic: null, t: null, n: 0, days: 0, ready: false,
+          why: "원장 없음 — 다음 밤부터 쌓인다(체크포인트를 이번에 처음 남겼다)", at: Date.now() };
     // [V33.50] 폴백 자가학습이 '더 좋은 외부 모델'을 덮어쓰지 않게 한다.
     //   워커 학습은 CPU 예산(300s) 안에서만 도는 축소 학습이라 Modal GPU 산출물보다 대개 약하다.
     //   외부 모델이 아직 문턱 미달이더라도 이번 워커 결과보다 낫다면 그대로 둔다(둘 다 미신뢰면
@@ -41124,7 +41176,7 @@ async function mlDNNTrainNightly(DB) {
     const arch = dims.join("-") + "×" + nets.length;
     return "[DNN] arch=" + arch + " n=" + N + " valAcc=" + (dnnAcc * 100).toFixed(1) + "%(하한 " + (dnnLB * 100).toFixed(1) +
            "%) vs mind하한 " + (mindLB * 100).toFixed(1) + "% → wDnn=" + trust.wDnn +
-           (trust.trusted ? " (신뢰)" : " (자동억제=0)");
+           (trust.trusted ? " (신뢰)" : " (자동억제=0)") + _fwdTrustNote(net.fwdTrust);
   } catch (e) {
     // [V9.2] 에러 메시지·발생시각 저장 → 다음 진단 가능(관측성). 로그에도 남김.
     const _em = (e && e.message) ? String(e.message).slice(0, 200) : "unknown";
@@ -42726,14 +42778,46 @@ async function mlGBDTTrainNightly(DB) {
         return "[GBDT] 외부GPU 학습모델 신뢰 중(valAcc " + ((_num(_live.valAcc, 0)) * 100).toFixed(1) + "%) — 야간 자가학습 생략(외부 소유)";
       }
     } catch (e) {}
+    /* ══ [V33.410] ★배포된 모델의 '지금' 신뢰도를 잰다 — 재기만 한다★ ═══════════════════
+       위원회 지분은 wGbdt = σ(T·(gLB−0.5)) 로 정해진다. 그 gLB 는 ★학습하던 밤에 얼어붙은★
+       숫자다. 배포된 뒤 성적을 보는 곳이 ★한 군데도 없다★ — 그래서 지분도 못 고치고,
+       다음 재학습 때 현직을 살릴지도 못 정한다. V33.408 이 그 위험의 실물이다:
+       위원회 0.6677 을 쥔 하한 70.1% 가 실력이 아니라 산수였는데, 배포 후 기록이 없어
+       화면만으로는 몇 주 동안 드러나지 않았다.
+
+       재료는 ★이미 있다★ — icForwardCheck / fwd_ledger(V33.140·149·178)다:
+       날짜별 비중첩 블록, 학습 때 없던 행만(id·ts 둘 다), 45일 누적. 그런데 배선이
+       ★정확히 거꾸로★ 였다 — 지분이 가장 작은 잠정 위원(flow·xalpha·stack·memo·듀얼)만
+       매일 재고, 지분이 가장 큰 GBDT·DNN 은 ★측정이 아예 없다.★
+
+       ★이 판에서는 재기만 한다. 어떤 판정도 바꾸지 않는다.★
+       이유는 검정력이다: 지금 원장은 한 줄도 없고 FWDLED.minDays 는 3 이다. 오늘 규칙을
+       만들면 3일치로 현직을 죽일지 살릴지 정하게 된다 — 그건 측정이 아니라 동전던지기다.
+       2주쯤 쌓여 t 가 의미를 가질 때 강등·존속 규칙을 배선한다(그때도 방향은 한쪽뿐이다 —
+       ★강등과 존속만, 승격은 아니다★. 안 그러면 "문턱을 낮춰 수를 늘리는" 장치가 된다).
+       check-fwd-trust 게이트가 ★이 값이 어떤 게이트에도 안 닿는 것★ 을 계약으로 못 박는다. */
+    let _fwdTrust = null;
+    try {
+      _fwdTrust = await icForwardCheck(DB, {
+        stateKey: "gbdt_model", table: "ml_samples", featVer: LUXML.featVer,
+        sampleFeatVer: LUXML.featVer, hasInsTs: true,   // ml_samples.ts 는 봉 날짜라 못 쓴다
+        scoreFn: function (m, v) { return mlGBDTScore(m, v); },
+        labelFn: function (r) { return _labelOfRow(r); }
+      });
+    } catch (e) {}
+    /* [V33.410] id 를 함께 읽는다 — 다음 밤 전진검증이 "학습에 안 쓰인 행" 을 집합적으로
+       정확히 고르는 기준(maxId)이 여기서 나온다. 종전 질의엔 id 가 없어 그 자가 없었다. */
     const rows = await DB.prepare(
-      "SELECT ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
+      "SELECT id, ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
     ).bind(LUXML.featVer, LUXML.trainWindow).all();
     const raw = (rows && rows.results) ? rows.results : [];
     const nowTs = Date.now();
+    let _ckMaxId = 0, _ckMaxTs = 0;
     const data = [];
     for (let i = raw.length - 1; i >= 0; i--) {
       const r = raw[i]; raw[i] = null;   // 파싱이 끝난 행의 원본 문자열을 즉시 놓아준다
+      const _rid = _num(r.id, 0); if (_rid > _ckMaxId) _ckMaxId = _rid;
+      const _rts = _num(r.ts, 0); if (_rts > _ckMaxTs) _ckMaxTs = _rts;
       let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
       for (let j = 0; j < v.length; j++) v[j] = _num(v[j], 0);   // 사본 대신 제자리에서 숫자화
@@ -42893,6 +42977,19 @@ async function mlGBDTTrainNightly(DB) {
     model.featVer = LUXML.featVer; model.valAcc = +acc.toFixed(4); model.valAccLB = +accLB.toFixed(4);
     model.valN = valN; model.valNRaw = valNRaw; model.valUniq = +_uBar.toFixed(4);
     model.n = N; model.trainedAt = Date.now();
+    /* [V33.410] 다음 밤이 ★이 모델★ 을 채점할 수 있게 체크포인트를 남긴다.
+       ts 는 icForwardCheck 가 "어제 모델이 있는가" 를 묻는 자리고(벽시계),
+       maxId/maxTs 는 "학습에 안 쓰였고 미래다" 를 둘 다 거는 자다(V33.178).
+       ★이 세 줄이 없으면 전진검증이 영원히 null 을 돌려준다★ — 지금까지 그랬다. */
+    model.ts = model.trainedAt; model.maxId = _ckMaxId; model.maxTs = _ckMaxTs;
+    /* ★재기만 한다★ — 이 값은 기록·화면용이고 아래 승격 판정은 한 줄도 안 읽는다.
+       (check-fwd-trust 가 그 경계를 계약으로 확인한다) */
+    model.fwdTrust = _fwdTrust
+      ? { ic: _fwdTrust.blockIC != null ? _fwdTrust.blockIC : _fwdTrust.ic, t: _fwdTrust.t,
+          n: _fwdTrust.n, days: _fwdTrust.days, ready: !!_fwdTrust.ready,
+          why: _fwdTrust.why || null, at: Date.now() }
+      : { ic: null, t: null, n: 0, days: 0, ready: false,
+          why: "원장 없음 — 다음 밤부터 쌓인다(체크포인트를 이번에 처음 남겼다)", at: Date.now() };
     // 중요도 상위 저장(설명가능성 — /api/ml-status·crowd 근거 표시용)
     if (model.importance) {
       const tot = model.importance.reduce(function (a, b) { return a + b; }, 0) || 1;
@@ -42963,7 +43060,7 @@ async function mlGBDTTrainNightly(DB) {
     }
     await setState(DB, "gbdt_trust", trust);
     return "[GBDT] trees=" + model.nTrees + " n=" + N + " OOF=" + (acc * 100).toFixed(1) + "%(하한 " + (accLB * 100).toFixed(1) +
-           "%, " + cvMode + calNote + ") vs mind하한 " + (mindLB * 100).toFixed(1) + "% → wGbdt=" + trust.wGbdt + (trust.trusted ? " (신뢰)" : " (억제)");
+           "%, " + cvMode + calNote + ") vs mind하한 " + (mindLB * 100).toFixed(1) + "% → wGbdt=" + trust.wGbdt + (trust.trusted ? " (신뢰)" : " (억제)") + _fwdTrustNote(model.fwdTrust);
   } catch (e) {
     const _em = (e && e.message) ? String(e.message).slice(0, 200) : "unknown";
     try { await setState(DB, "gbdt_trust", { wGbdt: 0, trusted: false, reason: "err", err: _em, errAt: Date.now() }); } catch (e2) {}
@@ -51557,7 +51654,7 @@ export {
   mlBanditNoiseNightly, LUXNOISE, LUXBANDIT,
   memoScore, memoTrainNightly, MEMOML,
   _blockAccLB, BLKACC,   // [V33.398] 블록 정확도 하한 — 게이트가 실제로 돌려 본다
-  _gbdtCalSplit,   // [V33.408] 달력 고정 홀드아웃 분할 — 게이트가 실제로 돌려 본다
+  _gbdtCalSplit, _fwdTrustNote, FWDLED,   // [V33.408/410] 달력 고정 홀드아웃 분할 — 게이트가 실제로 돌려 본다
   DEADBAND, _deadbandMask,   // [V33.409] 데드밴드 — 게이트가 상수를 실제로 읽는다
   _dnnArchDecide, DNNARCH, DNN, DNNW,   // [V33.260] 측정-반영 고리 검사
   _dnnAdmit,                        // [V33.262] DNN 승격 판정(정확도 길 · IC 길)
