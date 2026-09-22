@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.417";
+const _BUILD_VER = "V33.418";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -10025,6 +10025,253 @@ async function fetchOptionsSignal(DB, symbol) {
     try { await setState(DB, "opt:" + symbol, out); } catch (e) {}
     return out;
   } catch (e) { return null; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════
+   [V33.418] ★OMNI 데이터층 — 원시 봉 저장소★ (사용자 지시: "데이터 수집도 완전히 새로 설계해")
+
+   ■ 종전 설계의 한계 — 왜 새로 짜야 했나
+     단타(STIN) 표본은 ★관측하는 순간 JS 가 피처를 계산해 얼려 버린다★. 그래서
+       · 피처를 하나 바꾸려면 표본을 처음부터 다시 모아야 한다
+       · 라벨이 60분 하나로 박혀 있어 다른 지평(30분·1일·5일·20일)을 붙일 수가 없다
+       · 스캔에 걸린 종목만, 사이클당 12건씩 — 학습 문턱 3,000 을 한 세션에 겨우 넘긴다
+     스윙(ml_samples)은 일봉 피처 한 줄에 10일 부호 라벨이 박혀 있다 — 같은 한계다.
+
+   ■ 새 설계 — ★피처가 아니라 원시 봉을 모은다★
+     OHLCV + 봉 시각을 그대로 R2 에 쌓는다. 피처·라벨은 학습기(Modal)가 원시 봉에서 만든다.
+       · 피처를 바꿔도 다시 모을 필요가 없다 — 봉은 그대로다
+       · 지평을 몇 개든 붙일 수 있다 — 앞쪽 봉만 있으면 라벨이 나온다
+       · 종목·시각을 가리지 않는다 — 유니버스 전체의 모든 봉이 표본 후보다
+     ★수집은 워커(I/O), 계산은 Modal(CPU)★ — 사용자 원칙("클라우드플레어 CPU 로 학습하지 말 것")과
+     이 저장소가 이미 확인한 사실(워커 시계는 순수 계산 중 안 움직인다 · V33.416) 둘 다에 맞는 분업이다.
+
+   ■ ★덧붙이기만 한다(append-only)★ — 공급자의 이력 깊이에 묶이지 않는다
+     야후 5분봉은 60일, 네이버 분봉은 그보다 짧다. 매번 받은 것을 기존 파일에 ★합친다★.
+     석 달이 지나면 석 달치 5분봉이, 1년이 지나면 1년치가 쌓인다 — 공급자가 안 주는 깊이를
+     우리가 만든다. 같은 시각의 봉은 새 것이 이긴다(진행 중이던 마지막 봉이 확정값으로 바뀐다).
+
+   ■ 해상도 — 5분봉 + 일봉 두 가지만 원본으로 둔다
+     · 5분봉: 분봉 기준(사용자 지시). 1분봉은 야후가 7일밖에 안 주고 잡음이 커서 기준봉으로는
+       손해다(V33.222 가 1분봉으로 가며 적어 둔 대가 그대로). 60일 × 전 종목이면 바로 수백만 표본이다.
+     · 일봉: 장타 지평(5일·20일)과 수년치 이력.
+     · 60분봉은 ★저장하지 않는다★ — 5분봉을 묶어 만든다. 학습과 추론이 ★같은 방법★ 으로
+       60분봉을 만들어야 피처가 일치한다(야후 네이티브 60분봉은 경계가 다르다). 원본을 하나로
+       두는 편이 정합이 깨질 자리를 하나 줄인다.
+   ═══════════════════════════════════════════════════════════════════════════════════════ */
+const OMNIBARS = {
+  prefix: "bars/v1/",
+  baseSec: 300,                                    // 기준봉 5분 — 바꾸면 학습기도 같이 바꾼다
+  cap: { "5m": 40000, "1d": 6000 },                // 파일당 보존 상한(최근 것부터) — 5분봉 ≈2년 · 일봉 ≈24년
+  refreshH: { "5m": 18, "1d": 18 },                // 이만큼 지났으면 다시 받는다
+  usRange: { "5m": "60d", "1d": "max" },           // 야후 range
+  perRunOff: 16,                                   // 장외 한 번에 도는 종목 수(종목당 요청 2회)
+  perRunIn: 4,                                     // 장중 — 거래 사이클을 방해하지 않게 작게
+  gapOffMs: 4 * 60000,
+  gapInMs: 15 * 60000
+};
+
+function _obKey(res, sym) { return OMNIBARS.prefix + res + "/" + String(sym || "").replace(/[^A-Za-z0-9._^-]/g, "_") + ".json"; }
+
+/* 빈 봉 묶음 — 열마다 배열 하나(행마다 객체를 만들면 파일이 몇 배로 커진다). */
+function _obEmpty() { return { t: [], o: [], h: [], l: [], c: [], v: [] }; }
+
+/* 야후 v8 chart 응답 → 봉. 종가가 없는 봉(휴장 칸·결측)은 버린다. */
+function _obBarsFromYahoo(j) {
+  const out = _obEmpty();
+  try {
+    const r = j && j.chart && j.chart.result && j.chart.result[0];
+    if (!r) return out;
+    const ts = r.timestamp || [];
+    const q = (r.indicators && r.indicators.quote && r.indicators.quote[0]) || {};
+    const C = q.close || [], O = q.open || [], H = q.high || [], L = q.low || [], V = q.volume || [];
+    for (let i = 0; i < ts.length; i++) {
+      const c = C[i];
+      if (typeof c !== "number" || !(c > 0) || !(ts[i] > 0)) continue;
+      const o = (typeof O[i] === "number" && O[i] > 0) ? O[i] : c;
+      const h = (typeof H[i] === "number" && H[i] > 0) ? H[i] : Math.max(o, c);
+      const l = (typeof L[i] === "number" && L[i] > 0) ? L[i] : Math.min(o, c);
+      out.t.push(Math.floor(ts[i])); out.o.push(o); out.h.push(h); out.l.push(l); out.c.push(c);
+      out.v.push((typeof V[i] === "number" && V[i] > 0) ? V[i] : 0);
+    }
+  } catch (e) {}
+  return out;
+}
+
+/* 네이버 국내 차트 응답 → 봉.
+   kind "min": localDateTime "YYYYMMDDHHmm" (KST) · kind "day": localDate "YYYYMMDD".
+   KST → UTC 는 −9시간. 일봉은 그 날짜의 00:00 UTC 로 둔다(아래 _obDayKey 와 같은 규칙). */
+function _obBarsFromNaver(rows, kind) {
+  const out = _obEmpty();
+  try {
+    const arr = Array.isArray(rows) ? rows : (rows && Array.isArray(rows.priceInfos) ? rows.priceInfos : []);
+    const _n = function (v) { const x = Number(String(v == null ? "" : v).replace(/,/g, "")); return isFinite(x) ? x : 0; };
+    const tmp = [];
+    for (const row of arr) {
+      const c = _n(row.currentPrice != null ? row.currentPrice : row.closePrice);
+      if (!(c > 0)) continue;
+      let t = 0;
+      if (kind === "min") {
+        const s = String(row.localDateTime || "");
+        if (s.length < 12) continue;
+        t = Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8), +s.slice(8, 10) - 9, +s.slice(10, 12)) / 1000;
+      } else {
+        const s = String(row.localDate || row.localDateTime || "");
+        if (s.length < 8) continue;
+        t = Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8)) / 1000;
+      }
+      if (!(t > 0)) continue;
+      const o = _n(row.openPrice) > 0 ? _n(row.openPrice) : c;
+      const h = _n(row.highPrice) > 0 ? _n(row.highPrice) : Math.max(o, c);
+      const l = _n(row.lowPrice) > 0 ? _n(row.lowPrice) : Math.min(o, c);
+      const v = _n(row.volume != null ? row.volume : row.accumulatedTradingVolume);
+      tmp.push([t, o, h, l, c, v > 0 ? v : 0]);
+    }
+    tmp.sort(function (a, b) { return a[0] - b[0]; });
+    for (const r of tmp) { out.t.push(r[0]); out.o.push(r[1]); out.h.push(r[2]); out.l.push(r[3]); out.c.push(r[4]); out.v.push(r[5]); }
+  } catch (e) {}
+  return out;
+}
+
+/* ★일봉은 날짜로 맞춘다.★ 야후 일봉 시각은 개장 시각(09:30 ET)이라 서머타임이 바뀌면
+   한 시간 밀린다 — 그 시각 그대로 합치면 ★같은 날이 두 줄★ 이 된다. 그 시장의 현지 날짜
+   00:00 UTC 로 바꿔 둔다. 한국은 네이버가 이미 날짜로 준다. */
+function _obDayKey(tSec, market) {
+  const d = new Date(tSec * 1000);
+  if (market === "us") { const e = getUSEt(d); return Date.UTC(e.year, e.month - 1, e.date) / 1000; }
+  const k = new Date(d.getTime() + 9 * 3600000);
+  return Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate()) / 1000;
+}
+function _obNormDaily(b, market) {
+  const out = _obEmpty();
+  for (let i = 0; i < b.t.length; i++) {
+    out.t.push(_obDayKey(b.t[i], market)); out.o.push(b.o[i]); out.h.push(b.h[i]);
+    out.l.push(b.l[i]); out.c.push(b.c[i]); out.v.push(b.v[i]);
+  }
+  return out;
+}
+
+/* ★기준봉으로 묶는다★ — 네이버가 1분봉을 주든 5분봉을 주든, 야후가 5분봉을 주든
+   저장되는 것은 언제나 같은 칸(5분 경계)의 봉이다. 칸 = floor(t / 300) × 300.
+   시가=첫 봉 · 고가=최대 · 저가=최소 · 종가=마지막 봉 · 거래량=합. 이미 5분봉이면 항등이다. */
+function _obResample(b, sec) {
+  const out = _obEmpty();
+  let cur = -1;
+  for (let i = 0; i < b.t.length; i++) {
+    const k = Math.floor(b.t[i] / sec) * sec;
+    if (k !== cur) {
+      out.t.push(k); out.o.push(b.o[i]); out.h.push(b.h[i]); out.l.push(b.l[i]); out.c.push(b.c[i]); out.v.push(b.v[i]);
+      cur = k;
+    } else {
+      const j = out.t.length - 1;
+      if (b.h[i] > out.h[j]) out.h[j] = b.h[i];
+      if (b.l[i] < out.l[j]) out.l[j] = b.l[i];
+      out.c[j] = b.c[i]; out.v[j] += b.v[i];
+    }
+  }
+  return out;
+}
+
+/* ★합친다 — 덮어쓰지 않는다★.
+   · 시각으로 합집합 · 같은 시각은 새 것이 이긴다(진행 중이던 봉이 확정값으로 바뀐다)
+   · 오름차순 · 상한을 넘으면 ★오래된 쪽★ 을 버린다
+   ★새로 받은 것이 짧아도(공급자가 60일만 줘도) 예전 봉은 남는다★ — 이게 깊이를 쌓는 방법이다. */
+function _obMerge(oldB, freshB, cap) {
+  const m = new Map();
+  const put = function (b) {
+    if (!b || !Array.isArray(b.t)) return;
+    for (let i = 0; i < b.t.length; i++) {
+      if (!(b.t[i] > 0) || !(b.c[i] > 0)) continue;
+      m.set(b.t[i], [b.o[i], b.h[i], b.l[i], b.c[i], b.v[i]]);
+    }
+  };
+  put(oldB); put(freshB);                          // 뒤에 넣은 것(새 것)이 같은 키를 이긴다
+  const keys = Array.from(m.keys()).sort(function (a, b) { return a - b; });
+  const start = Math.max(0, keys.length - Math.max(1, _num(cap, keys.length)));
+  const out = _obEmpty();
+  for (let i = start; i < keys.length; i++) {
+    const r = m.get(keys[i]);
+    out.t.push(keys[i]); out.o.push(r[0]); out.h.push(r[1]); out.l.push(r[2]); out.c.push(r[3]); out.v.push(r[4]);
+  }
+  return out;
+}
+
+async function _obLoad(R2, res, sym) {
+  try { const g = await R2.get(_obKey(res, sym)); if (!g) return null; return JSON.parse(await g.text()); }
+  catch (e) { return null; }
+}
+
+/* 한 종목·한 해상도를 받아온다(I/O 만). 실패는 null — 다음 바퀴에 다시 한다. */
+async function _obFetch(sym, res) {
+  const isKR = /\.(KS|KQ)$/.test(sym);
+  if (isKR) {
+    const code = sym.split(".")[0];
+    const now = new Date();
+    const ymd = function (d) { return d.getUTCFullYear() + String(d.getUTCMonth() + 1).padStart(2, "0") + String(d.getUTCDate()).padStart(2, "0"); };
+    const from = new Date(now);
+    if (res === "1d") from.setUTCFullYear(from.getUTCFullYear() - 12); else from.setUTCDate(from.getUTCDate() - 60);
+    /* 분봉은 네이버가 ★기간을 얼마나 주는지 확인하지 못했다★(이 세션은 외부 호출이 막혀 있다).
+       그래서 기간을 넓게 요청하고, 오는 만큼 합친다 — 짧게 와도 매일 쌓이면 깊어진다. */
+    const ep = res === "1d" ? "day" : "minute";
+    const url = "https://api.stock.naver.com/chart/domestic/item/" + code + "/" + ep +
+                "?startDateTime=" + ymd(from) + "0000&endDateTime=" + ymd(now) + "2359";
+    try { __fetchBudget.used++; } catch (e) {}
+    const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" } });
+    if (!r.ok) return null;
+    let rows = null; try { rows = await r.json(); } catch (e) { return null; }
+    const b = _obBarsFromNaver(rows, res === "1d" ? "day" : "min");
+    return res === "1d" ? b : _obResample(b, OMNIBARS.baseSec);
+  }
+  const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(sym) +
+                             "?interval=" + (res === "1d" ? "1d" : "5m") + "&range=" + OMNIBARS.usRange[res] +
+                             (res === "1d" ? "" : "&includePrePost=false"));
+  const b = _obBarsFromYahoo(j);
+  return res === "1d" ? _obNormDaily(b, "us") : _obResample(b, OMNIBARS.baseSec);
+}
+
+/* ★수집기★ — 유니버스를 커서로 돈다. 한 번에 몇 종목만(장중엔 더 적게).
+   색인(omnibars_index)을 같이 갱신한다 — 학습기가 R2 를 통째로 훑지 않고 무엇이 있는지 안다. */
+async function omniBarsCollect(DB, opts) {
+  const o = opts || {};
+  const R2 = _bigR2();
+  if (!R2) return "[OMNI-BARS] R2 미바인딩 — 수집 불가";
+  const uni = (DEFAULT_US || []).concat(DEFAULT_KR || []);
+  if (!uni.length) return "[OMNI-BARS] 유니버스 비어 있음";
+  const inHours = (typeof isTradingWindow === "function") && (isTradingWindow("us") || isTradingWindow("kr"));
+  const per = Math.max(1, _num(o.perRun, inHours ? OMNIBARS.perRunIn : OMNIBARS.perRunOff));
+  let cur = null; try { cur = await getState(DB, "omnibars_cursor", null); } catch (e) {}
+  let idx = (cur && cur.i >= 0) ? Math.floor(cur.i) % uni.length : 0;
+  let index = null; try { index = await getState(DB, "omnibars_index", null); } catch (e) {}
+  if (!index || typeof index !== "object" || !index.s) index = { v: 1, s: {} };
+  const nowMs = Date.now();
+  let done = 0, fetched = 0, skipped = 0, failed = 0, added = 0;
+  for (let k = 0; k < per; k++) {
+    const sym = uni[idx]; idx = (idx + 1) % uni.length; done++;
+    const ent = index.s[sym] || (index.s[sym] = { m: /\.(KS|KQ)$/.test(sym) ? "kr" : "us" });
+    for (const res of ["5m", "1d"]) {
+      const meta = ent[res];
+      if (meta && meta.upd && (nowMs - meta.upd) < OMNIBARS.refreshH[res] * 3600000) { skipped++; continue; }
+      let fresh = null;
+      try { fresh = await _obFetch(sym, res); } catch (e) { fresh = null; }
+      if (!fresh || !fresh.t.length) { failed++; ent[res] = Object.assign({}, meta || {}, { err: nowMs }); continue; }
+      fetched++;
+      const old = await _obLoad(R2, res, sym);
+      const before = old && Array.isArray(old.t) ? old.t.length : 0;
+      const merged = _obMerge(old, fresh, OMNIBARS.cap[res]);
+      merged.s = sym; merged.res = res; merged.m = ent.m; merged.upd = nowMs;
+      try { await R2.put(_obKey(res, sym), JSON.stringify(merged)); }
+      catch (e) { failed++; continue; }
+      added += Math.max(0, merged.t.length - before);
+      ent[res] = { n: merged.t.length, first: merged.t[0], last: merged.t[merged.t.length - 1], upd: nowMs };
+    }
+  }
+  index.upd = nowMs;
+  try { await setState(DB, "omnibars_index", index); } catch (e) {}
+  try { await setState(DB, "omnibars_cursor", { i: idx, at: nowMs }); } catch (e) {}
+  const nSym = Object.keys(index.s).length;
+  let n5 = 0, n1 = 0; for (const s in index.s) { if (index.s[s]["5m"] && index.s[s]["5m"].n) n5++; if (index.s[s]["1d"] && index.s[s]["1d"].n) n1++; }
+  return "[OMNI-BARS] " + done + "종목 · 받음 " + fetched + " · 신선해서 건너뜀 " + skipped + " · 실패 " + failed +
+         " · 새 봉 +" + added + " · 커버 5분봉 " + n5 + "/" + uni.length + " · 일봉 " + n1 + "/" + uni.length +
+         (inHours ? " (장중 — 적게)" : "") + " · 다음 커서 " + idx;
 }
 
 /* [V33.217] ★캐시에 봉 날짜(days)가 없으면 신선해도 낡은 것으로 본다.★
@@ -25309,6 +25556,25 @@ async function handleRequest(request, env, ctx) {
 
     // [V33.40] GET /api/ml-export-intraday?day=YYYY-MM-DD — 장중 단타 표본(R2)만 내보낸다.
     //   D1 을 전혀 조회하지 않는다. R2 list 로 그날 오브젝트를 모아 합쳐 준다.
+    /* ══ [V33.418] OMNI 원시 봉 내보내기 — 학습기(Modal)가 여기서 봉을 받아 피처·라벨을 스스로 만든다 ══
+       색인: 무엇이 있는지(종목·해상도·봉 수·처음/끝 시각). 학습기가 R2 를 훑지 않게 한다.
+       봉: 한 번에 최대 25종목. 인증은 다른 학습용 내보내기와 같다(TRAIN_KEY). */
+    if (path === "/api/omni-bars-index") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const ix = await getState(env.DB, "omnibars_index", null);
+      return Response.json({ ok: true, baseSec: OMNIBARS.baseSec, index: ix || { v: 1, s: {} } }, { headers: cors });
+    }
+    if (path === "/api/omni-bars") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const R2 = _bigR2();
+      if (!R2) return Response.json({ error: "R2 미바인딩" }, { status: 503, headers: cors });
+      const res = url.searchParams.get("res") === "1d" ? "1d" : "5m";
+      const syms = String(url.searchParams.get("s") || "").split(",").map(function (x) { return x.trim(); })
+                     .filter(Boolean).slice(0, 25);
+      const bars = {};
+      for (const sym of syms) { const b = await _obLoad(R2, res, sym); if (b) bars[sym] = b; }
+      return Response.json({ ok: true, res: res, bars: bars, n: Object.keys(bars).length }, { headers: cors });
+    }
     if (path === "/api/ml-export-intraday") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const R2 = _bigR2();
@@ -26709,6 +26975,9 @@ async function handleRequest(request, env, ctx) {
         ["optmicro", function (DB) { return optMicroNightly(DB); }],
         ["lsmscore", function (DB) { return lsmScoreNightly(DB); }],
         ["harvest", function (DB) { return mlMarketHarvestNightly(DB); }],
+        // [V33.418] OMNI 원시 봉 — 야간에는 넉넉히 돈다(장외라 거래 사이클과 안 겹친다)
+        ["omnibars", function (DB) { try { resetFetchBudget(200); } catch (e) {} return omniBarsCollect(DB, { perRun: 40 }); }],
+
         // [V33.104] 전문가 재학습 앞 — 누출없는 STACK 표본 생성 후 기준선 갱신(크론과 동일 순서).
         ["stackbf", function (DB) { return stackSampleBackfill(DB, {}); }],
         ["stackepoch", function (DB) { return stackExpertEpochStamp(DB); }],
@@ -51861,6 +52130,21 @@ export default {
             }
           } catch (e) { try { await log(env.DB, "ERROR", null, "[CF-TICK] " + (e && e.message)); } catch (e2) {} }
 
+          /* [V33.418] ★OMNI 원시 봉 수집★ — 야간 한 번(40종목)으로는 유니버스 1,000종목에 25일이 걸린다.
+             딥이력 수집과 같은 모양으로 매 틱 잠금 뒤에 조금씩 돈다:
+               장외 4분마다 16종목(시간당 ≈240) · 장중 15분마다 4종목(거래 사이클을 방해하지 않게)
+             받는 것은 I/O 뿐이다 — 피처·라벨 계산은 Modal 이 한다(워커 CPU 로 학습하지 않는다). */
+          try {
+            const _obLock = _num(await getState(env.DB, "omnibars_lock", 0), 0);
+            const _obOpen = (typeof isTradingWindow === "function") && (isTradingWindow("us") || isTradingWindow("kr"));
+            const _obGap = _obOpen ? OMNIBARS.gapInMs : OMNIBARS.gapOffMs;
+            if (Date.now() - _obLock > _obGap) {
+              await setState(env.DB, "omnibars_lock", Date.now());
+              const _obr = await omniBarsCollect(env.DB, {});
+              await log(env.DB, "INFO", null, _obr);
+            }
+          } catch (e) { try { await log(env.DB, "ERROR", null, "[OMNI-BARS] " + ((e && e.message) || e)); } catch (e2) {} }
+
           // [V12.130b] ★표본을 실제로 늘리는 유일한 길 — 딥이력 커버리지 확대★
           //   현재 딥이력(2400봉) 보유 422종목 / 일봉(320봉)만 555종목. 표본 상한이 원천 데이터로
           //   묶여 있어(163,667에서 고갈) 수확을 아무리 돌려도 더 나오지 않는다. 딥이력이 붙은 종목은
@@ -52113,6 +52397,8 @@ export default {
             await _stg("lsmscore", async function () { return await lsmScoreNightly(env.DB); });
             // (2.5) [HARVEST] 시장 자기지도 표본 수확 — 전 종목 일봉에서 "피처→N일 뒤 방향" 대량 편입
             await _stg("harvest", async function () { return await mlMarketHarvestNightly(env.DB); });
+            // [V33.418] OMNI 원시 봉 — 수동 파이프라인과 ★같은 단계★ 를 같은 이름으로(check-pipeline-graph)
+            await _stg("omnibars", async function () { try { resetFetchBudget(200); } catch (e) {} return await omniBarsCollect(env.DB, { perRun: 40 }); });
             // [V12.122] ★재구축기 재학습 가속★ _stg는 하루 1회만 학습을 허용하는데, 표본풀이 재구축
             //   중(< rebuildTarget)엔 하루 안에도 풀이 크게 늘어난다(catch-up 수확이 매 틱 실행). GBDT가
             //   그날 이른 시각 작은 풀(예: 7만)로 한 번 학습해버리면, 그 뒤 풀이 16만으로 늘어도 다음날까지
@@ -52288,6 +52574,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
+export { OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
