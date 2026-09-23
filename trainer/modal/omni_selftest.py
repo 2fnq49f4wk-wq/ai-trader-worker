@@ -90,7 +90,12 @@ def synth(nsym, rho, seed):
         #   잡는 버그를 자가검사가 통째로 못 봤다(합성에서는 우연히 맞아떨어진다).
         #   구멍(거래정지·저유동)과 다른 이력 길이·수집 지연을 넣어 두면, 격자가 절대 시계에
         #   안 걸린 순간 횡단면 묶음이 무너지고 아래 검사가 바로 잡는다.
-        b5, bd = make_symbol(rng, mkt, rho, ndays_i=70 - (k % 4), drift_mom=0.0)
+        # [V33.425e] ★장타에도 신호를 심는다.★ 예전엔 5분봉 자기상관(장중)만 심어서, 장타 지평은
+        #   합성 시장에서 ★원래부터 잡음★ 이었다. 그 상태로 조기종료 검증의 지평 구성을 맞추면
+        #   모델이 잡음 지평에도 똑같이 힘을 쓰게 돼 30분 AUC 만 깎인다 — 실제 시장에는 없는
+        #   불리함이다(실제 지평은 다 같은 자격이다). 일봉 갭에 전일 장중 모멘텀을 실어 둔다.
+        b5, bd = make_symbol(rng, mkt, rho, ndays_i=70 - (k % 4),
+                             drift_mom=(0.25 if rho > 0 else 0.0))
         keep = [i for i in range(len(b5["t"]) - 1) if rng.random() > 0.015] + [len(b5["t"]) - 1]
         b5 = {f: [b5[f][i] for i in keep] for f in ("t", "o", "h", "l", "c", "v")}
         if k % 7 == 0:                      # 수집이 하루 늦은 종목 — 일봉 격자의 홀짝이 갈린다
@@ -291,6 +296,19 @@ def main():
     # [V33.424] ★지평 균형★ 과 ★나무 최소치★ — 실데이터에서 나무 2그루가 올라간 그 자리를 막는다
     if not rep.get("hzMult"):
         fails.append("지평 균형이 안 돌았다 — 자료 많은 지평이 모델을 통째로 가져간다")
+    # [V33.425e] ★조기종료 검증이 학습과 같은 질문을 보는가★ — 지평 구성이 갈리면 모델이 배운 곳을
+    #   검증이 볼 수 없어 조기종료가 몇 라운드에서 멈춘다(실데이터: fit 가중의 72% 가 val 에 없는
+    #   지평이었고, 20일은 val 에 ★한 행도 없었다★).
+    _sf, _sv = rep.get("hzFitShare") or {}, rep.get("hzValShare") or {}
+    print("지평 가중비중 학습 %s · 검증 %s" % (
+        " ".join("%s %.0f%%" % (h, v * 100) for h, v in _sf.items()),
+        " ".join("%s %.0f%%" % (h, v * 100) for h, v in _sv.items())))
+    _miss = [h for h in _sf if _sf[h] > 0.02 and _sv.get(h, 0.0) <= 0.0]
+    if _miss:
+        fails.append("조기종료 검증에 %s 지평이 한 행도 없다 — 학습과 다른 질문을 본다" % "·".join(_miss))
+    _gap = max([abs(_sf.get(h, 0.0) - _sv.get(h, 0.0)) for h in set(_sf) | set(_sv)] or [0.0])
+    if _gap > 0.12:
+        fails.append("학습/검증의 지평 구성이 %.0f%%p 벌어졌다 — 조기종료가 딴 데를 본다" % (_gap * 100))
     if len(trees) < omni.MIN_TREES:
         fails.append("나무 %d그루 < %d — 학습이 안 된 모델을 올릴 뻔했다" % (len(trees), omni.MIN_TREES))
     # [V33.425] 나무 총수는 시드 수에 속는다(시드 4 × 7라운드 = 28그루). 시드 하나의 라운드 수를 본다.
@@ -326,13 +344,32 @@ def main():
     #    ① 배리어가 정해진 행만 남기던 ★선택★ 이 없어져 조용한 행까지 다 들어왔고
     #    ② 라벨이 동료 중앙값과의 차라 동료 쪽 잡음이 얹힌다. 표본이 더 정직해진 대가다.
     #    n=24,040 에서 se(AUC)≈0.004 이므로 0.547 은 0.5 에서 11시그마다 — 못 찾은 게 아니다.)
-    _a1 = h30.get("auc") or 0.0
-    _a0 = (rep0["heads"]["30m"].get("auc") or 0.0)
-    print("신호 판별: 있음 AUC %.3f vs 없음 AUC %.3f (차 %.3f)" % (_a1, _a0, _a1 - _a0))
-    if not _a1 > 0.53:
-        fails.append("심은 신호를 못 찾았다(30분 AUC %.3f)" % _a1)
-    if not (_a1 - _a0) > 0.03:
-        fails.append("신호 있음/없음이 안 갈린다(%.3f vs %.3f) — 배관이 신호를 못 나른다" % (_a1, _a0))
+    #   [V33.425e] ★판별은 홀드아웃 AUC 로 한다 — 검증손실 이득으로는 안 된다.★
+    #     LightGBM 의 best_score 는 ★전 라운드 중 최솟값★ 이라 라운드를 많이 돌수록 낙관 편향이
+    #     커진다. 실제로 지평별 분할을 넣어 라운드가 길어지자 ★잡음 회차의 검증손실 이득이
+    #     +0.0001 → +0.0020★ 으로 뛰었다(홀드아웃 AUC 는 0.499 — 배운 게 아니라 창에 맞춘 것).
+    #     홀드아웃은 절단점 밖이고 한 번만 잰다 — 그게 정직한 숫자다.
+    #   그리고 30분 하나가 아니라 ★다섯 머리 전부★ 를 홀드아웃 행 수로 가중평균한다.
+    #     한 머리만 보면 시드 잡음에 흔들리고, 다른 지평이 망가져도 안 보인다.
+    #     실측: 신호 0.5247(30m .532 · 60m .519 · 1d .523 · 5d .522 · 20d .507 — ★전부 0.5 위★)
+    #           잡음 0.4953(.499 · .499 · .490 · .490 · .525 — 0.5 양쪽으로 흩어진다)
+    def _avg_auc(r):
+        tot = sn = 0.0
+        for hz in omni.HORIZONS:
+            h = r["heads"].get(hz) or {}
+            if h.get("n", 0) >= 50 and h.get("auc") is not None:
+                tot += h["auc"] * h["n"]
+                sn += h["n"]
+        return tot / max(1.0, sn)
+    _u1, _u0 = _avg_auc(rep), _avg_auc(rep0)
+    _med = lambda v: (sorted(v)[len(v) // 2] if v else 0.0)
+    print("신호 판별: 가중평균 홀드아웃 AUC 있음 %.4f vs 없음 %.4f (차 %+.4f) · "
+          "참고로 검증손실 이득 %+.4f vs %+.4f(게이트 아님 — 낙관 편향)" % (
+              _u1, _u0, _u1 - _u0, _med(rep.get("valGain") or []), _med(rep0.get("valGain") or [])))
+    if not _u1 > 0.515:
+        fails.append("심은 신호를 못 찾았다(가중평균 홀드아웃 AUC %.4f)" % _u1)
+    if not (_u1 - _u0) > 0.02:
+        fails.append("신호 있음/없음이 안 갈린다(%.4f vs %.4f) — 배관이 신호를 못 나른다" % (_u1, _u0))
     if fixture:
         import numpy as np
         # 고정물은 작게: 원본 장타·장중 각 100행 + 결측·0 을 넣은 같은 수. 값은 유효숫자 10자리로

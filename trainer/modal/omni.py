@@ -1232,11 +1232,33 @@ def train_model(A, log=print):
     C, tr, ho = split_cutoff(A)
     if len(tr) < 2000 or len(ho) < 500:
         return None, {"ok": False, "why": "표본 부족 — 학습 %d · 홀드아웃 %d" % (len(tr), len(ho)), "cutoff": C}
-    # 학습 구간 안에서 조기종료용 검증을 떼어낸다(같은 퍼징 규칙)
+    # ══ [V33.425e] ★조기종료 검증이 학습과 다른 질문을 보고 있었다.★ ═══════════════════════
+    #   실측(2026-09-23 · 1,005종목 · 3,137,890행 · 횡단면 라벨):
+    #     학습(fit)  30m 104,641 · 60m 94,893 · 1d 107,538 · 5d ★907,183★ · 20d ★913,753★
+    #     검증(val)  30m 126,208 · 60m 114,644 · 1d 131,046 · 5d 7,532 · 20d ★0★
+    #   지평 균형을 넣어도 이렇게 된다 — 균형은 ★전체★ 의 지평별 가중 합을 맞출 뿐이고,
+    #   그 뒤에 ★시간으로 한 번 더 자르면★ 장타는 라벨이 길어서 거의 전부 fit 쪽에 남는다
+    #   (5·20일 행의 98% 가 fit 에 있고, val 에는 20일이 ★한 행도 없다★).
+    #   그래서 fit 가중의 ★72%★ 가 val 이 볼 수 없는 지평에 쓰인다. 모델이 거기서 아무리
+    #   배워도 검증손실은 안 내려가고, 조기종료는 몇 라운드에서 멈춘다(실측 [8,5,4,5]).
+    #   → 시간 절단을 ★지평마다 따로★ 건다. 퍼징 규칙(라벨 끝 < 절단 · 결정 ≥ 절단)은 그대로다.
+    #     지평 구성이 fit 와 val 에서 같아지면, 검증손실이 비로소 ★학습과 같은 질문★ 을 본다.
     Atr = take(A, tr)
-    C2 = float(np.quantile(Atr["td"], 1 - INNER_VAL_FRAC))
-    fit = np.where(Atr["te"] < C2)[0]
-    val = np.where(Atr["td"] >= C2)[0]
+    _fit, _val = [], []
+    for _k in range(len(HORIZONS)):
+        _ix = np.where(Atr["hz"] == _k)[0]
+        if len(_ix) < 200:              # 이만큼도 없으면 나눌 게 없다 — 전부 학습에 둔다
+            _fit.append(_ix)
+            continue
+        _c = float(np.quantile(Atr["td"][_ix], 1 - INNER_VAL_FRAC))
+        _fit.append(_ix[Atr["te"][_ix] < _c])
+        _val.append(_ix[Atr["td"][_ix] >= _c])
+    fit = np.concatenate(_fit) if _fit else np.array([], dtype=np.int64)
+    val = np.concatenate(_val) if _val else np.array([], dtype=np.int64)
+    C2 = None
+    if len(val) < 500:
+        return None, {"ok": False, "why": "조기종료 검증 %d행 — 지평별로 나눌 표본이 모자라다" % len(val),
+                      "cutoff": C}
     dfit = lgb.Dataset(Atr["X"][fit], label=Atr["y"][fit], weight=Atr["w"][fit],
                        feature_name=MODEL_FEATS, free_raw_data=False)
     dval = lgb.Dataset(Atr["X"][val], label=Atr["y"][val], weight=Atr["w"][val], reference=dfit)
@@ -1279,7 +1301,15 @@ def train_model(A, log=print):
     log("   · OMNI 시드별 라운드 %s (중앙값 %.0f · 최소치 %d) · 검증손실 ln2 대비 %s" % (
         [it for _, it in boosters], float(np.median([it for _, it in boosters])), MIN_ITERS,
         ("—" if not _vg else " · ".join("%+.4f" % v for v in _vg))))
+    # 지평 구성이 정말 같아졌는가 — 가중 비중으로 남긴다(다시 갈라지면 여기서 바로 보인다)
+    _share = lambda ix: {HORIZONS[k]: round(float(Atr["w"][ix][Atr["hz"][ix] == k].sum())
+                                            / max(1e-9, float(Atr["w"][ix].sum())), 4)
+                         for k in range(len(HORIZONS)) if (Atr["hz"][ix] == k).any()}
+    _sf, _sv = _share(fit), _share(val)
+    log("   · OMNI 지평 가중비중 학습 " + " · ".join("%s %.0f%%" % (h, v * 100) for h, v in _sf.items()))
+    log("   · OMNI 지평 가중비중 검증 " + " · ".join("%s %.0f%%" % (h, v * 100) for h, v in _sv.items()))
     rep = {"ok": True, "cutoff": C, "innerCut": C2, "nTrain": int(len(fit)), "nVal": int(len(val)),
+           "hzFitShare": _sf, "hzValShare": _sv,
            "nHold": int(len(ho)), "bestIter": best, "seeds": len(boosters), "seedDisagree": dis,
            "iters": [it for _, it in boosters], "heads": heads,
            "valGain": [float(v) for v in _vg],
@@ -1558,6 +1588,7 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
                "hzTrain": rep.get("hzTrain"), "hzHold": rep.get("hzHold"), "hzMult": rep.get("hzMult"),
                "label": "xsec", "xsecMin": XSEC_MIN, "xsec": (excl or {}).get("xsec"),
                "iters": rep.get("iters"), "valGain": rep.get("valGain"),
+               "hzFitShare": rep.get("hzFitShare"), "hzValShare": rep.get("hzValShare"),
                "excl": excl, "trainedAt": int(time.time() * 1000), "params": LGB_PARAMS,
                "barrierK": BARRIER_K, "holdDays": HOLD_DAYS})
     body = json.dumps(payload, allow_nan=False, separators=(",", ":"))
