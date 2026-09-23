@@ -47,3 +47,21 @@
 .omni-sub{font-size:10.5px;padding:2px 6px;border-radius:6px;border:1px solid var(--ops-line,#2a2f3d);color:var(--ops-ink3,#8b93a7);}
 .omni-dim{font-size:11px;color:var(--ops-ink3,#8b93a7);line-height:1.6;}
 @media (max-width:640px){ .omni-heads{grid-template-columns:1fr;} }
+
+/* ══ [V33.423] OMNI 구조 — DNN 두뇌 그림이 사라진 자리. 층을 흉내 내지 않고
+   ★실제로 갈림을 만든 것★(gain 비중)을 그린다: 입력 묶음 → 나무 숲 → 지평 머리. */
+.omni-struct{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:14px;align-items:start;}
+.omni-struct-col{display:flex;flex-direction:column;gap:8px;min-width:0;}
+.omni-struct-h{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ops-ink3,#8b93a7);
+  border-bottom:1px solid var(--ops-line,#2a2f3d);padding-bottom:6px;}
+.omni-grp{display:grid;grid-template-columns:1fr 84px 42px;gap:8px;align-items:center;font-size:11.5px;}
+.omni-grp-n{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.omni-grp-n small{display:block;font-size:10px;color:var(--ops-ink3,#8b93a7);}
+.omni-grp-b{height:6px;border-radius:99px;background:var(--ops-line,#2a2f3d);overflow:hidden;}
+.omni-grp-b span{display:block;height:100%;background:var(--ops-accent,#4c8dff);border-radius:99px;}
+.omni-grp-v{text-align:right;font-variant-numeric:tabular-nums;color:var(--ops-ink2,#b6bdcc);}
+.omni-tops{display:flex;flex-wrap:wrap;gap:5px;}
+.omni-top{font-size:10.5px;padding:3px 7px;border-radius:7px;border:1px solid var(--ops-line,#2a2f3d);
+  color:var(--ops-ink2,#b6bdcc);white-space:nowrap;}
+.omni-top b{color:var(--ops-ink,#e6e9f0);}
+@media (max-width:860px){ .omni-struct{grid-template-columns:1fr;} }

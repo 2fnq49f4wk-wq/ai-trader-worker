@@ -25,7 +25,7 @@
 """
 import math
 
-OMNI_VER = 1
+OMNI_VER = 2
 BASE_SEC = 300                 # 5분봉 — 워커 OMNIBARS.baseSec 와 같아야 한다
 SESS_MIN = 390                 # 정규장 길이(분) — 미국 09:30~16:00 · 한국 09:00~15:30 둘 다 390
 OPEN_MIN = {"us": 570, "kr": 540}
@@ -45,7 +45,38 @@ FEATS = [
     "d_hi252", "d_lo20", "d_atr14", "d_volr", "d_bbz20",
     # 맥락
     "x_mkt", "x_dow", "x_tod",
+    # ══ [V33.423] ★XALPHA 가 하던 일 — 형식알파★ (퇴역 모델의 능력을 흡수한다) ═══════════
+    #   XALPHA 는 WorldQuant-101 계열 알파를 봤다. 그 아이디어는 옳았고 ★정적칸 24/25★ 가
+    #   문제였다(종목 안에서 안 변하는 칸이라 모델이 종목을 외웠다). 그래서 여기서는
+    #   ★전부 변화·상대량★ 으로만 만든다 — 종목 고유의 수준을 그대로 싣지 않는다.
+    "a_cvol20",    # corr(종가, 거래량) 20일 — 가격·거래량 동조(수급 동행)
+    "a_hlpos",     # ((고+저)/2 − 종가) / ATR — 종가가 봉 어디에 붙었나(장중 압력의 잔상)
+    "a_vwdev20",   # 20일 VWAP 이탈 — 평균 체결가 대비 지금 가격
+    "a_ill20",     # Amihud 비유동성 = mean(|수익|/거래대금) — 충격비용 대리
+    "a_skew20",    # 일간수익 왜도 — 복권성향(양의 왜도에 음의 프리미엄)
+    "a_kurt20",    # 첨도 — 꼬리 위험
+    "a_max5",      # 최근 5일 최대 일간수익 — MAX 효과
+    "a_dnvolr",    # 하락일 거래량 비중 — 팔자 압력 쏠림
+    "a_rev1",      # 전일 반전 = −d_r1 를 변동으로 정규화
+    # ══ [V33.423] ★XALPHA 의 횡단면 랭크 + FLOW 의 피어축★ — ★패널★ 에서 나온다 ═════════
+    #   실측(V33.413)이 말한 것: ★통합 IC > 0 > 블록 IC★. 즉 "어느 날이 오르나" 는 맞히는데
+    #   ★같은 날 안에서 어느 종목이 오르나★ 는 못 맞혔다. 그게 이 시스템이 실제로 하는 일인데.
+    #   원인은 분명하다 — 40칸이 전부 ★그 종목 혼자만 보는 값★ 이라 종목끼리 견줄 수가 없다.
+    #   랭크는 그 견줌을 직접 준다(같은 날 같은 시장 안에서 0~1 분위).
+    #   ★패널은 전일 확정 일봉으로 만든다.★ 장중 시각마다 만들면 학습(전 종목·정확한 시각)과
+    #   추론(그 사이클에 본 종목·근사 시각)이 달라져 값이 갈린다 — 이 저장소가 반복해 당한 사고다.
+    #   하루에 하나면 두 쪽이 ★같은 패널★ 을 쓴다. 장중 랭크를 포기하고 정합을 얻는다.
+    "q_r1", "q_r5", "q_r20", "q_rv20", "q_rsi", "q_volr", "q_hi252", "q_ill",
+    "p_ex1", "p_ex5", "p_ex20",   # 시장 중앙값 대비 초과수익(피어 상대)
+    "p_beta60", "p_corr60",       # 시장(패널 중앙값 수익률) 대비 베타·상관
+    "p_disp", "p_n",              # 그날 종목 간 산포(국면) · 패널 크기(신뢰도)
 ]
+# 패널에서 채우는 칸(나머지는 종목 하나만으로 계산된다) — 두 단계를 코드가 아니라 ★표★ 로 가른다.
+PANEL_FEATS = ["q_r1", "q_r5", "q_r20", "q_rv20", "q_rsi", "q_volr", "q_hi252", "q_ill",
+               "p_ex1", "p_ex5", "p_ex20", "p_beta60", "p_corr60", "p_disp", "p_n"]
+PANEL_MIN = 20          # 이보다 적으면 랭크를 만들지 않는다(모르면 모른다)
+PANEL_SRC = {"q_r1": "d_r1", "q_r5": "d_r5", "q_r20": "d_r20", "q_rv20": "d_rv20",
+             "q_rsi": "d_rsi14", "q_volr": "d_volr", "q_hi252": "d_hi252", "q_ill": "a_ill20"}
 NAN = float("nan")
 
 # 매매법(범주) — 한 모델이 여러 매매법을 배우게 하는 입력. 우선순위대로 첫 번째로 맞는 것.
@@ -268,6 +299,8 @@ def feature_point(b5, bd, i, mkt, daily_row=False, j=None):
     # 일봉 — j 까지(장중 행이면 '오늘 이전 마지막 확정일')
     if j is not None and j >= 0:
         _daily_feats(bd, j, f)
+        _alpha_feats(bd, j, f)      # [V33.423] 형식알파 — 일봉 칸이 채워진 ★뒤에★ (ATR·rv20 을 쓴다)
+    # 패널 칸은 여기서 안 채운다 — 같은 날 다른 종목이 있어야 만들 수 있다(panel_fill).
 
     vals = [_fin(float(f[k])) if f[k] == f[k] else NAN for k in FEATS]
     return vals, setup_of(f, daily_row, b5, i, bd, j)
@@ -281,6 +314,22 @@ def _last_daily_before(bd, dk):
     while lo <= hi:
         mid = (lo + hi) // 2
         if day_key_of_daily(t[mid]) < dk:
+            ans = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return ans
+
+
+def _last_daily_le(bd, dk):
+    """[V33.423] 날짜 키가 dk ★이하★ 인 마지막 일봉. `_last_daily_before(bd, dk + 1)` 로 쓰면 안 된다 —
+    날짜 키는 YYYYMMDD 라 20260918 + 1 = 20260919 가 ★실제로 있는 날★ 이다(하루를 더 먹는다)."""
+    t = bd["t"]
+    lo, hi = 0, len(t) - 1
+    ans = None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if day_key_of_daily(t[mid]) <= dk:
             ans = mid
             lo = mid + 1
         else:
@@ -323,6 +372,215 @@ def _daily_feats(bd, j, f):
         w = C[j - 19:j + 1]
         s = _pstd(w)
         f["d_bbz20"] = (C[j] - _mean(w)) / s if s > 0 else NAN
+
+
+def _alpha_feats(bd, j, f):
+    """[V33.423] 형식알파 — XALPHA 가 하던 일. ★전부 변화·상대량★ 이다(정적칸을 만들지 않는다).
+    일봉 j 까지만 본다. 창이 모자라면 NaN — 0 으로 메우지 않는다(모르는 것을 아는 척하지 않는다)."""
+    C, H, L, V = bd["c"], bd["h"], bd["l"], bd["v"]
+    a = max(0, j - D_LOOKBACK + 1)
+    if j - 19 >= a:
+        c20 = C[j - 19:j + 1]
+        v20 = V[j - 19:j + 1]
+        f["a_cvol20"] = _pearson(c20, v20)
+        # VWAP20 = Σ(종가×거래량)/Σ거래량 — 거래량이 0 이면 못 구한다
+        sv = 0.0
+        sp = 0.0
+        for k in range(20):
+            sv += v20[k]
+            sp += c20[k] * v20[k]
+        f["a_vwdev20"] = _lr(C[j], sp / sv) if sv > 0 and sp > 0 else NAN
+        r20 = [_lr(C[k], C[k - 1]) for k in range(j - 19, j + 1)] if j - 20 >= a else None
+        if r20 is not None and all(x == x for x in r20):
+            f["a_skew20"] = _moment(r20, 3)
+            f["a_kurt20"] = _moment(r20, 4)
+            # Amihud: |수익| / 거래대금(종가×거래량). 단위가 종목마다 다르므로 ★로그★ 로 눕힌다.
+            il = []
+            for k in range(20):
+                dv = c20[k] * v20[k]
+                if dv > 0:
+                    il.append(abs(r20[k]) / dv)
+            f["a_ill20"] = math.log(sum(il) / len(il)) if il else NAN
+            dn = 0.0
+            tot = 0.0
+            for k in range(20):
+                tot += v20[k]
+                if r20[k] < 0:
+                    dn += v20[k]
+            f["a_dnvolr"] = (dn / tot) if tot > 0 else NAN
+    atr = f.get("d_atr14", NAN)
+    if atr == atr and atr > 0 and C[j] > 0:
+        f["a_hlpos"] = (((H[j] + L[j]) / 2.0) - C[j]) / (atr * C[j])
+    if j - 5 >= a:
+        f["a_max5"] = max(_lr(C[k], C[k - 1]) for k in range(j - 4, j + 1))
+    rv = f.get("d_rv20", NAN)
+    r1 = f.get("d_r1", NAN)
+    if rv == rv and rv > 0 and r1 == r1:
+        f["a_rev1"] = -r1 / rv          # 변동으로 눕힌 전일 반전(종목 간 견줄 수 있게)
+
+
+def _pearson(x, y):
+    n = len(x)
+    if n < 3:
+        return NAN
+    mx, my = _mean(x), _mean(y)
+    sx = sy = sxy = 0.0
+    for k in range(n):
+        dx, dy = x[k] - mx, y[k] - my
+        sx += dx * dx
+        sy += dy * dy
+        sxy += dx * dy
+    return sxy / math.sqrt(sx * sy) if sx > 0 and sy > 0 else NAN
+
+
+def _moment(r, p):
+    """표준화 적률 — 3=왜도 · 4=첨도(초과 아님). 모집단 표준편차를 쓴다(피처 규약과 같게)."""
+    n = len(r)
+    m = _mean(r)
+    sd = _pstd(r)
+    if not (sd > 0):
+        return NAN
+    s = 0.0
+    for v in r:
+        s += ((v - m) / sd) ** p
+    return s / n
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# [V33.423] 패널 — ★같은 날 같은 시장의 종목들을 나란히 놓고 견준다★
+#   이 시스템이 실제로 하는 일은 "오늘 무엇을 사나" 이고, 그건 ★종목 간 비교★ 다.
+#   40칸은 전부 종목 혼자만 보는 값이라 그 비교를 못 했다(통합 IC > 0 > 블록 IC).
+#   패널은 ★전일 확정 일봉★ 하나로 만든다 — 학습과 추론이 같은 패널을 쓰게 하는 유일한 방법이다.
+# ══════════════════════════════════════════════════════════════════════════════════════
+def _qrank(vals):
+    """0~1 분위. 동점은 평균 순위. None/NaN 은 제외하고, 그 자리엔 None 을 돌려준다.
+    ★패널 크기에 둔감해야 한다★ — 학습 패널과 추론 패널의 종목 수가 다를 수 있다."""
+    idx = [k for k, v in enumerate(vals) if v is not None and v == v]
+    out = [None] * len(vals)
+    n = len(idx)
+    if n < PANEL_MIN:
+        return out
+    order = sorted(idx, key=lambda k: vals[k])
+    k = 0
+    while k < n:
+        m = k
+        while m + 1 < n and vals[order[m + 1]] == vals[order[k]]:
+            m += 1
+        r = (k + m) / 2.0
+        for q in range(k, m + 1):
+            out[order[q]] = r / (n - 1) if n > 1 else 0.5
+        k = m + 1
+    return out
+
+
+def build_panel(daily_by_sym, mkt_by_sym, day_key):
+    """그 날짜(현지 날짜 키)의 패널. 반환 {sym: {패널칸: 값}}.
+    ★그 날짜까지 확정된 일봉만★ 본다 — 미래를 한 칸도 안 읽는다."""
+    per = {}
+    for sym, bd in daily_by_sym.items():
+        if not bd or not bd.get("t"):
+            continue
+        j = _last_daily_le(bd, day_key)             # day_key 자신까지 포함(YYYYMMDD 는 +1 이 실제 날짜다)
+        if j is None or j < 60:
+            continue
+        f = {k: NAN for k in FEATS}
+        _daily_feats(bd, j, f)
+        _alpha_feats(bd, j, f)
+        rets = [_lr(bd["c"][k], bd["c"][k - 1]) for k in range(j - 59, j + 1)]
+        per[sym] = {"m": mkt_by_sym.get(sym, "us"), "f": f, "rets": rets}
+    out = {}
+    for mk in ("us", "kr"):
+        syms = [s for s in per if per[s]["m"] == mk]
+        if not syms:
+            continue
+        # ① 횡단면 랭크
+        ranks = {}
+        for qk, src in PANEL_SRC.items():
+            col = [_g(per[s]["f"], src) for s in syms]
+            ranks[qk] = _qrank(col)
+        # ② 시장 = 패널 ★중앙값 수익률★ (지수를 따로 받지 않는다 — 없던 자료를 만들지 않는다)
+        mret = []
+        for t in range(60):
+            col = sorted(per[s]["rets"][t] for s in syms if per[s]["rets"][t] == per[s]["rets"][t])
+            mret.append(col[len(col) // 2] if col else NAN)
+        n = len(syms)
+        med = {}
+        for key, src in (("p_ex1", "d_r1"), ("p_ex5", "d_r5"), ("p_ex20", "d_r20")):
+            col = sorted(v for v in (_g(per[s]["f"], src) for s in syms) if v is not None)
+            med[key] = col[len(col) // 2] if col else None
+        # 그날 종목 간 산포 — 국면(쏠린 날 vs 흩어진 날)
+        c1 = [v for v in (_g(per[s]["f"], "d_r1") for s in syms) if v is not None]
+        disp = _pstd(c1) if len(c1) >= PANEL_MIN else NAN
+        for a, s2 in enumerate(syms):
+            row = {}
+            for qk in PANEL_SRC:
+                r = ranks[qk][a]
+                row[qk] = r if r is not None else NAN
+            for key, src in (("p_ex1", "d_r1"), ("p_ex5", "d_r5"), ("p_ex20", "d_r20")):
+                v = _g(per[s2]["f"], src)
+                row[key] = (v - med[key]) if (v is not None and med[key] is not None and n >= PANEL_MIN) else NAN
+            if n >= PANEL_MIN:
+                rr = per[s2]["rets"]
+                ok = [t for t in range(60) if rr[t] == rr[t] and mret[t] == mret[t]]
+                if len(ok) >= 40:
+                    x = [mret[t] for t in ok]
+                    y = [rr[t] for t in ok]
+                    vx = _pstd(x)
+                    row["p_corr60"] = _pearson(x, y)
+                    if vx > 0:
+                        mx, my = _mean(x), _mean(y)
+                        cov = sum((x[t] - mx) * (y[t] - my) for t in range(len(ok))) / len(ok)
+                        row["p_beta60"] = cov / (vx * vx)
+                    else:
+                        row["p_beta60"] = NAN
+                else:
+                    row["p_corr60"] = NAN
+                    row["p_beta60"] = NAN
+            else:
+                row["p_corr60"] = NAN
+                row["p_beta60"] = NAN
+            row["p_disp"] = disp
+            row["p_n"] = float(n)
+            out[s2] = row
+    return out
+
+
+PANEL_MAX_DAYS = 1200      # 패널을 만드는 날 수 상한(최근부터) — 학습 시간이 종목×날로 늘어나는 걸 막는다
+
+
+def build_panels(daily_by_sym, mkt_by_sym, max_days=PANEL_MAX_DAYS):
+    """여러 날의 패널을 한 번에. 반환 {날짜키: {sym: 패널행}}.
+    날짜는 ★일봉이 실제로 있는 날★ 만 — 없는 날의 패널을 지어내지 않는다."""
+    keys = set()
+    for bd in daily_by_sym.values():
+        if bd and bd.get("t"):
+            for t in bd["t"]:
+                keys.add(day_key_of_daily(t))
+    days = sorted(keys)[-max_days:]
+    out = {}
+    for dk in days:
+        pr = build_panel(daily_by_sym, mkt_by_sym, dk)
+        if pr:
+            out[dk] = pr
+    return out
+
+
+def panel_day_of(bd, j):
+    """행이 쓰는 패널 날짜 = ★그 행이 본 마지막 확정 일봉의 날짜★ (feature_point 와 같은 규칙)."""
+    if bd is None or j is None or j < 0 or j >= len(bd.get("t", [])):
+        return None
+    return day_key_of_daily(bd["t"][j])
+
+
+def panel_fill(vals, prow):
+    """feature_point 가 낸 값 배열의 ★패널 칸만★ 채운다. 패널이 없으면 그대로 NaN 이다.
+    ★배열을 새로 만들지 않는다★ — 같은 자리에 꽂아야 학습과 추론이 같은 칸을 본다."""
+    if not prow:
+        return vals
+    for k in PANEL_FEATS:
+        v = prow.get(k, NAN)
+        vals[FEATS.index(k)] = _fin(float(v)) if v == v else NAN
+    return vals
 
 
 def _g(f, k):
@@ -456,7 +714,7 @@ def uniq_weight(hz):
     return min(1.0, DAILY_STEP / float(H_DAYS[hz]))
 
 
-def build_rows(sym, mkt, b5, bd):
+def build_rows(sym, mkt, b5, bd, panels=None):
     """한 종목의 모든 행. 각 행 = (피처 40, 매매법, 지평, 라벨, 가중, 결정시각, 라벨끝시각, 사후수익).
     ★마지막 봉은 버린다★ — 수집 시점에 진행 중이던 봉일 수 있다(확정값이 아니다)."""
     rows = []
@@ -473,6 +731,10 @@ def build_rows(sym, mkt, b5, bd):
         i0 += (n - 1 - i0) % INTRA_STEP
         for i in range(i0, n, INTRA_STEP):
             x, st = feature_point(b5, bdi, i, mkt)
+            if panels and bdi.get("t"):   # [V33.423] 횡단면 칸 — feature_point 와 ★같은 규칙★ 으로 일봉을 고른다
+                _pd = panel_day_of(bdi, _last_daily_before(bdi, local_parts(b5["t"][i], mkt)[2]))
+                if _pd is not None:
+                    x = panel_fill(x, (panels.get(_pd) or {}).get(sym))
             isg = intra_sigma(b5, i)
             for hz in ("30m", "60m", "1d"):
                 nb = H_BARS[hz]
@@ -504,6 +766,10 @@ def build_rows(sym, mkt, b5, bd):
         j0 += (n - 1 - j0) % DAILY_STEP          # 끝에서부터 같은 격자 — 수집일에 따라 격자가 흔들리지 않게
         for j in range(j0, n, DAILY_STEP):
             x, st = feature_point(None, bd2, None, mkt, daily_row=True, j=j)
+            if panels:
+                _pd = panel_day_of(bd2, j)
+                if _pd is not None:
+                    x = panel_fill(x, (panels.get(_pd) or {}).get(sym))
             for hz in ("5d", "20d"):
                 nd = H_DAYS[hz]
                 if j + nd >= n:
@@ -680,6 +946,11 @@ LGB_PARAMS = {"objective": "binary", "learning_rate": 0.03, "num_leaves": 31, "m
               "max_bin": 255, "verbose": -1, "seed": 7, "deterministic": True, "force_row_wise": True}
 MAX_ROUNDS = 400
 EARLY_STOP = 40
+# [V33.423] ★시드 앙상블 — DNN 이 하던 일(Deep Ensembles)★ 을 흡수한다.
+#   한 시드의 나무는 행 순서·부트스트랩에 흔들린다. 여러 시드의 로짓을 평균하면 그 흔들림이 준다
+#   ("모자란 앙상블이 없는 앙상블보다 낫다" — 같은 이유로 DNN 도 6시드였다).
+#   ★시드 불일치★ 를 같이 잰다 — 시드끼리 답이 갈리는 행은 모델이 모르는 행이다(불확실성).
+SEEDS = 4
 
 
 def rows_to_arrays(rows):
@@ -812,28 +1083,68 @@ def train_model(A, log=print):
     fit = np.where(Atr["te"] < C2)[0]
     val = np.where(Atr["td"] >= C2)[0]
     dfit = lgb.Dataset(Atr["X"][fit], label=Atr["y"][fit], weight=Atr["w"][fit],
-                       feature_name=MODEL_FEATS, free_raw_data=True)
+                       feature_name=MODEL_FEATS, free_raw_data=False)
     dval = lgb.Dataset(Atr["X"][val], label=Atr["y"][val], weight=Atr["w"][val], reference=dfit)
-    bst = lgb.train(LGB_PARAMS, dfit, num_boost_round=MAX_ROUNDS, valid_sets=[dval],
-                    callbacks=[lgb.early_stopping(EARLY_STOP, verbose=False)])
-    best = int(bst.best_iteration or bst.current_iteration())
     Aho = take(A, ho)
-    raw = bst.predict(Aho["X"], num_iteration=best, raw_score=True)
+    boosters, raws = [], []
+    for sd in range(SEEDS):
+        P = dict(LGB_PARAMS, seed=LGB_PARAMS["seed"] + sd * 101,
+                 bagging_seed=LGB_PARAMS["seed"] + sd * 211,
+                 feature_fraction_seed=LGB_PARAMS["seed"] + sd * 307)
+        b = lgb.train(P, dfit, num_boost_round=MAX_ROUNDS, valid_sets=[dval],
+                      callbacks=[lgb.early_stopping(EARLY_STOP, verbose=False)])
+        it = int(b.best_iteration or b.current_iteration())
+        boosters.append((b, it))
+        raws.append(b.predict(Aho["X"], num_iteration=it, raw_score=True))
+    raw = np.mean(raws, axis=0)
+    dis = float(np.mean(np.std(raws, axis=0))) if len(raws) > 1 else 0.0   # 시드 불일치(불확실성)
     p = 1.0 / (1.0 + np.exp(-raw))
     heads = evaluate_heads(p, Aho)
+    best = int(np.mean([it for _, it in boosters]))
     rep = {"ok": True, "cutoff": C, "innerCut": C2, "nTrain": int(len(fit)), "nVal": int(len(val)),
-           "nHold": int(len(ho)), "bestIter": best, "heads": heads}
-    return (bst, best), rep
+           "nHold": int(len(ho)), "bestIter": best, "seeds": len(boosters), "seedDisagree": dis,
+           "iters": [it for _, it in boosters], "heads": heads}
+    return (boosters, best), rep
 
 
-def export_model(bst, best):
-    """LightGBM → 워커 형식. ★best 까지만★ 내보낸다 — 잰 모델 = 올라가는 모델."""
-    dump = bst.dump_model(num_iteration=best)
-    if dump.get("objective", "").split(" ")[0] != "binary":
-        raise ValueError("binary 목적만 지원")
-    if len(dump.get("feature_names", [])) != len(MODEL_FEATS):
-        raise ValueError("피처 수 불일치")
-    return [export_tree(t["tree_structure"]) for t in dump["tree_info"]]
+def _scale_leaves(t, k):
+    """잎 값에 배수를 먹인다 — 앙상블 평균을 ★나무 합★ 으로 바꾸는 유일한 손질."""
+    if "w" in t:
+        return {"w": t["w"] * k}
+    return {"f": t["f"], "t": t["t"], "dl": t["dl"], "mt": t["mt"],
+            "l": _scale_leaves(t["l"], k), "r": _scale_leaves(t["r"], k)}
+
+
+def export_model(boosters, best=None):
+    """[V33.423] 시드 앙상블 → 워커 형식. ★채점기를 안 건드린다★:
+       앙상블 값 = (1/S)·Σ_s Σ_t 잎  =  Σ (잎/S) — 잎에 1/S 를 먹여 전부 이어 붙이면
+       워커의 '나무 합' 채점이 그대로 앙상블 평균이 된다(새 코드 0줄).
+       각 시드는 ★자기 best★ 까지만 — 잰 모델 = 올라가는 모델."""
+    if not isinstance(boosters, list):
+        boosters = [(boosters, best)]
+    k = 1.0 / len(boosters)
+    out = []
+    for b, it in boosters:
+        dump = b.dump_model(num_iteration=it)
+        if dump.get("objective", "").split(" ")[0] != "binary":
+            raise ValueError("binary 목적만 지원")
+        if len(dump.get("feature_names", [])) != len(MODEL_FEATS):
+            raise ValueError("피처 수 불일치")
+        for t in dump["tree_info"]:
+            out.append(_scale_leaves(export_tree(t["tree_structure"]), k))
+    return out
+
+
+def feature_gain(boosters):
+    """[V33.423] ★구조 관측용★ — 어느 칸이 실제로 갈림을 만들었나(gain 합, 시드 합산 후 정규화).
+    DNN 의 '두뇌 구조' 가 사라진 자리를 이 모델의 ★진짜 구조★ 로 채운다(지어내지 않는다)."""
+    tot = [0.0] * len(MODEL_FEATS)
+    for b, it in boosters:
+        g = b.feature_importance(importance_type="gain", iteration=it)
+        for k in range(min(len(tot), len(g))):
+            tot[k] += float(g[k])
+    s = sum(tot)
+    return [(v / s if s > 0 else 0.0) for v in tot]
 
 
 def score_raw(trees, x):
@@ -902,13 +1213,19 @@ def build_dataset_stream(BASE, HDR, log=print, limit=None):
     daily = {}
     for got in _get_bars(BASE, HDR, [s for s in syms if (ix[s].get("1d") or {}).get("n")], "1d", log):
         daily.update(got)
+    # [V33.423] ★패널을 먼저 만든다★ — 횡단면 칸은 같은 날 다른 종목이 있어야 생긴다.
+    #   일봉은 전부 받아 둔 상태이므로 여기가 유일하게 가능한 자리다(5분봉은 흘려서 버린다).
+    _t1 = time.time()
+    panels = build_panels(daily, {s: ix[s].get("m", "us") for s in syms})
+    log("   · OMNI 패널 %d일 (종목 %d · %.0fs) — 횡단면 랭크·시장 상대가 여기서 나온다" % (
+        len(panels), len(daily), time.time() - _t1))
     parts = []
     tot = _new_tot()
     seen = set()
     n5 = 0
 
     def _eat(s, b5):
-        rows, st = build_rows(s, ix[s].get("m", "us"), b5, daily.get(s))
+        rows, st = build_rows(s, ix[s].get("m", "us"), b5, daily.get(s), panels=panels)
         _acc(tot, st)
         if rows:
             parts.append(rows_to_arrays(rows))
@@ -936,15 +1253,18 @@ def build_dataset_stream(BASE, HDR, log=print, limit=None):
     return A, tot, len(seen)
 
 
-def build_dataset(data, log=print):
+def build_dataset(data, log=print, panels=None):
     """메모리에 이미 있는 봉(자가검사용)."""
     import time
     t0 = time.time()
+    if panels is None:
+        panels = build_panels({s: d.get("1d") for s, d in data.items()},
+                              {s: d["m"] for s, d in data.items()})
     parts = []
     tot = _new_tot()
     nsym = 0
     for s, d in data.items():
-        rows, st = build_rows(s, d["m"], d.get("5m"), d.get("1d"))
+        rows, st = build_rows(s, d["m"], d.get("5m"), d.get("1d"), panels=panels)
         _acc(tot, st)
         if rows:
             parts.append(rows_to_arrays(rows))
@@ -983,7 +1303,7 @@ def _clean(o):
     return o
 
 
-def make_probe(bst, best, A, n=PROBE_N, seed=5):
+def make_probe(boosters, best, A, n=PROBE_N, seed=5):
     """정합 probe — 홀드아웃에서 장타·장중을 반씩(장타 행은 장중 칸이 NaN). 기대값은 lgb 자체의 raw."""
     import numpy as np
     rng = np.random.default_rng(seed)
@@ -993,7 +1313,9 @@ def make_probe(bst, best, A, n=PROBE_N, seed=5):
                            rng.choice(i_ix, min(n - n // 2, len(i_ix)), replace=False) if len(i_ix) else []])
     pick = pick.astype(np.int64)
     X = A["X"][pick]
-    raw = bst.predict(X, num_iteration=best, raw_score=True)
+    if not isinstance(boosters, list):
+        boosters = [(boosters, best)]
+    raw = np.mean([b.predict(X, num_iteration=it, raw_score=True) for b, it in boosters], axis=0)
     return [{"x": [None if v != v else float(v) for v in x], "raw": float(r)} for x, r in zip(X, raw)]
 
 

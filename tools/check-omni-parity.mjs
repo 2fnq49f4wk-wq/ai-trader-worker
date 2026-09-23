@@ -95,7 +95,37 @@ for (let j = 0; j < usD.t.length; j++) cases.push({ mkt: "us", j, daily: true })
 for (let j = 0; j < krD.t.length; j++) cases.push({ mkt: "kr", j, daily: true });
 
 const dir = tmpdir(), inF = join(dir, "omni_parity_in.json"), outF = join(dir, "omni_parity_py.json");
-writeFileSync(inF, JSON.stringify({ us5, usD, kr5, krD, cases }));
+/* ══ [V33.423] ★패널(횡단면) 정합★ — 새 칸 15개는 '같은 날 다른 종목' 이 있어야 생긴다.
+   한 종목만 비교하면 이 칸들은 양쪽 다 NaN 이라 ★검사가 눈이 먼다.★
+   그래서 일봉을 흔들어 ★가짜 종목 30개★ 를 만들고 두 구현이 같은 랭크를 내는지 본다.
+   (랭크는 동점·최소 패널·시장 분리에서 갈리기 쉽다 — 그 셋을 일부러 만든다.) */
+const panelSyms = {}, panelMkt = {};
+for (let q = 0; q < 50; q++) {   // 시장별 25종목 — PANEL_MIN(20) 을 넘겨야 랭크가 실제로 생긴다
+  const src = q % 2 === 0 ? usD : krD;
+  const b = {};
+  /* 종목마다 다른 배수 — 단, 두 종목은 ★같은 값★ 으로 둬 동점 처리를 태운다. */
+  const mul = 1 + q * 0.037;
+  /* q=6 과 q=8 은 ★완전히 같은 종목★ 으로 둔다(같은 시장·같은 값) — 동점 처리를 태우려면
+     "비슷한" 이 아니라 ★똑같아야★ 한다. 첫 판은 sin 항이 달라 동점이 한 번도 안 생겼고,
+     그래서 '동점 평균순위' 를 지운 돌연변이가 빠져나갔다. */
+  const qq = (q === 8) ? 6 : q;
+  for (const k of ["t"]) b[k] = src[k].slice();
+  for (const k of ["o", "h", "l", "c"]) b[k] = src[k].map((v, i2) => v * (1 + qq * 0.037) * (1 + 0.004 * Math.sin(i2 + qq)));
+  b.v = src.v.map((v, i2) => Math.max(0, Math.round(v * (0.5 + (qq % 7) * 0.2) + (i2 % 5 === 0 ? 0 : 3 * qq))));
+  panelSyms["S" + q] = b;
+  panelMkt["S" + q] = q % 2 === 0 ? "us" : "kr";
+}
+/* 검사할 날짜 — 패널이 서는 날(초반은 60봉이 안 차서 빈다) */
+const pDays = [];
+{
+  /* ★날짜 키 규약을 맞춘다.★ 패널이 쓰는 키는 일봉 t 의 YYYYMMDD(omni.day_key_of_daily) 다.
+     첫 판은 _obDayKey(초 단위 자정)를 넣어 ★검사가 늘 같은 날을 봤고★, 그래서 경계
+     돌연변이(dayKey+1)가 빠져나갔다 — 규약이 어긋나면 검사는 조용히 헛돈다. */
+  const dk = (t) => { const d = new Date(t * 1000); return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate(); };
+  const all = [...new Set(usD.t.map(dk))].sort((a, b) => a - b);
+  for (const q of [70, 90, 120, all.length - 1]) if (all[q] != null) pDays.push(all[q]);
+}
+writeFileSync(inF, JSON.stringify({ us5, usD, kr5, krD, cases, panelSyms, panelMkt, pDays }));
 const py = `
 import json, sys, math
 sys.path.insert(0, ${JSON.stringify(new URL("../trainer/modal", import.meta.url).pathname)})
@@ -111,7 +141,12 @@ for cs in d["cases"]:
         bd = d["usD"] if cs["mkt"] == "us" else d["krD"]
         x, s = omni.feature_point(b5, bd, cs["i"], cs["mkt"])
     out.append({"x": [None if v != v else v for v in x], "s": s})
-json.dump({"feats": omni.FEATS, "setups": omni.SETUPS, "horizons": omni.HORIZONS, "ver": omni.OMNI_VER,
+pan = {}
+for dk in d["pDays"]:
+    pr = omni.build_panel(d["panelSyms"], d["panelMkt"], dk)
+    pan[str(dk)] = {s: {k: (None if v != v else v) for k, v in r.items()} for s, r in pr.items()}
+json.dump({"panel": pan, "panelFeats": omni.PANEL_FEATS, "panelMin": omni.PANEL_MIN,
+           "feats": omni.FEATS, "setups": omni.SETUPS, "horizons": omni.HORIZONS, "ver": omni.OMNI_VER,
            "consts": {"sess": omni.SESS_MIN, "openUs": omni.OPEN_MIN["us"], "openKr": omni.OPEN_MIN["kr"],
                       "hLook": omni.H_LOOKBACK, "dLook": omni.D_LOOKBACK, "base": omni.BASE_SEC},
            "rows": out}, open(${JSON.stringify(outF)}, "w"))
@@ -202,6 +237,42 @@ console.log("\n④ ★창이 고정인가★ — 과거 이력이 길어도 짧�
   // s_vwapdev·s_ret 는 세션 첫 봉이 잘리면 달라질 수 있다 — 추론은 세션을 통째로 받아야 한다(여기선 잘리지 않게 320)
   chk(diffs.length === 0, "5분봉 320개·일봉 262개만 가진 쪽과 ★전체 이력★ 쪽이 같은 값을 낸다",
     "★이력 길이에 따라 값이 달라진다: " + diffs.join(",") + " — 학습과 추론이 갈린다★");
+}
+
+console.log("\n⑤ ★패널(횡단면 랭크·시장 상대)이 두 구현에서 같은가★  [V33.423]");
+{
+  chk(JSON.stringify(P.panelFeats) === JSON.stringify(M.OMNI_PANEL_FEATS),
+    "패널 칸 " + M.OMNI_PANEL_FEATS.length + "개 이름·순서가 같다", "★패널 칸 목록이 갈렸다★");
+  let nCmp = 0, nNonNan = 0, worst = 0, bad = [];
+  for (const dk of pDays) {
+    const js = M.omniBuildPanel(panelSyms, panelMkt, dk);
+    const pyp = P.panel[String(dk)] || {};
+    const keys = [...new Set([...Object.keys(js), ...Object.keys(pyp)])];
+    if (keys.length !== Object.keys(js).length || keys.length !== Object.keys(pyp).length) {
+      bad.push("종목 집합이 다르다(" + dk + ")"); continue;
+    }
+    for (const sym of keys) {
+      for (const k of M.OMNI_PANEL_FEATS) {
+        const a = js[sym][k], b = pyp[sym][k] == null ? NaN : pyp[sym][k];
+        nCmp++;
+        if (a === a) nNonNan++;
+        const eq = (!(a === a) && !(b === b)) || Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a));
+        if (!eq) { bad.push(sym + "." + k + " " + a + "≠" + b); worst = Math.max(worst, Math.abs(a - b)); }
+      }
+    }
+  }
+  chk(nCmp > 1000, "패널 값 " + nCmp.toLocaleString() + "칸을 비교했다(" + pDays.length + "일 × 50종목)",
+    "비교한 칸이 너무 적다 — 검사가 헛돈다");
+  chk(nNonNan > nCmp * 0.5, "그중 " + nNonNan.toLocaleString() + "칸이 ★실제 값★ 이다(전부 NaN 이면 검사가 눈이 멀었다)",
+    "★패널이 거의 전부 NaN 이다 — 이 검사는 아무것도 확인하지 못했다★");
+  chk(bad.length === 0, "두 구현의 패널 값이 같다", "★패널이 갈린다(" + bad.length + "칸): " + bad.slice(0, 3).join(" · ") + "★");
+  /* 최소 패널 미만이면 ★랭크를 만들지 않는다★ — 두 구현이 같은 자리에서 같이 기권해야 한다. */
+  const few = {}, fewM = {};
+  for (let q = 0; q < 5; q++) { few["S" + q] = panelSyms["S" + q]; fewM["S" + q] = "us"; }
+  const small = M.omniBuildPanel(few, fewM, pDays[1]);
+  const anyRank = Object.values(small).some((r) => r.q_r1 === r.q_r1);
+  chk(!anyRank, "패널이 " + M.OMNI_PANEL_MIN + "종목 미만이면 랭크를 ★안 만든다★(모르면 NaN)",
+    "★적은 패널에서도 랭크를 만든다 — 두세 종목 순위를 분위라고 부르게 된다★");
 }
 
 console.log(fails === 0 ? "\n✓ OMNI 학습/추론 피처 정합 검사 통과" : "\n✗ " + fails + "건 실패");

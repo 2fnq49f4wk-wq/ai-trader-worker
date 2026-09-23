@@ -84,8 +84,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.422">
-<script src="/neural-observatory.js?v=33.422" defer></script>
+<meta name="lux-build" content="V33.423">
+<script src="/neural-observatory.js?v=33.423" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -14781,7 +14781,45 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         + (sub3? '<div class="omni-subs">'+sub3+'</div>':'')
         + '</div>';
     }).join('');
+    /* ══ [V33.423] ★구조★ — DNN 의 '두뇌 구조' 가 사라진 자리를 이 모델의 진짜 구조로 채운다.
+       신경망 층을 흉내 내지 않는다(이건 나무 앙상블이다). 대신 ★실제로 갈림을 만든 것★ 을 그린다:
+         입력 묶음 → 나무 숲(시드 앙상블) → 지평 머리
+       막대는 gain 비중이다 — 학습기가 낸 숫자이지 화면이 지어낸 값이 아니다. */
+    var GT = { '5분봉(단타)': '분봉 미시구조', '세션': '장중 위치', '60분봉': '중기 흐름',
+               '일봉(장타)': '장기 추세', '형식알파': 'XALPHA 가 하던 일', '횡단면·피어': 'XALPHA·FLOW 가 하던 일',
+               '맥락': '시장·요일·시각', '지평': '장타/단타 전환', '매매법': '돌파·눌림·평균회귀…' };
+    var gmax = 0; (d.groups||[]).forEach(function(g){ if(g.share>gmax) gmax=g.share; });
+    var groupHtml = (d.groups||[]).map(function(g){
+      return '<div class="omni-grp">'
+        + '<div class="omni-grp-n">'+esc(g.name)+'<small>'+esc(GT[g.name]||'')+'</small></div>'
+        + '<div class="omni-grp-b"><span style="width:'+(gmax>0?(g.share/gmax*100):0).toFixed(1)+'%"></span></div>'
+        + '<div class="omni-grp-v">'+(g.share*100).toFixed(1)+'%</div></div>';
+    }).join('');
+    var topHtml = (d.top||[]).map(function(t){
+      return '<span class="omni-top" title="'+esc(t.name)+' · gain '+(t.share*100).toFixed(2)+'%">'
+        + esc(t.name)+' <b>'+(t.share*100).toFixed(1)+'%</b></span>';
+    }).join('');
+    var structHtml = (d.groups && d.groups.length)
+      ? '<div class="omni-lane-h">구조 — 입력 묶음이 실제로 만든 갈림(gain 비중)</div>'
+        + '<div class="omni-struct">'
+        + '<div class="omni-struct-col"><div class="omni-struct-h">01 / 입력 '+(d.inputDim||0)+'칸</div>'+groupHtml+'</div>'
+        + '<div class="omni-struct-col"><div class="omni-struct-h">02 / 나무 숲</div>'
+          + '<div class="brain-map-node"><strong>'+(d.nTrees||0)+'그루</strong><small>'
+          + '시드 '+(d.seeds||1)+'개 앙상블'+(d.seedDisagree!=null? ' · 시드 불일치 '+d.seedDisagree.toFixed(4):'')
+          + '<br>마디 '+(d.nodes!=null? d.nodes.toLocaleString():'—')+'개 · 조기종료 '+(d.bestIter||'—')+'회'
+          + '</small></div>'
+          + '<div class="brain-map-node"><strong>왜 앙상블인가</strong><small>한 시드의 나무는 행 순서에 흔들립니다. '
+          + '여러 시드의 로그오즈를 평균해 그 흔들림을 줄이고, <b>시드끼리 갈리는 정도</b>를 불확실성으로 함께 잽니다.</small></div></div>'
+        + '<div class="omni-struct-col"><div class="omni-struct-h">03 / 지평 머리 '+((d.heads||[]).length)+'</div>'
+          + (d.heads||[]).map(function(h){
+              return '<div class="brain-map-node" data-state="'+(h.ok?'on':'bad')+'"><strong>'+esc(HZTXT[h.hz]||h.hz)+'</strong>'
+                + '<small>'+(h.auc!=null? 'AUC '+h.auc.toFixed(3):'못 쟀다')+(h.ok?' · 사용':' · 보류')+'</small></div>';
+            }).join('')
+        + '</div></div>'
+        + (topHtml? '<div class="omni-lane-h">가장 많이 갈린 칸</div><div class="omni-tops">'+topHtml+'</div>':'')
+      : '';
     stage.innerHTML = '<div class="omni-wrap">'
+      + structHtml
       + '<div class="omni-lane-h">지평별 성적 — ★쓰는 지평만 쓴다★</div>'
       + '<div class="omni-heads">'+cards+'</div>'
       + '<div class="brain-map-foot">막대: 실제 정확도 · 회색선 = 무실력 기준선 · 주황선 = 발언 문턱 · 파란선 = 발언 구간 하한. '
@@ -20096,11 +20134,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.422">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.422">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.422">
-<link rel="stylesheet" href="/model-evidence.css?v=33.422">
-<script src="/model-evidence.js?v=33.422"></script>
-<script src="/workspace-ui.js?v=33.422"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.423">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.423">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.423">
+<link rel="stylesheet" href="/model-evidence.css?v=33.423">
+<script src="/model-evidence.js?v=33.423"></script>
+<script src="/workspace-ui.js?v=33.423"></script>
 </body>
 </html>

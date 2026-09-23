@@ -22,9 +22,15 @@ const chk = (c, ok, bad) => { if (c) console.log("  ok   " + ok); else { console
 
 const FX = JSON.parse(readFileSync(join(root, "tools/fixtures/omni-model.json"), "utf8"));
 console.log(`\n■ 고정물 — 나무 ${FX.trees.length} · 행 ${FX.rows.length} · NaN 행 ${FX.nanRows}`);
-chk(FX.feats.join("|") === M.OMNI_MODEL_FEATS.join("|"), "고정물 피처 명세 = 워커 OMNI_MODEL_FEATS (52칸)",
+chk(FX.feats.join("|") === M.OMNI_MODEL_FEATS.join("|"), `고정물 피처 명세 = 워커 OMNI_MODEL_FEATS (${M.OMNI_MODEL_FEATS.length}칸)`,
     "고정물 피처 명세가 워커와 다르다 — 고정물을 다시 만들 것");
 chk(FX.rows.length >= 300 && FX.nanRows >= 100, `검사 행이 충분하고 NaN 행을 포함한다 (${FX.rows.length} · NaN ${FX.nanRows})`);
+/* [V33.423] 시드 앙상블 — 고정물의 잎에는 1/시드수 가 먹여져 있다(export_model 의 유일한 손질).
+   ※ export_model 자체(배수를 만드는 쪽)는 LightGBM 이 있어야 돌므로 여기서 못 본다 —
+     그건 omni_selftest 의 앙상블 정합이 잡는다(Modal 배포 게이트에서 돈다). 역할을 나눈다. */
+chk(typeof FX.scale === "number" && FX.scale > 0 && FX.scale <= 1,
+  `고정물이 앙상블 배수(1/시드수 = ${FX.scale})를 싣는다`,
+  "고정물에 앙상블 배수가 없다 — 변환을 검사할 수 없다");
 
 /* 고정물 나무가 결측 가지를 실제로 밟는가 — 안 밟으면 NaN 규칙을 바꿔도 이 검사가 모른다 */
 const cnt = { mt0: 0, mt2: 0, dl0: 0, dl1: 0 };
@@ -59,7 +65,9 @@ md = 0.0
 for x, r in zip(fx["rows"], fx["raw"]):
     xx = [float("nan") if v is None else v for v in x]
     md = max(md, abs(omni.score_raw(fx["trees"], xx) - r))
-conv = [omni.export_tree(t) for t in fx.get("lgbDump", [])]
+# [V33.423] 시드 앙상블 — 고정물의 잎은 1/S 가 먹여져 있다(export_model 이 하는 유일한 손질).
+_sc = fx.get("scale", 1.0)
+conv = [omni._scale_leaves(omni.export_tree(t), _sc) for t in fx.get("lgbDump", [])]
 des = [omni.design_row([0.1 * k for k in range(40)], s, h) for s in range(7) for h in range(5)]
 print(json.dumps({"md": md, "feats": omni.MODEL_FEATS, "des": des, "conv": conv,
                   "consts": {"sess": omni.SESS_MIN, "openUs": omni.OPEN_MIN["us"], "openKr": omni.OPEN_MIN["kr"],

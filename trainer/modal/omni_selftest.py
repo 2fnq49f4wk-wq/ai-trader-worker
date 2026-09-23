@@ -19,7 +19,7 @@ import datetime as dt
 
 import omni
 
-NSYM = 80
+NSYM = 80        # 시장별 40종목 — PANEL_MIN(20) 을 넘겨야 횡단면 칸이 실제로 생긴다
 RHO = 0.4          # 심는 5분봉 자기상관 — 원피처(m_r3) 하나로 AUC ≈ 0.58 이 나오는 세기
 
 
@@ -91,8 +91,10 @@ def synth(nsym, rho, seed):
 
 
 def check_parity(bst, best, A, n=400, seed=3):
+    """[V33.423] ★앙상블 정합★ — 여러 시드의 평균을 '잎/S 를 먹인 나무 합' 으로 옮겼다.
+    그 변환이 맞는지 여기서 확인한다(틀리면 워커가 학습 때와 다른 확률을 낸다)."""
     import numpy as np
-    trees = omni.export_model(bst, best)
+    trees = omni.export_model(bst)
     rng = np.random.default_rng(seed)
     # 장타 행(장중 NaN)과 장중 행을 둘 다 고른다
     d_ix = np.where(A["hz"] >= 3)[0]
@@ -105,7 +107,7 @@ def check_parity(bst, best, A, n=400, seed=3):
     X2[::7, 5] = float("nan")
     X2[::11, 27] = 0.0
     X = np.vstack([X, X2])
-    ref = bst.predict(X, num_iteration=best, raw_score=True)
+    ref = np.mean([b.predict(X, num_iteration=it, raw_score=True) for b, it in bst], axis=0)
     mine = np.array([omni.score_raw(trees, list(x)) for x in X])
     err = float(np.max(np.abs(ref - mine)))
     nan_rows = int(np.isnan(X).any(axis=1).sum())
@@ -123,6 +125,14 @@ class _Resp:
 
     def json(self):
         return self._o
+
+
+PANEL_DAYS = 300   # 자가검사는 최근 300일 패널이면 충분하다(합성 이력은 900일 — 전부 만들면 느리다)
+
+
+def _panels(data):
+    return omni.build_panels({s: d.get("1d") for s, d in data.items()},
+                             {s: d["m"] for s, d in data.items()}, max_days=PANEL_DAYS)
 
 
 def fake_roundtrip(data):
@@ -154,11 +164,15 @@ def fake_roundtrip(data):
         return _Resp({"ok": True})
 
     og, op = requests.get, requests.post
+    obp = omni.build_panels
     requests.get, requests.post = fget, fpost
+    #   왕복 검사에서도 패널 창을 줄인다 — 재는 것은 ★배선★ 이지 패널 크기가 아니다.
+    omni.build_panels = lambda d, m, max_days=PANEL_DAYS: obp(d, m, PANEL_DAYS)
     try:
         pl = omni.run("http://w", "k", {"x-train-key": "k"}, upload=True, log=lambda *a: None)
     finally:
         requests.get, requests.post = og, op
+        omni.build_panels = obp
     if not sent.get("body"):
         return ["가짜 워커 왕복: 업로드가 일어나지 않았다"]
     body = json.loads(sent["body"])          # allow_nan=False 로 만든 본문 — JS 가 읽을 수 있어야 한다
@@ -185,7 +199,17 @@ def main():
     fails = []
     # ① 신호 있음
     data = synth(NSYM, RHO, 11)
-    A, _, nsym = omni.build_dataset(data)
+    A, _, nsym = omni.build_dataset(data, panels=_panels(data))
+    # [V33.423] ★새 능력이 실제로 켜져 있는가★ — 안 켜져 있으면 나머지 검사는 아무것도 확인 못 한다
+    import numpy as _np
+    _pi = [omni.FEATS.index(k) for k in omni.PANEL_FEATS]
+    _fill = float(_np.isfinite(A["X"][:, _pi]).mean())
+    print("패널 칸 채움 %.1f%% · 형식알파 %d칸 · 총 %d칸" % (
+        _fill * 100, sum(1 for k in omni.FEATS if k.startswith("a_")), len(omni.FEATS)))
+    if _fill < 0.5:
+        fails.append("횡단면(패널) 칸이 대부분 비었다 %.1f%% — 랭크가 안 만들어졌다" % (_fill * 100))
+    if sum(1 for k in omni.FEATS if k.startswith("a_")) < 9:
+        fails.append("형식알파 칸이 모자라다")
     assert A is not None and nsym == NSYM, "표본 생성 실패"
     # 진행 중 봉을 버렸는가 — 어떤 행도 마지막(가짜) 봉 시각을 결정시각으로 쓰지 않는다
     last5 = max(d["5m"]["t"][-1] for d in data.values())
@@ -223,6 +247,9 @@ def main():
     if not (h30.get("auc") or 0) > 0.56:
         fails.append("심은 신호를 못 찾았다(30분 AUC %s)" % h30.get("auc"))
     trees, X, ref, err, nan_rows = check_parity(bst, best, A)
+    if rep.get("seeds", 1) < 2:
+        fails.append("시드 앙상블이 꺼져 있다(seeds=%s)" % rep.get("seeds"))
+    print("시드 %d · 불일치 %.4f · 나무 %d" % (rep.get("seeds", 1), rep.get("seedDisagree", 0), len(trees)))
     print("정합: 나무 %d · 행 %d (NaN 포함 %d) · 최대 오차 %.3g" % (len(trees), len(X), nan_rows, err))
     if err > 1e-9:
         fails.append("내보낸 나무 채점 ≠ LightGBM (%.3g)" % err)
@@ -230,7 +257,7 @@ def main():
         fails.append("정합 검사에 NaN 행이 너무 적다(%d)" % nan_rows)
     # ② 신호 없음 — 잡음에서 말하면 안 된다
     data0 = synth(NSYM, 0.0, 12)
-    A0, _, _ = omni.build_dataset(data0)
+    A0, _, _ = omni.build_dataset(data0, panels=_panels(data0))
     m0, rep0 = omni.train_model(A0)
     spoke = [hz for hz, h in rep0["heads"].items() if h.get("ok")]
     print("신호 없음:", omni.head_line("30m", rep0["heads"]["30m"]))
@@ -242,17 +269,22 @@ def main():
         # 줄인 ★다음에★ LightGBM 기대값을 계산한다(줄인 입력 그대로가 검사 입력이다).
         sub = np.r_[0:100, 200:300, 400:500, 600:700]
         Xf = np.array([[v if v != v else float("%.10g" % v) for v in x] for x in X[sub]])
-        nt = min(60, best)
+        # 고정물은 ★첫 시드의 앞 nt 그루★ 만 쓴다 — 기대값도 같은 범위로 만든다(1/S 배수 포함).
+        #   nt 를 ★그 시드가 실제로 만든 나무 수★ 로 잡는다. 평균 best 로 잡으면 시드마다 나무 수가
+        #   달라 trees[:nt] 가 다음 시드로 넘어가고, 그러면 기대값과 안 맞는다.
+        _b0, _it0 = bst[0]
+        nt = min(60, _it0)
         small = {"feats": omni.MODEL_FEATS, "trees": trees[:nt], "rows": [], "raw": []}
-        ref_s = bst.predict(Xf, num_iteration=nt, raw_score=True)
+        ref_s = _b0.predict(Xf, num_iteration=nt, raw_score=True) / len(bst)
         mine_s = np.array([omni.score_raw(small["trees"], list(x)) for x in Xf])
         assert float(np.max(np.abs(ref_s - mine_s))) < 1e-9
         small["rows"] = [[None if v != v else float(v) for v in x] for x in Xf]
         small["raw"] = [float(v) for v in ref_s]
         small["nanRows"] = int(np.isnan(Xf).any(axis=1).sum())
         # LightGBM 원본 덤프 몇 그루 — 게이트가 LightGBM 없이도 export_tree(변환기)를 검사한다
-        dump = bst.dump_model(num_iteration=nt)
+        dump = _b0.dump_model(num_iteration=nt)
         small["lgbDump"] = [t["tree_structure"] for t in dump["tree_info"][:8]]
+        small["scale"] = 1.0 / len(bst)
         with open(fixture, "w", encoding="utf-8") as fh:
             json.dump(small, fh, separators=(",", ":"))
         print("고정물 저장:", fixture, "나무", nt, "행", len(small["rows"]), "NaN행", small["nanRows"])

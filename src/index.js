@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.422";
+const _BUILD_VER = "V33.423";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -10352,7 +10352,7 @@ async function omniBarsCollect(DB, opts) {
    한쪽만 고치면 그 검사가 배포를 막는다. (이 저장소가 반복해서 겪은 "학습과 추론이 다른 피처를
    본다" 는 사고를 구조로 막는다.)
    ═══════════════════════════════════════════════════════════════════════════════════════ */
-const OMNI_VER = 1;
+const OMNI_VER = 2;
 const OMNI_SESS_MIN = 390;
 const OMNI_OPEN_MIN = { us: 570, kr: 540 };
 const OMNI_H_LOOKBACK = 312;
@@ -10367,8 +10367,18 @@ const OMNI_FEATS = [
   "h_r6", "h_r24", "h_rv24", "h_rsi14", "h_sma20gap",
   "d_r1", "d_r5", "d_r20", "d_r60", "d_rv20", "d_rv60", "d_rsi14", "d_sma50gap", "d_sma200gap",
   "d_hi252", "d_lo20", "d_atr14", "d_volr", "d_bbz20",
-  "x_mkt", "x_dow", "x_tod"
+  "x_mkt", "x_dow", "x_tod",
+  /* [V33.423] XALPHA 가 하던 일 — 형식알파(전부 변화·상대량이라 정적칸이 안 생긴다) */
+  "a_cvol20", "a_hlpos", "a_vwdev20", "a_ill20", "a_skew20", "a_kurt20", "a_max5", "a_dnvolr", "a_rev1",
+  /* [V33.423] XALPHA 의 횡단면 랭크 + FLOW 의 피어축 — ★패널★ 에서 나온다(전일 확정 일봉 기준) */
+  "q_r1", "q_r5", "q_r20", "q_rv20", "q_rsi", "q_volr", "q_hi252", "q_ill",
+  "p_ex1", "p_ex5", "p_ex20", "p_beta60", "p_corr60", "p_disp", "p_n"
 ];
+const OMNI_PANEL_FEATS = ["q_r1", "q_r5", "q_r20", "q_rv20", "q_rsi", "q_volr", "q_hi252", "q_ill",
+                          "p_ex1", "p_ex5", "p_ex20", "p_beta60", "p_corr60", "p_disp", "p_n"];
+const OMNI_PANEL_MIN = 20;
+const OMNI_PANEL_SRC = { q_r1: "d_r1", q_r5: "d_r5", q_r20: "d_r20", q_rv20: "d_rv20",
+                         q_rsi: "d_rsi14", q_volr: "d_volr", q_hi252: "d_hi252", q_ill: "a_ill20" };
 const OMNI_SETUPS = ["generic", "breakout", "pullback", "meanrev", "momentum", "gap", "trend"];
 const OMNI_HORIZONS = ["30m", "60m", "1d", "5d", "20d"];
 
@@ -10439,6 +10449,159 @@ function _omLastDailyBefore(bd, dk) {
   while (lo <= hi) { const mid = (lo + hi) >> 1; if (_omDayKey(t[mid]) < dk) { ans = mid; lo = mid + 1; } else hi = mid - 1; }
   return ans;
 }
+/* ══ [V33.423] 형식알파 — ★진본은 trainer/modal/omni.py 의 _alpha_feats()★ 를 한 줄씩 옮긴 것.
+   check-omni-parity 가 파이썬을 실제로 돌려 값을 비교한다. 한쪽만 고치면 배포가 막힌다. ══ */
+function _omPearson(x, y) {
+  const n = x.length;
+  if (n < 3) return NaN;
+  const mx = _omMean(x), my = _omMean(y);
+  let sx = 0, sy = 0, sxy = 0;
+  for (let k = 0; k < n; k++) { const dx = x[k] - mx, dy = y[k] - my; sx += dx * dx; sy += dy * dy; sxy += dx * dy; }
+  return (sx > 0 && sy > 0) ? sxy / Math.sqrt(sx * sy) : NaN;
+}
+function _omMoment(r, p) {
+  const n = r.length, m = _omMean(r), sd = _omPstd(r);
+  if (!(sd > 0)) return NaN;
+  let s = 0;
+  for (let k = 0; k < n; k++) s += Math.pow((r[k] - m) / sd, p);
+  return s / n;
+}
+function _omAlpha(bd, j, f) {
+  const C = bd.c, H = bd.h, L = bd.l, V = bd.v;
+  const a = Math.max(0, j - OMNI_D_LOOKBACK + 1);
+  if (j - 19 >= a) {
+    const c20 = C.slice(j - 19, j + 1), v20 = V.slice(j - 19, j + 1);
+    f.a_cvol20 = _omPearson(c20, v20);
+    let sv = 0, sp = 0;
+    for (let k = 0; k < 20; k++) { sv += v20[k]; sp += c20[k] * v20[k]; }
+    f.a_vwdev20 = (sv > 0 && sp > 0) ? _omLr(C[j], sp / sv) : NaN;
+    let r20 = null;
+    if (j - 20 >= a) { r20 = []; for (let k = j - 19; k <= j; k++) r20.push(_omLr(C[k], C[k - 1])); }
+    if (r20 && r20.every(function (x) { return x === x; })) {
+      f.a_skew20 = _omMoment(r20, 3);
+      f.a_kurt20 = _omMoment(r20, 4);
+      const il = [];
+      for (let k = 0; k < 20; k++) { const dv = c20[k] * v20[k]; if (dv > 0) il.push(Math.abs(r20[k]) / dv); }
+      f.a_ill20 = il.length ? Math.log(il.reduce(function (x, y) { return x + y; }, 0) / il.length) : NaN;
+      let dn = 0, tot = 0;
+      for (let k = 0; k < 20; k++) { tot += v20[k]; if (r20[k] < 0) dn += v20[k]; }
+      f.a_dnvolr = (tot > 0) ? dn / tot : NaN;
+    }
+  }
+  const atr = f.d_atr14;
+  if (atr === atr && atr > 0 && C[j] > 0) f.a_hlpos = (((H[j] + L[j]) / 2) - C[j]) / (atr * C[j]);
+  if (j - 5 >= a) { let mx = -Infinity; for (let k = j - 4; k <= j; k++) { const v = _omLr(C[k], C[k - 1]); if (v > mx) mx = v; } f.a_max5 = mx; }
+  const rv = f.d_rv20, r1 = f.d_r1;
+  if (rv === rv && rv > 0 && r1 === r1) f.a_rev1 = -r1 / rv;
+}
+
+/* ══ [V33.423] 패널 — 같은 날 같은 시장의 종목을 나란히 놓고 견준다(전일 확정 일봉 기준).
+   ★장중 시각마다 만들지 않는다★ — 그러면 학습 패널과 추론 패널이 달라져 값이 갈린다. ══ */
+function _omQrank(vals) {
+  const idx = [];
+  for (let k = 0; k < vals.length; k++) { const v = vals[k]; if (v != null && v === v) idx.push(k); }
+  const out = new Array(vals.length).fill(null);
+  const n = idx.length;
+  if (n < OMNI_PANEL_MIN) return out;
+  const order = idx.slice().sort(function (x, y) { return vals[x] - vals[y] || x - y; });
+  let k = 0;
+  while (k < n) {
+    let m = k;
+    while (m + 1 < n && vals[order[m + 1]] === vals[order[k]]) m++;
+    const r = (k + m) / 2;
+    for (let q = k; q <= m; q++) out[order[q]] = (n > 1) ? r / (n - 1) : 0.5;
+    k = m + 1;
+  }
+  return out;
+}
+function _omMed(arr) { const a = arr.slice().sort(function (x, y) { return x - y; }); return a.length ? a[Math.floor(a.length / 2)] : null; }
+function _omGf(f, k) { const x = f[k]; return (x === x && x != null) ? x : null; }
+/* dailyBySym: {sym: 일봉} · mktBySym: {sym: "us"|"kr"} · dayKey: 현지 날짜 키(초) */
+function omniBuildPanel(dailyBySym, mktBySym, dayKey) {
+  const per = {};
+  for (const sym in dailyBySym) {
+    const bd = dailyBySym[sym];
+    if (!bd || !bd.t || !bd.t.length) continue;
+    const j = _omLastDailyLe(bd, dayKey);
+    if (j == null || j < 60) continue;
+    const f = {};
+    for (const k of OMNI_FEATS) f[k] = NaN;
+    _omDaily(bd, j, f); _omAlpha(bd, j, f);
+    const rets = [];
+    for (let k = j - 59; k <= j; k++) rets.push(_omLr(bd.c[k], bd.c[k - 1]));
+    per[sym] = { m: mktBySym[sym] || "us", f: f, rets: rets };
+  }
+  const out = {};
+  for (const mk of ["us", "kr"]) {
+    const syms = Object.keys(per).filter(function (s) { return per[s].m === mk; });
+    if (!syms.length) continue;
+    const ranks = {};
+    for (const qk in OMNI_PANEL_SRC) ranks[qk] = _omQrank(syms.map(function (s) { return _omGf(per[s].f, OMNI_PANEL_SRC[qk]); }));
+    const mret = [];
+    for (let t = 0; t < 60; t++) {
+      const col = [];
+      for (const s of syms) { const v = per[s].rets[t]; if (v === v) col.push(v); }
+      mret.push(col.length ? _omMed(col) : NaN);
+    }
+    const n = syms.length;
+    const med = {};
+    for (const [key, src] of [["p_ex1", "d_r1"], ["p_ex5", "d_r5"], ["p_ex20", "d_r20"]]) {
+      const col = [];
+      for (const s of syms) { const v = _omGf(per[s].f, src); if (v != null) col.push(v); }
+      med[key] = _omMed(col);
+    }
+    const c1 = [];
+    for (const s of syms) { const v = _omGf(per[s].f, "d_r1"); if (v != null) c1.push(v); }
+    const disp = (c1.length >= OMNI_PANEL_MIN) ? _omPstd(c1) : NaN;
+    for (let a = 0; a < syms.length; a++) {
+      const s2 = syms[a], row = {};
+      for (const qk in OMNI_PANEL_SRC) { const r = ranks[qk][a]; row[qk] = (r == null) ? NaN : r; }
+      for (const [key, src] of [["p_ex1", "d_r1"], ["p_ex5", "d_r5"], ["p_ex20", "d_r20"]]) {
+        const v = _omGf(per[s2].f, src);
+        row[key] = (v != null && med[key] != null && n >= OMNI_PANEL_MIN) ? (v - med[key]) : NaN;
+      }
+      row.p_corr60 = NaN; row.p_beta60 = NaN;
+      if (n >= OMNI_PANEL_MIN) {
+        const rr = per[s2].rets, ok = [];
+        for (let t = 0; t < 60; t++) if (rr[t] === rr[t] && mret[t] === mret[t]) ok.push(t);
+        if (ok.length >= 40) {
+          const x = ok.map(function (t) { return mret[t]; }), y = ok.map(function (t) { return rr[t]; });
+          const vx = _omPstd(x);
+          row.p_corr60 = _omPearson(x, y);
+          if (vx > 0) {
+            const mx = _omMean(x), my = _omMean(y);
+            let cov = 0;
+            for (let t = 0; t < ok.length; t++) cov += (x[t] - mx) * (y[t] - my);
+            cov /= ok.length;
+            row.p_beta60 = cov / (vx * vx);
+          }
+        }
+      }
+      row.p_disp = disp; row.p_n = n;
+      out[s2] = row;
+    }
+  }
+  return out;
+}
+/* 값 배열의 ★패널 칸만★ 같은 자리에 꽂는다 — 배열을 새로 만들지 않는다. */
+function omniPanelFill(vals, prow) {
+  if (!prow) return vals;
+  for (const k of OMNI_PANEL_FEATS) {
+    const v = prow[k];
+    vals[OMNI_FEATS.indexOf(k)] = (typeof v === "number" && isFinite(v)) ? v : NaN;
+  }
+  return vals;
+}
+
+/* [V33.423] 날짜 키가 dk ★이하★ 인 마지막 일봉. `_omLastDailyBefore(bd, dk + 1)` 은 틀린다 —
+   날짜 키는 YYYYMMDD 라 20260918 + 1 = 20260919 가 실제로 있는 날이다(하루를 더 먹는다). */
+function _omLastDailyLe(bd, dk) {
+  const t = bd.t;
+  let lo = 0, hi = t.length - 1, ans = null;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (_omDayKey(t[mid]) <= dk) { ans = mid; lo = mid + 1; } else hi = mid - 1; }
+  return ans;
+}
+
 function _omDaily(bd, j, f) {
   const C = bd.c, H = bd.h, L = bd.l, V = bd.v;
   const a = Math.max(0, j - OMNI_D_LOOKBACK + 1);
@@ -10542,7 +10705,7 @@ function omniFeatures(b5, bd, i, mkt, dailyRow, jIn) {
   } else {
     f.x_dow = NaN; f.x_tod = NaN;
   }
-  if (j != null && j >= 0) _omDaily(bd, j, f);
+  if (j != null && j >= 0) { _omDaily(bd, j, f); _omAlpha(bd, j, f); }   // [V33.423] 알파는 일봉 뒤에(ATR·rv20 을 쓴다)
   const x = OMNI_FEATS.map(function (k) { const z = f[k]; return (typeof z === "number" && isFinite(z)) ? z : NaN; });
   return { x: x, setup: _omSetup(f, dailyRow, b5, i, bd, j) };
 }
@@ -10673,6 +10836,33 @@ async function omniVizData(DB) {
     probeN: m ? _num(m.probeN, null) : null,
     probeMaxDiff: m ? _num(m.probeMaxDiff, null) : null,
     probeNanRows: m ? _num(m.probeNanRows, null) : null,
+    seeds: m ? _num(m.seeds, 1) : null,
+    seedDisagree: m ? _num(m.seedDisagree, null) : null,
+    /* [V33.423] ★구조★ — 입력 묶음별 기여도. 이름을 손으로 적지 않고 접두사로 가른다
+       (칸이 늘면 묶음도 자동으로 따라온다 — 손목록이 드리프트할 자리를 없앤다). */
+    groups: (!m || !Array.isArray(m.gain)) ? null : (function () {
+      const G = { "5분봉(단타)": 0, "세션": 0, "60분봉": 0, "일봉(장타)": 0, "형식알파": 0,
+                  "횡단면·피어": 0, "맥락": 0, "지평": 0, "매매법": 0 };
+      const pick = function (nm) {
+        if (nm.indexOf("hz_") === 0) return "지평";
+        if (nm.indexOf("st_") === 0) return "매매법";
+        if (nm.indexOf("m_") === 0) return "5분봉(단타)";
+        if (nm.indexOf("s_") === 0) return "세션";
+        if (nm.indexOf("h_") === 0) return "60분봉";
+        if (nm.indexOf("d_") === 0) return "일봉(장타)";
+        if (nm.indexOf("a_") === 0) return "형식알파";
+        if (nm.indexOf("q_") === 0 || nm.indexOf("p_") === 0) return "횡단면·피어";
+        return "맥락";
+      };
+      for (let k = 0; k < OMNI_MODEL_FEATS.length && k < m.gain.length; k++)
+        G[pick(OMNI_MODEL_FEATS[k])] += _num(m.gain[k], 0);
+      return Object.keys(G).map(function (n) { return { name: n, share: +G[n].toFixed(4) }; })
+                    .filter(function (r) { return r.share > 0; }).sort(function (a, b) { return b.share - a.share; });
+    })(),
+    top: (!m || !Array.isArray(m.gain)) ? null : OMNI_MODEL_FEATS
+      .map(function (n, k) { return { name: n, share: +_num(m.gain[k], 0).toFixed(4) }; })
+      .filter(function (r) { return r.share > 0; })
+      .sort(function (a, b) { return b.share - a.share; }).slice(0, 18),
     headsOk: m ? omniHeadsOk(m.heads) : [],
     heads: !m ? [] : OMNI_HORIZONS.map(function (hz) {
       const h = (m.heads && m.heads[hz]) || null;
@@ -25953,7 +26143,13 @@ async function handleRequest(request, env, ctx) {
       const model = { v: body.v, feats: body.feats, trees: body.trees, heads: body.heads || {},
                       cutoff: body.cutoff, bestIter: body.bestIter, trainedAt: body.trainedAt, importedAt: nowMs,
                       nTrain: body.nTrain, nHold: body.nHold, nSym: body.nSym, barrierK: body.barrierK,
-                      holdDays: body.holdDays, excl: body.excl || null };
+                      holdDays: body.holdDays, excl: body.excl || null,
+                      /* [V33.423] ★구조 관측용★ — 어느 칸이 실제로 갈림을 만들었나(gain 비중)와
+                         시드 앙상블 정보. DNN 의 '두뇌 구조' 가 사라진 자리를 ★지어내지 않고★
+                         이 모델의 진짜 구조로 채운다. */
+                      gain: Array.isArray(body.gain) ? body.gain.map(function (g) { return +_num(g, 0).toFixed(5); }) : null,
+                      seeds: _num(body.seeds, 1), seedDisagree: _num(body.seedDisagree, null),
+                      panelFeats: Array.isArray(body.panelFeats) ? body.panelFeats : null };
       try {
         const cur = await R2.get(OMNI_MODEL.r2Key);
         if (cur) await R2.put(OMNI_MODEL.r2Prev, await cur.text());
@@ -50975,7 +51171,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
