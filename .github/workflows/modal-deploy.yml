@@ -93,8 +93,14 @@ jobs:
       # [V33.421] OMNI 학습기 자가검사 — 합성 시장에서 학습기 전 과정을 돌린다(네트워크 없음 · 약 90초).
       #   심은 신호를 찾는가 · 잡음에서 침묵하는가 · 내보낸 나무 = LightGBM · 굵은 '일봉' 거부 ·
       #   라벨 σ 가 밤사이 갭을 안 먹는가 · 가짜 워커 왕복. 실패하면 트레이너를 배포하지 않는다.
+      # [V33.425c] ★같은 커밋이 러너 A 에서 2분 50초, 러너 B 에서 100분을 넘겼다.★ 코드가 아니라
+      #   LightGBM 이 호스트 논리 코어 수만큼 스레드를 띄워 서로 밀어낸 것이다(초과구독).
+      #   러너에 실제로 있는 코어만 쓰게 못 박고, 그래도 걸리면 ★6시간 태우지 말고 20분에 죽는다★.
       - name: OMNI trainer self-test
         if: steps.sec.outputs.ok == 'true'
+        timeout-minutes: 20
+        env:
+          OMNI_THREADS: '2'
         run: |
           pip install -q numpy lightgbm requests
           cd trainer/modal && python3 omni_selftest.py

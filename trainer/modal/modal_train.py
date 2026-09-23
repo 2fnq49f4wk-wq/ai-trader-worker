@@ -4102,6 +4102,9 @@ if _OMNI_IMAGE is not None:
         import sys
         import time
         sys.path.insert(0, "/root")
+        # [V33.425c] 컨테이너에 준 코어(cpu=8.0)를 LightGBM 에 그대로 알려 준다 — 안 알려 주면
+        #   OpenMP 가 ★호스트의 논리 코어 수★ 만큼 스레드를 띄워 서로 밀어낸다.
+        os.environ.setdefault("OMNI_THREADS", "8")
         import omni
         BASE = os.environ["BASE_URL"].rstrip("/")
         KEY = os.environ["TRAIN_KEY"]

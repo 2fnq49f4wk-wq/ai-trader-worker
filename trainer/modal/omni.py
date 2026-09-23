@@ -960,6 +960,22 @@ LGB_PARAMS = {"objective": "binary", "learning_rate": 0.03, "num_leaves": 31, "m
               "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 1, "lambda_l2": 10.0,
               "max_bin": 255, "verbose": -1, "seed": 7, "deterministic": True, "force_row_wise": True}
 MAX_ROUNDS = 400
+
+
+def n_threads():
+    """[V33.425c] LightGBM 이 쓸 스레드 수 — ★컨테이너에 실제로 준 코어★ 로 잡는다.
+    기본값(=호스트의 논리 코어 수)으로 두면, CPU 가 제한된 컨테이너에서 OpenMP 가 할당량보다
+    훨씬 많은 스레드를 띄워 서로 밀어낸다. 실측(2026-09-23): ★같은 커밋★ 의 자가검사가
+    러너 A 에서 2분 50초, 러너 B 에서 100분을 넘겼다 — 코드가 아니라 러너가 달랐다.
+    OMNI_THREADS 가 있으면 그걸 쓴다(Modal 은 cpu= 값을 그대로 넣어 준다)."""
+    import os
+    v = os.environ.get("OMNI_THREADS")
+    if v and v.strip().isdigit() and int(v) > 0:
+        return int(v)
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except Exception:  # noqa: BLE001 — 플랫폼이 없으면 cpu_count 로 떨어진다
+        return max(1, os.cpu_count() or 1)
 EARLY_STOP = 40
 MIN_TREES = 30            # [V33.424] 이보다 적으면 ★학습이 안 된 것★ 이다 — 올리지 않는다
 # [V33.425] ★나무 총수만 보던 관문은 시드 수에 속는다.★ 실데이터에서 시드 4 × 7~8라운드 = 30그루가
@@ -1224,9 +1240,11 @@ def train_model(A, log=print):
                        feature_name=MODEL_FEATS, free_raw_data=False)
     dval = lgb.Dataset(Atr["X"][val], label=Atr["y"][val], weight=Atr["w"][val], reference=dfit)
     Aho = take(A, ho)
+    _nt = n_threads()
+    log("   · OMNI 학습 스레드 %d (초과구독 방지 — 컨테이너에 준 코어만 쓴다)" % _nt)
     boosters, raws = [], []
     for sd in range(SEEDS):
-        P = dict(LGB_PARAMS, seed=LGB_PARAMS["seed"] + sd * 101,
+        P = dict(LGB_PARAMS, num_threads=_nt, seed=LGB_PARAMS["seed"] + sd * 101,
                  bagging_seed=LGB_PARAMS["seed"] + sd * 211,
                  feature_fraction_seed=LGB_PARAMS["seed"] + sd * 307)
         b = lgb.train(P, dfit, num_boost_round=MAX_ROUNDS, valid_sets=[dval],
