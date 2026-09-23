@@ -309,14 +309,13 @@ def main():
     _gap = max([abs(_sf.get(h, 0.0) - _sv.get(h, 0.0)) for h in set(_sf) | set(_sv)] or [0.0])
     if _gap > 0.12:
         fails.append("학습/검증의 지평 구성이 %.0f%%p 벌어졌다 — 조기종료가 딴 데를 본다" % (_gap * 100))
-    if len(trees) < omni.MIN_TREES:
-        fails.append("나무 %d그루 < %d — 학습이 안 된 모델을 올릴 뻔했다" % (len(trees), omni.MIN_TREES))
-    # [V33.425] 나무 총수는 시드 수에 속는다(시드 4 × 7라운드 = 28그루). 시드 하나의 라운드 수를 본다.
-    _it = sorted(rep.get("iters") or [0])
-    _md = _it[len(_it) // 2] if len(_it) % 2 else (_it[len(_it) // 2 - 1] + _it[len(_it) // 2]) / 2.0
-    if _md < omni.MIN_ITERS:
-        fails.append("라운드 중앙값 %.1f < %d — 조기종료가 즉시 멈췄다(시드별 %s)"
-                     % (_md, omni.MIN_ITERS, _it))
+    # [V33.425f] 업로드 관문은 ★홀드아웃 실력★ 이다(나무 수·라운드 수는 대리지표라 버렸다).
+    #   신호를 심은 회차는 통과해야 하고, 잡음 회차는 걸려야 한다 — 둘 다 아래에서 확인한다.
+    _e1 = omni.holdout_edge(rep["heads"])
+    print("홀드아웃 실력(신호 있음): AUC %.4f · %d행 · 필요 초과분 %.4f · %s" % (
+        _e1["auc"], _e1["n"], _e1["need"], "통과" if _e1["ok"] else "보류"))
+    if not _e1["ok"]:
+        fails.append("신호를 심었는데 홀드아웃 실력 관문을 못 넘었다: %s" % _e1.get("why"))
     # 균형이 실제로 ★가중 합★ 을 맞췄는가(배수만 찍고 안 곱하면 이 검사가 잡는다)
     _Ab, _ = omni.balance_horizons(A, log=lambda *a: None)
     _sums = [float(_Ab["w"][_Ab["hz"] == k].sum()) for k in range(len(omni.HORIZONS))]
@@ -370,6 +369,12 @@ def main():
         fails.append("심은 신호를 못 찾았다(가중평균 홀드아웃 AUC %.4f)" % _u1)
     if not (_u1 - _u0) > 0.02:
         fails.append("신호 있음/없음이 안 갈린다(%.4f vs %.4f) — 배관이 신호를 못 나른다" % (_u1, _u0))
+    _e0 = omni.holdout_edge(rep0["heads"])
+    print("홀드아웃 실력(신호 없음): AUC %.4f · 필요 초과분 %.4f · %s" % (
+        _e0["auc"], _e0["need"], "통과" if _e0["ok"] else "보류"))
+    if _e0["ok"]:
+        fails.append("잡음 회차가 홀드아웃 실력 관문을 통과했다(AUC %.4f) — 관문이 아무것도 안 막는다"
+                     % _e0["auc"])
     if fixture:
         import numpy as np
         # 고정물은 작게: 원본 장타·장중 각 100행 + 결측·0 을 넣은 같은 수. 값은 유효숫자 10자리로

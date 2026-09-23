@@ -978,17 +978,14 @@ def n_threads():
     except Exception:  # noqa: BLE001 — 플랫폼이 없으면 cpu_count 로 떨어진다
         return max(1, os.cpu_count() or 1)
 EARLY_STOP = 40
-MIN_TREES = 30            # [V33.424] 이보다 적으면 ★학습이 안 된 것★ 이다 — 올리지 않는다
-# [V33.425] ★나무 총수만 보던 관문은 시드 수에 속는다.★ 실데이터에서 시드 4 × 7~8라운드 = 30그루가
-#   MIN_TREES 를 ★정확히★ 통과했다 — 시드를 늘리면 학습이 안 돼도 나무는 늘어난다.
-#   조기종료가 즉시 멈췄는지는 ★라운드 수★ 로만 알 수 있다.
-#   ★최솟값이 아니라 중앙값을 본다.★ 처음엔 min(시드별 라운드) < 25 로 걸었는데, 자가검사에서
-#   [21, 21, 22, ★10★] 이 나와 ★제대로 배운 모델을 거절했다★ — 시드 하나가 운 나쁘게 일찍
-#   멈추는 건 흔하고, 그게 "학습이 안 됐다" 는 뜻은 아니다. 실제 실패는 ★전 시드가 같이★
-#   즉시 멈춘다(7·7·8·8) — 중앙값이면 그건 잡고 운 나쁜 시드 하나에는 안 걸린다.
-#   문턱 15 는 그 둘 사이에서 골랐다: 실패 회차 중앙값 7.5(2배 여유) · 정상 회차 중앙값 21(1.4배).
-#   ※ 이건 ★매매 문턱이 아니다★ — 발언 문턱(SPEAK_TARGET 0.60)은 손대지 않았다.
-MIN_ITERS = 15
+# ══ [V33.425f] ★"모델이긴 한가" 를 대리지표로 묻던 관문 둘을 버렸다.★ ═══════════════════
+#   MIN_TREES(나무 총수) — 시드 수에 속는다. 실데이터에서 시드 4 × 7~8라운드 = ★정확히 30그루★
+#     가 문턱 30 을 통과했다. 시드를 늘리면 학습이 안 돼도 나무는 늘어난다.
+#   MIN_ITERS(라운드 수) — 약한 신호를 실패로 오인한다. V33.425e 에서 라운드 중앙값 10 인
+#     모델이 홀드아웃에서 다섯 머리 전부 0.5 위(30m 0.507 · n=192,802 · ★5시그마★)였는데
+#     문턱 15 가 그걸 거절했다. 약한 신호도 신호다.
+#   둘 다 "배웠나" 를 ★옆에서★ 보는 숫자다. 홀드아웃 성적은 ★직접★ 잴 수 있다 —
+#   그래서 holdout_edge() 하나로 바꿨다(아래). 라운드 수와 나무 수는 로그·업로드에 남긴다.
 # ══ [V33.424] ★지평 균형 — 실측이 드러낸 구조 결함.★ ═══════════════════════════════════════
 #   2026-09-23 실데이터(948종목·1,491,195행): ★나무 2그루★ 로 끝났다(사실상 학습 실패).
 #   원인은 하이퍼파라미터가 아니라 ★행 구성★ 이다:
@@ -1224,6 +1221,36 @@ def evaluate_heads(p, A):
     return out
 
 
+def holdout_edge(heads):
+    """[V33.425f] ★"모델이긴 한가" 를 대리지표가 아니라 홀드아웃에서 직접 묻는다.★
+    머리별 AUC 를 홀드아웃 행 수로 가중평균하고, 우연으로 이만큼 나올 수 있는지 잰다.
+
+    왜 라운드 수를 그만 쓰는가: V33.425e 실데이터에서 라운드 중앙값 10 인 모델이 홀드아웃에서
+      30m 0.507(n=192,802) · 60m 0.510 · 1d 0.512 · 5d 0.507 · 20d 0.518 — ★다섯 전부 0.5 위★,
+      30m 만 해도 5시그마였다. 그런데 MIN_ITERS(15) 가 그 모델을 거절했다. 라운드 수는 신호가
+      약할수록 짧아지는 ★대리지표★ 일 뿐이고, 약한 신호도 신호다. 반대로 V33.424 의 나무 2그루
+      모델은 머리가 0.490~0.504 여서 이 검사에 걸린다 — 잡으려던 건 그쪽이다.
+
+    문턱: 0.5 초과분이 ★3시그마★ 를 넘고, 동시에 ★0.005 이상★ 이어야 한다.
+      se 는 귀무가설에서의 AUC 표준오차 1/sqrt(3N)(Bamber). 같은 날 행끼리 상관이 있어 se 가
+      과소평가되므로 효과크기 하한(0.005)을 같이 둔다 — 시그마만 믿지 않는다.
+      ※ 이건 ★올릴지 말지★ 의 문턱이지 ★발언★ 문턱이 아니다. 발언은 그대로 60% 다."""
+    tot = n = 0.0
+    for h in (heads or {}).values():
+        if (h or {}).get("n", 0) >= 50 and h.get("auc") is not None:
+            tot += float(h["auc"]) * int(h["n"])
+            n += int(h["n"])
+    if n < 1000:
+        return {"auc": None, "n": int(n), "se": None, "ok": False, "why": "홀드아웃 %d행 — 잴 게 없다" % n}
+    auc = tot / n
+    se = 1.0 / math.sqrt(3.0 * n)
+    need = max(3.0 * se, 0.005)
+    ok = (auc - 0.5) > need
+    return {"auc": auc, "n": int(n), "se": se, "need": need, "ok": bool(ok),
+            "why": None if ok else "가중평균 홀드아웃 AUC %.4f — 0.5 초과분 %.4f 가 문턱 %.4f 에 못 미친다"
+                                   % (auc, auc - 0.5, need)}
+
+
 def train_model(A, log=print):
     """A 전체에서 분할 → 학습 → 홀드아웃 평가. 반환 (booster, report)."""
     import numpy as np
@@ -1298,8 +1325,8 @@ def train_model(A, log=print):
     log("   · OMNI 기본율 학습 " + _bl(Atr, fit))
     log("   · OMNI 기본율 검증 " + _bl(Atr, val))
     log("   · OMNI 기본율 홀드 " + _bl(A, ho))
-    log("   · OMNI 시드별 라운드 %s (중앙값 %.0f · 최소치 %d) · 검증손실 ln2 대비 %s" % (
-        [it for _, it in boosters], float(np.median([it for _, it in boosters])), MIN_ITERS,
+    log("   · OMNI 시드별 라운드 %s (중앙값 %.0f) · 검증손실 ln2 대비 %s (참고 — 낙관 편향)" % (
+        [it for _, it in boosters], float(np.median([it for _, it in boosters])),
         ("—" if not _vg else " · ".join("%+.4f" % v for v in _vg))))
     # 지평 구성이 정말 같아졌는가 — 가중 비중으로 남긴다(다시 갈라지면 여기서 바로 보인다)
     _share = lambda ix: {HORIZONS[k]: round(float(Atr["w"][ix][Atr["hz"][ix] == k].sum())
@@ -1562,18 +1589,25 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
         .strftime("%Y-%m-%d"), pmax))
     for hz in HORIZONS:
         log("   · OMNI " + head_line(hz, rep["heads"].get(hz)))
-    # ══ [V33.424] ★나무 2그루짜리를 올리지 않는다.★ ═════════════════════════════════════
-    #   실데이터에서 실제로 그런 모델이 올라갔고, 모든 관문(정합·형식·probe)을 통과했다 —
-    #   관문들이 "맞는 모델인가" 만 보고 ★"모델이긴 한가"★ 를 안 봤기 때문이다.
-    #   조기종료가 즉시 멈췄다는 것은 배운 게 없다는 뜻이고, 그건 올릴 일이 아니라 말할 일이다.
+    # ══ [V33.425f] ★"모델이긴 한가" 를 홀드아웃에서 직접 묻는다.★ ═══════════════════════
+    #   V33.424 에서는 나무 2그루짜리가 정합·형식·probe 를 전부 통과해 올라갔다 — 관문들이
+    #   "맞는 모델인가" 만 보고 "모델이긴 한가" 를 안 봤기 때문이다. 그때 세운 관문(나무 수 ·
+    #   라운드 수)은 ★대리지표★ 였고, V33.425e 에서 실제로 ★실력 있는 모델을 거절했다★
+    #   (라운드 중앙값 10 인데 다섯 머리 전부 0.5 위 · 30m 만 5시그마). 대리지표를 버리고
+    #   홀드아웃 성적을 직접 본다 — 잴 수 있는 것을 재지 않을 이유가 없다.
     _its = sorted(rep.get("iters") or [best])
     _med = _its[len(_its) // 2] if len(_its) % 2 else (_its[len(_its) // 2 - 1] + _its[len(_its) // 2]) / 2.0
-    if len(trees) < MIN_TREES or _med < MIN_ITERS:
-        log("   ⏭ OMNI 나무 %d그루(<%d) · 시드별 라운드 %s 중앙값 %.1f(<%d) — 조기종료가 즉시 멈췄다. "
-            "★배운 것이 없어 올리지 않는다★ (라벨·지평 균형·표본 구성을 먼저 볼 것)"
-            % (len(trees), MIN_TREES, _its, _med, MIN_ITERS))
+    _edge = holdout_edge(rep.get("heads"))
+    rep["edge"] = _edge
+    log("   · OMNI 홀드아웃 실력 — 가중평균 AUC %s · %d행 · 필요 초과분 %s · %s" % (
+        "—" if _edge["auc"] is None else "%.4f" % _edge["auc"], _edge["n"],
+        "—" if _edge.get("need") is None else "%.4f" % _edge["need"],
+        "✅ 올린다" if _edge["ok"] else "보류"))
+    if len(trees) < 2 or not _edge["ok"]:
+        log("   ⏭ OMNI 나무 %d그루 · 라운드 %s(중앙값 %.1f) · %s — ★배운 것이 없어 올리지 않는다★"
+            % (len(trees), _its, _med, _edge.get("why")))
         rep["ok"] = False
-        rep["why"] = "나무 %d그루 · 라운드 중앙값 %.1f — 학습이 안 됐다" % (len(trees), _med)
+        rep["why"] = _edge.get("why") or "나무 %d그루" % len(trees)
         return rep
     if pmax > 1e-9:
         log("   ⚠️ OMNI 내보낸 나무가 LightGBM 과 다른 답을 낸다(%.3g) — 업로드하지 않는다" % pmax)
@@ -1589,6 +1623,7 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
                "label": "xsec", "xsecMin": XSEC_MIN, "xsec": (excl or {}).get("xsec"),
                "iters": rep.get("iters"), "valGain": rep.get("valGain"),
                "hzFitShare": rep.get("hzFitShare"), "hzValShare": rep.get("hzValShare"),
+               "edge": rep.get("edge"),
                "excl": excl, "trainedAt": int(time.time() * 1000), "params": LGB_PARAMS,
                "barrierK": BARRIER_K, "holdDays": HOLD_DAYS})
     body = json.dumps(payload, allow_nan=False, separators=(",", ":"))
