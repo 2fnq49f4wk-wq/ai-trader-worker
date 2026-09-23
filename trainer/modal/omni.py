@@ -946,6 +946,47 @@ LGB_PARAMS = {"objective": "binary", "learning_rate": 0.03, "num_leaves": 31, "m
               "max_bin": 255, "verbose": -1, "seed": 7, "deterministic": True, "force_row_wise": True}
 MAX_ROUNDS = 400
 EARLY_STOP = 40
+MIN_TREES = 30            # [V33.424] 이보다 적으면 ★학습이 안 된 것★ 이다 — 올리지 않는다
+# ══ [V33.424] ★지평 균형 — 실측이 드러낸 구조 결함.★ ═══════════════════════════════════════
+#   2026-09-23 실데이터(948종목·1,491,195행): ★나무 2그루★ 로 끝났다(사실상 학습 실패).
+#   원인은 하이퍼파라미터가 아니라 ★행 구성★ 이다:
+#       30분 182,541 · 60분 152,417 · 1일 202,740 · 5일 ★457,928★ · 20일 ★495,569★
+#   5분봉은 공급자가 60일만 주는데 일봉은 몇 년치다. 그래서 장타 두 지평이 표본의 ★64%★ 를
+#   차지하고, 그 대부분이 ★오래된 구간★ 이다. 반면 홀드아웃은 최근 35일이라 거의 장중이다
+#   (장타는 라벨이 아직 안 끝나 홀드아웃에 못 들어온다 — 20일 홀드아웃 463행).
+#   즉 ★옛 장타로 배우고 최근 장중으로 검증★ 하는 꼴이라, 첫 몇 라운드 뒤 검증손실이 바로
+#   나빠져 조기종료가 2에서 멈춘다. 한 모델이 여러 지평을 배우려면 지평이 ★같은 발언권★ 을
+#   가져야 한다 — 표본 수가 곧 발언권이 되게 두면 자료가 많은 지평이 모델을 통째로 가져간다.
+#   → 지평별 가중 합을 같게 맞춘다. 행을 버리지 않는다(정보를 버리는 게 아니라 나눠 준다).
+HZ_BALANCE = True
+
+
+def balance_horizons(A, log=print):
+    """지평별 가중 합을 같게. ★고유도 가중의 상대비는 지평 안에서 그대로 유지된다★ —
+    지평마다 배수 하나를 곱할 뿐이라, de Prado 고유도가 뜻하는 '겹친 사건은 덜 센다' 는 안 깨진다."""
+    import numpy as np
+    if not HZ_BALANCE:
+        return A, None
+    w = A["w"].astype(np.float64).copy()
+    tot = []
+    for k in range(len(HORIZONS)):
+        m = A["hz"] == k
+        tot.append(float(w[m].sum()) if m.any() else 0.0)
+    live = [t for t in tot if t > 0]
+    if len(live) < 2:
+        return A, None
+    tgt = float(np.mean(live))
+    mult = []
+    for k in range(len(HORIZONS)):
+        f = (tgt / tot[k]) if tot[k] > 0 else 0.0
+        mult.append(f)
+        if f > 0:
+            w[A["hz"] == k] *= f
+    A = dict(A)
+    A["w"] = w
+    log("   · OMNI 지평 균형 — 가중 배수 " + " · ".join(
+        "%s ×%.2f" % (HORIZONS[k], mult[k]) for k in range(len(HORIZONS)) if mult[k] > 0))
+    return A, mult
 # [V33.423] ★시드 앙상블 — DNN 이 하던 일(Deep Ensembles)★ 을 흡수한다.
 #   한 시드의 나무는 행 순서·부트스트랩에 흔들린다. 여러 시드의 로짓을 평균하면 그 흔들림이 준다
 #   ("모자란 앙상블이 없는 앙상블보다 낫다" — 같은 이유로 DNN 도 6시드였다).
@@ -1074,6 +1115,7 @@ def train_model(A, log=print):
     """A 전체에서 분할 → 학습 → 홀드아웃 평가. 반환 (booster, report)."""
     import numpy as np
     import lightgbm as lgb
+    A, _hzMult = balance_horizons(A, log=log)
     C, tr, ho = split_cutoff(A)
     if len(tr) < 2000 or len(ho) < 500:
         return None, {"ok": False, "why": "표본 부족 — 학습 %d · 홀드아웃 %d" % (len(tr), len(ho)), "cutoff": C}
@@ -1101,9 +1143,13 @@ def train_model(A, log=print):
     p = 1.0 / (1.0 + np.exp(-raw))
     heads = evaluate_heads(p, Aho)
     best = int(np.mean([it for _, it in boosters]))
+    # 지평별 행 수를 남긴다 — 불균형이 다시 생기면 ★로그에서 바로 보인다★(숫자를 숨기지 않는다)
+    import collections as _co
+    _cnt = lambda ix: dict(_co.Counter(HORIZONS[h] for h in A["hz"][ix]))
     rep = {"ok": True, "cutoff": C, "innerCut": C2, "nTrain": int(len(fit)), "nVal": int(len(val)),
            "nHold": int(len(ho)), "bestIter": best, "seeds": len(boosters), "seedDisagree": dis,
-           "iters": [it for _, it in boosters], "heads": heads}
+           "iters": [it for _, it in boosters], "heads": heads,
+           "hzMult": _hzMult, "hzTrain": _cnt(tr), "hzHold": _cnt(ho)}
     return (boosters, best), rep
 
 
@@ -1335,18 +1381,30 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
     if m is None:
         log("   ⏭ OMNI " + rep["why"])
         return rep
-    bst, best = m
-    trees = export_model(bst, best)
+    boosters, best = m
+    trees = export_model(boosters)
+    gain = feature_gain(boosters)
     C, _, ho = split_cutoff(A)
-    probe = make_probe(bst, best, take(A, ho))
+    probe = make_probe(boosters, best, take(A, ho))
     mine = [score_raw(trees, [NAN if v is None else v for v in pr["x"]]) for pr in probe]
     pmax = max([abs(a - pr["raw"]) for a, pr in zip(mine, probe)] or [0.0])
-    log("   · OMNI 나무 %d · 학습 %d · 조기종료검증 %d · 홀드아웃 %d (절단 %s) · 자체 정합 %.2g" % (
-        len(trees), rep["nTrain"], rep["nVal"], rep["nHold"],
+    log("   · OMNI 나무 %d(시드 %d · 불일치 %.4f) · 학습 %d · 조기종료검증 %d · 홀드아웃 %d (절단 %s) · 자체 정합 %.2g" % (
+        len(trees), rep.get("seeds", 1), rep.get("seedDisagree", 0.0),
+        rep["nTrain"], rep["nVal"], rep["nHold"],
         __import__("datetime").datetime.fromtimestamp(rep["cutoff"], __import__("datetime").timezone.utc)
         .strftime("%Y-%m-%d"), pmax))
     for hz in HORIZONS:
         log("   · OMNI " + head_line(hz, rep["heads"].get(hz)))
+    # ══ [V33.424] ★나무 2그루짜리를 올리지 않는다.★ ═════════════════════════════════════
+    #   실데이터에서 실제로 그런 모델이 올라갔고, 모든 관문(정합·형식·probe)을 통과했다 —
+    #   관문들이 "맞는 모델인가" 만 보고 ★"모델이긴 한가"★ 를 안 봤기 때문이다.
+    #   조기종료가 즉시 멈췄다는 것은 배운 게 없다는 뜻이고, 그건 올릴 일이 아니라 말할 일이다.
+    if len(trees) < MIN_TREES:
+        log("   ⏭ OMNI 나무 %d그루(<%d) — 조기종료가 즉시 멈췄다. ★배운 것이 없어 올리지 않는다★ "
+            "(지평 균형·표본 구성을 먼저 볼 것)" % (len(trees), MIN_TREES))
+        rep["ok"] = False
+        rep["why"] = "나무 %d그루 — 학습이 안 됐다" % len(trees)
+        return rep
     if pmax > 1e-9:
         log("   ⚠️ OMNI 내보낸 나무가 LightGBM 과 다른 답을 낸다(%.3g) — 업로드하지 않는다" % pmax)
         return rep
@@ -1355,6 +1413,9 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
                           "hLook": H_LOOKBACK, "dLook": D_LOOKBACK, "base": BASE_SEC},
                "trees": trees, "probe": probe, "heads": rep["heads"], "cutoff": rep["cutoff"],
                "bestIter": best, "nTrain": rep["nTrain"], "nHold": rep["nHold"], "nSym": nsym,
+               "seeds": rep.get("seeds", 1), "seedDisagree": rep.get("seedDisagree", 0.0),
+               "gain": gain, "featNames": MODEL_FEATS, "panelFeats": PANEL_FEATS,
+               "hzTrain": rep.get("hzTrain"), "hzHold": rep.get("hzHold"), "hzMult": rep.get("hzMult"),
                "excl": excl, "trainedAt": int(time.time() * 1000), "params": LGB_PARAMS,
                "barrierK": BARRIER_K, "holdDays": HOLD_DAYS})
     body = json.dumps(payload, allow_nan=False, separators=(",", ":"))

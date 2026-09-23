@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.423";
+const _BUILD_VER = "V33.424";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -10838,6 +10838,7 @@ async function omniVizData(DB) {
     probeNanRows: m ? _num(m.probeNanRows, null) : null,
     seeds: m ? _num(m.seeds, 1) : null,
     seedDisagree: m ? _num(m.seedDisagree, null) : null,
+    hzTrain: (m && m.hzTrain) || null, hzHold: (m && m.hzHold) || null,
     /* [V33.423] ★구조★ — 입력 묶음별 기여도. 이름을 손으로 적지 않고 접두사로 가른다
        (칸이 늘면 묶음도 자동으로 따라온다 — 손목록이 드리프트할 자리를 없앤다). */
     groups: (!m || !Array.isArray(m.gain)) ? null : (function () {
@@ -26149,7 +26150,11 @@ async function handleRequest(request, env, ctx) {
                          이 모델의 진짜 구조로 채운다. */
                       gain: Array.isArray(body.gain) ? body.gain.map(function (g) { return +_num(g, 0).toFixed(5); }) : null,
                       seeds: _num(body.seeds, 1), seedDisagree: _num(body.seedDisagree, null),
-                      panelFeats: Array.isArray(body.panelFeats) ? body.panelFeats : null };
+                      panelFeats: Array.isArray(body.panelFeats) ? body.panelFeats : null,
+                      /* [V33.424] 지평별 행 수 — 한 지평이 표본을 독식하면 화면에서 바로 보인다
+                         (실측: 5일·20일이 64% 를 먹어 조기종료가 2그루에서 멈췄다). */
+                      hzTrain: (body.hzTrain && typeof body.hzTrain === "object") ? body.hzTrain : null,
+                      hzHold: (body.hzHold && typeof body.hzHold === "object") ? body.hzHold : null };
       try {
         const cur = await R2.get(OMNI_MODEL.r2Key);
         if (cur) await R2.put(OMNI_MODEL.r2Prev, await cur.text());

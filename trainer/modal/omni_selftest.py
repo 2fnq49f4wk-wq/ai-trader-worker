@@ -249,6 +249,17 @@ def main():
     trees, X, ref, err, nan_rows = check_parity(bst, best, A)
     if rep.get("seeds", 1) < 2:
         fails.append("시드 앙상블이 꺼져 있다(seeds=%s)" % rep.get("seeds"))
+    # [V33.424] ★지평 균형★ 과 ★나무 최소치★ — 실데이터에서 나무 2그루가 올라간 그 자리를 막는다
+    if not rep.get("hzMult"):
+        fails.append("지평 균형이 안 돌았다 — 자료 많은 지평이 모델을 통째로 가져간다")
+    if len(trees) < omni.MIN_TREES:
+        fails.append("나무 %d그루 < %d — 학습이 안 된 모델을 올릴 뻔했다" % (len(trees), omni.MIN_TREES))
+    # 균형이 실제로 ★가중 합★ 을 맞췄는가(배수만 찍고 안 곱하면 이 검사가 잡는다)
+    _Ab, _ = omni.balance_horizons(A, log=lambda *a: None)
+    _sums = [float(_Ab["w"][_Ab["hz"] == k].sum()) for k in range(len(omni.HORIZONS))]
+    _live = [v for v in _sums if v > 0]
+    if _live and (max(_live) - min(_live)) > 1e-6 * max(_live):
+        fails.append("지평별 가중 합이 안 맞는다: %s" % [round(v) for v in _sums])
     print("시드 %d · 불일치 %.4f · 나무 %d" % (rep.get("seeds", 1), rep.get("seedDisagree", 0), len(trees)))
     print("정합: 나무 %d · 행 %d (NaN 포함 %d) · 최대 오차 %.3g" % (len(trees), len(X), nan_rows, err))
     if err > 1e-9:
