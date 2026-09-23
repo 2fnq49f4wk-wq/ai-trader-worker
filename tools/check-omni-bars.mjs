@@ -124,5 +124,31 @@ console.log("\n⑦ ★수집은 I/O 만 한다★ · 배선 · 경로");
   chk(/const _obr = await omniBarsCollect\(env\.DB, \{\}\);/.test(S), "크론 틱에서도 돈다(잠금 뒤)", "★크론 수집이 없다★");
 }
 
+/* ── [V33.421] ★요청한 간격이 오는가★ — 첫 실데이터 학습에서 미국 일봉이 사실상 0 행이었다 ── */
+{
+  console.log("\n■ 일봉 간격(V33.421)");
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'])\/\/.*$/gm, "$1");
+  const i0 = S.indexOf("async function _obFetch("); let d = 0, k = S.indexOf("{", i0), e = k;
+  for (; e < S.length; e++) { if (S[e] === "{") d++; else if (S[e] === "}") { d--; if (d === 0) break; } }
+  const F = strip(S.slice(i0, e + 1));
+  chk(!/range=max/.test(F) && !/usRange\[res\]/.test(F), "미국 일봉을 range=max 로 받지 않는다", "★미국 일봉이 range=max 경로를 탄다★(굵은 간격이 온다)");
+  chk(/interval=1d&period1=/.test(F) && /period2=/.test(F), "미국 일봉은 period1/period2 로 기간을 못 박는다", "미국 일봉에 period1/period2 가 없다");
+  const day = { t: Array.from({ length: 40 }, (_, q) => 1700000000 + Math.floor(q * 7 / 5) * 86400) };
+  const mon = { t: Array.from({ length: 40 }, (_, q) => 1700000000 + q * 30 * 86400) };
+  const m5 = { t: Array.from({ length: 200 }, (_, q) => 1700000000 + q * 300 + Math.floor(q / 78) * 60000) };
+  chk(M._obSpacingOk(day, "1d") && !M._obSpacingOk(mon, "1d"), "간격 검사: 일봉은 받고 월 간격 '일봉' 은 거부한다",
+      "간격 검사가 월봉을 일봉으로 받거나 일봉을 거부한다");
+  chk(M._obSpacingOk(m5, "5m") && !M._obSpacingOk(day, "5m"), "간격 검사: 5분봉은 받고 일 간격 '5분봉' 은 거부한다",
+      "간격 검사가 5분봉 해상도를 못 가른다");
+  const i1 = S.indexOf("async function omniBarsCollect("); let d2 = 0, k2 = S.indexOf("{", i1), e2 = k2;
+  for (; e2 < S.length; e2++) { if (S[e2] === "{") d2++; else if (S[e2] === "}") { d2--; if (d2 === 0) break; } }
+  const C = strip(S.slice(i1, e2 + 1));
+  const iOk = C.indexOf("_obSpacingOk(fresh, res)"), iPut = C.indexOf("R2.put(");
+  chk(iOk > 0 && iPut > iOk, "간격이 틀린 응답은 ★저장 전에★ 거른다", "간격 검사가 저장 뒤에 있거나 없다");
+  chk(/const old = curVer \? await _obLoad\(/.test(C) && /meta\.v === OMNIBARS\.ver\[res\]/.test(C),
+      "옛 판 파일은 합치지 않는다 — 굵은 봉이 새 일봉에 섞여 남지 않는다", "옛 판(굵은 봉)을 새 봉과 합친다");
+  chk(M.OMNIBARS.ver["1d"] >= 2, "일봉 저장 판이 올라갔다(옛 range=max 파일을 새로 받는다)", "일봉 판이 그대로다 — 옛 굵은 파일이 신선하다고 건너뛴다");
+  chk(/v: OMNIBARS\.ver\[res\]/.test(C) && /g: fresh\.g/.test(C), "색인에 판과 ★실제로 온 간격★ 을 적는다(학습기 로그에 나온다)", "색인에 판·간격이 없다");
+}
 console.log(fails === 0 ? "\n✓ OMNI 원시 봉 저장소 검사 통과" : "\n✗ " + fails + "건 실패");
 process.exit(fails ? 1 : 0);

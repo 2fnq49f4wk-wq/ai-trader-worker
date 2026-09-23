@@ -90,6 +90,14 @@ jobs:
       - name: Install modal
         if: steps.sec.outputs.ok == 'true'
         run: pip install modal
+      # [V33.421] OMNI 학습기 자가검사 — 합성 시장에서 학습기 전 과정을 돌린다(네트워크 없음 · 약 90초).
+      #   심은 신호를 찾는가 · 잡음에서 침묵하는가 · 내보낸 나무 = LightGBM · 굵은 '일봉' 거부 ·
+      #   라벨 σ 가 밤사이 갭을 안 먹는가 · 가짜 워커 왕복. 실패하면 트레이너를 배포하지 않는다.
+      - name: OMNI trainer self-test
+        if: steps.sec.outputs.ok == 'true'
+        run: |
+          pip install -q numpy lightgbm
+          cd trainer/modal && python3 omni_selftest.py
       - name: Deploy trainer (cron 갱신)
         if: steps.sec.outputs.ok == 'true'
         env:

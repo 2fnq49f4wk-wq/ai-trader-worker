@@ -196,6 +196,20 @@ def main():
         ix = A["hz"] == hk
         if ((A["te"][ix] - A["td"][ix]) > omni.MAX_SPAN_SEC[hz]).any():
             fails.append("%s 라벨이 세션을 넘었다" % hz)
+    # [V33.421] 굵은 '일봉'(월 간격)은 장타 행을 만들지 않는다 · 라벨 σ 는 밤사이 갭을 안 먹는다
+    s0 = sorted(data)[0]
+    bdm = {k: v[::21] for k, v in data[s0]["1d"].items()}          # 21거래일마다 하나 = 월봉 흉내
+    rows_m, st_m = omni.build_rows(s0, data[s0]["m"], data[s0]["5m"], bdm)
+    if st_m.get("badDaily") != 1 or any(r[2] >= 3 for r in rows_m):
+        fails.append("월 간격 '일봉' 을 걸러내지 못했다")
+    b5g = {k: list(v) for k, v in data[s0]["5m"].items()}
+    i0 = next(k for k in range(100, len(b5g["t"])) if b5g["t"][k] - b5g["t"][k - 1] > omni.BASE_SEC)
+    base = omni.intra_sigma(b5g, i0 + 10)
+    for k in range(i0, len(b5g["t"])):                              # 그 개장에 +30% 갭을 심는다
+        for f in ("o", "h", "l", "c"):
+            b5g[f][k] *= 1.3
+    if abs(omni.intra_sigma(b5g, i0 + 10) - base) > 1e-12:
+        fails.append("라벨 σ 가 밤사이 갭을 먹는다")
     C, tr, ho = omni.split_cutoff(A)
     if (A["te"][tr] >= C).any() or (A["td"][ho] < C).any():
         fails.append("분할 누수 — 학습 라벨이 절단점을 넘는다")

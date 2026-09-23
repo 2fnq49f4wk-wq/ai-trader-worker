@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.420";
+const _BUILD_VER = "V33.421";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -10063,7 +10063,17 @@ const OMNIBARS = {
   baseSec: 300,                                    // 기준봉 5분 — 바꾸면 학습기도 같이 바꾼다
   cap: { "5m": 40000, "1d": 6000 },                // 파일당 보존 상한(최근 것부터) — 5분봉 ≈2년 · 일봉 ≈24년
   refreshH: { "5m": 18, "1d": 18 },                // 이만큼 지났으면 다시 받는다
-  usRange: { "5m": "60d", "1d": "max" },           // 야후 range
+  usRange: { "5m": "60d" },                        // 야후 range(5분봉)
+  /* [V33.421] ★일봉은 range=max 로 받지 않는다.★ 첫 실데이터 학습(Actions 35802459439)에서 104종목의
+     일봉 행이 사실상 0 이었다 — 5일·20일 머리 "홀드아웃 부족", 1일 머리는 σ 가 부풀어 거의 전부
+     시간초과, 봉 간격 검사("구멍")에 2만 건. 야후 chart 는 range=max 에서 간격을 굵게(월·분기) 줄 수
+     있다 — 요청은 1d 인데 오는 건 1d 가 아니다. 기간을 period1/period2 로 못 박으면 요청한 간격이 온다.
+     그리고 ★받은 것을 믿지 않는다★: 간격 중앙값이 해상도와 안 맞으면 저장하지 않는다(_obSpacingOk). */
+  usDailyYears: 12,
+  /* 저장 판 — 올리면 그 해상도의 옛 파일을 ★합치지 않고★ 새로 받아 덮는다(굵은 봉이 섞여 남지 않게).
+     1d 를 2 로 올린 이유가 위의 range=max 다. */
+  ver: { "5m": 1, "1d": 2 },
+  maxMedGapSec: { "5m": 3600, "1d": 4 * 86400 },   // 간격 중앙값 상한(장 사이 틈은 중앙값에 안 잡힌다)
   perRunOff: 16,                                   // 장외 한 번에 도는 종목 수(종목당 요청 2회)
   perRunIn: 4,                                     // 장중 — 거래 사이클을 방해하지 않게 작게
   gapOffMs: 4 * 60000,
@@ -10093,8 +10103,20 @@ function _obBarsFromYahoo(j) {
       out.t.push(Math.floor(ts[i])); out.o.push(o); out.h.push(h); out.l.push(l); out.c.push(c);
       out.v.push((typeof V[i] === "number" && V[i] > 0) ? V[i] : 0);
     }
+    if (r.meta && r.meta.dataGranularity) out.g = String(r.meta.dataGranularity).slice(0, 8);   // [V33.421] 실제로 온 간격
   } catch (e) {}
   return out;
+}
+
+/* [V33.421] 받은 봉의 간격이 해상도와 맞는가 — 연속 봉 시각 차의 ★중앙값★ 으로 본다
+   (밤·주말·휴장 틈은 소수라 중앙값을 못 움직인다). 봉이 너무 적으면 판단하지 않는다(통과). */
+function _obSpacingOk(b, res) {
+  const n = b && b.t ? b.t.length : 0;
+  if (n < 5) return true;
+  const d = [];
+  for (let k = 1; k < n; k++) d.push(b.t[k] - b.t[k - 1]);
+  d.sort(function (x, y) { return x - y; });
+  return d[Math.floor(d.length / 2)] <= OMNIBARS.maxMedGapSec[res];
 }
 
 /* 네이버 국내 차트 응답 → 봉.
@@ -10221,11 +10243,15 @@ async function _obFetch(sym, res) {
     const b = _obBarsFromNaver(rows, res === "1d" ? "day" : "min");
     return res === "1d" ? b : _obResample(b, OMNIBARS.baseSec);
   }
+  const _now = Math.floor(Date.now() / 1000);
   const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(sym) +
-                             "?interval=" + (res === "1d" ? "1d" : "5m") + "&range=" + OMNIBARS.usRange[res] +
-                             (res === "1d" ? "" : "&includePrePost=false"));
+                             (res === "1d"
+                               ? "?interval=1d&period1=" + (_now - Math.round(OMNIBARS.usDailyYears * 365.25 * 86400)) + "&period2=" + _now
+                               : "?interval=5m&range=" + OMNIBARS.usRange["5m"] + "&includePrePost=false"));
   const b = _obBarsFromYahoo(j);
-  return res === "1d" ? _obNormDaily(b, "us") : _obResample(b, OMNIBARS.baseSec);
+  const out = res === "1d" ? _obNormDaily(b, "us") : _obResample(b, OMNIBARS.baseSec);
+  if (b.g) out.g = b.g;
+  return out;
 }
 
 /* ★수집기★ — 유니버스를 커서로 돈다. 한 번에 몇 종목만(장중엔 더 적게).
@@ -10249,19 +10275,24 @@ async function omniBarsCollect(DB, opts) {
     const ent = index.s[sym] || (index.s[sym] = { m: /\.(KS|KQ)$/.test(sym) ? "kr" : "us" });
     for (const res of ["5m", "1d"]) {
       const meta = ent[res];
-      if (meta && meta.upd && (nowMs - meta.upd) < OMNIBARS.refreshH[res] * 3600000) { skipped++; continue; }
+      const curVer = !!(meta && meta.v === OMNIBARS.ver[res]);
+      if (curVer && meta.upd && (nowMs - meta.upd) < OMNIBARS.refreshH[res] * 3600000) { skipped++; continue; }
       let fresh = null;
       try { fresh = await _obFetch(sym, res); } catch (e) { fresh = null; }
       if (!fresh || !fresh.t.length) { failed++; ent[res] = Object.assign({}, meta || {}, { err: nowMs }); continue; }
+      if (!_obSpacingOk(fresh, res)) {           // [V33.421] 요청한 간격이 아니면 저장하지 않는다
+        failed++; ent[res] = Object.assign({}, meta || {}, { err: nowMs, bad: "spacing", g: fresh.g || null }); continue;
+      }
       fetched++;
-      const old = await _obLoad(R2, res, sym);
+      const old = curVer ? await _obLoad(R2, res, sym) : null;   // 옛 판(굵은 봉 가능)은 합치지 않는다
       const before = old && Array.isArray(old.t) ? old.t.length : 0;
       const merged = _obMerge(old, fresh, OMNIBARS.cap[res]);
       merged.s = sym; merged.res = res; merged.m = ent.m; merged.upd = nowMs;
       try { await R2.put(_obKey(res, sym), JSON.stringify(merged)); }
       catch (e) { failed++; continue; }
       added += Math.max(0, merged.t.length - before);
-      ent[res] = { n: merged.t.length, first: merged.t[0], last: merged.t[merged.t.length - 1], upd: nowMs };
+      ent[res] = { n: merged.t.length, first: merged.t[0], last: merged.t[merged.t.length - 1], upd: nowMs,
+                   v: OMNIBARS.ver[res], g: fresh.g || null };
     }
   }
   index.upd = nowMs;
@@ -52909,7 +52940,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obKey, _obDayKey, omniBarsCollect };
+export { OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

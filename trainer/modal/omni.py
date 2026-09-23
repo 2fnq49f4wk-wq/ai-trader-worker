@@ -397,17 +397,43 @@ def barrier_outcome(c0, highs, lows, up, dn):
     return None, "timeout"
 
 
-def horizon_sigma(f, hz):
+def horizon_sigma(f, hz, intra=None):
     """지평별 σ. 장중 30·60분은 5분봉 변동(48봉) × √봉수 · 1일은 일봉 변동(20일) ·
     5·20일은 일봉 변동 × √일수. 1일을 5분봉 변동으로 늘리면 밤사이 갭을 못 담아 과소평가된다."""
     fi = {k: v for k, v in zip(FEATS, f)}
     if hz in ("30m", "60m"):
-        s = fi["m_rv48"]
+        s = fi["m_rv48"] if intra is None else intra
         return s * math.sqrt(H_BARS[hz]) if s == s and s > 0 else NAN
     s = fi["d_rv20"]
     if not (s == s and s > 0):
         return NAN
     return s if hz == "1d" else s * math.sqrt(H_DAYS[hz])
+
+
+def intra_sigma(b5, i, n=48, min_n=24):
+    """[V33.421] 라벨용 5분봉 σ — ★세션을 건너는 수익률(밤사이 갭)은 뺀다.★
+    피처 m_rv48 은 창이 개장을 걸치면 밤사이 갭 하나를 품는다(피처로는 그게 정보다). 그걸 30·60분 배리어
+    폭으로 쓰면 장중 변동보다 배리어가 넓어져 대부분 시간초과가 된다 — 첫 실데이터 학습에서 제외
+    172,554 건 중 대부분이 시간초과였다. 라벨은 워커와 정합할 필요가 없다(워커는 라벨을 만들지 않는다)."""
+    t, c = b5["t"], b5["c"]
+    r = []
+    k = i
+    while k > 0 and len(r) < n and i - k < 4 * n:
+        if t[k] - t[k - 1] == BASE_SEC and c[k] > 0 and c[k - 1] > 0:
+            r.append(math.log(c[k] / c[k - 1]))
+        k -= 1
+    if len(r) < min_n:
+        return NAN
+    return _pstd(r)
+
+
+def daily_spacing_ok(bd, max_med=4 * 86400):
+    """[V33.421] 일봉이 정말 일봉인가 — 간격 중앙값. 야후 range=max 는 굵은 간격(월·분기)을 줄 수 있다."""
+    t = bd.get("t") or []
+    if len(t) < 5:
+        return True
+    d = sorted(t[k] - t[k - 1] for k in range(1, len(t)))
+    return d[len(d) // 2] <= max_med
 
 
 # ─────────────────────────── 데이터셋 ───────────────────────────
@@ -434,14 +460,20 @@ def build_rows(sym, mkt, b5, bd):
     """한 종목의 모든 행. 각 행 = (피처 40, 매매법, 지평, 라벨, 가중, 결정시각, 라벨끝시각, 사후수익).
     ★마지막 봉은 버린다★ — 수집 시점에 진행 중이던 봉일 수 있다(확정값이 아니다)."""
     rows = []
-    stats = {"amb": 0, "timeout": 0, "nosig": 0, "span": 0}
+    stats = {"amb": 0, "timeout": 0, "nosig": 0, "span": 0, "badDaily": 0, "n": {h: 0 for h in HORIZONS},
+             "to": {h: 0 for h in HORIZONS}}
+    if bd and not daily_spacing_ok(bd):
+        stats["badDaily"] = 1
+        bd = None                       # 일봉이 아닌 '일봉' 으로 장타 행·일봉 피처를 만들지 않는다
     if b5 and len(b5.get("t", [])) > MIN_I + 1:
+        bdi = bd if bd else {k: [] for k in ("t", "o", "h", "l", "c", "v")}   # 일봉 없음 = 일봉 칸 NaN(죽지 않는다)
         b5 = {k: b5[k][:-1] for k in ("t", "o", "h", "l", "c", "v")}
         n = len(b5["t"])
         i0 = max(MIN_I, n - 1 - INTRA_MAX_POINTS * INTRA_STEP)
         i0 += (n - 1 - i0) % INTRA_STEP
         for i in range(i0, n, INTRA_STEP):
-            x, st = feature_point(b5, bd, i, mkt)
+            x, st = feature_point(b5, bdi, i, mkt)
+            isg = intra_sigma(b5, i)
             for hz in ("30m", "60m", "1d"):
                 nb = H_BARS[hz]
                 if i + nb >= n:
@@ -449,7 +481,7 @@ def build_rows(sym, mkt, b5, bd):
                 if b5["t"][i + nb] - b5["t"][i] > MAX_SPAN_SEC[hz]:
                     stats["span"] += 1      # 30·60분은 장 안에서 끝나야 한다 · 1일은 데이터 구멍을 건너지 않는다
                     continue
-                sg = horizon_sigma(x, hz)
+                sg = horizon_sigma(x, hz, intra=isg)
                 if not (sg == sg):
                     stats["nosig"] += 1
                     continue
@@ -458,7 +490,10 @@ def build_rows(sym, mkt, b5, bd):
                                          BARRIER_K * sg, -BARRIER_K * sg)
                 if y is None:
                     stats[why] += 1
+                    if why == "timeout":
+                        stats["to"][hz] += 1
                     continue
+                stats["n"][hz] += 1
                 rows.append((x, st, HORIZONS.index(hz), y, uniq_weight(hz),
                              b5["t"][i] + BASE_SEC, b5["t"][i + nb] + BASE_SEC,
                              math.log(b5["c"][i + nb] / b5["c"][i]), sym, mkt))
@@ -485,7 +520,10 @@ def build_rows(sym, mkt, b5, bd):
                                          BARRIER_K * sg, -BARRIER_K * sg)
                 if y is None:
                     stats[why] += 1
+                    if why == "timeout":
+                        stats["to"][hz] += 1
                     continue
+                stats["n"][hz] += 1
                 rows.append((x, st, HORIZONS.index(hz), y, uniq_weight(hz),
                              bd2["t"][j] + 86400, bd2["t"][j + nd] + 86400,
                              math.log(bd2["c"][j + nd] / bd2["c"][j]), sym, mkt))
@@ -827,6 +865,28 @@ def _get_bars(BASE, HDR, syms, res, log):
         out = {}
 
 
+def _new_tot():
+    return {"amb": 0, "timeout": 0, "nosig": 0, "span": 0, "badDaily": 0,
+            "n": {h: 0 for h in HORIZONS}, "to": {h: 0 for h in HORIZONS}}
+
+
+def _acc(tot, st):
+    for k, v in st.items():
+        if isinstance(v, dict):
+            for h, x in v.items():
+                tot[k][h] = tot[k].get(h, 0) + x
+        else:
+            tot[k] = tot.get(k, 0) + v
+
+
+def _tot_line(tot):
+    """지평별 라벨 수와 시간초과 비율 — 배리어 폭이 맞는지 한눈에 본다(첫 실데이터 학습의 교훈)."""
+    per = " · ".join("%s %d(초과 %.0f%%)" % (h, tot["n"][h], 100.0 * tot["to"][h] / max(1, tot["n"][h] + tot["to"][h]))
+                     for h in HORIZONS)
+    return "제외(동시타격 %d · 시간초과 %d · σ없음 %d · 구멍 %d · 일봉아님 %d종목) · 지평별 %s" % (
+        tot["amb"], tot["timeout"], tot["nosig"], tot["span"], tot["badDaily"], per)
+
+
 def build_dataset_stream(BASE, HDR, log=print, limit=None):
     """★흘려서★ 만든다 — 5분봉을 묶음으로 받아 곧바로 행으로 바꾸고 원시 봉은 버린다.
     저장소가 커져도(종목당 5분봉 4만 개) 원시 봉 전체를 한꺼번에 메모리에 올리지 않는다."""
@@ -843,14 +903,13 @@ def build_dataset_stream(BASE, HDR, log=print, limit=None):
     for got in _get_bars(BASE, HDR, [s for s in syms if (ix[s].get("1d") or {}).get("n")], "1d", log):
         daily.update(got)
     parts = []
-    tot = {"amb": 0, "timeout": 0, "nosig": 0, "span": 0}
+    tot = _new_tot()
     seen = set()
     n5 = 0
 
     def _eat(s, b5):
         rows, st = build_rows(s, ix[s].get("m", "us"), b5, daily.get(s))
-        for k in tot:
-            tot[k] += st.get(k, 0)
+        _acc(tot, st)
         if rows:
             parts.append(rows_to_arrays(rows))
             seen.add(s)
@@ -865,9 +924,15 @@ def build_dataset_stream(BASE, HDR, log=print, limit=None):
             _eat(s, None)
     A = concat_arrays(parts)
     log("   · OMNI 봉 수신 %d종목 (5분봉 %d · 일봉 %d)" % (len(syms), n5, len(daily)))
-    log("   · OMNI 표본 %s행 · 종목 %d · 제외(동시타격 %d · 시간초과 %d · σ없음 %d · 구멍 %d) · %.0fs" % (
-        0 if A is None else len(A["y"]), len(seen), tot["amb"], tot["timeout"], tot["nosig"], tot["span"],
-        time.time() - t0))
+    # 색인이 말하는 실제 간격(야후 dataGranularity)과 저장 판 — 수집기가 무엇을 받았는지 그대로 보인다
+    gr = {}
+    for s in syms:
+        e = ix[s].get("1d") or {}
+        key = "%s/v%s%s" % (e.get("g") or "?", e.get("v") or 1, "/거부" if e.get("bad") else "")
+        gr[key] = gr.get(key, 0) + 1
+    log("   · OMNI 일봉 색인 간격/판: " + " · ".join("%s %d" % kv for kv in sorted(gr.items())))
+    log("   · OMNI 표본 %s행 · 종목 %d · %.0fs" % (0 if A is None else len(A["y"]), len(seen), time.time() - t0))
+    log("   · OMNI " + _tot_line(tot))
     return A, tot, len(seen)
 
 
@@ -876,19 +941,17 @@ def build_dataset(data, log=print):
     import time
     t0 = time.time()
     parts = []
-    tot = {"amb": 0, "timeout": 0, "nosig": 0, "span": 0}
+    tot = _new_tot()
     nsym = 0
     for s, d in data.items():
         rows, st = build_rows(s, d["m"], d.get("5m"), d.get("1d"))
-        for k in tot:
-            tot[k] += st.get(k, 0)
+        _acc(tot, st)
         if rows:
             parts.append(rows_to_arrays(rows))
             nsym += 1
     A = concat_arrays(parts)
-    log("   · OMNI 표본 %s행 · 종목 %d · 제외(동시타격 %d · 시간초과 %d · σ없음 %d · 구멍 %d) · %.0fs" % (
-        0 if A is None else len(A["y"]), nsym, tot["amb"], tot["timeout"], tot["nosig"], tot["span"],
-        time.time() - t0))
+    log("   · OMNI 표본 %s행 · 종목 %d · %.0fs" % (0 if A is None else len(A["y"]), nsym, time.time() - t0))
+    log("   · OMNI " + _tot_line(tot))
     return A, tot, nsym
 
 
