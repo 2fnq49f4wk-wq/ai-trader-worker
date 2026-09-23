@@ -276,7 +276,8 @@ print(json.dumps(out))
   else console.log("  info 명목 길이를 직접 넘기는 곳 " + raw.length + "곳(겹침 없는 표본이면 정상):\n    " + raw.join("\n    "));
 
   // 자체학습 4종이 실제로 풀 고유도를 조회하는가
-  const need = ["mlTrainNightly", "mlBrainTrainNightly", "mlMindTrainNightly", "mlDNNTrainNightly", "mlGBDTTrainNightly"];
+  // [V33.422] mlDNNTrainNightly 퇴역 — 코드에서 삭제됐다.
+  const need = ["mlTrainNightly", "mlBrainTrainNightly", "mlMindTrainNightly", "mlGBDTTrainNightly"];
   const miss = [];
   for (const fn of need) {
     const at = src.indexOf("async function " + fn + "(");

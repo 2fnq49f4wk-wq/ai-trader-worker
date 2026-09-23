@@ -44,21 +44,21 @@ function sliceFn(src, header) {
 
 console.log("① 서버 응답은 자기가 어느 탭의 것인지 말하는가");
 {
-  const dnn = sliceFn(S, "async function mlDNNVizData(DB)");
-  chk(!!dnn, "mlDNNVizData 를 찾았다", "mlDNNVizData 가 없다");
-  if (dnn) {
-    /* 이 함수의 반환은 넷(캐시 재사용 · 미학습 미리보기 · 정상 · catch). 전부 kind 를 달아야 한다.
-       하나라도 빠지면 그 경로가 다시 '이름 없는 payload' 가 되어 분기의 나머지로 떨어진다. */
-    const lines = dnn.body.split("\n");
-    const rets = [];
-    for (let i = 0; i < lines.length; i++) {
-      if (!/^\s{2,8}(return (\{|Object\.assign)|\} catch \(e\) \{ return \{)/.test(lines[i])) continue;
-      rets.push(lines.slice(i, i + 4).join("\n"));   // 반환문이 여러 줄에 걸쳐 있다
-    }
-    const named = rets.filter(t => /kind: "dnn"/.test(t));
-    chk(rets.length >= 4 && named.length === rets.length,
-      "mlDNNVizData 의 반환 " + rets.length + "곳이 전부 kind:\"dnn\" 을 단다",
-      "★kind 없는 반환이 남아 있다(" + (rets.length - named.length) + "/" + rets.length + ") — 그 경로는 또 이름 없이 나간다★");
+  /* [V33.422] mlDNNVizData 퇴역 — 대신 ★새로 붙은 탭(OMNI)★ 이 같은 계약을 지는지 본다.
+     계약: 응답의 모든 반환 경로가 자기 kind 를 단다(안 달면 분기의 나머지로 조용히 샌다). */
+  const om = sliceFn(S, "async function omniVizData(DB)");
+  chk(!!om, "omniVizData 를 찾았다", "omniVizData 가 없다");
+  if (om) {
+    chk(/kind: "omni"/.test(om.body), "omniVizData 가 kind:\"omni\" 를 단다",
+      "★OMNI 응답에 kind 가 없다 — 그 경로는 이름 없이 나간다★");
+    const rets = om.body.split("\n").filter((l) => /^\s{2,8}return /.test(l));
+    chk(rets.length >= 2, "반환 경로가 " + rets.length + "곳(모델 없음 · 정상)",
+      "반환 경로를 못 세겠다");
+    /* out 객체 하나를 두 경로가 함께 돌려주므로 kind 가 한 번만 적혀도 전부 이름을 단다.
+       ★그 구조를 계약으로 못 박는다★ — 반환마다 새 객체를 만들면 하나가 이름을 잃는다. */
+    chk(/const out = \{ kind: "omni"/.test(om.body),
+      "모든 반환이 같은 out 객체를 쓴다 — 한 경로만 이름을 잃을 자리가 없다",
+      "★반환마다 새 객체를 만든다 — 한 곳이 kind 를 빠뜨리면 조용히 샌다★");
   }
   chk(/data\.reqModel = modelSel;/.test(S),
     "/api/nn-viz 가 응답에 요청한 모델키를 새긴다(reqModel)",
@@ -69,19 +69,34 @@ console.log("① 서버 응답은 자기가 어느 탭의 것인지 말하는가
     "kind 와 모델키가 어긋나도 서버가 모른 채 내보낸다");
 }
 
-console.log("② 탭 목록의 키를 서버가 전부 아는가 (모르면 기본값 DNN 으로 샌다)");
+console.log("② 탭 목록의 키를 서버가 전부 아는가 · 퇴역 모델 탭이 남아 있지 않은가");
 {
   const tabs = [...H.matchAll(/class="nnv-tab[^"]*"\s+data-model="([a-z_]+)"/g)].map(m => m[1]);
-  chk(tabs.length >= 13, "탭 " + tabs.length + "개를 읽었다", "탭 목록을 못 읽었다");
+  /* [V33.422] ★개수를 손으로 적지 않는다.★ 종전엔 ">= 13" 이라고 박혀 있어, 퇴역으로 탭이
+     줄자 "탭 목록을 못 읽었다" 는 ★엉뚱한 사유★ 로 실패했다(이 저장소가 반복해 겪은
+     '손으로 적은 숫자의 드리프트'). 세는 대신 ★관계★ 를 본다. */
+  chk(tabs.length > 0 && tabs.includes("overview"), "탭 " + tabs.length + "개를 읽었다(전체 구조 포함)",
+    "탭 목록을 못 읽었다");
   const disp = sliceFn(S, 'if (path === "/api/nn-viz") {');
   const linviz = sliceFn(S, "const _LINVIZ = {");
-  const known = new Set(["overview", "dnn"]);
+  const known = new Set(["overview"]);
   if (disp) for (const m of disp.body.matchAll(/"([a-z_]+)"/g)) known.add(m[1]);
   if (linviz) for (const m of linviz.body.matchAll(/^\s{2}([a-z_]+):/gm)) known.add(m[1]);
   const unknown = tabs.filter(t => !known.has(t));
   chk(unknown.length === 0,
     "탭 키 " + tabs.length + "개가 전부 서버 분기에 있다",
-    "★서버가 모르는 탭 키: " + unknown.join(", ") + " — 누르면 DNN 이 나온다★");
+    "★서버가 모르는 탭 키: " + unknown.join(", ") + " — 누르면 엉뚱한 모델이 나온다★");
+  /* 퇴역 모델(RETIRED)의 탭은 남아 있으면 안 된다 — 눌러도 410 만 돌아온다. */
+  const ret = [...(S.match(/const RETIRED = \{[\s\S]*?\n\};/) || [""])[0]
+    .matchAll(/^\s{2}([a-z_]+):\s*\{/gm)].map(m => m[1]);
+  chk(ret.length > 0, "퇴역 명부(RETIRED)를 읽었다: " + ret.join(", "), "퇴역 명부를 못 읽었다");
+  const zombie = tabs.filter(t => ret.includes(t));
+  chk(zombie.length === 0, "퇴역 모델의 탭이 남아 있지 않다",
+    "★퇴역했는데 탭이 남아 있다: " + zombie.join(", ") + " — 누르면 410 만 나온다★");
+  /* 기본 폴백이 퇴역 모델이면, 모르는 키가 전부 그리로 샌다(V33.308 이 고친 병의 재발). */
+  const fb = (S.match(/url\.searchParams\.get\("model"\) \|\| "([a-z_]+)"/) || [])[1];
+  chk(fb && !ret.includes(fb), "기본 모델키(" + fb + ")가 퇴역 모델이 아니다",
+    "★기본 폴백이 퇴역 모델(" + fb + ")이다 — 모르는 키가 전부 그리로 샌다★");
 }
 
 console.log("③ 화면이 보낸 순서를 세어 늦은 응답을 버리는가 (실제로 돌려본다)");

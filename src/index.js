@@ -3044,7 +3044,48 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.421";
+const _BUILD_VER = "V33.422";
+
+/* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
+   사용자: "기존 필요없는 모델은 제거해".
+
+   ■ 무엇을 근거로 내보냈나 — ★측정된 것만★ 내보낸다(감이 아니다)
+     넷 모두 docs/OPEN-DEFECTS.md V33.415/416 에 숫자가 적혀 있고, 넷 다 ★이미 한 표도
+     못 넣고 있었다★. 즉 이 변경은 매매 행동을 바꾸지 않는다 — 비용과 화면만 줄인다.
+       dnn    : 외부 49.9% · 워커 폴백 40.8% — ★둘 다 무실력 이하★. 문턱(50.5%) 미달이 맞다.
+                그러면서 Modal 회차 예산의 54%(32분·T4 GPU)를 먹었다.
+       flow   : 홀드아웃 t < 1.65 — 잡음과 구별되지 않는다. 원인도 이름으로 짚혔다
+                (정적칸 8/13 — 종목 안에서 변하지 않는 칸이라 모델이 종목을 외운다).
+       xalpha : 같은 이유(정적칸 24/25). 통합 IC > 0 > 블록 IC — 같은 날 안에서 종목을
+                고르는 능력이 ★없다★(심프슨 역설).
+       stack  : 결합기. 표본이 늘수록 나빠졌다(V33.298). 홀드아웃 t < 1.65.
+
+   ■ 무엇을 안 내보냈나 — ★재보지 않은 것은 손대지 않는다★
+     MIND(위원장) · GBDT(유일하게 하한을 넘긴 위원) · SEQ(설계대로 잠정가동) · RULE ·
+     MEMO · 부스터 3종 · 이중헤드는 그대로 둔다. 그중 일부는 지금 투표 중이고,
+     투표 중인 위원을 측정 없이 빼는 것은 "성능이 안 나온다" 를 추측으로 고치는 짓이다.
+
+   ■ 퇴역의 뜻 — ★한 표도 못 얻고 · 학습도 안 하고 · 화면에도 안 나온다★
+     ① 위원회: experts 배열에서 걸러진다(어느 경로로 들어와도 마지막에 한 번 더 막는다)
+     ② 학습: 야간 파이프라인·수동 파이프라인의 단계 목록에서 뺐다
+     ③ 화면: buildRoster 가 안 싣는다 → 사이드바와 구조관측이 ★같은 함수★ 라 함께 사라진다
+     ④ 업로드: /api/dnn-import 등은 410 으로 거절한다(외부 학습기가 계속 올리면 비용만 든다)
+     tools/check-retired.mjs 가 ①~④ 를 ★실행으로★ 확인한다.
+
+   ■ 되살리려면 이 표에서 한 줄을 지우면 된다. 모델 본문 코드는 지우지 않았다 —
+     본문까지 지우려면 게이트 20여 종을 같이 손봐야 해서, 작동하는 위원(GBDT·SEQ·MIND)을
+     건드릴 위험이 생긴다. 본문 삭제는 별건으로 남긴다(OPEN-DEFECTS BH-1). */
+const RETIRED = {
+  dnn:    { at: "2026-09-23", why: "외부 49.9% · 워커 40.8% — 둘 다 무실력 이하(V33.415 실측)" },
+  flow:   { at: "2026-09-23", why: "홀드아웃 t < 1.65 — 잡음과 구별 불가 · 정적칸 8/13(V33.414 실측)" },
+  xalpha: { at: "2026-09-23", why: "정적칸 24/25 · 통합 IC > 0 > 블록 IC — 종목 선별력 없음" },
+  stack:  { at: "2026-09-23", why: "표본이 늘수록 나빠졌다(V33.298) · 홀드아웃 t < 1.65" }
+};
+function _retired(key) { return !!(key && Object.prototype.hasOwnProperty.call(RETIRED, String(key))); }
+function _retiredWhy(key) { return _retired(key) ? RETIRED[String(key)].why : null; }
+/* 퇴역 위원이 학습 단계를 다시 갖지 못하게 — 단계 이름 → 위원 키. 게이트가 이 표로 확인한다. */
+const RETIRED_STAGES = { dnn: "dnn", flow: "flow", xalpha: "xalpha",
+                         stack: "stack", stackbf: "stack", stackepoch: "stack" };
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -3072,7 +3113,6 @@ const _BUILD_VER = "V33.421";
 //   핵심 평가는 제 속도로 계속 간다. 기능이 또 늘어도 총량은 변하지 않는다.
 const ENRICH = {
   share: 0.40,          // 평가예산 중 부가조회에 허용하는 총량(나머지 60% 는 평가가 확보)
-  flowRefreshPerCycle: 6,   // FLOW 콜드미스 네트워크 갱신은 사이클당 이만큼만(점진적 워밍)
   slowSymMs: 1200,      // 이 시간을 넘긴 종목은 느린 종목으로 계측에 남긴다
   /* [V33.327] ★한 건이 지갑을 통째로 비우지 못하게 한다★
      지갑은 '쓰기 전' 잔액만 봤다 — 한 번 시작한 조회는 얼마가 걸리든 끝까지 기다렸다.
@@ -10596,6 +10636,61 @@ function omniValidate(body) {
 
 /* 머리(지평)별 사용 여부 — 트레이너의 홀드아웃 판정(ok · tau)을 그대로 따른다. 워커가 새로 판정하지 않는다
    (잰 곳과 쓰는 곳이 같은 숫자를 봐야 한다). */
+/* 업로드된 OMNI 의 ★메타★(나무 제외) — 명부·구조관측이 같은 값을 읽는다. */
+async function _omniMeta(DB) {
+  try { return await getState(DB, OMNI_MODEL.metaKey, null); } catch (e) { return null; }
+}
+/* [V33.422] OMNI 관측 데이터 — ★나무를 싣지 않는다★(MB급). 머리별 성적 · 정합 증거 ·
+   무엇을 배웠는지(지평·매매법)만 보낸다. 화면은 이것만으로 "쓰는가/왜 안 쓰는가" 를 말한다. */
+async function omniVizData(DB) {
+  const m = await _omniMeta(DB);
+  const _p = function (x) { return (typeof x === "number" && isFinite(x)) ? +(x * 100).toFixed(1) : null; };
+  /* ★반환 객체는 하나다.★ 경로마다 새 객체를 만들면 한 곳이 kind 를 빠뜨려 이름 없이 나간다
+     (V33.308 이 고친 그 병) — check-nnviz-switch 가 이 구조를 계약으로 본다.
+     그리고 칸 이름은 ★리터럴★ 로 적는다 — check-viz-fields 가 "화면이 읽는 칸을 서버가
+     채우는가" 를 이 리터럴에서 읽기 때문이다(out.x = … 로 흩어 놓으면 검사가 눈이 먼다). */
+  const out = { kind: "omni", ts: Date.now(), ver: OMNI_VER,
+    feats: OMNI_FEATS, horizons: OMNI_HORIZONS, setups: OMNI_SETUPS,
+    inputDim: OMNI_MODEL_FEATS.length, base: OMNI_CONSTS.base,
+    trained: !!(m && _num(m.nTrees, 0) > 0),
+    why: m ? null : "아직 업로드된 모델이 없다 — Modal 학습기(omni_job)가 한 번도 안 돌았거나 표본이 모자랐다",
+    v: m ? m.v : null,
+    featVerOk: !m ? true : (m.v === OMNI_VER),
+    nTrees: m ? _num(m.nTrees, null) : null,
+    nodes: m ? _num(m.nodes, null) : null,
+    nTrain: m ? _num(m.nTrain, null) : null,
+    nHold: m ? _num(m.nHold, null) : null,
+    nSym: m ? _num(m.nSym, null) : null,
+    bestIter: m ? _num(m.bestIter, null) : null,
+    cutoff: m ? _num(m.cutoff, null) : null,
+    trainedAt: m ? _num(m.trainedAt, null) : null,
+    importedAt: m ? _num(m.importedAt, null) : null,
+    barrierK: m ? _num(m.barrierK, null) : null,
+    holdDays: m ? _num(m.holdDays, null) : null,
+    bytes: m ? _num(m.bytes, null) : null,
+    excl: (m && m.excl) || null,
+    mode: (m && m.mode) || "shadow",
+    probeN: m ? _num(m.probeN, null) : null,
+    probeMaxDiff: m ? _num(m.probeMaxDiff, null) : null,
+    probeNanRows: m ? _num(m.probeNanRows, null) : null,
+    headsOk: m ? omniHeadsOk(m.heads) : [],
+    heads: !m ? [] : OMNI_HORIZONS.map(function (hz) {
+      const h = (m.heads && m.heads[hz]) || null;
+      const sp = (h && h.speak) || null;
+      return { hz: hz, n: h ? _num(h.n, null) : null, base: _p(h ? _num(h.base, null) : null),
+        acc: _p(h ? _num(h.acc, null) : null), noSkill: _p(h ? _num(h.noSkill, null) : null),
+        accLB: _p(h ? _num(h.accLB, null) : null), blocks: h ? _num(h.blocks, null) : null,
+        auc: (h && typeof h.auc === "number") ? +h.auc.toFixed(3) : null,
+        ok: !!(h && h.ok), why: h ? (h.why || null) : "못 쟀다",
+        tau: (h && typeof h.tau === "number") ? +h.tau.toFixed(3) : null,
+        speakN: sp ? _num(sp.n, null) : null, prec: _p(sp ? _num(sp.prec, null) : null),
+        need: _p(sp ? _num(sp.need, null) : null), lb: _p(sp ? _num(sp.lb, null) : null),
+        cov: _p(sp ? _num(sp.cov, null) : null),
+        byMkt: (h && h.byMkt) || null, bySetup: (h && h.bySetup) || null };
+    })
+  };
+  return out;
+}
 function omniHeadsOk(heads) {
   const out = [];
   for (const h of OMNI_HORIZONS) {
@@ -11196,7 +11291,12 @@ function _dnnArchDecide(archRec, dnnTrust, poolN) {
 
 function _mlExportConfig(arch) {
   const A = arch || null;
-  return { hidden: (A && A.hidden) || DNN.hidden, seeds: DNN.seeds, dropout: DNN.dropout, l2: DNN.l2, labelSmooth: DNN.labelSmooth,
+  /* [V33.422] ★퇴역 명부를 트레이너에 내려보낸다.★ 워커가 위원 명부의 단일 출처이므로,
+     "누가 퇴역했나" 도 워커가 말해야 한다. Modal 트레이너는 이 값을 보고 DNN 학습을
+     통째로 건너뛴다 — 한 표도 못 얻는 모델에 회차 예산의 54%(T4 GPU 32분)를 쓰지 않는다.
+     ★트레이너에 목록을 손으로 또 적지 않는다★ — 두 곳에 적으면 언젠가 갈라진다. */
+  return { retired: Object.keys(RETIRED),
+           hidden: (A && A.hidden) || DNN.hidden, seeds: DNN.seeds, dropout: DNN.dropout, l2: DNN.l2, labelSmooth: DNN.labelSmooth,
            /* 트레이너가 스스로 켜는 게 아니라 ★워커가 시킨다★ — 신뢰 상태를 아는 쪽이 워커다. */
            archSweep: !!(A && A.sweep), archSweepWhy: (A && A.why) || null,
            archMeasured: !!(A && A.measured),
@@ -13884,7 +13984,6 @@ const SEQML = {
   /* [V33.338] 워커 폴백 가중 배수. GPU 망(은닉 10층·6시드)의 1/46 크기이고 표본도 6,000건
      상한이라 같은 발언권을 줄 근거가 없다. 0 으로 두면 featVer 를 올릴 때마다 DNN 이 몇 시간
      통째로 빠지므로(V33.50 이 고친 '영구 학습대기'의 반대편 함정), 절반만 준다. */
-  workerWeightMult: 0.5,
   /* 실측(2026-08-29, 320봉·L16): 종목당 조립 ★3.0ms★. 종전 상한 8ms 는 워커가 3배만
      느려도 ★전 종목이 기권★ 해 모델이 조용히 사라지는 값이었다 — 이 저장소가 반복해 당한
      '조용한 무력화' 그대로다. 실측의 8배로 잡고, 대신 사이클 총량으로 따로 막는다. */
@@ -17003,9 +17102,8 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
           //   청산 시각(Date.now())을 찍으면 라벨 지평만큼 미래로 밀려, 퍼징이 '검증 구간을
           //   침범하는 표본'으로 오판해 잘라낸다.
           const _obsTs = _num(pos.opened_ts, 0) || Date.now();
-          if (Array.isArray(pos.meta.flowFeat)) await flowLogSample(DB, market, symbol, pos.meta.flowFeat, pnlPct, _obsTs);
-          if (Array.isArray(pos.meta.xaFeat)) await xalphaLogSample(DB, market, symbol, pos.meta.xaFeat, pnlPct, _obsTs);
-          if (Array.isArray(pos.meta.stackFeat)) await stackLogSample(DB, market, symbol, pos.meta.stackFeat, pnlPct, _obsTs);
+          /* [V33.422] FLOW·XALPHA 표본 적재 삭제 — 퇴역. */
+          /* [V33.422] STACK 표본 적재 삭제 — 퇴역. 먹을 위원이 없는 표를 매 청산마다 쓰지 않는다. */
         } catch (e) {}
       }
       if (Array.isArray(pos.meta.mlEvKeys) && pos.meta.mlEvKeys.length && typeof mlUpdateEventExpectancy === "function") {
@@ -19176,11 +19274,9 @@ async function mlAiReadyState(DB) {
     if (!_auto.enabled || typeof LUXML === "undefined" || !LUXML.enabled) return false;
     const _mind = await mlMindLoad(DB);
     if (!_mind) return false;
-    const _dt = await getState(DB, "dnn_trust", null);
-    const _dnn = (_dt && _dt.trusted) ? await mlDNNLoad(DB) : null;
     const _gt = await getState(DB, "gbdt_trust", null);
-    const _gbdt = (_gt && _gt.trusted) ? await mlGBDTLoad(DB) : null;
-    return !!(_dnn || _gbdt);
+    const _gbdt = (_gt && _gt.trusted) ? await mlGBDTLoad(DB) : null;   // [V33.422] DNN 퇴역
+    return !!_gbdt;
   } catch (e) { return false; }
 }
 
@@ -20858,17 +20954,15 @@ async function runTradingCycle(env) {
       const evalMinMs = (typeof cfg.evalMinMs === "number") ? cfg.evalMinMs : 35000;
       // === [LUX-AI] 사이클당 1회 모델/보조데이터 로드(후보마다 재로딩 방지) ===
       let __mlModel = null, __ensemble = null, __mind = null, __guard = { distrust: false },
-          __dnn = null, __dnnTrust = null, __noiseFilter = null, __evMem = {}, __sectorNews = null,
+          __noiseFilter = null, __evMem = {}, __sectorNews = null,
           __gbdt = null, __gbdtTrust = null, __cal = null, __evStats = null, __portStats = null, __idxCloses = null, __xsPanel = null,
           __secCache = {}, __fundCache = {};   // [V12.130] 사이클당 1회 프리로드(종목별 중복 D1 read 제거)
       // [V33.78] FLOW — 모델과 피어계산용 일봉캐시를 사이클당 1회만 준비한다.
       //   일봉캐시는 이미 daily: 로 D1 에 있으니 한 번 훑어 메모리에 올린다(종목마다 재조회 금지).
-      let __flowModel = null, __dailyCacheForFlow = {}, __flowCollect = false;
+      let __dailyCacheForFlow = {};   // [V33.422] FLOW 퇴역 — 이름만 남는다(HRP·상관이 쓴다)
       /* [V33.304] FLOW 포지셔닝·풋콜 캐시 — ★사이클당 1회★ 로 읽는다(아래 프리로드 참조). */
       let __flowSideCache = null;
       let __socialK = null;   // [V33.109] 소셜 로그오즈 계수(social_k) — 미측정이면 개입 0
-      let __xaModel = null, __xaPanel = null;   // [V33.79] XALPHA — 형식알파 + 횡단면 랭크
-      let __stackModel = null;   // [V33.80] STACK 메타모델(투표 대체)
       let __seqModel = null;    // [V33.267] SEQ Transformer — 사이클 1회 로드(승격 게이트 통과분만)
       let __memoModel = null;    // [V33.92] MEMO 유사상황 기억 전문가
       let __techK = null, __finalCal = null;   // [V33.94] 실측 기술계수 · 최종보정 온도(사이클 1회)
@@ -20890,8 +20984,8 @@ async function runTradingCycle(env) {
           try { __ensemble = await mlBrainLoad(DB); } catch (e) {}
           try { __mind = await mlMindLoad(DB); } catch (e) {}
           try { __guard = await mlGuardState(DB); } catch (e) {}
-          try { __dnnTrust = await getState(DB, "dnn_trust", null); } catch (e) {}
-          try { if (__dnnTrust && __dnnTrust.trusted) __dnn = await mlDNNLoad(DB); } catch (e) {}
+          /* [V33.422] DNN 퇴역 — 신뢰기록도 21MB 망도 안 읽는다. 매 사이클 비용이 0 이 된다. */
+          /* [V33.422] DNN 퇴역 — 신뢰기록도 21MB 망도 안 읽는다(매 사이클 비용 0). */
           try { __gbdtTrust = await getState(DB, "gbdt_trust", null); } catch (e) {}
           try { if (__gbdtTrust && __gbdtTrust.trusted) __gbdt = await mlGBDTLoad(DB, market); } catch (e) {}   // [V33.76] 시장 전용 모델 우선
           try { __cal = await getState(DB, "committee_cal", null); } catch (e) {}
@@ -20908,10 +21002,8 @@ async function runTradingCycle(env) {
           //   위원회 전문가 3종과 확률 체인의 측정계수 전부가 조용히 null 이 된다 —
           //   그러면 '왜 갑자기 상수로 돌아갔지' 를 추적할 단서가 어디에도 안 남는다.
           //   각자 자기 스위치로만 걸리게 분리한다.
-          try { if (FLOWML.enabled) __flowModel = await getState(DB, "flow_model", null); }
-          catch (e) { __flowModel = __flowModel || null; }
-          try { if (XALPHA.enabled) __xaModel = await getState(DB, "xalpha_model", null); } catch (e2) {}
-          try { if (STACKML.enabled) __stackModel = await getState(DB, "stack_model", null); } catch (e2) {}
+          /* [V33.422] flow·xalpha·stack 퇴역 — 사이클마다 하던 세 번의 읽기를 안 한다. */
+          /* [V33.422] flow·xalpha·stack 퇴역 — 사이클마다 하던 세 번의 읽기를 안 한다. */
           try { if (SEQML.enabled) __seqModel = await _seqCached(DB); } catch (e2) {}
           try { if (MEMOML.enabled) __memoModel = await getState(DB, "memo_model", null); } catch (e2) {}
           try { __techK = await getState(DB, "tech_prior_k", null); __finalCal = await getState(DB, "final_cal", null); __blendK = await getState(DB, "decision_blend_k", null); } catch (e2) {}
@@ -20981,7 +21073,6 @@ async function runTradingCycle(env) {
           } catch (e) {}
           try {
             if (FLOWML.enabled) {
-              __flowCollect = true;   // 표본이 없을수록 수집이 급하다 — 항상 켠다(피어는 네트워크 0)
               /* [V33.348 · 해결 · 확인 한번 더] ★D1 과부하의 남은 큰 축★
                  이 자리는 'daily:' 전량(약 1,000종목 × 320~2,400봉 × 5배열)을 ★매 사이클·매 시장★
                  통째로 읽고 JSON.parse 했다. 위 주석은 "사이클당 1회" 라고 적혀 있지만 이 블록은
@@ -21017,7 +21108,6 @@ async function runTradingCycle(env) {
               __flowSideCache = _m;   // ★있음/없음이 확정된 표★ — 없는 키를 D1 에 다시 묻지 않는다
             } catch (e2) { __flowSideCache = null; }
             // [V33.79] 횡단면 패널 — 시장 단위로 1회만 만든다(종목마다 돌면 O(N²)).
-            try { if (XALPHA.enabled) __xaPanel = xalphaBuildPanel(__dailyCacheForFlow, market); } catch (e2) {}
             // [V33.83] 보유분 평균 상관 — 켈리의 동시베팅 보정에 쓴다(네트워크 0).
             try {
               const _held = [];
@@ -21053,7 +21143,10 @@ async function runTradingCycle(env) {
           try { __sectorNews = await getState(DB, "sector_news_sentiment", null); } catch (e) {}
           // [V16] 모델 열화(Concept Drift) 감지 — 위원회 검증정확도 기반. 열화면 ML 개입 보수화 + 재학습 플래그.
           try {
-            __mlDrift = mlDriftCheck(__dnnTrust, AI_PARAMS.mlops);
+            /* [V33.422] ★열화 감시 대상을 DNN → GBDT 로 옮긴다.★ DNN 이 퇴역했으므로 그대로 두면
+               감시가 "미학습" 을 반환해 ★조용히 꺼진다★ — 안전장치가 사라진 줄도 모르게 된다.
+               지금 지분이 가장 큰 위원(GBDT)을 감시한다. mlDriftCheck 가 gbdtAccLB 를 읽는다. */
+            __mlDrift = mlDriftCheck(__gbdtTrust, AI_PARAMS.mlops);
             /* ══ [V33.363] ★"언제부터" 가 매 사이클 지워지고 있었다★ ═══════════════════
                실측(자가진단 2026-09-15): "[MLOPS] 30회 반복 — 모델 열화 감지 —
                검증정확도 49.8% < 50.5% → 열화 → ML observe + 재학습 필요 (×2 · 최근 1분 전)".
@@ -21107,7 +21200,7 @@ async function runTradingCycle(env) {
           //   구버전(11)에서 trusted=true인 채 남아 __aiReady가 켜지지만 정작 mlDNNLoad/mlGBDTLoad는
           //   featVer 불일치로 null → AI가 '가동'된다면서 실은 MIND 단독으로 돌아 requireTrustedModel
           //   취지에 반했다. 이제 '실제 로드된 현재 featVer 모델'(__dnn/__gbdt 객체)이 있을 때만 준비완료.
-          __aiReady = !!(__mind && (__dnn || __gbdt));
+          __aiReady = !!(__mind && __gbdt);   // [V33.422] DNN 퇴역 — 준비 판정에서 뺐다
           try {
             const _sr = await getState(DB, "ai_selfreview", null);   // [V12.75] 자가치유 차단목록
             if (_sr && Array.isArray(_sr.autoDisable) && _sr.autoDisable.length) __autoDisabled = new Set(_sr.autoDisable);
@@ -21399,8 +21492,7 @@ async function runTradingCycle(env) {
                     /* 세 위원의 입력을 여기서도 만든다. 보유 종목은 스캔 대상보다 훨씬 적어 비용이 작고,
                        FLOW 는 ★noFetch★ 로만 부른다 — 캐시에 없으면 네트워크를 타지 않고 그냥 불참한다
                        (청산 경로가 지갑을 여는 일은 없어야 한다). 못 만들면 `absent` 에 사유가 남는다. */
-                    let _xaX = null, _seqX = null, _flowX = null;
-                    try { if (XALPHA.enabled) _xaX = xalphaBuildFeat(symbol, __dailyCacheForFlow, __xaPanel); } catch (e) {}
+                    let _seqX = null;   // [V33.422] FLOW·XALPHA 퇴역 — 청산 경로에서도 안 만든다
                     try {
                       /* 사이클 총 예산을 ★진입 경로와 같이 쓴다★ — 청산이 먼저 예산을 다 태우면
                          진입 쪽 SEQ 가 조용히 죽는다(반대도 마찬가지). 한 지갑을 둘이 나눠 쓴다. */
@@ -21415,12 +21507,7 @@ async function runTradingCycle(env) {
                         _enrich.seqMs += Date.now() - _sqX0;
                       }
                     } catch (e) {}
-                    try {
-                      if (FLOWML.enabled && __flowModel && __flowModel.trusted)
-                        _flowX = await flowBuildFeat(DB, symbol, market, __dailyCacheForFlow,
-                          { noFetch: true, pre: __flowSideCache });
-                    } catch (e) {}
-                    const _mdx = await _phaseRun("decide", async function () { return await mlDeepDecide(DB, _fx, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, portStats: __portStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, seqFeat: _seqX, seqModel: __seqModel, flowFeat: _flowX, flowModel: __flowModel, xaFeat: _xaX, xaModel: __xaModel, stackModel: __stackModel, memoModel: __memoModel, dualBull: __dualBull, dualBear: __dualBear, dualShift: __dualShift, techK: __techK, finalCal: __finalCal }); });
+                    const _mdx = await _phaseRun("decide", async function () { return await mlDeepDecide(DB, _fx, { mind: __mind, guard: __guard, ens: __ensemble, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, portStats: __portStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, seqFeat: _seqX, seqModel: __seqModel, memoModel: __memoModel, dualBull: __dualBull, dualBear: __dualBear, dualShift: __dualShift, techK: __techK, finalCal: __finalCal }); });
                     // [V12.90] ★청산도 기술+뉴스 블렌드로 통일★ — 진입은 그래프 중심인데 청산이 위원회 원시
                     //   확률만 쓰면 기술적으로 강한 종목을 노이즈로 파는 모순. 진입과 동일 기준으로 통합확률 산출.
                     let _exitP = (_mdx && typeof _mdx.p === "number") ? _mdx.p : null;
@@ -22757,35 +22844,11 @@ async function runTradingCycle(env) {
                 } catch (e) {}
                 // 최상위 결정(deep) → 폴백(mind)
                 _md = null;   // [V33.131] 선언은 전략 루프 최상단으로 이동 — 여기서는 재사용 전 초기화만
-                // [V33.78] FLOW 피처 조립 — 모델이 신뢰 상태일 때만 만든다(불필요한 fetch 방지).
-                //   피어 계산은 캐시된 일봉만 쓰므로 네트워크 0, 포지셔닝/옵션은 종목당 하루 1회 캐시.
-                let __flowFeat = null;
-                try {
-                  if (FLOWML.enabled && (( __flowModel && __flowModel.trusted) || __flowCollect)) {
-                    // [V33.172] ★"피어는 네트워크 0"이라는 주석이 사실의 3분의 1이었다★
-                    //   flowBuildFeat 은 피어 말고도 flowFetchPositioning(야후 quoteSummary 3모듈)과
-                    //   flowFetchPutCall(옵션체인 전량)을 종목마다 부른다. 상한이 전혀 없었다.
-                    //   → 지갑에서 결제하고, 콜드미스 네트워크 갱신은 사이클당 flowRefreshPerCycle 건까지만.
-                    const _flowNoFetch = (_enrich.flowRefresh >= ENRICH.flowRefreshPerCycle);
-                    __flowFeat = await _enrichRun("flow", async function () {
-                      const _t = Date.now();
-                      const _r = await flowBuildFeat(DB, symbol, market, __dailyCacheForFlow,
-                        { noFetch: _flowNoFetch, pre: __flowSideCache });   // [V33.304] 사이클 프리로드 표
-                      // 200ms 넘게 걸렸으면 네트워크를 탔다고 본다(캐시 적중은 D1 read 2회로 훨씬 싸다)
-                      if (!_flowNoFetch && (Date.now() - _t) > 200) _enrich.flowRefresh++;
-                      return _r;
-                    });
-                  }
-                  if (__flowFeat) signal.flowFeat = __flowFeat;
-                } catch (e) {}
-                // [V33.79] XALPHA 피처 — 전부 캐시된 OHLCV + 패널에서 나온다(네트워크 0).
-                let __xaFeat = null;
-                try {
-                  if (XALPHA.enabled) {
-                    __xaFeat = xalphaBuildFeat(symbol, __dailyCacheForFlow, __xaPanel);
-                    if (__xaFeat) signal.xaFeat = __xaFeat;
-                  }
-                } catch (e) {}
+                /* [V33.422] ★FLOW·XALPHA 피처 조립 삭제 — 퇴역.★ 이 자리는 종목마다 야후
+                   quoteSummary 3모듈 + 옵션체인을 부르고 있었다. 쓰는 위원이 없어졌으므로
+                   그 네트워크·D1 비용이 통째로 사라진다. (XALPHA 는 캐시만 썼지만 계산은 있었다.)
+                   ※ __dailyCacheForFlow 는 HRP 사이징·포트폴리오 상관이 계속 쓴다 — 남긴다. */
+                // (삭제된 FLOW 블록)
                 /* [V33.267] SEQ 입력 조립 — ★모델이 실제로 투표할 수 있을 때만★ 만든다.
                    L−1 봉치를 다시 계산하는 일이라 공짜가 아니다. 승격 못 한 모델을 위해
                    종목마다 15번씩 피처를 굽는 건 순수 낭비다(네트워크 0, CPU 는 0 이 아니다). */
@@ -22803,7 +22866,7 @@ async function runTradingCycle(env) {
                     if (__seqFeat) { signal.seqFeat = __seqFeat; _enrich.seqBuilt++; } else _enrich.seqSkip++;
                   } else if (__seqModel) _enrich.seqSkip++;
                 } catch (e) {}
-                try { _md = await _phaseRun("decide", async function () { return await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, portStats: __portStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, seqFeat: __seqFeat, seqModel: __seqModel, flowFeat: __flowFeat, flowModel: __flowModel, xaFeat: __xaFeat, xaModel: __xaModel, stackModel: __stackModel, memoModel: __memoModel, dualBull: __dualBull, dualBear: __dualBear, dualShift: __dualShift, techK: __techK, finalCal: __finalCal }); }); } catch (e) {}
+                try { _md = await _phaseRun("decide", async function () { return await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, portStats: __portStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, seqFeat: __seqFeat, seqModel: __seqModel, memoModel: __memoModel, dualBull: __dualBull, dualBear: __dualBear, dualShift: __dualShift, techK: __techK, finalCal: __finalCal }); }); } catch (e) {}
                 if (!_md) { try { _md = await mlMindDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble }); } catch (e) {} }
                 // [V5] AI 픽 수집 — 개입 여부와 무관하게 예측 자체는 기록(종목당 1회)
                 try {
@@ -24239,20 +24302,19 @@ async function handleRequest(request, env, ctx) {
       const _safe = function (fn) { try { const p = fn(); return Promise.resolve(p)["catch"](function () { return null; }); } catch (e) { return Promise.resolve(null); } };
       // [V33.56] 30s→15s
       return await swrJson("ml-status", 15000, 3600000, async function () {
-        const [a, b2, c2, d2, e2, f2, g2, h2, i2, j2, k2] = await Promise.all([
+        const [a, b2, c2, d2, e2, g2, h2, i2, j2, k2] = await Promise.all([   // [V33.422] DNN(f2) 퇴역
           _safe(function () { return (typeof mlStatus === "function") ? mlStatus(env.DB) : null; }),
           _safe(function () { return (typeof mlLoadEventMemory === "function") ? mlLoadEventMemory(env.DB) : null; }),
           _safe(function () { return (typeof mlBanditStatus === "function") ? mlBanditStatus(env.DB) : null; }),
           _safe(function () { return (typeof mlBrainStatus === "function") ? mlBrainStatus(env.DB) : null; }),
           _safe(function () { return (typeof mlMindStatus === "function") ? mlMindStatus(env.DB) : null; }),
-          _safe(function () { return (typeof mlDNNStatus === "function") ? mlDNNStatus(env.DB) : null; }),
           _safe(function () { return (typeof mlGBDTStatus === "function") ? mlGBDTStatus(env.DB) : null; }),
           _safe(function () { return getState(env.DB, "committee_cal", null); }),
           _safe(function () { return (typeof sentiStatus === "function") ? sentiStatus(env.DB) : null; }),
           _safe(function () { return (typeof mlDataHealth === "function") ? mlDataHealth(env.DB) : null; }),
           _safe(function () { return getState(env.DB, "ai_selfreview", null); })
         ]);
-        return { model: a, events: b2, bandit: c2, brain: d2, mind: e2, dnn: f2, gbdt: g2,
+        return { model: a, events: b2, bandit: c2, brain: d2, mind: e2, gbdt: g2,
                  committee: h2, data: i2, dataHealth: j2, selfreview: k2 };
       });
     }
@@ -24701,16 +24763,12 @@ async function handleRequest(request, env, ctx) {
               noteTs: _note ? _num(_note.ts, null) : null
             };
           };
-          const _bf = await getState(env.DB, "alt_bf_cursor", null);
           _alt = {
             /* [V33.301] ★명부는 여기서 만들지 않는다 — 한 곳(buildRoster)에서 받아 싣는다.★
                구조 관측(/api/nn-viz?model=overview)도 ★같은 함수★ 를 부른다. 사이드바가
-               위원 불을 스스로 판정하던 술어들(admit·trusted·tier 제각각)은 전부 걷어냈다. */
-            roster: await buildRoster(env.DB),
-            flow: await _mk("flow_model", "flow_samples", FLOWML.minTrainSamples, FLOWML.featVer),
-            xalpha: await _mk("xalpha_model", "xalpha_samples", XALPHA.minTrainSamples, XALPHA.featVer),
-            stack: await _mk("stack_model", "stack_samples", STACKML.minTrainSamples, STACKML.featVer),
-            backfill: _bf ? { made: _num(_bf.made, 0), cursor: _num(_bf.lastId, 0), ts: _num(_bf.ts, 0) } : null
+               위원 불을 스스로 판정하던 술어들(admit·trusted·tier 제각각)은 전부 걷어냈다.
+               [V33.422] flow·xalpha·stack 칸 삭제 — 퇴역. 소급생성 진행률도 같이 사라진다. */
+            roster: await buildRoster(env.DB)
           };
           // [V33.92] MEMO — ml_samples 를 원형으로 압축해 쓰므로 표본 풀은 스윙과 같다.
           try {
@@ -25156,13 +25214,14 @@ async function handleRequest(request, env, ctx) {
                     inputDim: LUXML.featNames.length };
       const _g = async function (k) { try { return await getState(env.DB, k, null); } catch (e) { return null; } };
       const _pc = function (x) { return (typeof x === "number" && isFinite(x)) ? +(x * 100).toFixed(1) : null; };
-      const [mindM, dnnT, gT, stackM, cal, oofW, bfCur, oofCur] = await Promise.all([
-        mlMindLoad(env.DB), _g("dnn_trust"), _g("gbdt_trust"), _g("stack_model"),
-        _g("committee_cal"), _g("stack_oof_window"), _g("stack_bf_cursor"), _g("stack_oof_cursor")
+      /* [V33.422] 퇴역한 넷(dnn·flow·xalpha·stack)은 ★읽지도 않는다★ — 화면에 안 나오는 값을
+         가져오는 것은 순수한 낭비다. 대신 OMNI 메타(나무 제외)를 싣는다. */
+      const [mindM, gT, cal, omniM] = await Promise.all([
+        mlMindLoad(env.DB), _g("gbdt_trust"), _g("committee_cal"), _omniMeta(env.DB)
       ]);
       let boosters = null; try { boosters = await _boostersCached(env.DB); } catch (e) {}
-      const [flowM, xaM, memoM, dBull, dBear, seqT] = await Promise.all([
-        _g("flow_model"), _g("xalpha_model"), _g("memo_model"), _g("dual_bull_model"), _g("dual_bear_model"),
+      const [memoM, dBull, dBear, seqT] = await Promise.all([
+        _g("memo_model"), _g("dual_bull_model"), _g("dual_bear_model"),
         _g("seq_trust")   // [V33.271] SEQ 는 작은 동반 레코드만 읽는다(큰 모델은 안 건드린다)
       ]);
       /* 위원 한 명을 '지금 실제로 투표하는가' 기준으로 적는다 — 화면에 좋아 보이는 값이 아니라
@@ -25182,7 +25241,6 @@ async function handleRequest(request, env, ctx) {
           why: o.why || (a ? a.why : null), params: o.params != null ? o.params : null };
       };
       const _mindLB = mindM ? _num(mindM.valAccLB, 0.5) : null;
-      const _dnnLB = dnnT ? _num(dnnT.dnnAccLB, null) : null;
       _ov.experts = [
         _row("mind", "MIND (인수분해기계 FM + 전문가 스태킹)", { kind: "fm",
           trained: !!mindM, featVer: mindM ? mindM.featVer : null,
@@ -25190,32 +25248,9 @@ async function handleRequest(request, env, ctx) {
           valAcc: mindM ? _num(mindM.valAcc, null) : null, accLB: _mindLB,
           n: mindM ? _num(mindM.n, null) : null, voting: !!mindM,
           tier: "full", mult: 1, why: mindM ? "위원장 — 신뢰게이트 없이 항상 참여" : "모델 없음" }),
-        /* ══ [V33.303] ★같은 모델의 '문턱' 을 두 화면이 다른 값으로 적고 있었다★ ═══════
-           사이드바(_diag.dnn)는 floor 를 ★DNN.trustFloor(0.505)★ 로 적는데 여기는
-           ★MIND 하한★ 을 적었다. 실측(2026-09-04): DNN accLB 51.6% · 이 화면의 문턱 52.1% —
-           화면만 보면 "문턱 미달인데 왜 가동이냐" 가 된다. 그런데 게이트(_dnnAdmit)가 실제로
-           보는 것은 _accFloor(DNN.trustFloor, 무실력기준) 이고 MIND 하한은 ★가중치 계산★ 에만
-           쓴다. 즉 이 화면이 없는 문턱을 적어 스스로 모순을 만들고 있었다.
-           V33.303 이 '불' 을 한 곳으로 모았고, 이건 같은 사고의 ★숫자★ 판이다 —
-           이름이 같으면 값도 같아야 한다. 게이트가 쓰는 상수를 그대로 적는다. */
-        _row("dnn", "DNN (다층 퍼셉트론)", { kind: "mlp",
-          trained: !!(dnnT && dnnT.dnnAcc != null), valAcc: dnnT ? _num(dnnT.dnnAcc, null) : null,
-          accLB: _dnnLB, floor: _num(DNN.trustFloor, 0.505),
-          voting: !!(dnnT && dnnT.trusted && _num(dnnT.wDnn, 0) > 0),
-          mult: dnnT ? _num(dnnT.wDnn, 0) : null,
-          /* [V33.394] 정합 오차를 사유에 붙인다 — 이 값이 없으면 "검증 47.3%" 가 이 워커가
-             실제로 계산하는 값이라는 보장이 화면 어디에도 없다. */
-          why: (dnnT && dnnT.probeMaxDiff != null && dnnT.probeMaxDiff > _num(DNN.probeTol, 0.02))
-                 ? ("★변환정합 실패★ 최대 확률차 " + dnnT.probeMaxDiff + " — 워커가 돌리는 모델이 검증받은 모델과 다르다")
-               : (dnnT && dnnT.trusted)
-                 ? ("신뢰 통과"
-                    + (dnnT.probeMaxDiff != null ? " · 정합 오차 " + dnnT.probeMaxDiff + "(probe " + _num(dnnT.probeN, 0) + "행)"
-                                                 : " · 정합 미확인(구버전 학습기)")
-                    + (_dnnLB != null && _mindLB != null && _dnnLB < _mindLB
-                      ? " · 하한 " + (_dnnLB * 100).toFixed(1) + "% 는 위원장(" + (_mindLB * 100).toFixed(1) +
-                        "%)보다 낮아 지분이 그만큼 줄어 있다(문턱이 아니라 가중치 문제)" : ""))
-                 : ((dnnT && dnnT.reason) || "미학습"),
-          params: dnnT ? _num(dnnT.params, null) : null }),
+        /* [V33.422] DNN 행 삭제 — 퇴역(RETIRED.dnn). 명부(buildRoster)와 같은 근거로 사라진다.
+           ※ 종전 이 자리엔 V33.303 의 '문턱을 두 화면이 다르게 적던' 사고 기록이 있었다.
+              그 교훈(이름이 같으면 값도 같아야 한다)은 docs/OPEN-DEFECTS.md 에 남아 있다. */
         _row("gbdt", "GBDT (부스팅 트리)", { kind: "tree",
           trained: !!(gT && gT.gbdtAcc != null), valAcc: gT ? _num(gT.gbdtAcc, null) : null,
           accLB: gT ? _num(gT.gbdtAccLB, null) : null, floor: _num(GBDT.trustFloor, 0.505),
@@ -25224,20 +25259,7 @@ async function handleRequest(request, env, ctx) {
           trained: !!(boosters && boosters.length), n: boosters ? boosters.length : 0,
           voting: !!(boosters && boosters.length),
           why: boosters && boosters.length ? boosters.length + "종 합의(가중 ×0.8)" : "부스터 없음" }),
-        _row("flow", "FLOW (수급·피어)", { kind: "linear", model: flowM,
-          trained: !!flowM, featVer: flowM ? flowM.featVer : null,
-          featVerOk: !!(flowM && flowM.featVer === FLOWML.featVer),
-          valAcc: flowM ? _num(flowM.valAcc, null) : null, ic: flowM ? _num(flowM.valICBlock, null) : null,
-          icT: flowM ? _num(flowM.valICt, null) : null, n: flowM ? _num(flowM.n, null) : null,
-          minN: FLOWML.minTrainSamples,
-          voting: !!(flowM && flowM.featVer === FLOWML.featVer && expertAdmit(flowM).admit) }),
-        _row("xalpha", "XALPHA (형식알파 · 횡단면랭크)", { kind: "linear", model: xaM,
-          trained: !!xaM, featVer: xaM ? xaM.featVer : null,
-          featVerOk: !!(xaM && xaM.featVer === XALPHA.featVer),
-          valAcc: xaM ? _num(xaM.valAcc, null) : null, ic: xaM ? _num(xaM.valICBlock, null) : null,
-          icT: xaM ? _num(xaM.valICt, null) : null, n: xaM ? _num(xaM.n, null) : null,
-          minN: XALPHA.minTrainSamples,
-          voting: !!(xaM && xaM.featVer === XALPHA.featVer && expertAdmit(xaM).admit) }),
+        /* [V33.422] FLOW·XALPHA 행 삭제 — 퇴역(RETIRED.flow/xalpha). */
         _row("memo", "MEMO (원형 기억)", { kind: "proto", model: memoM,
           trained: !!memoM, valAcc: memoM ? _num(memoM.valAcc, null) : null,
           ic: memoM ? _num(memoM.valICBlock, null) : null, icT: memoM ? _num(memoM.valICt, null) : null,
@@ -25269,23 +25291,45 @@ async function handleRequest(request, env, ctx) {
           valAcc: dBear ? _num(dBear.valAcc, null) : null, ic: dBear ? _num(dBear.valICBlock, null) : null,
           icT: dBear ? _num(dBear.valICt, null) : null, voting: !!(dBear && expertAdmit(dBear).admit) })
       ];
-      const _sa = stackM ? expertAdmit(stackM) : null;
-      _ov.stack = {
-        trained: !!stackM, featVer: stackM ? stackM.featVer : null, wantVer: STACKML.featVer,
-        featVerOk: !!(stackM && stackM.featVer === STACKML.featVer),
-        dim: STACK_SLOTS.length * 2, slots: STACK_SLOTS,   // [V33.272] 세 번째로 숨어 있던 손복사
-        n: stackM ? _num(stackM.n, null) : null, minN: STACKML.minTrainSamples,
-        valAcc: _pc(stackM ? _num(stackM.valAcc, null) : null),
-        ic: stackM ? +_num(stackM.valICBlock, 0).toFixed(4) : null,
-        icT: stackM ? +_num(stackM.valICt, 0).toFixed(2) : null,
-        tier: _sa ? _sa.tier : null, mult: _sa ? _sa.mult : null, why: _sa ? _sa.why : "모델 없음",
-        /* 재료 공급 상태 — 왜 아직 못 배우는지가 여기서 갈린다(V33.205) */
-        oof: { minTs: oofW ? _num(oofW.minTs, null) : null, n: oofW ? _num(oofW.n, null) : null,
-               models: (oofW && oofW.models) || [], at: oofW ? _num(oofW.ts, null) : null },
-        made: bfCur ? _num(bfCur.made, 0) : 0,
-        cursorEpoch: bfCur ? _num(bfCur.lastId, 0) : 0,
-        cursorOof: oofCur ? _num(oofCur.lastId, 0) : 0
-      };
+      /* [V33.422] ★STACK 블록 삭제 — 퇴역.★ 화면의 '통합 메타모델' 칸도 같이 없앤다.
+         (퇴역한 결합기의 표본 진행률을 계속 그리면, 읽는 사람은 아직 학습 중인 줄 안다.) */
+      _ov.stack = null;
+      /* [V33.422] ★OMNI — 새 복합모델의 관측 칸.★ 위원 목록에 섞지 않는다: 지평마다 성적이
+         따로 나오므로 '한 줄 한 위원' 표에 넣으면 다섯 머리가 한 숫자로 뭉개진다.
+         나무는 싣지 않는다(MB급) — 머리별 성적과 정합 증거만 보낸다. */
+      _ov.omni = omniM ? {
+        v: omniM.v, wantVer: OMNI_VER, featVerOk: omniM.v === OMNI_VER,
+        nTrees: _num(omniM.nTrees, null), nodes: _num(omniM.nodes, null),
+        nTrain: _num(omniM.nTrain, null), nHold: _num(omniM.nHold, null), nSym: _num(omniM.nSym, null),
+        bestIter: _num(omniM.bestIter, null), cutoff: _num(omniM.cutoff, null),
+        trainedAt: _num(omniM.trainedAt, null), importedAt: _num(omniM.importedAt, null),
+        barrierK: _num(omniM.barrierK, null), holdDays: _num(omniM.holdDays, null),
+        bytes: _num(omniM.bytes, null), excl: omniM.excl || null,
+        /* 정합 증거 — "학습기와 워커가 같은 답을 내는가" 를 화면이 직접 말한다(V33.420 관문). */
+        probeN: _num(omniM.probeN, null), probeMaxDiff: _num(omniM.probeMaxDiff, null),
+        probeNanRows: _num(omniM.probeNanRows, null),
+        horizons: OMNI_HORIZONS, setups: OMNI_SETUPS, mode: omniM.mode || "shadow",
+        headsOk: omniHeadsOk(omniM.heads),
+        heads: OMNI_HORIZONS.map(function (hz) {
+          const h = (omniM.heads && omniM.heads[hz]) || null;
+          const sp = (h && h.speak) || null;
+          return { hz: hz, n: h ? _num(h.n, null) : null,
+            base: _pc(h ? _num(h.base, null) : null),
+            acc: _pc(h ? _num(h.acc, null) : null),
+            noSkill: _pc(h ? _num(h.noSkill, null) : null),
+            accLB: _pc(h ? _num(h.accLB, null) : null),
+            blocks: h ? _num(h.blocks, null) : null,
+            auc: (h && typeof h.auc === "number") ? +h.auc.toFixed(3) : null,
+            ok: !!(h && h.ok), why: h ? (h.why || null) : "못 쟀다",
+            tau: (h && typeof h.tau === "number") ? +h.tau.toFixed(3) : null,
+            speakN: sp ? _num(sp.n, null) : null,
+            prec: _pc(sp ? _num(sp.prec, null) : null),
+            need: _pc(sp ? _num(sp.need, null) : null),
+            lb: _pc(sp ? _num(sp.lb, null) : null),
+            cov: _pc(sp ? _num(sp.cov, null) : null),
+            byMkt: (h && h.byMkt) || null, bySetup: (h && h.bySetup) || null };
+        })
+      } : null;
       _ov.combine = {
         icTemp: (typeof DNN !== "undefined" && DNN.icTemp != null) ? DNN.icTemp : 60,
         icClamp: [-0.05, 0.25], trimMin: 5, trimFrac: 0.2, trimGap: 0.12,
@@ -25317,14 +25361,20 @@ async function handleRequest(request, env, ctx) {
     }
 
     if (path === "/api/nn-viz") {
-      const modelSel = url.searchParams.get("model") || "dnn";
+      /* [V33.422] 기본값을 dnn → gbdt 로. DNN 은 퇴역했고, 종전엔 ★모르는 키가 전부 DNN 으로
+         샜다★(V33.308 이 고친 그 병). 퇴역한 모델이 기본 폴백이면 그 병이 되살아난다. */
+      const modelSel = url.searchParams.get("model") || "gbdt";
+      if (_retired(modelSel))
+        return Response.json({ kind: modelSel, reqModel: modelSel, retired: RETIRED[modelSel],
+          error: modelSel + " 는 퇴역했다 — " + _retiredWhy(modelSel) }, { status: 410, headers: cors });
       // [V33.150] 신규 위원 5종 추가 — 선형(계수) / 원형(기억) 은 트리·층 렌더러로 못 그린다.
       const data = modelSel === "mind" ? await mlMindVizData(env.DB)
         : (["gbdt", "xgb", "lgb", "cat"].indexOf(modelSel) !== -1) ? await mlTreeVizData(env.DB, modelSel)
         : (modelSel === "seq") ? await mlSeqVizData(env.DB)
         : (modelSel === "memo") ? await mlMemoVizData(env.DB)
+        : (modelSel === "omni") ? await omniVizData(env.DB)     // [V33.422] 복합모델 관측
         : (_LINVIZ[modelSel] ? await mlLinearVizData(env.DB, modelSel)
-        : await mlDNNVizData(env.DB));
+        : await mlTreeVizData(env.DB, "gbdt"));
       /* [V33.301] 모델 탭 하나만 열어도 ★명부를 함께 싣는다★ — 그 탭의 '합류 상태' 글자와
          옆 탭의 점이 서로 다른 근거로 그려지면 그게 곧 이 사고의 다음 재발이다. */
       try { if (data && typeof data === "object") data.roster = await buildRoster(env.DB); } catch (e) {}
@@ -26012,246 +26062,7 @@ async function handleRequest(request, env, ctx) {
 
     // POST /api/dnn-import — 외부에서 학습한 3M 가중치 업로드 → 검증 → 청크저장 → 신뢰게이트 갱신.
     //   body: { nets:[{W,b,dims}], mean, std, dims, valAcc, valAccLB, valN, n, featVer }
-    if (path === "/api/dnn-import" && request.method === "POST") {
-      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
-      const D = LUXML.featNames.length;
-      const wantDims = [D].concat(DNN.hidden).concat([1]);
-      const stage = url.searchParams.get("stage");   // [V12.35] 분할 업로드 모드
-
-      // ── 공용: 단일 net 형상/유한성 검증 ──
-      const _validNet = function (nt, dims) {
-        if (!nt || !Array.isArray(nt.W) || nt.W.length !== dims.length - 1 || !Array.isArray(nt.b)) return "net 구조 불일치";
-        for (let l = 0; l < nt.W.length; l++) {
-          if (!Array.isArray(nt.W[l]) || nt.W[l].length !== dims[l + 1] || !Array.isArray(nt.W[l][0]) || nt.W[l][0].length !== dims[l])
-            return "W[" + l + "] 형상 불일치 (" + dims[l + 1] + "×" + dims[l] + " 필요)";
-        }
-        for (const v of nt.W[nt.W.length - 1][0]) if (!isFinite(v)) return "비유한 가중치";
-        return null;
-      };
-      // ── 공용: 신뢰게이트 계산 + 저장 + 응답(단발/커밋 공통) ──
-      /* [V33.170] ★여기서 8일치 GPU 학습이 통째로 버려지고 있었다.★
-         이 함수는 아래 커밋 분기의 지역변수 stg 를 참조했는데, stg 는 ★이 함수보다 뒤에★
-         그 분기 안에서 선언된다(const, 블록 스코프). 그래서 커밋할 때마다
-         ReferenceError: stg is not defined → 500 이 났다.
-         Modal 로그가 그대로 말해 준다: RuntimeError: commit 500: {"error":"stg is not defined"}.
-         GPU 는 매 6시간 8~15분씩 정상적으로 돌았고, 결과만 업로드 마지막 단계에서 버려졌다.
-         → 스코프에 의존하지 않고 ★인자로 받는다.★ */
-      const _finishImport = async function (saveInfo, valAcc, valAccLB, valN, valStat) {
-        const _vs = valStat || {};
-        __dnnMemCache = null;
-        let mindLB = 0.5, _fMindBase = null;   // [V33.397] 위원장의 무실력 영점
-        try { const mm = await mlMindLoad(env.DB); if (mm) { mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); _fMindBase = _num(mm.valAccBase, null); } } catch (e) {}
-        // [V33.175] ★"학습 21시간 전"이 아무 의미가 없던 마지막 조각★
-        //   신뢰(trust) 레코드에 trainedAt 이 없어 운영화면의 외부모델 나이가 전부 null 이었다.
-        //   그래서 워치독의 신선도 계산도 항상 9999(=낡음)로 떨어져, 주소를 고쳐도 6시간마다
-        //   무조건 GPU 를 돌리게 돼 있었다. 모델 레코드에는 이미 찍고 있었는데 trust 에만 빠졌다.
-        let trust = { wDnn: 0, trusted: false, dnnAcc: valAcc, dnnAccLB: valAccLB, mindAcc: mindLB, source: "external",
-                      featVer: LUXML.featVer,   // [V33.245] 신선도는 시각만으로 재지 않는다 — 판이 다르면 새것이어도 못 쓴다
-                      trainedAt: Date.now(),
-                      valN: valN, valNRaw: _num(_vs.valNRaw, valN), valUniq: _num(_vs.valUniq, null) };
-        // [V33.262] 판정은 _dnnAdmit 한 곳에만 있다 — 아래 단발 업로드 경로도 같은 함수를 쓴다.
-        {
-          const _icT = _num(_vs.valICt, null);
-          const _ad = _dnnAdmit(valAccLB, _icT, mindLB, _num(_vs.accBase, null), _fMindBase);   // [V33.292] · [V33.397] 영점
-          trust.wDnn = _ad.wDnn; trust.trusted = _ad.trusted;
-          trust.admitPath = _ad.path; trust.admitWhy = _ad.why;
-          trust.valICt = _icT; trust.valICBlock = _num(_vs.valICBlock, null);
-        }
-        /* [V33.394] 정합 결과를 trust 에 남긴다 — 화면이 "몇 %p 어긋나는 모델인가" 를
-           말할 수 있어야 한다. probe 가 없던 회차는 null 이고, 그것도 사실로 적는다. */
-        trust.accBase = _num(_vs.accBase, null);   // [V33.397] 무실력 영점 — 지분 계산의 근거
-        trust.probeMaxDiff = _num(_vs.probeMaxDiff, null);
-        trust.probeN = Math.max(0, Math.floor(_num(_vs.probeN, 0)));
-        if (_vs.probeWhy) trust.probeWhy = String(_vs.probeWhy).slice(0, 160);
-        await setState(env.DB, "dnn_trust", trust);
-        try { await log(env.DB, "INFO", null, "[DNN] 외부업로드 저장 " + (saveInfo.bytes / 1048576).toFixed(1) + "MB/" + saveInfo.chunks + "청크 valAcc=" + (valAcc * 100).toFixed(1) + "% wDnn=" + trust.wDnn); } catch (e) {}
-        return Response.json({ ok: true, saved: saveInfo, trust: trust, activated: trust.trusted,
-          note: trust.trusted ? "3M 딥넷이 위원회에서 가동됩니다(wDnn=" + trust.wDnn + ")" : "저장됐으나 검증성능이 trustFloor 미달 → 자동 억제(wDnn=0). 표본/에폭 늘려 재학습 권장." }, { headers: cors });
-      };
-
-      // ════════ [V12.35] 분할 업로드: begin → net×K → commit (37MB 통째 파싱 회피) ════════
-      if (stage === "begin") {
-        let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
-        if (_num(body.featVer, -1) !== LUXML.featVer) return Response.json({ error: "featVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
-        if (!Array.isArray(body.mean) || body.mean.length !== D || !Array.isArray(body.std) || body.std.length !== D)
-          return Response.json({ error: "mean/std 차원 불일치 (" + D + " 필요)" }, { status: 400, headers: cors });
-        const dims = Array.isArray(body.dims) ? body.dims : wantDims;
-        if (dims.length !== wantDims.length || dims.some(function (v, i) { return v !== wantDims[i]; }))
-          return Response.json({ error: "dims 불일치 — 기대 " + wantDims.join("-") }, { status: 400, headers: cors });
-        const seeds = Math.max(1, Math.floor(_num(body.seeds, 0)));
-        if (!seeds) return Response.json({ error: "seeds 없음" }, { status: 400, headers: cors });
-        // 이전 스테이징 잔여 제거
-        try { await env.DB.prepare("DELETE FROM state WHERE k = 'dnn_stage' OR (k >= 'dnn_stage:net:' AND k < 'dnn_stage:net;')").run(); } catch (e) {}
-        const dnnAcc = _clamp(_num(body.valAcc, 0), 0, 1);
-        const _vn = _importedValN(body, 30);       // [V33.115] 유효표본수 우선
-        const valN = _vn.n;
-        const dnnLB = (body.valAccLB != null) ? _clamp(_num(body.valAccLB, 0), 0, 1) : _wilsonLB(dnnAcc, valN);
-        await setState(env.DB, "dnn_stage", { featVer: LUXML.featVer, mean: body.mean.map(function (v) { return _num(v, 0); }),
-          std: body.std.map(function (v) { return _num(v, 1); }), dims: dims, seeds: seeds, valAcc: +dnnAcc.toFixed(4),
-          valAccLB: +dnnLB.toFixed(4), valN: valN, valNRaw: _vn.raw, valUniq: _vn.uniq,
-          /* [V33.262] ★IC 도 여기 담아 둔다.★ 커밋 단계의 body 에는 가중치만 오고 성적이 없다 —
-             valAcc 를 인자로 넘기는 이유가 그것이다(V33.170 이 스코프로 8일치를 버린 그 자리).
-             처음엔 커밋에서 body.valICt 를 읽게 썼다가 같은 함정에 다시 빠질 뻔했다. */
-          valICt: _num(body.valICt, null), valICBlock: _num(body.valICBlock, null),
-          /* [V33.394] 정합 probe 는 ★여기(begin)★ 로 온다 — 커밋 본문에는 가중치만 오고
-             성적도 probe 도 없다(V33.170·V33.262 가 배운 것과 같은 자리다). 행 수를 묶어
-             스테이징이 비대해지지 않게 한다(64행 × 80피처 ≈ 60KB). */
-          probe: (Array.isArray(body.probe) ? body.probe : []).slice(0, 64).map(function (pr) {
-            return { x: (Array.isArray(pr && pr.x) ? pr.x.map(function (v) { return _num(v, 0); }) : null),
-                     p: _num(pr && pr.p, null) };
-          }).filter(function (pr) { return pr.x && pr.x.length === D && pr.p != null; }),
-          n: Math.max(0, Math.floor(_num(body.n, 0))), ts: Date.now() });
-        return Response.json({ ok: true, staged: "begin", seeds: seeds }, { headers: cors });
-      }
-      if (stage === "net") {
-        const stg = await getState(env.DB, "dnn_stage", null);
-        if (!stg) return Response.json({ error: "begin 먼저 호출" }, { status: 409, headers: cors });
-        const i = Math.floor(Number(url.searchParams.get("i")));   // 쿼리파라미터는 문자열 → Number 파싱(_num은 number타입만 허용해 항상 default 반환)
-        if (!isFinite(i) || i < 0 || i >= stg.seeds) return Response.json({ error: "시드 인덱스 범위밖 (0.." + (stg.seeds - 1) + ")" }, { status: 400, headers: cors });
-        let nt; try { nt = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
-        const err = _validNet(nt, stg.dims);
-        if (err) return Response.json({ error: "시드 " + i + ": " + err }, { status: 400, headers: cors });
-        const info = await setBigState(env.DB, "dnn_stage:net:" + i, { W: nt.W, b: nt.b, dims: stg.dims });
-        return Response.json({ ok: true, i: i, saved: info }, { headers: cors });
-      }
-      if (stage === "commit") {
-        const stg = await getState(env.DB, "dnn_stage", null);
-        if (!stg) {
-          // [V32.3] ★멱등 커밋★ 스테이징이 없다 = (a) begin 안 함, 또는 (b) 직전 commit이 서버측에선
-          //   성공(모델 저장+스테이징 삭제)했는데 클라이언트가 read timeout으로 재시도한 경우.
-          //   (b)를 409로 처리하면 실제로는 업로드가 됐는데 학습 job이 실패로 뜬다. 현재 featVer의
-          //   dnn_model이 최근(10분 내) 저장돼 있으면 이미 커밋 완료로 보고 성공 응답한다.
-          try {
-            // 21MB 모델 통째 로드 대신 가벼운 메타(ts·featVer)로 판정.
-            const _meta = await getState(env.DB, "dnn_model:meta", null);
-            if (_meta && _meta.ts && typeof _meta.featVer === "number" && _meta.featVer === LUXML.featVer
-                && (Date.now() - _meta.ts) < 600000) {
-              const _tr = await getState(env.DB, "dnn_trust", null);
-              return Response.json({ ok: true, idempotent: true, trust: _tr || null,
-                note: "이미 커밋 완료(멱등) — 직전 업로드가 서버측에서 반영됨" }, { headers: cors });
-            }
-          } catch (e) {}
-          return Response.json({ error: "begin 먼저 호출" }, { status: 409, headers: cors });
-        }
-        // 모든 시드 net 원문 문자열을 이어붙여 최종 dnn_model JSON 문자열을 조립(객체 파싱 없음 → OOM 회피)
-        let netsStr = "";
-        for (let k = 0; k < stg.seeds; k++) {
-          const raw = await getBigStateRaw(env.DB, "dnn_stage:net:" + k);
-          if (raw == null) return Response.json({ error: "시드 " + k + " 누락 — 재업로드 필요" }, { status: 409, headers: cors });
-          netsStr += (k ? "," : "") + raw;
-        }
-        const head = '{"nets":[' + netsStr + '],"mean":' + JSON.stringify(stg.mean) + ',"std":' + JSON.stringify(stg.std) +
-          ',"featVer":' + LUXML.featVer + ',"valAcc":' + stg.valAcc + ',"valAccLB":' + stg.valAccLB + ',"valN":' + stg.valN +
-          ',"valNRaw":' + (_num(stg.valNRaw, 0) || stg.valN) + ',"valUniq":' + (_num(stg.valUniq, 0) || "null") +
-          ',"dims":' + JSON.stringify(stg.dims) + ',"n":' + (stg.n || 0) + ',"trainedAt":' + Date.now() + ',"source":"external"}';
-        netsStr = null;
-        let saveInfo;
-        try { saveInfo = await setBigStateRaw(env.DB, "dnn_model", head, { featVer: LUXML.featVer }); }
-        catch (e) { return Response.json({ error: "저장 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
-        // 스테이징 정리
-        try { await env.DB.prepare("DELETE FROM state WHERE k = 'dnn_stage' OR (k >= 'dnn_stage:net:' AND k < 'dnn_stage:net;')").run(); } catch (e) {}
-        /* ══ [V33.394] ★변환정합 검증 — 이 워커가 정말 그 모델을 돌리는가.★ ══════════════
-           GBDT·단타·SEQ·MEMO 는 업로드 때 이 검사를 하고 못 넘기면 거부한다. DNN 만 없었다.
-           그런데 DNN 은 BatchNorm 접기 + τ* bias 접기 + 소수 5자리 반올림을 거쳐서 온다 —
-           변환이 제일 많은 모델이 검사가 하나도 없었다. 그러면 "검증 47.3%" 가 이 워커가
-           실제로 계산하는 값이라는 보장이 어디에도 없다.
-           ★여기서는 거부가 아니라 억제다★ — 이 경로는 37MB 를 스트리밍으로 이미 저장했고
-           (객체로 파싱하면 OOM 이라 그렇게 설계돼 있다), 되돌리면 학습 회차가 통째로 날아간다.
-           저장은 하되 ★투표는 못 하게★ 하고 사유를 남긴다(정확도 미달과 같은 처리다). */
-        let _probeDiff = null, _probeN = 0, _probeWhy = null;
-        try {
-          const _pb = Array.isArray(stg.probe) ? stg.probe : [];
-          if (_pb.length >= 8) {
-            const _m = await mlDNNLoad(env.DB);
-            if (!_m) _probeWhy = "정합 미확인 — 저장 직후 모델을 다시 못 읽었다";
-            else {
-              let _md = 0;
-              for (const pr of _pb) {
-                const _sp = mlDNNScore(_m, pr.x);
-                if (_sp == null) { _md = Infinity; break; }
-                const _d = Math.abs(_sp - _num(pr.p, 0));
-                if (_d > _md) _md = _d;
-              }
-              _probeDiff = isFinite(_md) ? +_md.toFixed(6) : null;
-              _probeN = _pb.length;
-              if (!isFinite(_md)) _probeWhy = "정합 실패 — 워커 추론이 확률을 못 냈다";
-              else if (_md > _num(DNN.probeTol, 0.02))
-                _probeWhy = "★정합 실패★ 최대 확률차 " + _md.toFixed(4) + " > " + _num(DNN.probeTol, 0.02) +
-                            " — 이 워커가 돌리는 모델이 검증받은 모델과 다르다(접기·반올림 확인 필요)";
-            }
-          } else {
-            _probeWhy = "정합 미확인 — probe 미동봉(구버전 학습기)";
-          }
-        } catch (e) { _probeWhy = "정합 미확인 — 검사 중 예외: " + ((e && e.message) || e); }
-        if (_probeWhy && _probeDiff != null && _probeDiff > _num(DNN.probeTol, 0.02)) {
-          /* 저장은 그대로 두고 ★승격만 막는다.★ 모델을 지우지 않는 이유: 다음 사람이
-             무엇이 어긋났는지 들여다볼 수 있어야 한다. */
-          /* trainedAt·featVer 를 같이 남긴다 — 이 기록도 ★외부 모델 기록★ 이라 화면이 나이와
-             판을 읽는다. 빠지면 "나이 null" 이 되어 성공 경로와 다른 말을 하게 된다
-             (check-eval-cost ⑧ 이 이걸 잡았다). */
-          await setState(env.DB, "dnn_trust", { wDnn: 0, trusted: false, source: "external",
-            featVer: LUXML.featVer, trainedAt: Date.now(),
-            dnnAcc: stg.valAcc, dnnAccLB: stg.valAccLB, probeMaxDiff: _probeDiff, probeN: _probeN,
-            reason: _probeWhy, ts: Date.now() });
-          try { await log(env.DB, "ERROR", null, "[DNN] " + _probeWhy); } catch (e) {}
-          return Response.json({ ok: true, stored: true, trusted: false, probeMaxDiff: _probeDiff,
-            probeN: _probeN, note: _probeWhy }, { headers: cors });
-        }
-        try { if (_probeDiff != null) await log(env.DB, "INFO", null,
-          "[DNN] 변환정합 OK — 최대 확률차 " + _probeDiff + " (probe " + _probeN + "행)"); } catch (e) {}
-        return await _finishImport(saveInfo, stg.valAcc, stg.valAccLB, stg.valN,
-          Object.assign({}, stg, { probeMaxDiff: _probeDiff, probeN: _probeN, probeWhy: _probeWhy }));
-      }
-
-      // ════════ 기존 단발 업로드(소형·수동용) ════════
-      let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
-      // ── 검증: featVer·차원·유한성 ──
-      if (_num(body.featVer, -1) !== LUXML.featVer) return Response.json({ error: "featVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
-      if (!Array.isArray(body.nets) || !body.nets.length) return Response.json({ error: "nets 없음" }, { status: 400, headers: cors });
-      if (!Array.isArray(body.mean) || body.mean.length !== D || !Array.isArray(body.std) || body.std.length !== D)
-        return Response.json({ error: "mean/std 차원 불일치 (" + D + " 필요)" }, { status: 400, headers: cors });
-      const dims = Array.isArray(body.dims) ? body.dims : wantDims;
-      if (dims.length !== wantDims.length || dims.some(function (v, i) { return v !== wantDims[i]; }))
-        return Response.json({ error: "dims 불일치 — 기대 " + wantDims.join("-") }, { status: 400, headers: cors });
-      for (const nt of body.nets) {
-        if (!Array.isArray(nt.W) || nt.W.length !== dims.length - 1 || !Array.isArray(nt.b)) return Response.json({ error: "net 구조 불일치" }, { status: 400, headers: cors });
-        for (let l = 0; l < nt.W.length; l++) {
-          if (!Array.isArray(nt.W[l]) || nt.W[l].length !== dims[l + 1] || !Array.isArray(nt.W[l][0]) || nt.W[l][0].length !== dims[l])
-            return Response.json({ error: "W[" + l + "] 형상 불일치 (" + dims[l + 1] + "×" + dims[l] + " 필요)" }, { status: 400, headers: cors });
-        }
-        // 유한성 스팟체크(출력층 전부 + 첫층 일부)
-        for (const v of nt.W[nt.W.length - 1][0]) if (!isFinite(v)) return Response.json({ error: "비유한 가중치" }, { status: 400, headers: cors });
-      }
-      const dnnAcc = _clamp(_num(body.valAcc, 0), 0, 1);
-      const _vn = _importedValN(body, 30);         // [V33.115] 유효표본수 우선
-      const valN = _vn.n;
-      const dnnLB = (body.valAccLB != null) ? _clamp(_num(body.valAccLB, 0), 0, 1) : _wilsonLB(dnnAcc, valN);
-      const net = { nets: body.nets, mean: body.mean.map(function (v) { return _num(v, 0); }), std: body.std.map(function (v) { return _num(v, 1); }),
-                    featVer: LUXML.featVer, valAcc: +dnnAcc.toFixed(4), valAccLB: +dnnLB.toFixed(4), valN: valN,
-                    valNRaw: _vn.raw, valUniq: _vn.uniq,
-                    dims: dims, n: Math.max(0, Math.floor(_num(body.n, 0))), trainedAt: Date.now(), source: "external" };
-      let saveInfo;
-      try { saveInfo = await setBigState(env.DB, "dnn_model", net); } catch (e) { return Response.json({ error: "저장 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
-      __dnnMemCache = null;
-      // ── 신뢰게이트: mind 대비 Wilson 하한 비교(야간학습과 동일 로직) ──
-      let mindLB = 0.5, _uMindBase = null;   // [V33.397] 위원장의 무실력 영점
-      try { const mm = await mlMindLoad(env.DB); if (mm) { mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); _uMindBase = _num(mm.valAccBase, null); } } catch (e) {}
-      let trust = { wDnn: 0, trusted: false, dnnAcc: net.valAcc, dnnAccLB: net.valAccLB, mindAcc: mindLB, source: "external",
-                    featVer: LUXML.featVer,   // [V33.245] 동상
-                    trainedAt: Date.now(),
-                    valN: net.valN, valNRaw: net.valNRaw, valUniq: net.valUniq };
-      // [V33.262] 위 분할커밋 경로와 ★같은 판정 함수★ 를 쓴다. 규칙을 두 곳에 적으면 갈라진다.
-      {
-        const _ad = _dnnAdmit(dnnLB, _num(body.valICt, null), mindLB, _num(body.accBase, null), _uMindBase);   // [V33.397] 영점
-        trust.wDnn = _ad.wDnn; trust.trusted = _ad.trusted;
-        trust.admitPath = _ad.path; trust.admitWhy = _ad.why;
-        trust.valICt = _num(body.valICt, null); trust.valICBlock = _num(body.valICBlock, null);
-      }
-      await setState(env.DB, "dnn_trust", trust);
-      try { await log(env.DB, "INFO", null, "[DNN] 외부업로드 저장 " + (saveInfo.bytes / 1048576).toFixed(1) + "MB/" + saveInfo.chunks + "청크 valAcc=" + (dnnAcc * 100).toFixed(1) + "% wDnn=" + trust.wDnn); } catch (e) {}
-      return Response.json({ ok: true, saved: saveInfo, trust: trust, activated: trust.trusted,
-        note: trust.trusted ? "3M 딥넷이 위원회에서 가동됩니다(wDnn=" + trust.wDnn + ")" : "저장됐으나 검증성능이 trustFloor 미달 → 자동 억제(wDnn=0). 표본/에폭 늘려 재학습 권장." }, { headers: cors });
-    }
+        /* [V33.422] POST /api/dnn-import 삭제 — DNN 퇴역. 외부 학습기도 이 경로를 안 쓴다. */
     // [V32.7] POST /api/gbdt-import — 외부(Modal)에서 학습한 GBDT 트리 앙상블 업로드.
     //   body: { trees:[{f,t,l,r}|{w}], eta, bias, valAcc, valAccLB, valN, n, featVer }
     //   ★안전(섀도우 모드)★ 기본은 gbdt_model_ext/gbdt_trust_ext에만 저장하고 라이브 위원회
@@ -26853,171 +26664,9 @@ async function handleRequest(request, env, ctx) {
        게이트가 보는 것과 같은 자★ 로 뽑힌 승자다(유효표본 Wilson 하한).
        기본값(사용자 지시로 정해진 10층)을 지우지 않는다 — 이 레코드가 없거나 판이
        다르면 그대로 기본값으로 돌아간다. 근거가 있을 때만 근거를 쓴다. */
-    if (path === "/api/dnn-arch" && request.method === "POST") {
-      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
-      let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
-      if (_num(body.featVer, -1) !== LUXML.featVer)
-        return Response.json({ error: "featVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
-      const h = Array.isArray(body.hidden) ? body.hidden.map(function (v) { return Math.floor(_num(v, 0)); }) : null;
-      if (!h || !h.length || h.length > 24 || h.some(function (v) { return !(v >= 1 && v <= 4096); }))
-        return Response.json({ error: "hidden 이 형식에 안 맞는다(1~24층, 층당 1~4096)" }, { status: 400, headers: cors });
-      const _lb = _num(body.lb, null);
-      if (_lb == null || !(_lb >= 0 && _lb <= 1))
-        return Response.json({ error: "lb(유효표본 Wilson 하한) 필요" }, { status: 400, headers: cors });
-      /* ★이겼다고 주장하는 것과 이긴 것은 다르다.★ 순위표를 함께 받아서, 승자가 정말
-         그 표에서 하한 최상위인지 서버가 다시 확인한다. 트레이너를 믿되 검산한다. */
-      const rk = Array.isArray(body.ranking) ? body.ranking.slice(0, 12) : [];
-      if (rk.length) {
-        let top = -1; for (const r of rk) { const v = _num(r && r.lb, -1); if (v > top) top = v; }
-        if (top > _lb + 1e-9)
-          return Response.json({ error: "승자 하한(" + _lb.toFixed(4) + ")이 순위표 최상위(" + top.toFixed(4) + ")보다 낮다" },
-            { status: 400, headers: cors });
-      }
-      /* ══ [V33.386] ★규제 축 승자를 받는다 — 이게 없어서 규제 측정이 매번 버려졌다.★ ══
-         V33.260 은 깊이 축만 저장하게 만들었다. 스윕은 규제도 같이 재는데 그 결과는
-         그 실행 안에서 쓰이고 사라졌다 — "잰 값을 쓴다" 던 주석이 절반만 참이었다.
-         ★범위 밖이면 통째로 버린다★(부분 채택은 재 본 적 없는 조합을 만든다). */
-      let _reg = null;
-      const _rb = body && body.reg;
-      if (_rb && typeof _rb === "object") {
-        const _do = _num(_rb.dropout, null), _l2 = _num(_rb.l2, null),
-              _mx = _num(_rb.mixupP, null), _nz = _num(_rb.inputNoise, null);
-        /* [V33.386] dropTail = 드롭아웃을 ★마지막 몇 개 은닉층에만★ 걸지(0 = 전 층, 종전 동작).
-           옛 트레이너는 이 칸을 안 보낸다 — 없으면 0 으로 읽어 종전과 같게 둔다. */
-        const _dt = _num(_rb.dropTail, 0);
-        /* [V33.392] winDays = ★학습에 쓸 표본 창★(0 = 전체, 종전 동작). 시장은 정상이
-           아니고 학습 7.4년 대 검증 240일이다 — 창을 재서 정하는 축이 하나 늘었다.
-           옛 트레이너는 이 칸을 안 보낸다 → 0 으로 읽어 종전과 같게 둔다. */
-        const _wd = _num(_rb.winDays, 0);
-        if (_do != null && _l2 != null && _mx != null && _nz != null &&
-            _do >= 0 && _do <= 0.9 && _l2 >= 0 && _l2 <= 0.5 &&
-            _mx >= 0 && _mx <= 1 && _nz >= 0 && _nz <= 1 &&
-            _dt >= 0 && _dt <= 24 && Number.isInteger(_dt) &&
-            _wd >= 0 && _wd <= 4000 && Number.isInteger(_wd))
-          _reg = { dropout: +_do.toFixed(4), l2: _l2, mixupP: +_mx.toFixed(4),
-                   inputNoise: +_nz.toFixed(4), dropTail: _dt, winDays: _wd };
-        else
-          return Response.json({ error: "reg 값이 범위를 벗어났다(dropout 0~0.9, l2 0~0.5, mixupP/inputNoise 0~1, dropTail 정수 0~24, winDays 정수 0~4000)" },
-            { status: 400, headers: cors });
-      }
-      const rec = { hidden: h, reg: _reg, lb: +_lb.toFixed(4), acc: _num(body.acc, null), auc: _num(body.auc, null),
-                    n: Math.max(0, Math.floor(_num(body.n, 0))), featVer: LUXML.featVer,
-                    ranking: rk.map(function (r) { return { tag: String((r && r.tag) || "?").slice(0, 24),
-                      lb: _num(r && r.lb, null), acc: _num(r && r.acc, null) }; }),
-                    ts: Date.now() };
-      await setState(env.DB, DNNARCH.stateKey, rec);
-      try { await log(env.DB, "INFO", null, "[DNN-ARCH] 구성 확정 " + h.join("-") +
-        (_reg ? " · 규제 do=" + _reg.dropout + "@" + (_reg.dropTail ? "꼬리" + _reg.dropTail : "전층") +
-                " l2=" + _reg.l2 + " mix=" + _reg.mixupP + " noise=" + _reg.inputNoise +
-                " 창=" + (_reg.winDays ? _reg.winDays + "일" : "전체")
-              : " · 규제 미측정(사다리 유지)") +
-        " 하한 " + (rec.lb * 100).toFixed(2) + "% (표본 " + rec.n + ", 후보 " + rec.ranking.length + "종) — 다음 학습부터 이 구성으로 돈다"); } catch (e) {}
-      return Response.json({ ok: true, arch: rec }, { headers: cors });
-    }
+        /* [V33.422] POST /api/dnn-arch 삭제 — DNN 퇴역. */
 
-    if (path === "/api/stack-oof-window" && request.method === "POST") {
-      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
-      let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
-      if (_num(body.featVer, -1) !== LUXML.featVer)
-        return Response.json({ error: "featVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
-      const _mt = Math.floor(_num(body.minTs, 0));
-      if (!(_mt > 0) || !isFinite(_mt))
-        return Response.json({ error: "minTs 필요(홀드아웃 첫 표본의 관측 시각)" }, { status: 400, headers: cors });
-      if (_mt > Date.now() + 86400000)
-        return Response.json({ error: "minTs 가 미래다" }, { status: 400, headers: cors });
-      const _prev = await getState(env.DB, "stack_oof_window", null);
-      const _pv = _num(_prev && _prev.minTs, 0);
-      /* ══ [V33.279] ★이 규칙은 틀려 있었다 — 매 실행 409 로 거부되고 있었다★ ══════════
-         운영 실측(2026-08-30, 매 Modal 실행마다 반복):
-           STACK 경계 통지 실패 409: kept 2026-05-24 · rejected 2026-01-29
-
-         종전 규칙은 minTs 를 "여기까지 썼다" 는 ★누적 워터마크★ 로 봤다. 그런데 이 값은
-         그런 것이 아니다 — 학습기가 보내는 뜻은 "★지금 이 모델들이★ ts ≥ minTs 구간을
-         학습한 적 없다" 이고, 그래서 payload 에 models 가 같이 온다.
-         전문가는 Modal 실행마다 ★전부 다시 학습★ 된다. 표본 풀이 50만 → 56만으로 커지면
-         마지막 20% 홀드아웃은 시간상 ★더 과거로 뻗는다★ — minTs 가 앞당겨지는 게 정상이다.
-         세대가 다른 두 주장을 시각만으로 비교해 뒤로 못 간다고 막으면, STACK 은 넉 달치
-         멀쩡한 구간을 영영 못 쓴다(지금 그 상태다 — 전진표본 0/400 의 한 원인이다).
-
-         고치되 ★누출 방어는 유지한다★: 되감기는 "이 창을 기록한 뒤 전문가가 실제로 다시
-         학습됐을 때" 만 받는다. 그때만 옛 창이 낡은 세대의 것이 되기 때문이다.
-         판정은 ★가장 오래된★ 전문가를 기준으로 한다(하나라도 안 바뀌었으면 그 모델에겐
-         그 구간이 여전히 in-sample 이다) — 관대한 max 가 아니라 보수적인 min 이다. */
-      /* ══ [V33.377] ★이 되감기는 ★구조적으로★ 성공할 수 없었다 — 실측으로 확인했다.★ ══
-         run 35149059451 (2026-09-16 21:40:45):
-           ⑪ STACK 경계 통지 실패 409: {"kept":…,"rejected":…,"oldestExpertAt":0,…}
-
-         `oldestExpertAt: 0` 이 답이다. 둘이 겹쳐 있었다:
-
-         ① ★섀도우로 올라간 부스터는 `<name>_trust` 에 저장되지 않는다.★ `<name>_trust_ext`
-            에 간다(V33.xxx 섀도우 경로). 그런데 이 표는 `boost: "lgb_trust"` 만 봤다.
-            부스터 3종은 몇 달째 섀도우라 `lgb_trust` 레코드가 ★아예 없다.★
-            없는 레코드는 `_num(undefined, 0)` → 0 → `_oldest = 0` → 언제나 거절.
-            ★그런데 섀도우 모델도 ★다시 학습된 것★ 이다.★ 누출 방어가 묻는 것은
-            "승격됐는가" 가 아니라 "그 창을 기록한 뒤 다시 적합됐는가" 다. 승격 여부로
-            그 질문에 답하면, 승격 안 된 모델은 영원히 옛 세대로 남는다 — 지금 그 상태다.
-         ② 기록이 ★없는★ 것과 기록이 ★오래된★ 것을 같은 0 으로 뭉갰다. 앞은 "모른다",
-            뒤는 "안 바뀌었다" 인데 응답은 둘 다 `oldestExpertAt: 0` 으로 말해서,
-            밖에서는 어느 모델이 문제인지 알 길이 없었다(그래서 몇 달을 못 봤다).
-
-         결과: STACK 은 홀드아웃 구간을 out-of-fold 로 채점할 길이 막혀 전진표본이
-         안 쌓였고, 화면에는 "합류 보류 — 홀드아웃 t -0.07" 로만 보였다.
-
-         ★방어는 그대로 둔다.★ 여전히 ★전원★ 이 창 기록 이후 재학습돼야 하고, 판정은
-         가장 오래된 쪽(min)이다. 고치는 것은 ★어디를 보는가★ 와 ★모를 때 뭐라고 말하는가★ 다. */
-      let _rewindOK = false, _oldest = 0, _blockedBy = null;
-      if (_pv > 0 && _mt < _pv) {
-        /* 모델 하나가 여러 자리에 앉을 수 있다(승격=_trust, 섀도우=_trust_ext).
-           ★둘 중 더 최근★ 이 그 모델의 마지막 적합 시각이다. */
-        const _KEY = {
-          dnn:   ["dnn_trust"],
-          gbdt:  ["gbdt_model", "gbdt_trust", "gbdt_trust_ext"],
-          mind:  ["mind_model", "mind_tree_ext"],
-          boost: ["xgb_trust", "xgb_trust_ext", "lgb_trust", "lgb_trust_ext", "cat_trust", "cat_trust_ext"],
-          xgb:   ["xgb_trust", "xgb_trust_ext"],
-          lgb:   ["lgb_trust", "lgb_trust_ext"],
-          cat:   ["cat_trust", "cat_trust_ext"]
-        };
-        const _names = Array.isArray(body.models) ? body.models.map(String) : [];
-        let _ok = _names.length > 0;
-        const _all = [];
-        for (const nm of _names) { const ks = _KEY[nm]; if (!ks) { _ok = false; break; } for (const k of ks) if (_all.indexOf(k) === -1) _all.push(k); }
-        if (_ok) {
-          const _S = await getStates(env.DB, _all);
-          _oldest = Infinity;
-          for (const nm of _names) {
-            /* 그 모델이 앉을 수 있는 자리 중 ★가장 최근★ 적합 시각. 자리가 하나도 없으면
-               '모른다' 이고, 모르면 되감지 않는다(보수적). 누가 막았는지는 말한다. */
-            let _newest = 0;
-            for (const k of _KEY[nm]) { const t = _num(_S[k] && _S[k].trainedAt, 0); if (t > _newest) _newest = t; }
-            if (_newest <= 0) { _oldest = 0; _blockedBy = nm + "(기록 없음)"; break; }
-            if (_newest < _oldest) { _oldest = _newest; _blockedBy = nm; }
-          }
-          _rewindOK = isFinite(_oldest) && _oldest > 0 && _oldest > _num(_prev && _prev.ts, 0);
-        }
-        if (!_rewindOK) {
-          return Response.json({ ok: false, kept: _pv, rejected: _mt,
-            oldestExpertAt: (isFinite(_oldest) && _oldest > 0) ? _oldest : null,
-            blockedBy: _blockedBy, models: _names, prevAt: _num(_prev && _prev.ts, 0),
-            error: "경계를 뒤로 되돌리려면 그 창을 기록한 뒤 전문가가 전부 다시 학습돼 있어야 한다 — " +
-                   "아직 옛 세대 모델이 남아 있어 그 구간은 in-sample 이다(누출 방어)" +
-                   (_blockedBy ? " · 막은 모델: " + _blockedBy : "") },
-            { status: 409, headers: cors });
-        }
-      }
-      const _rec = { minTs: _mt, n: Math.max(0, Math.floor(_num(body.n, 0))),
-                     models: Array.isArray(body.models) ? body.models.slice(0, 12).map(String) : [],
-                     featVer: LUXML.featVer, ts: Date.now() };
-      await setState(env.DB, "stack_oof_window", _rec);
-      try { await log(env.DB, "INFO", null, "[STACK-OOF] 홀드아웃 경계 " +
-              new Date(_mt).toISOString().slice(0, 10) + " (표본 " + _rec.n + "건, 모델 " +
-              (_rec.models.join("/") || "미기재") + ")" +
-              (_rewindOK ? " ★세대 교체로 경계를 " + new Date(_pv).toISOString().slice(0, 10) +
-                           " → " + new Date(_mt).toISOString().slice(0, 10) + " 로 앞당김" +
-                           "(전문가 전원이 이 창 기록 이후 재학습됨)★" : "") +
-              " — 이 구간은 누출없이 채점할 수 있다"); } catch (e) {}
-      return Response.json({ ok: true, window: _rec, rewound: _rewindOK }, { headers: cors });
-    }
+        /* [V33.422] POST /api/stack-oof-window 삭제 — STACK 퇴역(홀드아웃 경계를 받을 위원이 없다). */
     /* ══ [V33.249] POST /api/mind-import — 위원장 슬롯에 ★트리 앙상블★ 을 올린다 ══
        FM 은 GPU 완전수렴에서도 47.9% 였다(시드 6 · 검증 51,800행 · 유효 3,555).
        같은 표본 같은 날 트리는 53.5~54.2%(IC t 2.5~4.7). 자리는 두고 내용물을 바꾼다.
@@ -27224,50 +26873,7 @@ async function handleRequest(request, env, ctx) {
        바로 그 행으로 학습돼 in-sample 누출이 된다(V33.104 주석). 별도 epoch 장치로 묶여 있다.
 
        실수 방지: TRAIN_KEY 인증 + confirm=1 을 모두 요구한다(둘 중 하나만으론 아무 일도 안 한다). */
-    if (path === "/api/ai/resample" && request.method === "POST") {
-      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
-      if (url.searchParams.get("confirm") !== "1")
-        return Response.json({ error: "confirm=1 이 필요하다 — 표본을 삭제하는 되돌릴 수 없는 작업이다" },
-          { status: 400, headers: cors });
-      const _tg = String(url.searchParams.get("target") || "both").toLowerCase();
-      const _want = { xalpha: _tg === "xalpha" || _tg === "both", flow: _tg === "flow" || _tg === "both" };
-      if (!_want.xalpha && !_want.flow)
-        return Response.json({ error: "target 은 xalpha|flow|both 중 하나" }, { status: 400, headers: cors });
-      const _cnt = async function (tbl, fv) {
-        try { const r = await env.DB.prepare("SELECT COUNT(*) c FROM " + tbl + " WHERE featver=?").bind(fv).first(); return _num(r && r.c, 0); }
-        catch (e) { return -1; }
-      };
-      const out = { ok: true, target: _tg, before: {}, after: {} };
-      try {
-        if (_want.xalpha) {
-          out.before.xalpha = await _cnt("xalpha_samples", XALPHA.featVer);
-          await env.DB.prepare("DELETE FROM xalpha_samples WHERE featver=?").bind(XALPHA.featVer).run();
-          out.after.xalpha = await _cnt("xalpha_samples", XALPHA.featVer);
-        }
-        if (_want.flow) {
-          out.before.flow = await _cnt("flow_samples", FLOWML.featVer);
-          await env.DB.prepare("DELETE FROM flow_samples WHERE featver=?").bind(FLOWML.featVer).run();
-          out.after.flow = await _cnt("flow_samples", FLOWML.featVer);
-        }
-        // 커서 되감기 — ★대상 모델만★ 0 으로. 다른 모델의 커서를 건드리면 그쪽이 중복 생성된다
-        //   (백필 루프가 모델별 커서로 각자 걸러낸다 — altSampleBackfill 의 xDone/fDone 참조).
-        const _c0 = (await getState(env.DB, "alt_bf_cursor", null)) || {};
-        const _c1 = {
-          lastId: 0, made: _num(_c0.made, 0),
-          fDone: _want.flow ? 0 : _num(_c0.fDone, 0), fvF: FLOWML.featVer,
-          xDone: _want.xalpha ? 0 : _num(_c0.xDone, 0), fvX: XALPHA.featVer,
-          ts: Date.now()
-        };
-        await setState(env.DB, "alt_bf_cursor", _c1);
-        out.cursor = _c1;
-        out.note = "다음 장외 백필 회차(10분 주기)부터 처음부터 다시 만든다. 진행은 [ALT-BF] 로그로 확인.";
-        try { await log(env.DB, "WARN", null, "[RESAMPLE] " + _tg + " 표본 삭제 후 커서 되감기 — " +
-          JSON.stringify(out.before) + " → 0 (관측기간 확보를 위한 재소급)"); } catch (e) {}
-      } catch (e) {
-        return Response.json({ ok: false, error: e && e.message, partial: out }, { status: 500, headers: cors });
-      }
-      return Response.json(out, { headers: cors });
-    }
+        /* [V33.422] POST /api/ai/resample 삭제 — FLOW·XALPHA 퇴역(되살릴 표본이 없다). */
     /* ══ [V33.184] POST /api/ai/resample-run — 소급생성을 손으로 몰아붙인다 ══
        V33.183 으로 표본을 비우고 커서를 되감았는데, 다시 채우는 경로가 ★10분 크론 하나뿐★ 이다
        (장외에만, 회당 1200행). 185,394행을 그 속도로 훑으면 장외시간 기준 2~3일이 걸린다.
@@ -27281,43 +26887,7 @@ async function handleRequest(request, env, ctx) {
        ★중복 방지★ — 크론이 동시에 돌면 같은 커서를 읽어 같은 행을 두 번 넣는다. 그래서 매 호출마다
        alt_bf_lock 을 지금으로 갱신한다. 크론은 그 값이 10분보다 새것이면 건너뛴다(아래 크론 참조).
        즉 CI 루프가 도는 동안 크론은 자동으로 비켜선다. */
-    if (path === "/api/ai/resample-run" && request.method === "POST") {
-      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
-      if (url.searchParams.get("confirm") !== "1")
-        return Response.json({ error: "confirm=1 이 필요하다" }, { status: 400, headers: cors });
-      try {
-        // 크론이 끼어들지 못하게 먼저 잠근다 — 잠그고 나서 돈다(순서가 뒤바뀌면 겹칠 수 있다).
-        await setState(env.DB, "alt_bf_lock", Date.now());
-        const _t0 = Date.now();
-        /* [V33.186] 수동 스윕은 회차당 날짜 수를 크게 잡는다(크론은 거래 사이클과 예산을 나눠
-           쓰므로 6 이 맞지만, 여기는 그 제약이 없다). 과거 구간은 날짜당 행이 몇 개뿐이라
-           날짜를 못 늘리면 커서가 회차당 +6 씩만 올라 과거 표본이 거의 안 쌓인다(실측). */
-        const _bd = Math.max(1, Math.min(60, _num(url.searchParams.get("dates"), 30)));
-        /* [V33.187] loopMs — ★날짜 루프에만★ 주는 예산이다. deadlineMs(절대시각) 로 주던 종전에는
-           우주 스캔 등 준비 단계가 20초를 다 먹으면 루프가 한 날짜도 못 돌고 빠져나와 커서가
-           멈췄다(실측: 669953 에서 10여 회차 정지). 준비 시간과 무관하게 일할 시간을 준다. */
-        const msg = await altSampleBackfill(env.DB, { batchDates: _bd, loopMs: 20000 });
-        /* [V33.185] ★진행을 밖에서 볼 수 없었다.★ 크론 경로는 결과를 로그에 남기는데
-           이 수동 경로는 안 남겨서, 스윕이 32분 도는 동안 ALT-BF 로그가 06:26 에 멈춰 있었다.
-           그 침묵이 "스윕이 죽었나" 로 읽힌다 — 실제로는 잘 돌고 있었는데도.
-           크론과 ★같은 접두사★ 로 남긴다. 그래야 기존 필터(ALT-BF) 하나로 둘 다 보인다. */
-        try { if (msg) await log(env.DB, "INFO", null, String(msg)); } catch (e0) {}
-        const cur = await getState(env.DB, "alt_bf_cursor", null);
-        const _n = async function (tbl, fv) {
-          try { const r = await env.DB.prepare("SELECT COUNT(*) c FROM " + tbl + " WHERE featver=?").bind(fv).first(); return _num(r && r.c, 0); }
-          catch (e) { return -1; }
-        };
-        return Response.json({
-          ok: true, ms: Date.now() - _t0, result: msg,
-          cursor: cur ? { lastId: _num(cur.lastId, 0), xDone: _num(cur.xDone, 0), fDone: _num(cur.fDone, 0), made: _num(cur.made, 0) } : null,
-          samples: { xalpha: await _n("xalpha_samples", XALPHA.featVer), flow: await _n("flow_samples", FLOWML.featVer) },
-          // CI 루프가 이 값으로 멈춘다 — 문자열을 뒤지게 하지 않는다.
-          done: /남은 표본 없음/.test(String(msg || ""))
-        }, { headers: cors });
-      } catch (e) {
-        return Response.json({ ok: false, error: e && e.message }, { status: 500, headers: cors });
-      }
-    }
+        /* [V33.422] POST /api/ai/resample-run 삭제 — 같은 이유. */
     // POST /api/ai/train-now?target=mind|gbdt|brain|dnn|l1|calibrate — 하루1회 게이트를 기다리지 않고
     //   특정 학습기 하나만 지금 즉시 재학습. [V12.37] MIND 회귀가드 발동 직후 정상 모델로 즉시 복구할 때,
     //   또는 trainWindow 등 설정 변경 검증 시 전체 야간파이프라인(수확+7단)을 다시 돌릴 필요 없이 사용.
@@ -27345,8 +26915,7 @@ async function handleRequest(request, env, ctx) {
         ["omnibars", function (DB) { try { resetFetchBudget(200); } catch (e) {} return omniBarsCollect(DB, { perRun: 40 }); }],
 
         // [V33.104] 전문가 재학습 앞 — 누출없는 STACK 표본 생성 후 기준선 갱신(크론과 동일 순서).
-        ["stackbf", function (DB) { return stackSampleBackfill(DB, {}); }],
-        ["stackepoch", function (DB) { return stackExpertEpochStamp(DB); }],
+        ["expepoch", function (DB) { return expertEpochStamp(DB); }],   // [V33.422] 누출 방지 기준선
         // [V33.115] 표본 풀의 평균 고유도 — 수확 직후·전 학습기 앞. 아래 학습기들이 이 값으로
         //   유효표본수를 구해 Wilson 하한을 잰다(명목 n 을 쓰면 겹친 라벨을 독립으로 세게 된다).
         /* [V33.360] 판이 지난 모델 기록 은퇴 — 학습기들 ★앞★ 에 둔다.
@@ -27364,9 +26933,7 @@ async function handleRequest(request, env, ctx) {
         ["brain", function (DB) { return mlBrainTrainNightly(DB); }],
         ["mind", function (DB) { return mlMindTrainNightly(DB); }],
         ["gbdt", function (DB) { return mlGBDTTrainNightly(DB); }],
-        ["dnn", function (DB) { return mlDNNTrainNightly(DB); }],
-        ["flow", function (DB) { return flowTrainNightly(DB); }],
-        ["xalpha", function (DB) { return xalphaTrainNightly(DB); }],
+        /* [V33.422] dnn·flow·xalpha 퇴역(RETIRED) — 단계 목록에서 뺐다. */
         ["memo", function (DB) { return memoTrainNightly(DB); }],
         ["expreg", function (DB) { return expertRegimeFitNightly(DB); }],
         ["techk", function (DB) { return techPriorFitNightly(DB); }],
@@ -27380,7 +26947,7 @@ async function handleRequest(request, env, ctx) {
         ["confk", function (DB) { return scalpConfluenceFitNightly(DB); }],
         ["shockk", function (DB) { return shockPriorFitNightly(DB); }],
         ["mindshadow", function (DB) { return mindShadowPromoteNightly(DB); }],
-        ["stack", function (DB) { return stackTrainNightly(DB); }],
+        /* [V33.422] stack 퇴역(RETIRED). */
         ["dual", function (DB) { return dualHeadTrainNightly(DB); }],
         ["portstats", function (DB) { return portfolioStatsNightly(DB); }],
         ["ledgeraudit", async function (DB) { const r = await ledgerCheckIntegrity(DB, {}); return r.ok ? "[감사] 전수 " + r.checked + "종목 이상 없음" : "[감사] " + r.checked + "종목 중 " + r.issues.length + "건 불일치"; }],
@@ -27407,7 +26974,7 @@ async function handleRequest(request, env, ctx) {
            지워지지 않은 채 남아 있다는 것은 ★그 단계에서 죽었다★ 는 뜻이다. */
         /* 표본 전체(수만 행)를 읽어 파싱하는 단계들 — 이들이 한 요청에 겹치면 메모리가 넘친다.
            ★목록은 '무엇을 읽는가' 로 정한다★: LUXML.trainWindow 만큼 ml_samples 를 훑는 학습기들. */
-        const _HEAVY = ["l1", "brain", "mind", "gbdt", "dnn", "bandit", "memo", "dual", "stackbf", "expreg", "techk", "calibrate"];
+        const _HEAVY = ["l1", "brain", "mind", "gbdt", "bandit", "memo", "dual", "expreg", "techk", "calibrate"];
         let _ranHeavy = false;
         let _crashPrev = null;
         try { _crashPrev = await getState(env.DB, "alltrain_cur", null); } catch (e0) {}
@@ -27845,8 +27412,6 @@ async function handleRequest(request, env, ctx) {
         const l1 = await mlLoadModel(env.DB);
         if (mind || (l1 && l1.mode !== "observe")) {
           const ens = mind ? await mlBrainLoad(env.DB) : null;
-          const dnnT = await getState(env.DB, "dnn_trust", null);
-          const dnn = (dnnT && dnnT.trusted) ? await mlDNNLoad(env.DB) : null;
           const gT = await getState(env.DB, "gbdt_trust", null);
           const g = (gT && gT.trusted) ? await mlGBDTLoad(env.DB) : null;
           const cal = await getState(env.DB, "committee_cal", null);
@@ -27872,7 +27437,7 @@ async function handleRequest(request, env, ctx) {
               });
               let p = null;
               if (mind) {
-                const md = await mlDeepDecide(env.DB, feat, { mind: mind, guard: guard, ens: ens, trust: dnnT, dnn: dnn, gbdtTrust: gT, gbdt: g, cal: cal, evstats: evs });
+                const md = await mlDeepDecide(env.DB, feat, { mind: mind, guard: guard, ens: ens, gbdtTrust: gT, gbdt: g, cal: cal, evstats: evs });
                 if (md && typeof md.p === "number") p = md.p;
               } else { p = mlScore(l1, feat); }
               if (p == null) continue;
@@ -27934,7 +27499,7 @@ async function handleRequest(request, env, ctx) {
         "signal_stats", "budget_split_applied", "llm_daily:us", "llm_daily:kr",
         "mkt_context", "sector_news_sentiment",
         // [V33.172] 외부(Modal) 학습이 ★커밋을 통과해 실제로 들어왔는지★ — 상단 상태칩용.
-        EXTIMP_KEY, "modal_retrain_auto", "mind_model", "dnn_trust", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"
+        EXTIMP_KEY, "modal_retrain_auto", "mind_model", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"
       ]);
       const sectorGroupStats = __S["sector_group_stats"] || {};
       const sectorGroups = { stats: sectorGroupStats, weights: (cfg.sectorGroups && cfg.sectorGroups.weights) || {} };
@@ -31477,25 +31042,7 @@ async function flowBuildFeat(DB, symbol, market, dailyCache, opts) {
   } catch (e) { return null; }
 }
 
-// 표본 적재 — 청산 시 mlLogSample 과 같은 자리에서 호출한다(같은 결과, 다른 피처).
-// [V33.173] ★ts 는 "이 표본이 관측된 시각"이어야 한다 — 적재 시각이 아니다.★
-//   퍼징(V33.141)은 "이 학습표본의 라벨 구간(10일)이 검증 경계를 넘느냐"를 ts 로 판단한다.
-//   그런데 소급생성(altSampleBackfill)은 과거 거래에서 피처를 만들면서 ts 에 Date.now() 를
-//   찍었다 — 몇 달 전 시장을 본 표본 19,436건이 전부 '오늘' 로 기록됐다.
-//   결과: 표본이 시간상 한 점에 뭉쳐 ★전부가 검증 경계를 넘는다★ → 퍼징이 학습셋을 통째로
-//   지운다. 운영 스냅샷이 그대로 말한다 — XALPHA 1,921건 → 학습표본 0/800,
-//   FLOW 7,788건 → 298/800. "표본은 다 모였는데 학습이 안 된다"의 정체다.
-//   (V33.141 주석은 이 증상을 '백필이 하루에 수백 종목을 넣어서' 라고 적었지만, 진짜 원인은
-//    백필이 원본 행의 ts 를 손에 쥐고도 버린 것이었다 — 날짜별로 묶는 데는 쓰면서.)
-async function flowLogSample(DB, market, symbol, featVec, pnlPct, tsMs) {
-  try {
-    if (!FLOWML.enabled || !Array.isArray(featVec) || featVec.length !== FLOWML.featNames.length) return;
-    await DB.prepare("CREATE TABLE IF NOT EXISTS flow_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, feat TEXT, label INTEGER, pnl_pct REAL, featver INTEGER)").run();
-    await DB.prepare("INSERT INTO flow_samples (ts, market, symbol, feat, label, pnl_pct, featver) VALUES (?,?,?,?,?,?,?)")
-      .bind(_num(tsMs, 0) > 0 ? _num(tsMs, 0) : Date.now(), market, symbol, JSON.stringify(featVec), _num(pnlPct, 0) > 0 ? 1 : 0, _num(pnlPct, 0), FLOWML.featVer).run();
-  } catch (e) {}
-}
-
+/* [V33.422] flowLogSample 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
 // 야간 자체학습 — 로지스틱 회귀(L2). 12차원이라 워커 CPU 예산 안에서 충분히 수렴한다.
 //   IC 를 함께 재서 위원회 가중에 바로 쓴다(V33.77 기준과 동일).
 // [V33.79] FLOW·XALPHA 공용 야간학습기 — 두 모델이 같은 구조라 구현을 하나로 둔다.
@@ -32503,17 +32050,7 @@ async function _miniLogisticTrain(DB, opts) {
   } catch (e) {}
   return _msg;
 }
-
-async function flowTrainNightly(DB) {
-  if (!FLOWML.enabled) return null;
-  return await _miniLogisticTrain(DB, {
-    table: "flow_samples", stateKey: "flow_model", tag: "FLOW",
-    featVer: FLOWML.featVer, D: FLOWML.featNames.length, featNames: FLOWML.featNames,
-    minN: FLOWML.minTrainSamples, window: FLOWML.trainWindow,
-    l2: FLOWML.l2, icFloor: FLOWML.icFloor
-  });
-}
-
+/* [V33.422] flowTrainNightly 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
 function flowScore(model, featVec) {
   try {
     if (!model || !Array.isArray(model.w) || !Array.isArray(featVec)) return null;
@@ -32678,276 +32215,8 @@ function _altBarIdx(len, ts, nowTs, days) {
   }
   return len - 1 - back;
 }
-function _sliceTo(arr, idx) { return Array.isArray(arr) ? arr.slice(0, idx + 1) : null; }
-
-async function altSampleBackfill(DB, opts) {
-  const cfg = opts || {};
-  try {
-    if (!XALPHA.enabled && !FLOWML.enabled) return "[ALT-BF] 비활성";
-    // 진행 커서 — 오래된 표본부터 처리하고 이어서 돈다.
-    // [V33.104] ★모델별 커서로 분리★ 종전엔 커서가 하나였다. 한쪽 피처 버전이 바뀌어
-    //   되감으면 다른 쪽은 이미 처리한 행을 다시 적재해 ★같은 표본이 두 벌★ 이 된다
-    //   (중복표본은 유효표본 수를 부풀리고 검증 분할을 오염시킨다).
-    //   → FLOW·XALPHA 각각 '어디까지 처리했나' 를 따로 들고, 자기 버전이 바뀔 때만 되감는다.
-    const _st0 = (await getState(DB, "alt_bf_cursor", null)) || {};
-    const _fDone0 = (_st0.fvF === FLOWML.featVer) ? _num(_st0.fDone, 0) : 0;
-    const _xDone0 = (_st0.fvX === XALPHA.featVer) ? _num(_st0.xDone, 0) : 0;
-    // 구버전 상태(lastId 단일 커서)에서 올라온 경우 — 그 값을 양쪽 시작점으로 승계한다.
-    const _legacy = (_st0.fvF === undefined && _st0.fvX === undefined) ? _num(_st0.lastId, 0) : 0;
-    const fDone = _fDone0 || (FLOWML.featVer === 1 ? _legacy : 0);
-    const xDone = _xDone0 || (_legacy || 0);
-    const st = { lastId: Math.min(FLOWML.enabled ? fDone : Infinity, XALPHA.enabled ? xDone : Infinity),
-                 made: _num(_st0.made, 0) };
-    if (!isFinite(st.lastId)) st.lastId = 0;
-    /* ══ [V33.406] ★신규 위원은 전진검증을 구조적으로 못 모으고 있었다.★ ══════════════
-       화면 실측(2026-09-22 08:09):
-         FLOW   합류 보류 · 홀드아웃 t −0.59 · 전진 표본 ★0/400★ · 고른 행 ★0★ < 배치하한 30
-         XALPHA 합류 보류 · 홀드아웃 t −0.89 · 전진 표본 ★0/400★ · 고른 행 ★0★
-         STACK  합류 보류 · 전진 표본 0/400 · (기준 관측시각 2026-09-17 이후 ·
-                ★과거표본 3000건 제외★)          ← 행은 있는데 ★전부 과거★ 였다
-         MEMO   전진 표본 16,086/400             ← ml_samples 를 직접 읽는 쪽은 찬다
-       전진검증의 조건은 `id > 체크포인트 AND ★ts > 학습셋 최대 관측시각★` 이다(icForwardCheck).
-       그런데 이 소급생성은 원본 ml_samples 행의 ★과거 봉 날짜★ 를 물려준다(V33.173 이
-       퍼징을 고치려고 의도적으로 그렇게 했다 — 그 고침 자체는 옳다).
-       두 규칙이 만나면 ★새 표본의 ts 가 언제나 과거★ 라 전진창을 영원히 못 채운다.
-       신선한 ts 는 실거래 청산 경로뿐인데 그건 전 시스템 통틀어 ★68건★ 이다.
-       ★문턱 문제가 아니다 — 생산 구조 문제다.★
-
-       고침: 소급 커서(과거)와 ★프런티어(최근)★ 를 나눈다.
-         · 프런티어 = 최근 frontierDays 일. 자기 워터마크(fwdTs)로 매 회차 새 행만 집는다.
-           수확이 매일 붙이는 프런티어 봉이 곧바로 FLOW·XALPHA 표본이 되어 ts 가 신선하다.
-         · 소급 커서는 ★프런티어 구간을 건드리지 않는다★ (ts < 경계) — 두 경로가 겹치지
-           않으므로 같은 행을 두 번 만들지 않는다. 경계 하나로 소유권이 갈린다.
-       ※ 최근 구간은 daily: 캐시가 확실히 닿으므로 V33.403 의 '우주 미도달' 문제도 없다. */
-    const _frFrom = Date.now() - Math.max(1, _num(ALTBF.frontierDays, 30)) * 86400000;
-    const _fwdDone0 = _num(_st0.fwdTs, 0);
-    const _fwdFloor = Math.max(_fwdDone0, _frFrom);
-    let _frRows = [];
-    try {
-      _frRows = (await DB.prepare(
-        "SELECT id, ts, market, symbol, pnl_pct FROM ml_samples WHERE featver = ? AND ts > ? ORDER BY ts ASC LIMIT ?"
-      ).bind(LUXML.featVer, _fwdFloor, Math.max(50, _num(ALTBF.frontierMax, 900))).all()).results || [];
-    } catch (e) { _frRows = []; }
-    /* 과거 커서는 ★경계 앞쪽만★ 본다 — 프런티어가 소유한 구간을 다시 만들지 않는다. */
-    const rows = (await DB.prepare(
-      "SELECT id, ts, market, symbol, pnl_pct FROM ml_samples WHERE id > ? AND featver = ? AND ts < ? ORDER BY id ASC LIMIT ?"
-    ).bind(_num(st.lastId, 0), LUXML.featVer, _frFrom, ALTBF.maxPerRun).all()).results || [];
-    if (!rows.length && !_frRows.length)
-      return "[ALT-BF] 남은 표본 없음 (FLOW커서 " + fDone + " XALPHA커서 " + xDone +
-             " · 프런티어 워터마크 " + (_fwdDone0 > 0 ? new Date(_fwdDone0).toISOString().slice(0, 10) : "없음") +
-             ", 누적생성 " + _num(st.made, 0) + ")";
-
-    // 날짜(YYYY-MM-DD)별로 묶는다 — 횡단면 패널을 날짜마다 한 번만 만들기 위해서.
-    const byDay = {};
-    const _dk = function (ts) {
-      const d = new Date(_num(ts, 0));
-      return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0") + "-" + String(d.getUTCDate()).padStart(2, "0");
-    };
-    /* [V33.406] 프런티어 날짜를 ★먼저★ 넣고 따로 표시해 둔다 — 아래에서 예산을 먼저 준다.
-       과거 커서가 예산을 다 먹으면 신선한 표본이 또 안 생기고, 그게 지금 상태다. */
-    const _frDays = new Set();
-    /* ★프런티어 행은 과거 커서(lastId)를 올리면 안 된다.★ ml_samples 의 id 는 ts 순이
-       아니라(캐치업이 옛 봉을 나중에 적재) 최근 행의 id 가 클 수 있고, 그걸로 커서를 올리면
-       ★아직 안 만든 과거 행을 통째로 건너뛴다★ — 영구 손실이다. 표식을 달아 갈라 둔다. */
-    for (const r of _frRows) { r._fr = 1; const k = _dk(r.ts); _frDays.add(k); (byDay[k] = byDay[k] || []).push(r); }
-    for (const r of rows) { const k = _dk(r.ts); (byDay[k] = byDay[k] || []).push(r); }
-    /* [V33.186] ★회차당 날짜 수를 수동 경로에서 올릴 수 있게 한다.★
-       실측: 재소급 스윕 160회차를 돌렸는데 커서가 회차당 +6 밖에 안 올랐다. batchDates=6 이
-       회차마다 ★날짜 6개★ 만 처리하는데, 과거 구간은 날짜당 행이 몇 개뿐이라 6행만 훑고 끝난다.
-       그 결과 표본 1745건 중 1692건이 최근 10일에 몰리고 과거는 53건뿐 —
-       관측기간은 134.8일로 늘었는데 ★밀도가 끝에 쏠려★ 퍼징이 여전히 학습구간을 지운다.
-       (기간과 밀도는 다른 문제다. V33.182 의 문구가 기간만 보고 "더 쌓이면 된다" 고 말한 이유다)
-       크론은 10분마다 거래 사이클과 예산을 나눠 쓰므로 6 이 맞다. 수동 스윕은 그 제약이 없다. */
-    const _bDates = Math.max(1, Math.min(60, _num(cfg.batchDates, ALTBF.batchDates)));
-    /* ══ [V33.403] ★닿지 않는 날짜가 배치 예산을 먹어 회차당 0건이 나왔다.★ ═══════════════
-       종전엔 여기서 ★가장 오래된 6일★ 을 잘라 놓고 루프를 돌았다. 그런데 이 소급은
-       daily: 캐시(≈320봉)가 닿는 날짜에만 표본을 만들 수 있고, 커서는 id 순으로 도는데
-       ml_samples 의 id 는 ts 순이 아니다(판갈이 캐치업이 옛 봉을 나중에 적재한다).
-       그래서 배치에 닿지 않는 옛 날짜만 6개 들어오면 ★그 회차는 0건을 만들고 끝난다★ —
-       예산은 '일을 얼마나 할까' 를 묶는 장치인데, ★일을 안 한 날짜★ 가 그 예산을 먹었다.
-       → 자른 뒤에 도는 대신 ★전부 훑되 실제로 처리한 날짜만★ 예산에 센다.
-       V33.187 의 규칙은 그대로다 — 건너뛴 날짜도 lastId 를 올리므로 ★커서는 반드시 전진한다.★
-       훑는 비용(날짜당 우주 슬라이스)도 공짜가 아니라 상한을 따로 둔다. */
-    /* [V33.406] ★프런티어 날짜가 먼저 선다.★ 오래된 순으로 세우면 과거 커서가 예산을
-       다 먹고 신선한 표본은 또 안 생긴다 — 그게 지금 상태를 만든 구조다.
-       대신 프런티어에도 상한(frontierDateCap)을 둬서 과거 소급이 굶지 않게 한다. */
-    const _frList = Object.keys(byDay).filter(function (k) { return _frDays.has(k); }).sort();
-    const _hiList = Object.keys(byDay).filter(function (k) { return !_frDays.has(k); }).sort();
-    const _frCap = Math.max(1, Math.min(_num(ALTBF.frontierDateCap, 3), _bDates));
-    const _daysAll = _frList.slice(0, _frCap).concat(_hiList);
-    const _scanCapDays = Math.min(_daysAll.length, Math.max(_bDates * 10, _bDates));
-    const days = _daysAll.slice(0, _scanCapDays);
-
-    /* [V33.187] ★배치 종목별 일봉 선로드를 걷어냈다.★ 여기서 만든 dailyAll 은 ★한 번도 읽히지
-       않는다★ — 아래 스냅샷(snap)은 전부 universe 에서 만든다. 그런데 이 루프는 배치에 등장한
-       종목 수만큼(수백 건) getState 를 ★한 건씩★ 날린다. 회차당 수십 초를 쓰고 아무것도 안 남긴
-       셈이다. 실측: 스윕 2회차 후반 10여 회차가 회차당 48초를 쓰고 커서를 1도 못 올렸다
-       (아래 마감시한 주석 참조 — 준비 단계가 예산을 다 먹으면 날짜 루프가 시작도 못 한다). */
-    // 패널용 — 같은 시장 전 종목이 필요하므로 daily: 전체를 한 번 훑는다(배치당 1회).
-    const universe = {};
-    try {
-      const dr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
-      for (const r of ((dr && dr.results) || [])) {
-        const sy = String(r.k).slice(6);
-        if (!sy || sy[0] === "^") continue;
-        try {
-          const v = (typeof r.v === "string") ? JSON.parse(r.v) : r.v;
-          if (v && Array.isArray(v.closes) && v.closes.length >= 60) universe[sy] = v;
-        } catch (e) {}
-      }
-    } catch (e) {}
-
-    const now = Date.now();
-    let madeX = 0, madeF = 0, skipped = 0, lastId = _num(st.lastId, 0);
-    // [V33.178] ★XALPHA 가 왜 0 건인지 로그가 답하지 못했다.★ 운영 실측에서 같은 루프·같은 행을
-    //   돌면서 FLOW 는 299 건을 만들고 XALPHA 는 0 건이었는데, 메시지는 "+0 / +299" 만 찍었다.
-    //   XALPHA 는 ★같은 시장 안에서 20종목(minPanel) 이상★ 이라야 횡단면 랭크를 낼 수 있다
-    //   (얇은 패널의 순위는 정보가 아니라 잡음이다 — xalphaBuildFeat 주석). 날짜 게이트는
-    //   두 시장을 ★합쳐★ 20 을 보므로, US 12 + KR 11 같은 날은 게이트를 통과하지만 두 패널이
-    //   모두 얇아 XALPHA 만 통째로 실패한다. 그런데 커서는 그대로 전진해 그 행들은 영영 안 돌아온다.
-    //   원인을 로그가 스스로 말하게 한다 — 다음 수확 한 번이면 가설이 사실인지 갈린다.
-    let xThinUS = 0, xThinKR = 0, xNull = 0;
-    // [V33.403] 닿는 날짜 / 못 닿는 날짜 — 이 회차가 무엇을 영구히 버렸는지 센다.
-    let _dayThin = 0, _lostRows = 0, _thinNewest = null, _thinOldest = null, _okOldest = null;
-    let _frTsSeen = 0, _frMadeX = 0, _frMadeF = 0;   // [V33.406] 프런티어 워터마크·생산량
-    let _snapMin = null, _snapMax = null;
-    const _panelW = function (p) { return (p && Array.isArray(p.alphas) && Array.isArray(p.alphas[0])) ? p.alphas[0].length : 0; };
-    // [V33.186] 날짜 수를 올리면 한 회차가 길어진다 — 마감시한을 두어 워커 시간예산을 넘지 않게 한다.
-    //   중간에 멈춰도 커서는 ★처리한 날짜까지만★ 오르므로(아래 lastId) 다음 회차가 이어받는다.
-    /* [V33.187] ★마감시한은 '적어도 하루는 처리한 뒤' 부터 본다.★ 종전엔 루프 첫머리에서 바로
-       재서, 준비 단계(우주 스캔 + 위의 죽은 선로드)가 예산을 다 쓰면 ★날짜를 하나도 처리하지
-       못한 채★ 빠져나왔다. 그러면 lastId 가 그대로라 커서가 안 오르고, 다음 회차가 똑같은 날짜를
-       다시 집어 온다 — 영원히 제자리다(실측: 커서 669953 에서 10여 회차 정지, +0/+0, 건너뜀 0).
-       마감시한은 '한 회차를 짧게 끊는' 장치이지 '아무것도 안 하는' 장치가 아니다.
-       한 날짜는 반드시 끝낸다 = 커서는 반드시 전진한다 = 스윕은 반드시 끝난다. */
-    /* [V33.187] 예산은 ★날짜 루프가 시작하는 시점부터★ 잰다(loopMs). 종전의 deadlineMs 는
-       호출 시각 기준 절대시각이라 준비 단계가 길면 루프 몫이 0 이 됐다 — 그게 위의 정지다.
-       (deadlineMs 도 계속 받는다. 예전 호출자가 있으면 그대로 동작한다.) */
-    const _lm = _num(cfg.loopMs, 0);
-    const _dl = _lm > 0 ? (Date.now() + _lm) : _num(cfg.deadlineMs, 0);
-    let _dDone = 0, _dProc = 0;
-    for (const dk of days) {
-      if (_dProc >= _bDates) break;                              // ★처리한 날짜★ 만 예산에 센다
-      if (_dl && _dDone > 0 && Date.now() > _dl) break;
-      _dDone++;
-      const list = byDay[dk];
-      const ts0 = _num(list[0].ts, now);
-      // 이 날짜 시점으로 잘라낸 우주 — 패널과 피어 계산에 함께 쓴다.
-      const snap = {};
-      for (const sy in universe) {
-        const u = universe[sy];
-        const idx = _altBarIdx(u.closes.length, ts0, now, u.days);
-        if (idx < ALTBF.minIdx) continue;
-        snap[sy] = {
-          closes: _sliceTo(u.closes, idx), opens: _sliceTo(u.opens, idx),
-          highs: _sliceTo(u.highs, idx), lows: _sliceTo(u.lows, idx),
-          volumes: _sliceTo(u.volumes, idx)
-        };
-      }
-      /* ══ [V33.403] ★여기서 잃는 표본이 영영 안 돌아오는데 아무도 세지 않았다.★ ══════════
-         이 소급생성은 패널을 ★daily: 캐시(≈320봉)★ 로 만든다(배치당 D1 1회 — 의도된 비용 설계).
-         그런데 ml_samples 는 ★2,320일★ 을 덮는다. 그 차이만큼의 과거 날짜는 snap 이 얇아져
-         통째로 건너뛰고, ★커서는 그대로 전진한다★ — 그 행들의 XALPHA·FLOW 표본은 영구 손실이다.
-         게다가 ml_samples 의 id 는 ts 순이 아니다(판갈이 캐치업이 옛 봉을 나중에 적재한다).
-         그래서 "오래된 표본부터 처리" 라는 커서의 전제와 달리, ★최근에 적재된 옛 날짜★ 가
-         닿지 않는 구간으로 계속 들어온다.
-         고치기 전에 크기를 알아야 한다 — 닿는 날짜와 못 닿는 날짜를 갈라 세어 로그가 답하게 한다.
-         (V33.178 이 '패널부족' 을 세기 시작해 XALPHA 0건의 이유를 밝힌 것과 같은 방식이다.) */
-      const _snapN = Object.keys(snap).length;
-      _snapMin = _snapMin == null ? _snapN : Math.min(_snapMin, _snapN);
-      _snapMax = _snapMax == null ? _snapN : Math.max(_snapMax, _snapN);
-      if (_snapN < 20) {
-        _dayThin++;
-        _lostRows += list.length;
-        if (!_thinNewest || dk > _thinNewest) _thinNewest = dk;
-        if (!_thinOldest || dk < _thinOldest) _thinOldest = dk;
-        for (const r of list) lastId = Math.max(lastId, r.id);
-        skipped += list.length; continue;
-      }
-      if (!_okOldest || dk < _okOldest) _okOldest = dk;
-      _dProc++;                                                   // 여기부터가 ★실제로 한 일★ 이다
-      const panelUS = XALPHA.enabled ? xalphaBuildPanel(snap, "us") : null;
-      const panelKR = XALPHA.enabled ? xalphaBuildPanel(snap, "kr") : null;
-      for (const r of list) {
-        if (r._fr) { _frTsSeen = Math.max(_frTsSeen, _num(r.ts, 0)); }
-        else lastId = Math.max(lastId, r.id);       // [V33.406] 과거 커서는 과거 행만 올린다
-        const sy = r.symbol, mk = String(r.market || "us");
-        if (!sy || !snap[sy]) { skipped++; continue; }
-        /* [V33.406] 프런티어는 자기 워터마크(ts)로 중복을 막으므로 id 커서를 보지 않는다 —
-           id 커서로 거르면 최근 행의 id 가 이미 커서 아래일 때 조용히 안 만들어진다. */
-        if (XALPHA.enabled && (r._fr || _num(r.id, 0) > xDone)) {
-          const _pn = mk === "kr" ? panelKR : panelUS;
-          const f = xalphaBuildFeat(sy, snap, _pn);
-          if (f) { await xalphaLogSample(DB, mk, sy, f, _num(r.pnl_pct, 0), _num(r.ts, 0)); madeX++; if (r._fr) _frMadeX++; }   // [V33.173] 원본 행의 관측 시각
-          // [V33.178] 실패 사유를 갈라 센다 — '패널이 얇아서' 와 '그 밖의 이유' 는 처방이 다르다.
-          else if (_panelW(_pn) < XALPHA.minPanel) { if (mk === "kr") xThinKR++; else xThinUS++; }
-          else xNull++;
-        }
-        if (FLOWML.enabled && (r._fr || _num(r.id, 0) > fDone)) {
-          // 포지셔닝(공매도·내부자·풋콜)은 시점 데이터라 과거 값을 알 수 없다 → 0(중립).
-          //   피어 그래프만으로도 6/12 차원이 채워지고, 그 부분은 완전히 정직한 소급 계산이다.
-          const peer = await flowPeerFeat(DB, sy, mk, snap);
-          if (peer) {
-            const g = function (o, k) { return (o && typeof o[k] === "number" && isFinite(o[k])) ? o[k] : 0; };
-            //   [V33.104] 마지막 0 = posAvail 마스크 — "이 행의 포지셔닝 6칸은 결측대체다".
-            const fv = [g(peer, "peerRet5"), g(peer, "peerRet20"), g(peer, "peerDisp"),
-                        g(peer, "peerRel5"), g(peer, "peerCorrAvg"), g(peer, "peerLead"),
-                        0, 0, 0, 0, 0, 0, 0];
-            await flowLogSample(DB, mk, sy, fv, _num(r.pnl_pct, 0), _num(r.ts, 0));   // [V33.173] 원본 행의 관측 시각
-            madeF++; if (r._fr) _frMadeF++;
-          }
-        }
-      }
-    }
-    /* [V33.406] ★프런티어 워터마크는 날짜 경계로 올린다.★ 행 단위로 올리면, 한 날짜가
-       LIMIT 에 잘렸을 때 그 날의 나머지 행이 `ts > 워터마크` 에 안 걸려 영영 안 만들어진다.
-       그리고 질의가 ★잘렸으면★(가져온 수 = 상한) 마지막 날짜는 통째로 미완일 수 있으므로
-       그 앞 날짜까지만 올린다 — 다음 회차가 그 날짜를 처음부터 다시 집는다. */
-    let _fwdTs = _fwdDone0, _fwdStuck = null;
-    if (_frTsSeen > 0) {
-      const _truncated = _frRows.length >= Math.max(50, _num(ALTBF.frontierMax, 5000));
-      const _doneDays = _frList.slice(0, _frCap).filter(function (k) { return !_truncated || k !== _frList[_frList.length - 1]; });
-      if (_doneDays.length) {
-        const _lastDay = _doneDays[_doneDays.length - 1];
-        const _dEnd = Date.parse(_lastDay + "T00:00:00Z") + 86400000 - 1;
-        if (isFinite(_dEnd) && _dEnd > _fwdTs) _fwdTs = _dEnd;
-      } else {
-        /* ★완결로 읽을 날짜가 하나도 없다 = 워터마크가 안 오른다 = 다음 회차가 같은 행을
-           또 집는다.★ frontierMax 가 하루치보다 작으면 여기서 영원히 맴돈다 — 조용히 돌지
-           않게 사유를 남긴다(V33.187 이 과거 커서에서 배운 것과 같은 교착이다). */
-        _fwdStuck = "프런티어 워터마크 정지 — 후보 " + _frRows.length + "행이 상한(" +
-                    _num(ALTBF.frontierMax, 5000) + ")에 잘려 완결 날짜가 없다. frontierMax 를 올려야 한다";
-      }
-    }
-    await setState(DB, "alt_bf_cursor", {
-      lastId: lastId, made: _num(st.made, 0) + madeX + madeF,
-      fDone: FLOWML.enabled ? Math.max(fDone, lastId) : fDone, fvF: FLOWML.featVer,
-      xDone: XALPHA.enabled ? Math.max(xDone, lastId) : xDone, fvX: XALPHA.featVer,
-      fwdTs: _fwdTs,
-      ts: Date.now() });
-    return "[ALT-BF] 날짜 " + _dProc + "처리/" + _dDone + "훑음/" + _daysAll.length + "일 — XALPHA +" + madeX + " / FLOW +" + madeF +
-           /* [V33.406] ★전진검증을 채우는 것은 이 숫자뿐이다.★ 0 이면 신규 위원은 영원히 보류다. */
-           " · ★프런티어 XALPHA +" + _frMadeX + " / FLOW +" + _frMadeF +
-             " (최근 " + _num(ALTBF.frontierDays, 30) + "일 · 후보 " + _frRows.length + "행 · 워터마크 " +
-             (_fwdTs > 0 ? new Date(_fwdTs).toISOString().slice(0, 10) : "없음") + ")★" +
-           (_fwdStuck ? " · ⚠️★" + _fwdStuck + "★" : "") +
-           " (건너뜀 " + skipped + ", 커서 " + lastId + ")" +
-           /* [V33.403] ★영구 손실을 소리내어 말한다.★ 커서가 전진하므로 이 행들은 다시 안 온다. */
-           (_dayThin
-             ? " · ★우주 미도달 " + _dayThin + "일 · 표본 " + _lostRows + "건 영구손실" +
-               (_thinOldest ? " (" + _thinOldest + (_thinNewest !== _thinOldest ? "~" + _thinNewest : "") + ")" : "") +
-               " — daily: 캐시(≈320봉)가 그 날짜에 안 닿는다★"
-             : "") +
-           (_snapMin != null ? " · 우주폭 " + _snapMin + "~" + _snapMax + "종목" +
-             (_okOldest ? " (닿은 가장 오래된 날 " + _okOldest + ")" : "") : "") +
-           // [V33.178] XALPHA 가 0 건일 때 ★왜★ 를 함께 적는다(위 주석 참조).
-           ((xThinUS || xThinKR || xNull)
-             ? " · XALPHA 실패내역: 패널부족 US " + xThinUS + " / KR " + xThinKR +
-               " (최소 " + XALPHA.minPanel + "종목) · 기타 " + xNull
-             : "");
-  } catch (e) { return "[ALT-BF] 실패: " + (e && e.message); }
-}
-
+/* [V33.422] _sliceTo 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
+/* [V33.422] altSampleBackfill 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
 // ════════════════════════════════════════════════════════════════════════════
 // [V33.89] ★강세/약세 이중 헤드 — LLM 토론을 자체 AI 로 900종목에 구현한다★
 //
@@ -33909,31 +33178,10 @@ const STACKML = {
    그게 회당 600건이라는 상한의 실체였고, 그 속도로는 홀드아웃 창(≈37,000행)을 채우는 데
    야간 60회가 걸린다. 스키마는 아이솔레이트당 한 번만 보장하고, 적재는 묶어서 보낸다. */
 let __stackSchemaOk = false;
-async function _stackEnsureSchema(DB) {
-  if (__stackSchemaOk) return;
-  await DB.prepare("CREATE TABLE IF NOT EXISTS stack_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, feat TEXT, label INTEGER, pnl_pct REAL, featver INTEGER, src TEXT)").run();
-  /* [V33.227] ★표본이 어느 경로에서 왔는지 남긴다.★ 종전엔 라이브 청산·에폭 소급·홀드아웃 소급이
-     표에서 구분되지 않아, "표본을 600건 더했더니 t 가 절반이 됐다" 를 만났을 때 어느 쪽이
-     희석했는지 ★추측밖에 할 수 없었다★. 한 글자를 남기면 다음엔 재서 답할 수 있다.
-     구표에는 컬럼이 없으므로 ALTER 를 시도하고, 이미 있으면 조용히 넘어간다. */
-  try { await DB.prepare("ALTER TABLE stack_samples ADD COLUMN src TEXT").run(); } catch (e) {}
-  __stackSchemaOk = true;
-}
+/* [V33.422] _stackEnsureSchema 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
 const _STACK_INS = "INSERT INTO stack_samples (ts, market, symbol, feat, label, pnl_pct, featver, src) VALUES (?,?,?,?,?,?,?,?)";
-function _stackInsStmt(DB, market, symbol, featVec, pnlPct, tsMs, src) {
-  // ts 는 ★원본 행의 관측 시각★ 이 우선이다 — 적재 시각으로 뭉치면 퍼징이 학습셋을 통째로 지운다.
-  return DB.prepare(_STACK_INS)
-    .bind(_num(tsMs, 0) > 0 ? _num(tsMs, 0) : Date.now(), market, symbol, JSON.stringify(featVec),
-      _num(pnlPct, 0) > 0 ? 1 : 0, _num(pnlPct, 0), STACKML.featVer, src || "live");
-}
-// 단건 적재(라이브 청산 경로) — 호출 빈도가 낮아 왕복 1회면 충분하다.
-async function stackLogSample(DB, market, symbol, featVec, pnlPct, tsMs, src) {
-  try {
-    if (!STACKML.enabled || !Array.isArray(featVec) || featVec.length !== STACK_SLOTS.length * 2) return;
-    await _stackEnsureSchema(DB);
-    await _stackInsStmt(DB, market, symbol, featVec, pnlPct, tsMs, src).run();
-  } catch (e) {}
-}
+/* [V33.422] _stackInsStmt 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
+/* [V33.422] stackLogSample 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
 // ════════════════════════════════════════════════════════════════════════════
 // [V33.102] ★STACK 표본이 0 인 이유와 해결★
 //   stackLogSample 은 ★청산 시점★ 에만 불린다(executeSell 안). 즉 STACK 표본은
@@ -33950,338 +33198,8 @@ async function stackLogSample(DB, market, symbol, featVec, pnlPct, tsMs, src) {
    stinBackfill 이 같은 이유로 이미 그렇게 한다(V33.106). 회선·D1 이 빠른 밤엔 더 많이 돌고
    느린 밤엔 알아서 접는다. 상한을 숫자로 못 박으면 그 숫자가 맞는지 잴 방법이 없다. */
 const STACKBF = { maxPerRun: 600, minIdx: 0, deadlineMs: 20000, insChunk: 50 };
-async function stackSampleBackfill(DB, opts) {
-  const cfg = opts || {};
-  try {
-    if (!STACKML.enabled) return "[STACK-BF] 비활성";
-    // ══ [V33.104] ★STACK IC 0.566 · t 7.51 은 실력이 아니라 누출이었다★ ══
-    //   소급생성은 ml_samples 의 행을 mind·dnn·gbdt·boost·memo 로 다시 채점해 STACK 입력을
-    //   만든다. 그런데 그 전문가들은 ★바로 그 행들로 학습됐다★ — 즉 P.mind 등이 이미 정답을
-    //   알고 있는 in-sample 예측이다. 스태킹은 "전문가 확률을 얼마나 믿을까"를 배우는 자리라,
-    //   in-sample 확률로 학습하면 "전문가를 전적으로 믿어라"를 배운다. 실전에서 전문가가
-    //   처음 보는 데이터를 만나는 순간 그 가중치는 과신 그 자체가 된다.
-    //   → 전문가가 ★학습한 적 없는 행★ 만 쓴다. 기준선은 '지난 밤 전문가 재학습 직전의
-    //     ml_samples 최대 id'(stack_expert_epoch). 그 이후 들어온 행은 어느 전문가도 못 봤다.
-    //   파이프라인 순서도 이에 맞춰 조정했다: harvest → stackbf → (에폭 갱신) → 전문가 재학습.
-    const _ep = _num((await getState(DB, "stack_expert_epoch", null) || {}).id, 0);
-    if (!(_ep > 0)) {
-      try {
-        const r0 = await DB.prepare("SELECT MAX(id) AS m FROM ml_samples").first();
-        await setState(DB, "stack_expert_epoch", { id: _num(r0 && r0.m, 0), ts: Date.now() });
-      } catch (e) {}
-      return "[STACK-BF] 누출없는 기준선 최초 기록 — 다음 수확분부터 수집";
-    }
-    const st = (await getState(DB, "stack_bf_cursor", null)) || { lastId: 0, made: 0 };
-    const lim = Math.max(50, Math.floor(_num(cfg.maxPerRun, STACKBF.maxPerRun)));
-    /* ══ [V33.205] ★누출 없는 행이 하루치씩만 생겨 STACK 이 영원히 못 찼다★ ══
-       실측: 표본 1,275건 / 관측기간 47.7일(≈27건/일) · 퍼징 후 350/600 — 대기.
-       FLOW·XALPHA 가 소급생성으로 30,518건을 받은 것과 대조적이다. STACK 만 굶은 이유는
-       위 에폭 규칙이다: '지난 밤 재학습 직전의 최대 id 이후' 만 쓰는데, 그 기준선이
-       ★매일 밤 현재로 갱신★ 되므로(stackExpertEpochStamp) 하루치밖에 안 남는다.
-       그 규칙 자체는 옳다 — 틀린 건 그것이 ★유일한★ 누출없는 경로라고 본 것이다.
-
-       외부 학습기(Modal)는 표본을 시간순으로 정렬해 ★뒤쪽 20%를 홀드아웃★ 으로 떼고,
-       퍼지·엠바고까지 걸어 ★앞쪽만★ 으로 학습한다(DNN·GBDT·부스터·MIND 모두 같은 규칙).
-       즉 업로드되어 지금 워커에 실려 있는 그 모델들은 ★홀드아웃 구간을 학습한 적이 없다★.
-       그 구간을 지금 모델로 채점하면 그것이 곧 out-of-fold 예측이다 — Wolpert 스태킹이
-       요구하는 바로 그 값이고, 추가 GPU 비용은 0 이다(이미 만들어 놓고 valAcc 계산에만
-       쓰고 버리던 것을 쓰는 것이다).
-       → 학습기가 홀드아웃 시작 시각(minTs)을 올려주면, 그 이후 ts 를 가진 행도 누출없는
-         구간으로 쓴다. 커서를 따로 두어 에폭 경로와 섞이지 않게 한다. */
-    let _oofMinTs = 0, _oofN = 0, _oofModels = null, _rewound = false;
-    let _gapFrom = 0, _gapTo = 0;   // [V33.286] 이번 회차가 '빈 구간 메우기' 였는가
-    let _oc0 = 0, _covPrev = 0;     // 읽을 때의 커서·커버시작(저장할 때 그대로 되쓴다)
-    try {
-      const _ow = await getState(DB, "stack_oof_window", null);
-      if (_ow && _num(_ow.minTs, 0) > 0) {
-        _oofMinTs = _num(_ow.minTs, 0); _oofN = _num(_ow.n, 0);
-        /* [V33.227] ★이 목록을 읽어 놓고 쓰지 않고 있었다.★
-           외부 학습기가 보내는 창은 "ts >= minTs 구간을 ★이 모델들이★ 학습한 적 없다" 는 뜻이다
-           (실측: ["dnn","gbdt","boost","mind"]). 그런데 소급생성은 그 목록을 무시하고
-           memo·rule 까지 채웠다. memo 는 ml_samples 로 학습하고 학습창이 최근 구간이라,
-           OOF 창 안의 행을 memo 로 채점하면 ★in-sample 확률★ 이 나온다.
-           그러면 STACK 은 "memo 를 믿어라" 를 부풀려진 확률에서 배우고, 라이브에서 무너진다.
-           V33.104 가 겪은 사고(in-sample 로 학습해 IC 0.566·t 7.51)의 좁은 재발이다. */
-        if (Array.isArray(_ow.models) && _ow.models.length) _oofModels = _ow.models.slice();
-      }
-    } catch (e) {}
-    // 커서와 에폭 중 큰 쪽부터 — 되감아도 누출 구간으로는 절대 못 돌아간다.
-    const _from = Math.max(_num(st.lastId, 0), _ep);
-    let rows = (await DB.prepare(
-      // [V33.173] ts 를 함께 읽는다 — 소급생성 표본의 '관측 시각'을 원본에서 물려주기 위해서.
-      "SELECT id, ts, market, symbol, feat, label, pnl_pct FROM ml_samples WHERE id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
-    ).bind(_from, LUXML.featVer, lim).all()).results || [];
-    let _src = "에폭";
-    if (!rows.length && _oofMinTs > 0) {
-      /* 에폭 경로가 마르면 홀드아웃 경로로 넘어간다. 커서가 따로인 이유는 ts 와 id 의 순서가
-         일치하지 않기 때문이다 — 소급표본은 ts 가 과거인데 id 는 크다(V33.173). */
-      /* ══ [V33.228] ★판(featVer)이 바뀌면 홀드아웃 커서를 되감는다.★ ══
-         V33.227 이 누출을 고치며 STACKML.featVer 를 4→5 로 올렸다. 옛 판 표본 6,931건이
-         학습에서 빠져 STACK 은 즉시 표본 0 이 됐다.
-
-         ※ [V33.232 정정] 이 주석은 처음에 "커서가 창 끝에 서 있어 소급생성이 영영 막힌다"
-           고 적었다. 틀렸다. 실측이 그것을 바로 반증했다:
-             [STACK-BF] +600표본 (홀드아웃경로 · 건너뜀 0, 커서 559572, 에폭 682566)
-           커서는 창 끝이 아니라 ★중간★ 이었다. 홀드아웃 창은 표본의 뒤쪽 20%(≈37,000행)
-           인데 회당 600행씩만 훑으므로, 6,931건을 만든 시점의 커서는 창의 5분의 1 지점이다.
-           막혀 있지 않았고, 그냥 멈춘 자리에서 이어 간다.
-
-         그래도 되감는 편이 낫다. 이어서만 가면 새 판은 창의 ★남은 뒤쪽만★ 갖게 되고,
-         이미 훑은 앞쪽 5분의 1 은 옛 판 표본으로만 남아 학습에서 통째로 빠진다. 되감으면
-         같은 창 전체를 새 판으로 다시 갖는다 — 표본이 그만큼 많아지고, 구간도 한쪽으로
-         치우치지 않는다.
-
-         되감아도 누출이 아니다. 이 경로의 누출 차단은 ★ts >= _oofMinTs★ 가 한다 — 외부
-         학습기가 "이 구간은 어떤 전문가도 학습한 적 없다" 고 보증한 창이고, 그 경계는 뒤로
-         못 간다(단조 전진, 409 거절). 커서는 같은 행을 두 번 만들지 않기 위한 쪽수표일 뿐이다.
-
-         되감기 조건은 '판이 다르다' 가 아니라 ★지금 판으로 만든 홀드아웃 표본이 아직 0★ 이다.
-         구 커서에는 판 표기가 없어 '다른 판인지' 를 알 수 없는데, 이 조건은 그것을 몰라도
-         성립한다 — 0 건이면 되감아도 사본이 생길 수 없고, 1건이라도 있으면 이미 이 판으로
-         훑은 것이므로 절대 되감지 않는다. 판 표기는 앞으로를 위해 함께 남긴다. */
-      const _ocSt = (await getState(DB, "stack_oof_cursor", null)) || {};
-      let _oc = _num(_ocSt.lastId, 0);
-      if (_oc > 0 && _num(_ocSt.fv, 0) !== STACKML.featVer) {
-        let _haveFv = -1;
-        try {
-          const _c2 = await DB.prepare(
-            "SELECT COUNT(*) AS c FROM stack_samples WHERE featver = ? AND src = 'oof'"
-          ).bind(STACKML.featVer).first();
-          _haveFv = _num(_c2 && _c2.c, 0);
-        } catch (e) {}
-        if (_haveFv === 0) { _oc = 0; _rewound = true; }
-      }
-      /* ══ [V33.286] ★경계는 열렸는데 커서가 이미 지나가 있었다★ ═══════════════════
-         V33.279 로 경계 통지가 통과했다(실측: 2026-05-24 → 2026-01-30, 200).
-         그런데 그 다음 소급생성은 ★+1건★ 이었고 경로도 에폭이었다. 왜인가:
-         이 커서는 ★id 고수위★ 다(id > _oc). 그런데 새로 열린 넉 달치는 ts 가 더 과거라
-         ★id 가 더 작다★ — id > _oc 가 통째로 걸러낸다. 문이 열렸는데 지나갈 수가 없었다.
-         종전 되감기는 ★featVer 가 바뀔 때만★ 돈다(그때만 사본이 안 생기니까). 경계가
-         앞당겨진 경우는 아무도 처리하지 않았다.
-
-         고침: '어디부터 훑었는가(covFromTs)' 를 커서에 함께 남기고, 경계가 그보다
-         앞당겨지면 ★그 사이 구간만★ 따로 훑는다(ts >= 새경계 AND ts < 이미훑은시작).
-         그 구간의 행은 종전 경계 아래라 ★한 번도 안 훑은 것★ 이므로 사본이 생기지 않는다 —
-         전체를 되감는 게 아니라 ★빈 구간만 메운다.★ */
-      /* ══ [V33.289] ★V33.286 은 자기 문을 자기가 잠갔다★ ═══════════════════════════
-         운영 실측(2026-08-31 00:47, V33.286 배포 후):
-             [STACK-BF] +2표본 (★에폭★경로 · 커서 1770747, 에폭 1770744, 누적 32480)
-         빈 구간 경로가 한 번도 안 돌았다. 이유는 covFromTs 의 ★최초 기록값★ 이었다.
-
-         covFromTs 는 "어디부터 훑었는가" 인데, 없을 때 아래 저장부가 `_covPrev || _oofMinTs`
-         로 ★지금 경계★ 를 적는다. 그런데 지금 경계는 이미 앞당겨진 값(2026-01-30)이고
-         실제로 훑은 시작은 옛 경계(2026-05-24)다. 즉 홀드아웃 회차가 한 번 돌면
-         "2026-01-30 부터 전부 훑었다" 고 스스로 선언해 버린다 → _oofMinTs < _cov 가
-         영영 거짓 → ★열어 둔 넉 달치가 그 순간 봉인된다.★
-
-         고침: 최초값을 ★추측하지 말고 잰다.★ 이미 만들어 둔 홀드아웃 표본의 최소 ts 가
-         곧 "어디까지 덮었는가" 다 — 커서(id 고수위)와 달리 ts 로 물어보므로 id 순서와
-         ts 순서가 어긋나는 이 표(V33.173)에서도 뜻이 흔들리지 않는다.
-         표본이 아직 하나도 없으면 덮은 구간도 없으므로 빈 구간 개념 자체가 없다(0). */
-      let _cov = _num(_ocSt.covFromTs, 0);
-      if (!(_cov > 0)) {
-        try {
-          const _mn = await DB.prepare(
-            "SELECT MIN(ts) AS m FROM stack_samples WHERE featver = ? AND src = 'oof'"
-          ).bind(STACKML.featVer).first();
-          _cov = _num(_mn && _mn.m, 0);
-        } catch (e) {}
-      }
-      _oc0 = _oc; _covPrev = _cov;
-      if (_oofMinTs > 0 && _cov > 0 && _oofMinTs < _cov) {
-        const _gid = _num(_ocSt.gapId, 0);
-        rows = (await DB.prepare(
-          "SELECT id, ts, market, symbol, feat, label, pnl_pct FROM ml_samples WHERE ts >= ? AND ts < ? AND id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
-        ).bind(_oofMinTs, _cov, _gid, LUXML.featVer, lim).all()).results || [];
-        if (rows.length) { _src = "홀드아웃"; _gapFrom = _oofMinTs; _gapTo = _cov; }   // 로그가 이 사실을 적는다
-        else {
-          await setState(DB, "stack_oof_cursor", { lastId: _oc, fv: STACKML.featVer,
-            covFromTs: _oofMinTs, gapId: 0, ts: Date.now() });
-        }
-      }
-      if (!rows.length) {
-        rows = (await DB.prepare(
-          "SELECT id, ts, market, symbol, feat, label, pnl_pct FROM ml_samples WHERE ts >= ? AND id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
-        ).bind(_oofMinTs, _oc, LUXML.featVer, lim).all()).results || [];
-        if (rows.length) _src = "홀드아웃";
-      }
-    }
-    if (!rows.length) {
-      // 되감기 없음 — 되감으면 전문가가 이미 학습한 행으로 돌아가 누출이 재발한다.
-      //   새 수확분이 들어올 때까지 기다린다(하루 수천 건이 들어오므로 곧 재개된다).
-      return "[STACK-BF] 새 표본 대기 (에폭 " + _ep + " 이후 미도착, 누적생성 " + _num(st.made, 0) + ")" +
-             (_oofMinTs > 0 ? " · 홀드아웃 구간도 소진(경계 " + new Date(_oofMinTs).toISOString().slice(0, 10) + ")"
-                            : " · 홀드아웃 경계 미수신(외부 학습기가 아직 안 올렸다)");
-    }
-    // 채점기는 사이클 1회만 로드한다(표본마다 다시 읽으면 D1 이 죽는다).
-    const mind = await mlMindLoad(DB);
-    const ens = await mlBrainLoad(DB);
-    const dnnT = await getState(DB, "dnn_trust", null);
-    const dnn = (dnnT && dnnT.trusted) ? await mlDNNLoad(DB) : null;
-    const gT = await getState(DB, "gbdt_trust", null);
-    const gbdt = (gT && gT.trusted) ? await mlGBDTLoad(DB) : null;
-    let boosters = null; try { boosters = await _boostersCached(DB); } catch (e) {}
-    const memo = await getState(DB, "memo_model", null);
-    const _iR = LUXML.featNames.indexOf("taUpProb");
-    if (!mind && !dnn && !gbdt && !(boosters && boosters.length) && !memo)
-      return "[STACK-BF] 채점 가능한 전문가가 없다 — 위원회 학습 먼저";
-
-    /* [V33.233] ★회차 총량을 벽시계가 정한다.★ 종전엔 한 회차가 rows 한 묶음(600행)에서
-       끝났다 — 표본당 D1 왕복 3회라는 비용 때문에 그 이상을 못 돌았기 때문이다. 그 비용을
-       걷어냈으니(스키마 1회 + 묶음 적재) 남은 제약은 시간뿐이다. 시간이 남는 만큼 다음
-       묶음을 이어서 훑는다(stinBackfill 이 같은 이유로 쓰는 방식이다). */
-    await _stackEnsureSchema(DB);
-    const _t0sb = Date.now();
-    const _sbDeadline = _num(cfg.deadlineMs, STACKBF.deadlineMs);
-    const _insChunk = Math.max(1, _num(cfg.insChunk, STACKBF.insChunk));
-    let _pendIns = [], _batches = 0;
-    const _flushIns = async function () {
-      if (!_pendIns.length) return;
-      const b = _pendIns; _pendIns = [];
-      await DB.batch(b);
-    };
-
-    let made = 0, lastId = _num(st.lastId, 0), skipped = 0;
-    while (true) {
-    for (const r of rows) {
-      lastId = _num(r.id, lastId);
-      let v; try { v = JSON.parse(r.feat); } catch (e) { skipped++; continue; }
-      if (!Array.isArray(v) || v.length !== LUXML.featNames.length) { skipped++; continue; }
-      const P = {}, M = {};
-      /* [V33.227] 홀드아웃 경로에서는 ★창이 보장한 모델만★ 채운다.
-         보장 없는 슬롯은 마스크 0 으로 남긴다 — 그게 마스크 차원을 처음부터 넣어 둔 이유다
-         ("그 전문가가 없었다" 는 유효한 정보다). 에폭 경로는 '전문가가 학습한 적 없는 행' 이라는
-         다른 기준으로 이미 누출이 없으므로 종전대로 전부 채운다. */
-      const _allow = function (k) { return _src !== "홀드아웃" || !_oofModels || _oofModels.indexOf(k) >= 0; };
-      try { if (mind && _allow("mind")) { const s = await mlMindScore(DB, mind, v, ens); if (s && typeof s.p === "number") { P.mind = s.p; M.mind = 1; } } } catch (e) {}
-      try { if (dnn && _allow("dnn")) { const p = mlDNNScore(dnn, v); if (p != null) { P.dnn = p; M.dnn = 1; } } } catch (e) {}
-      try { if (gbdt && _allow("gbdt")) { const p = mlGBDTScore(gbdt, v); if (p != null) { P.gbdt = p; M.gbdt = 1; } } } catch (e) {}
-      try {
-        if (boosters && boosters.length && _allow("boost")) {
-          let bz = 0, bw = 0, n2 = 0;
-          for (const b of boosters) {
-            const pB = mlGBDTScore(b.model, v); if (pB == null) continue;
-            const ic = _icEffective(b.model);
-            const w = (ic != null) ? Math.max(0.002, ic) : Math.max(0.01, b.accLB - 0.5);
-            bz += w * _logit(_clamp(pB, 1e-4, 1 - 1e-4)); bw += w; n2++;
-          }
-          if (bw > 0 && n2 > 0) { P.boost = _clamp(_sigmoid(bz / bw), 0.001, 0.999); M.boost = 1; }
-        }
-      } catch (e) {}
-      try { if (memo && _allow("memo") && memo.trusted && memo.luxFeatVer === LUXML.featVer) { const p = memoScore(memo, v); if (p != null) { P.memo = p; M.memo = 1; } } } catch (e) {}
-      try {
-        // rule 은 mind 의 학습에서 파생된 임계(ruleTau)를 쓰므로 mind 의 보장을 따른다.
-        if (mind && _allow("mind") && _iR >= 0 && typeof mind.ruleAccLB === "number" && mind.ruleAccLB > 0.5) {
-          const raw = _clamp(_num(v[_iR], 0.5), 0.01, 0.99);
-          const tau = _clamp(_num(mind.ruleTau, 0.5), 0.01, 0.99);
-          P.rule = _clamp(_sigmoid(_logit(raw) - _logit(tau)), 0.01, 0.99); M.rule = 1;
-        }
-      } catch (e) {}
-      /* [V33.272] ★seq 는 여기서 채우지 않는다 — 채울 수 없다.★ 다른 전문가는 이 행의
-         피처벡터 v(오늘 한 시점) 하나로 다시 채점할 수 있지만, SEQ 는 같은 종목의 최근
-         L봉 ★시퀀스★ 가 있어야 채점된다. ml_samples.ts 는 "봉 수 × 1일" 근사(V33.173 주석 —
-         2000봉이면 800일 가까이 어긋난다)라 그 시각으로 정확한 봉 인덱스를 되짚을 수 없다 —
-         틀린 자리를 갖다 붙이면 이 저장소가 반복해 당한 '조용한 오염'이 그대로 재현된다.
-         → seq 슬롯은 이 소급생성 경로에서는 항상 마스크 0 이고, ★라이브 청산 표본
-         (stackLogSample, pos.meta.stackFeat)★ 에서만 실제 값이 들어온다 — 그건 결정
-         당시 진짜 계산된 값이라 재구성이 필요 없다. 거래가 쌓일수록 seq 마스크가 있는
-         표본 비율이 자연히 올라간다. */
-      // 전문가가 2명 미만이면 스태킹 표본으로 의미가 없다.
-      const nExp = Object.keys(P).length;
-      if (nExp < 2) { skipped++; continue; }
-      const fv = [];
-      for (const k of STACK_SLOTS) fv.push(P[k] != null ? _clamp(P[k], 0.001, 0.999) : 0.5);
-      for (const k of STACK_SLOTS) fv.push(M[k] ? 1 : 0);
-      // [V33.173] 원본 행의 관측 시각 · [V33.227] 경로 · [V33.233] 묶음으로 보낸다
-      _pendIns.push(_stackInsStmt(DB, r.market || "us", r.symbol || null, fv, _num(r.pnl_pct, 0),
-        _num(r.ts, 0), _src === "홀드아웃" ? "oof" : "epoch"));
-      if (_pendIns.length >= _insChunk) await _flushIns();
-      made++;
-    }
-    await _flushIns();
-    _batches++;
-    // 시간이 남으면 같은 경로에서 다음 묶음을 이어 훑는다. 경계·경로는 그대로다.
-    if (Date.now() - _t0sb > _sbDeadline) break;
-    let _nx;
-    if (_src === "홀드아웃") {
-      _nx = (await DB.prepare(
-        "SELECT id, ts, market, symbol, feat, label, pnl_pct FROM ml_samples WHERE ts >= ? AND id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
-      ).bind(_oofMinTs, lastId, LUXML.featVer, lim).all()).results || [];
-    } else {
-      _nx = (await DB.prepare(
-        "SELECT id, ts, market, symbol, feat, label, pnl_pct FROM ml_samples WHERE id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
-      ).bind(lastId, LUXML.featVer, lim).all()).results || [];
-    }
-    if (!_nx.length) break;
-    rows = _nx;
-    }
-    /* [V33.205] 어느 경로에서 읽었는지에 따라 ★그 경로의 커서만★ 전진시킨다.
-       섞으면 에폭 커서가 홀드아웃 구간의 id 로 튀어, 나중에 들어올 신규 수확분을 통째로 건너뛴다. */
-    if (_src === "홀드아웃") {
-      /* [V33.286] 빈 구간을 메우는 중이면 ★그 구간의 커서만★ 옮긴다 — lastId 를 건드리면
-         평소 경로가 앞으로 튀어 신규 수확분을 건너뛴다(V33.205 가 에폭 커서에서 겪은 것과
-         같은 사고다). covFromTs 는 '어디부터 훑었는가' 이므로 처음 한 번만 기록된다. */
-      if (_gapTo > 0) {
-        // 빈 구간 회차 — 평소 커서(lastId)와 커버시작은 그대로 두고 구간 커서만 전진.
-        await setState(DB, "stack_oof_cursor", { lastId: _oc0, fv: STACKML.featVer,
-          covFromTs: _covPrev, gapId: lastId, ts: Date.now() });
-      } else {
-        await setState(DB, "stack_oof_cursor", { lastId: lastId, fv: STACKML.featVer,
-          covFromTs: _covPrev || _oofMinTs, gapId: 0, ts: Date.now() });
-      }
-      await setState(DB, "stack_bf_cursor", { lastId: _num(st.lastId, 0), made: _num(st.made, 0) + made, ts: Date.now() });
-    } else {
-      await setState(DB, "stack_bf_cursor", { lastId: lastId, made: _num(st.made, 0) + made, ts: Date.now() });
-    }
-    return "[STACK-BF] +" + made + "표본 (" + _src + "경로" +
-           /* [V33.286] 빈 구간을 메우는 중이면 그 사실과 구간을 적는다 — 안 적으면
-              "왜 갑자기 옛날 표본이 늘지" 를 다음에 또 추측하게 된다. */
-           (_gapTo > 0 ? ("★신규개방구간 " + new Date(_gapFrom).toISOString().slice(0, 10) +
-                          "~" + new Date(_gapTo).toISOString().slice(0, 10) + " 메우는 중★") : "") +
-           " · 묶음 " + _batches + "회 " +
-           (Date.now() - _t0sb) + "ms · 건너뜀 " + skipped + ", 커서 " + lastId +
-           ", 에폭 " + _ep + ", 누적 " + (_num(st.made, 0) + made) + ")" +
-           (_rewound ? " — 판 v" + STACKML.featVer + " 표본 0 이라 홀드아웃 커서를 창 처음으로 되감았다(창 경계는 그대로 · 같은 창을 새 판으로 전부 다시 만든다)" : "") +
-           " — 누출없음";
-  } catch (e) { return "[STACK-BF] fail: " + (e && e.message); }
-}
-
-// [V33.104] 전문가 재학습 직전의 ml_samples 최대 id 를 못 박는다.
-//   이 시점 이후 들어오는 행은 오늘 밤 학습되는 전문가들이 본 적 없는 데이터다 —
-//   내일 밤 STACK 소급생성이 그 구간만 쓰면 in-sample 누출이 원천적으로 불가능해진다.
-async function stackExpertEpochStamp(DB) {
-  try {
-    const r = await DB.prepare("SELECT MAX(id) AS m FROM ml_samples").first();
-    const id = _num(r && r.m, 0);
-    await setState(DB, "stack_expert_epoch", { id: id, ts: Date.now() });
-    return "[STACK-EPOCH] 전문가 학습 기준선 id " + id;
-  } catch (e) { return "[STACK-EPOCH] fail: " + (e && e.message); }
-}
-
-async function stackTrainNightly(DB) {
-  if (!STACKML.enabled) return null;
-  return await _miniLogisticTrain(DB, {
-    table: "stack_samples", stateKey: "stack_model", tag: "STACK",
-    featVer: STACKML.featVer, D: STACK_SLOTS.length * 2,
-    /* [V33.401] STACK 입력은 슬롯마다 (p, 가용) 두 칸이다 — 이름을 여기서 만든다.
-       퇴화칸 로그가 "f7" 이 아니라 "seq.p" 라고 말해야 사람이 읽을 수 있다. */
-    featNames: STACK_SLOTS.reduce(function (a, n) { a.push(n + ".p", n + ".on"); return a; }, []),
-    minN: STACKML.minTrainSamples, window: STACKML.trainWindow,
-    l2: STACKML.l2, icFloor: STACKML.icFloor,
-    // [V33.209] ★비선형 헤드 경합을 켜는 곳은 여기 하나다.★ STACK 만 켠다 —
-    //   FLOW/XALPHA/MEMO 는 자기 피처를 직접 읽는 1차 전문가라 선형으로 두는 편이 해석 가능하고,
-    //   비선형이 필요하면 그건 위(메타) 층에서 하는 게 스태킹의 분업이다.
-    nonlinear: true, nlHidden: STACKML.nlHidden, nlTrees: STACKML.nlTrees, nlMargin: STACKML.nlMargin,
-    srcCol: true,   // [V33.227] stack_samples 만 src 컬럼을 갖는다(경로별 IC 보고)
-    // [V33.91] STACK 은 위원회 결합확률을 ★통째로 대체★ 하는 자리다. 잘못 들어오면
-    //   다른 전문가와 섞여 희석되는 게 아니라 혼자 결정한다 → 유의성 문턱을 더 높게 잡는다.
-    // [V33.143] ★그런데 값이 2.2 였다 — 공통 문턱 2.50 보다 오히려 낮다.★
-    //   주석은 "더 높게" 인데 숫자는 더 낮았다. 손으로 정한 상수가 의도와 반대로 굳은 것이다.
-    //   이제 공통 문턱(가족 크기에서 계산) × strictMult 로 ★실제로 더 높게★ 만든다.
-    strictGate: true
-  });
-}
-
+/* [V33.422] stackExpertEpochStamp 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
+/* [V33.422] stackTrainNightly 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
 const XALPHA = {
   enabled: true,
   // [V33.155] 1 → 2: 형식알파 10종이 원값에서 ★횡단면 랭크★ 로 바뀌었다(의미가 다른 피처다).
@@ -34553,29 +33471,8 @@ function xalphaBuildFeat(symbol, dailyCache, panel) {
     return out;
   } catch (e) { return null; }
 }
-
-async function xalphaLogSample(DB, market, symbol, featVec, pnlPct, tsMs) {
-  try {
-    if (!XALPHA.enabled || !Array.isArray(featVec) || featVec.length !== XALPHA.featNames.length) return;
-    await DB.prepare("CREATE TABLE IF NOT EXISTS xalpha_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, feat TEXT, label INTEGER, pnl_pct REAL, featver INTEGER)").run();
-    await DB.prepare("INSERT INTO xalpha_samples (ts, market, symbol, feat, label, pnl_pct, featver) VALUES (?,?,?,?,?,?,?)")
-      .bind(_num(tsMs, 0) > 0 ? _num(tsMs, 0) : Date.now(), market, symbol, JSON.stringify(featVec), _num(pnlPct, 0) > 0 ? 1 : 0, _num(pnlPct, 0), XALPHA.featVer).run();
-  } catch (e) {}
-}
-
-// FLOW 와 동일한 야간 자체학습(로지스틱+L2, IC 측정). 구조를 맞춰 유지보수를 단순하게 둔다.
-async function xalphaTrainNightly(DB) {
-  if (!XALPHA.enabled) return null;
-  return await _miniLogisticTrain(DB, {
-    table: "xalpha_samples", stateKey: "xalpha_model", tag: "XALPHA",
-    featVer: XALPHA.featVer, D: XALPHA.featNames.length, featNames: XALPHA.featNames,
-    minN: XALPHA.minTrainSamples, window: XALPHA.trainWindow,
-    l2: XALPHA.l2, icFloor: XALPHA.icFloor,
-    // 횡단면 알파 — 유의성은 '일별 횡단면 IC 의 시계열'(ICIR)로 잰다. 위 _icBlockStats 주석 참조.
-    dayBlocks: true
-  });
-}
-
+/* [V33.422] xalphaLogSample 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
+/* [V33.422] xalphaTrainNightly 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
 const LUXML = {
   enabled: true,
   featNames: [
@@ -36228,7 +35125,7 @@ function icTMinNow(fam, opts) {
 //   모델이 추가·제거·정지되면 자동으로 따라간다(목록을 갱신하는 걸 잊어도 어긋나지 않는다).
 const IC_FAMILY_KEYS = ["flow_model", "xalpha_model", "stack_model", "memo_model",
   "dual_bull_model", "dual_bear_model", "mind_model", "gbdt_model", "ml_model",
-  "xgb_trust", "lgb_trust", "cat_trust", "dnn_trust", "scalp_trust"];
+  "xgb_trust", "lgb_trust", "cat_trust", "scalp_trust"];   // [V33.422] dnn_trust 퇴역
 async function icFamilyStamp(DB) {
   try {
     const S = await getStates(DB, IC_FAMILY_KEYS);
@@ -36413,7 +35310,10 @@ const ROSTER_STATE_TXT = {
   on:   "정식 합류 — 가중 1.0 으로 투표 중",
   prov: "잠정 합류 — 증거가 덜 쌓여 가중을 줄여 투표 중",
   bad:  "합류 보류 — 학습은 됐지만 문턱 미달이거나 아직 못 쟀다",
-  off:  "미학습 또는 판(featVer) 불일치"
+  off:  "미학습 또는 판(featVer) 불일치",
+  /* [V33.422] 섀도우 — ★투표하지 않는다.★ 'bad' 로 칠하면 "문턱을 못 넘어 막혔다" 로 읽히는데
+     OMNI 는 막힌 게 아니라 ★아직 연결하지 않은★ 것이다. 둘은 다른 사실이라 색도 달라야 한다. */
+  shadow: "섀도우 관측 — 실거래에 쓰지 않고 성적만 잰다(좌석 없음)"
 };
 /* ══ [V33.343] ★V33.342 는 이미 닫힌 문을 열지 못했다★ ═══════════════════════════
    V33.342 는 "대기 단계가 남으면 완주 도장을 찍지 않는다" 를 넣었다. 옳지만 부족했다 —
@@ -36482,6 +35382,7 @@ function _mindStored(probe) {
   return !!(probe && probe.mmeta && (probe.mfm || _num(probe.mtrees, 0) > 0));
 }
 function rosterCls(o) {
+  if (o && o.tier === "shadow") return "shadow";   // [V33.422] 학습 여부와 무관하게 섀도우다
   if (!o || !o.trained) return "off";
   if (o.featVerOk === false) return "off";
   if (o.tier === "full") return "on";
@@ -36494,6 +35395,10 @@ const ROSTER_SEAT_ROLES = { chair: 1, expert: 1 };
 async function buildRoster(DB) {
   const out = [];
   const add = function (key, name, role, o) {
+    /* [V33.422] ★퇴역 위원은 명부에 오르지 않는다.★ 사이드바와 구조관측이 이 배열 하나를
+       읽으므로(V33.301), 여기서 한 번 막으면 두 화면에서 동시에 사라진다 — 화면마다
+       따로 지우면 또 갈라진다. 좌석 수(n/m 가동)도 자동으로 줄어든다. */
+    if (_retired(key)) return null;
     const e = {
       key: key, name: name, role: role, seat: !!ROSTER_SEAT_ROLES[role],
       trained: !!o.trained,
@@ -36545,30 +35450,7 @@ async function buildRoster(DB) {
     why: !mStored ? "모델 없음" : (!mVerOk ? "판 불일치 — 재학습 대기" : "위원장 — 신뢰게이트 없이 항상 참여")
   });
 
-  // ② DNN — 본문은 청크/R2 에 있다. 저장 여부는 meta 로만 본다.
-  const dt = S["dnn_trust"], dMeta = S["dnn_model:meta"];
-  const dStored = !!(dMeta && (_num(dMeta.chunks, 0) > 0 || dMeta.r2));
-  const dVerOk = !!(dMeta && (typeof dMeta.featVer !== "number" || dMeta.featVer === LUXML.featVer));
-  const dOn = !!(dt && dt.trusted && _num(dt.wDnn, 0) > 0 && dStored && dVerOk);
-  /* [V33.338] ★어느 DNN 인지 화면이 말해야 한다.★
-     사용자가 "12층에서 4층 됐다" 고 층수를 세어 알아챘다 — 화면은 그냥 "신뢰 통과" 라고만 했다.
-     GPU 망(은닉 10층·6시드·460만 파라미터)과 워커 폴백(은닉 2층·1.7만, 1/46)은 전혀 다른 모델인데
-     같은 이름·같은 문구로 표시됐다. 어느 쪽이 앉아 있는지, 왜 그런지를 그대로 적는다. */
-  const _dWorker = !!(dt && dt.source === "worker");
-  const _dLayers = (dt && dt.hiddenLayers != null) ? _num(dt.hiddenLayers, null)
-                 : ((dMeta && Array.isArray(dMeta.dims)) ? Math.max(0, dMeta.dims.length - 2) : null);
-  add("dnn", _dWorker ? "DNN (워커 폴백 · 은닉 " + (_dLayers != null ? _dLayers : "?") + "층)"
-                      : "DNN (다층 퍼셉트론)", "expert", {
-    trained: dStored, featVerOk: dVerOk,
-    featVer: dMeta ? _num(dMeta.featVer, null) : null, wantVer: LUXML.featVer,
-    source: (dt && dt.source) || (dMeta && dMeta.source) || null,
-    hiddenLayers: _dLayers, params: dt ? _num(dt.params, null) : null,
-    tier: dOn ? (_dWorker ? "provisional" : "full") : "reject", mult: dOn ? _num(dt.wDnn, 0) : 0,
-    why: dOn ? (_dWorker ? ((dt && dt.why) || "워커 폴백 — GPU 모델 재학습 대기") : "신뢰 통과")
-             : (!dStored ? "모델 없음" : (!dVerOk ? "판 불일치 — 재학습 대기"
-         : ((dt && dt.reason) || "정확도 하한이 문턱 미달 — 자동 억제")))
-  });
-
+  // [V33.422] ② DNN 명부 항목 삭제 — 퇴역(RETIRED.dnn).
   // ③ GBDT
   const gt = S["gbdt_trust"];
   const gStored = !!(probe && _num(probe.gtrees, 0) > 0);
@@ -36653,18 +35535,7 @@ async function buildRoster(DB) {
     why: "상시 — 기술지표 기반 사전확률"
   });
 
-  /* ⑨ STACK — 위원이 아니라 ★결합기★ 다(투표에 끼는 게 아니라 결합을 통째로 대체한다).
-        좌석에 넣으면 인원수가 한 명 늘어 보인다 — 그 오해가 V33.126 의 출발점이었다. */
-  const sm = S["stack_model"];
-  const smOk = !!(sm && sm.featVer === STACKML.featVer);
-  const smA = smOk ? expertAdmit(sm) : null;
-  add("stack", "STACK (전문가 통합 — 결합기)", "combiner", {
-    trained: !!sm, featVerOk: !sm ? true : smOk,
-    featVer: sm ? _num(sm.featVer, null) : null, wantVer: STACKML.featVer,
-    tier: smA ? smA.tier : null, mult: smA ? smA.mult : 0,
-    why: smA ? smA.why : (!sm ? "모델 없음" : "판 불일치 — 재학습 대기")
-  });
-
+  /* [V33.422] ⑨ STACK 명부 항목 삭제 — 퇴역. 결합은 이제 IC 가중 하나뿐이다. */
   /* ⑩ 이중헤드 — 위원이 아니라 ★사분면 판정★ 이다. 저장하는 쪽이 넣는 판은
         DUALHEAD.featVer 가 아니라 LUXML.featVer 다(V33.282 에서 내가 낸 회귀). */
   [["dual_bull", "이중헤드 강세", S["dual_bull_model"]], ["dual_bear", "이중헤드 약세", S["dual_bear_model"]]]
@@ -36690,6 +35561,21 @@ async function buildRoster(DB) {
     tier: _dOn ? "full" : "reject", mult: _dOn ? 1 : 0,
     why: _dOn ? ("실측 사분면 로짓 적용 (n " + _num(_dsh.n, 0) + ")")
               : (_dTrained ? "헤드는 학습됨 — 사분면 실측표 대기" : "학습 대기")
+  });
+  /* ⑫ [V33.422] OMNI — ★좌석이 아니다.★ 아직 ★섀도우★ 다: 분봉 원시봉으로 학습한 복합모델이
+        지평(30분·60분·1일·5일·20일)마다 따로 성적을 내고, 그중 발언 문턱을 넘은 머리만
+        언젠가 좌석을 받는다. 지금은 한 표도 안 넣는다 — 그 사실을 화면이 그대로 말해야 한다.
+        (좌석에 넣으면 'n/m 가동' 이 늘어나 "투표에 끼어 있다" 는 거짓말이 된다.) */
+  const _om = await _omniMeta(DB);
+  const _omOk = _om ? omniHeadsOk(_om.heads) : [];
+  add("omni", "OMNI (복합모델 · 분봉 · 장타+단타 한 모델)", "shadow", {
+    trained: !!(_om && _num(_om.nTrees, 0) > 0), featVerOk: !_om ? true : (_om.v === OMNI_VER),
+    featVer: _om ? _om.v : null, wantVer: OMNI_VER,
+    tier: "shadow", mult: 0,
+    why: !_om ? "아직 업로드된 모델이 없다"
+       : (_om.v !== OMNI_VER ? ("판 불일치 v" + _om.v + " → v" + OMNI_VER)
+       : (_omOk.length ? ("섀도우 — 문턱을 넘은 머리 " + _omOk.join("·") + " (아직 매매에 안 쓴다)")
+                       : "섀도우 — 모든 지평이 발언 문턱 미달(쓰지 않는다)"))
   });
   return out;
 }
@@ -41529,12 +40415,9 @@ const DNN = {
   dropout: 0.42,
   l2: 9e-4,
   lr: 0.0025,
-  beta1: 0.9, beta2: 0.999, eps: 1e-8,
   epochs: 50,            // 워커용 상한. Modal 은 자체 400에폭 + 조기종료를 쓴다
   batch: 32,
-  dnnMaxSamples: 2000,   // (워커 폴백은 DNNW.dnnMaxSamples 를 쓴다 — 이 값은 하위호환용)
   patience: 8,           // 조기종료 인내
-  gradClip: 5,
   minTrainSamples: 150,  // [V12.100] 300→150 — DNN Worker폴백만 문턱이 높아 MIND(80)/GBDT(120)는 학습되는데
                          //   DNN만 계속 "학습 대기"로 남던 것 해소(사용자 지적: 왜 DNN은 안 도냐). featVer 재구축
                          //   중 풀이 150~300 사이일 때 DNN도 함께 참여. 과적합은 신뢰게이트(valAccLB≥trustFloor)가
@@ -41586,14 +40469,9 @@ const DNN = {
   inputNoise: 0.06,      // 학습 시 표준화 입력에 가우시안 노이즈(σ) 증강
   // [V9.7 논문 기법] 소표본 금융 tabular 특화 3종 — 신뢰게이트가 mind 대비 검증성능으로 자동 채택/억제.
   mixupP: 0.2,           // Mixup(Zhang 2018) — 노이즈35% 합성실험서 유일하게 개선(54.0% vs off 53.1%). 라벨노이즈 강건 증강.
-  focalGamma: 0,         // Focal(Lin 2017)은 라벨노이즈 도메인에서 역효과 실측(52.5%<53.1%) — 오라벨을 "어려운 표본"으로 증폭. 기본 OFF(코드 유지, 튜닝용)
-  gceQ: 0,               // [V9.8] GCE 노이즈-강건 손실(Zhang&Sabuncu 2018, arXiv:1805.07836) — grad×p_t^q(MAE↔CE 보간).
                          //   페어드 5회 실측 평균Δ-0.25%p(승2무1패2)=이득 없음 → 기본 OFF(기존 mixup·라벨스무딩·가중클립이 이미 노이즈방어 수행. 코드 유지=튜닝용)
-  disagreeK: 3.0,        // Deep Ensembles(Lakshminarayanan 2017) — 시드 로짓 std로 DNN 전문가 신뢰 감쇠 계수
   // [V9] AdamW(디커플드 weight decay) + 코사인 LR — 적응형 옵티마이저의 표준 일반화 개선(Loshchilov&Hutter 2019).
   //   신뢰블렌드 게이트가 mind 대비 검증성능으로 자동 채택/억제하므로, 이 변경은 "더 나으면 반영·아니면 무시"로 안전.
-  adamW: true,           // true=디커플드 감쇠(g에 L2 미포함, 가중치에 직접 λ·W 감쇠)
-  cosineLR: true,        // 에폭별 코사인 어닐링(lr→lr·lrFloorFrac)
   lrFloorFrac: 0.08,     // 코사인 하한(lr의 8%까지 감쇠)
   trainBudgetMs: 90000   // [V10] 대형 망(3M) 대응 55s→90s. cpu_ms 300s 한도 내 다른 야간 스테이지와 합산 여유 확보. 예산 초과 시 남은 시드 생략(최소 1개 보장)
                          //   (월 CPU 영향: +55s/일 ≈ +1.7M ms/월 — 사용량 가드 여유 내, 셧다운 90% 대비 안전)
@@ -41636,14 +40514,8 @@ const DNNW = Object.assign({}, DNN, {
 });
 
 
-// ── 선형대수 헬퍼 ──────────────────────────────────────────
-function _dnnRelu(v) { return v > 0 ? v : 0; }
-function _dnnHeInit(nout, nin) {
-  const scale = Math.sqrt(2 / Math.max(1, nin));
-  const W = [];
-  for (let i = 0; i < nout; i++) { const r = new Array(nin); for (let j = 0; j < nin; j++) r[j] = _gaussM() * scale; W.push(r); }
-  return W;
-}
+/* [V33.422] _dnnRelu 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
+/* [V33.422] _dnnHeInit 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
 // [V9.1] 윈저화 표준화 — 표준화값을 ±stdClip(σ)로 클램프. 금융 팬테일 이상치가 활성/그래디언트를
 //   지배하는 것을 차단(학습·추론 동일 적용 → 분포 일관). NaN/Inf는 0으로 살균.
 /* [V33.193] dims 배열 하나로 파라미터 수를 센다 — ★세는 곳을 하나로 둔다.★
@@ -41734,588 +40606,11 @@ function _dnnStdVec(x, mean, std) {
   return o;
 }
 
-// 순전파. train=true면 드롭아웃 적용(inverted). 반환: {a[], pre[], p, masks[]}
-// [V33.191] 드롭아웃 비율을 인자로 받는다 — 워커 폴백은 정식(GPU) 망과 다른 값을 쓴다.
-//   기본값은 종전과 같은 DNN.dropout 이라 추론 경로(train=false)는 아무 영향이 없다.
-function _dnnForward(net, x, train, dropoutP) {
-  const _dp = (typeof dropoutP === "number" && isFinite(dropoutP)) ? dropoutP : DNN.dropout;
-  const L = net.W.length;
-  const a = [x];
-  const pre = [];
-  const masks = [];
-  let cur = x;
-  for (let l = 0; l < L; l++) {
-    const W = net.W[l], b = net.b[l];
-    const nout = W.length;
-    const z = new Array(nout);
-    for (let i = 0; i < nout; i++) { let s = b[i]; const wi = W[i]; for (let j = 0; j < cur.length; j++) s += wi[j] * cur[j]; z[i] = s; }
-    pre.push(z);
-    if (l < L - 1) {
-      // 은닉층: ReLU (+드롭아웃)
-      const out = new Array(nout);
-      const mask = new Array(nout).fill(1);
-      for (let i = 0; i < nout; i++) {
-        let h = _dnnRelu(z[i]);
-        if (train && _dp > 0) { if (Math.random() < _dp) { mask[i] = 0; h = 0; } else { h = h / (1 - _dp); } }
-        out[i] = h;
-      }
-      masks.push(mask);
-      cur = out; a.push(out);
-    } else {
-      // 출력층: sigmoid
-      const p = _clamp(_sigmoid(z[0]), 1e-6, 1 - 1e-6);
-      a.push([p]);
-      return { a: a, pre: pre, p: p, masks: masks };
-    }
-  }
-  return { a: a, pre: pre, p: 0.5, masks: masks };
-}
-
-// 앙상블 추론: 각 시드넷의 로짓을 평균 → sigmoid (과신 억제된 확률)
-function _dnnEnsembleP(nets, x) {
-  let zsum = 0, c = 0;
-  for (const nt of nets) {
-    const p = _dnnForward(nt, x, false).p;
-    zsum += Math.log(p / (1 - p)); c++;
-  }
-  if (!c) return 0.5;
-  return _clamp(_sigmoid(zsum / c), 1e-6, 1 - 1e-6);
-}
-// [V9.7] 앙상블 통계 — 로짓 평균확률 + 시드 간 로짓 std(불일치=예측 불확실성, Deep Ensembles 2017).
-//   같은 forward 결과 재사용이라 추가 비용 0. std 클수록 이 입력에 대한 DNN 확신이 낮다는 뜻.
-function _dnnEnsembleStats(nets, x) {
-  const zs = [];
-  for (const nt of nets) { const p = _dnnForward(nt, x, false).p; zs.push(Math.log(p / (1 - p))); }
-  if (!zs.length) return { p: 0.5, std: 0 };
-  let m = 0; for (const z of zs) m += z; m /= zs.length;
-  let v = 0; for (const z of zs) v += (z - m) * (z - m);
-  return { p: _clamp(_sigmoid(m), 1e-6, 1 - 1e-6), std: Math.sqrt(v / zs.length) };
-}
-
-function mlDNNScore(net, featVec) {
-  try {
-    if (!net) return null;
-    const x = _dnnStdVec(featVec.map(function (v) { return _num(v, 0); }), net.mean, net.std);
-    if (Array.isArray(net.nets) && net.nets.length) return _clamp(_dnnEnsembleP(net.nets, x), 0.001, 0.999);
-    if (Array.isArray(net.W)) { const fwd = _dnnForward(net, x, false); return _clamp(fwd.p, 0.001, 0.999); } // 구버전 단일넷 호환
-    return null;
-  } catch (e) { return null; }
-}
-
-// ── 시드 1개 학습: Adam + 미니배치 + 조기종료 + 라벨스무딩 + 입력노이즈 증강 ──
-//   deadline 초과 시 그 시점까지의 최적 가중치로 중단(부분학습도 유효). NaN이면 null.
-/* [V33.191] hp — 하이퍼파라미터를 인자로 받는다. 기본값은 DNN(정식·GPU) 이라 종전 호출은 그대로다.
-   워커 폴백만 DNNW 를 넘겨 ★작고 반드시 끝나는★ 망으로 학습한다(DNNW 주석 참조). */
-function _dnnTrainOne(train, val, dims, deadline, warm, hp) {
-  hp = hp || DNN;
-  const W = [], b = [], mW = [], vW = [], mB = [], vB = [];
-  for (let l = 0; l < dims.length - 1; l++) {
-    W.push(_dnnHeInit(dims[l + 1], dims[l]));
-    b.push(new Array(dims[l + 1]).fill(0));
-    mW.push(W[l].map(function (r) { return r.map(function () { return 0; }); }));
-    vW.push(W[l].map(function (r) { return r.map(function () { return 0; }); }));
-    mB.push(new Array(dims[l + 1]).fill(0));
-    vB.push(new Array(dims[l + 1]).fill(0));
-  }
-  // [V11] 웜스타트: 이전 밤 학습된 가중치에서 이어서 학습(3M은 하룻밤에 못 끝내므로 여러 밤에 걸쳐 누적).
-  //   차원 일치 시에만 로드. Adam 모멘트는 0으로 리셋(안전).
-  if (warm && Array.isArray(warm.W) && warm.W.length === W.length) {
-    let okShape = true;
-    for (let l = 0; l < W.length; l++) if (!Array.isArray(warm.W[l]) || warm.W[l].length !== W[l].length || warm.W[l][0].length !== W[l][0].length) { okShape = false; break; }
-    if (okShape) for (let l = 0; l < W.length; l++) { for (let i = 0; i < W[l].length; i++) { const wr = warm.W[l][i]; for (let j = 0; j < W[l][i].length; j++) { const v = wr[j]; if (isFinite(v)) W[l][i][j] = v; } b[l][i] = isFinite(warm.b[l][i]) ? warm.b[l][i] : b[l][i]; } }
-  }
-  const net = { W: W, b: b, dims: dims };
-
-  let pos = 0; for (const t of train) pos += t.y;
-  const wPos = pos > 0 ? train.length / (2 * pos) : 1;
-  const wNeg = (train.length - pos) > 0 ? train.length / (2 * (train.length - pos)) : 1;
-  const eps = hp.labelSmooth || 0;          // 라벨 스무딩: y→y(1-ε)+ε/2
-  const sigma = hp.inputNoise || 0;         // 입력 가우시안 노이즈(표준화 공간)
-  const D = dims[0];
-
-  function valLoss() {
-    let ll = 0;
-    for (const t of val) { const p = _dnnForward(net, t.x, false).p; ll += -(t.y * Math.log(p) + (1 - t.y) * Math.log(1 - p)); }
-    return ll / val.length;
-  }
-
-  let step = 0, bestLoss = Infinity, bestW = null, bestB = null, wait = 0, deadlineHit = false;
-  // [V4] SWA(Izmailov 2018): 후반부 에폭들의 가중치 평균 — 평평한 최소점으로 일반화↑
-  const swaFrom = Math.floor(hp.epochs * 0.5);
-  let swaW = null, swaB = null, swaN = 0;
-  const clip = hp.gradClip;
-  const noisy = new Array(D);
-  for (let ep = 0; ep < hp.epochs; ep++) {
-    // [V11] ★핵심 수정★ 예산 초과 시 무조건 중단(기존 `&& bestW`가 첫 에폭 미완료 시 break를 막아
-    //   3M망이 CPU한도까지 폭주→Worker 강제종료→아무것도 저장 못 함→"영원히 학습대기"의 원인이었음).
-    if (Date.now() > deadline) break;
-    // [V9] 코사인 LR 어닐링: lr → lr·lrFloorFrac (에폭 진행에 따라 감쇠, 후반 미세조정으로 일반화↑)
-    const _cosT = hp.epochs > 1 ? ep / (hp.epochs - 1) : 0;
-    const curLr = hp.cosineLR
-      ? hp.lr * ((hp.lrFloorFrac || 0.08) + (1 - (hp.lrFloorFrac || 0.08)) * 0.5 * (1 + Math.cos(Math.PI * _cosT)))
-      : hp.lr;
-    for (let i = train.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); const tmp = train[i]; train[i] = train[k]; train[k] = tmp; }
-    for (let bs = 0; bs < train.length; bs += hp.batch) {
-      // [V11] 에폭 내부에서도 예산 감시 — 3M 대형망은 단일 에폭도 예산을 넘길 수 있어(에폭경계 체크만으론
-      //   CPU한도 초과→강제종료). 배치마다 확인해 즉시 마감하고 지금까지 학습분을 반환(부분학습도 유효).
-      if (Date.now() > deadline) { deadlineHit = true; break; }
-      const batch = train.slice(bs, bs + hp.batch);
-      // 그래디언트 누적
-      const gW = W.map(function (m) { return m.map(function (r) { return r.map(function () { return 0; }); }); });
-      const gB = b.map(function (r) { return r.map(function () { return 0; }); });
-      for (const t of batch) {
-        let xin = t.x;
-        // [V9.7 Mixup] (Zhang et al., ICLR 2018) 확률 mixupP로 무작위 파트너와 선형보간(x·y 동시)
-        //   → 소표본 tabular에서 결정경계를 매끄럽게(과적합·과신 완화). 소프트라벨은 BCE grad (p−y)에 그대로 유효.
-        let yEff = t.y, wCls = (t.y ? wPos : wNeg), mwEff = t.mw;
-        if (hp.mixupP > 0 && Math.random() < hp.mixupP && train.length > 1) {
-          const u = train[Math.floor(Math.random() * train.length)];
-          const lam = 0.2 + Math.random() * 0.6;   // λ∈[0.2,0.8] (Beta 근사 — 극단 회피)
-          const mixed = new Array(D);
-          for (let j = 0; j < D; j++) mixed[j] = lam * t.x[j] + (1 - lam) * u.x[j];
-          xin = mixed;
-          yEff = lam * t.y + (1 - lam) * u.y;
-          wCls = lam * (t.y ? wPos : wNeg) + (1 - lam) * (u.y ? wPos : wNeg);
-          mwEff = lam * t.mw + (1 - lam) * u.mw;
-        }
-        if (sigma > 0) { const src = xin; for (let j = 0; j < D; j++) noisy[j] = src[j] + sigma * _gaussM(); xin = noisy; }
-        const fwd = _dnnForward(net, xin, true, hp.dropout);
-        const L = W.length;
-        // 출력 델타 (BCE+sigmoid, 스무딩 라벨): (p - yS) * weight
-        const yS = yEff * (1 - eps) + eps / 2;
-        // [V9.7 Focal] (Lin et al., ICCV 2017) 변조계수 (1−p_t)^γ — 이미 맞춘 쉬운 표본의 grad를 줄이고
-        //   어려운 표본(오분류·경계)에 학습 집중. γ=0이면 기존과 동일.
-        let focal = 1;
-        if (hp.focalGamma > 0) { const pt = yEff > 0.5 ? fwd.p : (1 - fwd.p); focal = Math.pow(1 - pt, hp.focalGamma); }
-        // [V9.8 GCE] (Zhang&Sabuncu 2018) grad ×= p_t^q — 라벨과 모델확신이 어긋나는(오라벨 의심) 표본의
-        //   갱신을 자동 감쇠 → CE의 노이즈 암기 방지. 소프트라벨(mixup)엔 기대확률로 일반화.
-        let gce = 1;
-        if (hp.gceQ > 0) { const ptg = yEff * fwd.p + (1 - yEff) * (1 - fwd.p); gce = Math.pow(Math.max(ptg, 0.05), hp.gceQ); }
-        let delta = [(fwd.p - yS) * wCls * mwEff * focal * gce];
-        for (let l = L - 1; l >= 0; l--) {
-          const aPrev = fwd.a[l];
-          const gWl = gW[l], gBl = gB[l];
-          for (let i = 0; i < W[l].length; i++) {
-            const di = delta[i];
-            gBl[i] += di;
-            const gRow = gWl[i];
-            for (let j = 0; j < aPrev.length; j++) gRow[j] += di * aPrev[j];
-          }
-          if (l > 0) {
-            // 이전 은닉층 델타: (W^T delta) * relu'(pre) * dropoutMask
-            const prevLen = W[l][0].length;
-            const nd = new Array(prevLen).fill(0);
-            for (let i = 0; i < W[l].length; i++) { const di = delta[i], Wi = W[l][i]; for (let j = 0; j < prevLen; j++) nd[j] += Wi[j] * di; }
-            const pre = fwd.pre[l - 1], mask = fwd.masks[l - 1];
-            for (let j = 0; j < prevLen; j++) nd[j] *= (pre[j] > 0 ? 1 : 0) * (mask ? mask[j] : 1);
-            delta = nd;
-          }
-        }
-      }
-      // Adam 갱신(배치평균 + L2)
-      step++;
-      const bc1 = 1 - Math.pow(hp.beta1, step), bc2 = 1 - Math.pow(hp.beta2, step);
-      const bl = batch.length;
-      for (let l = 0; l < W.length; l++) {
-        for (let i = 0; i < W[l].length; i++) {
-          for (let j = 0; j < W[l][i].length; j++) {
-            // [V9] AdamW: 디커플드면 L2를 그래디언트에 넣지 않고 가중치에 직접 감쇠(적응형 옵티마이저 일반화↑).
-            let g = gW[l][i][j] / bl;
-            if (!hp.adamW) g += hp.l2 * W[l][i][j];
-            if (g > clip) g = clip; else if (g < -clip) g = -clip;
-            mW[l][i][j] = hp.beta1 * mW[l][i][j] + (1 - hp.beta1) * g;
-            vW[l][i][j] = hp.beta2 * vW[l][i][j] + (1 - hp.beta2) * g * g;
-            const mh = mW[l][i][j] / bc1, vh = vW[l][i][j] / bc2;
-            W[l][i][j] -= curLr * mh / (Math.sqrt(vh) + hp.eps);
-            if (hp.adamW) W[l][i][j] -= curLr * hp.l2 * W[l][i][j];  // 디커플드 감쇠
-          }
-          let gb = gB[l][i] / bl;
-          if (gb > clip) gb = clip; else if (gb < -clip) gb = -clip;
-          mB[l][i] = hp.beta1 * mB[l][i] + (1 - hp.beta1) * gb;
-          vB[l][i] = hp.beta2 * vB[l][i] + (1 - hp.beta2) * gb * gb;
-          const mhb = mB[l][i] / bc1, vhb = vB[l][i] / bc2;
-          b[l][i] -= curLr * mhb / (Math.sqrt(vhb) + hp.eps);  // 바이어스는 감쇠 없음(표준)
-        }
-      }
-    }
-    if (deadlineHit) break;   // [V11] 예산 소진 — 현재 가중치(부분학습)로 마감
-    // [V4] SWA 누적(후반부 에폭)
-    if (ep >= swaFrom) {
-      if (!swaW) {
-        swaW = W.map(function (m) { return m.map(function (r) { return r.slice(); }); });
-        swaB = b.map(function (r) { return r.slice(); });
-        swaN = 1;
-      } else {
-        swaN++;
-        for (let l = 0; l < W.length; l++) {
-          for (let i = 0; i < W[l].length; i++) {
-            const sw = swaW[l][i], cw = W[l][i];
-            for (let j = 0; j < cw.length; j++) sw[j] += (cw[j] - sw[j]) / swaN;
-            swaB[l][i] += (b[l][i] - swaB[l][i]) / swaN;
-          }
-        }
-      }
-    }
-    // 조기종료 체크
-    const vl = valLoss();
-    if (isFinite(vl) && vl < bestLoss - 1e-5) {
-      bestLoss = vl; wait = 0;
-      bestW = W.map(function (m) { return m.map(function (r) { return r.slice(); }); });
-      bestB = b.map(function (r) { return r.slice(); });
-    } else { wait++; if (wait >= hp.patience) break; }
-  }
-  if (bestW) { net.W = bestW; net.b = bestB; }
-
-  // [V4] SWA vs best 체크포인트 — 검증 손실이 더 낮은 쪽 채택
-  if (swaW && swaN >= 3) {
-    const saveW = net.W, saveB = net.b;
-    net.W = swaW; net.b = swaB;
-    const swaLoss = valLoss();
-    if (!(isFinite(swaLoss) && swaLoss <= bestLoss)) { net.W = saveW; net.b = saveB; }
-  }
-
-  // NaN 가드
-  for (const m of net.W) for (const r of m) for (const v of r) if (!isFinite(v)) return null;
-  return { W: net.W, b: net.b, dims: dims };
-}
-
-// ── 학습: Adam + 미니배치 + 조기종료 + 역전파 ──────────────
-async function mlDNNTrainNightly(DB) {
-  if (!DNN.enabled) return null;
-  try {
-    // [V12.36] 외부(Modal GPU) 모델이 이미 소유 중이면 여기서 즉시 종료 — trainWindow(60000)를 D1에서
-    //   읽어 JSON.parse·표준화까지 다 해놓고 18757줄에서야 버리던 낭비 제거(예전엔 12000행 기준으로도
-    //   낭비였는데 표본창 확대로 5배 커짐). 조기 리턴을 판정 앞단으로 이동.
-    let prevModelEarly = null;
-    try { prevModelEarly = await mlDNNLoad(DB); } catch (e) {}
-    // [V33.50] ★DNN 이 영구히 '학습 대기'에 갇히던 버그★
-    //   이 가드는 source === "external" 이기만 하면 무조건 조기 리턴했다. GBDT·MIND 의 같은
-    //   가드는 (a) trusted 이고 (b) 36시간 내 학습분일 때만 생략하는데 DNN 만 두 조건이 없었다.
-    //   결과: Modal 이 trustFloor(50.5%) 미달 DNN 을 올리면 → 워커는 "외부 모델 있음"으로 자가학습을
-    //   건너뛰고 → 미달 모델이 그대로 남아 → 다음 Modal 실행 전까지 DNN 은 계속 미가동.
-    //   게다가 신선도 검사도 없어 며칠 지난 외부 모델도 영구히 자가학습을 막았다.
-    //   → 외부 모델이 '신뢰되고 신선할 때만' 생략한다. 미달·노후면 워커가 폴백으로 자가학습한다.
-    if (prevModelEarly && prevModelEarly.source === "external") {
-      let _dTrusted = false;
-      try { const _dt2 = await getState(DB, "dnn_trust", null); _dTrusted = !!(_dt2 && _dt2.trusted); } catch (e) {}
-      const _fresh = !!(prevModelEarly.trainedAt && (Date.now() - prevModelEarly.trainedAt) < 36 * 3600000);
-      if (_dTrusted && _fresh) {
-        return "[DNN] 외부GPU 학습모델 신뢰 중(valAcc " + ((_num(prevModelEarly.valAcc, 0)) * 100).toFixed(1) + "%) — 야간 자가학습 생략(외부 소유)";
-      }
-      await log(DB, "INFO", null, "[DNN] 외부모델 " + (!_dTrusted ? "미신뢰(valAcc " + ((_num(prevModelEarly.valAcc, 0)) * 100).toFixed(1) + "%)" : "노후") + " — 워커 자가학습으로 폴백");
-    }
-    // [V12.100] ★DNN 완주 신뢰성★ 종전엔 trainWindow(90000)만큼 다 읽어 JSON.parse·표준화했는데
-    //   실제 학습엔 최근 dnnMaxSamples(2000)만 쓴다 — 표본이 커질수록(37k+) 읽기·파싱만으로 CPU를 태워
-    //   DNN 단계가 완주 못 하고(뒤의 GBDT까지 굶김) "DNN만 안 넘어가던" 원인. 필요한 최근 표본만 읽는다.
-    /* [V33.191] ★표본이 굶고 있었다 — 185,408건 중 5,000건, 그것도 전부 최근 구간.★
-       종전: _dnnRead = min(trainWindow, dnnMaxSamples×2+1000) = 5,000 을 ts DESC 로 읽고
-       학습에는 그중 최근 2,000건만 썼다. 그러면 검증 홀드아웃까지 같은 며칠 안에서 잘려
-       valAcc 가 '한 국면에서의 성적' 이 된다(XALPHA 홀드아웃이 사흘치였던 것과 같은 병).
-       → 절반은 최근 구간, 절반은 ★id 범위를 균등 분할해★ 전 구간에서 뽑는다.
-         id 는 기본키라 범위 조회가 인덱스를 그대로 탄다 — 읽는 행 수는 비슷한데(비용 동일)
-         보는 기간이 며칠에서 몇 달로 늘어난다.
-       ※ 검증 분할은 아래에서 ts 정렬 후 ★뒤쪽(최근)★ 을 쓰므로 walk-forward 성질은 그대로다. */
-    const _dnnRead = Math.min(LUXML.trainWindow, (DNNW.dnnMaxSamples || 6000) * 2 + 1000);
-    const _nRecent = Math.max(200, Math.floor(_dnnRead * _num(DNNW.recentFrac, 0.5)));
-    /* [V33.410] ★배포된 DNN 의 '지금' 신뢰도를 잰다 — 재기만 한다.★
-       GBDT 와 같은 이유다(그 자리 주석 참조): 위원회 지분은 학습하던 밤에 얼어붙은
-       하한에서 나오는데, 배포 후 성적을 보는 곳이 없었다. 재료(icForwardCheck·fwd_ledger)는
-       이미 있었고 잠정 위원에게만 걸려 있었다. ★어떤 판정도 바꾸지 않는다★ —
-       검정력이 생기기 전에 규칙을 만들면 3일치로 현직을 죽이게 된다. */
-    let _fwdTrust = null;
-    try {
-      /* ★이미 메모리에 있는 모델을 쓴다★ — prevModelEarly 는 이 함수 맨 앞에서 읽은
-         ★지금 배포돼 있는★ DNN 이다. 여기서 다시 읽으면 21MB·53청크를 두 번 읽는다. */
-      /* [V33.412] 체크포인트는 ★21MB 모델 안이 아니라 작은 전용 키★ 에 산다.
-         이유는 실측이다(회차 35671199889): 워커 자가학습이 외부보다 나쁘면
-         "외부 모델 유지(덮어쓰기 생략)" 로 ★조기 반환★ 하는데, 그 경로는 setBigState 를
-         통째로 건너뛴다 → 체크포인트가 영영 저장되지 않는다. V33.410 이 고치려던
-         "전진검증이 영원히 null" 이 그 경로에서 ★그대로 재현★ 되고 있었다. */
-      const _ck = await getState(DB, "dnn_ckpt", null);
-      _fwdTrust = await icForwardCheck(DB, {
-        stateKey: "dnn_model", table: "ml_samples", featVer: LUXML.featVer,
-        sampleFeatVer: LUXML.featVer, hasInsTs: true,
-        loadFn: function () {
-          if (!prevModelEarly) return null;
-          return (_ck && _ck.featVer === LUXML.featVer) ? Object.assign({}, prevModelEarly, _ck) : prevModelEarly;
-        },
-        scoreFn: function (m, v) { const p = mlDNNScore(m, v); return p == null ? null : p; },
-        labelFn: function (r) { return _labelOfRow(r); }
-      });
-    } catch (e) {}
-    const _COLS = "SELECT id, ts, feat, label, pnl_pct, strategy FROM ml_samples ";
-    const _seen = new Set();
-    const raw = [];
-    const _push = function (rs) {
-      for (const r of (rs || [])) { const k = _num(r.id, -1); if (k < 0 || _seen.has(k)) continue; _seen.add(k); raw.push(r); }
-    };
-    // ① 최근 구간
-    try {
-      const r1 = await DB.prepare(_COLS + "WHERE featver = ? ORDER BY ts DESC LIMIT ?")
-        .bind(LUXML.featVer, _nRecent).all();
-      _push(r1 && r1.results);
-    } catch (e) {}
-    // ② 전 구간 균등 — id 범위를 spanBuckets 로 나눠 각 구간에서 같은 수만큼
-    try {
-      const _mm = await DB.prepare("SELECT MIN(id) AS lo, MAX(id) AS hi FROM ml_samples WHERE featver = ?")
-        .bind(LUXML.featVer).first();
-      const lo = _num(_mm && _mm.lo, 0), hi = _num(_mm && _mm.hi, 0);
-      const B = Math.max(1, Math.floor(_num(DNNW.spanBuckets, 8)));
-      const per = Math.max(50, Math.floor((_dnnRead - _nRecent) / B));
-      if (hi > lo) {
-        const step = (hi - lo) / B;
-        for (let bI = 0; bI < B; bI++) {
-          const from = Math.floor(lo + step * bI);
-          const rb = await DB.prepare(_COLS + "WHERE featver = ? AND id >= ? ORDER BY id ASC LIMIT ?")
-            .bind(LUXML.featVer, from, per).all();
-          _push(rb && rb.results);
-        }
-      }
-    } catch (e) {}
-    // 시간순(오름차순)으로 맞춘다 — 아래 루프가 역순으로 읽으므로 여기서는 내림차순으로 둔다.
-    raw.sort(function (a, b) { return _num(b.ts, 0) - _num(a.ts, 0); });
-    const nowTs = Date.now();
-    const data = [];
-    /* [V33.410] 체크포인트는 ★읽은 자리에서 바로★ 센다 — 저장 시점까지 raw 가 살아 있기를
-       기대하면, 나중에 누가 메모리 해제(raw[i] = null · GBDT 가 하는 그 패턴)를 넣는 순간
-       maxId 가 조용히 0 이 되고 전진검증이 소리 없이 약한 기준으로 내려앉는다. */
-    let _ckMaxId = 0, _ckMaxTs = 0;
-    for (let i = raw.length - 1; i >= 0; i--) {
-      const _a = _num(raw[i].id, 0); if (_a > _ckMaxId) _ckMaxId = _a;
-      const _b = _num(raw[i].ts, 0); if (_b > _ckMaxTs) _ckMaxTs = _b;
-      let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
-      if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-      data.push({ ts: _num(raw[i].ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(raw[i]), pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
-    }
-    const N = data.length;
-    if (N < DNN.minTrainSamples) {
-      await setState(DB, "dnn_trust", { wDnn: 0, trusted: false, reason: "samples", n: N });
-      return "[DNN] 표본 " + N + "/" + DNN.minTrainSamples + " — 딥넷 미학습(자동 미사용)";
-    }
-    const D = LUXML.featNames.length;
-
-    // 표준화
-    const mean = new Array(D).fill(0), std = new Array(D).fill(0);
-    for (const d of data) for (let j = 0; j < D; j++) mean[j] += d.x[j];
-    for (let j = 0; j < D; j++) mean[j] /= N;
-    for (const d of data) for (let j = 0; j < D; j++) { const dv = d.x[j] - mean[j]; std[j] += dv * dv; }
-    for (let j = 0; j < D; j++) std[j] = Math.sqrt(std[j] / N) || 1;
-
-    const absP = data.map(function (d) { return Math.abs(d.pnl); }).sort(function (a, b) { return a - b; });
-    const pnlScale = absP.length ? (absP[Math.floor(absP.length / 2)] || 1) : 1;
-    const all = data.map(function (d) {
-      return { x: _dnnStdVec(d.x, mean, std), y: d.y, ts: d.ts,
-        mw: _clamp(Math.abs(d.pnl) / (pnlScale > 1e-6 ? pnlScale : 1), 0.3, 3.0) * (d.hv ? HARVEST.srcWeight : (LUXML.liveSrcWeight || 1)) * _recencyW(d.ts, nowTs) };
-    });
-    const nVal = Math.max(20, Math.floor(N * DNN.valFrac));
-    // [V4] 엠바고 퍼지 홀드아웃(라벨 horizon 겹침 누출 차단)
-    const embargoMs = (LUXML.embargoDays || 6) * 86400000;
-    const cutTs = all[N - nVal].ts - embargoMs;
-    let train = all.slice(0, N - nVal).filter(function (t) { return t.ts < cutTs; });
-    if (train.length < 60) train = all.slice(0, N - nVal);
-    // [V10] 대형 망 학습비용 제한 — 최근 dnnMaxSamples개만 사용(예산 내 에폭 수 확보). 최신성 우선이라 뒤쪽(최근) 유지.
-    /* [V33.191] 학습표본 상한도 워커 전용 값으로. ★그리고 '최근만 남기기' 를 하지 않는다★ —
-       위에서 전 구간에 걸쳐 뽑아 온 표본을 여기서 뒤쪽만 잘라내면 애써 넓힌 기간이 도로 사라진다.
-       상한을 넘으면 ★균등 간격으로 솎아내어★ 기간을 유지한 채 개수만 줄인다. */
-    if (DNNW.dnnMaxSamples && train.length > DNNW.dnnMaxSamples) {
-      const _keep = DNNW.dnnMaxSamples, _st = train.length / _keep;
-      const _thin = [];
-      for (let ti = 0; ti < _keep; ti++) _thin.push(train[Math.min(train.length - 1, Math.floor(ti * _st))]);
-      train = _thin;
-    }
-    const val = all.slice(N - nVal);
-    if (train.length < 60) { await setState(DB, "dnn_trust", { wDnn: 0, trusted: false, reason: "train" }); return "\u27F3 " + "[DNN] 훈련셋 부족"; }
-    /* ══ [V33.391] ★조기중단이 채점표를 보고 멈추고 있었다 — 워커 폴백도 같았다.★ ═══════
-       V33.388 이 Modal 학습기 8곳에서 고친 것과 같은 병이 여기 남아 있었다:
-       _dnnTrainOne 이 val 손실로 최적 에폭을 고르고, 바로 아래에서 ★그 같은 val★ 로
-       dnnAcc·dnnLB 를 낸다. 고른 자로 채점하면 점수가 부푼다.
-       ★이번엔 그냥 두면 더 나쁘다.★ 40335 행이 이 dnnLB 를 외부(Modal) 모델의 accLB 와
-       ★맞대어★ 어느 쪽을 쓸지 정한다. 한쪽만 정직해지면 그 비교가 기울어져,
-       정직해진 외부 모델이 부푼 폴백에 밀려난다 — 내 수정이 만든 새 비대칭이다.
-       → _mlpFit 이 이미 쓰는 방식 그대로: 학습 꼬리 15% 를 내부검증으로 떼고
-         홀드아웃은 건드리지 않는다. 표본이 모자라면 종전대로 돌되 그 사실을 적는다. */
-    let _innerVal = null;
-    {
-      const _ni = Math.max(20, Math.floor(train.length * 0.15));
-      if (train.length - _ni >= 60) { _innerVal = train.slice(train.length - _ni); train = train.slice(0, train.length - _ni); }
-    }
-    const _esSet = _innerVal || val;
-
-    // 층 구조 [D, ...hidden, 1] — 멀티시드 앙상블(서로 다른 초기화·셔플 K개 → 로짓 평균)
-    const dims = [D].concat(DNNW.hidden).concat([1]);   // [V33.191] 워커 폴백 구조(GPU 는 DNN.hidden)
-    // [V12.36] "외부 모델 존재→생략" 판정은 함수 맨 앞으로 이동(위 prevModelEarly) — 여기선 웜스타트에만 재사용.
-    const prevModel = prevModelEarly;
-    const warmNets = (prevModel && Array.isArray(prevModel.nets) && Array.isArray(prevModel.dims)
-      && prevModel.dims.length === dims.length && prevModel.dims.every(function (v, i) { return v === dims[i]; }))
-      ? prevModel.nets : null;   // [V11] 웜스타트 소스(차원 일치 시에만)
-    const deadline = Date.now() + (DNN.trainBudgetMs || 20000);
-    const nets = [];
-    const K = Math.max(1, DNNW.seeds || 1);
-    for (let sd = 0; sd < K; sd++) {
-      if (sd > 0 && Date.now() > deadline) break;   // CPU 예산 소진 — 최소 1개는 보장
-      const warm = warmNets ? warmNets[sd % warmNets.length] : null;   // [V11] 여러 밤에 걸쳐 이어학습
-      const one = _dnnTrainOne(train, _esSet, dims, deadline, warm, DNNW);   // [V33.391] 멈출 때는 내부검증
-      if (one) nets.push(one);
-    }
-    if (!nets.length) { await setState(DB, "dnn_trust", { wDnn: 0, trusted: false, reason: "nan" }); return "[DNN] 수치불안정 감지 — 미사용"; }
-
-    // 검증 정확도(앙상블: 로짓 평균) + Wilson 신뢰하한
-    let correct = 0;
-    if (!_innerVal) console.log("[DNN] ★내부검증을 못 뗐다(표본 부족) — 이 회차 dnnLB 는 부풀어 있다★");
-    const _bHitD = [], _bTsD = [], _pD = [], _yD = [];
-    for (const t of val) { const p = _dnnEnsembleP(nets, t.x); const _ok = ((p >= 0.5 ? 1 : 0) === t.y);
-      if (_ok) correct++; _bHitD.push(_ok ? 1 : 0); _bTsD.push(_num(t.ts, 0));
-      _pD.push(_num(p, 0.5)); _yD.push(t.y); }
-    /* [V33.411] ★발언점★ — 홀드아웃 앞절반에서 문턱을 고르고 뒤절반에서 잰다.
-       평가 절반은 문턱 선택에 안 쓰였다. ★기존 게이트(dnnAcc·dnnLB)는 안 건드린다.★ */
-    let _speak = null;
-    try {
-      const _hv = _pD.length;
-      const _m2 = _speakSplit(_hv, _bTsD, _num(SPEAK.calFrac, 0.25), _num(SPEAK.minSpeakN, 200));
-      if (_m2 > 0) {
-        _speak = _speakPoint(_pD.slice(0, _m2), _yD.slice(0, _m2),
-                             _pD.slice(_m2), _yD.slice(_m2), _bTsD.slice(_m2),
-                             Math.max(1, _num((AI_PARAMS.prediction && AI_PARAMS.prediction.horizonDays) || 10, 10)) * 86400000,
-                             SPEAK);
-      } else {
-        _speak = { ok: false, tau: null, cov: 0, acc: null, lb: null, n: 0, k: 0,
-                   target: _num(SPEAK.target, 0.6),
-                   why: "홀드아웃 " + _hv + "행 — 문턱 고르기/재기로 가르기엔 부족" };
-      }
-    } catch (e) {}
-    const dnnAcc = correct / val.length;
-    // [V33.115] 유효표본수로 하한을 잰다 — 외부(Modal) 업로드와 같은 자를 써야 공정 비교다.
-    const _uBar = await mlPoolUniqGet(DB);
-    const _dnnNEff = _effN(val.length, _uBar);
-    let dnnLB = _wilsonLB(dnnAcc, _dnnNEff);
-    /* [V33.398] 행이 아니라 ★사건★ 을 센다 — GBDT 와 같은 규율(위 _blockAccLB 주석). */
-    const _horD = Math.max(1, _num((AI_PARAMS.prediction && AI_PARAMS.prediction.horizonDays) || 10, 10)) * 86400000;
-    const _blkD = _blockAccLB(_bHitD, _bTsD, _horD);
-    if (_blkD.lb != null && _blkD.lb < dnnLB) dnnLB = +_blkD.lb.toFixed(4);
-
-    const net = { nets: nets, mean: mean, std: std, featVer: LUXML.featVer,
-                  valAcc: +dnnAcc.toFixed(4), valAccLB: +dnnLB.toFixed(4), valN: _dnnNEff,
-                  valNRaw: val.length, valUniq: +_uBar.toFixed(4),
-                  dims: dims, n: N, trainedAt: Date.now(), source: "worker",
-                  warmResumed: !!warmNets };   // [V11] 웜스타트 여부(누적학습 추적)
-    /* [V33.410] 다음 밤이 ★이 모델★ 을 채점할 수 있게 체크포인트를 남긴다.
-       ts 는 "어제 모델이 있는가", maxId/maxTs 는 "학습에 안 쓰였고 미래다" 를 거는 자다.
-       ★이 줄이 없으면 전진검증이 영원히 null 이다★ — 지금까지 GBDT·DNN 이 그랬다. */
-    net.ts = net.trainedAt; net.maxId = _ckMaxId; net.maxTs = _ckMaxTs;
-    // [V33.412] 같은 값을 작은 키에도 남긴다 — 다음 밤이 21MB 를 안 열고도 읽는다.
-    try {
-      await setState(DB, "dnn_ckpt", { ts: net.ts, maxId: _ckMaxId, maxTs: _ckMaxTs,
-                                       featVer: LUXML.featVer, src: "worker", at: Date.now() });
-    } catch (e) {}
-    net.speak = _speak;   // [V33.411] ★재기만 한다★ — 발언 게이트는 숫자를 보고 배선한다
-    /* ★재기만 한다★ — 아래 승격 판정(trust)은 이 값을 한 줄도 안 읽는다.
-       (check-fwd-trust 가 그 경계를 계약으로 확인한다) */
-    net.fwdTrust = _fwdTrust
-      ? { ic: _fwdTrust.blockIC != null ? _fwdTrust.blockIC : _fwdTrust.ic, t: _fwdTrust.t,
-          n: _fwdTrust.n, days: _fwdTrust.days, ready: !!_fwdTrust.ready,
-          why: _fwdTrust.why || null, at: Date.now() }
-      : { ic: null, t: null, n: 0, days: 0, ready: false,
-          why: "원장 없음 — 다음 밤부터 쌓인다(체크포인트를 이번에 처음 남겼다)", at: Date.now() };
-    // [V33.50] 폴백 자가학습이 '더 좋은 외부 모델'을 덮어쓰지 않게 한다.
-    //   워커 학습은 CPU 예산(300s) 안에서만 도는 축소 학습이라 Modal GPU 산출물보다 대개 약하다.
-    //   외부 모델이 아직 문턱 미달이더라도 이번 워커 결과보다 낫다면 그대로 둔다(둘 다 미신뢰면
-    //   운용상 차이는 없지만, 다음 Modal 실행 때 웜스타트/비교 기준으로 더 나은 쪽이 유용하다).
-    if (prevModelEarly && prevModelEarly.source === "external" &&
-        _num(prevModelEarly.valAccLB, 0) >= dnnLB) {
-      /* [V33.412] ★이 경로도 체크포인트를 남긴다.★ 유지되는 것은 ★외부★ 모델이므로
-         워커가 읽은 maxId 를 그 모델의 적합 경계로 쓰면 안 된다 — Modal 이 무엇으로
-         학습했는지 워커는 모른다. 대신 ★외부 모델의 업로드 시각★ 을 기준으로 둔다:
-         그 뒤에 ★도착한★ 행(ins_ts)은 그 모델에게 진짜 out-of-sample 이다.
-         maxId 를 일부러 안 넣는다 — 넣으면 icForwardCheck 가 id 경로로 가서
-         "Modal 이 봤을 수도 있는 행" 을 전진표본으로 셀 수 있다. */
-      try {
-        await setState(DB, "dnn_ckpt", { ts: _num(prevModelEarly.trainedAt, 0), featVer: LUXML.featVer,
-                                         src: "external", at: Date.now() });
-      } catch (e) {}
-      return "[DNN] 워커 자가학습 " + (dnnAcc * 100).toFixed(1) + "% ≤ 외부 " +
-             (_num(prevModelEarly.valAccLB, 0) * 100).toFixed(1) + "% — 외부 모델 유지(덮어쓰기 생략)";
-    }
-    // [V10] 대형 모델(최대 3M) 청크 저장 — D1 단일행 한계 우회. 메모리 캐시 무효화.
-    const _saveInfo = await setBigState(DB, "dnn_model", net);
-    __dnnMemCache = null;
-    try { await log(DB, "INFO", null, "[DNN] 저장 " + (_saveInfo.bytes / 1024 / 1024).toFixed(1) + "MB / " + _saveInfo.chunks + "청크"); } catch (e) {}
-
-    // ── 신뢰블렌드: mind(스태킹) 대비 — [V4] 양쪽 다 Wilson 하한으로 공정 비교 ──
-    let mindLB = 0.5, _wMindBase = null;   // [V33.397] 위원장의 무실력 영점
-    try {
-      const mm = await mlMindLoad(DB);
-      if (mm) { mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); _wMindBase = _num(mm.valAccBase, null); }
-    } catch (e) {}
-    // [V12.54] 절대실력 게이트 — MIND 상대비교 폐기(위 config 주석 참조). 다수클래스 기저를 넘고
-    //   trustFloor를 넘으면 위원회 합류. wDnn은 참고용(실제 표는 mlDeepDecide가 결정시 재계산).
-    let _dnnPos = 0; for (const t of val) _dnnPos += (t.y ? 1 : 0);
-    const _dnnBase = val.length ? Math.max(_dnnPos / val.length, 1 - _dnnPos / val.length) : 0.5;
-    let trust = { wDnn: 0, trusted: false, dnnAcc: net.valAcc, dnnAccLB: +dnnLB.toFixed(4), mindAcc: mindLB, base: +_dnnBase.toFixed(4),
-                  valN: net.valN, valNRaw: net.valNRaw, valUniq: net.valUniq };
-    // [V33.124] 고유도 보정이 문턱을 올린 것을 보이게 한다(GBDT 주석 참조 — 같은 이유).
-    if (_num(net.valNRaw, 0) > _num(net.valN, 0)) {
-      const _lbNomD = _wilsonLB(dnnAcc, _num(net.valNRaw, 0));
-      trust.accLBNominal = +_lbNomD.toFixed(4);
-      trust.uniqCost = +(_lbNomD - dnnLB).toFixed(4);
-      if (_lbNomD >= DNN.trustFloor && dnnLB < DNN.trustFloor)
-        trust.reason = "고유도보정: 명목 하한 " + (_lbNomD * 100).toFixed(1) + "% 는 통과인데 유효 하한 " +
-                       (dnnLB * 100).toFixed(1) + "% 로 미달 (유효 " + _num(net.valN, 0) + "/" + _num(net.valNRaw, 0) + ")";
-    }
-    trust.blockAccLB = (_blkD.lb != null) ? +_blkD.lb.toFixed(4) : null;
-    trust.blockK = _num(_blkD.k, 0);
-    if (_blkD.lb == null) {
-      /* [V33.398] 못 쟀으면 승격하지 않는다 — 못 잰 것을 통과로 읽지 않는다. */
-      trust.reason = "블록 기준 못 쟀다 — " + (_blkD.why || "블록 부족");
-      await setState(DB, "dnn_trust", trust);
-      return "[DNN] " + trust.reason;
-    }
-    if (dnnLB >= DNN.trustFloor && dnnLB >= _dnnBase + (DNN.trustBaselineMargin || 0)) {
-      /* [V33.397] 영점을 각자의 무실력 정확도로. _dnnBase 는 바로 위에서 이 풀로 쟀다. */
-      const eD = _skillExp(dnnLB, _dnnBase, DNN.trustTemp);
-      const eM = _skillExp(mindLB, _wMindBase, DNN.trustTemp);
-      trust.wDnn = +(eD / (eD + eM)).toFixed(4);
-      trust.trusted = true;
-      trust.skill = +(dnnLB - _clamp(_num(_dnnBase, 0.5), 0.5, 0.9)).toFixed(4);
-      {
-        const _o = Math.exp(DNN.trustTemp * (dnnLB - 0.5)), _om = Math.exp(DNN.trustTemp * (mindLB - 0.5));
-        trust.wDnnRaw05 = +(_o / (_o + _om)).toFixed(4);
-      }
-    }
-    /* [V33.338] ★이건 폴백이다 — 그렇게 말하고, 그만큼만 발언한다.★
-       사용자 지적: "dnn 또 12층에서 4층됐는데". featVer 를 올릴 때마다 GPU 모델(은닉 10층·
-       6시드·460만 파라미터)이 판 불일치로 빠지고, 그 자리를 워커 폴백(은닉 2층·1.7만 파라미터,
-       46분의 1)이 채운다. 그런데 종전엔 그 사실이 ★어디에도 안 적혔다★ — 화면은 그냥
-       "DNN 정식 합류" 라고 했고 가중도 GPU 모델과 같은 식으로 계산됐다.
-       그래서 46배 작은 망이 실제 돈을 걸고 같은 목소리로 투표했다.
-       구조를 기록하고(화면이 폴백임을 말할 수 있게), 가중을 배수로 깎는다
-       (이 저장소가 이미 쓰는 방식 — icPathWeightMult 0.35 · fwdWeak 0.60 과 같은 계열). */
-    trust.source = "worker";
-    trust.arch = dims.join("-");
-    trust.hiddenLayers = Math.max(0, dims.length - 2);
-    trust.seeds = nets.length;
-    trust.params = _dnnParamCount(dims) * Math.max(1, nets.length);
-    if (trust.trusted) {
-      const _fm = _num(DNN.workerWeightMult, 0.5);
-      trust.wDnnFull = trust.wDnn;
-      trust.wDnn = +(trust.wDnn * _fm).toFixed(4);
-      trust.why = "워커 폴백(은닉 " + trust.hiddenLayers + "층·" + trust.params +
-                  "파라미터) — GPU 모델 재학습 대기 중이라 가중 ×" + _fm;
-    }
-    await setState(DB, "dnn_trust", trust);
-
-    const arch = dims.join("-") + "×" + nets.length;
-    return "[DNN] arch=" + arch + " n=" + N + " valAcc=" + (dnnAcc * 100).toFixed(1) + "%(하한 " + (dnnLB * 100).toFixed(1) +
-           "%) vs mind하한 " + (mindLB * 100).toFixed(1) + "% → wDnn=" + trust.wDnn +
-           (trust.trusted ? " (신뢰)" : " (자동억제=0)") + _fwdTrustNote(net.fwdTrust) + _speakNote(net.speak);
-  } catch (e) {
-    // [V9.2] 에러 메시지·발생시각 저장 → 다음 진단 가능(관측성). 로그에도 남김.
-    const _em = (e && e.message) ? String(e.message).slice(0, 200) : "unknown";
-    try { await setState(DB, "dnn_trust", { wDnn: 0, trusted: false, reason: "err", err: _em, errAt: Date.now() }); } catch (e2) {}
-    try { await log(DB, "ERROR", null, "[DNN] train fail: " + _em); } catch (e3) {}
-    return "[DNN] train fail: " + _em;
-  }
-}
-
+/* [V33.422] _dnnForward 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
+/* [V33.422] _dnnEnsembleP 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
+/* [V33.422] mlDNNScore 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
+/* [V33.422] _dnnTrainOne 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
+/* [V33.422] mlDNNTrainNightly 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
 // [V10] 대형 DNN 메모리 캐시 — 청크 모델을 매 사이클 재조립하지 않도록(D1 read 폭증·지연 방지).
 //   메타(1 read)의 trainedAt만 확인 → 안 바뀌었으면 메모리 재사용, 바뀌었을 때만 전체 청크 로드.
 var __dnnMemCache = null;   // { trainedAt, model }
@@ -42396,34 +40691,7 @@ function _dnnAdmit(accLB, icT, mindLB, accBase, mindBase) {
            why: accPath ? "정확도 경로(accLB " + _acc.toFixed(4) + ")"
                         : "IC 경로(accLB " + _acc.toFixed(4) + " · 블록IC t " + _t.toFixed(2) + ") — 잠정 지분 ×" + _num(DNN.icPathWeightMult, 0.35) };
 }
-
-async function mlDNNLoad(DB) {
-  try {
-    const meta = await getState(DB, "dnn_model:meta", null);
-    if (meta && meta.ts) {
-      if (__dnnMemCache && __dnnMemCache.metaTs === meta.ts) return __dnnMemCache.model;   // 캐시 히트
-      // [V11.2] 메타에 featVer가 있으면 21MB 청크 로드 전에 선판정 — nn-viz가 매번 구모델을
-      //   헛로드(53청크 순차 read≈20s)해 "두뇌 관측 안 돌아감"이 되던 것 차단.
-      if (typeof meta.featVer === "number" && meta.featVer !== LUXML.featVer) { __dnnMemCache = null; return null; }
-      const m = await getBigState(DB, "dnn_model", null);
-      if (!m || m.featVer !== LUXML.featVer || (!Array.isArray(m.nets) && !Array.isArray(m.W))) {
-        __dnnMemCache = null;
-        // [V11.2] featVer 불일치 구모델은 재사용 불가 — 청크를 지워 다음 호출부터 메타 1read로 즉시 종료.
-        if (m && m.featVer !== LUXML.featVer) {
-          try { await DB.prepare("DELETE FROM state WHERE (k >= 'dnn_model:chunk:' AND k < 'dnn_model:chunk;') OR k = 'dnn_model:meta'").run(); } catch (e2) {}
-        }
-        return null;
-      }
-      __dnnMemCache = { metaTs: meta.ts, model: m };
-      return m;
-    }
-    // 폴백: 구버전 단일행 저장분 호환
-    const m = await getState(DB, "dnn_model", null);
-    if (!m || m.featVer !== LUXML.featVer || (!Array.isArray(m.nets) && !Array.isArray(m.W))) return null;
-    return m;
-  } catch (e) { return null; }
-}
-
+/* [V33.422] mlDNNLoad 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
 // ── 최상위 결정: mind(스태킹) ⊕ dnn 신뢰블렌드 → 게이트/켈리 ──
 // null 반환 시 상위 호출부는 mlMindDecide로 폴백.
 function _logitD(p) { const q = _clamp(p, 1e-4, 1 - 1e-4); return Math.log(q / (1 - q)); }
@@ -42701,6 +40969,20 @@ function seqBuildFeat(base, live, L, budgetMs) {
 //   ★누출 방지★: 채점 대상은 전문가들이 학습한 적 없는 구간(stack_expert_epoch 이후)만 쓴다.
 //     STACK 소급생성이 같은 기준선을 쓰는 것과 같은 이유다 — 자기가 배운 행으로 자기를
 //     평가하면 IC 가 실력이 아니라 암기력이 된다(V33.104 에서 IC 0.566 로 겪었다).
+/* ══ [V33.422] ★전문가 학습 기준선 — 이름만 STACK 이었지 STACK 것이 아니다.★ ════════════
+   STACK 퇴역으로 stackExpertEpochStamp 를 지웠더니 상황별 IC(expertRegimeFitNightly)의
+   ★누출 방지 기준선★ 이 같이 사라졌다 — 그 값이 없으면 기준선 id 가 0 이 되어 전문가가
+   ★자기가 학습한 행으로 자기를 평가★ 하게 된다(V33.104 에서 IC 0.566 으로 겪은 그 사고).
+   그래서 되살린다. 키(stack_expert_epoch)는 그대로 둔다 — 이미 쌓인 값과 이어져야 한다. */
+async function expertEpochStamp(DB) {
+  try {
+    const r = await DB.prepare("SELECT MAX(id) AS m FROM ml_samples").first();
+    const id = _num(r && r.m, 0);
+    await setState(DB, "stack_expert_epoch", { id: id, ts: Date.now() });
+    return "[EXP-EPOCH] 전문가 학습 기준선 id " + id;
+  } catch (e) { return "[EXP-EPOCH] fail: " + (e && e.message); }
+}
+
 const EXPREG = {
   enabled: true,
   minBucketN: 250,      // 버킷 IC 를 쳐다보기 시작하는 최소 표본
@@ -42755,12 +41037,10 @@ async function expertRegimeFitNightly(DB) {
     if (rows.length < EXPREG.minBucketN) return "[EXPREG] 누출없는 표본 " + rows.length + "/" + EXPREG.minBucketN + " — 대기";
     // 채점기 1회 로드(표본마다 다시 읽으면 D1 이 죽는다 — STACK 소급생성과 같은 규약).
     const mind = await mlMindLoad(DB), ens = await mlBrainLoad(DB);
-    const dnnT = await getState(DB, "dnn_trust", null);
-    const dnn = (dnnT && dnnT.trusted) ? await mlDNNLoad(DB) : null;
     const gT = await getState(DB, "gbdt_trust", null);
     const gbdt = (gT && gT.trusted) ? await mlGBDTLoad(DB) : null;
     const memo = await getState(DB, "memo_model", null);
-    if (!mind && !dnn && !gbdt && !memo) return "\u27F3 " + "[EXPREG] 채점 가능한 전문가 없음 — 판 갱신 대기";
+    if (!mind && !gbdt && !memo) return "\u27F3 " + "[EXPREG] 채점 가능한 전문가 없음 — 판 갱신 대기";
     // 버킷별 (p, y) 수집
     const acc = {};   // name → bucket → { p:[], y:[], m:[] }
     let _curMkt = "";   // [V33.291] 지금 행의 시장 — put 이 셀마다 같이 쌓는다
@@ -42777,7 +41057,6 @@ async function expertRegimeFitNightly(DB) {
       const y = _labelOfRow(r); if (y == null) continue;
       _curMkt = _mktOfVec(v);   // [V33.291] 아래 put 들이 이 값을 함께 쌓는다
       try { if (mind) { const sc = await mlMindScore(DB, mind, v, ens); if (sc && typeof sc.p === "number") put("mind", bk, sc.p, y); } } catch (e) {}
-      try { if (dnn) put("dnn", bk, mlDNNScore(dnn, v), y); } catch (e) {}
       try { if (gbdt) put("gbdt", bk, mlGBDTScore(gbdt, v), y); } catch (e) {}
       try { if (memo && memo.luxFeatVer === LUXML.featVer) put("memo", bk, memoScore(memo, v), y); } catch (e) {}
     }
@@ -42851,44 +41130,14 @@ async function mlDeepDecide(DB, featVec, opts) {
       } else _skip("mind", "점수 null");
     } else _skip("mind", "MIND 모델 없음(미학습·판 불일치·회귀가드 거부)");
 
-    const trust = (opts.trust !== undefined) ? opts.trust : await _cycState(DB, "dnn_trust", null);
-    // ── 전문가 위원회: mind(스태킹) + dnn(멀티시드 딥넷) + gbdt(부스팅트리) ──
-    //   [V4] 각 전문가의 검증정확도 "Wilson 하한" 소프트맥스(T=12)로 로짓 가중평균.
-    //   신뢰 못 받은 전문가는 불참. 결합확률은 야간 보정 온도(committee_cal.T)로 캘리브레이션.
-    let usedDnn = false, usedGbdt = false;
-    let _usedStack = false;   // [V33.80] STACK 메타모델이 결합확률을 냈는가
-    let _diVal = null;   // [V12.73] FreqAI식 Dissimilarity Index — 입력이 학습분포에서 얼마나 먼지(평균|z|)
-    if (trust && trust.trusted && trust.wDnn > 0) {
-      const net = (opts.dnn !== undefined) ? opts.dnn : await mlDNNLoad(DB);
-      let pDnn = null, dnnStd = 0;
-      if (net) {
-        try {
-          if (Array.isArray(net.nets) && net.nets.length) {
-            // [V9.7] 시드 불일치(std)로 이 입력에 대한 DNN 신뢰를 감쇠(Deep Ensembles) — 확신 없을 땐 스스로 물러남
-            const xStd = _dnnStdVec(featVec.map(function (v) { return _num(v, 0); }), net.mean, net.std);
-            // [V12.73] DI 산출 — FreqAI(freqtrade) 벤치마킹: 예측 입력을 학습분포(mean/std)와 비교해
-            //   분포 밖(OOD)이면 그 예측 자체를 불신. 평균|z|가 임계 초과면 아래에서 기권(abstain).
-            try { let _s = 0; for (let _j = 0; _j < xStd.length; _j++) _s += Math.abs(xStd[_j]); _diVal = _s / Math.max(1, xStd.length); } catch (e) {}
-            const st = _dnnEnsembleStats(net.nets, xStd);
-            pDnn = _clamp(st.p, 0.001, 0.999); dnnStd = st.std;
-          } else pDnn = mlDNNScore(net, featVec);
-        } catch (e) { pDnn = null; _skip("dnn", "예외: " + ((e && e.message) || e)); }
-      } else _skip("dnn", "모델 로드 실패/판 불일치");
-      if (pDnn != null) {
-        const accBase = _num(trust.dnnAccLB, _num(trust.dnnAcc, 0.5));
-        const accEff = 0.5 + (accBase - 0.5) / (1 + (DNN.disagreeK || 3.0) * dnnStd);  // 불일치↑ → 소프트맥스 가중↓
-        // [V33.90] ★치명 버그 수정★ 여기서 참조하던 `dnn` 은 이 함수 어디에도 선언이 없다
-        //   (로드된 모델의 변수명은 `net` 이다). 선언 없는 식별자를 읽으면 ReferenceError 가 나고,
-        //   mlDeepDecide 의 최상위 try/catch 가 그걸 삼켜 ★null 을 반환★ 한다.
-        //   즉 DNN 이 신뢰 상태로 확률을 내는 순간마다 위원회 전체(MIND·GBDT·부스터·FLOW·XALPHA·
-        //   STACK·이중헤드)가 통째로 죽고 밴딧/규칙엔진으로 폴백해 왔다. V33.77 부터 존재한 버그다.
-        // [V33.91] 점추정 IC 대신 '유의성으로 수축된 유효 IC' 를 위원회 가중에 넘긴다.
-        const _dnnIC = _icEffective(net) != null ? _icEffective(net) : _icEffective(trust);
-        experts.push({ name: "dnn", p: pDnn, z: _logitD(pDnn), acc: accEff, ic: _dnnIC,
-                       base: _num(trust.accBase, _num(trust.base, null)) }); usedDnn = true;
-        if (!mind) _committeeUnc = Math.max(_committeeUnc, dnnStd);  // [V12.62] MIND 없을 땐 DNN 시드불일치를 위원회 불확실성으로
-      } else _skip("dnn", "점수 null");
-    } else _skip("dnn", !trust ? "신뢰기록 없음" : (!trust.trusted ? "미승격" : "wDnn 0"));
+    /* ══ [V33.422] ★DNN 위원 블록 삭제 — 퇴역(RETIRED.dnn).★ ═══════════════════════════
+       실측: 외부 학습 49.9% · 워커 폴백 40.8% — ★둘 다 무실력 이하★(docs/OPEN-DEFECTS V33.415).
+       그러면서 매 사이클 21MB 짜리 망을 R2/청크에서 끌어오고, Modal 회차 예산의 54% 를 먹었다.
+       한 표도 못 얻는 위원에게 가장 비싼 값을 치르고 있었다.
+       ※ usedDnn·_diVal 은 응답 스키마(화면·로그·감사)가 읽으므로 이름을 남긴다 — 항상 꺼져 있다. */
+    const usedDnn = false, _diVal = null;
+    let usedGbdt = false;
+    let _usedStack = false;   // [V33.80] STACK 결합기 흔적 — 퇴역했으므로 항상 false
     try {
       const gtrust = (opts.gbdtTrust !== undefined) ? opts.gbdtTrust : await _cycState(DB, "gbdt_trust", null);
       if (gtrust && gtrust.trusted && gtrust.wGbdt > 0) {
@@ -42954,37 +41203,11 @@ async function mlDeepDecide(DB, featVec, opts) {
     //   0 이 되어 ★"그 위원은 없었다"★ 로 기록된다. 실제로는 투표했는데 없었다고 학습시킨 것이다.
     //   신규 위원은 전부 잠정 단계라, 정확히 신규 위원만 이 세 경로에서 통째로 빠져 있었다.
     //   → name 은 고정하고, 등급은 tier 필드로 나른다(화면이 tier 로 표식을 그린다).
-    // ── [V33.78] FLOW 전문가 합류 — 봉차트·뉴스에 없는 축(피어그래프·공매도·내부자·풋콜) ──
-    //   기존 위원들과 정보원이 겹치지 않아 앙상블 다양성 측면에서 기여가 크다.
-    //   IC 가 icFloor 를 넘을 때만 참여하고, 가중은 V33.77 의 IC 소프트맥스가 자동 처리한다.
-    try {
-      if (opts.flowFeat && Array.isArray(opts.flowFeat)) {
-        const fm = (opts.flowModel !== undefined) ? opts.flowModel : await _cycState(DB, "flow_model", null);
-        // [V33.138] 이분법(trusted) → 증거 비례. 잠정 합류는 IC 를 줄여서 실린다.
-        const _fa = expertAdmit(fm);
-        if (fm && _fa.admit && fm.featVer === FLOWML.featVer) {
-          const pF = flowScore(fm, opts.flowFeat);
-          if (pF != null && Math.abs(pF - 0.5) > 1e-4) {
-            experts.push({ name: "flow", p: pF, z: _logitD(pF),
-                           acc: _num(fm.valAcc, 0.5), ic: _num(_icEffective(fm), 0) * _fa.mult, tier: _fa.tier });
-          } else _skip("flow", pF == null ? "점수 null" : "확률이 0.5 — 기권");
-        } else _skip("flow", !fm ? "모델 없음" : (fm.featVer !== FLOWML.featVer ? "판 불일치" : "미승격"));
-      } else _skip("flow", "FLOW 피처 미제공(호출부가 flowFeat 를 안 넘겼다)");
-    } catch (e) { _skip("flow", "예외: " + ((e && e.message) || e)); }
-    // ── [V33.79] XALPHA 전문가 합류 — 형식알파(WorldQuant 101) + 횡단면 랭크(JPX) ──
-    try {
-      if (opts.xaFeat && Array.isArray(opts.xaFeat)) {
-        const xm = (opts.xaModel !== undefined) ? opts.xaModel : await _cycState(DB, "xalpha_model", null);
-        const _xa = expertAdmit(xm);
-        if (xm && _xa.admit && xm.featVer === XALPHA.featVer) {
-          const pX = flowScore(xm, opts.xaFeat);   // 같은 로지스틱 포맷이라 채점기를 공유한다
-          if (pX != null && Math.abs(pX - 0.5) > 1e-4) {
-            experts.push({ name: "xalpha", p: pX, z: _logitD(pX),
-                           acc: _num(xm.valAcc, 0.5), ic: _num(_icEffective(xm), 0) * _xa.mult, tier: _xa.tier });
-          } else _skip("xalpha", pX == null ? "점수 null" : "확률이 0.5 — 기권");
-        } else _skip("xalpha", !xm ? "모델 없음" : (xm.featVer !== XALPHA.featVer ? "판 불일치" : "미승격"));
-      } else _skip("xalpha", "XALPHA 피처 미제공(호출부가 xaFeat 를 안 넘겼다)");
-    } catch (e) { _skip("xalpha", "예외: " + ((e && e.message) || e)); }
+    /* ══ [V33.422] ★FLOW·XALPHA 위원 블록 삭제 — 퇴역.★ ═══════════════════════════════
+       둘 다 홀드아웃 t < 1.65 로 잡음과 구별되지 않았고, 원인도 이름으로 짚혀 있다:
+       정적칸(종목 안에서 변하지 않는 칸)이 FLOW 8/13 · XALPHA 24/25 였다 —
+       그런 칸이 많으면 모델은 "무엇이 오를까" 가 아니라 "이게 어느 종목인가" 를 외운다.
+       (XALPHA 는 통합 IC > 0 > 블록 IC 이기도 했다 — 같은 날 안에서 종목을 고르는 능력이 없다.) */
     // ── [V33.92] MEMO 전문가 합류 — "비슷했던 과거 상황에서 실제로 어땠나"(비모수·국소) ──
     //   나머지 위원 전원이 전역 파라미터 하나로 모든 상황을 설명하는 모수적 모델이라,
     //   국소 구조를 보는 위원이 하나도 없었다. 앙상블 다양성 기여가 큰 자리다.
@@ -43015,6 +41238,12 @@ async function mlDeepDecide(DB, featVec, opts) {
         else _skip("rule", "확률이 0.5 — 기권");
       } else _skip("rule", !mind ? "MIND 없음" : (_tiR < 0 ? "taUpProb 피처 없음" : "ruleAccLB ≤ 0.5"));
     } catch (e) { _skip("rule", "예외: " + ((e && e.message) || e)); }
+    /* [V33.422] ★퇴역 위원은 어느 경로로 들어왔든 여기서 내린다.★ 위 push 자리마다 막아도
+       되지만, 그러면 새 경로가 생길 때 한 곳을 빼먹는다 — 이 저장소가 반복해 당한 사고다.
+       배열이 완성된 ★한 자리★ 에서 거른다. 여기를 지나면 퇴역 위원은 존재하지 않는다. */
+    for (let _i = experts.length - 1; _i >= 0; _i--) {
+      if (_retired(experts[_i].name)) { _skip(experts[_i].name, "퇴역 — " + _retiredWhy(experts[_i].name)); experts.splice(_i, 1); }
+    }
     if (!experts.length) return null;   // [V12.62] 쓸 전문가 0 → 하위 폴백(밴딧/규칙엔진)
     // [V32.59] ★적응형 앙상블★ — 야간 보정이 최근 라이브표본에서 잰 전문가별 실측정확도(expert_reliability)를
     //   정적 검증정확도와 블렌드해 소프트맥스 가중에 반영 → '요즘 잘 맞히는 모델'의 발언권↑(레짐 적응).
@@ -43137,26 +41366,8 @@ async function mlDeepDecide(DB, featVec, opts) {
       } catch (e) {}
       // [V33.80] 학습된 STACK 메타모델이 있으면 그 출력으로 대체한다(투표 → 통합모델).
       //   IC 검증을 통과한 모델만 쓰고, 미달이면 위 투표 결과를 그대로 유지한다.
-      try {
-        if (_stackFeat) {
-          const sm = (opts.stackModel !== undefined) ? opts.stackModel : await _cycState(DB, "stack_model", null);
-          // [V33.138] STACK 은 투표 위원이 아니라 ★결합확률을 대체하는 메타모델★ 이다.
-          //   그래서 잠정 단계에서 그대로 대체하면 증거가 덜 쌓인 모델에 결정을 통째로 넘기게 된다.
-          //   대신 로짓 공간에서 증거 배수만큼 ★혼합★ 한다 — 증거가 차면 자연히 대체에 수렴한다.
-          const _sa = expertAdmit(sm);
-          if (sm && _sa.admit && sm.featVer === STACKML.featVer) {
-            const pS = stackScore(sm, _stackFeat);   // [V33.209] 헤드(lin/gbdt/mlp/blend)에 따라 갈라진다
-            if (pS != null) {
-              if (_sa.tier === "full") { pCombined = pS; _usedStack = true; }
-              else {
-                const _wS = _clamp(_sa.mult, 0, 1);
-                pCombined = _clamp(_sigmoid((1 - _wS) * _logitD(pCombined) + _wS * _logitD(pS)), 0.001, 0.999);
-                _usedStack = false;   // 온도보정은 여전히 투표분포 기준이 맞다(대체가 아니므로)
-              }
-            }
-          }
-        }
-      } catch (e) {}
+      /* [V33.422] ★STACK 결합기 적용 블록 삭제 — 퇴역.★ 표본이 늘수록 나빠졌고(V33.298)
+         홀드아웃 t < 1.65 였다. 이제 결합은 언제나 ②의 IC 가중 하나다(대체 경로가 없다). */
     }
     // [V4] 위원회 확률 보정(야간 mlCalibrateCommittee가 학습한 온도)
     //   ★위치 주의★ mlCalibrateCommittee 는 T 를 '②IC가중 로짓평균' 분포에서 학습한다.
@@ -43444,19 +41655,7 @@ async function mlDeepDecide(DB, featVec, opts) {
              bull: +_bull.toFixed(3), bear: +_bear.toFixed(3), conviction: +_conv.toFixed(3), conflict: +_conflict.toFixed(3), contested: _contested, dual: _dual };
   } catch (e) { return null; }
 }
-
-async function mlDNNStatus(DB) {
-  try {
-    const m = await mlDNNLoad(DB);
-    const trust = await getState(DB, "dnn_trust", null);
-    if (!m) return { trained: false, trust: trust || { wDnn: 0, trusted: false } };
-    return { trained: true, architecture: m.dims.join("-") + (Array.isArray(m.nets) ? "×" + m.nets.length : ""), hidden: DNN.hidden, n: m.n,
-      valAcc: m.valAcc, trainedAt: m.trainedAt,
-      trust: trust ? { wDnn: trust.wDnn, trusted: !!trust.trusted, dnnAcc: trust.dnnAcc, mindAcc: trust.mindAcc } : null };
-  } catch (e) { return { trained: false, error: e && e.message }; }
-}
-
-
+/* [V33.422] mlDNNStatus 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
 // [V11] 입력 피처(파라미터) 역할 설명 — featNames 순서와 1:1 대응. 시각화에서 "이 뉴런이 무슨 일을 하는가"를 표시.
 const FEAT_ROLES = {
   rsi14: "RSI(14) 과매수/과매도", maGapPct: "가격-이동평균 괴리%", atrPct: "ATR 변동성%", dayPct: "당일 등락%", distHighPct: "전고점 대비 거리%",
@@ -43506,155 +41705,7 @@ const _LIVE_ONLY_NEUTRAL = {
 };
 const _LIVE_ONLY_FEATS = new Set(Object.keys(_LIVE_ONLY_NEUTRAL));
 
-// ── [V9 시각화] 신경망 구조·가중치 강도를 프론트 시각화용으로 요약 반환 ──
-//   층 구조, 뉴런별 incoming-weight L2 norm(시드 평균, 0~1 정규화)=노드 강도, 위원회 신뢰가중.
-//   전체 66k 가중치를 보내지 않고 층당 뉴런 강도만(≈609개 실수) → 경량.
-async function mlDNNVizData(DB) {
-  try {
-    const trust = await getState(DB, "dnn_trust", null);
-    let gtrust = null; try { gtrust = await getState(DB, "gbdt_trust", null); } catch (e) {}
-    let strust = null; try { strust = await getState(DB, "seq_trust", null); } catch (e) {}   // [V33.267] SEQ 명단용(작은 레코드 1행)
-    // [V12.35] 위원회 표시는 하한(LB)으로 통일 — DNN/GBDT는 AccLB로 표시되고 가중치도 전부 하한 기반이므로,
-    //   MIND만 점추정(valAcc)으로 보이면 "표시 정확도↑인데 실제 가중치↓" 모순이 생긴다. mind도 valAccLB 사용.
-    let mindAcc = null; try { const mm = await mlMindLoad(DB); if (mm) mindAcc = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
-    // [V12.5 로딩속도] 가중치 요약(layers·params·피처영향도)은 모델이 바뀔 때만 변한다 →
-    //   dnn_model:meta.ts 기준으로 캐시(nn_viz_cache). 캐시 적중 시 21MB 청크 로드 0회.
-    //   trust/위원회/가동여부는 학습과 무관하게 변하므로 매 요청 소량 재조회로 신선도 유지.
-    const _meta = await getState(DB, "dnn_model:meta", null);
-    let _cachedHeavy = null;
-    if (_meta && _meta.ts) {
-      try { const c = await getState(DB, "nn_viz_cache", null); if (c && c.heavy && c.metaTs === _meta.ts) _cachedHeavy = c.heavy; } catch (e) {}
-    }
-    if (_cachedHeavy) {
-      const dimsC = _cachedHeavy.dims || [];
-      const committeeC = [];
-      if (mindAcc != null) committeeC.push({ name: "MIND", role: "스태킹", acc: +mindAcc.toFixed(3), w: null, trusted: true });
-      // [V33.262] 캐시 경로도 같은 자로 센다 — 두 경로가 다른 숫자를 말하면 그것부터 버그다.
-      {
-        const _hn = Math.max(0, (Array.isArray(dimsC) ? dimsC.length : 0) - 2);
-        const _fb = _hn > 0 && _hn === DNNW.hidden.length && _hn !== DNN.hidden.length;
-        committeeC.push({ name: "DNN", role: "은닉 " + _hn + "층 딥넷" + (_fb ? "(★워커 폴백★ — GPU 망 미탑재)" : "(GPU)"),
-          hiddenLayers: _hn, expectedHidden: DNN.hidden.length, fallback: _fb,
-          acc: trust ? +_num(trust.dnnAccLB, _num(trust.dnnAcc, 0)).toFixed(3) : null, w: trust ? _num(trust.wDnn, 0) : 0, trusted: !!(trust && trust.trusted) });
-      }
-      // [V33.413] 캐시 경로도 같은 규율 — 못 쟀으면 숫자를 만들지 않는다(두 곳이 갈리면 사고다)
-      if (gtrust) committeeC.push({ name: "GBDT", role: "부스팅트리",
-        acc: (gtrust.gbdtAccLB == null && gtrust.accLBWhy) ? null
-             : +_num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0)).toFixed(3),
-        accWhy: gtrust.accLBWhy || null,
-        w: _num(gtrust.wGbdt, 0), trusted: !!gtrust.trusted });
-      { const _sr = _seqRosterRow(strust); if (_sr) committeeC.push(_sr); }
-      return Object.assign({}, _cachedHeavy, {
-        kind: "dnn",
-        trust: trust ? { wDnn: trust.wDnn, trusted: !!trust.trusted, dnnAcc: trust.dnnAcc } : null,
-        active: !!(trust && trust.trusted && _num(trust.wDnn, 0) > 0),
-        committee: committeeC,
-        config: { dropout: DNN.dropout, adamW: !!DNN.adamW, cosineLR: !!DNN.cosineLR, optimizer: DNN.adamW ? "AdamW+cosine" : "Adam", batchNorm: true, arch: "심층 MLP + BatchNorm(추론 fold)" }
-      });
-    }
-    const m = await mlDNNLoad(DB);
-    if (!m || (!Array.isArray(m.nets) && !Array.isArray(m.W))) {
-      const _fn = LUXML.featNames;
-      const _if = _fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", liveOnly: _LIVE_ONLY_FEATS.has(nm), strength: 0 }; });
-      /* [V33.193] ★파라미터 수를 화면이 '3M' 이라고 외우고 있었다.★
-         구조가 바뀌면 그 숫자는 곧바로 거짓이 된다(실제로 그렇게 됐다). 여기서 dims 로부터
-         ★세어서★ 내려보낸다. 미학습 미리보기는 정식(GPU) 구조 기준이고, 워커 폴백이 만들
-         구조는 따로 함께 싣는다 — 둘은 다른 망이고 화면이 그걸 구분할 수 있어야 한다. */
-      const _dimsPrev = [_fn.length].concat(DNN.hidden).concat([1]);
-      return { kind: "dnn", trained: false, hidden: DNN.hidden, dims: _dimsPrev, inputDim: _fn.length, seeds: DNN.seeds, trust: trust || null,
-        paramsPerNet: _dnnParamCount(_dimsPrev), params: _dnnParamCount(_dimsPrev) * Math.max(1, _num(DNN.seeds, 1)),
-        workerDims: [_fn.length].concat(DNNW.hidden).concat([1]),
-        workerParamsPerNet: _dnnParamCount([_fn.length].concat(DNNW.hidden).concat([1])),
-        workerSeeds: DNNW.seeds,
-        active: false, source: null, featNames: _fn, inputFeatures: _if, topFeatures: _if.slice(0, 20) };
-    }
-    const nets = Array.isArray(m.nets) ? m.nets : [{ W: m.W, b: m.b, dims: m.dims }];
-    const dims = m.dims || nets[0].dims;
-    const nLayers = nets[0].W.length;
-    const norm01 = function (a) { let mx = 0; for (const v of a) if (v > mx) mx = v; if (mx <= 0) return a.map(function () { return 0; }); return a.map(function (v) { return +(v / mx).toFixed(3); }); };
-    // 각 층 출력뉴런 incoming-weight norm(시드 평균)
-    const layerNorms = [];
-    for (let l = 0; l < nLayers; l++) {
-      const nout = nets[0].W[l].length, nin = nets[0].W[l][0].length;
-      const norms = new Array(nout).fill(0);
-      for (const nt of nets) for (let i = 0; i < nout; i++) { let s = 0; const Wi = nt.W[l][i]; for (let j = 0; j < nin; j++) s += Wi[j] * Wi[j]; norms[i] += Math.sqrt(s); }
-      for (let i = 0; i < nout; i++) norms[i] /= nets.length;
-      layerNorms.push(norms);
-    }
-    // 입력노드 강도 = 첫 층 W의 입력열 norm(≈피처 영향도)
-    const nin0 = nets[0].W[0][0].length, inNorms = new Array(nin0).fill(0);
-    for (const nt of nets) for (let i = 0; i < nt.W[0].length; i++) { const Wi = nt.W[0][i]; for (let j = 0; j < nin0; j++) inNorms[j] += Wi[j] * Wi[j]; }
-    for (let j = 0; j < nin0; j++) inNorms[j] = Math.sqrt(inNorms[j] / nets.length);
-    const inStrength = norm01(inNorms);
-    // [V11] 입력 파라미터별 역할 + 영향도 — 각 입력 뉴런이 무슨 피처를 담당하는지, 학습된 가중치로 얼마나 중요한지.
-    const fnames = LUXML.featNames;
-    const inputFeatures = [];
-    for (let j = 0; j < nin0; j++) inputFeatures.push({ i: j, name: fnames[j] || ("f" + j), role: FEAT_ROLES[fnames[j]] || "", liveOnly: _LIVE_ONLY_FEATS.has(fnames[j]), strength: inStrength[j] });
-    const topFeatures = inputFeatures.slice().sort(function (a, b) { return b.strength - a.strength; }).slice(0, 20);
-    const layers = [{ kind: "input", size: nin0, strength: inStrength, names: fnames.slice(0, nin0) }];
-    for (let l = 0; l < nLayers; l++) layers.push({ kind: (l === nLayers - 1 ? "output" : "hidden"), size: layerNorms[l].length, strength: norm01(layerNorms[l]) });
-    let paramsPerNet = 0; for (let l = 0; l < nLayers; l++) paramsPerNet += nets[0].W[l].length * nets[0].W[l][0].length + nets[0].b[l].length;
-    const params = paramsPerNet * nets.length;   // [V10] 앙상블 전체 파라미터(시드 곱)
-    const committee = [];
-    if (mindAcc != null) committee.push({ name: "MIND", role: "스태킹", acc: +mindAcc.toFixed(3), w: null, trusted: true });
-    /* ══ [V33.262] ★"딥넷이 4층으로 줄었다" 는 화면이 잘못 세고 있었던 것이다.★ ══
-       dims 는 [입력, 은닉…, 출력] 이다. 그런데 라벨이 dims.length 를 그대로 "층" 이라
-       불렀다. 그러면
-         · 은닉 10층 GPU 망(DNN.hidden) → dims 12개 → "12층 딥넷"
-         · 은닉  2층 워커 폴백(DNNW.hidden) → dims  4개 → ★"4층 딥넷"★
-       설정은 V33.193 이후 한 번도 바뀐 적이 없다(은닉 10층 그대로). 화면의 "4" 는
-       ★층이 줄어서가 아니라 지금 실려 있는 것이 워커 폴백이라는 뜻★ 이었다.
-       숫자 하나가 두 가지를 동시에 감추고 있었다 — 세는 법이 틀렸다는 것과,
-       GPU 망이 안 실려 있다는 것. 둘 다 드러나게 적는다. */
-    const _hidN = Math.max(0, (Array.isArray(dims) ? dims.length : 0) - 2);
-    const _srcNow = m.source || "worker";   // source 는 아래에서 선언된다(const, TDZ) — 여기선 원본에서 직접 읽는다
-    const _isFallback = (_srcNow === "worker") || (_hidN > 0 && _hidN === DNNW.hidden.length && _hidN !== DNN.hidden.length);
-    committee.push({ name: "DNN", role: "은닉 " + _hidN + "층 딥넷" + (_isFallback ? "(★워커 폴백★ — GPU 망 미탑재)" : "(GPU)"),
-      hiddenLayers: _hidN, expectedHidden: DNN.hidden.length, fallback: _isFallback,
-      acc: trust ? +_num(trust.dnnAccLB, _num(trust.dnnAcc, 0)).toFixed(3) : null, w: trust ? _num(trust.wDnn, 0) : 0, trusted: !!(trust && trust.trusted) });
-    /* [V33.413] 하한을 못 쟀으면 ★위원회 표에도 숫자를 만들어 내지 않는다.★
-       종전엔 gbdtAccLB 가 null 이면 gbdtAcc(행 기반 관측 정확도)로 떨어졌는데,
-       그건 "못 쟀다" 옆에 또 다른 숫자를 세우는 일이라 같은 오해를 만든다. */
-    if (gtrust) committee.push({ name: "GBDT", role: "부스팅트리",
-      acc: (gtrust.gbdtAccLB == null && gtrust.accLBWhy) ? null
-           : +_num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0)).toFixed(3),
-      accWhy: gtrust.accLBWhy || null,
-      w: _num(gtrust.wGbdt, 0), trusted: !!gtrust.trusted });
-    { const _sr = _seqRosterRow(strust); if (_sr) committee.push(_sr); }
-    // [V11] 3M이 실제 거래결정에 기여 중인가? 신뢰게이트 통과(trusted & wDnn>0) 여부 = 실동작 여부.
-    const active = !!(trust && trust.trusted && _num(trust.wDnn, 0) > 0);
-    const source = m.source || "worker";   // "external"=외부GPU 업로드, "worker"=야간 자가학습
-    // [V12.5 로딩속도] 무거운 요약을 캐시(모델 meta.ts 키) — 다음 요청부터 21MB 로드 생략
-    const heavy = {
-      /* [V33.191] ★기대 구조는 '어디서 학습됐나' 에 따라 다르다.★ 워커 폴백은 이제 GPU 망보다
-         일부러 작다(DNNW). 여기서 DNN.hidden 만 보면 화면이 정상 폴백을 '구버전 구조' 라고
-         잘못 적는다 — 고칠 것이 없는데 고치라고 말하는 표시다. */
-      trained: true, architecture: dims.join("-") + "×" + nets.length, dims: dims,
-      cfgLayers: ((m.source === "external" ? DNN.hidden : DNNW.hidden).length + 2),
-      builtBy: (m.source === "external" ? "external" : "worker"), seeds: nets.length,
-      /* [V33.195] ★사이드바와 같은 이름으로 같은 두 값을 싣는다.★ 종전에는 여기가 valAcc 만
-         내보내고 사이드바는 accLB 만 내보내, 같은 모델이 화면 두 곳에서 다른 숫자로 보였다.
-         accLB·floor 를 함께 실어 "왜 억제 중인지" 가 두 화면에서 같은 근거로 읽히게 한다. */
-      valAcc: m.valAcc,
-      accLB: (trust && trust.dnnAccLB != null) ? +(_num(trust.dnnAccLB, 0) * 100).toFixed(1)
-           : (m.valAccLB != null ? +(_num(m.valAccLB, 0) * 100).toFixed(1) : null),
-      valAccRaw: (m.valAcc != null) ? +(_num(m.valAcc, 0) * 100).toFixed(1) : null,
-      floor: +(_num(DNN.trustFloor, 0.505) * 100).toFixed(1),
-      valN: m.valN != null ? _num(m.valN, null) : null, valNRaw: m.valNRaw != null ? _num(m.valNRaw, null) : null,
-      uniq: m.valUniq != null ? _num(m.valUniq, null) : null,
-      n: m.n, params: params, paramsPerNet: paramsPerNet, trainedAt: m.trainedAt, source: source,
-      layers: layers, inputFeatures: inputFeatures, topFeatures: topFeatures
-    };
-    if (_meta && _meta.ts) { try { await setState(DB, "nn_viz_cache", { metaTs: _meta.ts, heavy: heavy }); } catch (e) {} }
-    return Object.assign({}, heavy, {
-      kind: "dnn",
-      trust: trust ? { wDnn: trust.wDnn, trusted: !!trust.trusted, dnnAcc: trust.dnnAcc } : null,
-      active: active, committee: committee,
-      config: { dropout: DNN.dropout, adamW: !!DNN.adamW, cosineLR: !!DNN.cosineLR, optimizer: DNN.adamW ? "AdamW+cosine" : "Adam", batchNorm: true, arch: "심층 MLP + BatchNorm(추론 fold)" }
-    });
-  } catch (e) { return { kind: "dnn", trained: false, error: e && e.message }; }
-}
-
+/* [V33.422] mlDNNVizData 삭제 — 퇴역(RETIRED). 부르는 곳이 없어 죽은 코드였다. */
 // ============================================================================
 // [GBDT] XGBoost식 그래디언트 부스팅 트리 (Chen & Guestrin, KDD 2016 — 순수 JS 이식)
 //   공개 알고리즘의 핵심 수식을 그대로 구현(외부 API·의존성 0):
@@ -44383,9 +42434,7 @@ async function mlCalibrateCommittee(DB) {
     const raw = (rows && rows.results) ? rows.results : [];
     if (raw.length < 60) return "\u27F3 " + "[CAL] 표본 " + raw.length + "/60 (featVer " + LUXML.featVer + ") — 보정 대기";
     const ens = await mlBrainLoad(DB);
-    const dnnTrust = await getState(DB, "dnn_trust", null);
-    const dnn = (dnnTrust && dnnTrust.trusted) ? await mlDNNLoad(DB) : null;
-    const gTrust = await getState(DB, "gbdt_trust", null);
+    const gTrust = await getState(DB, "gbdt_trust", null);   // [V33.422] DNN 퇴역
     const gbdt = (gTrust && gTrust.trusted) ? await mlGBDTLoad(DB) : null;
     const boosters = await _boostersCached(DB);   // [V32.65] 부스터도 보정·신뢰도에 포함(라이브 위원회와 정합)
     const T0 = (typeof DNN !== "undefined" ? DNN.trustTemp : 12);
@@ -44397,13 +42446,12 @@ async function mlCalibrateCommittee(DB) {
       return _icEffective(t);
     };
     const _mindIC0 = _icEffective({ valICBlock: mind.valICBlock, valICt: mind.valICt, valIC: mind.valIC, valN: mind.valN });
-    const _dnnIC0 = _icPick(dnn, dnnTrust);
     const _gbdtIC0 = _icPick(gbdt, gTrust);
 
     const preds = [];
     // [V32.59] 전문가별 최근 실측정확도 집계 — 이미 각 모델을 표본에 돌리므로 추가비용 ≈0.
     //   라이브분포 최근표본 기준 '요즘 잘 맞히는 모델'을 재는 값(정적 홀드아웃 검증정확도와 블렌드).
-    const rel = { mind: { c: 0, n: 0 }, dnn: { c: 0, n: 0 }, gbdt: { c: 0, n: 0 }, boost: { c: 0, n: 0 } };
+    const rel = { mind: { c: 0, n: 0 }, gbdt: { c: 0, n: 0 }, boost: { c: 0, n: 0 } };   // [V33.422] DNN 퇴역
     for (const r of raw) {
       let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
@@ -44413,7 +42461,6 @@ async function mlCalibrateCommittee(DB) {
       const ex = [{ z: _logitD(ms.p), acc: mindAccLB, ic: _mindIC0 }];   // [V33.93] 측정 IC(라이브와 동일)
       rel.mind.n++; if ((ms.p >= 0.5 ? 1 : 0) === y) rel.mind.c++;
       // [V33.90] 라이브와 동일하게 모델이 싣고 온 valIC 를 함께 넘긴다(가중식 정합).
-      if (dnn) { const pD = mlDNNScore(dnn, v); if (pD != null) { ex.push({ z: _logitD(pD), acc: _num(dnnTrust.dnnAccLB, 0.5), ic: _dnnIC0 }); rel.dnn.n++; if ((pD >= 0.5 ? 1 : 0) === y) rel.dnn.c++; } }
       if (gbdt) { const pG = mlGBDTScore(gbdt, v); if (pG != null) { ex.push({ z: _logitD(pG), acc: _num(gTrust.gbdtAccLB, 0.5), ic: _gbdtIC0 }); rel.gbdt.n++; if ((pG >= 0.5 ? 1 : 0) === y) rel.gbdt.c++; } }
       // [V32.65] 부스터 합의(XGB/LGB/Cat) — 라이브와 동일하게 정확도가중 1표(wMul 0.8)로 반영
       if (boosters && boosters.length) {
@@ -44794,7 +42841,7 @@ async function aiSelfCheck(DB, env) {
         lastSkip: _auto.lastSkip || null, lastCheckAgeH: ageH(_auto.checkTs)
       };
       // 모델별 외부(Modal) 학습 도달 여부 — source==="external" 이면 Modal 산출물이 올라온 것.
-      const _mm = { mind: "mind_model", dnn: "dnn_trust", gbdt: "gbdt_trust", xgb: "xgb_trust", lgb: "lgb_trust", cat: "cat_trust" };
+      const _mm = { mind: "mind_model", gbdt: "gbdt_trust", xgb: "xgb_trust", lgb: "lgb_trust", cat: "cat_trust" };
       R.externalTrain = {};
       let _extN = 0, _extStale = [];
       for (const k of Object.keys(_mm)) {
@@ -46524,7 +44571,8 @@ function mlDriftCheck(trust, params) {
     if (!trust) { out.reason = "미학습"; return out; }
     const acc = (typeof trust.valAccLB === "number") ? trust.valAccLB
       : (typeof trust.valAcc === "number") ? trust.valAcc
-      : (typeof trust.dnnAcc === "number") ? trust.dnnAcc
+      : (typeof trust.gbdtAccLB === "number") ? trust.gbdtAccLB   /* [V33.422] DNN 퇴역 → 감시 대상은 GBDT */
+      : (typeof trust.gbdtAcc === "number") ? trust.gbdtAcc
       : (typeof trust.mindAcc === "number") ? trust.mindAcc : null;
     if (acc == null) { out.reason = "정확도 없음"; return out; }
     out.acc = +acc.toFixed(4);
@@ -47590,9 +45638,7 @@ async function mlUniverseScanNightly(DB, opts) {
     const l1 = await mlLoadModel(DB);
     if (!mind && !(l1 && l1.mode !== "observe")) return "\u27F3 " + "[SCAN] 모델 미학습 — 전종목 스캔 대기";
     const ens = mind ? await mlBrainLoad(DB) : null;
-    const dnnT = await getState(DB, "dnn_trust", null);
-    const dnn = (dnnT && dnnT.trusted) ? await mlDNNLoad(DB) : null;
-    const gT = await getState(DB, "gbdt_trust", null);
+    const gT = await getState(DB, "gbdt_trust", null);   // [V33.422] DNN 퇴역
     const g = (gT && gT.trusted) ? await mlGBDTLoad(DB) : null;
     const cal = await getState(DB, "committee_cal", null);
     const guard = await mlGuardState(DB);
@@ -47691,7 +45737,7 @@ async function mlUniverseScanNightly(DB, opts) {
       let p = null;
       if (mind) {
         try {
-          const md = await mlDeepDecide(DB, feat, { mind: mind, guard: guard, ens: ens, trust: dnnT, dnn: dnn, gbdtTrust: gT, gbdt: g, cal: cal, evstats: evstats, shock: _shock, sym: sym });
+          const md = await mlDeepDecide(DB, feat, { mind: mind, guard: guard, ens: ens, gbdtTrust: gT, gbdt: g, cal: cal, evstats: evstats, shock: _shock, sym: sym });
           if (md && typeof md.p === "number") p = md.p;
         } catch (e) {}
       } else { p = mlScore(l1, feat); }
@@ -49265,7 +47311,7 @@ async function _luxSelfCheck(DB) {
       try {
         const ext = [];
         const chkE = function (name, obj) { if (obj && obj.source === "external" && obj.trainedAt) ext.push({ name: name, ageH: (nowT - obj.trainedAt) / 3600000 }); };
-        chkE("MIND", S["mind_model"]); chkE("DNN", S["dnn_trust"]); chkE("GBDT", S["gbdt_trust"]);
+        chkE("MIND", S["mind_model"]); chkE("GBDT", S["gbdt_trust"]);   // [V33.422] DNN 퇴역
         try {
           const B = await getStates(DB, ["xgb_trust", "lgb_trust", "cat_trust", "xgb_trust_ext", "lgb_trust_ext", "cat_trust_ext"]);
           chkE("XGB", latestExternalReceipt(B["xgb_trust"], B["xgb_trust_ext"]));
@@ -49416,7 +47462,7 @@ async function _luxAutoRetrainModal(env) {
        프로덕션 레코드엔 새 필드가 없다). 헛트리거 비용은 8h 쿨다운 안의 Modal 1회뿐이다. */
     const _wantFV = (typeof LUXML !== "undefined") ? LUXML.featVer : null;
     let staleFV = 0;
-    for (const k of ["mind_model", "dnn_trust", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"]) {
+    for (const k of ["mind_model", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"]) {
       const o = latestExternalReceipt(S[k], S[k + "_ext"]);
       if (!(o && o.source === "external" && o.trainedAt)) { missingExt++; continue; }
       if (_wantFV != null && o.featVer !== _wantFV) { staleFV++; continue; }
@@ -51820,7 +49866,7 @@ const EXTIMP_KEY = "ext_import_log";
 function _extTrainSummary(SS) {
   try {
     const rec = SS[EXTIMP_KEY] || null;
-    const names = { mind: "mind_model", dnn: "dnn_trust", gbdt: "gbdt_trust", xgb: "xgb_trust", lgb: "lgb_trust", cat: "cat_trust" };
+    const names = { mind: "mind_model", gbdt: "gbdt_trust", xgb: "xgb_trust", lgb: "lgb_trust", cat: "cat_trust" };
     const keys = Object.keys(names);
     let ext = 0, freshest = null;
     for (const k of keys) {
@@ -52159,18 +50205,8 @@ export default {
         }
       } catch (e) { try { await log(env.DB, "ERROR", null, "[원장정리] 예외: " + (e && e.message)); } catch (e2) {} }
 
-      // 0.955) [V33.81] ★기존 표본으로 XALPHA·FLOW 소급 학습표본 생성★
-      //   새 거래를 기다리지 않고 이미 아는 결과(17만건)에 새 피처를 붙인다.
-      //   장외에만, 10분에 한 번, 배치 크기를 작게 — 거래 사이클을 방해하지 않는다.
-      try {
-        let _mkoBf2 = false; try { _mkoBf2 = isMarketOpen("us") || isMarketOpen("kr"); } catch (e) {}
-        const _abLock = _num(await getState(env.DB, "alt_bf_lock", 0), 0);
-        if (!_mkoBf2 && (Date.now() - _abLock) > 10 * 60000) {
-          await setState(env.DB, "alt_bf_lock", Date.now());
-          const _abr = await altSampleBackfill(env.DB, {});
-          if (_abr) await log(env.DB, "INFO", null, _abr);
-        }
-      } catch (e) { try { await log(env.DB, "WARN", null, "[ALT-BF] 예외: " + (e && e.message)); } catch (e2) {} }
+      /* [V33.422] 0.955) ALT 소급생성(XALPHA·FLOW 표본) 삭제 — 두 모델 퇴역.
+         장 마감마다 일봉 캐시를 통째로 읽어 쓰는 위원이 없는 표본을 만들고 있었다. */
 
       // 0.956) [V33.73] ★원장 정합성 자동감사★
       //   runLedgerAudit 는 유령매도(보유초과 매도)·포지션 드리프트를 정확히 잡아내는데
@@ -52787,9 +50823,9 @@ export default {
             //   수확이 방금 넣은 행들은 어제 학습된 전문가들이 본 적 없는 데이터다.
             //   지금 그 행들을 어제 전문가로 채점해야 out-of-sample STACK 표본이 된다.
             //   아래 l1~memo 가 돌고 나면 그 행들은 in-sample 이 되어 못 쓴다.
-            await _stg("stackbf", async function () { return await stackSampleBackfill(env.DB, {}); });
-            // 채점이 끝났으면 '오늘 전문가가 학습할 구간' 의 상한을 못 박는다 — 내일 기준선.
-            await _stg("stackepoch", async function () { return await stackExpertEpochStamp(env.DB); });
+            /* [V33.422] stackbf 삭제(STACK 퇴역). expepoch 는 남긴다 —
+               STACK 것이 아니라 ★상황별 IC 의 누출 방지 기준선★ 이다. 반드시 학습기들 앞이다. */
+            await _stg("expepoch", async function () { return await expertEpochStamp(env.DB); });
             // [V33.115] 표본 풀의 평균 고유도 — 수확 직후·전 학습기 앞에서 한 번만 잰다.
             //   아래 학습기 전부가 이 값으로 유효표본수를 구해 Wilson 하한을 잰다.
             await _stg("retirefv", async function () { return await mlRetireStaleFeatVer(env.DB); });
@@ -52803,15 +50839,14 @@ export default {
             // [V12.100] GBDT를 DNN 앞으로 — DNN(무거운 3M Worker폴백)이 CPU예산 초과로 죽어도 GBDT는
             //   먼저 완주해 학습되게(종전 순서는 DNN 실패 시 뒤의 GBDT가 영영 못 돌던 원인).
             await _stg("gbdt", async function () { return await mlGBDTTrainNightly(env.DB); });
-            await _stg("dnn", async function () { return await mlDNNTrainNightly(env.DB); });
+            /* [V33.422] dnn 퇴역 — 워커 폴백 학습도 하지 않는다(실측 40.8%, 무실력 이하). */
             // [V33.90] ★신규 4모델을 야간 파이프라인에 정식 편입 — 그동안 학습된 적이 없다★
             //   FLOW(V33.78)·XALPHA(V33.79)·STACK(V33.80)·DUAL(V33.89) 은 /api/ai/train-now 의
             //   수동 목록(FN·_order)에만 있고 ★크론 야간 파이프라인에는 등록되지 않았다★.
             //   즉 사람이 API 를 직접 때리지 않는 한 영원히 미학습이고, 위원회 합류 조건
             //   (model.trusted)이 성립할 수 없었다 — 만들어만 두고 안 돌던 코드다.
             //   순서: 전문가 3종(flow·xalpha) → STACK(전문가 확률을 입력으로 받으므로 뒤) → DUAL.
-            await _stg("flow", async function () { return await flowTrainNightly(env.DB); });
-            await _stg("xalpha", async function () { return await xalphaTrainNightly(env.DB); });
+            /* [V33.422] flow·xalpha 퇴역 — 정적칸 때문에 종목을 외울 뿐이었다(블록 IC ≤ 0). */
             // [V33.92] MEMO(유사상황 기억)를 STACK 앞에 둔다 — STACK 입력에 memo 확률이 들어간다.
             await _stg("memo", async function () { return await memoTrainNightly(env.DB); });
             // [V33.94] 기술 프라이어 계수 실측 + 최종 확률 보정(T2) — 상수를 측정으로 대체.
@@ -52838,7 +50873,7 @@ export default {
             await _stg("shockk", async function () { return await shockPriorFitNightly(env.DB); });
             // [V33.101] 섀도우 MIND 재평가 — 저장만 하고 아무도 안 읽던 키를 살린다.
             await _stg("mindshadow", async function () { return await mindShadowPromoteNightly(env.DB); });
-            await _stg("stack", async function () { return await stackTrainNightly(env.DB); });
+            /* [V33.422] stack 퇴역 — 표본이 늘수록 나빠졌다(V33.298). */
             await _stg("dual", async function () { return await dualHeadTrainNightly(env.DB); });
             // [V33.90] 실제 원장 기준 포트폴리오 통계(NautilusTrader PortfolioAnalyzer) —
             //   EV 게이트가 이 값을 읽으므로 보정(calibrate)보다 앞에서 갱신한다.
@@ -52940,7 +50975,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
@@ -53020,7 +51055,7 @@ export {
   _expRegBucket, _expRegIC, EXPREG,
   // [V33.228] STACK 홀드아웃 커서 계약 검증용 — tools/check-stack-oof.mjs 가 실제로 돌린다.
   //   판(featVer)이 올라간 뒤 커서가 창 끝에 서서 소급생성이 영영 멈추는 회귀를 잡는다.
-  stackSampleBackfill, stackLogSample, STACKML, STACK_SLOTS,   // [V33.272] 검사가 슬롯 목록을 직접 본다
+  /* [V33.422] STACK 내보내기 삭제 — 퇴역. */
   // [V33.239] 하이킨아시 추세반전 피처 검증용 — tools/check-heikin.mjs 가 수치로 확인한다.
   _mlHeikinFeats,
   // [V33.251] 이중헤드 라벨 정규화 검증용 — tools/check-dualhead.mjs 가 수치로 확인한다.

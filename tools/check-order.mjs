@@ -14,8 +14,7 @@ const CONTRACTS = [
   ["// ══ [V33.83] 거래별 켈리", ["let stopDist =", "let riskPct = _baseRisk", "let __portRho", "let __scalpEdge = null, __ddPctNow"]],
   ["// ══ [V33.82] ★단타 집중투자·레버리지★", ["let maxPosPct", "let __scalpEdge = null, __ddPctNow"]],
   ["// ══ [V33.80] ★고정 확률문턱 → 횡단면 백분위 문턱★", ["let __pDistCache"]],
-  ["// [V33.78] FLOW 피처 조립", ["let __flowModel = null"]],
-  ["// [V33.79] XALPHA 피처", ["let __xaModel = null"]],
+  /* [V33.422] FLOW·XALPHA 순서계약 삭제 — 퇴역해 블록 자체가 없다. */
   ["// [V33.83] 보유분 평균 상관", ["let __portRho"]],
 ];
 // riskPct 는 켈리가 고쳐 쓴 뒤에 소비돼야 한다(먼저 소비되면 켈리가 무의미).

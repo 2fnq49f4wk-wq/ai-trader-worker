@@ -67,7 +67,8 @@ function mkt(days, syms, pUp, noise, seed) {
 /* [V33.408] 글자가 아니라 ★뜻★ 으로 잰다 — V33.408 이 이 자리를 τ* 뒤로 옮기면서
    옛 고정 문구가 깨졌다. 계약은 그대로다: "블록 하한을 채택하는 곳은 한 군데뿐이고,
    그 자리는 ★더 작을 때만★ 갈아 끼운다." 그래서 대입 자리를 세고 가드를 확인한다. */
-for (const [nm, lbv, accv] of [["GBDT", "_blk", "accLB"], ["DNN", "_blkD", "dnnLB"]]) {
+/* [V33.422] DNN 퇴역 — 블록 하한 채택 계약은 남은 학습기(GBDT)에만 적용된다. */
+for (const [nm, lbv, accv] of [["GBDT", "_blk", "accLB"]]) {
   const asg = [...S.matchAll(new RegExp(accv + " = \\+" + lbv + "\\.lb\\.toFixed\\(4\\);", "g"))];
   if (asg.length !== 1) { no(`블록정확도: ${nm} 가 블록 하한을 ${asg.length} 곳에서 채택한다 — 한 곳이어야 순서가 안 되살아난다`); continue; }
   const pre = S.slice(Math.max(0, asg[0].index - 300), asg[0].index);
@@ -96,7 +97,6 @@ ok("GBDT·DNN 둘 다 '더 작은 하한' 만, ★한 자리에서만★ 채택�
   };
   for (const [nm, needle, key, wkey] of [
     ["GBDT", "if (_blk.lb == null) {", "gbdt_trust", "wGbdt"],
-    ["DNN", "if (_blkD.lb == null) {", "dnn_trust", "wDnn"],
   ]) {
     const b = blockAt(S, needle);
     if (!b) { no(`블록정확도: ${nm} 의 '못 쟀다' 분기를 못 찾는다`); continue; }
@@ -109,7 +109,6 @@ ok("GBDT·DNN 둘 다 '더 작은 하한' 만, ★한 자리에서만★ 채택�
   /* ★사유를 남기는가★ — 멈추기만 하고 이유가 없으면 화면이 "미학습" 으로 뭉갠다(돌연변이 B5). */
   for (const [nm, re] of [
     ["GBDT", /if \(_blk\.lb == null\) \{[\s\S]{0,200}?trust\.reason = "블록 기준 못 쟀다/],
-    ["DNN", /if \(_blkD\.lb == null\) \{[\s\S]{0,200}?trust\.reason = "블록 기준 못 쟀다/],
   ]) if (!re.test(S)) no(`블록정확도: ${nm} 가 '못 쟀다' 사유를 trust.reason 에 안 남긴다`);
   ok("두 경로 모두 '못 쟀다' 사유를 기록에 남긴다");
   /* ★그 값이 정말 _blockAccLB 에서 오는가★ — 상수로 바꿔치기하면 검사가 통째로 무의미해진다
@@ -117,7 +116,7 @@ ok("GBDT·DNN 둘 다 '더 작은 하한' 만, ★한 자리에서만★ 채택�
   /* [V33.408] GBDT 는 τ* 가 이기면 ★calB 로 다시 잰다★ — 그래서 대입이 한 번이 아니다.
      계약을 다시 세운다: "_blk / _blkD 에 들어가는 값은 ★전부★ _blockAccLB 호출에서 온다."
      상수를 한 군데라도 끼워 넣으면(돌연변이 B6) 여기서 걸린다. */
-  for (const [nm, lbv] of [["GBDT", "_blk"], ["DNN", "_blkD"]]) {
+  for (const [nm, lbv] of [["GBDT", "_blk"]]) {
     const asg = [...S.matchAll(new RegExp("(?:const |let |)\\b" + lbv + " = ([^;\\n]+);", "g"))];
     if (!asg.length) { no(`블록정확도: ${nm} 의 블록 하한 대입을 못 찾는다`); continue; }
     const bad = asg.filter(m => !/^_blockAccLB\(/.test(m[1].trim()));
@@ -126,8 +125,8 @@ ok("GBDT·DNN 둘 다 '더 작은 하한' 만, ★한 자리에서만★ 채택�
   ok("두 경로의 블록 하한이 ★대입마다 전부★ 실제 _blockAccLB 호출에서 나온다");
   /* 적중·시각이 ★검증행에서★ 모이는가 — 빈 배열을 넘기면 언제나 '못 쟀다' 가 되어
      겉보기엔 안전하지만 실제로는 아무 모델도 승격 못 한다(조용한 마비). */
-  for (const re of [/_bHit\.push\(_ok \? 1 : 0\); _bTs\.push\(_num\(d\.ts, 0\)\)/,
-                    /_bHitD\.push\(_ok \? 1 : 0\); _bTsD\.push\(_num\(t\.ts, 0\)\)/])
+  // [V33.422] DNN(_bHitD) 퇴역 — GBDT 경로만 남았다.
+  for (const re of [/_bHit\.push\(_ok \? 1 : 0\); _bTs\.push\(_num\(d\.ts, 0\)\)/])
     if (!re.test(S)) no("블록정확도: 검증행의 적중·시각을 모으는 코드가 없다");
   ok("검증행마다 적중·시각을 모은다(빈 배열로 조용히 마비되지 않는다)");
   if (!/blockAccLB/.test(S) || !/blockK/.test(S))

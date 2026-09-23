@@ -56,7 +56,7 @@ else {
     /* ★위원의 참석 여부를 가르는 인자★ 는 반드시 양쪽에 다 있어야 한다.
        모델 인자(flowModel 등)는 없으면 DB 에서 채우지만, ★피처★ 는 폴백이 없다 —
        안 넘기면 그 위원은 그냥 불참한다. 그래서 피처가 핵심이다. */
-    const MUST = ["seqFeat", "flowFeat", "xaFeat", "seqModel", "flowModel", "xaModel",
+    const MUST = ["seqFeat", "seqModel",
                   "stackModel", "memoModel", "dualBull", "dualBear", "shock", "evCtx",
                   "applyEventPrior", "market", "sym", "portStats", "techK", "finalCal"];
     const missing = MUST.filter((k) => entry.keys.has(k) && !exit.keys.has(k));
@@ -95,15 +95,16 @@ else {
   else {
     const silent = (blk.match(/catch \(e\) \{\}/g) || []).length;
     const named = (blk.match(/catch \(e\) \{ _skip\(/g) || []).length;
-    if (named < 7) no(`위원회대칭: 위원 조립 catch 중 사유를 적는 것이 ${named}곳뿐이다 — 던져서 빠진 위원을 못 본다`);
+    // [V33.422] 퇴역 4종이 빠져 위원 수가 줄었다 — 개수가 아니라 ★남은 위원 전부★ 를 본다(아래 목록).
+    if (named < 4) no(`위원회대칭: 위원 조립 catch 중 사유를 적는 것이 ${named}곳뿐이다 — 던져서 빠진 위원을 못 본다`);
     else ok(`위원 조립 catch ${named}곳이 사유를 적는다`);
     if (silent > 3) no(`위원회대칭: 조용한 catch 가 ${silent}곳 — 위원이 조용히 빠질 자리가 남아 있다`);
     else ok(`조용한 catch ${silent}곳(위원 합류와 무관한 캐시·진단 경로만)`);
-    for (const nm of ["mind", "dnn", "gbdt", "boost", "seq", "flow", "xalpha", "memo", "rule"])
+    for (const nm of ["mind", "gbdt", "boost", "seq", "memo", "rule"])
       if (!new RegExp('_skip\\("' + nm + '"').test(blk)) no("위원회대칭: " + nm + " 의 불참 사유를 안 적는다");
     ok("위원 9종 전부 불참 사유를 적는다");
     // ★피처 미제공★ 을 ★미승격★ 과 다른 말로 적는가 — 같은 말로 적으면 이번 버그를 또 못 본다.
-    for (const nm of ["seq", "flow", "xalpha"])
+    for (const nm of ["seq"])
       if (!new RegExp('_skip\\("' + nm + '", "[^"]*피처 미제공').test(blk))
         no("위원회대칭: " + nm + " 가 '피처 미제공' 을 따로 적지 않는다 — 호출부 누락을 미승격과 못 가른다");
     ok("피처 미제공(호출부 누락)을 미승격과 다른 사유로 적는다");
@@ -123,13 +124,9 @@ else {
 // ── 청산은 ★지갑을 열지 않는다★ ─────────────────────────────────────────────
 //   보유 종목마다 매 사이클(1분) 도는 경로다. 여기서 네트워크를 타면 비용이 조용히 샌다.
 {
-  const iF = src.indexOf("if (FLOWML.enabled && __flowModel && __flowModel.trusted)");
-  const blk = iF >= 0 ? src.slice(iF, iF + 400) : "";
-  if (!blk) no("위원회대칭: 청산 경로의 FLOW 조립부를 못 찾겠다");
-  else if (!/noFetch:\s*true/.test(blk))
-    no("위원회대칭: 청산 FLOW 가 noFetch 가 아니다 — 보유 종목마다 매 사이클 네트워크를 탄다");
-  else ok("청산 FLOW 는 캐시만 쓴다(noFetch) — 못 만들면 사유를 남기고 불참");
-  if (!/_enrich\.seqMs < _num\(SEQML\.maxCycleBudgetMs/.test(src.slice(iF - 1200, iF)))
+  /* [V33.422] FLOW 퇴역 — 청산 경로에서 네트워크를 타던 유일한 위원이 사라졌다.
+     남은 계약은 SEQ 가 사이클 예산을 나눠 쓰는가 하나다. */
+  if (!/_enrich\.seqMs < _num\(SEQML\.maxCycleBudgetMs/.test(src))
     no("위원회대칭: 청산 SEQ 가 사이클 예산을 안 본다 — 진입 쪽 SEQ 를 굶길 수 있다");
   else ok("청산 SEQ 가 진입과 같은 사이클 예산을 나눠 쓴다");
 }

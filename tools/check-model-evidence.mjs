@@ -39,102 +39,10 @@ const params = (D, hidden) => {
   return w + b;
 };
 
-// ── ① GPU 와 워커 구조가 분리됐는가 ────────────────────────────────────────
-{
-  const gpu = params(65, DNN.hidden), wk = params(65, DNNW.hidden);
-  /* [V33.260] 종전엔 `hidden: DNN.hidden` 이라는 ★문자열★ 을 고정했다. 그런데 이 절의
-     진짜 계약은 "GPU 가 워커 폴백용 작은 망을 학습하지 않는다" 이지 특정 표현식이 아니다.
-     구성이 실측값으로 대체될 수 있게 되면서(측정 → 저장 → 반영) 표현식이 바뀌었고,
-     문자열 고정은 멀쩡한 코드를 막았다. 계약을 표현식이 아니라 ★성질★ 로 적는다. */
-  const _cfgFn = src.slice(src.indexOf("function _mlExportConfig("), src.indexOf("const MLSNAP_PART"));
-  chk(/hidden:\s*\(A && A\.hidden\) \|\| DNN\.hidden/.test(_cfgFn) || /hidden:\s*DNN\.hidden/.test(_cfgFn),
-    "트레이너에 내려가는 구조는 정식(GPU) 구조이거나 그것을 이긴 실측 구성이다",
-    "내려가는 구조의 출처가 DNN.hidden 도 실측값도 아니다");
-  chk(!/hidden:\s*DNNW\./.test(_cfgFn),
-    "워커 폴백 구조(DNNW)를 트레이너에 내려보내지 않는다 — GPU 가 작은 망을 학습하면 안 된다",
-    "★DNNW(워커 폴백) 구조가 트레이너로 내려간다★ — GPU 가 워커용 작은 망을 학습하게 된다");
-  chk(/const dims = \[D\]\.concat\(DNNW\.hidden\)/.test(src),
-    "워커 폴백은 DNNW.hidden 으로 학습한다(GPU 구조와 분리)",
-    "워커 폴백이 아직 GPU 구조로 학습한다 — CPU 300s 안에서 수렴할 수 없다");
-  chk(gpu >= 700000, `정식(GPU) 망 용량이 유지된다 — 넷당 ${gpu.toLocaleString()} 파라미터`,
-    `GPU 망이 넷당 ${gpu} 파라미터로 줄었다 — GPU 예산에서 용량을 줄일 이유가 없다`);
-  /* 깊이는 ★사용자가 정한 값★ 이다(은닉 10층). 여기서 '몇 층이 옳은가' 를 게이트가 판정하지
-     않는다 — 그건 코드가 아니라 사람이 정할 문제다. 게이트가 막는 것은 ★모르는 사이에 바뀌는
-     것★ 이다: 아래 EXPECT 와 다르면 배포가 멈추고, 바꾸려면 이 줄을 함께 고쳐야 한다.
-     (V33.188 이 10→2, V33.191 이 2→5 로 바꾸는 동안 아무 게이트도 그걸 붙잡지 못했다.) */
-  const EXPECT_HIDDEN = [640, 512, 384, 256, 192, 128, 96, 64, 48, 32];
-  chk(DNN.hidden.length === EXPECT_HIDDEN.length && DNN.hidden.every((v, i) => v === EXPECT_HIDDEN[i]),
-    `정식 망 구조가 선언된 값과 같다 — 은닉 ${DNN.hidden.length}층 ${DNN.hidden.join("-")}`,
-    `정식 망 구조가 바뀌었다: ${DNN.hidden.join("-")} ≠ ${EXPECT_HIDDEN.join("-")} — 의도한 변경이면 이 게이트의 EXPECT_HIDDEN 도 함께 고칠 것`);
-  chk(gpu === 763345 && gpu * 6 === 4580070,
-    `파라미터 수가 산식과 일치한다 — 넷당 ${gpu.toLocaleString()} · 6시드 ${(gpu * 6).toLocaleString()}`,
-    `파라미터 수가 예상과 다르다(넷당 ${gpu}) — 구조 변경이 화면 표시와 어긋날 수 있다`);
-  chk(wk < gpu / 10, `워커 폴백은 넷당 ${wk.toLocaleString()} 파라미터(GPU 망의 1/${Math.round(gpu / wk)})`,
-    `워커 폴백이 넷당 ${wk} 파라미터다 — CPU 예산 안에서 못 끝낸다`);
-  chk(DNNW.seeds <= DNN.seeds, `워커 시드 ${DNNW.seeds} ≤ GPU 시드 ${DNN.seeds}`,
-    "워커가 GPU 보다 많은 시드를 돌린다 — 예산을 수렴이 아니라 개수에 쓴다");
-  chk(DNNW.dropout < DNN.dropout,
-    `작은 망에 맞춰 드롭아웃을 낮췄다(${DNN.dropout} → ${DNNW.dropout})`,
-    "작은 망에 대형 망용 드롭아웃을 그대로 쓴다 — 이번엔 과소적합한다");
-  /* [V33.391] 이 계약의 뜻은 ★하이퍼파라미터를 인자로 받는다★ 이지 "둘째 인자가 val" 이
-     아니다. 조기중단 누출을 고치며 둘째 인자가 내부검증(_esSet)으로 바뀌었는데, 문자열을
-     통째로 못 박아 둔 탓에 뜻과 무관한 이유로 실패했다 — 계약을 뜻으로 적는다.
-     대신 ★hp 배선★ 은 종전보다 더 좁게 본다: 여섯째 인자가 DNNW 여야 하고,
-     함수 본문이 전역 DNN 상수를 직접 읽으면 안 된다. */
-  {
-    // ★정의부(function _dnnTrainOne(...))가 아니라 ★호출부★ 를 봐야 한다 — 정의부가 먼저
-    //   걸려서 언제나 (val, hp) 로 읽히면 이 계약은 아무것도 안 지키는 검사가 된다.
-    const _call = src.match(/=\s*_dnnTrainOne\(train, (\w+), dims, deadline, warm, (\w+)\)/);
-    const _def = /function _dnnTrainOne\(train, val, dims, deadline, warm, hp\)/.test(src);
-    chk(!!_call && _call[2] === "DNNW" && _def,
-      "학습 하이퍼파라미터가 인자로 전달된다 — 워커와 GPU 가 서로의 값을 안 쓴다",
-      "_dnnTrainOne 이 아직 전역 DNN 상수를 직접 읽는다 — 분리가 절반만 된 것이다");
-    /* 둘째 인자는 ★멈출 때를 고르는 집합★ 이다. 그게 채점용 홀드아웃(val)이면
-       고른 자로 채점하게 된다 — V33.391 이 고친 그 누출이다. */
-    chk(!!_call && _call[1] !== "val",
-      "조기중단 집합이 채점용 홀드아웃이 아니다(내부검증을 따로 뗀다)",
-      "_dnnTrainOne 이 채점용 홀드아웃으로 멈춘다 — 고른 자로 채점하면 점수가 부푼다");
-    const _i = src.indexOf("function _dnnTrainOne(");
-    const _b = _i >= 0 ? src.slice(_i, src.indexOf("\n}", _i)) : "";
-    chk(_b.length > 0 && !/\bDNN\.[a-zA-Z]/.test(_b),
-      "_dnnTrainOne 본문이 전역 DNN 상수를 직접 안 읽는다",
-      "_dnnTrainOne 본문이 전역 DNN 을 직접 읽는다 — hp 인자가 무의미해진다");
-  }
-}
-
-// ── ①-b 파라미터 수를 ★세어서★ 말하는가 (화면이 "3M" 을 외우고 있었다) ───
-{
-  const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
-  chk(/function _dnnParamCount\(dims\)/.test(src),
-    "파라미터를 dims 에서 세는 단일 진실(_dnnParamCount)이 있다",
-    "파라미터를 세는 곳이 없다 — 화면과 서버가 서로 다른 숫자를 말하게 된다");
-  chk(/paramsPerNet: _dnnParamCount\(_dimsPrev\)/.test(src),
-    "미학습 미리보기도 실제 dims 로 센 값을 내려보낸다",
-    "미학습 경로가 파라미터 수를 안 내려보낸다 — 화면이 상수를 지어내게 된다");
-  // ★하드코딩된 '3M' 이 화면에 남아 있으면 안 된다★ — 구조가 바뀌면 곧바로 거짓이 된다.
-  const bad3m = (H.match(/>3M[^<]*파라미터|3M은 Worker|3M 파라미터/g) || []).length;
-  chk(bad3m === 0, "화면에 하드코딩된 '3M' 표기가 남아 있지 않다",
-    `화면이 아직 '3M' 을 문자열로 들고 있다(${bad3m}곳) — 구조를 바꾸는 순간 거짓이 된다`);
-  chk(/d\.params\.toLocaleString\(\)/.test(H) && !/\(d\.params\/1e6\)\.toFixed/.test(H),
-    "화면이 정확한 개수를 그대로 적는다(백만 단위 반올림 금지)",
-    "화면이 파라미터를 'M' 으로 반올림한다 — 워커 폴백(33,538)과 GPU 망이 구별되지 않는다");
-}
-
-// ── ② 표본이 전 구간을 보는가 ──────────────────────────────────────────────
-{
-  chk(/spanBuckets/.test(code) && /AND id >= \? ORDER BY id ASC LIMIT \?/.test(src),
-    "워커 DNN 이 id 범위를 균등 분할해 전 구간에서 표본을 뽑는다",
-    "워커 DNN 이 아직 최근 구간만 읽는다 — 검증까지 한 국면 안에서 잘린다");
-  chk(_num(DNNW.dnnMaxSamples) > 2000,
-    `워커 학습표본 상한 ${DNNW.dnnMaxSamples}(종전 2,000)`,
-    "워커 학습표본이 아직 2,000 이하다");
-  // ★상한을 넘길 때 '최근만 남기기' 로 되돌아가면 애써 넓힌 기간이 사라진다★
-  chk(!/train = train\.slice\(train\.length - DNNW?\.dnnMaxSamples\)/.test(code)
-      && /const _thin = \[\];/.test(src),
-    "상한 초과분은 균등 솎아내기로 줄인다 — 기간을 유지한 채 개수만 준다",
-    "상한 초과분을 뒤쪽(최근)만 남겨 자른다 — 전 구간 추출이 무의미해진다");
-  function _num(v) { return (typeof v === "number" && isFinite(v)) ? v : 0; }
-}
+/* ══ [V33.422] ①·①-b·② 삭제 — DNN 퇴역. ═══════════════════════════════════════════════
+   이 세 절은 전부 ★워커 폴백 DNN★ 의 계약이었다(GPU/워커 구조 분리 · 파라미터 세기 ·
+   전 구간 표본 추출). DNN 이 코드에서 사라졌으므로 지킬 대상이 없다.
+   남은 절(③ 부스터 증거 · ④ 사실표 단일출처 · ⑤ 화면 표기)은 그대로 유효하다. */
 
 // ── ③ 부스터가 '떨어진 축' 으로 표를 받지 않는가 ───────────────────────────
 {
@@ -194,16 +102,15 @@ const params = (D, hidden) => {
   chk(/function _modelFacts\(trust, meta, opts\)/.test(src),
     "모델 사실표를 만드는 단일 함수(_modelFacts)가 있다",
     "사실표를 각 엔드포인트가 따로 조립한다 — 같은 모델이 화면마다 다른 숫자로 보이게 된다");
-  chk(/dnn: Object\.assign\(_modelFacts\(_dt, _dMeta/.test(src) && /gbdt: Object\.assign\(_modelFacts\(_gt/.test(src),
-    "/api/ai-mode 의 DNN·GBDT 행이 그 사실표에서 나온다",
+  chk(/gbdt: Object\.assign\(_modelFacts\(_gt/.test(src),
+    "/api/ai-mode 의 GBDT 행이 그 사실표에서 나온다(DNN 은 퇴역)",
     "ai-mode 가 아직 필드를 손으로 조립한다");
   // 두 값이 ★둘 다★ 실려야 한다 — 하나만 실으면 화면은 다시 이름을 겹쳐 쓰게 된다.
   chk(/valAcc: pct\(raw\)/.test(src) && /accLB: pct\(lb\)/.test(src),
     "사실표가 valAcc(맞힌 비율)와 accLB(신뢰하한)를 둘 다 싣는다",
     "사실표에 두 값 중 하나가 없다 — 화면이 다시 한 이름으로 두 통계를 부르게 된다");
-  chk(/accLB: \(trust && trust\.dnnAccLB != null\)/.test(src) && /floor: \+\(_num\(DNN\.trustFloor/.test(src),
-    "/api/ml-status 도 accLB·floor 를 같은 이름으로 싣는다",
-    "두뇌관측 쪽에 accLB/floor 가 없다 — 두 화면이 다시 다른 값만 갖게 된다");
+  /* [V33.422] /api/ml-status 의 DNN accLB·floor 검사 삭제 — DNN 퇴역.
+     같은 계약(하한과 문턱을 같은 이름으로 싣는다)은 위 _modelFacts 단일출처 검사가 지킨다. */
   // ★같은 모델을 보고 있는지 판별할 키★ — 캐시 창이 다르면 값이 갈릴 수 있다.
   chk(/trainedAt: pick\(t \? _num\(t\.trainedAt, null\)/.test(src),
     "사실표가 trainedAt 을 싣는다 — 두 화면이 같은 모델인지 대조할 수 있다",

@@ -88,7 +88,9 @@ function cut(start, end) {
 {
   const tables = [...new Set([...S.matchAll(/CREATE TABLE IF NOT EXISTS ([a-z_]+) ?\(/g)].map((m) => m[1]))]
     .filter((t) => new RegExp("CREATE TABLE IF NOT EXISTS " + t + " ?\\([^;]{0,400}featver").test(S));
-  if (tables.length < 4) bad(`featver 를 가진 표본 표를 ${tables.length}개밖에 못 찾았다 — 이 검사가 헛돈다`);
+  /* [V33.422] ★개수를 손으로 적지 않는다.★ FLOW·XALPHA·STACK 표가 퇴역으로 사라져 4 라는
+     숫자가 뜻을 잃었다. 계약은 "★찾은 표 전부★ 가 구 판 정리를 갖는다" 이다. */
+  if (tables.length < 1) bad(`featver 를 가진 표본 표를 하나도 못 찾았다 — 이 검사가 헛돈다`);
   /* 표 하나가 '구 판 정리' 를 받는 방법은 두 가지다:
        ① 직접 DELETE … featver 로 거른다  (ml_samples · ml_candidates)
        ② _altPrune 목록에 실려 공용 루프가 지운다 (V33.328 에서 넷을 여기 실었다)

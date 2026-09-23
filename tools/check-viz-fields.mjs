@@ -54,7 +54,8 @@ const names = (blk, re) => { const out = new Set(); let m; while ((m = re.exec(b
 
 // ── ② 모델 탭 — 화면이 읽는 칸을 그 모델의 응답 함수가 채우는가 ───────────────
 {
-  const SRV = ["mlDNNVizData", "mlMindVizData", "mlTreeVizData", "mlSeqVizData", "mlMemoVizData", "mlLinearVizData"];
+  // [V33.422] mlDNNVizData 퇴역 · omniVizData 신설.
+  const SRV = ["mlMindVizData", "mlTreeVizData", "mlSeqVizData", "mlMemoVizData", "mlLinearVizData", "omniVizData"];
   const set = new Set();
   let found = 0;
   for (const fn of SRV) { const b = body(S, fn); if (b) { found++; for (const k of names(b, /\b([A-Za-z_][\w]*)\s*:/g)) set.add(k); } }
@@ -72,33 +73,9 @@ const names = (blk, re) => { const out = new Set(); let m; while ((m = re.exec(b
   else ok(`모델 탭 ${rends.length}종이 읽는 칸을 서버가 전부 채운다`);
 }
 
-// ── ③ ★모델이 들고 있는데 응답이 안 넘기는 진단★ — 이번에 잡힌 자리 ──────────
-{
-  const blk = body(S, "mlLinearVizData") || "";
-  if (!/headDegenerate:\s*!!m\.headDegenerate/.test(blk))
-    no("화면칸: STACK 응답이 headDegenerate 를 안 넘긴다 — '후보 전원이 다수 클래스로 붕괴' 경고가 영영 안 뜬다");
-  else ok("STACK 의 headDegenerate 가 모델 → 응답 → 화면으로 이어진다");
-  if (!/headDegenerate/.test(H)) no("화면칸: 화면에 headDegenerate 를 그리는 코드가 없다");
-  else ok("화면이 그 경고를 그릴 줄 안다");
-}
+/* [V33.422] ③ STACK headDegenerate 절 삭제 — STACK 퇴역(그 경고를 낼 모델이 없다). */
 
-// ── ④ 화면이 구조 숫자를 ★손으로 적지 않는가★ ────────────────────────────────
-//   "전문가 확률 8 + 참여마스크 8" 이 그대로 남아 있었다 — 위원이 8명이던 시절 값이다.
-//   MEMO·SEQ 가 합류해 9명이 된 뒤에도 화면만 16차원짜리 옛 모델을 설명했다.
-{
-  const b = body(H, "NNV_renderStack") || "";
-  if (/전문가 확률 \d/.test(b) || /참여마스크 \d/.test(b))
-    no("화면칸: STACK 화면이 슬롯 수를 손으로 적는다 — 위원이 늘면 그 줄만 옛 모델을 설명한다");
-  else ok("STACK 화면이 슬롯 수를 손으로 안 적는다");
-  if (!/Math\.floor\(d\.inputDim \/ 2\)/.test(b))
-    no("화면칸: STACK 화면이 확률·마스크 개수를 inputDim 에서 안 뽑는다");
-  else ok("확률·마스크 개수를 inputDim 에서 뽑는다(구조가 바뀌어도 따라간다)");
-  // 서버의 슬롯 수와 화면이 설명하는 구조가 같은 뿌리인지 — STACK_SLOTS 한 곳에서 온다.
-  const m = S.match(/const STACK_SLOTS = \[([^\]]*)\]/);
-  const nSlot = m ? (m[1].match(/"/g) || []).length / 2 : 0;
-  if (!(nSlot >= 9)) no(`화면칸: STACK_SLOTS 가 ${nSlot}개 — 위원 명부와 어긋난다`);
-  else ok(`STACK_SLOTS ${nSlot}종 → 입력 ${nSlot * 2}차원(화면이 이 값을 응답에서 받아 그린다)`);
-}
+/* [V33.422] ④ STACK 화면의 손으로 적은 차원 검사 삭제 — 그 화면이 사라졌다. */
 
 console.log(bad ? `\n화면칸 게이트 실패 ${bad}건` : "\n화면칸 게이트 통과");
 process.exit(bad ? 1 : 0);

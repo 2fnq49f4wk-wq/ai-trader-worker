@@ -24,6 +24,7 @@
      ④ 갈라진 술어를 다시 넣으면 이 검사가 ★실패하는가★(변이 시험 — 검사가 살아 있는가)
    ═══════════════════════════════════════════════════════════════════════════ */
 import { readFileSync } from "node:fs";
+import { RETIRED } from "./_retired.mjs";
 import vm from "node:vm";
 
 const S = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
@@ -69,13 +70,19 @@ console.log("① 서버 — 명부는 하나이고, 값을 주는 모든 응답�
      그 순간 다시 두 개의 자가 된다 — 이 저장소가 네 번 당한 그 모양이다. */
   const b = fnBody(S, "async function buildRoster(DB)");
   chk(b.length > 800, "buildRoster 본문을 찾았다", "buildRoster 본문을 못 찾는다");
-  for (const k of ["mind", "dnn", "gbdt", "xgb", "flow", "xalpha", "memo", "seq", "rule", "stack", "dual_bull", "dual_bear", "dual"])
+  /* [V33.422] ★목록을 손으로 적지 않는다.★ 퇴역(RETIRED)으로 넷이 빠지자 손목록이
+     "명부에 dnn 이 없다" 며 배포를 막았다 — 뜻과 무관한 실패다. 현역만 요구하고,
+     ★퇴역한 이름이 남아 있지 않은지★ 도 같이 본다(양쪽으로 갈릴 자리를 없앤다). */
+  for (const k of ["mind", "gbdt", "xgb", "memo", "seq", "rule", "omni", "dual_bull", "dual_bear", "dual"])
     chk(b.includes('"' + k + '"'), `명부가 ${k} 를 담는다`, `★명부에 ${k} 가 없다 — 그 위원은 어느 화면에도 못 나온다★`);
+  for (const k of RETIRED)
+    chk(!new RegExp(`add\\("${k}"`).test(b), `명부가 퇴역한 ${k} 를 담지 않는다`,
+      `★퇴역한 ${k} 가 아직 명부에 있다★`);
   chk(/_boostersCached\(DB\)/.test(b),
     "부스터 가동 판정은 ★위원회가 실제로 쓰는 함수★ 로 한다(trusted 플래그가 아니다)",
     "부스터를 trusted 로만 본다 — V33.191 의 증거문턱을 화면이 모른다");
-  chk((b.match(/expertAdmit\(/g) || []).length >= 4,
-    "선형 위원·STACK·이중헤드 합류는 expertAdmit 하나로 판정한다",
+  chk((b.match(/expertAdmit\(/g) || []).length >= 2,
+    "MEMO·이중헤드 합류는 expertAdmit 하나로 판정한다(퇴역 위원이 빠져 호출 수가 줄었다)",
     "합류 판정이 expertAdmit 을 안 쓴다");
 }
 

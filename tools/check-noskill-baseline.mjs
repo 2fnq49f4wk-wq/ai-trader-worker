@@ -121,7 +121,6 @@ console.log("\n⑥ 게이트가 실제로 이 기준점을 쓰는가 · 트레�
        ★뜻과 무관한 이유로★ 실패했다(이 저장소가 check-model-evidence 에서 이미 겪은 그 실수다).
        계약의 뜻은 "게이트가 무실력 기준점을 본다" 이지 "인자가 넷" 이 아니다 — 넷째 인자가
        accBase 인지만 본다. 대신 ★더 좁게★: 다섯째(mindBase)까지 넘기는지도 아래에서 확인한다. */
-    ["DNN", /_dnnAdmit\(valAccLB, _icT, mindLB, _num\(_vs\.accBase, null\)[,)]/],
     ["SEQ", /_dnnAdmit\(lb, icT, 0\.5, _num\(body\.accBase, null\)[,)]/],
     ["단타", /_clamp\(_num\(body\.accBase, 0\), 0, 0\.9\)/]
   ];
@@ -153,22 +152,24 @@ console.log("\n⑥ 게이트가 실제로 이 기준점을 쓰는가 · 트레�
       "판정에 쓰는 지분식에 0.5 영점이 남아 있지 않다",
       `★0.5 영점이 아직 ${left.length}곳 남았다 — 한쪽만 고치면 그 자리만 부푼다 ▸ ${left.join(" ▸ ")}★`);
   }
-  chk(/_dnnAdmit\(accLB, icT, mindLB, accBase, mindBase\)/.test(S),
+  /* [V33.422] DNN 퇴역 — _dnnAdmit 은 SEQ 승격이 쓰는 공용 판정자로 남았다(이름만 DNN 이다).
+     "자기 영점 + 위원장 영점을 둘 다 받는다" 는 계약은 그 공용 판정자에 그대로 적용된다. */
+  chk(/function _dnnAdmit\(accLB, icT, mindLB, accBase, mindBase\)/.test(S),
     "_dnnAdmit 이 자기 영점과 ★위원장의 영점★ 을 둘 다 받는다",
     "★위원장 쪽 영점을 안 받는다 — 한쪽만 교정하면 비교가 더 틀어진다★");
-  for (const [nm, re] of [
-    ["분할커밋", /_dnnAdmit\(valAccLB, _icT, mindLB, _num\(_vs\.accBase, null\), _fMindBase\)/],
-    ["단발업로드", /_dnnAdmit\(dnnLB, _num\(body\.valICt, null\), mindLB, _num\(body\.accBase, null\), _uMindBase\)/],
-  ]) chk(re.test(S), `${nm} 경로가 위원장 영점을 넘긴다`, `★${nm} 경로가 위원장 영점을 안 넘긴다★`);
+  // [V33.422] DNN 업로드 두 경로 퇴역 — SEQ 승격 경로가 같은 계약을 진다.
+  chk(/_dnnAdmit\(lb, icT, 0\.5, _num\(body\.accBase, null\)[,)]/.test(S),
+    "SEQ 승격 경로가 무실력 기준점을 넘긴다", "★SEQ 승격 경로가 영점을 안 넘긴다★");
   /* ★부풀었던 크기를 기록으로 남기는가★ — 안 남기면 "얼마나 고쳐졌나" 를 영영 못 잰다. */
   /* ★개수를 센다★ — 존재만 보면 두 곳 중 하나만 지워도 통과한다(돌연변이 N7).
      지분을 확정하는 자리마다 교정 전 값이 같이 남아야 "얼마나 부풀었었나" 를 잴 수 있다. */
   {
-    const nW = (S.match(/wGbdtRaw05/g) || []).length, nD = (S.match(/wDnnRaw05/g) || []).length;
+    // [V33.422] wDnnRaw05 퇴역 — 남은 지분 확정 자리(GBDT)가 전부 덮이는지 본다.
+    const nW = (S.match(/wGbdtRaw05/g) || []).length;
     const nSites = (S.match(/_skillExp\((?:accLB|gLB|dnnLB), /g) || []).length;
-    chk(nW >= 2 && nD >= 1 && (nW + nD) >= nSites,
-      `교정 전(0.5 영점) 지분을 ${nW + nD}곳에 남긴다 — 지분 확정 ${nSites}곳을 덮는다`,
-      `★교정 전 값이 ${nW + nD}곳뿐이다(지분 확정 ${nSites}곳) — 개선 폭을 증명할 수 없다★`);
+    chk(nW >= 1 && nW >= nSites,
+      `교정 전(0.5 영점) 지분을 ${nW}곳에 남긴다 — 지분 확정 ${nSites}곳을 덮는다`,
+      `★교정 전 값이 ${nW}곳뿐이다(지분 확정 ${nSites}곳) — 개선 폭을 증명할 수 없다★`);
   }
   /* ★경계 동작★ — base 를 모르면 0.5 로 떨어져 종전과 한 글자도 다르지 않아야 한다. */
   {

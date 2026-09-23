@@ -110,15 +110,19 @@ ok(R.memo_imports.includes("requests") && R.memo_imports.includes("json"),
      "그 줄이 로그에서 눈에 띈다(다음 사람이 훑어서 찾을 수 있다)");
 }
 
-/* ★STACK 경계 통지가 '실제로 다시 학습한 것' 만 주장하는가.★
-   종전엔 네 이름을 박아 보냈다 — 예산으로 gbdt·mind 가 생략된 회차에도 재학습했다고 주장한 셈이다. */
+/* [V33.422] STACK 경계 통지 계약 삭제 — STACK 퇴역(워커가 그 엔드포인트를 지웠다).
+   대신 ★퇴역 목록을 트레이너가 손으로 적지 않는가★ 를 본다. 목록이 두 곳에 살면
+   언젠가 갈라지고, 갈라지면 퇴역한 모델을 계속 학습하게 된다(이 저장소의 단골 사고). */
 {
-  ok(/"models": _oof_models\b/.test(PYSRC),
-     "경계 통지의 models 가 ★그 회차가 실제로 돌린 단계★ 에서 나온다(박힌 목록이 아니다)");
-  ok(/_oof_models = \["dnn"\] \+ \[_STAGE2OOF\[n\] for n in _ran if n in _STAGE2OOF\]/.test(PYSRC),
-     "_ran(실제로 완료한 단계)에서만 이름을 뽑는다 — 생략된 단계를 학습했다고 하지 않는다");
-  ok(!/"models": \["dnn", "gbdt", "boost", "mind"\]/.test(PYSRC),
-     "박아 넣은 옛 목록이 남아 있지 않다");
+  ok(/_RETIRED = set\(\(cfg or \{\}\)\.get\("retired"\) or \[\]\)/.test(PYSRC),
+     "퇴역 명부를 ★워커 설정에서 받는다★(트레이너에 손으로 적지 않는다)");
+  ok(!/RETIRED = \{?"dnn"/.test(PYSRC) && !/retired = \["dnn"/.test(PYSRC),
+     "트레이너 안에 박아 넣은 퇴역 목록이 없다");
+  ok(/if "dnn" in _RETIRED:/.test(PYSRC) && /return _run_stages\(\{"dnnRetired": True\}\)/.test(PYSRC),
+     "퇴역이면 DNN 학습을 건너뛰고 ★뒤 단계는 그대로 돈다★(회차가 통째로 비지 않는다)");
+  ok(/def _run_stages\(dnn_out=None\):/.test(PYSRC) &&
+     (PYSRC.match(/_stage\(_nm, _fn\)/g) || []).length === 1,
+     "회전 꼬리가 ★한 벌★ 이다 — 두 경로가 같은 코드를 쓴다(복사본이 갈릴 자리가 없다)");
 }
 
 if (fails) { console.error(`\n✗ 학습기 스코프 계약 ${fails}건 실패 (총 ${n})`); process.exit(1); }

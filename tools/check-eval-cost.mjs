@@ -25,9 +25,6 @@ console.log('① 부가조회 총량 상한이 존재하고 안전한가');
   if (ENRICH.share > 0 && ENRICH.share <= 0.6)
     ok('부가조회 총량 ' + Math.round(ENRICH.share*100) + '% — 평가 본체가 ' + Math.round((1-ENRICH.share)*100) + '% 를 확보한다');
   else bad('ENRICH.share 가 위험하다: ' + ENRICH.share);
-  if (ENRICH.flowRefreshPerCycle >= 1 && ENRICH.flowRefreshPerCycle <= 20)
-    ok('FLOW 콜드미스 네트워크 갱신 ' + ENRICH.flowRefreshPerCycle + '건/사이클 — 라운드로빈이 유니버스를 훑어도 폭주하지 않는다');
-  else bad('flowRefreshPerCycle 이 위험하다: ' + ENRICH.flowRefreshPerCycle);
 }
 
 console.log('② 지갑이 비면 ★실행 자체를★ 안 하는가 (실제 소스를 떼어 돌린다)');
@@ -65,7 +62,8 @@ console.log('② 지갑이 비면 ★실행 자체를★ 안 하는가 (실제 �
 
 console.log('③ 실제 부가조회들이 전부 지갑/계측을 통과하는가');
 {
-  const charged = [['scalp','단타 분봉 스캔'], ['flow','FLOW 포지셔닝·풋콜']];
+  // [V33.422] FLOW 퇴역 — 그 조회 자체가 사라졌다(지갑을 거칠 일이 없다).
+  const charged = [['scalp','단타 분봉 스캔']];
   for (const [k, label] of charged) {
     if (new RegExp('_enrichRun\\("' + k + '"').test(S)) ok(label + ' → 지갑 결제');
     else bad(label + ' 이 지갑을 거치지 않는다');
@@ -91,20 +89,8 @@ console.log('③ 실제 부가조회들이 전부 지갑/계측을 통과하는�
   } else bad('★평가 루프 구간을 찾지 못했다★ — 이 검사가 무의미해졌다. 경계 마커를 고칠 것');
 }
 
-console.log('④ FLOW 가 평가 루프에서 네트워크를 무제한으로 타지 않는가');
-{
-  if (/async function flowFetchPositioning\(DB, symbol, opts\)/.test(S) &&
-      /async function flowFetchPutCall\(DB, symbol, opts\)/.test(S)) ok('두 조회 모두 캐시전용 모드를 받는다');
-  else bad('flowFetch* 가 캐시전용 모드를 받지 않는다');
-  const cnt = (S.match(/if \(opts && opts\.noFetch\) return cached \? cached\.v : null;/g) || []).length;
-  if (cnt === 2) ok('캐시전용일 때 ★네트워크로 나가지 않는다★ (2곳 모두)');
-  else bad('noFetch 처리가 ' + cnt + '곳뿐이다(2곳 필요)');
-  /* [V33.304] 호출에 프리로드 표(pre)가 함께 실린다 — 계약은 그대로다("상한에 닿으면
-     캐시전용으로 부른다"). 인자 리터럴 대신 ★그 계약★ 을 본다. */
-  if (/flowBuildFeat\(DB, symbol, market, __dailyCacheForFlow,[\s\S]{0,120}?noFetch: _flowNoFetch/.test(S))
-    ok('평가 루프가 상한 도달 시 캐시전용으로 부른다');
-  else bad('평가 루프가 캐시전용 모드를 넘기지 않는다');
-}
+/* [V33.422] ④ FLOW 네트워크 상한 검사 삭제 — FLOW 퇴역으로 flowBuildFeat 호출이
+   평가 루프에서 사라졌다. (조회 함수 자체도 죽은 코드로 삭제됐다.) */
 
 console.log('⑤ "어디에 시간이 갔나"를 매 사이클 남기는가');
 {

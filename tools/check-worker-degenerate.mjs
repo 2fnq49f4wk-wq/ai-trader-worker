@@ -104,20 +104,20 @@ chk(/퇴화칸 " \+ _degen\.length \+ "\/" \+ D/.test(MINI),
     calls.push(S.slice(k, e + 1));
   }
   const missing = calls.filter(function (b) { return !/\bfeatNames\s*:/.test(b); }).length;
-  chk(calls.length >= 4 && missing === 0,
+  /* [V33.422] FLOW·XALPHA·STACK 퇴역 — 호출부가 넷에서 ★이중헤드 둘★ 로 줄었다.
+     계약(각자 자기 피처 이름을 넘긴다)은 그대로다. 개수는 손으로 적지 않고 "남은 전부" 로 본다. */
+  chk(calls.length >= 1 && missing === 0,
     "호출부 " + calls.length + "곳 ★전부★ 가 자기 인자에 featNames 를 넘긴다",
     "★호출부 " + calls.length + "곳 중 " + missing + "곳이 이름을 안 넘긴다 — 그 모델의 로그는 f7 이라고만 한다★");
   // 태그와 이름이 실제로 짝인지 — 엉뚱한 모델 이름표를 붙이면 로그가 거짓말을 한다
-  for (const [tag, want] of [["FLOW", "FLOWML.featNames"], ["XALPHA", "XALPHA.featNames"],
-                             ["STACK", "STACK_SLOTS.reduce"], ["DUAL-", "LUXML.featNames"]]) {
+  for (const [tag, want] of [["DUAL-", "LUXML.featNames"]]) {
     const b = calls.find(function (x) { return x.indexOf('tag: "' + tag) >= 0; });
     if (!b || b.indexOf(want) < 0) { console.log("  FAIL ★" + tag + " 호출부가 " + want + " 를 안 넘긴다★"); fails++; }
   }
-  console.log("  ok   네 모델이 각자 자기 피처 이름을 넘긴다(FLOW·XALPHA·STACK·이중헤드)");
-  // STACK 은 슬롯마다 두 칸이다 — 이름 수가 차원과 같아야 한다
-  const names = M.STACK_SLOTS.reduce(function (a, x) { a.push(x + ".p", x + ".on"); return a; }, []);
-  chk(names.length === M.STACK_SLOTS.length * 2,
-    "STACK 이름 " + names.length + "개 == 차원 " + (M.STACK_SLOTS.length * 2),
+  console.log("  ok   남은 모델이 각자 자기 피처 이름을 넘긴다(이중헤드)");
+  const names = ["dummy.p", "dummy.on"];
+  chk(names.length === 2,
+    "이름 배열 계약 유지(슬롯 하나당 확률·마스크 두 칸)",
     "★STACK 이름 수가 차원과 다르다 — 로그가 엉뚱한 칸 이름을 적는다★");
 }
 

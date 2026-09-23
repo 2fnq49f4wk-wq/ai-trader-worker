@@ -150,7 +150,7 @@ const score = (m, rows) => rows.map((r) => 1 / (1 + Math.exp(-(m.w * r.x + m.b))
 {
   const src2 = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
   const fn = src2.slice(src2.indexOf("async function _miniLogisticTrain"),
-                        src2.indexOf("async function flowTrainNightly"));
+                        src2.indexOf("function flowScore("));
   if (/const nvalStart = N - nval;/.test(fn)) ok("홀드아웃 시작점(nvalStart)을 못 박는다");
   else bad("홀드아웃 시작점이 없다 — 퍼징이 경계를 움직인다");
   if (/for \(let i = nvalStart; i < N; i\+\+\) \{/.test(fn))
@@ -209,7 +209,7 @@ const score = (m, rows) => rows.map((r) => 1 / (1 + Math.exp(-(m.w * r.x + m.b))
   const src3 = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
   const cut = (a, b) => { const i = src3.indexOf(a); const j = b ? src3.indexOf(b, i) : src3.length; return src3.slice(i, j); };
   const trainers = [
-    ["_miniLogisticTrain", cut("async function _miniLogisticTrain", "async function flowTrainNightly")],
+    ["_miniLogisticTrain", cut("async function _miniLogisticTrain", "function flowScore(")],
     ["memoTrainNightly",   cut("async function memoTrainNightly", "function memoScore")]
   ];
   for (const [nm, body] of trainers) {

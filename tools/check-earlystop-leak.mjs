@@ -72,7 +72,8 @@ for (const s of sites) {
 
 // ── ② 보정구간이 ★실제로 만들어진다★ ─────────────────────────────────────────
 //   cal_frac 을 안 주면 _split_ts 는 빈 배열을 돌려준다 — 그러면 전부 검증으로 떨어진다.
-for (const tag of ["DNN", "부스팅", "시장별", "tag=tag"]) {
+// [V33.422] DNN 퇴역 — 남은 학습 경로만 본다.
+for (const tag of ["부스팅", "시장별", "tag=tag"]) {
   const re = new RegExp(`_split_ts\\([^)]*?cal_frac=0\\.10[^)]*?tag=${tag === "tag=tag" ? "tag" : `"${tag}"`}`, "s");
   if (!re.test(py)) no(`조기중단누출: ${tag} 분할에 cal_frac 이 없다 — 보정구간이 비어 전부 검증으로 떨어진다`);
 }
@@ -140,21 +141,9 @@ else ok("종전 방식이 가져가던 이득을 매 회차 숫자로 적는다"
 //   정직해진 외부 모델이 부푼 폴백에 밀려난다 — 고치다 만 것이 안 고친 것보다 나쁜 자리다.
 {
   const js = fs.readFileSync("src/index.js", "utf8");
-  // 워커 DNN: 조기중단 집합이 홀드아웃(val)이 아니라 학습 꼬리에서 온다
-  const i0 = js.indexOf("const _esSet = _innerVal || val;");
-  if (i0 < 0) no("조기중단누출(워커): DNN 이 내부검증을 안 뗀다 — 홀드아웃으로 멈추고 그 홀드아웃으로 채점한다");
-  else {
-    const blk = js.slice(Math.max(0, i0 - 900), i0 + 200);
-    if (!/_innerVal = train\.slice\(train\.length - _ni\)/.test(blk) || !/train = train\.slice\(0, train\.length - _ni\)/.test(blk))
-      no("조기중단누출(워커): DNN 내부검증을 학습에서 ★빼지 않는다★ — 같은 행으로 배우고 멈출 때를 고른다");
-    else ok("워커 DNN — 학습 꼬리에서 내부검증을 떼고 홀드아웃은 채점 전용");
-    if (!/_dnnTrainOne\(train, _esSet,/.test(js))
-      no("조기중단누출(워커): _dnnTrainOne 이 내부검증을 안 받는다 — 손잡이를 만들고 안 쓴 꼴");
-    else ok("워커 DNN 학습 호출이 내부검증으로 멈춘다");
-    if (!/★내부검증을 못 뗐다\(표본 부족\) — 이 회차 dnnLB 는 부풀어 있다★/.test(js))
-      no("조기중단누출(워커): 내부검증을 못 뗐을 때 조용히 넘어간다 — 부푼 점수를 부풀었다고 말해야 한다");
-    else ok("워커 DNN — 내부검증을 못 뗐으면 그 회차가 부풀었다고 말한다");
-  }
+  /* [V33.422] 워커 DNN 조기중단 계약 삭제 — DNN 퇴역으로 _dnnTrainOne 이 코드에서 사라졌다.
+     (그 계약이 막던 사고 — "홀드아웃으로 멈추고 그 홀드아웃으로 채점" — 는 아래 GBDT 와
+      Modal 쪽 학습기들에서 그대로 검사된다.) */
   // 워커 GBDT: innerStop 이 실제로 train 을 잘라 val 을 덮는가 + 새는 호출부 두 곳이 그걸 켜는가
   const iG = js.indexOf("if (opts.innerStop && train.length >= 80)");
   if (iG < 0) no("조기중단누출(워커): _gbdtFit 에 innerStop 이 없다 — 폴드/홀드아웃 검증으로 트리 수를 고른다");

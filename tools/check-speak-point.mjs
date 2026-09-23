@@ -189,7 +189,8 @@ console.log("\n⑥ ★조용한 무동작★ 이 없는가 — 발언점 계산�
 {
   // TDZ 사고가 실제로 있었다: _horD 를 선언 ★전★ 에 썼고, ReferenceError 가 catch 에 먹혀
   // _speak 이 조용히 null 이 됐다. 같은 모양을 소스에서 막는다.
-  for (const [nm, fnName] of [["DNN", "mlDNNTrainNightly"], ["GBDT", "mlGBDTTrainNightly"], ["공용", "_miniLogisticTrain"]]) {
+  /* [V33.422] DNN 퇴역 — 그 학습기는 코드에서 사라졌다. 목록에서 뺀다(검사 자체는 그대로다). */
+  for (const [nm, fnName] of [["GBDT", "mlGBDTTrainNightly"], ["공용", "_miniLogisticTrain"]]) {
     const i = S.indexOf("async function " + fnName + "(");
     chk(i > 0, nm + " 학습 함수를 찾았다", "★" + nm + " 함수를 못 찾는다★");
     if (i < 0) continue;
@@ -215,8 +216,9 @@ console.log("\n⑥ ★조용한 무동작★ 이 없는가 — 발언점 계산�
       nm + ": 발언점 호출이 ★뒤에 선언되는 변수를 안 쓴다★(TDZ → catch → 조용한 null 없음)",
       "★" + nm + " 발언점이 나중에 선언되는 " + late.join(",") + " 를 쓴다 — ReferenceError 가 catch 에 먹혀 조용히 꺼진다★");
   }
-  chk(/_speakNote\(model\.speak\)/.test(S) && /_speakNote\(net\.speak\)/.test(S) && /_speakNote\(_speak\)/.test(S),
-    "세 학습기 모두 로그에 발언점을 적는다", "★어느 학습기가 재고도 안 적는다★");
+  // [V33.422] DNN(net.speak) 퇴역 — 남은 두 학습기가 적는지 본다.
+  chk(/_speakNote\(model\.speak\)/.test(S) && /_speakNote\(_speak\)/.test(S),
+    "남은 학습기 모두 로그에 발언점을 적는다", "★어느 학습기가 재고도 안 적는다★");
 }
 
 console.log(fails === 0 ? "\n✓ 발언점(기권) 검사 통과" : "\n✗ " + fails + "건 실패");

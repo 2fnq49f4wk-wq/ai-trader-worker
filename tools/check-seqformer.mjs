@@ -294,9 +294,13 @@ console.log("\n⑦ 시퀀스 조립이 정말 '그 봉' 을 담는가 — 순서
   }
 }
 
+const M_SRC = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
 console.log("\n⑧ 화면이 '왜 SEQ 가 안 실리는지' 를 말할 수 있는가");
 {
-  chk(/committee(C)?\.push\(_sr\)/.test(code), "위원 명단에 SEQ 줄이 들어간다", "명단에 SEQ 가 없다 — 왜 없는지 물어볼 단서가 화면에 안 남는다");
+  /* [V33.422] 종전 명단(committee.push)은 mlDNNVizData 안에 있었고 DNN 퇴역으로 사라졌다.
+     이제 화면이 읽는 명단은 ★buildRoster 하나★ 다 — 거기에 SEQ 줄이 있는지 본다. */
+  chk(/add\("seq", "SEQ /.test(M_SRC), "위원 명부(buildRoster)에 SEQ 줄이 들어간다",
+    "명부에 SEQ 가 없다 — 왜 없는지 물어볼 단서가 화면에 안 남는다");
   const row = M._seqRosterRow({ trusted: true, wSeq: 0.3, seqAccLB: 0.52, L: 16, d: 32, heads: 2,
                                 admitPath: "ic", featVer: M.LUXML.featVer, probeMaxDiff: 0.001 });
   chk(row && row.trusted === true && row.w === 0.3 && /IC 경로 잠정/.test(row.role),

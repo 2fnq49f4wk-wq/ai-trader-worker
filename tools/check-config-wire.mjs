@@ -75,9 +75,8 @@ const reads = (k) => [`get("${k}"`, `get('${k}'`, `["${k}"]`, `['${k}']`].some((
   else if (ws !== parseInt(so[1], 10))
     no(`설정배선: 워커 DNN.seeds(${ws}) ≠ 트레이너 폴백 SEEDS_OVERRIDE(${so[1]}) — 화면은 워커 값으로 파라미터를 그린다(실제와 어긋난다)`);
   else ok(`DNN.seeds(${ws}) = SEEDS_OVERRIDE(${so[1]}) — 보내는 값·도는 값·화면 값이 같다`);
-  if (!/params: _dnnParamCount\(_dimsPrev\) \* Math\.max\(1, _num\(DNN\.seeds, 1\)\)/.test(S))
-    no("설정배선: 구조 관측의 파라미터 수가 DNN.seeds 에서 안 나온다 — 어긋남을 이 검사로 못 묶는다");
-  else ok("구조 관측의 파라미터 수가 그 값에서 나온다(어긋나면 위 검사가 잡는다)");
+  /* [V33.422] DNN 퇴역 — 구조 관측에 DNN 파라미터 칸이 없어졌다(mlDNNVizData 삭제).
+     위의 "보내는 값 = 도는 값" 계약은 트레이너가 아직 DNN 을 학습하는 동안 그대로 유효하다. */
 }
 
 // ── 승격 문턱을 받아 ★쓰는가★ — 같은 회차 안에서 통과/미달을 말해야 한다 ──────

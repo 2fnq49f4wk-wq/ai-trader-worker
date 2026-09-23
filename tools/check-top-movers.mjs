@@ -91,21 +91,82 @@ console.log("\n④ ★줄 세우기가 맞는가★ (상승표는 내림차순 �
     "★두 표가 같은 쪽을 보고 있다★");
 }
 
-console.log("\n⑤ ★시장이 보이는가★ · ★없던 정보를 만들지 않는가★");
+console.log("\n⑤ ★티커만 적는가★ · ★없던 정보를 만들지 않는가★  [V33.422]");
 {
-  /* ★선언이 아니라 ★쓰임★ 을 본다.★ 처음엔 `var flag = …` 만 확인했는데, 그러면 행 HTML 에서
-     flag 를 빼도 검사가 통과한다(돌연변이 M5 가 그렇게 빠져나갔다) — 이 저장소에서
-     "이름만 세고 실제 사용을 안 세는" 실수는 반복해서 난다. 둘 다 본다. */
-  chk(/var flag = isKR \?/.test(H), "시장 깃발을 ★만든다★",
-    "★시장 표시를 안 만든다 — 섞인 표에서 읽는 사람이 구분 못 한다★");
+  /* ★선언이 아니라 ★쓰임★ 을 본다.★ 이 저장소에서 "이름만 세고 실제 사용을 안 세는" 실수는
+     반복해서 난다 — 행 HTML 안에서 무엇이 실리는지 직접 본다. */
   const rowI = H.indexOf("function moverRow(");
   const rowBody = rowI > 0 ? H.slice(rowI, H.indexOf("}", H.indexOf("return '<tr", rowI)) + 1) : "";
-  chk(/'\+flag\+'/.test(rowBody),
-    "그 깃발을 ★행 HTML 에 실제로 싣는다★",
-    "★깃발을 만들어 놓고 행에 안 싣는다 — 화면엔 아무 표시도 안 나온다★");
+  chk(rowBody.length > 100, "행 렌더러를 찾았다", "★행 렌더러를 못 찾는다★");
+  /* 사용자 지시: "topmovers에 국기 빼고 티커만 넣고".
+     ① 국기 이모지가 없어야 한다(코드포인트로 본다 — 소스에 이스케이프로 적히든 그대로 적히든). */
+  chk(!/\\uD83C\\uDDF[0-9A-F]/i.test(rowBody) && !/[\u{1F1E6}-\u{1F1FF}]/u.test(rowBody),
+    "행에 국기 이모지가 ★없다★",
+    "★국기 이모지가 아직 행에 실린다★");
+  /* ② 첫 칸은 ★티커★ 다 — 한국 종목명으로 바꾸지 않는다. */
+  chk(/escapeHtml\(it\.sym\)\+'<\/span>/.test(rowBody.replace(/\s+/g, "")) ||
+      />'\+escapeHtml\(it\.sym\)\+'</.test(rowBody),
+    "첫 칸에 ★티커(it.sym)★ 를 그대로 적는다",
+    "★첫 칸이 티커가 아니다 — 이름·깃발로 바뀌어 있다★");
+  chk(!/DYNAMIC_NAMES\[it\.sym\] \|\| it\.sym\.replace/.test(rowBody),
+    "한국 종목을 이름으로 갈아끼우지 않는다(티커가 곧 시장 표시다: .KS/.KQ)",
+    "★아직 한국은 이름으로 표시한다★");
   chk(/q\.market \|\| \(\/\\\.\(KS\|KQ\)\$\/\.test\(sym\) \? 'kr' : 'us'\)/.test(H),
     "시장은 ★시세가 이미 싣고 있는 q.market★ 을 쓴다(없을 때만 티커로 추정)",
     "★시장을 티커로만 추정한다 — 이미 있는 정보를 안 쓴다★");
+}
+
+console.log("\n⑥ ★정규장 등락으로만 줄 세우는가★  [V33.422 · 사용자 지시]");
+{
+  /* 백엔드는 시간외에 q.price/q.dayPct 를 ★시간외 값으로 덮어쓰고★ 원래 값을 regPrice/regPct 에
+     보존한다(applyDisplayOverMarket). 이 표는 보존값을 써야 한다 — 실행으로 확인한다. */
+  const now = Date.now();
+  const qs = [];
+  // 미국 12종목: 정규장은 전부 +1% 인데, 한 종목만 ★시간외에 +40%★ 로 덮여 있다(얇은 호가).
+  for (let i = 0; i < 12; i++) {
+    /* 시간외에 값이 ★따로 논다★: 가격도 등락도 정규장과 다르게 덮여 있다.
+       (regPrice 와 price 를 같은 값으로 두면 "가격은 어느 쪽이냐" 를 검사가 못 가른다 — 돌연변이 M2 가
+        그 틈으로 빠져나갔다.) */
+    qs.push({ symbol: "US" + i, market: "us", price: i === 7 ? 140 : 101, regPrice: 100,
+              dayPct: i === 7 ? 40 : 1.2, regPct: 1, ts: now });
+  }
+  for (let i = 0; i < 12; i++) qs.push({ symbol: "KR" + i + ".KS", market: "kr", price: 100,
+              regPrice: 100, dayPct: 0.5, regPct: 0.5, ts: now });
+  const r = run(qs, now);
+  const head = r.up[0];
+  chk(head && !(head.sym === "US7"),
+    "시간외에만 +40% 인 종목이 상승표 머리를 ★차지하지 않는다★",
+    "★시간외 등락이 표를 먹는다 — 정규장이 아니라 덮어쓴 값으로 줄 세운다★");
+  chk(r.up.every((x) => x.pct != null && Math.abs(x.pct - (x.q.regPct)) < 1e-9),
+    "행이 들고 다니는 등락(pct)이 ★전부 regPct★ 다",
+    "★행의 등락이 정규장 값이 아니다★");
+  chk(r.up.every((x) => x.px != null && Math.abs(x.px - (x.q.regPrice)) < 1e-9),
+    "행이 들고 다니는 가격(px)도 ★전부 regPrice★ 다(시간외 가격이 아니다)",
+    "★행의 가격이 시간외 가격이다 — 정규장 등락과 다른 시점이 한 줄에 섞인다★");
+  /* 정규장 필드만 있는 시세(덮어쓰기 전 원본)도 표에 들어와야 한다 — 수집 필터가
+     덮어쓴 dayPct/price 를 조건으로 삼고 있으면 이 시세가 통째로 사라진다. */
+  const r3 = run([{ symbol: "REGONLY", market: "us", regPrice: 50, regPct: 9, ts: now },
+                  { symbol: "REGONLY2", market: "us", regPrice: 50, regPct: -9, ts: now }], now);
+  chk(r3.up.length === 2 && r3.up[0].sym === "REGONLY",
+    "정규장 필드만 있는 시세도 ★수집된다★(수집 필터가 정규장 값을 본다)",
+    "★수집 필터가 아직 덮어쓴 dayPct/price 를 본다 — 정규장 값만 있는 시세가 사라진다★");
+  // 보존값이 없는 옛 시세는 dayPct 로 물러선다 — 칸을 비우지 않는다
+  const r2 = run([{ symbol: "OLD", market: "us", price: 10, dayPct: 3, ts: now },
+                  { symbol: "OLD2", market: "us", price: 10, dayPct: -3, ts: now }], now);
+  chk(r2.up.length === 2, "regPct 가 없는 옛 시세는 dayPct 로 물러선다(사라지지 않는다)",
+    "★보존값 없는 시세를 통째로 버린다★");
+  // 가격도 정규장 값이어야 한다
+  const rowI = H.indexOf("function moverRow(");
+  const rowBody = rowI > 0 ? H.slice(rowI, H.indexOf("}", H.indexOf("return '<tr", rowI)) + 1) : "";
+  chk(/fmtNum\(px\)/.test(rowBody) && !/it\.q\.price/.test(rowBody),
+    "가격 칸도 ★정규장 가격★ 이다(시간외 가격과 정규장 등락을 한 줄에 섞지 않는다)",
+    "★가격은 시간외인데 등락은 정규장이다 — 한 줄이 두 시점을 섞는다★");
+  chk(!/it\.q\.dayPct/.test(rowBody), "행이 덮어쓴 dayPct 를 직접 읽지 않는다",
+    "★행이 아직 q.dayPct 를 직접 읽는다★");
+}
+
+console.log("\n⑦ ts 없는 시세");
+{
   const now = Date.now();
   const qs = [];
   for (let i = 0; i < 12; i++) qs.push(mkQ("KR" + i + ".KS", "kr", i, 1, now));

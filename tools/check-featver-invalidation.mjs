@@ -90,7 +90,8 @@ console.log("③ 외부 trust 레코드가 자기 판을 적는가");
 {
   // source:"external" 인 trust 객체는 featVer 를 함께 적어야 ②가 돈다.
   const sites = [...S.matchAll(/let trust = \{[^;]*?source: "external"[^;]*?\};/gs)];
-  chk(sites.length >= 3, "외부 trust 생성 지점 " + sites.length + "곳을 찾았다", "외부 trust 생성 지점을 못 찾았다");
+  // [V33.422] DNN 퇴역으로 외부 trust 생성 지점이 3곳 → GBDT 1곳으로 줄었다(계약은 그대로).
+  chk(sites.length >= 1, "외부 trust 생성 지점 " + sites.length + "곳을 찾았다", "외부 trust 생성 지점을 못 찾았다");
   let missing = 0;
   for (const m of sites) if (!/featVer:/.test(m[0])) missing++;
   chk(missing === 0,

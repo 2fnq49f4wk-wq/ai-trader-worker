@@ -39,16 +39,23 @@ console.log("① ★못 쟀으면 하한을 내보내지 않는다★ (BC-1 — 
     "순서가 맞다 — ★남긴 뒤에★ 지운다(먼저 지우면 null 을 남기게 된다)",
     "★null 을 먼저 넣고 그 뒤에 남긴다 — 진단칸이 null 이 된다★");
   chk(/trust\.accLBWhy = /.test(blk), "왜 못 쟀는지 사유를 남긴다", "★사유가 없다 — 화면이 '미학습' 으로 뭉갠다★");
-  // 위원회 표 두 곳 모두 숫자를 만들어 내지 않는다(한 곳만 고치면 두 화면이 갈린다)
-  const rows = [...S.matchAll(/committee\w*\.push\(\{ name: "GBDT"/g)];
-  chk(rows.length === 2, "GBDT 위원회 행이 두 곳이다(" + rows.length + ")", "구조가 바뀌었다 — 이 검사를 다시 세울 것");
-  for (const m of rows) {
-    const seg = S.slice(m.index, m.index + 420);
-    chk(/gtrust\.gbdtAccLB == null && gtrust\.accLBWhy\) \? null/.test(seg),
-      "그 행이 못 잰 경우 ★acc 를 null★ 로 둔다",
-      "★못 잰 경우 gbdtAcc(행 기반 관측치)로 떨어진다 — 또 다른 숫자를 세워 같은 오해를 만든다★");
-    chk(/accWhy: gtrust\.accLBWhy/.test(seg), "그 행이 사유를 함께 싣는다", "★사유 없이 빈칸만 보낸다★");
-  }
+  /* [V33.422] ★위원회 표의 손복사 두 벌이 사라졌다.★ 그 두 벌은 mlDNNVizData 안에 있었고,
+     DNN 이 퇴역하면서 함수째 삭제됐다. 이제 GBDT 의 '못 쟀다' 를 화면에 전하는 경로는
+     ★명부(buildRoster) 하나★ 다 — 두 화면이 갈릴 자리가 원리상 없어졌다(V33.301 의 목표).
+     검사도 그 하나를 본다: 명부가 사유를 싣고, 못 쟀을 때 숫자를 만들지 않는가. */
+  const ros = (() => {
+    const a = S.indexOf("async function buildRoster(");
+    if (a < 0) return "";
+    const b = S.indexOf("// ③ GBDT", a);          // 판정 변수(gOn)까지 포함해서 본다
+    return b < 0 ? "" : S.slice(b, S.indexOf("});", b) + 3);
+  })();
+  chk(ros.length > 0, "명부에서 GBDT 행을 찾았다", "★명부에 GBDT 행이 없다★");
+  chk(/gt && gt\.trusted/.test(ros), "명부가 gbdt_trust 로 판정한다", "★명부가 다른 근거로 판정한다★");
+  chk(/gt\.reason/.test(ros), "명부가 사유(reason)를 그대로 싣는다 — '미학습' 으로 뭉개지 않는다",
+    "★명부가 사유를 안 싣는다★");
+  chk(!/gbdtAcc\b/.test(ros),
+    "명부가 ★행 기반 관측치(gbdtAcc)를 숫자로 만들어 내지 않는다★",
+    "★명부가 못 잰 경우 행 기반 값으로 떨어진다 — 또 다른 숫자를 세워 같은 오해를 만든다★");
 }
 
 console.log("\n② ★영원히 못 재게 두지 않는다★ (BC-2) — 문턱은 한 칸도 안 깎는다");

@@ -61,7 +61,8 @@ if (!bad) ok(`학습창 로더 ${LOADERS.length}곳 — 파싱한 행을 즉시 
   if (!m) no("메모리계약: _HEAVY(무거운 단계 목록)가 없다 — 한 요청에 하나씩 끊는 장치가 사라졌다");
   else {
     const heavy = new Set([...m[1].matchAll(/"([a-z0-9]+)"/g)].map((x) => x[1]));
-    const MUST = ["l1", "bandit", "brain", "mind", "gbdt", "memo", "dnn", "techk"];
+    // [V33.422] dnn 퇴역 — 그 단계 자체가 없다(목록에 있으면 오히려 거짓 계약이 된다).
+    const MUST = ["l1", "bandit", "brain", "mind", "gbdt", "memo", "techk"];
     const miss = MUST.filter((k) => !heavy.has(k));
     if (miss.length) no(`메모리계약: 학습창을 통째로 읽는 단계가 _HEAVY 에서 빠졌다 — ${miss.join(", ")}`);
     else ok(`_HEAVY — 학습창 전체를 읽는 ${MUST.length}단계가 모두 한 요청에 하나씩 돈다`);

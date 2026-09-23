@@ -747,6 +747,97 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     _ord, tr, cal, va, n_val, _emb = _split_ts(TS, val_frac, embargo_ms, min_val=20,
                                                horizon_ms=_HORIZON_MS, cal_frac=0.10, tag="DNN")
     print(f"   분할: 학습 {len(tr)} · 보정 {len(cal)} · 검증 {len(va)} · 엠바고 {_emb/86400000:.0f}일")
+    # ══ [V33.422] 회전 꼬리를 함수로 뺀다 — DNN 을 건너뛰는 경로도 ★같은 코드★ 를 쓴다.
+    #   (복사해 두 벌로 만들면 한쪽만 고쳐지는 이 저장소 단골 사고가 그대로 재현된다.)
+    def _run_stages(dnn_out=None):
+        if not dry:
+            # [V33.350] ★뒤쪽 단계를 목록으로 만들고 예산 안에서 회전시킨다.★
+            #   종전엔 이 자리가 try/except 로 줄줄이 늘어서 있었고, 예산이 끝나면 Modal 이
+            #   그 지점에서 작업을 ★죽였다★. 그러면 (1) 앞서 성공한 업로드까지 '실패한 실행' 으로
+            #   뭻히고 (2) 뒤 단계는 매 회차 같은 자리에서 잘려 ★영원히 한 번도 안 돈다.★
+            #   실측에서 MIND 이후(단타·SEQ·MEMO·STACK 경계)가 정확히 그 상태였다.
+            #
+            #   단계들은 서로 독립이다 — 각자 자기 모델을 따로 업로드하고, 위 DNN 결과에도
+            #   서로에게도 영향을 주지 않는다(그래서 원래도 예외를 삼켰다). 순서를 바꿔도 된다.
+            #   → 남은 예산이 모자라면 건너뛰고, ★다음 회차는 건너뛴 그 단계부터★ 시작한다.
+            #     크론이 6시간마다 도니 하루면 모든 단계가 제 차례를 받는다.
+            #   ※ STACK 경계 통지는 회전에 넣지 않는다 — 한 줄 POST 라 비용이 없고,
+            #     이 회차가 무엇을 학습했든 홀드아웃 경계는 같기 때문이다.
+            _plan = list(_PLAN)
+            _byname = dict(_plan)
+            # [V33.377] 커서가 아니라 ★굶은 정도★ 로 순서를 정한다(STARVE 주석의 실측 참조).
+            _names0 = [n for n, _ in _plan]
+            _ages = _stage_ages({"last_ok": _last_ok}, _names0)
+            _order = _starve_order(_names0, _ages)
+            # [V33.383] ★기억이 없으면 시각으로 돌린다.★ 상태 저장소가 죽으면 모든 단계가
+            #   "한 번도 안 돎"(무한대)으로 같아져 순서가 언제나 기본 순서가 된다 —
+            #   그러면 앞쪽만 매번 돌고 뒤쪽은 영영 차례를 못 받는다(W-3 교착의 재발).
+            #   크론 주기(6시간)로 나눈 회차 번호만큼 돌려 ★적어도 차례는 오게★ 한다.
+            if _store is None and len(_order) > 1:
+                _k = int(time.time() // (6 * 3600)) % len(_order)
+                _order = _order[_k:] + _order[:_k]
+                print(f"   ⚠️ 기억이 없어 ★시각 기반 회전★ 을 쓴다 — 이번 회차는 '{_order[0]}' 부터")
+            _plan = [(n, _byname[n]) for n in _order]
+            def _agetxt(a):
+                return "한 번도" if a == float("inf") else f"{a/3600:.0f}h"
+            print(f"⑤~⑩ 후속 학습 {len(_plan)}단계 · 남은 예산 {_left():.0f}s "
+                  f"(예상 합계 {sum(_costs.get(n, 600) for n, _ in _plan)}s)")
+            print("   굶은 순서: " + " · ".join(f"{n}({_agetxt(_ages.get(n, 0.0))})" for n in _order))
+            for _nm, _fn in _plan:
+                _stage(_nm, _fn)
+
+            # [V33.422] STACK 홀드아웃 경계 통지 삭제 — STACK 퇴역(워커가 410 으로 돌려보낸다).
+
+        # ── 회차 마무리 — 무엇을 했고 무엇을 못 했는지 ★남긴다★ ──
+            # ══ [V33.383] ★회차가 일을 못 끝낸다는 사실을 숫자로 말하게 한다.★ ══════════
+            #   "몇 단계를 생략했다" 만으로는 ★전 단계가 한 바퀴 도는 데 며칠 걸리는지★ 를
+            #   알 수 없었다. 화면의 "GBDT 학습 27.2시간 전" 이 그 결과였는데, 로그는 그것을
+            #   예고하지 못했다. 남은 예산과 단계 비용으로 회전 주기를 바로 적는다.
+            try:
+                _tot = sum(int(_costs.get(n, 600)) for n, _ in _PLAN)
+                _used = time.time() - _T0
+                _percyc = max(1.0, float(sum(int(_costs.get(n, 600)) for n in _ran)))
+                _cyc = _tot / _percyc
+                print(f"   [회전주기] 후속 8단계 총량 {_tot}s · 이번 회차가 소화한 양 {int(_percyc)}s"
+                      f" → 전 단계 한 바퀴에 약 {_cyc:.1f}회차 = ★{_cyc * 6:.0f}시간★"
+                      f" (크론 6시간 · 회차 {_used/60:.0f}분)")
+                if _cyc * 6 > 24:
+                    print("      ★하루가 넘는다 — 모델이 하루 이상 묵는다.★ 고칠 곳은 주기가 아니라"
+                          " ①회차 시간(timeout) ②DNN 시드 ③GPU/CPU 분리 중 하나다"
+                          " (주기를 늘리면 회차 수가 줄어 ★더 나빠진다★).")
+            except Exception as _e:
+                print("   [회전주기] 산출 실패(무시):", _e)
+            if _skipped:
+                print(f"⚠️ 예산으로 생략 {len(_skipped)}단계: {', '.join(_skipped)} "
+                      f"— 다음 회차가 '{_skipped[0]}' 부터 시작한다")
+            else:
+                print(f"✅ 후속 학습 전 단계 완주({len(_ran)}단계) · 남은 예산 {_left():.0f}s")
+            if _store is not None:
+                try:
+                    _store["stage_cost"] = _costs
+                    _store["last_ok"] = _last_ok
+                    _store["last_run"] = {"ts": int(time.time()), "ran": _ran, "skipped": _skipped,
+                                          "elapsed": int(time.time() - _T0), "n": int(N)}
+                except Exception as e:
+                    print("   상태 저장 실패(다음 회차는 기본 순서):", e)
+        return dict({"ok": True, "ran": _ran, "skipped": _skipped,
+                     "elapsed": int(time.time() - _T0)}, **(dnn_out or {}))
+
+    # ══ [V33.422] ★DNN 이 퇴역했으면 여기서 멈추고 뒤 단계만 돈다.★ ═══════════════════
+    #   워커가 위원 명부의 단일 출처다 — 목록을 트레이너에 또 적지 않고 설정에서 받는다
+    #   (_mlExportConfig 의 retired). 실측: DNN 6시드가 회차의 54%(32분·T4 GPU)였는데
+    #   그 모델은 정확도 49.9%/40.8% 로 ★한 표도 못 얻고 있었다★. 그 시간이 통째로 돌아온다.
+    #   ※ 설정을 못 받았으면(구버전 워커) 종전대로 학습한다 — 조용히 꺼지지 않는다.
+    _RETIRED = set((cfg or {}).get("retired") or [])
+    if "dnn" in _RETIRED:
+        if target == "dnn":
+            print("⏭ DNN 은 퇴역했다 — 학습하지 않는다(워커 RETIRED 명부).")
+            return {"ok": False, "retired": "dnn", "note": "worker roster says dnn is retired"}
+        print(f"⏭ ★DNN 퇴역★ — 시드 학습·업로드를 건너뛴다(회차 예산의 54% 를 뒤 단계가 쓴다). "
+              f"퇴역 명부: {', '.join(sorted(_RETIRED))}")
+        if dry:
+            return {"ok": True, "dry": True, "target": target, "n": N, "retired": sorted(_RETIRED)}
+        return _run_stages({"dnnRetired": True})
     # ══ [V33.392] ★"정확도 47.3%" 를 어느 자에 대고 읽어야 하는지가 없었다.★ ═════════════
     #   같은 표본에서 트리는 53~54%, 이 망은 47.3% — ★동전보다 낮다.★ 동전보다 낮으려면
     #   단순히 약한 게 아니라 뭔가가 ★뒤집혀 있어야★ 한다. 후보는 둘이고, 둘 다 여기서 잰다.
@@ -1587,109 +1678,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     print("✅", json.dumps(res.get("trust", {}), ensure_ascii=False), res.get("note", ""))
     if target == "dnn": return {"ok": True, "target": target, "trust": res.get("trust")}
     # [V32.7] GBDT도 외부학습해 섀도우 업로드(같은 표본 재사용 — 추가 export 부하 0). 실패해도 DNN 결과엔 무영향.
-    if not dry:
-        # [V33.350] ★뒤쪽 단계를 목록으로 만들고 예산 안에서 회전시킨다.★
-        #   종전엔 이 자리가 try/except 로 줄줄이 늘어서 있었고, 예산이 끝나면 Modal 이
-        #   그 지점에서 작업을 ★죽였다★. 그러면 (1) 앞서 성공한 업로드까지 '실패한 실행' 으로
-        #   뭻히고 (2) 뒤 단계는 매 회차 같은 자리에서 잘려 ★영원히 한 번도 안 돈다.★
-        #   실측에서 MIND 이후(단타·SEQ·MEMO·STACK 경계)가 정확히 그 상태였다.
-        #
-        #   단계들은 서로 독립이다 — 각자 자기 모델을 따로 업로드하고, 위 DNN 결과에도
-        #   서로에게도 영향을 주지 않는다(그래서 원래도 예외를 삼켰다). 순서를 바꿔도 된다.
-        #   → 남은 예산이 모자라면 건너뛰고, ★다음 회차는 건너뛴 그 단계부터★ 시작한다.
-        #     크론이 6시간마다 도니 하루면 모든 단계가 제 차례를 받는다.
-        #   ※ STACK 경계 통지는 회전에 넣지 않는다 — 한 줄 POST 라 비용이 없고,
-        #     이 회차가 무엇을 학습했든 홀드아웃 경계는 같기 때문이다.
-        _plan = list(_PLAN)
-        _byname = dict(_plan)
-        # [V33.377] 커서가 아니라 ★굶은 정도★ 로 순서를 정한다(STARVE 주석의 실측 참조).
-        _names0 = [n for n, _ in _plan]
-        _ages = _stage_ages({"last_ok": _last_ok}, _names0)
-        _order = _starve_order(_names0, _ages)
-        # [V33.383] ★기억이 없으면 시각으로 돌린다.★ 상태 저장소가 죽으면 모든 단계가
-        #   "한 번도 안 돎"(무한대)으로 같아져 순서가 언제나 기본 순서가 된다 —
-        #   그러면 앞쪽만 매번 돌고 뒤쪽은 영영 차례를 못 받는다(W-3 교착의 재발).
-        #   크론 주기(6시간)로 나눈 회차 번호만큼 돌려 ★적어도 차례는 오게★ 한다.
-        if _store is None and len(_order) > 1:
-            _k = int(time.time() // (6 * 3600)) % len(_order)
-            _order = _order[_k:] + _order[:_k]
-            print(f"   ⚠️ 기억이 없어 ★시각 기반 회전★ 을 쓴다 — 이번 회차는 '{_order[0]}' 부터")
-        _plan = [(n, _byname[n]) for n in _order]
-        def _agetxt(a):
-            return "한 번도" if a == float("inf") else f"{a/3600:.0f}h"
-        print(f"⑤~⑩ 후속 학습 {len(_plan)}단계 · 남은 예산 {_left():.0f}s "
-              f"(예상 합계 {sum(_costs.get(n, 600) for n, _ in _plan)}s)")
-        print("   굶은 순서: " + " · ".join(f"{n}({_agetxt(_ages.get(n, 0.0))})" for n in _order))
-        for _nm, _fn in _plan:
-            _stage(_nm, _fn)
-
-        # ── [V33.205] 홀드아웃 경계를 워커에 알린다 ─────────────────────────────
-        #   위 모델들은 전부 ★시간순 뒤쪽★ 을 홀드아웃으로 떼고(V33.376 이후 그 크기는
-        #   행 비율이 아니라 ★달력 기간★ 으로 정해진다) 퍼지·엠바고를 건 뒤
-        #   앞쪽만으로 학습한다. 즉 방금 올린 모델들은 그 구간을 ★학습한 적이 없다★ —
-        #   워커가 지금 모델로 그 구간을 채점하면 그게 out-of-fold 예측이고, STACK 이
-        #   요구하는 값이 정확히 그것이다. ★모델이 아니라 경계 시각 하나만 보낸다.★
-        try:
-            #   이 회차가 실제로 다시 적합한 모델 이름(워커 _KEY 의 이름 규약).
-            #   DNN 은 이 경로에서 항상 돌므로 언제나 포함된다.
-            _STAGE2OOF = {"gbdt": "gbdt", "mind": "mind", "boosters": "boost"}
-            _oof_models = ["dnn"] + [_STAGE2OOF[n] for n in _ran if n in _STAGE2OOF]
-            _oof_min_ts = int(TS[N - n_val])          # 홀드아웃 첫 표본의 관측 시각
-            #   (TS 는 표본을 ts 로 정렬한 뒤 만든 것이라 이 자리가 곧 홀드아웃 첫 표본이다 —
-            #    check-stack-oof 가 그 정렬을 지킨다.)
-            _r = requests.post(BASE + "/api/stack-oof-window", params={"key": KEY}, headers=HDR,
-                               data=json.dumps({"featVer": featver, "minTs": _oof_min_ts,
-                                                "n": int(n_val),
-                                                # [V33.377] ★이 회차가 실제로 다시 학습한 것만 적는다.★
-                                                #   종전엔 네 이름을 박아 보냈는데, 예산으로 gbdt·mind 가
-                                                #   생략된 회차에도 "다시 학습했다" 고 주장한 셈이다.
-                                                #   워커의 누출 방어는 그 주장을 믿고 판정한다 —
-                                                #   거짓 주장이 통과하면 in-sample 구간을 out-of-fold 로
-                                                #   채점하게 된다. 통과 못 해도 거짓말은 하지 않는다.
-                                                "models": _oof_models}),
-                               timeout=60)
-            if _r.status_code == 200:
-                print(f"⑪ STACK 홀드아웃 경계 통지 — minTs={_oof_min_ts} ({int(n_val)}건)")
-            else:
-                # 409 = 경계를 과거로 되돌리려 함(워커가 막는다). 실패해도 학습 결과엔 영향 없다.
-                print(f"⑪ STACK 경계 통지 실패 {_r.status_code}: {_r.text[:200]}")
-        except Exception as e:
-            print("⑪ STACK 경계 통지 예외(무시):", e)
-
-        # ── 회차 마무리 — 무엇을 했고 무엇을 못 했는지 ★남긴다★ ──
-        # ══ [V33.383] ★회차가 일을 못 끝낸다는 사실을 숫자로 말하게 한다.★ ══════════
-        #   "몇 단계를 생략했다" 만으로는 ★전 단계가 한 바퀴 도는 데 며칠 걸리는지★ 를
-        #   알 수 없었다. 화면의 "GBDT 학습 27.2시간 전" 이 그 결과였는데, 로그는 그것을
-        #   예고하지 못했다. 남은 예산과 단계 비용으로 회전 주기를 바로 적는다.
-        try:
-            _tot = sum(int(_costs.get(n, 600)) for n, _ in _PLAN)
-            _used = time.time() - _T0
-            _percyc = max(1.0, float(sum(int(_costs.get(n, 600)) for n in _ran)))
-            _cyc = _tot / _percyc
-            print(f"   [회전주기] 후속 8단계 총량 {_tot}s · 이번 회차가 소화한 양 {int(_percyc)}s"
-                  f" → 전 단계 한 바퀴에 약 {_cyc:.1f}회차 = ★{_cyc * 6:.0f}시간★"
-                  f" (크론 6시간 · 회차 {_used/60:.0f}분)")
-            if _cyc * 6 > 24:
-                print("      ★하루가 넘는다 — 모델이 하루 이상 묵는다.★ 고칠 곳은 주기가 아니라"
-                      " ①회차 시간(timeout) ②DNN 시드 ③GPU/CPU 분리 중 하나다"
-                      " (주기를 늘리면 회차 수가 줄어 ★더 나빠진다★).")
-        except Exception as _e:
-            print("   [회전주기] 산출 실패(무시):", _e)
-        if _skipped:
-            print(f"⚠️ 예산으로 생략 {len(_skipped)}단계: {', '.join(_skipped)} "
-                  f"— 다음 회차가 '{_skipped[0]}' 부터 시작한다")
-        else:
-            print(f"✅ 후속 학습 전 단계 완주({len(_ran)}단계) · 남은 예산 {_left():.0f}s")
-        if _store is not None:
-            try:
-                _store["stage_cost"] = _costs
-                _store["last_ok"] = _last_ok
-                _store["last_run"] = {"ts": int(time.time()), "ran": _ran, "skipped": _skipped,
-                                      "elapsed": int(time.time() - _T0), "n": int(N)}
-            except Exception as e:
-                print("   상태 저장 실패(다음 회차는 기본 순서):", e)
-    return {"ok": True, "valAcc": acc, "trust": res.get("trust"), "depthSweep": sweep_note,
-            "ran": _ran, "skipped": _skipped, "elapsed": int(time.time() - _T0)}
+    return _run_stages({"valAcc": acc, "trust": res.get("trust"), "depthSweep": sweep_note})
 
 
 # ============================================================================

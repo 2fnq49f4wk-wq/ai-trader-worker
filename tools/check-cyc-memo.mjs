@@ -71,8 +71,10 @@ console.log('④ 캐시 대상이 ★사이클 상수★ 인가');
   const body = grab('async function mlDeepDecide');
   const left = (body.match(/getState\(DB,/g) || []).length;
   const memo = (body.match(/_cycState\(DB,/g) || []).length;
-  if (left === 0 && memo >= 14) ok('mlDeepDecide 의 상태 읽기 ' + memo + '곳이 전부 캐시 경로');
-  else bad('아직 직접 읽는 곳 ' + left + '곳');
+  /* [V33.422] 퇴역 4종이 빠지면서 캐시 경로 수가 14 → 그 아래로 줄었다. ★손으로 적은 하한★ 이
+     의미를 잃었다 — 계약은 "직접 읽는 곳이 0" 이다. 그것만 본다(개수는 코드가 정한다). */
+  if (left === 0 && memo >= 1) ok('mlDeepDecide 의 상태 읽기 ' + memo + '곳이 전부 캐시 경로');
+  else bad('아직 직접 읽는 곳 ' + left + '곳 (캐시 경로 ' + memo + '곳)');
   // 시세·포지션처럼 자주 바뀌는 것을 캐시하면 안 된다
   for (const k of ['quote:', 'daily:', 'positions', 'last_tick']) {
     if (new RegExp('_cycState\\(DB, "' + k).test(S)) bad('자주 바뀌는 키를 캐시한다: ' + k);

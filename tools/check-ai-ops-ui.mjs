@@ -102,8 +102,11 @@ const VQ = BUILDV.length ? `?v=${BUILDV[1]}.${BUILDV[2]}` : '?v=<판을 못 읽�
 check(html.includes('/brain-console.css' + VQ) && css.includes('prefers-reduced-motion'),
   `흑백 스타일과 모션 감소가 연결되어 있다(캐시무효화 ${VQ} 가 빌드 판과 같다)`,
   `흑백 콘솔 스타일 배선이 없거나 캐시무효화가 빌드 판(${VQ})과 어긋난다 — 옛 CSS 가 그대로 남는다`);
-check((html.match(/class="nnv-tab(?: active)?" data-model=/g)||[]).length === 14,
-  '14개 모델 탭을 보존했다', '모델 탭이 사라졌다');
+/* [V33.422] ★탭 개수를 손으로 적지 않는다.★ 퇴역(DNN·FLOW·XALPHA·STACK)과 신설(OMNI)로
+   14 라는 숫자가 뜻을 잃었다 — 계약은 "탭이 살아 있고 전체 구조가 그 안에 있다" 이다. */
+const _tabs = (html.match(/class="nnv-tab(?: active)?" data-model="([a-z_]+)"/g)||[]);
+check(_tabs.length >= 5 && html.includes('data-model="overview"') && html.includes('data-model="omni"'),
+  `모델 탭 ${_tabs.length}개가 살아 있다(전체 구조·OMNI 포함)`, '모델 탭이 사라졌다');
 
 // [Codex V33.315] Unified workspaces, topology, and regressions found during integration.
 const ui = fs.readFileSync(new URL('../public/workspace-ui.js', import.meta.url),'utf8');
@@ -121,11 +124,17 @@ check(ctx.newsSafeUrl('https://example.com/news?a=1&b=2') === 'https://example.c
   '정상 원문 링크는 보존한다', '정상 뉴스 링크를 막았다');
 check(html.includes('escapeHtml(pub)') && html.includes('rel="noopener noreferrer"'),
   '뉴스 날짜를 이스케이프하고 원문 탭을 분리한다', '뉴스 외부 데이터가 HTML/오프너 경계를 넘는다');
-ctx.LUXR = {state:key=>key==='stack'?'prov':'on'};
+ctx.LUXR = {state:()=>'on'};
 evaluateBetween('  function NNV_netSvg(d){','  function NNV_renderOverview(d){');
-const topology=ctx.NNV_netSvg({inputDim:75,featVer:9,experts:[{name:'dnn',valAcc:53},{name:'seq',valAcc:54}],stack:{slots:['dnn','seq']},combine:{},dual:[]});
-check(topology.includes('75차원') && topology.includes('IC 결합과 로짓 혼합') && topology.includes("switchNnModel('seq')"),
-  '새 구조도는 실제 차원·잠정 혼합·모델 이동을 표현한다', '구조도가 실제 경로나 모델 연결을 잃었다');
+/* [V33.422] STACK 퇴역 — 구조도에서 '결합 대체' 칸이 빠지고 ★섀도우 OMNI★ 칸이 들어왔다.
+   계약은 그대로다: 실제 차원을 적고, 모델을 누르면 그 탭으로 가고, 섀도우는 ★표가 없다★ 고 말한다. */
+const topology=ctx.NNV_netSvg({inputDim:75,featVer:9,experts:[{name:'gbdt',valAcc:53},{name:'seq',valAcc:54}],
+  omni:{nTrees:48,headsOk:[],heads:[{hz:'30m'},{hz:'60m'},{hz:'1d'},{hz:'5d'},{hz:'20d'}]},combine:{},dual:[]});
+check(topology.includes('75차원') && topology.includes("switchNnModel('seq')") && topology.includes("switchNnModel('omni')"),
+  '새 구조도는 실제 차원과 모델 이동(SEQ·OMNI)을 표현한다', '구조도가 실제 경로나 모델 연결을 잃었다');
+check(/섀도우/.test(topology) && /표가 없다|선이 없다/.test(topology),
+  '구조도가 섀도우 모델에 ★투표선이 없다★ 는 사실을 그린다',
+  '섀도우 모델이 투표하는 위원처럼 그려진다');
 check(!topology.includes('<svg') && topology.includes('brain-map-experts'),
   '고정폭 구조도를 반응형 모델 카드로 교체했다', '구조도가 여전히 고정폭 그림이다');
 check(/if\(id === 'news' \|\| id === 'fx'\) id = 'macro'/.test(html),

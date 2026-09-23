@@ -84,8 +84,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.421">
-<script src="/neural-observatory.js?v=33.421" defer></script>
+<meta name="lux-build" content="V33.422">
+<script src="/neural-observatory.js?v=33.422" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4658,17 +4658,16 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
            전체 구조 화면(ex.length)뿐이고, 여기 지도는 개수를 말하지 않는다. -->
       <span class="nnv-nav-h">위원 · 각자 투표한다</span>
       <button class="nnv-tab" data-model="mind" onclick="switchNnModel('mind')"><span class="nnv-tab-dot" data-dot="mind"></span>MIND 스태킹</button>
-      <button class="nnv-tab" data-model="dnn" onclick="switchNnModel('dnn')"><span class="nnv-tab-dot" data-dot="dnn"></span>DNN 딥넷</button>
       <button class="nnv-tab" data-model="gbdt" onclick="switchNnModel('gbdt')"><span class="nnv-tab-dot" data-dot="gbdt"></span>GBDT</button>
       <button class="nnv-tab" data-model="xgb" onclick="switchNnModel('xgb')"><span class="nnv-tab-dot" data-dot="xgb"></span>XGBoost</button>
       <button class="nnv-tab" data-model="lgb" onclick="switchNnModel('lgb')"><span class="nnv-tab-dot" data-dot="lgb"></span>LightGBM</button>
       <button class="nnv-tab" data-model="cat" onclick="switchNnModel('cat')"><span class="nnv-tab-dot" data-dot="cat"></span>CatBoost</button>
-      <button class="nnv-tab" data-model="flow" onclick="switchNnModel('flow')"><span class="nnv-tab-dot" data-dot="flow"></span>FLOW 수급</button>
-      <button class="nnv-tab" data-model="xalpha" onclick="switchNnModel('xalpha')"><span class="nnv-tab-dot" data-dot="xalpha"></span>XALPHA 알파</button>
       <button class="nnv-tab" data-model="memo" onclick="switchNnModel('memo')"><span class="nnv-tab-dot" data-dot="memo"></span>MEMO 기억</button>
       <button class="nnv-tab" data-model="seq" onclick="switchNnModel('seq')"><span class="nnv-tab-dot" data-dot="seq"></span>SEQ 트랜스포머 3D</button>
-      <span class="nnv-nav-h">결합 · 투표를 통째로 대체한다</span>
-      <button class="nnv-tab" data-model="stack" onclick="switchNnModel('stack')"><span class="nnv-tab-dot" data-dot="stack"></span>STACK 메타</button>
+      <!-- [V33.422] DNN·FLOW·XALPHA·STACK 탭 삭제 — 퇴역(RETIRED). 서버 명부에서 빠졌으므로
+           탭만 남기면 눌러도 410 만 돌아온다. 탭과 명부는 같이 사라져야 한다. -->
+      <span class="nnv-nav-h">복합모델 · 분봉 한 모델이 장타·단타를 같이 배운다</span>
+      <button class="nnv-tab" data-model="omni" onclick="switchNnModel('omni')"><span class="nnv-tab-dot" data-dot="omni"></span>OMNI 복합</button>
       <span class="nnv-nav-h">방향 분리 · 오름과 내림을 따로 본다</span>
       <button class="nnv-tab" data-model="dualbull" onclick="switchNnModel('dualbull')"><span class="nnv-tab-dot" data-dot="dualbull"></span>이중헤드 강세</button>
       <button class="nnv-tab" data-model="dualbear" onclick="switchNnModel('dualbear')"><span class="nnv-tab-dot" data-dot="dualbear"></span>이중헤드 약세</button>
@@ -6029,20 +6028,36 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
            한쪽에 자료가 없으면 남는 자리는 다른 쪽이 채운다(칸을 비우지 않는다).
          q.market 은 워치리스트 시세가 ★이미 싣고 있다★ — 없던 정보를 만들지 않는다. */
       var MOVER_SLOT = 10;                 // 시장당 자리(표당 US 10 + KR 10 = 종전과 같은 20줄)
+      /* ══ [V33.422] ★TOP MOVERS 는 정규장 등락만 본다★ (사용자 지시) ═════════════════
+         백엔드(applyDisplayOverMarket)는 시간외(PRE/POST)에 q.price·q.dayPct 를 ★시간외 값으로
+         덮어쓴다★ — 워치리스트가 "지금 얼마"를 보여줘야 하기 때문이다. 그런데 TOP MOVERS 는
+         "오늘 누가 얼마나 움직였나" 를 묻는 표다. 그 물음의 답은 정규장 등락이다:
+           · 시간외는 호가가 얇아 몇 주 거래로 ±10% 가 찍힌다 — 그게 상위 칸을 먹는다
+           · 두 시장을 한 표에 놓는데 한쪽만 시간외면 ★서로 다른 것을 비교★ 하게 된다
+           · 미국이 23시간 장이 되면(V33.417) 시간외 구간이 하루의 대부분이라 더 심해진다
+         덮어쓰기 전 값은 regPrice·regPct 로 ★보존돼 있다★ — 없던 정보를 만들지 않는다.
+         (종목상세·워치리스트가 이미 같은 값을 쓴다. 이 표만 안 쓰고 있었다.) */
+      function mvPct(q){
+        return (typeof q.regPct === 'number') ? q.regPct
+             : ((typeof q.dayPct === 'number') ? q.dayPct : null);   // 보존값이 없는 옛 시세만 폴백
+      }
+      function mvPx(q){
+        return (typeof q.regPrice === 'number' && q.regPrice > 0) ? q.regPrice : q.price;
+      }
       function collectMovers(mkt, requireFresh){
         return Object.keys(lastQuotes).map(function(sym){
           var q = lastQuotes[sym];
-          if (!q || typeof q.dayPct !== 'number' || !(q.price > 0)) return null;
+          if (!q || typeof mvPct(q) !== 'number' || !(mvPx(q) > 0)) return null;
           var m = q.market || (/\.(KS|KQ)$/.test(sym) ? 'kr' : 'us');
           if (mkt && m !== mkt) return null;
           if (requireFresh && q.ts && q.ts < _freshLimit) return null;
-          return { sym: sym, q: q, mkt: m };
+          return { sym: sym, q: q, mkt: m, pct: mvPct(q), px: mvPx(q) };
         }).filter(Boolean);
       }
       function byMarket(mkt){
         var a = collectMovers(mkt, true);
         if (a.length < 5) a = collectMovers(mkt, false);   // ★시장마다 따로★ 물러선다
-        return a.sort(function(x, y){ return y.q.dayPct - x.q.dayPct; });
+        return a.sort(function(x, y){ return y.pct - x.pct; });
       }
       var mvUS = byMarket('us'), mvKR = byMarket('kr');
       /* 상승·하락 각각 시장별로 자리를 나눈다. 한쪽이 모자라면 다른 쪽이 그만큼 더 가져간다. */
@@ -6055,22 +6070,20 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
           nK += Math.min(spare, mvKR.length - nK);
         }
         return cut(mvUS, nU).concat(cut(mvKR, nK))
-          .sort(function(x, y){ return top ? (y.q.dayPct - x.q.dayPct) : (x.q.dayPct - y.q.dayPct); });
+          .sort(function(x, y){ return top ? (y.pct - x.pct) : (x.pct - y.pct); });
       }
       function moverRow(it, isUp) {
         var held = (heldMap.us && heldMap.us[it.sym]) || (heldMap.kr && heldMap.kr[it.sym]);
         var sig = held ? 'HELD' : (isUp ? 'Top Gainer' : 'Top Loser');
-        var cls = it.q.dayPct >= 0 ? 'pos' : 'neg';
-        // [V65] KR은 티커 대신 종목명 표시
-        var isKR = (it.mkt ? it.mkt === 'kr' : /\.(KS|KQ)$/.test(it.sym));
-        var disp = isKR ? (it.q.name || DYNAMIC_NAMES[it.sym] || it.sym.replace(/\.(KS|KQ)$/,'')) : it.sym;
-        // [V33.419] 어느 시장인지 보이게 — 섞어 보여주므로 이게 없으면 읽는 사람이 헷갈린다
-        var flag = isKR ? '\uD83C\uDDF0\uD83C\uDDF7' : '\uD83C\uDDFA\uD83C\uDDF8';
-        // [V12.68] data-sym + 더블클릭/더블탭 시 종목상세로. 힌트 title도 표시.
+        var pct = it.pct, px = it.px;                    // ★정규장 값★ — 표 전체가 같은 자로 잰다
+        var cls = pct >= 0 ? 'pos' : 'neg';
+        /* [V33.422] ★티커만 적는다★ (사용자 지시) — 국기 이모지도, 한국 종목명 대체도 뺀다.
+           티커 자체가 시장을 말한다(.KS/.KQ = 한국). 이름은 더블탭 → 종목상세에 있다.
+           이모지는 기기마다 폭이 달라 칸을 밀고, 종목명은 길이가 제각각이라 표가 흔들렸다. */
         return '<tr data-sym="'+escapeHtml(it.sym)+'" style="cursor:pointer;" title="더블클릭(더블탭) → 종목상세">'+
-          '<td><span class="fv-tick" title="'+escapeHtml(it.sym)+'">'+flag+' '+escapeHtml(disp)+'</span></td>'+
-          '<td class="right">'+fmtNum(it.q.price)+'</td>'+
-          '<td class="right '+cls+'">'+(it.q.dayPct>=0?'+':'')+fmtNum(it.q.dayPct,2)+'%</td>'+
+          '<td><span class="fv-tick" title="'+escapeHtml((it.q.name || DYNAMIC_NAMES[it.sym] || it.sym))+'">'+escapeHtml(it.sym)+'</span></td>'+
+          '<td class="right">'+fmtNum(px)+'</td>'+
+          '<td class="right '+cls+'">'+(pct>=0?'+':'')+fmtNum(pct,2)+'%</td>'+
           '<td class="fv-sig">'+sig+'</td></tr>';
       }
       // [V80] 14 → 20개 — 맵 카드(줌바 포함 ~414px) 길이에 맞춤
@@ -14669,165 +14682,134 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     }).join('');
   }
 
-  /* ═══ [V33.209] STACK 구조 — 결합기가 선형일 수도, 아닐 수도 있다 ═══════════
-     STACK 은 전문가들의 확률 + 참여마스크를 받아 ★위원회 결론을 통째로 대체★ 하는 자리다.
-     [V33.272] 숫자를 손으로 적지 않는다 — 슬롯 목록은 서버가 st.slots 로 내려준다.
-     그 결합기를 비선형으로 열었으므로, 이 화면이 답해야 하는 질문이 하나 늘었다:
-       ① 지금 무엇으로 결합하고 있나(lin / gbdt / mlp / blend)
-       ② 왜 그것인가 — 후보들을 같은 자로 재서 무엇에 이겼나
-       ③ 그 헤드는 안이 어떻게 생겼나 — 트리는 무엇을 보고 갈랐고, 신경망은 무엇을 조합하나
-     ★특히 중요한 것은 ①★ 이다. 헤드가 gbdt 인데 계수 막대를 모델처럼 보여주면,
-     화면이 ★배포되지 않은 함수★ 를 설명하게 된다. 그래서 계수는 헤드가 선형일 때만
-     '모델' 이고, 아닐 때는 '참고(실제 결합에는 안 쓰임)' 라고 명시한다. */
-  var NNV_HEADNAME = { lin:'선형 로지스틱', gbdt:'GBDT (부스팅 트리)', mlp:'MLP (은닉 1층)', blend:'혼합 (로짓 평균)' };
-  function NNV_renderStack(d){
+
+  /* ══ [V33.422] ★OMNI — 복합모델 관측★ (사용자 지시: "신규 모델을 AI 구조 관측에 표현") ══
+     이 모델은 다른 위원과 모양이 다르다. 위원들은 "오를 확률 하나" 를 내지만 OMNI 는
+     ★지평 다섯 개(30분·60분·1일·5일·20일) × 매매법 일곱 가지★ 를 한 모델이 배우고,
+     성적도 지평마다 따로 나온다. 그래서 한 줄 요약으로 그리면 이 모델의 전부가 접힌다.
+
+     화면이 말해야 하는 것은 셋이다:
+       ① 어느 지평이 ★쓸 수 있고★ 어느 지평이 아닌가 — 그리고 ★왜 아닌가★
+       ② 그 판단의 근거 숫자 — 무실력 대비 · 블록 하한 · 발언 문턱 · 적용률
+       ③ 학습기와 워커가 ★같은 답을 내는가★(정합 probe) — 이게 아니면 위 숫자는 남의 것이다
+     못 잰 것은 ★"못 쟀다"★ 라고 적는다. 모르는 것을 아는 것처럼 그리지 않는다(V33.223 규칙). */
+  function NNV_renderOmni(d){
     var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
         comm=document.getElementById('nnvComm'), legend=document.getElementById('nnvLegend'),
         sub=document.getElementById('nnvSub'), ban=document.getElementById('nnvBanner'),
         roles=document.getElementById('nnvRoles');
     if(legend) legend.style.display='none'; if(roles) roles.innerHTML='';
-    if(!d || !d.trained){ NNV_renderLinear(d); return; }   // 미학습·판 불일치 문구는 한 곳에만 둔다
-
-    var head = d.head || 'lin', hn = NNV_HEADNAME[head] || head;
-    var tier = LUXR.tag('stack'), tierCls = LUXR.chipCls('stack');
-    /* [V33.398] ★바로 위 주석이 "숫자를 손으로 적지 않는다" 라고 적어 두고, 그 다음 줄이
-       8 을 손으로 적고 있었다.★ 위원이 8명이던 시절 값이다 — MEMO(V33.92)·SEQ(V33.272)가
-       합류해 지금은 9명이고 입력은 9확률+9마스크 = 18차원이다. 화면만 16차원짜리 옛 모델을
-       설명하고 있었다. 반으로 나눈다 — 이 구조는 언제나 (확률 n + 마스크 n) 이다. */
-    var _half = (typeof d.inputDim === 'number' && d.inputDim > 0) ? Math.floor(d.inputDim / 2) : null;
-    sub.textContent = 'STACK — 메타모델 · 입력 '+d.inputDim+'차원'
-      + (_half!=null ? '(전문가 확률 '+_half+' + 참여마스크 '+_half+')' : '') + ' · 결합 '+hn
-      + (d.trainedAt? ' · 학습 '+new Date(d.trainedAt).toLocaleDateString('ko-KR') : '');
+    var HZTXT={'30m':'30분','60m':'60분','1d':'1일','5d':'5일','20d':'20일'};
+    var STTXT={generic:'일반',breakout:'돌파',pullback:'눌림',meanrev:'평균회귀',
+               momentum:'모멘텀',gap:'갭',trend:'추세'};
+    if(!d || !d.trained){
+      sub.textContent = 'OMNI — 분봉 원시봉으로 배우는 복합모델(아직 모델 없음)';
+      chips.innerHTML = chip('상태','학습 대기','warn') + chip('입력 칸', (d&&d.inputDim)||'—','')
+        + chip('지평', ((d&&d.horizons)||[]).length+'종','') + chip('매매법', ((d&&d.setups)||[]).length+'종','');
+      if(ban){ ban.className='nnv-banner off';
+        ban.innerHTML='🌱 <b>아직 올라온 모델이 없다</b>'+(d&&d.why? ' — '+esc(d.why):'');
+        ban.style.display='block'; }
+      comm.innerHTML=''; stage.innerHTML='<div class="nnv-empty">🌱 OMNI 학습 대기 중…</div>';
+      return;
+    }
+    var okN=(d.headsOk||[]).length, heads=d.heads||[];
+    var probeOk = (d.probeMaxDiff!=null && d.probeMaxDiff <= 1e-9);
+    sub.textContent = 'OMNI — 나무 '+(d.nTrees||0)+'그루 · 입력 '+(d.inputDim||0)+'칸(피처 '
+      +((d.feats||[]).length)+' + 지평 '+((d.horizons||[]).length)+' + 매매법 '+((d.setups||[]).length)
+      +') · 한 모델이 장타·단타를 같이 배운다 · ★섀도우(매매에 안 씀)★';
     chips.innerHTML =
-      chip('결합 헤드', hn, head==='lin'?'':'good') +
-      chip('합류 상태', tier, tierCls) +
-      chip('학습 표본', d.n!=null? d.n.toLocaleString():'—','') +
-      chip('검증 정확도', pct(d.valAcc),'') +
-      chip('블록 IC', d.valICBlock!=null? d.valICBlock.toFixed(3):'—', (d.valICBlock||0)>0.012?'good':'warn') +
-      chip('유의성 t', (d.valICt!=null? d.valICt.toFixed(2):'—')+(d.tMinUsed!=null?' / '+d.tMinUsed:''),
-           (d.valICt!=null && d.tMinUsed!=null && d.valICt>=d.tMinUsed)?'good':'warn') +
-      chip('전진검증', d.fwdN!=null? (d.fwdN.toLocaleString()+' / '+(d.minFwd||0).toLocaleString()):'—',
-           d.fwdN>=(d.minFwd||0)?'good':'warn');
+      chip('쓸 수 있는 지평', okN+' / '+heads.length, okN>0?'good':'warn') +
+      chip('나무', (d.nTrees||0)+'그루'+(d.bestIter!=null? ' (조기종료 '+d.bestIter+')':''),'') +
+      chip('학습 / 홀드아웃', (d.nTrain!=null?d.nTrain.toLocaleString():'—')+' / '+(d.nHold!=null?d.nHold.toLocaleString():'—'),'') +
+      chip('종목', (d.nSym!=null? d.nSym.toLocaleString():'—'),'') +
+      chip('학습·추론 정합', probeOk? '일치(오차 0)' : (d.probeMaxDiff!=null? '오차 '+d.probeMaxDiff : '미확인'),
+           probeOk?'good':'warn') +
+      chip('판(OMNI_VER)', 'v'+(d.v!=null?d.v:'—'), d.featVerOk?'good':'warn');
     if(ban){
-      var _onS = (LUXR.state('stack') === 'on' || LUXR.state('stack') === 'prov');
-      var _eS = LUXR.get('stack');
-      ban.className = 'nnv-banner ' + (_onS ? 'on' : 'off');
-      ban.innerHTML = (_onS ? '✅ ' : '⚠️ ') + '<b>'+esc(tier)+'</b>'
-        + (_eS && _eS.why ? ' — '+esc(_eS.why) : '')
-        + (d.note && d.noteOk===false ? '<br>마지막 학습 시도: <code>'+esc(d.note)+'</code>' : '');
+      ban.className='nnv-banner '+(okN>0?'on':'off');
+      ban.innerHTML = okN>0
+        ? '🕶️ <b>섀도우 — 문턱을 넘은 지평 '+okN+'종('+ (d.headsOk||[]).map(function(h){return esc(HZTXT[h]||h);}).join('·') +')</b> · 아직 위원회에 넣지 않았다. 실거래에 쓰기 전에 전진 관측으로 한 번 더 확인한다.'
+        : '🕶️ <b>섀도우 — 아직 어느 지평도 발언 문턱을 못 넘었다</b> · 그래서 <b>한 표도 넣지 않는다</b>. 숫자는 아래에 그대로 적었다(문턱을 내려 앉히지 않는다).';
       ban.style.display='block';
     }
-
-    var html = '';
-
-    // ── ② 헤드 경합표 — 무엇에 이겨서 지금 이것인가 ──────────────────────────
-    if(d.heads && d.heads.length){
-      var lin0 = null; for(var q=0;q<d.heads.length;q++) if(d.heads[q].head==='lin') lin0=d.heads[q];
-      // [V33.214] 자는 블록 IC 하한이다 — 합류를 판정하는 통계와 같은 것으로 고른다.
-      //   (0.5 문턱 정확도는 기저확률이 0.5 에서 멀면 후보를 원리상 구별하지 못한다.)
-      var mxlb = 0; d.heads.forEach(function(h){ if(Math.abs(h.icLB||0)>mxlb) mxlb=Math.abs(h.icLB||0); });
-      html += '<div class="nnv-hd-box"><div class="nnv-hd-t">결합기 후보 — 같은 자(블록 IC 의 1σ 하한)로 잰다</div>';
-      html += d.heads.map(function(h){
-        var lb = h.icLB||0, w = mxlb>0? Math.max(3, Math.abs(lb)/mxlb*100) : 3;
-        var gap = (lin0 && h.head!=='lin') ? (lb - (lin0.icLB||0)) : null;
-        return '<div class="nnv-hd-row'+(h.win?' win':'')+'">'
-          +'<div class="nnv-hd-nm">'+(h.win?'<b>▶ </b>':'')+esc(NNV_HEADNAME[h.head]||h.head)+'</div>'
-          +'<div class="nnv-hd-bar"><span style="width:'+w.toFixed(1)+'%"></span></div>'
-          +'<div class="nnv-hd-v">IC하한 <b>'+lb.toFixed(3)+'</b>'
-          +'<span class="nnv-hd-acc">IC '+(h.ic!=null?h.ic.toFixed(3):'—')+' · t '+(h.icT!=null?h.icT.toFixed(1):'—')+'</span>'
-          +'<span class="nnv-hd-acc">정확도 '+((h.acc||0)*100).toFixed(1)+'%</span>'
-          +(gap!=null? '<span class="nnv-hd-gap '+(gap>=0?'pos':'neg')+'">'+(gap>=0?'+':'')+gap.toFixed(3)+' vs 선형</span>':'')
-          +(h.nTrees? '<span class="nnv-hd-acc">트리 '+h.nTrees+'</span>':'')
-          +'</div></div>';
-      }).join('');
-      if(d.headDegenerate){
-        html += '<div class="nnv-hd-note">⚠️ <b>후보 전원의 정확도가 같다</b>('+((d.valAcc||0)*100).toFixed(1)+'%). '
-          +'기저 승률이 0.5 에서 멀어 <b>넷 다 홀드아웃을 다수 클래스 하나로 찍고 있다</b> — '
-          +'0.5 문턱의 정확도로는 후보를 원리상 구별할 수 없다는 뜻이다. 그래서 순위를 재는 IC 로 고른다.</div>';
+    /* 머리(지평)별 카드 — 막대 하나에 ★무실력·실제·하한·문턱★ 을 같이 얹는다.
+       "정확도 57%" 만 적으면 그게 잘한 건지 알 수 없다 — 기준선이 같이 보여야 뜻이 생긴다. */
+    var cards = heads.map(function(h){
+      var badge = h.ok ? '<span class="nnv-ov-b good">쓸 수 있다</span>'
+                : (h.n==null||h.n<50 ? '<span class="nnv-ov-b wait">못 쟀다</span>'
+                                     : '<span class="nnv-ov-b off">문턱 미달</span>');
+      var bar='';
+      if(h.acc!=null && h.noSkill!=null){
+        var lo=40, hi=75, sc=function(v){ return Math.max(0,Math.min(100,(v-lo)/(hi-lo)*100)); };
+        bar = '<div class="omni-bar">'
+            + '<span class="omni-bar-fill" style="width:'+sc(h.acc)+'%"></span>'
+            + '<i class="omni-bar-mark ns" style="left:'+sc(h.noSkill)+'%" title="무실력 기준선 '+h.noSkill+'%"></i>'
+            + (h.need!=null? '<i class="omni-bar-mark need" style="left:'+sc(h.need)+'%" title="발언 문턱 '+h.need+'%"></i>':'')
+            + (h.lb!=null? '<i class="omni-bar-mark lb" style="left:'+sc(h.lb)+'%" title="발언 구간 블록 하한 '+h.lb+'%"></i>':'')
+            + '</div>';
       }
-      if(d.blendW && d.blendW.length){
-        // [V33.218] 혼합 지분은 ★내부검증★ 에서 기저(절편만)보다 나은 만큼만 준다.
-        //   홀드아웃으로 맞추면 그 홀드아웃이 학습셋이 되고, 등가중으로 두면 가장 약한
-        //   구성원이 1/n 지분을 그냥 가져간다(실측: 무신호 MLP 가 혼합을 끌어내렸다).
-        html += '<div class="nnv-hd-note">혼합 지분 — '
-          + d.blendW.map(function(m){
-              var sh = (m.share||0)*100;
-              return '<b>'+esc(NNV_HEADNAME[m.head]||m.head)+' '+sh.toFixed(0)+'%</b>'
-                + (m.innerLoss!=null ? '<span class="nnv-hd-acc"> 내부손실 '+m.innerLoss.toFixed(3)+'</span>' : '');
-            }).join(' · ')
-          + (d.blendBaseLoss!=null ? ' · 기저(절편만) '+d.blendBaseLoss.toFixed(3) : '')
-          + '. 학습구간 뒤 15%(내부검증)에서 기저보다 나은 만큼만 지분을 준다 — '
-          + '홀드아웃은 건드리지 않고, 기저보다 못한 헤드는 <b>지분 0</b> 이다.</div>';
+      var m=[];
+      if(h.n!=null) m.push('홀드아웃 '+h.n.toLocaleString()+'행');
+      if(h.auc!=null) m.push('AUC '+h.auc.toFixed(3));
+      if(h.acc!=null&&h.noSkill!=null) m.push('정확도 '+h.acc+'% (무실력 '+h.noSkill+'%)');
+      if(h.accLB!=null) m.push('블록 하한 '+h.accLB+'%'+(h.blocks!=null?' · 블록 '+h.blocks+'개':''));
+      var sp=[];
+      if(h.speakN!=null){
+        sp.push('사라고 한 '+h.speakN.toLocaleString()+'건');
+        if(h.prec!=null) sp.push('맞춘 비율 '+h.prec+'%');
+        if(h.lb!=null) sp.push('하한 '+h.lb+'%');
+        if(h.need!=null) sp.push('문턱 '+h.need+'%');
+        if(h.cov!=null) sp.push('적용률 '+h.cov+'%');
       }
-      html += '<div class="nnv-hd-note">선형이 기본값이다. 갈아타려면 <b>IC 하한에서 0.005</b> 앞서야 한다 — 우연히 앞선 정도로는 결합기를 바꾸지 않는다. '
-        + 'IC 하한 = IC − 표준오차 = IC·(1 − 1/t) 이라, t 가 1 이하인 후보는 하한이 0 아래로 내려간다(증거 없음).'
-        + (d.headK>1 && d.tMinBase!=null
-            ? ' 후보 '+d.headK+'개 중 최고를 골랐으므로 유의성 문턱을 <b>'+d.tMinBase+' → '+d.tMinUsed+'</b> 로 올려서 판정했다(K개 최댓값은 단일검정과 다른 분포다).'
-            : ' 선형이 그대로 이겨서 다중검정 벌점은 없다.')
-        + '</div></div>';
-    }
-
-    // ── ③ 이긴 헤드의 속 ─────────────────────────────────────────────────
-    var nl = d.nl || null;
-    if(nl && nl.gbdt){
-      var g = nl.gbdt;
-      html += '<div class="nnv-hd-box"><div class="nnv-hd-t">GBDT — 무엇을 보고 갈랐나 (분할이득 비중)</div>';
-      if(g.top && g.top.length){
-        var gmx = g.top[0].share||1;
-        html += g.top.map(function(r){
-          return '<div class="nnv-hd-row"><div class="nnv-hd-nm">'+esc(r.name)+'</div>'
-            +'<div class="nnv-hd-bar"><span class="imp" style="width:'+Math.max(3,(r.share/gmx*100)).toFixed(1)+'%"></span></div>'
-            +'<div class="nnv-hd-v"><b>'+(r.share*100).toFixed(1)+'%</b></div></div>';
-        }).join('');
-      } else {
-        html += '<div class="nnv-hd-note">분할이득 기록이 없다 — 이 모델은 이득 수집 이전 판으로 학습됐다.</div>';
-      }
-      html += '<div class="nnv-hd-note">트리 <b>'+g.nTrees+'</b>개 · 분할 <b>'+g.nSplits+'</b>회 · 최대깊이 <b>'+g.maxDepth+'</b>'
-        +(g.eta!=null?' · 셔링크 η '+g.eta:'')
-        +'. 분할 <b>횟수</b>가 아니라 <b>이득</b>으로 잰다 — 횟수로 세면 값이 잘게 쪼개지는 축이 과대평가된다.</div></div>';
-    }
-    if(nl && nl.mlp){
-      var m = nl.mlp;
-      html += '<div class="nnv-hd-box"><div class="nnv-hd-t">MLP — 무엇을 조합해서 보나 (은닉 노드별 상위 입력)</div>';
-      html += (m.units||[]).map(function(u){
-        var pos = (u.out||0) >= 0;
-        return '<div class="nnv-mlp-u">'
-          +'<div class="nnv-mlp-h"><b>h'+u.i+'</b>'
-            +'<span class="nnv-mlp-out '+(pos?'pos':'neg')+'">출력 기여 '+(pos?'+':'')+u.out+'</span></div>'
-          +'<div class="nnv-proto-mk">'+(u.top||[]).map(function(t){
-              return '<span class="nnv-mk '+(t.w>=0?'p':'n')+'">'+esc(t.name)+' '+(t.w>=0?'+':'')+t.w+'</span>';
-            }).join('')+'</div></div>';
-      }).join('');
-      html += '<div class="nnv-hd-note">은닉 <b>'+m.H+'</b>노드 · 파라미터 <b>'+(m.params||0).toLocaleString()+'</b>개 · tanh. '
-        +'노드 하나가 입력 몇 개를 <b>곱이 아니라 합</b>으로 모은 뒤 tanh 로 휘는 축이다 — 그 축들을 다시 더하는 데서 상호작용이 나온다. '
-        +'출력 기여가 큰 순서로 정렬했다.</div></div>';
-    }
-
-    // ── ① 계수: 헤드가 선형일 때만 '모델' 이다 ───────────────────────────
-    html += '<div class="nnv-hd-box"><div class="nnv-hd-t">'
-      + (head==='lin'
-          ? '선형 계수 — <b>이것이 지금 돌아가는 결합기다</b>'
-          : '선형 계수 — <b>참고용</b>. 지금 결합은 '+esc(hn)+' 이 하고 있어 이 계수는 쓰이지 않는다'
-            + (head==='blend' ? ' (혼합의 1/3 지분으로만 들어간다)' : ''))
-      + '</div>'
-      + '<div class="nnv-lin-head"><span>← 확률을 낮추는 축</span><span>확률을 높이는 축 →</span></div>'
-      + NNV_coefRows(d, 16) + '</div>';
-
-    stage.innerHTML = '<div class="nnv-lin-wrap">'+html+'</div>';
-    comm.innerHTML = '<div style="font-size:10px;color:#6f84aa;line-height:1.6;">'
-      + 'STACK 은 <b>전문가 '+(st.slots||[]).length+'명의 확률과 "그 전문가가 그 판에 있었는가"(참여마스크)</b>를 받아 최종 확률을 낸다. '
-      + '투표를 대체하는 자리라 문턱이 다른 위원보다 높다. '
-      + '결합기를 비선형으로 연 이유는 <b>조건부 신뢰</b>다 — "MIND 는 GBDT 도 같이 강할 때만 믿을 만하다" 같은 규칙은 '
-      + '고정 가중치(선형)로는 원리상 표현되지 않는다. '
-      + '다만 <b>홀드아웃은 후보 선택에 쓰지 않는다</b> — 조기종료는 학습구간 뒤 15% 안에서만 한다. '
-      + '절편 b = <b>'+(d.b!=null?d.b.toFixed(3):'—')+'</b>'
-      + (d.baseRate!=null? ' · 기저 승률 <b>'+pct(d.baseRate)+'</b>':'')
-      + (d.purged? ' · 경계 퍼징으로 학습표본 <b>'+d.purged.toLocaleString()+'</b>건 제외':'')
-      + (d.valUniq!=null? ' · 검증 평균 고유도 <b>'+d.valUniq.toFixed(2)+'</b>(유효 '+(d.valN||0).toLocaleString()+'/'+(d.valNRaw||0).toLocaleString()+')':'')
-      + '</div>';
+      var sub2 = (h.byMkt? Object.keys(h.byMkt).map(function(k){
+        var r=h.byMkt[k];
+        return '<span class="omni-sub">'+esc(k.toUpperCase())+' n='+r.n
+          +(r.prec!=null? ' 정밀 '+(r.prec*100).toFixed(1)+'%':'')+'</span>';
+      }).join('') : '');
+      var sub3 = (h.bySetup? Object.keys(h.bySetup).map(function(k){
+        var r=h.bySetup[k];
+        return '<span class="omni-sub">'+esc(STTXT[k]||k)+' n='+r.n
+          +(r.prec!=null? ' 정밀 '+(r.prec*100).toFixed(1)+'%':'')+'</span>';
+      }).join('') : '');
+      return '<div class="omni-head'+(h.ok?' on':'')+'">'
+        + '<div class="omni-head-t"><strong>'+esc(HZTXT[h.hz]||h.hz)+'</strong>'+badge+'</div>'
+        + bar
+        + '<div class="omni-head-m">'+esc(m.join(' · ')||'—')+'</div>'
+        + (sp.length? '<div class="omni-head-s">발언점 — '+esc(sp.join(' · '))+'</div>':'')
+        + (h.why? '<div class="nnv-ov-why">'+String(h.why).replace(/[<>]/g,'')+'</div>':'')
+        + (sub2? '<div class="omni-subs">'+sub2+'</div>':'')
+        + (sub3? '<div class="omni-subs">'+sub3+'</div>':'')
+        + '</div>';
+    }).join('');
+    stage.innerHTML = '<div class="omni-wrap">'
+      + '<div class="omni-lane-h">지평별 성적 — ★쓰는 지평만 쓴다★</div>'
+      + '<div class="omni-heads">'+cards+'</div>'
+      + '<div class="brain-map-foot">막대: 실제 정확도 · 회색선 = 무실력 기준선 · 주황선 = 발언 문턱 · 파란선 = 발언 구간 하한. '
+      + '문턱을 넘지 못한 지평은 쓰지 않습니다(문턱을 내리지 않습니다).</div></div>';
+    var exTxt = '';
+    try{
+      var e=d.excl||{};
+      exTxt = '제외 — 동시타격 '+(e.amb||0).toLocaleString()+' · 시간초과 '+(e.timeout||0).toLocaleString()
+            + ' · σ없음 '+(e.nosig||0).toLocaleString()+' · 구멍 '+(e.span||0).toLocaleString();
+    }catch(err){}
+    comm.innerHTML = '<div class="nnv-comm">'
+      + '<div class="nnv-comm-h">무엇을 어떻게 배웠나</div>'
+      + '<div class="nnv-comm-b">'
+      + '<p>원시 <b>5분봉·일봉</b>만 저장해 두고 피처·라벨은 학습기가 만듭니다(피처를 바꿔도 처음부터 다시 모으지 않습니다). '
+      + '라벨은 그 종목·그 시점의 <b>변동성에 비례한 삼중배리어</b>입니다 — 조용한 종목의 ±1% 와 요동치는 종목의 ±1% 를 같은 질문으로 만들지 않기 위해서입니다.</p>'
+      + '<p>한 모델이 지평 <b>'+((d.horizons||[]).map(function(h){return HZTXT[h]||h;}).join(' · '))+'</b> 과 '
+      + '매매법 <b>'+((d.setups||[]).map(function(x){return STTXT[x]||x;}).join(' · '))+'</b> 를 <b>입력으로</b> 받습니다. '
+      + '그래서 장타와 단타가 서로의 자료에서 배웁니다.</p>'
+      + '<p>성적은 <b>학습에 쓰지 않은 최근 '+(d.holdDays||'—')+'일</b>에서 잽니다. 그 구간을 다시 넣어 재학습하지 않으므로, '
+      + '<b>여기 적힌 숫자가 곧 올라가 있는 모델의 숫자</b>입니다.</p>'
+      + '<p class="omni-dim">'+esc(exTxt)+'</p>'
+      + (d.probeN!=null? '<p class="omni-dim">정합 probe '+d.probeN.toLocaleString()+'행'
+          +(d.probeNanRows!=null? '(장타 결측 '+d.probeNanRows+'행 포함)':'')
+          +' — 최대 오차 '+(d.probeMaxDiff!=null? d.probeMaxDiff : '—')+'. '
+          +'학습기가 낸 값과 이 워커가 낸 값이 같지 않으면 업로드 자체가 거절됩니다.</p>':'')
+      + '</div></div>';
   }
 
-  /* ═══ [V33.150] MEMO 구조 — 계수가 없다. '비슷했던 과거 국면' 목록이 곧 모델이다 ═══ */
   function NNV_renderMemo(d){
     var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
         comm=document.getElementById('nnvComm'), legend=document.getElementById('nnvLegend'),
@@ -14978,11 +14960,11 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
   // Legacy function name remains for callers; the graph now uses semantic HTML, not a fixed 880px SVG.
   function NNV_netSvg(d){
     var ex=d.experts||[], st=d.stack||{}, cb=d.combine||{};
-    var tags={on:'정식 합류',prov:'잠정 합류',bad:'합류 보류',off:'미학습 / 판 불일치'};
+    var tags={on:'정식 합류',prov:'잠정 합류',bad:'합류 보류',off:'미학습 / 판 불일치',shadow:'섀도우 · 표 없음'};
     function modelNode(key,label,detail){
       var state=LUXR.state(key)||'off';
       var jump=String(key||'').toLowerCase().replace('dual_bull','dualbull').replace('dual_bear','dualbear');
-      var allowed=['mind','dnn','gbdt','xgb','lgb','cat','flow','xalpha','memo','seq','stack','dualbull','dualbear'];
+      var allowed=['mind','gbdt','xgb','lgb','cat','memo','seq','omni','dualbull','dualbear'];   // [V33.422] 퇴역 4종 제거 · OMNI 추가
       var content='<span class="brain-map-state">'+esc(tags[state]||state)+'</span><strong>'+esc(label)+'</strong><small>'+esc(detail)+'</small>';
       return allowed.indexOf(jump)>=0
         ? '<button type="button" class="brain-map-node" data-state="'+esc(state)+'" onclick="switchNnModel(\''+jump+'\')">'+content+'</button>'
@@ -14993,16 +14975,25 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       if(typeof m.accLB==='number') metric+=' · 하한 '+m.accLB.toFixed(1)+'%';
       return modelNode(m.name,String(m.name||'').toUpperCase(),metric);
     }).join('');
-    var stackState=LUXR.state('stack');
-    var stackMode=stackState==='on' ? 'IC 결합확률 대체' : stackState==='prov' ? 'IC 결합과 로짓 혼합' : 'IC 결합 유지 · 승격 대기';
     var cal=cb.cal ? (cb.cal.mode==='beta'?'베타':cb.cal.mode==='platt'?'플랫':'온도')+' 보정' : '보정 모델 없음';
+    /* [V33.422] OMNI 는 ★투표선이 없다★ — 섀도우라 결합에 한 줄도 안 들어간다.
+       그래서 위원 줄에 섞지 않고 ★옆에서 관측만 하는 칸★ 으로 따로 그린다. 선이 없다는 것이
+       곧 "아직 매매에 안 쓴다" 는 사실이고, 그 사실이 그림에서 읽혀야 한다. */
+    var om=d.omni||null;
+    var omOk=(om&&om.headsOk)?om.headsOk.length:0;
+    var omTxt=!om ? '모델 없음 — 학습 대기'
+      : (omOk>0 ? ('문턱을 넘은 지평 '+omOk+'/'+(om.heads?om.heads.length:5)+' · 나무 '+(om.nTrees||0)+'그루')
+                : ('모든 지평 문턱 미달 · 나무 '+(om.nTrees||0)+'그루'));
     return '<div class="brain-map" role="group" aria-label="입력에서 최종 판정까지 모델 처리 구조">'
       +'<section class="brain-map-lane"><div class="brain-map-label">01 / MARKET INPUT <span>↓</span></div>'
       +'<div class="brain-map-node"><strong>시장 데이터 → 피처 벡터</strong><small>'+esc(d.inputDim!=null?d.inputDim:'—')+'차원 · 피처 판 '+esc(d.featVer)+' · 같은 입력, 독립된 전문가</small></div></section>'
       +'<section class="brain-map-lane"><div class="brain-map-label">02 / EXPERT COMMITTEE <span>모델을 눌러 내부 관측 ↓</span></div><div class="brain-map-experts">'+experts+'</div></section>'
+      +'<section class="brain-map-lane"><div class="brain-map-label">02b / SHADOW — 관측만 한다(표 없음) <span>·</span></div><div class="brain-map-routing">'
+      +modelNode('omni','OMNI 복합모델',omTxt)
+      +'<div class="brain-map-node" data-state="shadow"><strong>섀도우</strong><small>결합으로 가는 선이 없다 — 성적만 재고 매매엔 쓰지 않는다</small></div>'
+      +'</div></section>'
       +'<section class="brain-map-lane"><div class="brain-map-label">03 / COMBINATION ROUTING <span>↓</span></div><div class="brain-map-routing">'
       +'<div class="brain-map-node"><strong>IC 가중 결합</strong><small>전문가 증거에 따른 기본 결합 경로</small></div>'
-      +modelNode('stack','STACK / '+String(st.head||'—').toUpperCase(),stackMode+' · '+(st.slots||[]).length+'개 입력 슬롯')
       +'</div></section>'
       +'<section class="brain-map-lane"><div class="brain-map-label">04 / CALIBRATION & DECISION</div><div class="brain-map-routing">'
       +'<div class="brain-map-node"><strong>확률 보정</strong><small>'+esc(cal)+' → 로그오즈 층</small></div>'
@@ -15022,27 +15013,30 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     /* [V33.301] ★명부부터 넣는다.★ 아래 모든 불(탭 점·한눈 요약·도식)은 이 값을 읽는다 —
        사이드바가 읽는 것과 ★같은 서버 함수가 만든 같은 배열★ 이다. */
     try { if (d.roster) LUXR.set(d.roster, 'nn-viz'); } catch(e){}
-    var ex = d.experts||[], st = d.stack||{}, cb = d.combine||{};
+    var ex = d.experts||[], om = d.omni||null, cb = d.combine||{};   // [V33.422] STACK 퇴역 → OMNI 칸
     var _tl = LUXR.tally(), nv = _tl.live, nseat = _tl.seats;
     NNV_paintDots(d);   // [V33.215] 탭의 상태 점 — 전체 구조를 불러온 순간의 사실로 칠한다
     NNV_paintGlance(d); // [V33.219] 사이드바 한눈 요약도 같은 응답으로 채운다
-    sub.textContent = '전체 구조 — 전문가 '+nseat+'명 중 ★'+nv+'명 투표 중★ → IC가중 결합 → STACK(통합 메타모델) → 보정 → 로그오즈 층';
+    /* [V33.422] STACK 퇴역 — 결합 경로에서 뺐다. 그리고 OMNI(섀도우)를 ★투표선 밖★ 에 적는다. */
+    var _omOk = (om && om.headsOk) ? om.headsOk.length : 0;
+    sub.textContent = '전체 구조 — 전문가 '+nseat+'명 중 ★'+nv+'명 투표 중★ → IC가중 결합 → 보정 → 로그오즈 층'
+      + ' · 섀도우 OMNI(표 없음): 쓸 수 있는 지평 '+_omOk+'/'+((om&&om.heads)?om.heads.length:5);
 
     chips.innerHTML =
       chip('투표 중인 위원', nv+' / '+nseat, nv>=4?'good':'warn') +
-      /* [V33.301] STACK 도 명부의 state 로 적는다 — 종전엔 trained 만 보고 '가동' 이라 적어
-         학습만 되고 합류는 못 한 상태를 초록으로 칠했다(탭 점은 같은 순간 '보류' 였다). */
-      chip('통합 메타모델(STACK)', LUXR.tag('stack'), LUXR.chipCls('stack')) +
-      chip('STACK 표본', (st.n!=null? st.n.toLocaleString():'—')+' / '+(st.minN!=null? st.minN.toLocaleString():'—'), (st.n!=null&&st.minN!=null&&st.n>=st.minN)?'good':'warn') +
+      /* [V33.422] 퇴역 4종(DNN·FLOW·XALPHA·STACK)은 명부에서 빠져 이 숫자에 안 들어간다.
+         대신 ★섀도우 OMNI★ 를 따로 적는다 — 투표하지 않는다는 사실을 숫자로 못 박는다. */
+      chip('섀도우 OMNI', om? (_omOk+' / '+((om.heads||[]).length)+' 지평 사용가능') : '모델 없음',
+           _omOk>0?'good':'warn') +
+      chip('OMNI 나무', om&&om.nTrees!=null? om.nTrees.toLocaleString()+'그루':'—','') +
       chip('확률 보정', cb.cal? (cb.cal.mode==='beta'?'베타':cb.cal.mode==='platt'?'플랫':'온도 T='+(cb.cal.T!=null?cb.cal.T.toFixed(2):'—')) : '없음', cb.cal?'':'warn') +
       chip('피처 판(featVer)', esc(d.featVer), 'good');
 
     if(ban){
-      var _stOn = (LUXR.state('stack') === 'on' || LUXR.state('stack') === 'prov');
-      ban.className = _stOn? 'nnv-banner on' : 'nnv-banner off';
-      ban.innerHTML = _stOn
-        ? '✅ <b>통합 메타모델 가동</b> — STACK 이 전문가 '+(st.slots||[]).length+'명의 확률을 입력으로 받아 최종 확률을 냅니다. 사람이 정한 가중이 아니라 <b>결과로부터 배운 결합</b>입니다.'
-        : '🌱 <b>통합 메타모델 학습 대기</b> — 전문가들의 확률을 하나로 묶는 STACK 이 아직 표본을 모으는 중입니다. 그동안은 아래 ②의 IC가중 결합이 최종 확률을 냅니다(공백 없음).';
+      ban.className = 'nnv-banner off';
+      ban.innerHTML = '🗂️ <b>퇴역한 위원 4종(DNN · FLOW · XALPHA · STACK)은 이 화면에서 사라졌습니다.</b> '
+        + '넷 다 측정에서 <b>잡음과 구별되지 않았고</b>, 이미 한 표도 넣지 않고 있었습니다 — 매매 행동은 그대로이고 학습 비용만 줄었습니다. '
+        + '빈자리는 아래 <b>섀도우 OMNI</b> 가 성적을 쌓아 대신할 후보입니다(아직 투표하지 않습니다).';
       ban.style.display='block';
     }
 
@@ -15079,33 +15073,33 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         + '</div>';
     }).join('');
 
-    /* STACK 재료 공급 상태 — "왜 아직 못 배우나" 는 여기서 갈린다(V33.205 홀드아웃 경로) */
-    var oof = st.oof||{};
-    var oofLine = oof.minTs
-      ? '홀드아웃 구간 <b>'+new Date(oof.minTs).toISOString().slice(0,10)+' 이후</b> '
-        + (oof.n!=null? oof.n.toLocaleString()+'행':'—') + ' 열림'
-        + (oof.models&&oof.models.length? ' <span style="opacity:.65">('+oof.models.join('/')+' 가 학습한 적 없는 구간)</span>':'')
-      : '홀드아웃 경계 미수신 — 외부 학습기가 아직 안 올렸습니다';
-
-    var stackBox =
-      '<div class="nnv-ov-stack'+((LUXR.state('stack')==='on'||LUXR.state('stack')==='prov')?' on':'')+'">'
-      + '<div class="nnv-ov-sh">③ STACK — 통합 메타모델 <small>'+esc(st.dim!=null?st.dim:'—')+'차원 · 전문가확률 '+(st.slots||[]).length+' + 참여마스크 '+(st.slots||[]).length+'</small></div>'
-      + '<div class="nnv-ov-sb">'+(st.slots||[]).map(function(k){
-            var e = ex.filter(function(x){return x.name===k;})[0];
-            return '<span class="nnv-ov-slot'+(e&&e.voting?' on':'')+'">'+k+'</span>'; }).join('')+'</div>'
+    /* ══ [V33.422] STACK 칸 → ★OMNI 칸★. 퇴역한 결합기의 표본 진행률을 계속 그리면
+       읽는 사람은 "아직 학습 중" 으로 안다 — 실제로는 영원히 안 온다. 그 자리에,
+       ★지금 실제로 자라고 있는 것★ 을 놓는다: 지평별로 문턱을 넘었는지 한 줄씩. */
+    var HZK={'30m':'30분','60m':'60분','1d':'1일','5d':'5일','20d':'20일'};
+    var omniBox =
+      '<div class="nnv-ov-stack'+(_omOk>0?' on':'')+'">'
+      + '<div class="nnv-ov-sh">③ OMNI — 복합모델(섀도우) <small>'
+        + (om? ('나무 '+(om.nTrees||0)+'그루 · 입력 '+(om.horizons?om.horizons.length:0)+'지평 × '
+                +(om.setups?om.setups.length:0)+'매매법 · 홀드아웃 '+(om.nHold!=null?om.nHold.toLocaleString():'—')+'행')
+             : '아직 올라온 모델이 없다')
+        + '</small></div>'
+      + '<div class="nnv-ov-sb">'+((om&&om.heads)||[]).map(function(h){
+            return '<span class="nnv-ov-slot'+(h.ok?' on':'')+'" title="'+esc(h.why||'')+'">'
+              + esc(HZK[h.hz]||h.hz) + (h.auc!=null? ' '+h.auc.toFixed(3):'') + '</span>'; }).join('')+'</div>'
       + '<div class="nnv-ov-sm">'
-        + ((LUXR.state('stack')==='on'||LUXR.state('stack')==='prov')
-            ? '검증 '+(st.valAcc!=null?st.valAcc.toFixed(1)+'%':'—')
-              + (st.ic!=null? ' · 블록IC '+st.ic.toFixed(4):'')
-              + (st.icT!=null? ' (t '+st.icT.toFixed(2)+')':'')
-              + ' · ' + (LUXR.state('stack')==='on'? '<b>결합확률을 통째로 대체</b>' : '로짓 혼합 ×'+(st.mult!=null?st.mult.toFixed(2):'—'))
-            : '표본 <b>'+(st.n!=null?st.n.toLocaleString():'—')+' / '+(st.minN!=null?st.minN.toLocaleString():'—')+'</b> — 퍼징 후 문턱을 넘으면 자동 학습')
+        + (om
+            ? (_omOk>0
+                ? '<b>쓸 수 있는 지평 '+_omOk+'종</b> — 그래도 아직 <b>투표하지 않는다</b>(섀도우). 전진 관측을 더 쌓고 나서 넣는다.'
+                : '<b>아직 어느 지평도 발언 문턱을 못 넘었다</b> — 그래서 한 표도 넣지 않는다. 문턱은 내리지 않는다.')
+              + (om.probeMaxDiff!=null? ' · 학습·추론 정합 오차 <b>'+om.probeMaxDiff+'</b>':'')
+            : '외부 학습기(omni_job)가 아직 모델을 안 올렸습니다')
         + '</div>'
-      + '<div class="nnv-ov-sf">'+oofLine
-        + ' · 누적생성 <b>'+(st.made!=null?st.made.toLocaleString():'—')+'</b>건'
-        + ' <span style="opacity:.6">(에폭커서 '+(st.cursorEpoch||0)+' / 홀드아웃커서 '+(st.cursorOof||0)+')</span></div>'
-      + (st.why? '<div class="nnv-ov-why">'+String(st.why).replace(/[<>]/g,'')+'</div>':'')
-      + '</div>';
+      + '<div class="nnv-ov-sf">'
+        + (om&&om.cutoff? '홀드아웃 <b>'+new Date(om.cutoff*1000).toISOString().slice(0,10)+' 이후</b>로 잰 성적입니다 — '
+            + '그 구간을 다시 넣어 재학습하지 않으므로 <b>여기 숫자가 곧 올라가 있는 모델의 숫자</b>입니다.'
+          : '홀드아웃 경계 미수신')
+        + '</div></div>';
 
     var calTxt = cb.cal
       ? (cb.cal.mode==='beta'? '베타(a '+esc(cb.cal.a)+' b '+esc(cb.cal.b)+' c '+esc(cb.cal.c)+')'
@@ -15125,7 +15119,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       + '<div class="nnv-ov-lh">② IC 소프트맥스 결합 <small>w = exp('+(cb.icTemp||60)+' × IC), IC ∈ ['+((cb.icClamp||[])[0])+', '+((cb.icClamp||[])[1])+']</small></div>'
       + '<div class="nnv-ov-note">정확도가 아니라 IC 로 가중합니다 — 정확도로 하면 실력차가 51~54% 라는 좁은 구간에 뭉쳐 사실상 단순평균이 됩니다.'
         + ' 전문가 '+(cb.trimMin||5)+'명 이상이면 상하 '+Math.round((cb.trimFrac||0.2)*100)+'% 절사평균 가드가 함께 돕니다.</div>'
-      + stackBox
+      + omniBox
       + '<div class="nnv-ov-lh">④ 확률 보정 <small>시간순 블록 교차검증으로 온도·플랫·베타 중 선택</small></div>'
       + '<div class="nnv-ov-note">'+calTxt+'</div>'
       + '<div class="nnv-ov-lh">⑤ 로그오즈 층 <small>여기부터는 전부 덧셈 — 보정된 기저확률에 독립 증거를 더한다</small></div>'
@@ -15166,13 +15160,14 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     if(d && d.kind === 'overview'){ NNV_renderOverview(d); return; }
     // [V33.150] 구조가 다른 위원은 다른 렌더러로 — 트리 렌더러에 넣으면 GBDT 로 오표기된다.
     if(d && d.kind === 'memo'){ NNV_renderMemo(d); return; }
-    // [V33.209] STACK 은 이제 선형이 아닐 수 있다 — 헤드(lin/gbdt/mlp/blend)에 따라 그림이 다르다.
-    //   선형 렌더러에 넣으면 ★쓰이지도 않는 계수★ 를 모델인 것처럼 그리게 된다.
-    if(d && d.kind === 'stack'){ NNV_renderStack(d); return; }
+    // [V33.422] STACK 분기 삭제 — 퇴역.
     /* [V33.269] SEQ 는 축이 셋(피처·시점·단계)이라 납작하게 그리면 "어느 시점이 어느
        시점을 보는가" 가 접혀 사라진다 — 그게 이 모델을 넣은 이유인데. 전용 3D 렌더러로. */
     if(d && d.kind === 'seq'){ NNV_renderSeq3D(d); return; }
-    if(d && d.kind && ['flow','xalpha','dualbull','dualbear'].indexOf(d.kind) !== -1){ NNV_renderLinear(d); return; }
+    /* [V33.422] OMNI 는 ★한 모델이 다섯 머리를 갖는다★ — 다른 위원처럼 한 줄 요약으로 그리면
+       "어느 지평이 되고 어느 지평이 안 되는가" 가 통째로 접힌다. 그게 이 모델의 전부인데. */
+    if(d && d.kind === 'omni'){ NNV_renderOmni(d); return; }
+    if(d && d.kind && ['dualbull','dualbear'].indexOf(d.kind) !== -1){ NNV_renderLinear(d); return; }
     /* [V33.308] 여기까지 온 kind 는 위 확인을 통과했으니 요청한 탭의 것이다.
        dnn 만 아래 층 렌더러로 가고, 나머지 알려진 위원은 경량 렌더러로 간다. */
     if(d && d.kind && d.kind!=='dnn'){ NNV_renderSimple(d); return; }
@@ -17088,8 +17083,10 @@ html:root .page > *{ flex-shrink:0; }
   // 구조 관측에서 고를 수 있는 모델 — 기존 nnv-tab 과 같은 목록(switchNnModel 인자와 동일)
   // [V33.150] 신규 위원 5종 추가 — 종전엔 고전 6종만 구조를 볼 수 있었다.
   //   FLOW·XALPHA·STACK·MEMO·이중헤드는 위원회에서 실제로 투표하는데 내부를 볼 방법이 없었다.
-  var MODELS = [['overview','전체 구조'],['dnn','DNN 딥넷'],['mind','MIND 스태킹'],['gbdt','GBDT'],['xgb','XGBoost'],['lgb','LightGBM'],['cat','CatBoost'],
-                ['flow','FLOW 수급'],['xalpha','XALPHA 알파'],['memo','MEMO 기억'],['seq','SEQ 트랜스포머 3D'],['stack','STACK 결합'],
+  /* [V33.422] dnn·flow·xalpha·stack 삭제(퇴역) · omni 추가 — 탭 목록과 ★같아야 한다★
+     (check-html-js 가 둘을 대조한다: 어긋나면 고른 모델이 활성표시되지 않는다). */
+  var MODELS = [['overview','전체 구조'],['mind','MIND 스태킹'],['gbdt','GBDT'],['xgb','XGBoost'],['lgb','LightGBM'],['cat','CatBoost'],
+                ['memo','MEMO 기억'],['seq','SEQ 트랜스포머 3D'],['omni','OMNI 복합'],
                 ['dualbull','이중헤드 강세'],['dualbear','이중헤드 약세']];
   /* [V33.153] 모델 표시는 ★구조 관측일 때만★ 나타난다(사용자 요청).
      [V33.215] 버튼 13개는 화면 안 '신경망 지도' 로 옮겼다 — 여기는 '지금 보는 모델' 만 적는다.
@@ -17100,7 +17097,7 @@ html:root .page > *{ flex-shrink:0; }
     if(BVIEW !== 'struct') return;
     if(!active){
       var cur = document.querySelector('#nnvTabs .nnv-tab.active');
-      active = cur ? cur.getAttribute('data-model') : 'dnn';
+      active = cur ? cur.getAttribute('data-model') : 'overview';   // [V33.422] dnn 퇴역 — 기본은 전체 구조
     }
     var now = document.getElementById('railNow');
     if(now){
@@ -18062,23 +18059,21 @@ html:root .page > *{ flex-shrink:0; }
        · DUAL    — 투표하지도, 대체하지도 않는다. 실측 사분면 로짓만큼 확률을 ★민다★.
      구조 관측의 '신경망 지도' 와 같은 층으로 묶어 두 화면이 한 언어를 쓰게 한다. */
   var CMLAYERS = [
-    ['위원 · 8자리로 투표한다', 'vote', [
+    /* [V33.422] DNN·FLOW·XALPHA 퇴역 — 위원 자리가 8 → 7 로 줄었다.
+       ★숫자를 제목에 적지 않는다★ — 위원이 드나들 때마다 제목이 거짓이 된다(이미 겪었다). */
+    ['위원 · 각자 투표한다', 'vote', [
       ['mind',   'MIND',   '위원장'],
-      ['dnn',    'DNN',    '딥넷'],
       ['gbdt',   'GBDT',   '트리'],
       ['xgb',    'XGB',    '부스터'],
       ['lgb',    'LGB',    '부스터'],
       ['cat',    'CAT',    '부스터'],
-      ['flow',   'FLOW',   '수급'],
-      ['xalpha', 'XALPHA', '형식알파'],
       ['memo',   'MEMO',   '기억'],
       /* [V33.301] SEQ 가 이 목록에도 없었다 — 투표하는 위원이 화면 목록에서 빠지면
          '몇 명 중 몇 명' 이 곧 거짓말이 된다(사이드바 신규모델 칸에만 있었다). */
       ['seq',    'SEQ',    '시퀀스']
     ]],
-    ['결합 · 투표를 통째로 대체한다', 'meta', [
-      ['stack',  'STACK',  '메타모델']
-    ]],
+    /* [V33.422] 결합층 삭제 — STACK 퇴역으로 '투표를 대체하는' 경로가 없어졌다.
+       결합은 이제 언제나 IC 가중 하나다. */
     ['방향 · 확률을 밀어 준다', 'shift', [
       ['dual',   'DUAL',   '사분면 프라이어']
     ]]
@@ -20101,11 +20096,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.421">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.421">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.421">
-<link rel="stylesheet" href="/model-evidence.css?v=33.421">
-<script src="/model-evidence.js?v=33.421"></script>
-<script src="/workspace-ui.js?v=33.421"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.422">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.422">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.422">
+<link rel="stylesheet" href="/model-evidence.css?v=33.422">
+<script src="/model-evidence.js?v=33.422"></script>
+<script src="/workspace-ui.js?v=33.422"></script>
 </body>
 </html>

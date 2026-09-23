@@ -420,20 +420,26 @@ try {
      창을 넘어가 "라우팅이 없다" 는 거짓 실패가 난다(실제로 그렇게 났다). 더 나쁜 경우는
      반대다 — 창이 짧아 뒤쪽 분기를 못 보면 라우팅 없는 탭을 놓친다.
      시작(첫 nn-viz 분기)과 끝(DNN 폴백)을 실제 위치로 잡는다. */
+  /* [V33.422] ★끝을 특정 함수 이름으로 찾지 않는다.★ 종전엔 "await mlDNNVizData(env.DB));"
+     로 잘랐는데, DNN 이 퇴역하면서 그 문자열이 사라지자 분기를 ★통째로 못 읽고★ 모든 탭이
+     "서버 라우팅 없음" 으로 실패했다 — 검사가 엉뚱한 사유를 말한다. 구문으로 자른다:
+     const data = … ; 한 문장이 곧 분기표다. */
   const route = (function () {
-    const a = sv.indexOf('if (path === "/api/nn-viz"');
+    const a = sv.indexOf('if (path === "/api/nn-viz")');
     if (a < 0) return "";
-    const b = sv.indexOf("await mlDNNVizData(env.DB));", a);
-    if (b < 0) return "";
-    return sv.slice(a, b + "await mlDNNVizData(env.DB));".length);
+    const c = sv.indexOf("const data =", a);
+    if (c < 0) return "";
+    const e = sv.indexOf(";", sv.indexOf("? await", c));
+    return e < 0 ? "" : sv.slice(c, e + 1);
   })();
   const linKeys = [...(sv.match(/const _LINVIZ = \{[\s\S]*?\n\};/) || [""])[0].matchAll(/^\s{2}(\w+):\s*\{/gm)].map((m) => m[1]);
   const missing = tabs.filter((t) => {
     // overview 는 선형/트리 렌더러가 아니라 ★전용 분기★ 로 간다(층 구조를 그리므로).
-    if (t === "overview") return !route.includes('=== "overview"');
+    /* overview 는 /api/nn-viz 의 ★별도 블록★(model=overview)이라 분기표 안에 없다 — 소스 전체에서 본다. */
+    if (t === "overview") return !sv.includes('(url.searchParams.get("model") || "") === "overview"');
     /* [V33.269] seq 도 전용 분기다(3D Transformer — 선형·트리 렌더러로 못 그린다). */
-    if (t === "dnn" || t === "mind" || t === "memo" || t === "seq") return !route.includes('"' + t + '"') && t !== "dnn";
-    if (["gbdt", "xgb", "lgb", "cat"].includes(t)) return !route.includes('"' + t + '"');
+    /* 전용 분기를 가진 탭은 분기표에 자기 키가 적혀 있어야 하고, 나머지는 선형 렌더러 표에 있어야 한다. */
+    if (["mind", "memo", "seq", "omni", "gbdt", "xgb", "lgb", "cat"].includes(t)) return !route.includes('"' + t + '"');
     return !linKeys.includes(t);
   });
   let nbad = 0;

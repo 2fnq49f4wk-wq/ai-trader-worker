@@ -63,7 +63,7 @@ const BUCKETS = Number(MINIHOLD.holdBuckets) || 12;
 {
   const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
   const fn = src.slice(src.indexOf("async function _miniLogisticTrain"),
-                       src.indexOf("async function flowTrainNightly"));
+                       src.indexOf("function flowScore("));
   const hasCal = /MINIHOLD\.days\(\)/.test(fn) && /ORDER BY ts DESC LIMIT \?"\s*\n?\s*\)\.bind\(opts\.featVer, _a, _z, _per\)|_a, _z, _per/.test(fn);
   const hasTsBoundary = /T\[i\], 0\) >= _holdFrom/.test(fn);
   const hasFallback = /if \(!raw\.length\) \{/.test(fn);

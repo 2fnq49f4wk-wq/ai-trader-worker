@@ -101,34 +101,8 @@ console.log('⑤ 고유도 정의 자체는 종목별인가 (이 전제가 깨�
   else bad('심볼을 넣어도 회복되지 않는다');
 }
 
-/* ══ [V33.183] 재소급(resample)은 표본을 지운다 — 안전장치를 계약으로 못 박는다 ══
-   되돌릴 수 없는 DELETE 라, 실수로 불리면 며칠치 표본이 사라진다. 두 겹을 요구한다:
-   ① TRAIN_KEY 인증(_trainAuthed)  ② confirm=1. 둘 중 하나만으론 아무 일도 일어나지 않는다.
-   그리고 ★대상 모델의 커서만★ 되감아야 한다 — 남의 커서를 0 으로 만들면 그쪽이 통째로
-   중복 생성된다(중복은 유효표본을 부풀려 검증을 오염시킨다 — V33.104 사고). */
-{
-  const s = readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
-  const blk = (s.match(/path === "\/api\/ai\/resample"[\s\S]{0,3000}/) || [''])[0];
-  if (!blk) bad('재소급 엔드포인트를 못 찾았다 — 검사가 헛돈다');
-  else {
-    if (/_trainAuthed\(\)/.test(blk)) ok('재소급: TRAIN_KEY 인증을 요구한다');
-    else bad('재소급이 인증 없이 표본을 지운다');
-    if (/confirm"\) !== "1"/.test(blk)) ok('재소급: confirm=1 을 함께 요구한다(실수 방지 두 겹)');
-    else bad('재소급에 confirm 안전장치가 없다 — 오타 한 번에 표본이 날아간다');
-    if (/DELETE FROM xalpha_samples WHERE featver=\?/.test(blk) && /DELETE FROM flow_samples WHERE featver=\?/.test(blk))
-      ok('재소급: 삭제가 featver 로 좁혀져 있다(다른 판 표본은 건드리지 않는다)');
-    else bad('재소급 삭제가 featver 로 안 좁혀져 있다');
-    if (/fDone: _want\.flow \? 0 :/.test(blk) && /xDone: _want\.xalpha \? 0 :/.test(blk))
-      ok('재소급: 대상 모델의 커서만 되감는다(남의 커서를 건드리면 중복 생성)');
-    else bad('재소급이 대상 아닌 모델의 커서까지 되감는다 — 그쪽이 중복 생성된다');
-    /* STACK 제외는 '지우지 않는다' 가 본질이다. 처음엔 블록 안에 stack 이 ★언급★ 되는지도
-       함께 봤는데, 제외 이유를 적은 주석이 블록 범위 밖(엔드포인트 선언 위)이라 헛돌았다.
-       계약으로 지킬 것은 문구가 아니라 동작이다. */
-    if (!/DELETE FROM stack_samples/.test(s))
-      ok('재소급: STACK 표본은 어디서도 지우지 않는다(소급 재채점은 in-sample 누출 — V33.104)');
-    else bad('stack_samples 를 지우는 경로가 생겼다 — 전문가 확률 누출이 되살아난다');
-  }
-}
+/* [V33.422] 재소급(resample) 안전장치 계약 삭제 — FLOW·XALPHA 퇴역으로 두 엔드포인트와
+   표본 표가 함께 사라졌다. 지울 표본이 없으므로 지킬 계약도 없다. */
 
 console.log(fail ? '\n✘ 표본 전달 게이트 실패 ' + fail + '건' : '\n✅ 통과 — 모든 경로가 종목을 싣고, 고유도가 무너지면 화면이 말한다');
 process.exit(fail ? 1 : 0);
