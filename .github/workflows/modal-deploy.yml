@@ -27,6 +27,11 @@ on:
         #   여기가 그것과 어긋나면 check-trainer-budget 이 배포를 막는다 —
         #   실제로 gbdt 가 빠져 있어 GBDT 만 따로 복구할 길이 없었다(게이트가 잡았다).
         options: [all, dnn, gbdt, seq, mind, memo, boosters, markets, scalp, ablate]
+      # [V33.420] OMNI 복합모델만 지금 학습(별도 CPU 컨테이너 · DNN 없이). 정기 회차는 train_job 이 띄운다.
+      omni_now:
+        description: 'OMNI 복합모델만 지금 학습(CPU · 수 분)'
+        type: boolean
+        default: false
       # [V33.204] 10층(4,580,070) DNN 이 valAcc 49.3% 로 2층 폴백(53.3%)보다 낮게 측정됐다.
       #   깊이를 추측으로 정하지 않고 ★같은 표본·같은 분할·같은 시드★ 로 후보를 재서 고른다.
       #   기본은 꺼짐 — 정기 6시간 실행에서 후보를 셋씩 학습하면 Modal 크레딧($21/$30)을 넘긴다.
@@ -148,3 +153,30 @@ jobs:
               echo "> JOB_TIMEOUT_S·JOB_MARGIN_S 와 STAGE_COST_DEFAULT 를 실측으로 다시 볼 것."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── ③ OMNI — 별도 CPU 함수라 DNN 학습과 자원이 겹치지 않는다(직렬화 그룹 밖) ─────────
+  omni:
+    needs: deploy
+    if: needs.deploy.outputs.ok == 'true' && github.event_name == 'workflow_dispatch' && inputs.omni_now
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    name: modal omni
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install modal
+        run: pip install modal
+      - name: Run OMNI once now
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          set -o pipefail
+          modal run trainer/modal/modal_train.py::omni_job 2>&1 | tee omni.log
+      - name: OMNI summary
+        if: always()
+        run: |
+          [ -f omni.log ] || exit 0
+          { echo "### OMNI 복합모델 학습"; echo ""; echo '```'; grep -E 'OMNI' omni.log | head -40; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

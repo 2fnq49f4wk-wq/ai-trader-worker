@@ -18,7 +18,13 @@ import { _tToZ, ICGATE } from "../src/index.js";
 let fails = 0;
 const ok = (m) => console.log("  ok   " + m);
 const bad = (m) => { fails++; console.log("  FAIL " + m); };
-const randn = () => { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+/* [V33.420] ★씨앗을 고정한다.★ Math.random 이라 드물게(8000회 중 1회 꼴) ④ 가 통과해 배포가
+   무작위로 막혔다(2026-09-23 로컬 실측 — 같은 코드로 다시 돌리면 통과). 검사의 뜻은 그대로다:
+   같은 표본 분포 · 같은 횟수. 달라진 건 "매번 같은 표본" 이라는 것뿐이다. */
+let _seed = 0x2f6e2b1;
+const _rnd = () => { _seed |= 0; _seed = (_seed + 0x6d2b79f5) | 0; let t = Math.imul(_seed ^ (_seed >>> 15), 1 | _seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+const randn = () => { let u = 0, v = 0; while (!u) u = _rnd(); while (!v) v = _rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
 
 const MIN_DAYS = 3, KEEP = 45;
 

@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.419";
+const _BUILD_VER = "V33.420";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -10474,6 +10474,104 @@ function omniFeatures(b5, bd, i, mkt, dailyRow, jIn) {
   if (j != null && j >= 0) _omDaily(bd, j, f);
   const x = OMNI_FEATS.map(function (k) { const z = f[k]; return (typeof z === "number" && isFinite(z)) ? z : NaN; });
   return { x: x, setup: _omSetup(f, dailyRow, b5, i, bd, j) };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════
+   [V33.420] OMNI 모델 — 입력 설계 · 채점기 · 업로드 검증.
+   ★진본은 trainer/modal/omni.py 의 design_row() · score_tree() 다.★ 이것은 그것을 옮긴 것이고,
+   tools/check-omni-model.mjs 가 LightGBM 이 직접 낸 raw 값(고정물)과 두 구현을 비교한다.
+   업로드도 같은 원리다 — 트레이너가 보낸 probe 행을 ★워커가 직접 채점해★ LightGBM 값과
+   다르면 받지 않는다(MEMO·SEQ 와 같은 자). 학습과 추론이 다른 답을 내는 모델은 올라가지 않는다.
+   ═══════════════════════════════════════════════════════════════════════════════════════ */
+const OMNI_MODEL = { r2Key: "omni/v1/model.json", r2Prev: "omni/v1/model.prev.json", metaKey: "omni_meta",
+                     probeMaxDiff: 1e-9, minProbe: 50, maxTrees: 3000, maxNodes: 400000 };
+const OMNI_MODEL_FEATS = OMNI_FEATS.concat(OMNI_HORIZONS.map(function (h) { return "hz_" + h; }),
+                                           OMNI_SETUPS.map(function (s) { return "st_" + s; }));
+
+/* 모델 입력 = 피처 40 + 지평 원핫 5 + 매매법 원핫 7 (omni.py design_row) */
+function omniDesign(x, setup, hz) {
+  const out = x.slice(0, OMNI_FEATS.length);
+  for (let k = 0; k < OMNI_HORIZONS.length; k++) out.push(k === hz ? 1 : 0);
+  for (let k = 0; k < OMNI_SETUPS.length; k++) out.push(k === setup ? 1 : 0);
+  return out;
+}
+
+/* LightGBM Tree::NumericalDecision 그대로 (omni.py score_tree):
+     x 가 NaN 이고 missing_type 이 NaN 이 아니면 → x = 0
+     (Zero 이고 x≈0) 또는 (NaN 이고 x 가 NaN) → default_left
+     그 밖: x <= 문턱 이면 왼쪽
+   JSON 의 null 은 NaN 이다(파이썬이 NaN 을 null 로 실어 보낸다). */
+function omniScoreTree(tr, x) {
+  let n = tr;
+  while (n.w === undefined) {
+    let v = x[n.f];
+    if (v === null || v === undefined) v = NaN;
+    let isnan = (v !== v);
+    if (isnan && n.mt !== 2) { v = 0; isnan = false; }
+    if ((n.mt === 1 && Math.abs(v) <= 1e-35) || (n.mt === 2 && isnan)) n = n.dl ? n.l : n.r;
+    else n = (v <= n.t) ? n.l : n.r;
+  }
+  return n.w;
+}
+function omniScoreRaw(trees, x) {
+  let s = 0;
+  for (let k = 0; k < trees.length; k++) s += omniScoreTree(trees[k], x);
+  return s;
+}
+
+/* 업로드 검증 — 형식 · 피처 명세 · ★probe 재현★. 하나라도 어긋나면 받지 않는다. */
+function omniValidate(body) {
+  const bad = function (m) { return { ok: false, err: m }; };
+  if (!body || typeof body !== "object") return bad("본문 없음");
+  if (body.v !== OMNI_VER) return bad("OMNI_VER 불일치 (서버 " + OMNI_VER + ", 받은 " + body.v + ")");
+  if (!Array.isArray(body.feats) || body.feats.join("|") !== OMNI_MODEL_FEATS.join("|"))
+    return bad("피처 명세 불일치 — 트레이너와 워커가 다른 칸을 본다");
+  const c = body.consts || {};
+  for (const k of ["sess", "openUs", "openKr", "hLook", "dLook", "base"])
+    if (c[k] !== OMNI_CONSTS[k]) return bad("상수 불일치 " + k + " (서버 " + OMNI_CONSTS[k] + ", 받은 " + c[k] + ")");
+  const T = body.trees;
+  if (!Array.isArray(T) || !T.length) return bad("나무 없음");
+  if (T.length > OMNI_MODEL.maxTrees) return bad("나무 " + T.length + " > " + OMNI_MODEL.maxTrees);
+  const D = OMNI_MODEL_FEATS.length;
+  let nodes = 0;
+  for (let k = 0; k < T.length; k++) {
+    const st = [T[k]];
+    while (st.length) {
+      const n = st.pop();
+      if (++nodes > OMNI_MODEL.maxNodes) return bad("마디 수 상한 초과");
+      if (!n || typeof n !== "object") return bad("나무 " + k + " 마디 형식");
+      if (n.w !== undefined) { if (typeof n.w !== "number" || !isFinite(n.w)) return bad("나무 " + k + " 잎 값"); continue; }
+      if (!(Number.isInteger(n.f) && n.f >= 0 && n.f < D)) return bad("나무 " + k + " 피처 번호 " + n.f);
+      if (typeof n.t !== "number" || !isFinite(n.t)) return bad("나무 " + k + " 문턱");
+      if (!(n.mt === 0 || n.mt === 1 || n.mt === 2) || !(n.dl === 0 || n.dl === 1)) return bad("나무 " + k + " 결측 규칙");
+      st.push(n.l, n.r);
+    }
+  }
+  const P = Array.isArray(body.probe) ? body.probe : [];
+  let md = 0, cnt = 0, nanRows = 0;
+  for (const pr of P) {
+    if (!pr || !Array.isArray(pr.x) || pr.x.length !== D || typeof pr.raw !== "number") continue;
+    const sc = omniScoreRaw(T, pr.x);
+    const d = Math.abs(sc - pr.raw);
+    if (!(d <= md)) md = d;          // NaN 도 잡는다
+    cnt++;
+    if (pr.x.some(function (v) { return v === null; })) nanRows++;
+  }
+  if (cnt < OMNI_MODEL.minProbe) return bad("probe " + cnt + "행 < " + OMNI_MODEL.minProbe + " — 정합을 확인할 수 없으면 받지 않는다");
+  if (!(md <= OMNI_MODEL.probeMaxDiff))
+    return Object.assign(bad("정합 불일치 maxDiff " + md + " > " + OMNI_MODEL.probeMaxDiff + " — 트레이너와 워커가 다른 답을 낸다"), { probeN: cnt });
+  return { ok: true, probeN: cnt, probeMaxDiff: md, probeNanRows: nanRows, nodes: nodes };
+}
+
+/* 머리(지평)별 사용 여부 — 트레이너의 홀드아웃 판정(ok · tau)을 그대로 따른다. 워커가 새로 판정하지 않는다
+   (잰 곳과 쓰는 곳이 같은 숫자를 봐야 한다). */
+function omniHeadsOk(heads) {
+  const out = [];
+  for (const h of OMNI_HORIZONS) {
+    const r = heads && heads[h];
+    if (r && r.ok === true && typeof r.tau === "number" && isFinite(r.tau)) out.push(h);
+  }
+  return out;
 }
 
 /* [V33.217] ★캐시에 봉 날짜(days)가 없으면 신선해도 낡은 것으로 본다.★
@@ -25761,6 +25859,41 @@ async function handleRequest(request, env, ctx) {
     /* ══ [V33.418] OMNI 원시 봉 내보내기 — 학습기(Modal)가 여기서 봉을 받아 피처·라벨을 스스로 만든다 ══
        색인: 무엇이 있는지(종목·해상도·봉 수·처음/끝 시각). 학습기가 R2 를 훑지 않게 한다.
        봉: 한 번에 최대 25종목. 인증은 다른 학습용 내보내기와 같다(TRAIN_KEY). */
+    /* [V33.420] POST /api/omni-import — Modal OMNI 학습기의 업로드. ★섀도우★: 저장만 하고 매매엔 안 쓴다.
+       바로 전 모델은 지우지 않고 model.prev.json 으로 남긴다(#12 — 재학습이 좋은 모델을 버리지 않게). */
+    if (path === "/api/omni-import" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const R2 = _bigR2();
+      if (!R2) return Response.json({ error: "R2 미바인딩" }, { status: 503, headers: cors });
+      let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
+      const vr = omniValidate(body);
+      if (!vr.ok) return Response.json({ error: vr.err, probeN: vr.probeN || 0 }, { status: 400, headers: cors });
+      const nowMs = Date.now();
+      const model = { v: body.v, feats: body.feats, trees: body.trees, heads: body.heads || {},
+                      cutoff: body.cutoff, bestIter: body.bestIter, trainedAt: body.trainedAt, importedAt: nowMs,
+                      nTrain: body.nTrain, nHold: body.nHold, nSym: body.nSym, barrierK: body.barrierK,
+                      holdDays: body.holdDays, excl: body.excl || null };
+      try {
+        const cur = await R2.get(OMNI_MODEL.r2Key);
+        if (cur) await R2.put(OMNI_MODEL.r2Prev, await cur.text());
+      } catch (e) {}
+      const txt = JSON.stringify(model);
+      try { await R2.put(OMNI_MODEL.r2Key, txt); }
+      catch (e) { return Response.json({ error: "R2 저장 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
+      const headsOk = omniHeadsOk(model.heads);
+      const meta = Object.assign({}, model, { trees: undefined, nTrees: body.trees.length, nodes: vr.nodes,
+        probeN: vr.probeN, probeMaxDiff: vr.probeMaxDiff, probeNanRows: vr.probeNanRows,
+        bytes: txt.length, r2Key: OMNI_MODEL.r2Key, headsOk: headsOk, mode: "shadow" });
+      delete meta.trees;
+      try { await setState(env.DB, OMNI_MODEL.metaKey, meta); } catch (e) {}
+      return Response.json({ ok: true, nTrees: meta.nTrees, probeN: vr.probeN, probeMaxDiff: vr.probeMaxDiff,
+                             probeNanRows: vr.probeNanRows, headsOk: headsOk, mode: "shadow" }, { headers: cors });
+    }
+    /* [V33.420] GET /api/omni-status — 업로드된 OMNI 의 머리별 성적(나무 제외). */
+    if (path === "/api/omni-status") {
+      const meta = await getState(env.DB, OMNI_MODEL.metaKey, null);
+      return Response.json({ ok: true, meta: meta }, { headers: cors });
+    }
     if (path === "/api/omni-bars-index") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const ix = await getState(env.DB, "omnibars_index", null);
@@ -52776,7 +52909,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obKey, _obDayKey, omniBarsCollect };
+export { OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

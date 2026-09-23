@@ -237,6 +237,13 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     # [V33.350] 예산 시계 — 이 함수가 시작한 시각이 기준이다(모듈 로드 시각이 아니다).
     _T0 = time.time()
     _DEADLINE = _T0 + JOB_TIMEOUT_S - JOB_MARGIN_S
+    # [V33.420] OMNI 는 따로(CPU 컨테이너) 돈다 — 이 회차의 예산·GPU 를 쓰지 않는다.
+    if target == "all" and omni_job is not None and not dry:
+        try:
+            omni_job.spawn()
+            print("   · OMNI 복합모델 학습을 별도 CPU 컨테이너로 띄웠다")
+        except Exception as e:  # noqa: BLE001 — 기존 학습을 막지 않는다
+            print("   ⚠️ OMNI 띄우기 실패(기존 학습은 계속):", e)
 
     def _left():
         return _DEADLINE - time.time()
@@ -4071,6 +4078,51 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
         except requests.exceptions.ReadTimeout:
             if attempt < 3: time.sleep(20); continue
     print("   단타모델 업로드 타임아웃")
+
+
+# ══ [V33.420] ★OMNI 복합모델 — 별도 CPU 함수★ ══════════════════════════════════════════
+#   사용자 지시: "ai 모델 전면 재설계 · 분봉 기준 · 하나의 모델로 장타·단타·여러 매매법".
+#   명세·학습·평가·내보내기는 전부 omni.py 에 있다(피처의 유일한 진본 — 워커 JS 가 그것을 옮겼다).
+#   ★T4 박스에서 돌리지 않는다★ — GPU 가 필요 없는 일에 GPU 시간을 쓰지 않는다(V33.383 의 교훈).
+#   train_job 이 시작할 때 이것을 따로 띄운다(spawn) — 회차 예산을 한 초도 쓰지 않고,
+#   OMNI 가 실패해도 기존 학습은 그대로 끝난다. 준비(이미지)에 실패해도 마찬가지다.
+def _omni_image():
+    try:
+        import pathlib
+        import sys as _sys
+        src = pathlib.Path(globals().get("__file__") or "modal_train.py").resolve().with_name("omni.py")
+        if not src.exists():
+            return None
+        return image.add_local_file(str(src), "/root/omni.py")
+    except Exception as e:  # noqa: BLE001 — 기존 학습기를 절대 막지 않는다
+        # stderr 로 — 이 모듈을 읽어 JSON 을 뽑는 검사기들이 stdout 을 파싱한다
+        print("⚠️ OMNI 이미지 준비 실패 — 기존 학습은 영향 없음:", e, file=_sys.stderr)
+        return None
+
+
+_OMNI_IMAGE = _omni_image()
+omni_job = None
+if _OMNI_IMAGE is not None:
+    @app.function(image=_OMNI_IMAGE, secrets=[modal.Secret.from_name("lux-dnn")],
+                  timeout=2400, cpu=4.0, memory=16384)
+    def omni_job(upload: bool = True, limit: int = 0):
+        import os
+        import sys
+        import time
+        sys.path.insert(0, "/root")
+        import omni
+        BASE = os.environ["BASE_URL"].rstrip("/")
+        KEY = os.environ["TRAIN_KEY"]
+        HDR = {"x-train-key": KEY}
+        t0 = time.time()
+        print("⑪ OMNI 복합모델 — 원시 봉 → 피처 40 · 지평 5 · 매매법 7 → LightGBM 하나")
+        try:
+            omni.run(BASE, KEY, HDR, upload=upload, log=print, limit=(limit or None))
+        except Exception as e:  # noqa: BLE001
+            import traceback
+            print("   ⚠️ OMNI 실패:", repr(e))
+            traceback.print_exc()
+        print("   · OMNI 끝 %.0fs" % (time.time() - t0))
 
 
 @app.local_entrypoint()
