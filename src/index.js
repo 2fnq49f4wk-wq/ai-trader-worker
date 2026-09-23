@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.418";
+const _BUILD_VER = "V33.419";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -10272,6 +10272,208 @@ async function omniBarsCollect(DB, opts) {
   return "[OMNI-BARS] " + done + "종목 · 받음 " + fetched + " · 신선해서 건너뜀 " + skipped + " · 실패 " + failed +
          " · 새 봉 +" + added + " · 커버 5분봉 " + n5 + "/" + uni.length + " · 일봉 " + n1 + "/" + uni.length +
          (inHours ? " (장중 — 적게)" : "") + " · 다음 커서 " + idx;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════
+   [V33.419] OMNI 피처 — 추론 쪽 구현. ★진본은 trainer/modal/omni.py 의 feature_point() 다.★
+   이 함수는 그것을 ★한 줄씩 옮긴 것★ 이다. 같은 봉에서 같은 값을 내야 한다 —
+   tools/check-omni-parity.mjs 가 파이썬을 실제로 돌려 두 구현을 비교한다(서머타임 경계 포함).
+   한쪽만 고치면 그 검사가 배포를 막는다. (이 저장소가 반복해서 겪은 "학습과 추론이 다른 피처를
+   본다" 는 사고를 구조로 막는다.)
+   ═══════════════════════════════════════════════════════════════════════════════════════ */
+const OMNI_VER = 1;
+const OMNI_SESS_MIN = 390;
+const OMNI_OPEN_MIN = { us: 570, kr: 540 };
+const OMNI_H_LOOKBACK = 312;
+const OMNI_D_LOOKBACK = 260;
+/* 학습 쪽(omni.py)과 ★같아야 하는★ 상수 — 정합 검사가 파이썬 값과 직접 비교한다. */
+const OMNI_CONSTS = { sess: OMNI_SESS_MIN, openUs: OMNI_OPEN_MIN.us, openKr: OMNI_OPEN_MIN.kr,
+                      hLook: OMNI_H_LOOKBACK, dLook: 260, base: 300 };
+const OMNI_FEATS = [
+  "m_r3", "m_r6", "m_r12", "m_r24", "m_rv12", "m_rv48", "m_vr", "m_rsi14", "m_bbz20",
+  "m_ofi12", "m_rho24", "m_relvol12", "m_range48", "m_hl12",
+  "s_frac", "s_vwapdev", "s_ret", "s_gap",
+  "h_r6", "h_r24", "h_rv24", "h_rsi14", "h_sma20gap",
+  "d_r1", "d_r5", "d_r20", "d_r60", "d_rv20", "d_rv60", "d_rsi14", "d_sma50gap", "d_sma200gap",
+  "d_hi252", "d_lo20", "d_atr14", "d_volr", "d_bbz20",
+  "x_mkt", "x_dow", "x_tod"
+];
+const OMNI_SETUPS = ["generic", "breakout", "pullback", "meanrev", "momentum", "gap", "trend"];
+const OMNI_HORIZONS = ["30m", "60m", "1d", "5d", "20d"];
+
+function _omLr(a, b) { return (a > 0 && b > 0) ? Math.log(a / b) : NaN; }
+function _omMean(xs) { let s = 0; for (let k = 0; k < xs.length; k++) s += xs[k]; return xs.length ? s / xs.length : NaN; }
+function _omPstd(xs) {
+  const n = xs.length; if (n < 2) return NaN;
+  const m = _omMean(xs); let s = 0;
+  for (let k = 0; k < n; k++) s += (xs[k] - m) * (xs[k] - m);
+  return Math.sqrt(s / n);
+}
+function _omRsi(c, i, n) {
+  if (i - n < 0) return NaN;
+  let g = 0, lo = 0;
+  for (let k = i - n + 1; k <= i; k++) { const d = c[k] - c[k - 1]; if (d > 0) g += d; else lo += -d; }
+  return (g + lo === 0) ? 0.5 : g / (g + lo);
+}
+function _omBbz(c, i, n) {
+  if (i - n + 1 < 0) return NaN;
+  const w = c.slice(i - n + 1, i + 1); const s = _omPstd(w);
+  return s > 0 ? (c[i] - _omMean(w)) / s : NaN;
+}
+function _omRets(c, i, n) {
+  if (i - n < 0) return null;
+  const r = []; for (let k = i - n + 1; k <= i; k++) r.push(_omLr(c[k], c[k - 1])); return r;
+}
+function _omCorr1(r) {
+  if (!r || r.length < 3) return NaN;
+  const a = r.slice(0, -1), b = r.slice(1);
+  const ma = _omMean(a), mb = _omMean(b);
+  let sab = 0, saa = 0, sbb = 0;
+  for (let k = 0; k < a.length; k++) {
+    sab += (a[k] - ma) * (b[k] - mb); saa += (a[k] - ma) * (a[k] - ma); sbb += (b[k] - mb) * (b[k] - mb);
+  }
+  return (saa > 0 && sbb > 0) ? sab / Math.sqrt(saa * sbb) : NaN;
+}
+function _omMax(a, s, e) { let m = -Infinity; for (let k = s; k < e; k++) if (a[k] > m) m = a[k]; return m; }
+function _omMin(a, s, e) { let m = Infinity; for (let k = s; k < e; k++) if (a[k] < m) m = a[k]; return m; }
+
+/* 파이썬 us_offset_h 와 같은 규칙(현행 미국법 = IANA 결과와 같다). 워커의 getUSEt 는 IANA 를
+   먼저 쓰지만, 피처는 ★학습 쪽과 같은 규칙★ 을 써야 하므로 여기서는 규칙을 직접 쓴다. */
+function _omNthSun(y, m, n) {
+  const dow = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
+  const first = dow === 0 ? 1 : 8 - dow; return first + (n - 1) * 7;
+}
+function _omUsOff(tSec) {
+  const y = new Date(tSec * 1000).getUTCFullYear();
+  const s = Date.UTC(y, 2, _omNthSun(y, 3, 2), 7) / 1000, e = Date.UTC(y, 10, _omNthSun(y, 11, 1), 6) / 1000;
+  return (tSec >= s && tSec < e) ? -4 : -5;
+}
+function _omLocal(tSec, mkt) {
+  const off = mkt === "us" ? _omUsOff(tSec) : 9;
+  const d = new Date((tSec + off * 3600) * 1000);
+  return { mi: d.getUTCHours() * 60 + d.getUTCMinutes(), dow: d.getUTCDay(),
+           dk: d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate() };
+}
+function _omDayKey(tSec) { const d = new Date(tSec * 1000); return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate(); }
+function _omHourly(t, c, i) {
+  const a = Math.max(0, i - OMNI_H_LOOKBACK + 1); const out = []; let cur = null;
+  for (let k = a; k <= i; k++) {
+    const key = Math.floor(t[k] / 3600) * 3600;
+    if (key !== cur) { out.push(c[k]); cur = key; } else out[out.length - 1] = c[k];
+  }
+  return out;
+}
+function _omLastDailyBefore(bd, dk) {
+  const t = bd.t; let lo = 0, hi = t.length - 1, ans = null;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (_omDayKey(t[mid]) < dk) { ans = mid; lo = mid + 1; } else hi = mid - 1; }
+  return ans;
+}
+function _omDaily(bd, j, f) {
+  const C = bd.c, H = bd.h, L = bd.l, V = bd.v;
+  const a = Math.max(0, j - OMNI_D_LOOKBACK + 1);
+  for (const [key, k] of [["d_r1", 1], ["d_r5", 5], ["d_r20", 20], ["d_r60", 60]]) f[key] = (j - k >= a) ? _omLr(C[j], C[j - k]) : NaN;
+  for (const [key, n] of [["d_rv20", 20], ["d_rv60", 60]]) {
+    if (j - n >= a) { const r = []; for (let k = j - n + 1; k <= j; k++) r.push(_omLr(C[k], C[k - 1])); f[key] = _omPstd(r); }
+  }
+  f.d_rsi14 = (j - 14 >= a) ? _omRsi(C, j, 14) : NaN;
+  if (j - 49 >= a) f.d_sma50gap = _omLr(C[j], _omMean(C.slice(j - 49, j + 1)));
+  if (j - 199 >= a) f.d_sma200gap = _omLr(C[j], _omMean(C.slice(j - 199, j + 1)));
+  if (j - 251 >= a) f.d_hi252 = _omLr(C[j], _omMax(H, j - 251, j + 1));
+  if (j - 19 >= a) f.d_lo20 = _omLr(C[j], _omMin(L, j - 19, j + 1));
+  if (j - 14 >= a) {
+    let s = 0;
+    for (let k = j - 13; k <= j; k++) s += Math.max(H[k] - L[k], Math.abs(H[k] - C[k - 1]), Math.abs(L[k] - C[k - 1]));
+    f.d_atr14 = C[j] > 0 ? (s / 14) / C[j] : NaN;
+  }
+  if (j - 59 >= a) {
+    let s20 = 0, s60 = 0;
+    for (let k = j - 19; k <= j; k++) s20 += V[k];
+    for (let k = j - 59; k <= j; k++) s60 += V[k];
+    f.d_volr = s60 > 0 ? (s20 / 20) / (s60 / 60) : NaN;
+  }
+  if (j - 19 >= a) { const w = C.slice(j - 19, j + 1); const s = _omPstd(w); f.d_bbz20 = s > 0 ? (C[j] - _omMean(w)) / s : NaN; }
+}
+function _omG(f, k) { const x = f[k]; return (typeof x === "number" && x === x) ? x : null; }
+function _omSetup(f, dailyRow, b5, i, bd, j) {
+  if (!dailyRow) {
+    const sf = _omG(f, "s_frac"), sg = _omG(f, "s_gap");
+    if (sf != null && sg != null && sf < 0.15 && Math.abs(sg) > 0.015) return OMNI_SETUPS.indexOf("gap");
+    const rv = _omG(f, "m_relvol12");
+    if (i - 48 >= 0 && rv != null && rv > 1.2 && b5.c[i] >= _omMax(b5.h, i - 48, i)) return OMNI_SETUPS.indexOf("breakout");
+    const rs = _omG(f, "m_rsi14"), bz = _omG(f, "m_bbz20");
+    if ((rs != null && rs < 0.3) || (bz != null && bz < -2)) return OMNI_SETUPS.indexOf("meanrev");
+    const g50 = _omG(f, "d_sma50gap"), r12 = _omG(f, "m_r12"), vd = _omG(f, "s_vwapdev");
+    if (g50 != null && r12 != null && vd != null && g50 > 0 && r12 < 0 && vd > -0.005) return OMNI_SETUPS.indexOf("pullback");
+    const d5 = _omG(f, "d_r5"), of = _omG(f, "m_ofi12");
+    if (r12 != null && d5 != null && of != null && r12 > 0 && d5 > 0 && of > 0) return OMNI_SETUPS.indexOf("momentum");
+    const r60 = _omG(f, "d_r60");
+    if (g50 != null && r60 != null && g50 > 0 && r60 > 0) return OMNI_SETUPS.indexOf("trend");
+    return OMNI_SETUPS.indexOf("generic");
+  }
+  if (j != null && j - 20 >= 0 && bd.c[j] >= _omMax(bd.h, j - 20, j)) return OMNI_SETUPS.indexOf("breakout");
+  const rs = _omG(f, "d_rsi14"), bz = _omG(f, "d_bbz20");
+  if ((rs != null && rs < 0.3) || (bz != null && bz < -2)) return OMNI_SETUPS.indexOf("meanrev");
+  const g50 = _omG(f, "d_sma50gap"), d5 = _omG(f, "d_r5"), d20 = _omG(f, "d_r20"), r60 = _omG(f, "d_r60");
+  if (g50 != null && d5 != null && g50 > 0 && d5 < 0) return OMNI_SETUPS.indexOf("pullback");
+  if (d5 != null && d20 != null && d5 > 0 && d20 > 0) return OMNI_SETUPS.indexOf("momentum");
+  if (g50 != null && r60 != null && g50 > 0 && r60 > 0) return OMNI_SETUPS.indexOf("trend");
+  return OMNI_SETUPS.indexOf("generic");
+}
+
+/* 한 시점의 피처. 반환 { x: OMNI_FEATS 순서 값(NaN 허용), setup }.
+   ★i(또는 j) 뒤의 봉은 한 칸도 읽지 않는다★ — 미래를 보지 않는다. */
+function omniFeatures(b5, bd, i, mkt, dailyRow, jIn) {
+  const f = {}; for (const k of OMNI_FEATS) f[k] = NaN;
+  f.x_mkt = mkt === "us" ? 0 : 1;
+  let j = jIn;
+  if (!dailyRow) {
+    const t = b5.t, o = b5.o, h = b5.h, l = b5.l, c = b5.c, v = b5.v;
+    for (const [key, k] of [["m_r3", 3], ["m_r6", 6], ["m_r12", 12], ["m_r24", 24]]) f[key] = (i - k >= 0) ? _omLr(c[i], c[i - k]) : NaN;
+    const r12 = _omRets(c, i, 12), r48 = _omRets(c, i, 48);
+    f.m_rv12 = r12 ? _omPstd(r12) : NaN;
+    f.m_rv48 = r48 ? _omPstd(r48) : NaN;
+    f.m_vr = (f.m_rv48 === f.m_rv48 && f.m_rv48 > 0 && f.m_rv12 === f.m_rv12) ? f.m_rv12 / f.m_rv48 : NaN;
+    f.m_rsi14 = _omRsi(c, i, 14);
+    f.m_bbz20 = _omBbz(c, i, 20);
+    if (i - 12 >= 0) {
+      let num = 0, den = 0;
+      for (let k = i - 11; k <= i; k++) { const d = c[k] - c[k - 1]; const sg = d > 0 ? 1 : (d < 0 ? -1 : 0); num += sg * v[k]; den += v[k]; }
+      f.m_ofi12 = den > 0 ? num / den : NaN;
+    }
+    f.m_rho24 = _omCorr1(_omRets(c, i, 24));
+    if (i - 59 >= 0) {
+      let s12 = 0, s60 = 0;
+      for (let k = i - 11; k <= i; k++) s12 += v[k];
+      for (let k = i - 59; k <= i; k++) s60 += v[k];
+      f.m_relvol12 = s60 > 0 ? s12 / (s60 / 5) : NaN;
+    }
+    if (i - 47 >= 0) { const lo = _omMin(l, i - 47, i + 1), hi = _omMax(h, i - 47, i + 1); f.m_range48 = hi > lo ? (c[i] - lo) / (hi - lo) : NaN; }
+    if (i - 11 >= 0) f.m_hl12 = _omLr(_omMax(h, i - 11, i + 1), _omMin(l, i - 11, i + 1));
+    const lp = _omLocal(t[i], mkt);
+    f.x_dow = lp.dow;
+    f.x_tod = (lp.mi + 5) / 1440;
+    f.s_frac = (lp.mi + 5 - OMNI_OPEN_MIN[mkt]) / OMNI_SESS_MIN;
+    let s0 = i;
+    while (s0 - 1 >= 0 && _omLocal(t[s0 - 1], mkt).dk === lp.dk) s0--;
+    let pv = 0, vv = 0;
+    for (let k = s0; k <= i; k++) { const tp = (h[k] + l[k] + c[k]) / 3; pv += tp * v[k]; vv += v[k]; }
+    f.s_vwapdev = vv > 0 ? _omLr(c[i], pv / vv) : NaN;
+    f.s_ret = _omLr(c[i], o[s0]);
+    const jj = _omLastDailyBefore(bd, lp.dk);
+    f.s_gap = jj != null ? _omLr(o[s0], bd.c[jj]) : NaN;
+    const hc = _omHourly(t, c, i), n = hc.length;
+    f.h_r6 = n >= 7 ? _omLr(hc[n - 1], hc[n - 7]) : NaN;
+    f.h_r24 = n >= 25 ? _omLr(hc[n - 1], hc[n - 25]) : NaN;
+    if (n >= 25) { const r = []; for (let k = n - 24; k < n; k++) r.push(_omLr(hc[k], hc[k - 1])); f.h_rv24 = _omPstd(r); }
+    f.h_rsi14 = n >= 15 ? _omRsi(hc, n - 1, 14) : NaN;
+    f.h_sma20gap = n >= 20 ? _omLr(hc[n - 1], _omMean(hc.slice(n - 20))) : NaN;
+    j = jj;
+  } else {
+    f.x_dow = NaN; f.x_tod = NaN;
+  }
+  if (j != null && j >= 0) _omDaily(bd, j, f);
+  const x = OMNI_FEATS.map(function (k) { const z = f[k]; return (typeof z === "number" && isFinite(z)) ? z : NaN; });
+  return { x: x, setup: _omSetup(f, dailyRow, b5, i, bd, j) };
 }
 
 /* [V33.217] ★캐시에 봉 날짜(days)가 없으면 신선해도 낡은 것으로 본다.★
@@ -52574,7 +52776,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obKey, _obDayKey, omniBarsCollect };
+export { OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
