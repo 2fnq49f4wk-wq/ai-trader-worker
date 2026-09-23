@@ -84,8 +84,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.424">
-<script src="/neural-observatory.js?v=33.424" defer></script>
+<meta name="lux-build" content="V33.425">
+<script src="/neural-observatory.js?v=33.425" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -14717,6 +14717,10 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     sub.textContent = 'OMNI — 나무 '+(d.nTrees||0)+'그루 · 입력 '+(d.inputDim||0)+'칸(피처 '
       +((d.feats||[]).length)+' + 지평 '+((d.horizons||[]).length)+' + 매매법 '+((d.setups||[]).length)
       +') · 한 모델이 장타·단타를 같이 배운다 · ★섀도우(매매에 안 씀)★';
+    /* [V33.425] ★확률의 뜻을 화면이 지어내지 않는다.★ 라벨 규약을 서버가 실어 오면 그대로 적는다 —
+       v3 부터 p 는 "오를 확률" 이 아니라 ★같은 시각 동료들보다 잘할 확률★ 이다. */
+    var LBLTXT = { xsec: '동료 대비 상대(같은 시각·같은 시장의 중앙값보다 잘할 확률)',
+                   abs: '절대 등락(오를 확률)' };
     chips.innerHTML =
       chip('쓸 수 있는 지평', okN+' / '+heads.length, okN>0?'good':'warn') +
       chip('나무', (d.nTrees||0)+'그루'+(d.bestIter!=null? ' (조기종료 '+d.bestIter+')':''),'') +
@@ -14724,7 +14728,11 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       chip('종목', (d.nSym!=null? d.nSym.toLocaleString():'—'),'') +
       chip('학습·추론 정합', probeOk? '일치(오차 0)' : (d.probeMaxDiff!=null? '오차 '+d.probeMaxDiff : '미확인'),
            probeOk?'good':'warn') +
-      chip('판(OMNI_VER)', 'v'+(d.v!=null?d.v:'—'), d.featVerOk?'good':'warn');
+      chip('판(OMNI_VER)', 'v'+(d.v!=null?d.v:'—'), d.featVerOk?'good':'warn') +
+      chip('라벨', d.label? (LBLTXT[d.label]||d.label) : '—', d.label==='xsec'?'good':'') +
+      (d.xsec? chip('횡단면 묶음', (d.xsec.used!=null?d.xsec.used.toLocaleString():'—')+'개 (최소 '
+               +(d.xsecMin!=null?d.xsecMin:'—')+'종목)','') : '') +
+      (d.iters&&d.iters.length? chip('시드별 라운드', d.iters.join('·'),'') : '');
     if(ban){
       ban.className='nnv-banner '+(okN>0?'on':'off');
       ban.innerHTML = okN>0
@@ -20135,11 +20143,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.424">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.424">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.424">
-<link rel="stylesheet" href="/model-evidence.css?v=33.424">
-<script src="/model-evidence.js?v=33.424"></script>
-<script src="/workspace-ui.js?v=33.424"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.425">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.425">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.425">
+<link rel="stylesheet" href="/model-evidence.css?v=33.425">
+<script src="/model-evidence.js?v=33.425"></script>
+<script src="/workspace-ui.js?v=33.425"></script>
 </body>
 </html>

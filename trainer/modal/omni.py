@@ -17,6 +17,13 @@
   모든 창은 ★고정 길이★ 다 — 학습 쪽 이력이 아무리 길어도 추론 쪽이 가진 만큼만 본다.
   그래야 두 쪽이 같은 값을 낸다(학습은 2년치, 추론은 5일치를 가져도).
 
+■ 라벨 — [V33.425] ★횡단면 상대★ (v3)
+  y = 1 ⇔ 이 종목의 지평 수익이 ★같은 시각 · 같은 시장 동료들의 중앙값★ 보다 높다.
+  절대 등락(오를 것인가)이 아니다. 절대 라벨에는 아무도 예측 못 하는 공통성분(시장 방향)이
+  통째로 들어 있어, 실데이터에서 모델이 그걸 배우고 홀드아웃에서 통째로 뒤집혔다
+  (2026-09-23 · AUC 0.492 / 0.488 / 0.502 — 0.5 ★아래★). 자세한 근거는 xsec_label() 위 주석.
+  삼중 배리어는 남아 있지만 이제 ★진단★ 이다 — 어느 행도 그것 때문에 버리지 않는다.
+
 ■ 모든 수학은 단순하게
   EMA 처럼 ★초기값이 이력 길이에 따라 달라지는★ 지표는 쓰지 않는다(SMA 로 대신한다).
   RSI 는 평활 없는 비율형(상승합/(상승합+하락합)). 표준편차는 모집단(÷n).
@@ -25,7 +32,7 @@
 """
 import math
 
-OMNI_VER = 2
+OMNI_VER = 3
 BASE_SEC = 300                 # 5분봉 — 워커 OMNIBARS.baseSec 와 같아야 한다
 SESS_MIN = 390                 # 정규장 길이(분) — 미국 09:30~16:00 · 한국 09:00~15:30 둘 다 390
 OPEN_MIN = {"us": 570, "kr": 540}
@@ -714,8 +721,26 @@ def uniq_weight(hz):
     return min(1.0, DAILY_STEP / float(H_DAYS[hz]))
 
 
+def _barrier_diag(x, hz, stats, c0, highs, lows, intra=None):
+    """[V33.425] 삼중 배리어는 이제 ★라벨이 아니라 진단★ 이다 — 행을 버리지 않는다.
+    반환 1|0|-1(못 정함). 시간초과·동시타격 비율은 배리어 폭이 맞는지 보는 눈으로만 남긴다."""
+    sg = horizon_sigma(x, hz, intra=intra)
+    if not (sg == sg):
+        stats["nosig"] += 1
+        return -1
+    sg = max(sg, SIGMA_FLOOR)
+    y, why = barrier_outcome(c0, highs, lows, BARRIER_K * sg, -BARRIER_K * sg)
+    if y is None:
+        stats[why] += 1
+        if why == "timeout":
+            stats["to"][hz] += 1
+        return -1
+    stats["n"][hz] += 1
+    return y
+
+
 def build_rows(sym, mkt, b5, bd, panels=None):
-    """한 종목의 모든 행. 각 행 = (피처 40, 매매법, 지평, 라벨, 가중, 결정시각, 라벨끝시각, 사후수익).
+    """한 종목의 모든 행. 각 행 = (피처 40, 매매법, 지평, 라벨, 가중, 결정시각, 라벨끝시각, 사후수익, 종목, 시장, 배리어).
     ★마지막 봉은 버린다★ — 수집 시점에 진행 중이던 봉일 수 있다(확정값이 아니다)."""
     rows = []
     stats = {"amb": 0, "timeout": 0, "nosig": 0, "span": 0, "badDaily": 0, "n": {h: 0 for h in HORIZONS},
@@ -743,22 +768,13 @@ def build_rows(sym, mkt, b5, bd, panels=None):
                 if b5["t"][i + nb] - b5["t"][i] > MAX_SPAN_SEC[hz]:
                     stats["span"] += 1      # 30·60분은 장 안에서 끝나야 한다 · 1일은 데이터 구멍을 건너지 않는다
                     continue
-                sg = horizon_sigma(x, hz, intra=isg)
-                if not (sg == sg):
-                    stats["nosig"] += 1
+                if not (b5["c"][i] > 0 and b5["c"][i + nb] > 0):
                     continue
-                sg = max(sg, SIGMA_FLOOR)
-                y, why = barrier_outcome(b5["c"][i], b5["h"][i + 1:i + 1 + nb], b5["l"][i + 1:i + 1 + nb],
-                                         BARRIER_K * sg, -BARRIER_K * sg)
-                if y is None:
-                    stats[why] += 1
-                    if why == "timeout":
-                        stats["to"][hz] += 1
-                    continue
-                stats["n"][hz] += 1
-                rows.append((x, st, HORIZONS.index(hz), y, uniq_weight(hz),
+                yb = _barrier_diag(x, hz, stats, b5["c"][i], b5["h"][i + 1:i + 1 + nb],
+                                   b5["l"][i + 1:i + 1 + nb], intra=isg)
+                rows.append((x, st, HORIZONS.index(hz), 0, uniq_weight(hz),
                              b5["t"][i] + BASE_SEC, b5["t"][i + nb] + BASE_SEC,
-                             math.log(b5["c"][i + nb] / b5["c"][i]), sym, mkt))
+                             math.log(b5["c"][i + nb] / b5["c"][i]), sym, mkt, yb))
     if bd and len(bd.get("t", [])) > D_LOOKBACK + 1:
         bd2 = {k: bd[k][:-1] for k in ("t", "o", "h", "l", "c", "v")}
         n = len(bd2["t"])
@@ -777,22 +793,13 @@ def build_rows(sym, mkt, b5, bd, panels=None):
                 if bd2["t"][j + nd] - bd2["t"][j] > MAX_SPAN_SEC[hz]:
                     stats["span"] += 1
                     continue
-                sg = horizon_sigma(x, hz)
-                if not (sg == sg):
-                    stats["nosig"] += 1
+                if not (bd2["c"][j] > 0 and bd2["c"][j + nd] > 0):
                     continue
-                sg = max(sg, SIGMA_FLOOR)
-                y, why = barrier_outcome(bd2["c"][j], bd2["h"][j + 1:j + 1 + nd], bd2["l"][j + 1:j + 1 + nd],
-                                         BARRIER_K * sg, -BARRIER_K * sg)
-                if y is None:
-                    stats[why] += 1
-                    if why == "timeout":
-                        stats["to"][hz] += 1
-                    continue
-                stats["n"][hz] += 1
-                rows.append((x, st, HORIZONS.index(hz), y, uniq_weight(hz),
+                yb = _barrier_diag(x, hz, stats, bd2["c"][j], bd2["h"][j + 1:j + 1 + nd],
+                                   bd2["l"][j + 1:j + 1 + nd])
+                rows.append((x, st, HORIZONS.index(hz), 0, uniq_weight(hz),
                              bd2["t"][j] + 86400, bd2["t"][j + nd] + 86400,
-                             math.log(bd2["c"][j + nd] / bd2["c"][j]), sym, mkt))
+                             math.log(bd2["c"][j + nd] / bd2["c"][j]), sym, mkt, yb))
     return rows, stats
 
 
@@ -947,6 +954,10 @@ LGB_PARAMS = {"objective": "binary", "learning_rate": 0.03, "num_leaves": 31, "m
 MAX_ROUNDS = 400
 EARLY_STOP = 40
 MIN_TREES = 30            # [V33.424] 이보다 적으면 ★학습이 안 된 것★ 이다 — 올리지 않는다
+# [V33.425] ★나무 총수만 보던 관문은 시드 수에 속는다.★ 실데이터에서 시드 4 × 7~8라운드 = 30그루가
+#   MIN_TREES 를 ★정확히★ 통과했다 — 시드를 늘리면 학습이 안 돼도 나무는 늘어난다.
+#   조기종료가 즉시 멈췄는지는 ★시드 하나의 라운드 수★ 로만 알 수 있다.
+MIN_ITERS = 25
 # ══ [V33.424] ★지평 균형 — 실측이 드러낸 구조 결함.★ ═══════════════════════════════════════
 #   2026-09-23 실데이터(948종목·1,491,195행): ★나무 2그루★ 로 끝났다(사실상 학습 실패).
 #   원인은 하이퍼파라미터가 아니라 ★행 구성★ 이다:
@@ -1000,14 +1011,14 @@ def rows_to_arrays(rows):
     import numpy as np
     n = len(rows)
     X = np.empty((n, len(MODEL_FEATS)), dtype=np.float64)
-    meta = {k: [] for k in ("st", "hz", "y", "w", "td", "te", "fr", "sym", "mkt")}
+    meta = {k: [] for k in ("st", "hz", "y", "yb", "w", "td", "te", "fr", "sym", "mkt")}
     for k, r in enumerate(rows):
         X[k] = design_row(r[0], r[1], r[2])
         meta["st"].append(r[1]); meta["hz"].append(r[2]); meta["y"].append(r[3]); meta["w"].append(r[4])
         meta["td"].append(r[5]); meta["te"].append(r[6]); meta["fr"].append(r[7])
-        meta["sym"].append(r[8]); meta["mkt"].append(r[9])
+        meta["sym"].append(r[8]); meta["mkt"].append(r[9]); meta["yb"].append(r[10])
     A = {"X": X}
-    for k in ("st", "hz", "y"):
+    for k in ("st", "hz", "y", "yb"):
         A[k] = np.asarray(meta[k], dtype=np.int64)
     for k in ("w", "td", "te", "fr"):
         A[k] = np.asarray(meta[k], dtype=np.float64)
@@ -1035,6 +1046,77 @@ def take(A, idx):
     idx = np.asarray(idx)
     out = {k: (A[k][idx] if k != "sym" else [A[k][i] for i in idx]) for k in A}
     return out
+
+
+# ══ [V33.425] ★횡단면 라벨 — 실데이터가 두 번 연속 말해 준 것.★ ═══════════════════════════
+#   2026-09-23 실데이터(1,008종목 · 1,735,157행 · 피처 76칸 · 지평 균형까지 넣은 회차):
+#       나무 30(=시드 4 × 7~8라운드) · 30m AUC 0.492 · 60m 0.488 · 1d 0.502 · 20d 0.834
+#   AUC 가 0.5 ★아래로★ 4~6시그마 벗어났다 — 잡음이 아니라 ★뒤집힌 신호★ 다. 그리고 홀드아웃
+#   기본율이 30m 48.2% · 60m 47.3% · 1d 44.6% 로 학습 구간과 크게 달랐다. 즉 모델이 배운 건
+#   종목 고르기가 아니라 ★그 시절의 시장 방향★ 이었고, 홀드아웃에서 방향이 바뀌자 그대로 뒤집혔다.
+#   20일 AUC 0.834 도 같은 물건이다 — 정확도가 무실력과 ★동률★ 이었다(확률이 전부 0.5 한쪽에
+#   몰려 있었다. 순위만 시장 방향을 따라간 것이다).
+#   절대 등락 라벨에는 ★아무도 예측 못 하는 공통성분(시장)★ 이 통째로 들어 있다. 그게 라벨 분산을
+#   지배하고 기본율을 시기마다 흔들어, 검증손실이 첫 라운드부터 나빠지고 조기종료가 즉시 멈춘다.
+#   지평 균형(V33.424)은 ★발언권★ 문제를 고쳤지만 ★질문★ 이 틀린 건 못 고친다.
+#   → 라벨을 ★같은 시각 · 같은 시장 · 같은 지평의 동료들과 견준 상대★ 로 바꾼다.
+#       y = 1  ⇔  이 종목의 지평 수익이 그 순간 동료들의 ★중앙값보다 높다★.
+#     · 공통성분이 정의상 빠진다 — 시장이 통째로 오르내려도 라벨은 안 흔들린다.
+#     · 기본율이 어느 시기든 ★정확히 50%★ 다 — 기본율 표류로 인한 조기종료가 사라진다.
+#     · 무실력 기준선이 50.0% 로 고정돼, 정확도 60% 가 ★진짜 60%★ 가 된다(하한을 낮춘 게 아니다).
+#     · 위원회가 실제로 하는 일(후보 중 무엇을 살까)과 ★같은 질문★ 이다.
+#   그리고 시간초과 · 동시타격 행을 ★더는 버리지 않는다★ — 동료가 오를 때 조용했던 종목은 못
+#   따라간 것이고 그건 정보다. 버리면 표본이 '앞으로 크게 움직인 행' 으로 선택된다(미래를 조건으로
+#   건 표본). 실데이터에서 그렇게 사라지던 행이 ★1,398,261행★ 이었다.
+XSEC_MIN = 20                   # 같은 시각 · 같은 시장에 이만큼은 있어야 '상대' 라고 말한다
+
+
+def xsec_label(A, log=print, min_n=XSEC_MIN):
+    """(시장 · 지평 · 결정시각) 묶음 안에서 지평 수익을 중앙값과 견준다.
+    중앙값과 정확히 같은 행은 버린다(어느 쪽도 아니다 — 추측하지 않는다).
+    묶음이 작으면 통째로 버린다(동료가 없으면 '상대' 라는 말이 성립하지 않는다)."""
+    import numpy as np
+    info = {"minN": int(min_n), "was": 0, "kept": 0, "groups": 0, "used": 0,
+            "dropSmall": 0, "dropTie": 0, "perHz": {}}
+    if A is None or not len(A["y"]):
+        return A, info
+    order = np.lexsort((A["td"], A["hz"], A["mkt"]))
+    md, hzv, tdv, fr = A["mkt"][order], A["hz"][order], A["td"][order], A["fr"][order]
+    n = len(order)
+    newg = np.empty(n, dtype=bool)
+    newg[0] = True
+    newg[1:] = (md[1:] != md[:-1]) | (hzv[1:] != hzv[:-1]) | (tdv[1:] != tdv[:-1])
+    starts = np.flatnonzero(newg)
+    ends = np.append(starts[1:], n)
+    y = np.zeros(n, dtype=np.int64)
+    keep = np.zeros(n, dtype=bool)
+    small = tie = used = 0
+    for a, b in zip(starts, ends):
+        if b - a < min_n:
+            small += int(b - a)
+            continue
+        seg = fr[a:b]
+        med = float(np.median(seg))
+        hi = seg > med
+        lo = seg < med
+        tie += int((b - a) - int(hi.sum()) - int(lo.sum()))
+        y[a:b][hi] = 1
+        keep[a:b] = hi | lo
+        used += 1
+    sel = order[keep]
+    B = {k: ([A["sym"][i] for i in sel] if k == "sym" else A[k][sel]) for k in A}
+    B["y"] = y[keep]
+    info.update(was=int(n), kept=int(len(sel)), groups=int(len(starts)), used=int(used),
+                dropSmall=int(small), dropTie=int(tie),
+                perHz={HORIZONS[k]: int((B["hz"] == k).sum()) for k in range(len(HORIZONS))
+                       if (B["hz"] == k).any()})
+    base = float(B["y"].mean()) if len(sel) else 0.0
+    agree = float((B["y"] == B["yb"]).mean()) if len(sel) else 0.0
+    log("   · OMNI 횡단면 라벨 — 묶음 %d(쓴 묶음 %d) · %d행 → %d행 (작은묶음 −%d · 동점 −%d) · "
+        "기본율 %.2f%% · 절대라벨과 일치 %.1f%%" % (info["groups"], used, n, len(sel), small, tie,
+                                                base * 100, agree * 100))
+    log("   · OMNI 횡단면 지평별 " + " · ".join("%s %d" % (h, c) for h, c in info["perHz"].items()))
+    return B, info
 
 
 def split_cutoff(A, hold_days=HOLD_DAYS):
@@ -1146,6 +1228,13 @@ def train_model(A, log=print):
     # 지평별 행 수를 남긴다 — 불균형이 다시 생기면 ★로그에서 바로 보인다★(숫자를 숨기지 않는다)
     import collections as _co
     _cnt = lambda ix: dict(_co.Counter(HORIZONS[h] for h in A["hz"][ix]))
+    _bl = lambda Z, ix: " · ".join(
+        "%s %.1f%%(%d)" % (HORIZONS[k], 100.0 * Z["y"][ix][Z["hz"][ix] == k].mean(),
+                           int((Z["hz"][ix] == k).sum()))
+        for k in range(len(HORIZONS)) if (Z["hz"][ix] == k).any())
+    log("   · OMNI 기본율 학습 " + _bl(Atr, fit))
+    log("   · OMNI 기본율 검증 " + _bl(Atr, val))
+    log("   · OMNI 기본율 홀드 " + _bl(A, ho))
     rep = {"ok": True, "cutoff": C, "innerCut": C2, "nTrain": int(len(fit)), "nVal": int(len(val)),
            "nHold": int(len(ho)), "bestIter": best, "seeds": len(boosters), "seedDisagree": dis,
            "iters": [it for _, it in boosters], "heads": heads,
@@ -1237,10 +1326,11 @@ def _acc(tot, st):
 
 
 def _tot_line(tot):
-    """지평별 라벨 수와 시간초과 비율 — 배리어 폭이 맞는지 한눈에 본다(첫 실데이터 학습의 교훈)."""
+    """[V33.425] 배리어는 이제 ★진단★ 이다(라벨 아님). 지평별 배리어 적중 수와 시간초과 비율 —
+    배리어 폭이 맞는지 보는 눈으로만 남긴다. 어느 쪽도 행을 버리지 않는다."""
     per = " · ".join("%s %d(초과 %.0f%%)" % (h, tot["n"][h], 100.0 * tot["to"][h] / max(1, tot["n"][h] + tot["to"][h]))
                      for h in HORIZONS)
-    return "제외(동시타격 %d · 시간초과 %d · σ없음 %d · 구멍 %d · 일봉아님 %d종목) · 지평별 %s" % (
+    return "배리어 진단(동시타격 %d · 시간초과 %d · σ없음 %d) · 구멍 %d · 일봉아님 %d종목 · 지평별 %s" % (
         tot["amb"], tot["timeout"], tot["nosig"], tot["span"], tot["badDaily"], per)
 
 
@@ -1286,6 +1376,7 @@ def build_dataset_stream(BASE, HDR, log=print, limit=None):
         if s not in seen and s in daily:
             _eat(s, None)
     A = concat_arrays(parts)
+    A, tot["xsec"] = xsec_label(A, log=log)
     log("   · OMNI 봉 수신 %d종목 (5분봉 %d · 일봉 %d)" % (len(syms), n5, len(daily)))
     # 색인이 말하는 실제 간격(야후 dataGranularity)과 저장 판 — 수집기가 무엇을 받았는지 그대로 보인다
     gr = {}
@@ -1316,6 +1407,7 @@ def build_dataset(data, log=print, panels=None):
             parts.append(rows_to_arrays(rows))
             nsym += 1
     A = concat_arrays(parts)
+    A, tot["xsec"] = xsec_label(A, log=log)
     log("   · OMNI 표본 %s행 · 종목 %d · %.0fs" % (0 if A is None else len(A["y"]), nsym, time.time() - t0))
     log("   · OMNI " + _tot_line(tot))
     return A, tot, nsym
@@ -1399,11 +1491,13 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
     #   실데이터에서 실제로 그런 모델이 올라갔고, 모든 관문(정합·형식·probe)을 통과했다 —
     #   관문들이 "맞는 모델인가" 만 보고 ★"모델이긴 한가"★ 를 안 봤기 때문이다.
     #   조기종료가 즉시 멈췄다는 것은 배운 게 없다는 뜻이고, 그건 올릴 일이 아니라 말할 일이다.
-    if len(trees) < MIN_TREES:
-        log("   ⏭ OMNI 나무 %d그루(<%d) — 조기종료가 즉시 멈췄다. ★배운 것이 없어 올리지 않는다★ "
-            "(지평 균형·표본 구성을 먼저 볼 것)" % (len(trees), MIN_TREES))
+    _its = list(rep.get("iters") or [best])
+    if len(trees) < MIN_TREES or min(_its) < MIN_ITERS:
+        log("   ⏭ OMNI 나무 %d그루(<%d) · 시드별 라운드 %s(<%d) — 조기종료가 즉시 멈췄다. "
+            "★배운 것이 없어 올리지 않는다★ (라벨·지평 균형·표본 구성을 먼저 볼 것)"
+            % (len(trees), MIN_TREES, _its, MIN_ITERS))
         rep["ok"] = False
-        rep["why"] = "나무 %d그루 — 학습이 안 됐다" % len(trees)
+        rep["why"] = "나무 %d그루 · 시드별 라운드 %s — 학습이 안 됐다" % (len(trees), _its)
         return rep
     if pmax > 1e-9:
         log("   ⚠️ OMNI 내보낸 나무가 LightGBM 과 다른 답을 낸다(%.3g) — 업로드하지 않는다" % pmax)
@@ -1416,6 +1510,8 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
                "seeds": rep.get("seeds", 1), "seedDisagree": rep.get("seedDisagree", 0.0),
                "gain": gain, "featNames": MODEL_FEATS, "panelFeats": PANEL_FEATS,
                "hzTrain": rep.get("hzTrain"), "hzHold": rep.get("hzHold"), "hzMult": rep.get("hzMult"),
+               "label": "xsec", "xsecMin": XSEC_MIN, "xsec": (excl or {}).get("xsec"),
+               "iters": rep.get("iters"),
                "excl": excl, "trainedAt": int(time.time() * 1000), "params": LGB_PARAMS,
                "barrierK": BARRIER_K, "holdDays": HOLD_DAYS})
     body = json.dumps(payload, allow_nan=False, separators=(",", ":"))

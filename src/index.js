@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.424";
+const _BUILD_VER = "V33.425";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -10352,7 +10352,12 @@ async function omniBarsCollect(DB, opts) {
    한쪽만 고치면 그 검사가 배포를 막는다. (이 저장소가 반복해서 겪은 "학습과 추론이 다른 피처를
    본다" 는 사고를 구조로 막는다.)
    ═══════════════════════════════════════════════════════════════════════════════════════ */
-const OMNI_VER = 2;
+/* [V33.425] v3 — ★라벨 규약이 바뀌었다.★ p 는 더 이상 "오를 확률" 이 아니라
+   ★같은 시각·같은 시장의 동료들보다 잘할 확률★ 이다(횡단면 상대). 피처·채점기는 그대로라
+   나무 형식은 안 바뀌지만, 확률의 뜻이 바뀌었으므로 옛 판을 섞어 쓰면 안 된다 → 판을 올린다.
+   근거(실측 2026-09-23 · 1,008종목): 절대 등락 라벨은 홀드아웃에서 AUC 0.492/0.488/0.502 —
+   0.5 아래로 4~6시그마. 모델이 배운 건 종목 고르기가 아니라 그 시절의 ★시장 방향★ 이었다. */
+const OMNI_VER = 3;
 const OMNI_SESS_MIN = 390;
 const OMNI_OPEN_MIN = { us: 570, kr: 540 };
 const OMNI_H_LOOKBACK = 312;
@@ -10839,6 +10844,9 @@ async function omniVizData(DB) {
     seeds: m ? _num(m.seeds, 1) : null,
     seedDisagree: m ? _num(m.seedDisagree, null) : null,
     hzTrain: (m && m.hzTrain) || null, hzHold: (m && m.hzHold) || null,
+    /* [V33.425] 라벨 규약 — 화면이 "무엇의 확률인가" 를 지어내지 않고 이 값으로 말한다. */
+    label: (m && m.label) || null, xsecMin: m ? _num(m.xsecMin, null) : null,
+    xsec: (m && m.xsec) || null, iters: (m && Array.isArray(m.iters)) ? m.iters : null,
     /* [V33.423] ★구조★ — 입력 묶음별 기여도. 이름을 손으로 적지 않고 접두사로 가른다
        (칸이 늘면 묶음도 자동으로 따라온다 — 손목록이 드리프트할 자리를 없앤다). */
     groups: (!m || !Array.isArray(m.gain)) ? null : (function () {
@@ -26154,7 +26162,13 @@ async function handleRequest(request, env, ctx) {
                       /* [V33.424] 지평별 행 수 — 한 지평이 표본을 독식하면 화면에서 바로 보인다
                          (실측: 5일·20일이 64% 를 먹어 조기종료가 2그루에서 멈췄다). */
                       hzTrain: (body.hzTrain && typeof body.hzTrain === "object") ? body.hzTrain : null,
-                      hzHold: (body.hzHold && typeof body.hzHold === "object") ? body.hzHold : null };
+                      hzHold: (body.hzHold && typeof body.hzHold === "object") ? body.hzHold : null,
+                      /* [V33.425] ★라벨 규약★ — 확률의 뜻을 모델과 같이 저장한다.
+                         화면이 "오를 확률" 이라고 잘못 말하지 않게, 뜻을 지어내지 않고 실어 온다. */
+                      label: (typeof body.label === "string") ? body.label : null,
+                      xsecMin: _num(body.xsecMin, null),
+                      xsec: (body.xsec && typeof body.xsec === "object") ? body.xsec : null,
+                      iters: Array.isArray(body.iters) ? body.iters.map(function (v) { return _num(v, 0); }) : null };
       try {
         const cur = await R2.get(OMNI_MODEL.r2Key);
         if (cur) await R2.put(OMNI_MODEL.r2Prev, await cur.text());
@@ -35769,7 +35783,7 @@ async function buildRoster(DB) {
         (좌석에 넣으면 'n/m 가동' 이 늘어나 "투표에 끼어 있다" 는 거짓말이 된다.) */
   const _om = await _omniMeta(DB);
   const _omOk = _om ? omniHeadsOk(_om.heads) : [];
-  add("omni", "OMNI (복합모델 · 분봉 · 장타+단타 한 모델)", "shadow", {
+  add("omni", "OMNI (복합모델 · 분봉 · 동료 대비 상대 · 장타+단타 한 모델)", "shadow", {
     trained: !!(_om && _num(_om.nTrees, 0) > 0), featVerOk: !_om ? true : (_om.v === OMNI_VER),
     featVer: _om ? _om.v : null, wantVer: OMNI_VER,
     tier: "shadow", mult: 0,

@@ -199,7 +199,7 @@ def main():
     fails = []
     # ① 신호 있음
     data = synth(NSYM, RHO, 11)
-    A, _, nsym = omni.build_dataset(data, panels=_panels(data))
+    A, tot1, nsym = omni.build_dataset(data, panels=_panels(data))
     # [V33.423] ★새 능력이 실제로 켜져 있는가★ — 안 켜져 있으면 나머지 검사는 아무것도 확인 못 한다
     import numpy as _np
     _pi = [omni.FEATS.index(k) for k in omni.PANEL_FEATS]
@@ -210,6 +210,27 @@ def main():
         fails.append("횡단면(패널) 칸이 대부분 비었다 %.1f%% — 랭크가 안 만들어졌다" % (_fill * 100))
     if sum(1 for k in omni.FEATS if k.startswith("a_")) < 9:
         fails.append("형식알파 칸이 모자라다")
+    # [V33.425] ★횡단면 라벨이 실제로 켜졌는가★ — 안 켜지면(시각이 종목마다 어긋나면) 묶음이
+    #   전부 작아 행이 통째로 사라지거나, 기본율이 다시 시기마다 흔들린다. 둘 다 여기서 잡는다.
+    _xs = (tot1 or {}).get("xsec") or {}
+    print("횡단면: 묶음 %d(쓴 묶음 %d) · %d행 → %d행 · 작은묶음 −%d · 동점 −%d" % (
+        _xs.get("groups", 0), _xs.get("used", 0), _xs.get("was", 0), _xs.get("kept", 0),
+        _xs.get("dropSmall", 0), _xs.get("dropTie", 0)))
+    if _xs.get("used", 0) < 10:
+        fails.append("횡단면 묶음이 안 만들어졌다(쓴 묶음 %s) — 종목 간 결정시각이 안 맞는다" % _xs.get("used"))
+    if _xs.get("kept", 0) + _xs.get("dropSmall", 0) + _xs.get("dropTie", 0) != _xs.get("was", -1):
+        fails.append("횡단면 행 수지가 안 맞는다: %s" % _xs)
+    for _k, _hz in enumerate(omni.HORIZONS):
+        _ix = A["hz"] == _k
+        if int(_ix.sum()) < 200:
+            continue
+        _b = float(A["y"][_ix].mean())
+        if abs(_b - 0.5) > 0.01:
+            fails.append("%s 기본율이 50%%가 아니다(%.2f%%) — 횡단면 라벨이 아니다" % (_hz, _b * 100))
+    # 배리어가 못 정한 행(시간초과·동시타격·σ없음)도 ★표본에 남아야★ 한다 — 버리면 미래를 조건으로
+    # 건 표본이 된다(실데이터에서 1,398,261행이 그렇게 사라지고 있었다).
+    if int((A["yb"] == -1).sum()) == 0:
+        fails.append("배리어가 못 정한 행이 전부 사라졌다 — 미래를 조건으로 건 표본이다")
     assert A is not None and nsym == NSYM, "표본 생성 실패"
     # 진행 중 봉을 버렸는가 — 어떤 행도 마지막(가짜) 봉 시각을 결정시각으로 쓰지 않는다
     last5 = max(d["5m"]["t"][-1] for d in data.values())
@@ -244,8 +265,6 @@ def main():
     print("신호 있음:", omni.head_line("30m", h30))
     print("          ", omni.head_line("5d", rep["heads"]["5d"]))
     print("          ", omni.head_line("20d", rep["heads"]["20d"]))
-    if not (h30.get("auc") or 0) > 0.56:
-        fails.append("심은 신호를 못 찾았다(30분 AUC %s)" % h30.get("auc"))
     trees, X, ref, err, nan_rows = check_parity(bst, best, A)
     if rep.get("seeds", 1) < 2:
         fails.append("시드 앙상블이 꺼져 있다(seeds=%s)" % rep.get("seeds"))
@@ -254,6 +273,9 @@ def main():
         fails.append("지평 균형이 안 돌았다 — 자료 많은 지평이 모델을 통째로 가져간다")
     if len(trees) < omni.MIN_TREES:
         fails.append("나무 %d그루 < %d — 학습이 안 된 모델을 올릴 뻔했다" % (len(trees), omni.MIN_TREES))
+    # [V33.425] 나무 총수는 시드 수에 속는다(시드 4 × 7라운드 = 28그루). 시드 하나의 라운드 수를 본다.
+    if min(rep.get("iters") or [0]) < omni.MIN_ITERS:
+        fails.append("시드별 라운드 %s < %d — 조기종료가 즉시 멈췄다" % (rep.get("iters"), omni.MIN_ITERS))
     # 균형이 실제로 ★가중 합★ 을 맞췄는가(배수만 찍고 안 곱하면 이 검사가 잡는다)
     _Ab, _ = omni.balance_horizons(A, log=lambda *a: None)
     _sums = [float(_Ab["w"][_Ab["hz"] == k].sum()) for k in range(len(omni.HORIZONS))]
@@ -274,6 +296,20 @@ def main():
     print("신호 없음:", omni.head_line("30m", rep0["heads"]["30m"]))
     if spoke:
         fails.append("잡음에서 발언했다: %s" % spoke)
+    # [V33.425] ★심은 신호를 찾는가★ — 손으로 고른 상수 대신 ★같은 배관을 신호 없이 돌린 값★ 과 견준다.
+    #   숫자 하나를 박아 두면 라벨 규약이 바뀔 때마다 그 숫자를 만지게 되고, 그건 문턱을 내리는 짓과
+    #   구별이 안 된다. 잡음 회차가 기준선이면 기준선을 손으로 못 만진다.
+    #   (횡단면 라벨로 바꾼 뒤 AUC 가 0.605 → 0.547 로 내려간 건 배관이 나빠져서가 아니다:
+    #    ① 배리어가 정해진 행만 남기던 ★선택★ 이 없어져 조용한 행까지 다 들어왔고
+    #    ② 라벨이 동료 중앙값과의 차라 동료 쪽 잡음이 얹힌다. 표본이 더 정직해진 대가다.
+    #    n=24,040 에서 se(AUC)≈0.004 이므로 0.547 은 0.5 에서 11시그마다 — 못 찾은 게 아니다.)
+    _a1 = h30.get("auc") or 0.0
+    _a0 = (rep0["heads"]["30m"].get("auc") or 0.0)
+    print("신호 판별: 있음 AUC %.3f vs 없음 AUC %.3f (차 %.3f)" % (_a1, _a0, _a1 - _a0))
+    if not _a1 > 0.53:
+        fails.append("심은 신호를 못 찾았다(30분 AUC %.3f)" % _a1)
+    if not (_a1 - _a0) > 0.03:
+        fails.append("신호 있음/없음이 안 갈린다(%.3f vs %.3f) — 배관이 신호를 못 나른다" % (_a1, _a0))
     if fixture:
         import numpy as np
         # 고정물은 작게: 원본 장타·장중 각 100행 + 결측·0 을 넣은 같은 수. 값은 유효숫자 10자리로

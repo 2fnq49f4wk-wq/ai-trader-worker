@@ -4092,8 +4092,11 @@ def _omni_image():
 _OMNI_IMAGE = _omni_image()
 omni_job = None
 if _OMNI_IMAGE is not None:
+    # [V33.425] 시간초과·동시타격 행을 더는 버리지 않는다 → 표본이 1.7M 에서 3M 대로 늘고,
+    #   조기종료가 즉시 멈추지 않으면 라운드도 실제로 돈다. 그릇을 먼저 키운다(잘려서 못 배우면
+    #   '성능이 안 난다' 와 구별이 안 된다).
     @app.function(image=_OMNI_IMAGE, secrets=[modal.Secret.from_name("lux-dnn")],
-                  timeout=2400, cpu=4.0, memory=16384)
+                  timeout=5400, cpu=8.0, memory=32768)
     def omni_job(upload: bool = True, limit: int = 0):
         import os
         import sys
