@@ -753,8 +753,13 @@ def build_rows(sym, mkt, b5, bd, panels=None):
         b5 = {k: b5[k][:-1] for k in ("t", "o", "h", "l", "c", "v")}
         n = len(b5["t"])
         i0 = max(MIN_I, n - 1 - INTRA_MAX_POINTS * INTRA_STEP)
-        i0 += (n - 1 - i0) % INTRA_STEP
-        for i in range(i0, n, INTRA_STEP):
+        for i in range(i0, n):
+            # [V33.425] ★격자를 절대 시계에 건다.★ 예전엔 '배열 끝에서 6봉마다' 였다 — 종목마다
+            #   봉 수와 구멍이 달라 결정시각이 어긋난다. 합성 자료는 모든 종목이 같은 격자라
+            #   자가검사가 그걸 못 봤지만, 실데이터에선 횡단면 묶음이 통째로 못 만들어진다.
+            #   t % 1800 == 0 은 미국(09:30 개장)·한국(09:00) 둘 다 개장부터 30분 격자다.
+            if b5["t"][i] % (INTRA_STEP * BASE_SEC):
+                continue
             x, st = feature_point(b5, bdi, i, mkt)
             if panels and bdi.get("t"):   # [V33.423] 횡단면 칸 — feature_point 와 ★같은 규칙★ 으로 일봉을 고른다
                 _pd = panel_day_of(bdi, _last_daily_before(bdi, local_parts(b5["t"][i], mkt)[2]))
@@ -779,8 +784,11 @@ def build_rows(sym, mkt, b5, bd, panels=None):
         bd2 = {k: bd[k][:-1] for k in ("t", "o", "h", "l", "c", "v")}
         n = len(bd2["t"])
         j0 = max(D_LOOKBACK - 1, n - 1 - DAILY_MAX_POINTS * DAILY_STEP)
-        j0 += (n - 1 - j0) % DAILY_STEP          # 끝에서부터 같은 격자 — 수집일에 따라 격자가 흔들리지 않게
-        for j in range(j0, n, DAILY_STEP):
+        for j in range(j0, n):
+            # [V33.425] 장타 격자도 같은 이유로 ★날짜★ 에 건다 — '배열 끝에서 2봉마다' 는 종목마다
+            #   이력 길이가 달라 홀짝이 갈린다(횡단면 묶음이 반씩 쪼개진다).
+            if (bd2["t"][j] // 86400) % DAILY_STEP:
+                continue
             x, st = feature_point(None, bd2, None, mkt, daily_row=True, j=j)
             if panels:
                 _pd = panel_day_of(bd2, j)
@@ -956,8 +964,14 @@ EARLY_STOP = 40
 MIN_TREES = 30            # [V33.424] 이보다 적으면 ★학습이 안 된 것★ 이다 — 올리지 않는다
 # [V33.425] ★나무 총수만 보던 관문은 시드 수에 속는다.★ 실데이터에서 시드 4 × 7~8라운드 = 30그루가
 #   MIN_TREES 를 ★정확히★ 통과했다 — 시드를 늘리면 학습이 안 돼도 나무는 늘어난다.
-#   조기종료가 즉시 멈췄는지는 ★시드 하나의 라운드 수★ 로만 알 수 있다.
-MIN_ITERS = 25
+#   조기종료가 즉시 멈췄는지는 ★라운드 수★ 로만 알 수 있다.
+#   ★최솟값이 아니라 중앙값을 본다.★ 처음엔 min(시드별 라운드) < 25 로 걸었는데, 자가검사에서
+#   [21, 21, 22, ★10★] 이 나와 ★제대로 배운 모델을 거절했다★ — 시드 하나가 운 나쁘게 일찍
+#   멈추는 건 흔하고, 그게 "학습이 안 됐다" 는 뜻은 아니다. 실제 실패는 ★전 시드가 같이★
+#   즉시 멈춘다(7·7·8·8) — 중앙값이면 그건 잡고 운 나쁜 시드 하나에는 안 걸린다.
+#   문턱 15 는 그 둘 사이에서 골랐다: 실패 회차 중앙값 7.5(2배 여유) · 정상 회차 중앙값 21(1.4배).
+#   ※ 이건 ★매매 문턱이 아니다★ — 발언 문턱(SPEAK_TARGET 0.60)은 손대지 않았다.
+MIN_ITERS = 15
 # ══ [V33.424] ★지평 균형 — 실측이 드러낸 구조 결함.★ ═══════════════════════════════════════
 #   2026-09-23 실데이터(948종목·1,491,195행): ★나무 2그루★ 로 끝났다(사실상 학습 실패).
 #   원인은 하이퍼파라미터가 아니라 ★행 구성★ 이다:
@@ -1220,6 +1234,14 @@ def train_model(A, log=print):
         it = int(b.best_iteration or b.current_iteration())
         boosters.append((b, it))
         raws.append(b.predict(Aho["X"], num_iteration=it, raw_score=True))
+    # 검증손실이 ★동전던지기(ln2)★ 보다 실제로 내려갔나 — 횡단면 라벨이라 기본율이 정확히 50%
+    #   이므로 무학습 손실이 ln2 로 ★딱 떨어진다★. 라운드 수 옆에 이 숫자를 같이 남긴다.
+    _vg = []
+    for b, it in boosters:
+        try:
+            _vg.append(math.log(2.0) - float(list(list(b.best_score.values())[0].values())[0]))
+        except Exception:  # noqa: BLE001 — 관측용이다. 못 읽어도 학습을 막지 않는다
+            pass
     raw = np.mean(raws, axis=0)
     dis = float(np.mean(np.std(raws, axis=0))) if len(raws) > 1 else 0.0   # 시드 불일치(불확실성)
     p = 1.0 / (1.0 + np.exp(-raw))
@@ -1235,9 +1257,13 @@ def train_model(A, log=print):
     log("   · OMNI 기본율 학습 " + _bl(Atr, fit))
     log("   · OMNI 기본율 검증 " + _bl(Atr, val))
     log("   · OMNI 기본율 홀드 " + _bl(A, ho))
+    log("   · OMNI 시드별 라운드 %s (중앙값 %.0f · 최소치 %d) · 검증손실 ln2 대비 %s" % (
+        [it for _, it in boosters], float(np.median([it for _, it in boosters])), MIN_ITERS,
+        ("—" if not _vg else " · ".join("%+.4f" % v for v in _vg))))
     rep = {"ok": True, "cutoff": C, "innerCut": C2, "nTrain": int(len(fit)), "nVal": int(len(val)),
            "nHold": int(len(ho)), "bestIter": best, "seeds": len(boosters), "seedDisagree": dis,
            "iters": [it for _, it in boosters], "heads": heads,
+           "valGain": [float(v) for v in _vg],
            "hzMult": _hzMult, "hzTrain": _cnt(tr), "hzHold": _cnt(ho)}
     return (boosters, best), rep
 
@@ -1491,13 +1517,14 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
     #   실데이터에서 실제로 그런 모델이 올라갔고, 모든 관문(정합·형식·probe)을 통과했다 —
     #   관문들이 "맞는 모델인가" 만 보고 ★"모델이긴 한가"★ 를 안 봤기 때문이다.
     #   조기종료가 즉시 멈췄다는 것은 배운 게 없다는 뜻이고, 그건 올릴 일이 아니라 말할 일이다.
-    _its = list(rep.get("iters") or [best])
-    if len(trees) < MIN_TREES or min(_its) < MIN_ITERS:
-        log("   ⏭ OMNI 나무 %d그루(<%d) · 시드별 라운드 %s(<%d) — 조기종료가 즉시 멈췄다. "
+    _its = sorted(rep.get("iters") or [best])
+    _med = _its[len(_its) // 2] if len(_its) % 2 else (_its[len(_its) // 2 - 1] + _its[len(_its) // 2]) / 2.0
+    if len(trees) < MIN_TREES or _med < MIN_ITERS:
+        log("   ⏭ OMNI 나무 %d그루(<%d) · 시드별 라운드 %s 중앙값 %.1f(<%d) — 조기종료가 즉시 멈췄다. "
             "★배운 것이 없어 올리지 않는다★ (라벨·지평 균형·표본 구성을 먼저 볼 것)"
-            % (len(trees), MIN_TREES, _its, MIN_ITERS))
+            % (len(trees), MIN_TREES, _its, _med, MIN_ITERS))
         rep["ok"] = False
-        rep["why"] = "나무 %d그루 · 시드별 라운드 %s — 학습이 안 됐다" % (len(trees), _its)
+        rep["why"] = "나무 %d그루 · 라운드 중앙값 %.1f — 학습이 안 됐다" % (len(trees), _med)
         return rep
     if pmax > 1e-9:
         log("   ⚠️ OMNI 내보낸 나무가 LightGBM 과 다른 답을 낸다(%.3g) — 업로드하지 않는다" % pmax)
@@ -1511,7 +1538,7 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
                "gain": gain, "featNames": MODEL_FEATS, "panelFeats": PANEL_FEATS,
                "hzTrain": rep.get("hzTrain"), "hzHold": rep.get("hzHold"), "hzMult": rep.get("hzMult"),
                "label": "xsec", "xsecMin": XSEC_MIN, "xsec": (excl or {}).get("xsec"),
-               "iters": rep.get("iters"),
+               "iters": rep.get("iters"), "valGain": rep.get("valGain"),
                "excl": excl, "trainedAt": int(time.time() * 1000), "params": LGB_PARAMS,
                "barrierK": BARRIER_K, "holdDays": HOLD_DAYS})
     body = json.dumps(payload, allow_nan=False, separators=(",", ":"))

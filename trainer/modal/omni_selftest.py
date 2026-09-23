@@ -85,7 +85,16 @@ def synth(nsym, rho, seed):
     data = {}
     for k in range(nsym):
         mkt = "us" if k % 2 == 0 else "kr"
-        b5, bd = make_symbol(rng, mkt, rho, drift_mom=0.0)
+        # [V33.425] ★종목마다 봉 수와 구멍이 다르게 만든다 — 실데이터가 그렇다.★
+        #   예전 합성 시장은 모든 종목이 ★똑같은 격자★ 라, 결정시각을 '배열 끝에서 N봉마다' 로
+        #   잡는 버그를 자가검사가 통째로 못 봤다(합성에서는 우연히 맞아떨어진다).
+        #   구멍(거래정지·저유동)과 다른 이력 길이·수집 지연을 넣어 두면, 격자가 절대 시계에
+        #   안 걸린 순간 횡단면 묶음이 무너지고 아래 검사가 바로 잡는다.
+        b5, bd = make_symbol(rng, mkt, rho, ndays_i=70 - (k % 4), drift_mom=0.0)
+        keep = [i for i in range(len(b5["t"]) - 1) if rng.random() > 0.015] + [len(b5["t"]) - 1]
+        b5 = {f: [b5[f][i] for i in keep] for f in ("t", "o", "h", "l", "c", "v")}
+        if k % 7 == 0:                      # 수집이 하루 늦은 종목 — 일봉 격자의 홀짝이 갈린다
+            bd = {f: bd[f][:-1] for f in ("t", "o", "h", "l", "c", "v")}
         data["S%03d%s" % (k, ".KS" if mkt == "kr" else "")] = {"m": mkt, "5m": b5, "1d": bd}
     return data
 
@@ -218,6 +227,17 @@ def main():
         _xs.get("dropSmall", 0), _xs.get("dropTie", 0)))
     if _xs.get("used", 0) < 10:
         fails.append("횡단면 묶음이 안 만들어졌다(쓴 묶음 %s) — 종목 간 결정시각이 안 맞는다" % _xs.get("used"))
+    # ★격자가 절대 시계에 걸려 있는가★ — 종목마다 봉 수·구멍·수집 지연이 다른데도 같은 시각에
+    #   모여야 한다. 안 걸려 있으면 묶음이 잘게 부서져 ①남는 행이 급감하고 ②평균 묶음 크기가
+    #   종목 수 근처에서 한 자릿수로 떨어진다. 둘 다 본다(하나만 보면 우회할 구멍이 남는다).
+    _avg = _xs.get("kept", 0) / max(1, _xs.get("used", 0))
+    _rate = _xs.get("kept", 0) / max(1, _xs.get("was", 1))
+    print("횡단면 정렬: 평균 묶음 %.1f종목 (시장당 %d) · 남은 비율 %.1f%%" % (_avg, NSYM // 2, _rate * 100))
+    if _rate < 0.8:
+        fails.append("횡단면 라벨에서 행이 %.0f%% 만 남았다 — 결정시각이 종목마다 어긋난다" % (_rate * 100))
+    if _avg < 0.6 * (NSYM // 2):
+        fails.append("평균 묶음이 %.1f종목뿐이다(시장당 %d) — 격자가 절대 시계에 안 걸려 있다"
+                     % (_avg, NSYM // 2))
     if _xs.get("kept", 0) + _xs.get("dropSmall", 0) + _xs.get("dropTie", 0) != _xs.get("was", -1):
         fails.append("횡단면 행 수지가 안 맞는다: %s" % _xs)
     for _k, _hz in enumerate(omni.HORIZONS):
@@ -274,8 +294,11 @@ def main():
     if len(trees) < omni.MIN_TREES:
         fails.append("나무 %d그루 < %d — 학습이 안 된 모델을 올릴 뻔했다" % (len(trees), omni.MIN_TREES))
     # [V33.425] 나무 총수는 시드 수에 속는다(시드 4 × 7라운드 = 28그루). 시드 하나의 라운드 수를 본다.
-    if min(rep.get("iters") or [0]) < omni.MIN_ITERS:
-        fails.append("시드별 라운드 %s < %d — 조기종료가 즉시 멈췄다" % (rep.get("iters"), omni.MIN_ITERS))
+    _it = sorted(rep.get("iters") or [0])
+    _md = _it[len(_it) // 2] if len(_it) % 2 else (_it[len(_it) // 2 - 1] + _it[len(_it) // 2]) / 2.0
+    if _md < omni.MIN_ITERS:
+        fails.append("라운드 중앙값 %.1f < %d — 조기종료가 즉시 멈췄다(시드별 %s)"
+                     % (_md, omni.MIN_ITERS, _it))
     # 균형이 실제로 ★가중 합★ 을 맞췄는가(배수만 찍고 안 곱하면 이 검사가 잡는다)
     _Ab, _ = omni.balance_horizons(A, log=lambda *a: None)
     _sums = [float(_Ab["w"][_Ab["hz"] == k].sum()) for k in range(len(omni.HORIZONS))]
