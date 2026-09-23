@@ -96,7 +96,7 @@ jobs:
       - name: OMNI trainer self-test
         if: steps.sec.outputs.ok == 'true'
         run: |
-          pip install -q numpy lightgbm
+          pip install -q numpy lightgbm requests
           cd trainer/modal && python3 omni_selftest.py
       - name: Deploy trainer (cron 갱신)
         if: steps.sec.outputs.ok == 'true'
