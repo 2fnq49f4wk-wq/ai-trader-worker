@@ -31,6 +31,7 @@
 ══════════════════════════════════════════════════════════════════════════════════════
 """
 import math
+import os
 
 OMNI_VER = 3
 BASE_SEC = 300                 # 5분봉 — 워커 OMNIBARS.baseSec 와 같아야 한다
@@ -79,6 +80,22 @@ FEATS = [
     "p_disp", "p_n",              # 그날 종목 간 산포(국면) · 패널 크기(신뢰도)
 ]
 # 패널에서 채우는 칸(나머지는 종목 하나만으로 계산된다) — 두 단계를 코드가 아니라 ★표★ 로 가른다.
+# ══ [V33.425g] ★장중 횡단면 — 재 보기 전에는 싣지 않는다(실험 스위치).★ ═══════════════════
+#   라벨은 "같은 시각 · 같은 시장 동료보다 잘하는가" 인데, 지금 있는 횡단면 칸(q_*·p_* 15칸)은
+#   전부 ★전일 일봉★ 이다 — 장중 상대 위치를 아무도 안 보고 있다. 그래서 장중 랭크가 다음 수다.
+#   ★그런데 V33.423 이 그걸 의도적으로 뺐다★ — 학습은 전 종목을 정확한 시각에 보지만 추론은
+#   그 사이클에 본 종목을 근사 시각에 본다. 그 어긋남이 이 저장소가 반복해 당한 사고다.
+#   그리고 워커가 30분마다 1,008종목 피처를 다시 계산해야 한다(Cloudflare CPU 한도).
+#   → 비싼 쪽(워커 배선)을 만들기 ★전에★ 값이 있는지부터 잰다. OMNI_KSEC=1 인 회차에서만
+#     칸이 붙고, 그 회차는 ★올리지 않는다★(실험은 운영에 안 섞인다 — 관문이 확인한다).
+KSEC = os.environ.get("OMNI_KSEC") == "1"
+KSEC_MIN = 20
+KSEC_SRC = {"k_r12": "m_r12", "k_r24": "m_r24", "k_sret": "s_ret", "k_gap": "s_gap",
+            "k_relvol": "m_relvol12", "k_rv48": "m_rv48", "k_rsi": "m_rsi14", "k_vwdev": "s_vwapdev"}
+KSEC_FEATS = ["k_r12", "k_r24", "k_sret", "k_gap", "k_relvol", "k_rv48", "k_rsi", "k_vwdev", "k_n"]
+if KSEC:
+    FEATS = FEATS + KSEC_FEATS
+
 PANEL_FEATS = ["q_r1", "q_r5", "q_r20", "q_rv20", "q_rsi", "q_volr", "q_hi252", "q_ill",
                "p_ex1", "p_ex5", "p_ex20", "p_beta60", "p_corr60", "p_disp", "p_n"]
 PANEL_MIN = 20          # 이보다 적으면 랭크를 만들지 않는다(모르면 모른다)
@@ -1099,6 +1116,52 @@ def take(A, idx):
 XSEC_MIN = 20                   # 같은 시각 · 같은 시장에 이만큼은 있어야 '상대' 라고 말한다
 
 
+def xsec_feats(A, log=print, min_n=KSEC_MIN):
+    """[V33.425g] (시장 · 결정시각) 묶음 안에서 장중 피처의 순위를 매긴다 — ★미래를 안 쓴다★
+    (결정시각까지의 값만 쓴다). 한 종목이 지평마다 여러 행으로 있으므로 ★종목 단위로 한 번★
+    순위를 내고 그 종목의 모든 행에 같은 값을 넣는다(행 수로 세면 지평이 덜 붙은 종목이 손해다)."""
+    import numpy as np
+    if not KSEC or A is None or not len(A["y"]):
+        return A, {"on": False}
+    cols = [FEATS.index(k) for k in KSEC_FEATS]
+    src = [FEATS.index(KSEC_SRC[k]) for k in KSEC_FEATS if k in KSEC_SRC]
+    order = np.lexsort((A["td"], A["mkt"]))
+    md, tdv = A["mkt"][order], A["td"][order]
+    n = len(order)
+    newg = np.empty(n, dtype=bool)
+    newg[0] = True
+    newg[1:] = (md[1:] != md[:-1]) | (tdv[1:] != tdv[:-1])
+    starts = np.flatnonzero(newg)
+    ends = np.append(starts[1:], n)
+    X = A["X"]
+    used = filled = 0
+    for a, b in zip(starts, ends):
+        ix = order[a:b]
+        syms = {}
+        for i in ix:                       # 종목 단위로 접는다(같은 종목의 행은 값이 같다)
+            syms.setdefault(A["sym"][i], []).append(i)
+        if len(syms) < min_n:
+            continue
+        keys = list(syms)
+        used += 1
+        for c, sc in zip(cols, src):
+            vals = [X[syms[k][0], sc] for k in keys]
+            rk = _qrank(vals)
+            for k, r in zip(keys, rk):
+                v = NAN if r is None else r
+                for i in syms[k]:
+                    X[i, c] = v
+        for k in keys:                     # k_n — 그 시각에 견준 동료 수(신뢰도)
+            for i in syms[k]:
+                X[i, cols[-1]] = float(len(keys))
+        filled += len(ix)
+    info = {"on": True, "groups": int(len(starts)), "used": int(used), "rows": int(filled),
+            "cols": len(KSEC_FEATS), "minN": int(min_n)}
+    log("   · OMNI 장중 횡단면(실험) — 묶음 %d(쓴 묶음 %d) · %d행에 %d칸 채움" % (
+        info["groups"], used, filled, len(KSEC_FEATS)))
+    return A, info
+
+
 def xsec_label(A, log=print, min_n=XSEC_MIN):
     """(시장 · 지평 · 결정시각) 묶음 안에서 지평 수익을 중앙값과 견준다.
     중앙값과 정확히 같은 행은 버린다(어느 쪽도 아니다 — 추측하지 않는다).
@@ -1478,6 +1541,7 @@ def build_dataset_stream(BASE, HDR, log=print, limit=None):
         if s not in seen and s in daily:
             _eat(s, None)
     A = concat_arrays(parts)
+    A, tot["ksec"] = xsec_feats(A, log=log)
     A, tot["xsec"] = xsec_label(A, log=log)
     log("   · OMNI 봉 수신 %d종목 (5분봉 %d · 일봉 %d)" % (len(syms), n5, len(daily)))
     # 색인이 말하는 실제 간격(야후 dataGranularity)과 저장 판 — 수집기가 무엇을 받았는지 그대로 보인다
@@ -1509,6 +1573,7 @@ def build_dataset(data, log=print, panels=None):
             parts.append(rows_to_arrays(rows))
             nsym += 1
     A = concat_arrays(parts)
+    A, tot["ksec"] = xsec_feats(A, log=log)
     A, tot["xsec"] = xsec_label(A, log=log)
     log("   · OMNI 표본 %s행 · 종목 %d · %.0fs" % (0 if A is None else len(A["y"]), nsym, time.time() - t0))
     log("   · OMNI " + _tot_line(tot))
@@ -1608,6 +1673,11 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
             % (len(trees), _its, _med, _edge.get("why")))
         rep["ok"] = False
         rep["why"] = _edge.get("why") or "나무 %d그루" % len(trees)
+        return rep
+    if KSEC:
+        log("   ⏭ OMNI ★장중 횡단면 실험 회차★ — 칸이 워커에 없다. 재기만 하고 올리지 않는다.")
+        rep["ok"] = False
+        rep["why"] = "OMNI_KSEC 실험 회차 — 업로드 안 함"
         return rep
     if pmax > 1e-9:
         log("   ⚠️ OMNI 내보낸 나무가 LightGBM 과 다른 답을 낸다(%.3g) — 업로드하지 않는다" % pmax)

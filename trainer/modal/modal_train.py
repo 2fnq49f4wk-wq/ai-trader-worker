@@ -4097,7 +4097,7 @@ if _OMNI_IMAGE is not None:
     #   '성능이 안 난다' 와 구별이 안 된다).
     @app.function(image=_OMNI_IMAGE, secrets=[modal.Secret.from_name("lux-dnn")],
                   timeout=5400, cpu=8.0, memory=32768)
-    def omni_job(upload: bool = True, limit: int = 0):
+    def omni_job(upload: bool = True, limit: int = 0, ksec: int = 0):
         import os
         import sys
         import time
@@ -4105,6 +4105,9 @@ if _OMNI_IMAGE is not None:
         # [V33.425c] 컨테이너에 준 코어(cpu=8.0)를 LightGBM 에 그대로 알려 준다 — 안 알려 주면
         #   OpenMP 가 ★호스트의 논리 코어 수★ 만큼 스레드를 띄워 서로 밀어낸다.
         os.environ.setdefault("OMNI_THREADS", "8")
+        # [V33.425g] 장중 횡단면 실험 회차 — 칸이 붙고, omni.run 이 ★업로드를 거부★ 한다.
+        if ksec:
+            os.environ["OMNI_KSEC"] = "1"
         import omni
         BASE = os.environ["BASE_URL"].rstrip("/")
         KEY = os.environ["TRAIN_KEY"]

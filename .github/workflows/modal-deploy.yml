@@ -32,6 +32,12 @@ on:
         description: 'OMNI 복합모델만 지금 학습(CPU · 수 분)'
         type: boolean
         default: false
+      # [V33.425g] 장중 횡단면 칸을 붙여 ★값이 있는지만★ 재는 실험 회차. 워커에 없는 칸이므로
+      #   이 회차는 업로드하지 않는다(omni.run 이 거부한다 — 실험이 운영에 안 섞인다).
+      omni_ksec:
+        description: 'OMNI 장중 횡단면 칸 실험(재기만 · 업로드 안 함) — omni_now 와 함께'
+        type: boolean
+        default: false
       # [V33.204] 10층(4,580,070) DNN 이 valAcc 49.3% 로 2층 폴백(53.3%)보다 낮게 측정됐다.
       #   깊이를 추측으로 정하지 않고 ★같은 표본·같은 분할·같은 시드★ 로 후보를 재서 고른다.
       #   기본은 꺼짐 — 정기 6시간 실행에서 후보를 셋씩 학습하면 Modal 크레딧($21/$30)을 넘긴다.
@@ -189,7 +195,7 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           set -o pipefail
-          modal run trainer/modal/modal_train.py::omni_job 2>&1 | tee omni.log
+          modal run trainer/modal/modal_train.py::omni_job --ksec ${{ inputs.omni_ksec && 1 || 0 }} 2>&1 | tee omni.log
       - name: OMNI summary
         if: always()
         run: |
