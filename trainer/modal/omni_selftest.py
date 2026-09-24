@@ -472,6 +472,15 @@ def main():
             _top = max(range(len(_W0)), key=lambda i: abs(_W0[i][0]))
             if not any(e[0] == _top and e[1] == 0 for e in _E[0]):
                 fails.append("구조 관측 연결선이 실제 가중치 상위와 다르다(지어낸 선)")
+    # [V33.428c] ★되돌림 안전장치★ — 실데이터 1회차처럼 섞음이 나무 단독보다 나쁘면 α 가 전부 0 이 돼야 한다
+    _mk = lambda a: {hz: {"n": 20000, "auc": a} for hz in omni.HORIZONS}
+    _r1 = omni.revert_if_worse({"heads": _mk(0.5068), "headsG": _mk(0.5113), "alpha": [0, 0, 0.5, 0, 0]}, log=lambda *a: None)
+    _r2 = omni.revert_if_worse({"heads": _mk(0.5469), "headsG": _mk(0.5444), "alpha": [0, 0, 0.9, 0, 0]}, log=lambda *a: None)
+    if not (_r1.get("reverted") and not any(_r1["alpha"]) and _r1["heads"]["1d"]["auc"] == 0.5113 and "headsG" not in _r1):
+        fails.append("섞음이 나빠도 되돌리지 않았다: %s" % {k: _r1.get(k) for k in ("alpha", "reverted")})
+    if _r2.get("reverted") or _r2["alpha"] != [0, 0, 0.9, 0, 0]:
+        fails.append("섞음이 나은데 되돌렸다")
+    print("되돌림 안전장치: 나쁜 섞음 → α %s · 나은 섞음 → α %s" % (_r1["alpha"], _r2["alpha"]))
     if fixture:
         import numpy as np
         # 고정물은 작게: 원본 장타·장중 각 100행 + 결측·0 을 넣은 같은 수. 값은 유효숫자 10자리로

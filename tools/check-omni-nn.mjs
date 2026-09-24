@@ -87,5 +87,16 @@ console.log("\n④ 배선 — 업로드 검증과 섀도우 채점이 같은 식
     "★신경망 가중치가 D1 메타로 들어간다(행 크기 한도)★");
 }
 
+console.log("\n⑤ 신경망 보고서는 작게 — 가중치가 섞여 와도 메타(D1)가 부풀지 않는다");
+{
+  const big = { edgeB: { auc: 0.51 }, export: FX.nn, zHold: new Array(5000).fill(0.1), grid: [{ valAuc: 0.52 }] };
+  const r = M._omNnRepSlim(big);
+  chk(r && r.edgeB && r.grid && !("export" in r) && !("zHold" in r), "모르는 칸(가중치·홀드아웃 로짓)은 버리고 아는 칸만 남긴다",
+    "★가중치가 메타로 샌다★");
+  const huge = { grid: new Array(4000).fill({ valAuc: 0.5, cfg: { name: "x".repeat(20) } }) };
+  chk(M._omNnRepSlim(huge) === null, "60KB 를 넘으면 통째로 버린다(없다고 말한다)", "★큰 보고서가 그대로 들어간다★");
+  chk(M._omNnRepSlim(null) === null && M._omNnRepSlim([1]) === null, "빈 값·배열은 null", "★형식 검사 없음★");
+}
+
 console.log(fails ? "\n✗ OMNI-NN 검사 실패 " + fails : "\n✓ OMNI-NN 검사 통과");
 process.exit(fails ? 1 : 0);

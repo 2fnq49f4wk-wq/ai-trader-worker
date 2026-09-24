@@ -11298,6 +11298,17 @@ function omniNnValidate(nn, alpha, D) {
   }
   return null;
 }
+/* [V33.428c] 신경망 보고서는 ★아는 칸만★ · ★작게★ 메타(D1 한 행)에 싣는다 — 학습기가 실수로 가중치를
+   실어 보내도(1회차에서 실제로 그랬다 — 300KB) 메타가 부풀지 않게. 넘치면 버린다(없다고 말한다). */
+const OMNI_NNREP_KEYS = ["alpha", "alphaTable", "cfg", "grid", "hid", "inputDim", "nFlags", "target", "sec", "seeds",
+                         "headsN", "headsG", "edgeG", "edgeN", "edgeB", "reverted", "alphaTried"];
+function _omNnRepSlim(r) {
+  if (!r || typeof r !== "object" || Array.isArray(r)) return null;
+  const out = {};
+  for (const k of OMNI_NNREP_KEYS) if (r[k] !== undefined) out[k] = r[k];
+  let n = 0; try { n = JSON.stringify(out).length; } catch (e) { return null; }
+  return n <= 60000 ? out : null;
+}
 /* design 행에서 지평 번호를 읽는다(원핫) — probe 행은 지평을 따로 싣지 않는다. */
 function _omHzOf(x) {
   const o = OMNI_FEATS.length;
@@ -26766,7 +26777,7 @@ async function handleRequest(request, env, ctx) {
                          nnViz(구조 관측용 세기)와 nnRep(나무/신경망/섞음 홀드아웃 비교)은 메타에도. */
                       nn: body.nn || null, alpha: body.nn ? body.alpha : null,
                       nnViz: (body.nn && body.nnViz && typeof body.nnViz === "object") ? body.nnViz : null,
-                      nnRep: (body.nn && body.nnRep && typeof body.nnRep === "object") ? body.nnRep : null };
+                      nnRep: _omNnRepSlim(body.nn ? body.nnRep : null) };
       try {
         const cur = await R2.get(OMNI_MODEL.r2Key);
         if (cur) await R2.put(OMNI_MODEL.r2Prev, await cur.text());
@@ -51864,7 +51875,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

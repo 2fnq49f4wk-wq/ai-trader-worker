@@ -1584,12 +1584,15 @@ def train_model(A, log=print):
            "valGain": [float(v) for v in _vg],
            "hzMult": _hzMult, "hzTrain": _cnt(tr), "hzHold": _cnt(ho)}
     if nnr:
-        rep["nn"] = {k: v for k, v in nnr.items() if k not in ("zHold", "nets")}
+        # 가중치(export)는 여기 싣지 않는다 — 본문 "nn" 에 한 번만. 여기 실으면 워커 메타(D1 한 행)에 들어간다.
+        rep["nn"] = {k: v for k, v in nnr.items() if k not in ("zHold", "nets", "export")}
         rep["nn"]["headsN"] = {hz: {k: (h or {}).get(k) for k in ("n", "auc", "acc")} for hz, h in (headsN or {}).items()}
         rep["nn"]["headsG"] = {hz: {k: (h or {}).get(k) for k in ("n", "auc", "acc")} for hz, h in (headsG or {}).items()}
         rep["nnExport"] = nnr["export"]
         rep["nnViz"] = nn_viz(nnr["export"], headsN)
     rep["alpha"] = alpha
+    if nnr:
+        rep["headsG"] = headsG           # 되돌림 안전장치용(run) — 나무 단독의 전체 머리 성적
     return (boosters, best), rep
 
 
@@ -2141,6 +2144,21 @@ def make_probe(boosters, best, A, n=PROBE_N, seed=5, nn=None, alpha=None):
     return out
 
 
+def revert_if_worse(rep, log=print):
+    """[V33.428c] 섞은 홀드아웃이 나무 단독보다 낮으면 α 를 전부 0 으로 — 나무 단독의 머리 성적으로 올린다."""
+    if rep.get("headsG") and any(rep.get("alpha") or []):
+        _eB, _eG = holdout_edge(rep["heads"]), holdout_edge(rep["headsG"])
+        if _eG.get("auc") is not None and (_eB.get("auc") is None or _eG["auc"] > _eB["auc"]):
+            log("   ↩ OMNI 섞음 %.4f < 나무 단독 %.4f — ★α 를 전부 0 으로 되돌린다★(신경망은 구조 관측에만 남는다)"
+                % (_eB["auc"] or 0.0, _eG["auc"]))
+            rep["alphaTried"] = rep["alpha"]
+            rep["alpha"] = [0.0] * len(HORIZONS)
+            rep["heads"] = rep["headsG"]
+            rep["reverted"] = True
+    rep.pop("headsG", None)
+    return rep
+
+
 def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
     """수집 → 표본 → 학습 → 평가 → 업로드. 업로드는 ★섀도우★ — 워커가 라이브에 쓰는 건 머리별 ok 뿐."""
     import time
@@ -2164,6 +2182,17 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
     trees = export_model(boosters)
     gain = feature_gain(boosters)
     C, _, ho = split_cutoff(A)
+    # ══ [V33.428c] ★되돌림 안전장치 — 섞은 모델이 나무 단독보다 나쁘면 나무 단독을 쓴다.★ ═════════
+    #   실데이터 두 회차 모두, 검증(α 구간)에서 신경망이 이긴 1일 머리가 홀드아웃에서는 졌다
+    #   (1회차: 섞음 0.5068 < 나무 0.5113 인데 관문을 넘어 ★나쁜 모델이 올라갔다★ ·
+    #    2회차: 1d 신경망 검증 +2σ 초과 → 홀드아웃 0.496 vs 나무 0.516, 섞음 0.5042 로 관문 불통과 →
+    #    ★아무것도 안 올라가 1회차의 나쁜 모델이 그대로 남았다★).
+    #   α 구간(절단 직전 몇 주)의 우위가 다음 35일로 이어지지 않는다 — 신경망의 검증↔홀드아웃 간극이
+    #   나무보다 크다(검증 0.524 → 홀드아웃 0.501).
+    #   → 홀드아웃을 ★고르는 데★ 쓰지는 않는다. 다만 ★기본값(나무 단독)보다 나빠지는 것만은 막는다★:
+    #     섞은 홀드아웃 AUC 가 나무 단독보다 낮으면 α 를 전부 0 으로 되돌리고 나무 단독의 성적으로 올린다.
+    #     (둘 중 나은 쪽을 고르는 셈이라 올린 숫자가 아주 약간 낙관적일 수 있다 — 그래서 기록에 둘 다 남긴다.)
+    revert_if_worse(rep, log=log)
     _nnx = rep.get("nnExport")
     _alpha = [float(a) for a in (rep.get("alpha") or [0.0] * len(HORIZONS))]
     probe = make_probe(boosters, best, take(A, ho), nn=_nnx, alpha=_alpha)
@@ -2235,7 +2264,9 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
                "hzFitShare": rep.get("hzFitShare"), "hzValShare": rep.get("hzValShare"),
                "edge": rep.get("edge"),
                # [V33.428] 신경망 — 가중치 · α · 구조 관측용 세기 · 나무/신경망/섞음 성적 비교
-               "nn": _nnx, "alpha": _alpha, "nnViz": rep.get("nnViz"), "nnRep": rep.get("nn"),
+               "nn": _nnx, "alpha": _alpha, "nnViz": rep.get("nnViz"),
+               "nnRep": dict(rep.get("nn") or {}, reverted=bool(rep.get("reverted")), alphaTried=rep.get("alphaTried"))
+                        if rep.get("nn") else None,
                # [V33.426] ★패널을 같이 올린다★ — 워커가 다시 만들면 종목 집합이 달라 랭크가 갈린다.
                "panelDay": _pday, "panel": _prows,
                "excl": excl, "trainedAt": int(time.time() * 1000), "params": LGB_PARAMS,

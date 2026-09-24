@@ -14749,7 +14749,8 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       (NV? chip('신경망', nnShape+' · 네트 '+((NR.seeds||[]).length||'—')+'개', 'good') : chip('신경망', '아직 없음(나무만)', '')) +
       (NV? chip('지평별 α(신경망 몫)', (d.horizons||[]).map(function(h,k){ return h+' '+(AL[k]!=null?(+AL[k]).toFixed(1):'—'); }).join(' · '),
                 nnUsed? 'good':'') : '') +
-      (NV? chip('홀드아웃 AUC 나무 / 신경망 / 섞음', fa(NR.edgeG)+' / '+fa(NR.edgeN)+' / '+fa(NR.edgeB), '') : '');
+      (NV? chip('홀드아웃 AUC 나무 / 신경망 / 섞음', fa(NR.edgeG)+' / '+fa(NR.edgeN)+' / '+fa(NR.edgeB)
+                + (NR.reverted? ' — 섞음이 나빠 나무 단독으로 되돌림' : ''), NR.reverted?'warn':'') : '');
     if(ban){
       ban.className='nnv-banner '+(okN>0?'on':'off');
       ban.innerHTML = okN>0
