@@ -1509,6 +1509,27 @@ def _tot_line(tot):
         tot["amb"], tot["timeout"], tot["nosig"], tot["span"], tot["badDaily"], per)
 
 
+def latest_panel(panels):
+    """[V33.426] ★워커가 다시 만들지 않고 이것을 그대로 쓴다.★
+    가장 최근 날짜의 패널 한 장 + 그 날짜. 워커가 패널을 스스로 만들면 그 시점에 가진 종목
+    집합·시각이 학습 때와 달라 랭크가 갈린다 — 이 저장소가 반복해 당한 사고다(V33.423 주석).
+    같은 객체를 실어 보내면 갈릴 자리가 ★없다★."""
+    if not panels:
+        return None, None
+    dk = max(panels)
+    pr = panels[dk] or {}
+    out = {}
+    for sym, row in pr.items():
+        r = {}
+        for k in PANEL_FEATS:
+            v = row.get(k, NAN)
+            if v == v and v not in (float("inf"), float("-inf")):
+                r[k] = round(float(v), 6)
+        if r:
+            out[sym] = r
+    return dk, out
+
+
 def build_dataset_stream(BASE, HDR, log=print, limit=None):
     """★흘려서★ 만든다 — 5분봉을 묶음으로 받아 곧바로 행으로 바꾸고 원시 봉은 버린다.
     저장소가 커져도(종목당 5분봉 4만 개) 원시 봉 전체를 한꺼번에 메모리에 올리지 않는다."""
@@ -1551,6 +1572,9 @@ def build_dataset_stream(BASE, HDR, log=print, limit=None):
         if s not in seen and s in daily:
             _eat(s, None)
     A = concat_arrays(parts)
+    tot["panelDay"], tot["panelRows"] = latest_panel(panels)
+    log("   · OMNI 최신 패널 %s — 종목 %d (워커가 이걸 그대로 쓴다)" % (
+        tot["panelDay"], len(tot["panelRows"] or {})))
     A, tot["ksec"] = xsec_feats(A, log=log)
     A, tot["xsec"] = xsec_label(A, log=log)
     log("   · OMNI 봉 수신 %d종목 (5분봉 %d · 일봉 %d)" % (len(syms), n5, len(daily)))
@@ -1583,6 +1607,7 @@ def build_dataset(data, log=print, panels=None):
             parts.append(rows_to_arrays(rows))
             nsym += 1
     A = concat_arrays(parts)
+    tot["panelDay"], tot["panelRows"] = latest_panel(panels)
     A, tot["ksec"] = xsec_feats(A, log=log)
     A, tot["xsec"] = xsec_label(A, log=log)
     log("   · OMNI 표본 %s행 · 종목 %d · %.0fs" % (0 if A is None else len(A["y"]), nsym, time.time() - t0))
@@ -1650,6 +1675,9 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
     if m is None:
         log("   ⏭ OMNI " + rep["why"])
         return rep
+    # [V33.426] 패널은 ★한 번만★ 싣는다 — excl 에 남겨 두면 본문이 두 배가 된다.
+    _pday = (excl or {}).pop("panelDay", None)
+    _prows = (excl or {}).pop("panelRows", None)
     boosters, best = m
     trees = export_model(boosters)
     gain = feature_gain(boosters)
@@ -1704,10 +1732,13 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
                "iters": rep.get("iters"), "valGain": rep.get("valGain"),
                "hzFitShare": rep.get("hzFitShare"), "hzValShare": rep.get("hzValShare"),
                "edge": rep.get("edge"),
+               # [V33.426] ★패널을 같이 올린다★ — 워커가 다시 만들면 종목 집합이 달라 랭크가 갈린다.
+               "panelDay": _pday, "panel": _prows,
                "excl": excl, "trainedAt": int(time.time() * 1000), "params": LGB_PARAMS,
                "barrierK": BARRIER_K, "holdDays": HOLD_DAYS})
     body = json.dumps(payload, allow_nan=False, separators=(",", ":"))
-    log("   · OMNI 업로드 크기 %.1f MB" % (len(body) / 1e6))
+    log("   · OMNI 업로드 크기 %.1f MB (패널 %s · 종목 %d)" % (
+        len(body) / 1e6, _pday, len(_prows or {})))
     if upload:
         for attempt in range(3):
             try:

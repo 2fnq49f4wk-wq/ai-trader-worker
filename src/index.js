@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.425";
+const _BUILD_VER = "V33.426";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -10345,6 +10345,265 @@ async function omniBarsCollect(DB, opts) {
          (inHours ? " (장중 — 적게)" : "") + " · 다음 커서 " + idx;
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════
+   [V33.426] ★OMNI 섀도우 채점 — 여기까지 와야 "개발 끝" 이다.★
+
+   여기 오기 전까지 OMNI 는 운영에서 ★한 번도 돌지 않았다★: 수집기가 봉을 모으고, Modal 이
+   학습해 올리고, 화면이 홀드아웃 숫자를 보여 줬지만, 워커는 OMNI 피처를 단 한 칸도 계산한
+   적이 없다(omniScoreRaw 는 업로드 probe 검증에서만 불렸다). 즉 "학습과 추론이 같은 값을
+   내는가" 를 ★합성 봉★ 으로만 확인해 왔다. 실제 저장 봉으로는 아무도 확인하지 않았다.
+
+   ■ 무엇을 하는가
+     30분 격자의 ★마지막 확정 봉★ 에서 유니버스를 돌며 다섯 지평 확률을 내고 기록한다.
+     한 표도 안 넣는다(머리가 전부 발언 문턱 미달이다 — 그 사실은 명부가 이미 말한다).
+     기록하는 이유는 하나다: ★전진검증★ — 홀드아웃에서 잰 0.51 이 실시간에서도 남는가.
+
+   ■ 왜 패널을 여기서 안 만드는가
+     횡단면 칸(q_*·p_*)은 ★그날 전 종목★ 이 있어야 순위가 나온다. 워커가 스스로 만들면 그
+     순간 가진 종목 집합이 학습 때와 달라 랭크가 갈린다 — V33.423 이 장중 랭크를 포기한
+     바로 그 이유다. 그래서 ★트레이너가 만든 패널을 그대로 받아★ 쓴다(업로드 본문의 panel).
+     갈릴 자리가 없다. 대신 패널이 낡으면(panelMaxDays) ★채점을 멈춘다★ — 낡은 랭크로
+     낸 확률은 학습 때의 그 확률이 아니다.
+
+   ■ 결정시각 규칙은 학습기와 ★같다★
+     · t % 1800 == 0 (개장부터 30분 격자 — 미국 09:30 · 한국 09:00 둘 다 맞는다)
+     · ★마지막 봉은 쓰지 않는다★ (진행 중일 수 있다 — omni.py 가 b5[:-1] 하는 것과 같다)
+     · i >= MIN_I(60) — 창이 다 차야 한다
+   ═══════════════════════════════════════════════════════════════════════════════════════ */
+async function omniShadowEnsure(DB) {
+  try {
+    await DB.prepare(
+      "CREATE TABLE IF NOT EXISTS omni_shadow (" +
+      "id INTEGER PRIMARY KEY AUTOINCREMENT, ins_ts INTEGER, symbol TEXT, market TEXT, " +
+      "tdec INTEGER, hz TEXT, p REAL, setup INTEGER, ver INTEGER, panel_day INTEGER, " +
+      "label INTEGER, fr REAL, res_ts INTEGER)"
+    ).run();
+    /* 같은 (종목·결정시각·지평)을 두 번 적지 않는다 — 회전이 한 바퀴 안에 같은 봉을 또 만난다. */
+    await DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_omnishadow_key ON omni_shadow(symbol, tdec, hz)").run();
+    await DB.prepare("CREATE INDEX IF NOT EXISTS idx_omnishadow_tdec ON omni_shadow(tdec, hz)").run();
+  } catch (e) {}
+}
+
+/* 30분 격자의 마지막 ★확정★ 봉 인덱스. 없으면 null. */
+function _omGridIndex(b5) {
+  const t = b5 && b5.t;
+  if (!Array.isArray(t) || t.length < 62) return null;
+  for (let i = t.length - 2; i >= 60; i--) {     // length-2 = 마지막 봉을 버린다
+    if (t[i] % (OMNI_CONSTS.base * 6) === 0) return i;
+  }
+  return null;
+}
+
+async function omniShadowScore(DB, opts) {
+  const o = opts || {};
+  const R2 = _bigR2();
+  if (!R2) return "[OMNI-SHADOW] R2 미바인딩";
+  const meta = await _omniMeta(DB);
+  if (!meta) return "[OMNI-SHADOW] 올라온 모델이 없다 — 채점할 것이 없다";
+  if (meta.v !== OMNI_VER) return "[OMNI-SHADOW] 판 불일치 v" + meta.v + " → v" + OMNI_VER + " — 재학습 대기";
+  /* 패널 신선도 — 낡은 랭크로 낸 확률은 학습 때의 그 확률이 아니다. */
+  const pday = _num(meta.panelDay, 0);
+  if (!pday) return "[OMNI-SHADOW] 패널이 없다(트레이너가 안 실었다) — 채점하지 않는다";
+  const ageD = _omPanelAgeDays(pday);
+  if (ageD > OMNI_MODEL.panelMaxDays)
+    return "[OMNI-SHADOW] 패널 " + pday + " 가 " + ageD + "일 낡았다(상한 " + OMNI_MODEL.panelMaxDays + ") — 채점하지 않는다";
+  let trees = null, panel = null;
+  try { const g = await R2.get(OMNI_MODEL.r2Key); if (g) trees = (JSON.parse(await g.text()) || {}).trees; } catch (e) {}
+  if (!Array.isArray(trees) || !trees.length) return "[OMNI-SHADOW] 모델 본문을 못 읽었다 " + OMNI_MODEL.r2Key;
+  try { const g = await R2.get(OMNI_MODEL.r2Panel); if (g) panel = JSON.parse(await g.text()); } catch (e) {}
+  if (!panel || typeof panel !== "object") return "[OMNI-SHADOW] 패널 본문을 못 읽었다 " + OMNI_MODEL.r2Panel;
+  await omniShadowEnsure(DB);
+
+  const uni = (DEFAULT_US || []).concat(DEFAULT_KR || []);
+  if (!uni.length) return "[OMNI-SHADOW] 유니버스 비어 있음";
+  const per = Math.max(1, _num(o.perRun, 30));
+  let cur = null; try { cur = await getState(DB, OMNI_MODEL.scoreCursor, null); } catch (e) {}
+  let idx = (cur && cur.i >= 0) ? Math.floor(cur.i) % uni.length : 0;
+  const nowMs = Date.now();
+  let done = 0, scored = 0, noBars = 0, noGrid = 0, noPanel = 0, rows = 0;
+  const seen = {};
+  for (let k = 0; k < per; k++) {
+    const sym = uni[idx]; idx = (idx + 1) % uni.length; done++;
+    const mkt = /\.(KS|KQ)$/.test(sym) ? "kr" : "us";
+    const b5 = await _obLoad(R2, "5m", sym);
+    const bd = await _obLoad(R2, "1d", sym);
+    if (!b5 || !Array.isArray(b5.t) || !b5.t.length) { noBars++; continue; }
+    const i = _omGridIndex(b5);
+    if (i == null) { noGrid++; continue; }
+    const prow = panel[sym];
+    if (!prow) { noPanel++; continue; }
+    /* ★학습기가 만든 행과 같은 모양으로만 채점한다.★ omni.py build_rows 는 두 종류의 행을 만든다:
+       장중 결정점(30·60분·1일 — 5분봉 칸이 차 있다)과 장타 결정점(5·20일 — 장중 칸이 ★NaN★).
+       장중 행으로 5·20일 머리를 채점하면 그 머리가 ★한 번도 본 적 없는 모양★ 을 먹인다. */
+    const bdOk = bd && Array.isArray(bd.t) && bd.t.length > OMNI_D_LOOKBACK;
+    let fi = null, fd = null;
+    try { fi = omniFeatures(b5, bd || { t: [], o: [], h: [], l: [], c: [], v: [] }, i, mkt, false, null); }
+    catch (e) { fi = null; }
+    if (!fi || !Array.isArray(fi.x)) { noBars++; continue; }
+    omniPanelFill(fi.x, prow);
+    const tdec = b5.t[i] + OMNI_CONSTS.base;      // 학습기와 같다 — 봉이 ★닫힌★ 시각
+    const put = async function (td, hzi, fx) {
+      const raw = omniScoreRaw(trees, omniDesign(fx.x, fx.setup, hzi));
+      if (!isFinite(raw)) return;
+      const p = 1 / (1 + Math.exp(-raw));
+      try {
+        await DB.prepare(
+          "INSERT OR IGNORE INTO omni_shadow (ins_ts, symbol, market, tdec, hz, p, setup, ver, panel_day) " +
+          "VALUES (?,?,?,?,?,?,?,?,?)"
+        ).bind(nowMs, sym, mkt, td, OMNI_HORIZONS[hzi], p, fx.setup, OMNI_VER, pday).run();
+        rows++;
+      } catch (e) {}
+    };
+    for (let hzi = 0; hzi < 3; hzi++) await put(tdec, hzi, fi);        // 30m · 60m · 1d
+    if (bdOk) {
+      const j = bd.t.length - 2;                  // 마지막 일봉은 버린다(진행 중일 수 있다)
+      if (j >= OMNI_D_LOOKBACK - 1) {
+        try { fd = omniFeatures(null, bd, null, mkt, true, j); } catch (e) { fd = null; }
+        if (fd && Array.isArray(fd.x)) {
+          omniPanelFill(fd.x, prow);
+          const tdd = bd.t[j] + 86400;            // 학습기와 같다
+          for (let hzi = 3; hzi < OMNI_HORIZONS.length; hzi++) await put(tdd, hzi, fd);   // 5d · 20d
+        }
+      }
+    }
+    scored++;
+    seen[tdec] = (seen[tdec] || 0) + 1;
+  }
+  try { await setState(DB, OMNI_MODEL.scoreCursor, { i: idx, at: nowMs }); } catch (e) {}
+  const stamps = Object.keys(seen).length;
+  return "[OMNI-SHADOW] " + done + "종목 · 채점 " + scored + " · 기록 " + rows + "행 · 결정시각 " + stamps +
+         "종 · 패널 " + pday + "(" + ageD + "일 전) · 봉없음 " + noBars + " · 격자없음 " + noGrid +
+         " · 패널없음 " + noPanel + " · 다음 커서 " + idx;
+}
+
+
+/* [V33.426] ★사후채점 — 적어 둔 확률을 지평이 지난 뒤에 실제와 맞춰 본다.★
+   라벨 규약은 학습기와 ★같다★: "같은 시각 · 같은 시장 동료들의 중앙값보다 잘했는가".
+   그래서 한 종목만으로는 채점할 수 없다 — 같은 결정시각에 동료가 XSEC_MIN 종목 이상 있어야 한다.
+   중앙값과 정확히 같은 행은 버린다(어느 쪽도 아니다 — 학습기와 같은 규칙).
+   ※ 이건 ★관측★ 이다. 여기 나온 숫자로 좌석을 주지 않는다 — 좌석은 명부의 발언 문턱이 정한다. */
+const OMNI_SHADOW = { xsecMin: 20, batchGroups: 6, maxRows: 4000 };
+
+async function omniShadowResolve(DB, opts) {
+  const o = opts || {};
+  const R2 = _bigR2();
+  if (!R2) return "[OMNI-FWD] R2 미바인딩";
+  await omniShadowEnsure(DB);
+  const nowS = Math.floor(Date.now() / 1000);
+  /* 지평이 지난 ★묶음★ 부터 — 오래된 것 먼저. 한 묶음 = (결정시각 · 지평). */
+  let gs = null;
+  try {
+    gs = await DB.prepare(
+      "SELECT tdec, hz, COUNT(*) n FROM omni_shadow WHERE label IS NULL AND ver=? " +
+      "GROUP BY tdec, hz HAVING n >= ? ORDER BY tdec ASC LIMIT ?"
+    ).bind(OMNI_VER, OMNI_SHADOW.xsecMin, Math.max(1, _num(o.groups, OMNI_SHADOW.batchGroups))).all();
+  } catch (e) { return "[OMNI-FWD] 조회 실패: " + ((e && e.message) || e); }
+  const groups = (gs && gs.results) || [];
+  if (!groups.length) return "[OMNI-FWD] 채점할 묶음이 없다(지평 미도래 또는 동료 부족)";
+  let didG = 0, didR = 0, tie = 0, notReady = 0, noBar = 0, hit = 0, tot = 0;
+  for (const g of groups) {
+    const hz = String(g.hz), tdec = _num(g.tdec, 0);
+    const span = OMNI_FWD_SPAN[hz];
+    if (!span) continue;
+    if (tdec + span.sec > nowS) { notReady++; continue; }      // 아직 안 끝났다
+    let rs = null;
+    try {
+      rs = await DB.prepare("SELECT id, symbol, market FROM omni_shadow WHERE tdec=? AND hz=? AND label IS NULL AND ver=? LIMIT ?")
+        .bind(tdec, hz, OMNI_VER, OMNI_SHADOW.maxRows).all();
+    } catch (e) { continue; }
+    const rows = (rs && rs.results) || [];
+    const frs = [];
+    for (const r of rows) {
+      const fr = await _omFwdRet(R2, String(r.symbol), hz, tdec);
+      if (fr == null) { noBar++; continue; }
+      frs.push({ id: r.id, m: String(r.market || "us"), fr: fr });
+    }
+    /* 시장별로 중앙값을 낸다 — 학습기의 묶음이 (시장 · 지평 · 결정시각)이다. */
+    for (const mk of ["us", "kr"]) {
+      const mine = frs.filter(function (z) { return z.m === mk; });
+      if (mine.length < OMNI_SHADOW.xsecMin) continue;
+      const med = _omMed(mine.map(function (z) { return z.fr; }));
+      for (const z of mine) {
+        if (!(z.fr > med) && !(z.fr < med)) { tie++; continue; }   // 중앙값과 같다 → 버린다
+        const lab = z.fr > med ? 1 : 0;
+        try {
+          await DB.prepare("UPDATE omni_shadow SET label=?, fr=?, res_ts=? WHERE id=?")
+            .bind(lab, z.fr, nowS, z.id).run();
+          didR++;
+        } catch (e) {}
+      }
+    }
+    didG++;
+  }
+  /* 지금까지 채점된 것 전체의 성적 — 지평별로. 화면이 이걸 읽는다. */
+  const acc = await omniShadowAcc(DB);
+  try { await setState(DB, "omni_fwd", Object.assign({ at: Date.now() }, acc)); } catch (e) {}
+  const per = OMNI_HORIZONS.map(function (h) {
+    const a = acc.byHz[h];
+    return a && a.n ? h + " " + (a.acc * 100).toFixed(1) + "%(" + a.n + ")" : null;
+  }).filter(Boolean).join(" · ");
+  return "[OMNI-FWD] 묶음 " + didG + " 채점 · " + didR + "행 · 동점버림 " + tie + " · 봉없음 " + noBar +
+         " · 미도래 " + notReady + (per ? " · 누적 " + per : "");
+}
+
+/* 지평별 라벨 창 — 학습기 H_BARS/H_DAYS 와 같은 길이. sec 은 "이만큼 지나야 잰다" 는 하한이다. */
+const OMNI_FWD_SPAN = {
+  "30m": { bars: 6, sec: 30 * 60 }, "60m": { bars: 12, sec: 60 * 60 }, "1d": { bars: 78, sec: 78 * 300 },
+  "5d": { days: 5, sec: 5 * 86400 }, "20d": { days: 20, sec: 20 * 86400 }
+};
+
+/* 결정시각 이후 지평 끝까지의 로그수익. 학습기와 ★같은 봉★ 을 쓴다(장중=5분봉 · 장타=일봉). */
+async function _omFwdRet(R2, sym, hz, tdec) {
+  const sp = OMNI_FWD_SPAN[hz];
+  if (!sp) return null;
+  if (sp.bars) {
+    const b5 = await _obLoad(R2, "5m", sym);
+    if (!b5 || !Array.isArray(b5.t)) return null;
+    const i = b5.t.indexOf(tdec - OMNI_CONSTS.base);      // 학습기: tdec = t[i] + base
+    if (i < 0 || i + sp.bars >= b5.t.length) return null;
+    /* 30·60분은 ★같은 세션 안★ 에서 끝나야 한다 — 학습기 MAX_SPAN_SEC 과 같은 자다. */
+    const maxSpan = (hz === "30m") ? (6 * OMNI_CONSTS.base + 60)
+                  : (hz === "60m") ? (12 * OMNI_CONSTS.base + 60) : (5 * 86400);
+    if (b5.t[i + sp.bars] - b5.t[i] > maxSpan) return null;
+    return _omLr(b5.c[i + sp.bars], b5.c[i]);
+  }
+  const bd = await _obLoad(R2, "1d", sym);
+  if (!bd || !Array.isArray(bd.t)) return null;
+  const j = bd.t.indexOf(tdec - 86400);                   // 학습기: tdec = t[j] + 86400
+  if (j < 0 || j + sp.days >= bd.t.length) return null;
+  const maxSpan = (hz === "5d") ? (10 * 86400) : (35 * 86400);
+  if (bd.t[j + sp.days] - bd.t[j] > maxSpan) return null;
+  return _omLr(bd.c[j + sp.days], bd.c[j]);
+}
+
+/* 누적 전진 성적 — 지평별 n·정확도. 무실력 기준선은 ★정의상 50.0%★ 다(횡단면 라벨). */
+async function omniShadowAcc(DB) {
+  const out = { byHz: {}, n: 0, acc: null };
+  try {
+    const r = await DB.prepare(
+      "SELECT hz, COUNT(*) n, SUM(CASE WHEN (p >= 0.5 AND label=1) OR (p < 0.5 AND label=0) THEN 1 ELSE 0 END) h " +
+      "FROM omni_shadow WHERE label IS NOT NULL AND ver=? GROUP BY hz"
+    ).bind(OMNI_VER).all();
+    let n = 0, h = 0;
+    for (const row of ((r && r.results) || [])) {
+      const cn = _num(row.n, 0), ch = _num(row.h, 0);
+      out.byHz[String(row.hz)] = { n: cn, hits: ch, acc: cn ? ch / cn : null };
+      n += cn; h += ch;
+    }
+    out.n = n; out.acc = n ? h / n : null;
+  } catch (e) {}
+  return out;
+}
+
+/* 패널 날짜(yyyymmdd)가 며칠 낡았나 — 날짜키를 UTC 자정으로 되돌려 잰다. */
+function _omPanelAgeDays(dayKey) {
+  const y = Math.floor(dayKey / 10000), m = Math.floor((dayKey % 10000) / 100), d = dayKey % 100;
+  const t = Date.UTC(y, m - 1, d);
+  if (!isFinite(t)) return 9999;
+  return Math.max(0, Math.round((Date.now() - t) / 86400000));
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════════════════
    [V33.419] OMNI 피처 — 추론 쪽 구현. ★진본은 trainer/modal/omni.py 의 feature_point() 다.★
    이 함수는 그것을 ★한 줄씩 옮긴 것★ 이다. 같은 봉에서 같은 값을 내야 한다 —
@@ -10722,8 +10981,16 @@ function omniFeatures(b5, bd, i, mkt, dailyRow, jIn) {
    업로드도 같은 원리다 — 트레이너가 보낸 probe 행을 ★워커가 직접 채점해★ LightGBM 값과
    다르면 받지 않는다(MEMO·SEQ 와 같은 자). 학습과 추론이 다른 답을 내는 모델은 올라가지 않는다.
    ═══════════════════════════════════════════════════════════════════════════════════════ */
-const OMNI_MODEL = { r2Key: "omni/v1/model.json", r2Prev: "omni/v1/model.prev.json", metaKey: "omni_meta",
-                     probeMaxDiff: 1e-9, minProbe: 50, maxTrees: 3000, maxNodes: 400000 };
+/* [V33.426] ★판 불일치 — 경로가 판을 안 품고 있었다.★
+   `omni/v1/model.json` 고정이라, 판 1(절대 배리어 라벨) · 2 · 3(횡단면 상대 라벨)이 ★같은 자리★ 에
+   덮여 왔다. 셋은 확률의 ★뜻이 다른★ 모델이다. 특히 model.prev.json 에는 지금 ★판 2★ 가 들어 있다 —
+   되살리는 순간 "오를 확률" 과 "동료보다 잘할 확률" 이 뒤섞인다.
+   → 경로가 OMNI_VER 을 품는다. 판을 올리면 자리가 자동으로 갈라지고, 옛 판은 옛 자리에 남는다.
+     손으로 적지 않는다 — check-omni-label 이 "경로가 OMNI_VER 에서 나오는가" 를 본다. */
+const OMNI_MODEL = { r2Key: "omni/v" + OMNI_VER + "/model.json", r2Prev: "omni/v" + OMNI_VER + "/model.prev.json",
+                     r2Panel: "omni/v" + OMNI_VER + "/panel.json", metaKey: "omni_meta",
+                     probeMaxDiff: 1e-9, minProbe: 50, maxTrees: 3000, maxNodes: 400000,
+                     panelMaxDays: 5, scoreCursor: "omni_score_cursor" };
 const OMNI_MODEL_FEATS = OMNI_FEATS.concat(OMNI_HORIZONS.map(function (h) { return "hz_" + h; }),
                                            OMNI_SETUPS.map(function (s) { return "st_" + s; }));
 
@@ -10796,10 +11063,27 @@ function omniValidate(body) {
     cnt++;
     if (pr.x.some(function (v) { return v === null; })) nanRows++;
   }
+  /* [V33.426] ★패널★ — 워커가 다시 만들지 않고 이걸 그대로 쓴다. 그러니 모양을 여기서 본다.
+     없으면 받되(옛 트레이너 호환) 섀도우 채점은 안 돈다 — 그 사실을 메타가 말한다. */
+  let panelN = 0;
+  if (body.panel != null) {
+    if (typeof body.panel !== "object" || Array.isArray(body.panel)) return bad("패널 형식");
+    if (!Number.isInteger(body.panelDay) || body.panelDay < 19000101) return bad("패널 날짜 " + body.panelDay);
+    for (const sym in body.panel) {
+      const r = body.panel[sym];
+      if (!r || typeof r !== "object") return bad("패널 행 형식 " + sym);
+      for (const k in r) {
+        if (OMNI_PANEL_FEATS.indexOf(k) < 0) return bad("패널에 모르는 칸 " + k);
+        if (typeof r[k] !== "number" || !isFinite(r[k])) return bad("패널 값 " + sym + "." + k);
+      }
+      panelN++;
+    }
+    if (panelN < OMNI_PANEL_MIN) return bad("패널 종목 " + panelN + " < " + OMNI_PANEL_MIN + " — 랭크가 성립하지 않는다");
+  }
   if (cnt < OMNI_MODEL.minProbe) return bad("probe " + cnt + "행 < " + OMNI_MODEL.minProbe + " — 정합을 확인할 수 없으면 받지 않는다");
   if (!(md <= OMNI_MODEL.probeMaxDiff))
     return Object.assign(bad("정합 불일치 maxDiff " + md + " > " + OMNI_MODEL.probeMaxDiff + " — 트레이너와 워커가 다른 답을 낸다"), { probeN: cnt });
-  return { ok: true, probeN: cnt, probeMaxDiff: md, probeNanRows: nanRows, nodes: nodes };
+  return { ok: true, probeN: cnt, probeMaxDiff: md, probeNanRows: nanRows, nodes: nodes, panelN: panelN };
 }
 
 /* 머리(지평)별 사용 여부 — 트레이너의 홀드아웃 판정(ok · tau)을 그대로 따른다. 워커가 새로 판정하지 않는다
@@ -10812,6 +11096,9 @@ async function _omniMeta(DB) {
    무엇을 배웠는지(지평·매매법)만 보낸다. 화면은 이것만으로 "쓰는가/왜 안 쓰는가" 를 말한다. */
 async function omniVizData(DB) {
   const m = await _omniMeta(DB);
+  /* [V33.426] ★전진 성적★ — 섀도우 채점이 적어 둔 확률을 지평 뒤에 맞춰 본 결과.
+     홀드아웃(학습기가 잰 값) 옆에 실시간 값을 나란히 둔다. 둘이 갈리면 그게 신호다. */
+  let _fwd = null; try { _fwd = await getState(DB, "omni_fwd", null); } catch (e) {}
   const _p = function (x) { return (typeof x === "number" && isFinite(x)) ? +(x * 100).toFixed(1) : null; };
   /* ★반환 객체는 하나다.★ 경로마다 새 객체를 만들면 한 곳이 kind 를 빠뜨려 이름 없이 나간다
      (V33.308 이 고친 그 병) — check-nnviz-switch 가 이 구조를 계약으로 본다.
@@ -10846,6 +11133,10 @@ async function omniVizData(DB) {
     hzTrain: (m && m.hzTrain) || null, hzHold: (m && m.hzHold) || null,
     /* [V33.425] 라벨 규약 — 화면이 "무엇의 확률인가" 를 지어내지 않고 이 값으로 말한다. */
     label: (m && m.label) || null, xsecMin: m ? _num(m.xsecMin, null) : null,
+    panelDay: m ? _num(m.panelDay, null) : null, panelN: m ? _num(m.panelN, null) : null,
+    fwdAt: _fwd ? _num(_fwd.at, null) : null, fwdN: _fwd ? _num(_fwd.n, null) : null,
+    fwdAcc: (_fwd && _fwd.acc != null) ? +(_fwd.acc * 100).toFixed(1) : null,
+    fwdByHz: (_fwd && _fwd.byHz && typeof _fwd.byHz === "object") ? _fwd.byHz : null,
     xsec: (m && m.xsec) || null, iters: (m && Array.isArray(m.iters)) ? m.iters : null,
     /* [V33.423] ★구조★ — 입력 묶음별 기여도. 이름을 손으로 적지 않고 접두사로 가른다
        (칸이 늘면 묶음도 자동으로 따라온다 — 손목록이 드리프트할 자리를 없앤다). */
@@ -26166,6 +26457,9 @@ async function handleRequest(request, env, ctx) {
                       /* [V33.425] ★라벨 규약★ — 확률의 뜻을 모델과 같이 저장한다.
                          화면이 "오를 확률" 이라고 잘못 말하지 않게, 뜻을 지어내지 않고 실어 온다. */
                       label: (typeof body.label === "string") ? body.label : null,
+                      /* [V33.426] 패널 — 본문은 R2 에 따로 두고(모델과 같은 판 경로), 메타엔 날짜·종목 수만. */
+                      panelDay: Number.isInteger(body.panelDay) ? body.panelDay : null,
+                      panelN: vr.panelN || 0,
                       xsecMin: _num(body.xsecMin, null),
                       xsec: (body.xsec && typeof body.xsec === "object") ? body.xsec : null,
                       iters: Array.isArray(body.iters) ? body.iters.map(function (v) { return _num(v, 0); }) : null };
@@ -26173,6 +26467,11 @@ async function handleRequest(request, env, ctx) {
         const cur = await R2.get(OMNI_MODEL.r2Key);
         if (cur) await R2.put(OMNI_MODEL.r2Prev, await cur.text());
       } catch (e) {}
+      /* 패널을 ★먼저★ 쓴다 — 모델이 있는데 패널이 없는 순간이 생기면 그 사이 채점이 멎는다. */
+      if (body.panel && vr.panelN) {
+        try { await R2.put(OMNI_MODEL.r2Panel, JSON.stringify(body.panel)); }
+        catch (e) { return Response.json({ error: "패널 저장 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
+      }
       const txt = JSON.stringify(model);
       try { await R2.put(OMNI_MODEL.r2Key, txt); }
       catch (e) { return Response.json({ error: "R2 저장 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
@@ -26183,7 +26482,8 @@ async function handleRequest(request, env, ctx) {
       delete meta.trees;
       try { await setState(env.DB, OMNI_MODEL.metaKey, meta); } catch (e) {}
       return Response.json({ ok: true, nTrees: meta.nTrees, probeN: vr.probeN, probeMaxDiff: vr.probeMaxDiff,
-                             probeNanRows: vr.probeNanRows, headsOk: headsOk, mode: "shadow" }, { headers: cors });
+                             probeNanRows: vr.probeNanRows, headsOk: headsOk, mode: "shadow",
+                             panelDay: model.panelDay, panelN: vr.panelN }, { headers: cors });
     }
     /* [V33.420] GET /api/omni-status — 업로드된 OMNI 의 머리별 성적(나무 제외). */
     if (path === "/api/omni-status") {
@@ -27128,6 +27428,10 @@ async function handleRequest(request, env, ctx) {
         ["harvest", function (DB) { return mlMarketHarvestNightly(DB); }],
         // [V33.418] OMNI 원시 봉 — 야간에는 넉넉히 돈다(장외라 거래 사이클과 안 겹친다)
         ["omnibars", function (DB) { try { resetFetchBudget(200); } catch (e) {} return omniBarsCollect(DB, { perRun: 40 }); }],
+        /* [V33.426] OMNI 섀도우 채점 — 한 표도 안 넣는다. 실시간 확률을 적어 두고 지평이 지나면 채점한다.
+           이게 있어야 "홀드아웃 0.51" 이 실시간에서도 남는지 알 수 있다. */
+        ["omniscore", function (DB) { return omniShadowScore(DB, { perRun: 30 }); }],
+        ["omniresolve", function (DB) { return omniShadowResolve(DB, {}); }],
 
         // [V33.104] 전문가 재학습 앞 — 누출없는 STACK 표본 생성 후 기준선 갱신(크론과 동일 순서).
         ["expepoch", function (DB) { return expertEpochStamp(DB); }],   // [V33.422] 누출 방지 기준선
@@ -51016,6 +51320,9 @@ export default {
             await _stg("harvest", async function () { return await mlMarketHarvestNightly(env.DB); });
             // [V33.418] OMNI 원시 봉 — 수동 파이프라인과 ★같은 단계★ 를 같은 이름으로(check-pipeline-graph)
             await _stg("omnibars", async function () { try { resetFetchBudget(200); } catch (e) {} return await omniBarsCollect(env.DB, { perRun: 40 }); });
+            // [V33.426] OMNI 섀도우 채점·사후채점 — 수동 파이프라인과 ★같은 이름★ 으로(check-pipeline-graph)
+            await _stg("omniscore", async function () { return await omniShadowScore(env.DB, { perRun: 30 }); });
+            await _stg("omniresolve", async function () { return await omniShadowResolve(env.DB, {}); });
             // [V12.122] ★재구축기 재학습 가속★ _stg는 하루 1회만 학습을 허용하는데, 표본풀이 재구축
             //   중(< rebuildTarget)엔 하루 안에도 풀이 크게 늘어난다(catch-up 수확이 매 틱 실행). GBDT가
             //   그날 이른 시각 작은 풀(예: 7만)로 한 번 학습해버리면, 그 뒤 풀이 16만으로 늘어도 다음날까지

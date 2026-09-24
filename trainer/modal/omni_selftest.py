@@ -200,6 +200,18 @@ def fake_roundtrip(data):
         fails.append("묶음 조회가 일어나지 않았다 %s" % calls)
     if body.get("nSym") != len(data):
         fails.append("5분봉 없는 종목의 장타 행이 빠졌다(nSym %s ≠ %d)" % (body.get("nSym"), len(data)))
+    # [V33.426] ★패널을 같이 싣는가★ — 워커는 이걸 그대로 쓴다. 안 실으면 섀도우 채점이 통째로 멎고,
+    #   워커가 스스로 만들면 종목 집합이 학습 때와 달라 랭크가 갈린다(V33.423 이 피한 그 사고).
+    _pn = body.get("panel") or {}
+    if not isinstance(_pn, dict) or len(_pn) < omni.PANEL_MIN:
+        fails.append("패널을 안 실었다(종목 %d < %d)" % (len(_pn), omni.PANEL_MIN))
+    if not isinstance(body.get("panelDay"), int):
+        fails.append("패널 날짜가 없다: %r" % (body.get("panelDay"),))
+    _bad = [k for r in _pn.values() for k in r if k not in omni.PANEL_FEATS]
+    if _bad:
+        fails.append("패널에 모르는 칸: %s" % sorted(set(_bad))[:3])
+    print("패널 동봉: %s · 종목 %d · 칸 %d" % (
+        body.get("panelDay"), len(_pn), len(next(iter(_pn.values()), {}))))
     print("왕복: 5분봉 조회 %d · 일봉 조회 %d · 나무 %d · probe %d · 본문 %.1f MB" % (
         calls["5m"], calls["1d"], len(body["trees"]), len(body["probe"]), len(sent["body"]) / 1e6))
     return fails

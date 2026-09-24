@@ -84,8 +84,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.425">
-<script src="/neural-observatory.js?v=33.425" defer></script>
+<meta name="lux-build" content="V33.426">
+<script src="/neural-observatory.js?v=33.426" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -14729,6 +14729,11 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       chip('학습·추론 정합', probeOk? '일치(오차 0)' : (d.probeMaxDiff!=null? '오차 '+d.probeMaxDiff : '미확인'),
            probeOk?'good':'warn') +
       chip('판(OMNI_VER)', 'v'+(d.v!=null?d.v:'—'), d.featVerOk?'good':'warn') +
+      chip('패널(횡단면 근거)', d.panelDay? (d.panelDay+' · '+(d.panelN||0)+'종목') : '없음 — 섀도우 채점 멈춤',
+           d.panelDay?'good':'warn') +
+      /* [V33.426] ★전진 성적★ — 학습기가 잰 홀드아웃 옆에 실시간을 나란히. 무실력은 정의상 50.0%다. */
+      chip('전진(실시간) 정확도', d.fwdN? (d.fwdAcc+'% · '+d.fwdN.toLocaleString()+'건 (무실력 50.0%)')
+                                        : '아직 쌓이는 중', (d.fwdAcc!=null && d.fwdAcc>50)?'good':'') +
       chip('라벨', d.label? (LBLTXT[d.label]||d.label) : '—', d.label==='xsec'?'good':'') +
       (d.xsec? chip('횡단면 묶음', (d.xsec.used!=null?d.xsec.used.toLocaleString():'—')+'개 (최소 '
                +(d.xsecMin!=null?d.xsecMin:'—')+'종목)','') : '') +
@@ -20143,11 +20148,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.425">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.425">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.425">
-<link rel="stylesheet" href="/model-evidence.css?v=33.425">
-<script src="/model-evidence.js?v=33.425"></script>
-<script src="/workspace-ui.js?v=33.425"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.426">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.426">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.426">
+<link rel="stylesheet" href="/model-evidence.css?v=33.426">
+<script src="/model-evidence.js?v=33.426"></script>
+<script src="/workspace-ui.js?v=33.426"></script>
 </body>
 </html>

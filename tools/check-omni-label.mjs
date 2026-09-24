@@ -26,6 +26,18 @@ const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8")
 let fails = 0;
 const chk = (c, ok, bad) => { if (c) console.log("  ok   " + ok); else { console.log("  FAIL " + (bad || ok)); fails++; } };
 
+/* JS 함수 하나를 중괄호 균형으로 잘라 낸다 — 이름만 보면 다른 곳의 같은 글자에 속는다. */
+function jsfn(text, head) {
+  const i = text.indexOf(head);
+  if (i < 0) return "";
+  let d = 0;
+  for (let j = text.indexOf("{", i); j >= 0 && j < text.length; j++) {
+    if (text[j] === "{") d++;
+    else if (text[j] === "}") { d--; if (d === 0) return text.slice(i, j + 1); }
+  }
+  return "";
+}
+
 /* 파이썬 최상위 def 블록을 들여쓰기로 잘라 낸다 — 이름만 보지 않고 ★그 함수 안★ 을 본다. */
 function pyfn(text, name) {
   const re = new RegExp("^def " + name + "\\(", "m");
@@ -110,6 +122,46 @@ chk(/^if KSEC:\n    FEATS = FEATS \+ KSEC_FEATS$/m.test(PY),
 chk(run && /if KSEC:/.test(run) && /rep\["ok"\] = False/.test(run),
     "실험 회차는 ★업로드를 거부★ 한다",
     "★실험 모델이 운영으로 올라간다★ — 워커에 없는 칸을 보고 학습한 모델이다");
+
+// ⑤ [V33.426] ★서빙 계약 — 여기까지 와야 "개발 끝" 이다.★
+//   ㉠ 저장 경로가 판을 품는가 — 판 1(절대 라벨)·2·3(횡단면 라벨)이 같은 자리에 덮이면
+//      model.prev 를 되살리는 순간 확률의 ★뜻★ 이 뒤섞인다(실제로 지금 prev 에 판 2가 있었다).
+//   ㉡ 패널을 워커가 ★다시 만들지 않는가★ — 만들면 그 순간 가진 종목 집합이 학습 때와 달라
+//      랭크가 갈린다(V33.423 이 장중 랭크를 포기한 바로 그 이유). 트레이너가 만든 걸 그대로 쓴다.
+//   ㉢ 장타 머리(5·20일)를 ★장중 행으로 채점하지 않는가★ — 학습기는 장타 행의 장중 칸을 NaN 으로
+//      두고 배웠다. 장중 값이 찬 행을 먹이면 그 머리가 한 번도 본 적 없는 모양이다.
+//   ㉣ 사후채점이 학습기와 ★같은 라벨 규약★ 을 쓰는가(동료 중앙값 · 동점 버림 · 최소 동료 수).
+chk(/r2Key: "omni\/v" \+ OMNI_VER \+ "\/model\.json"/.test(S),
+    "모델 저장 경로가 ★OMNI_VER 에서 나온다★",
+    "경로에 판이 손으로 박혀 있다 — 판을 올려도 자리가 안 갈라져 옛 판 위에 덮인다");
+chk(!/"omni\/v1\//.test(S), "판 1 경로가 손으로 남아 있지 않다", "omni/v1/ 이 아직 코드에 박혀 있다");
+const shadow = jsfn(S, "async function omniShadowScore");
+chk(shadow.length > 0, "omniShadowScore() 가 있다", "★워커가 OMNI 로 아무것도 채점하지 않는다★");
+chk(shadow && /R2\.get\(OMNI_MODEL\.r2Panel\)/.test(shadow) && !/omniBuildPanel\(/.test(shadow),
+    "섀도우 채점이 ★트레이너가 준 패널★ 을 읽는다(직접 안 만든다)",
+    "워커가 패널을 스스로 만든다 — 종목 집합이 학습 때와 달라 랭크가 갈린다");
+chk(shadow && /if \(ageD > OMNI_MODEL\.panelMaxDays\)/.test(shadow),
+    "패널이 낡으면 ★채점을 멈춘다★", "낡은 랭크로 낸 확률을 그대로 적는다 — 학습 때의 그 확률이 아니다");
+chk(shadow && /for \(let hzi = 0; hzi < 3; hzi\+\+\)/.test(shadow) && /for \(let hzi = 3; hzi < OMNI_HORIZONS\.length; hzi\+\+\)/.test(shadow),
+    "장중 머리(0~2)와 장타 머리(3~4)를 ★다른 행★ 으로 채점한다",
+    "★장타 머리를 장중 행으로 채점한다★ — 학습기가 NaN 으로 둔 칸이 차 있다");
+chk(shadow && /omniFeatures\(null, bd, null, mkt, true, j\)/.test(shadow),
+    "장타 행은 dailyRow=true 로 만든다(장중 칸 NaN)", "장타 행이 장중 칸을 품는다");
+chk(shadow && /b5\.t\[i\] \+ OMNI_CONSTS\.base/.test(shadow),
+    "결정시각이 학습기와 같다(봉이 닫힌 시각)", "결정시각 규약이 학습기와 다르다");
+const grid = jsfn(S, "function _omGridIndex");
+chk(grid && /t\.length - 2/.test(grid) && /% \(OMNI_CONSTS\.base \* 6\)/.test(grid),
+    "격자는 30분 절대 시계 · 마지막 봉은 버린다(진행 중일 수 있다)",
+    "격자·진행중봉 규약이 학습기와 다르다");
+const resolve = jsfn(S, "async function omniShadowResolve");
+chk(resolve.length > 0, "omniShadowResolve() 가 있다", "적어만 두고 ★맞춰 보지 않는다★");
+chk(resolve && /_omMed\(/.test(resolve) && /xsecMin/.test(resolve),
+    "사후채점이 ★동료 중앙값★ 과 ★최소 동료 수★ 를 쓴다(학습기와 같은 규약)",
+    "사후채점 라벨이 학습기와 다르다 — 다른 자로 잰 성적이다");
+chk(resolve && /중앙값과 같다/.test(resolve) && /tie\+\+/.test(resolve),
+    "중앙값과 같은 행은 버린다(학습기와 같다)", "동점을 한쪽으로 몰아 넣는다");
+chk(/fwdAcc:/.test(S) && /fwdByHz:/.test(S) && /전진\(실시간\) 정확도/.test(H),
+    "전진 성적이 ★화면까지★ 온다", "재 놓고 아무도 안 본다");
 
 // ④ 워커·화면이 확률의 뜻을 지어내지 않는다
 chk(/const OMNI_VER = 3;/.test(S), "워커 OMNI_VER 가 3(라벨 규약이 바뀐 판)이다",
