@@ -1351,8 +1351,14 @@ def holdout_edge(heads):
 
 
 def train_nn(Atr, fit, val, Aho, boosters, log=print, val_al=None):
-    """신경망 학습 + α 선택. val = 조기종료 구간 · val_al = α 고르는 구간(둘은 겹치지 않는다).
-    반환 None(끔) 또는 {alpha, zHold, export, ...}."""
+    """신경망 학습 + 구성 고르기 + α 선택. val = 조기종료 구간 · val_al = 고르는 구간(겹치지 않는다).
+    반환 None(끔) 또는 {alpha, zHold, export, ...}.
+
+    ★세 겹 문턱★ — 실데이터 첫 회차에서 ★아무것도 못 배운 신경망★ 이 1일 머리에 α=0.5 로 섞여
+    홀드아웃이 0.5155 → 0.5029 로 ★나빠진 채 올라갔다★(α 구간 18,686행에서 우연히 1σ 를 넘었다).
+      ① 초기값을 한 번도 못 이긴 네트(bestStep 0)는 버린다 — 배운 게 없다.
+      ② 그 지평에서 ★신경망 단독★ 검증 AUC 가 0.5 + 2σ 를 넘어야 한다 — 우연 수준이면 섞지 않는다.
+      ③ 섞은 이득이 2σ(1σ 가 아니라) 를 넘어야 한다 — 이미 검증된 쪽(나무)이 기본값이다."""
     import time
     import numpy as np
     if not NN_ON:
@@ -1364,24 +1370,42 @@ def train_nn(Atr, fit, val, Aho, boosters, log=print, val_al=None):
     spec = nn_spec(Atr["X"], fit)
     Zf = nn_inputs(Atr["X"][fit], spec)
     Zv = nn_inputs(Atr["X"][val], spec)
-    Zh = nn_inputs(Aho["X"], spec)
-    tgt = Atr["ys"] if "ys" in Atr else Atr["y"].astype(np.float64)
-    tf, tv = tgt[fit].astype(np.float32), tgt[val].astype(np.float64)
-    nets, recs = [], []
-    for sd in range(NN_SEEDS):
-        net, rec = _nn_train_one(Zf, Atr["hz"][fit], tf, Atr["w"][fit],
-                                 Zv, Atr["hz"][val], tv, Atr["w"][val], seed=17 + 1000 * sd, log=log)
-        nets.append(net)
-        recs.append(rec)
     Za = nn_inputs(Atr["X"][val_al], spec)
-    zv = np.mean([nn_logit(n_, Za, Atr["hz"][val_al]) for n_ in nets], axis=0).astype(np.float64)
-    zh = np.mean([nn_logit(n_, Zh, Aho["hz"]) for n_ in nets], axis=0).astype(np.float64)
-    gv = np.mean([b.predict(Atr["X"][val_al], num_iteration=it, raw_score=True) for b, it in boosters], axis=0)
+    Zh = nn_inputs(Aho["X"], spec)
     Av = take(Atr, val_al)
-    # ══ α 는 ★지평마다 하나★ — 합성 실측에서 신경망은 1d·5d·20d 에서, 나무는 30m·60m 에서 이겼다.
-    #   전체 하나로 고르면 행이 많은 단타 지평이 결정을 가져가 장타에서 이긴 신경망을 통째로 버린다.
-    #   지평마다 ★자기 α 구간 행만★ 으로 고른다. 행이 모자란 지평(<200)은 0(나무 그대로)이다 —
-    #   모르면 바꾸지 않는다.
+    hzf, hzv, hza = Atr["hz"][fit], Atr["hz"][val], Atr["hz"][val_al]
+    cands = []
+    for cfg in NN_GRID:
+        tc = time.time()
+        tgt = Atr["ys"] if (cfg["target"] == "ys" and "ys" in Atr) else Atr["y"].astype(np.float64)
+        tf, tv = tgt[fit].astype(np.float32), tgt[val].astype(np.float64)
+        nets, recs = [], []
+        for sd in range(NN_SEEDS):
+            net, rec = _nn_train_one(Zf, hzf, tf, Atr["w"][fit], Zv, hzv, tv, Atr["w"][val],
+                                     seed=17 + 1000 * sd, log=log, cfg=cfg)
+            if rec["bestStep"] > 0:            # ① 초기값을 못 이긴 네트는 버린다
+                nets.append(net)
+            recs.append(rec)
+        c = {"cfg": dict(cfg, hid=list(cfg["hid"])), "recs": recs, "nets": nets, "sec": round(time.time() - tc, 1)}
+        if nets:
+            c["zv"] = np.mean([nn_logit(n_, Za, hza) for n_ in nets], axis=0).astype(np.float64)
+            c["valAuc"] = _wavg_auc(c["zv"], Av)
+            c["zh"] = np.mean([nn_logit(n_, Zh, Aho["hz"]) for n_ in nets], axis=0).astype(np.float64)
+            c["holdAuc"] = _wavg_auc(c["zh"], Aho)          # ★기록만★ — 고르는 데 안 쓴다
+        cands.append(c)
+        log("   · OMNI 신경망 후보 %s %s lr %.0e 감쇠 %.0e 배치 %d 라벨 %s — 쓸 네트 %d/%d · 최적 스텝 %s · "
+            "검증 AUC %s · (홀드아웃 %s — 기록만) · %.0fs" % (
+                cfg["name"], "-".join(str(h) for h in cfg["hid"]), cfg["lr"], cfg["wd"], cfg["batch"], cfg["target"],
+                len(nets), len(recs), [r["bestStep"] for r in recs],
+                "—" if c.get("valAuc") is None else "%.4f" % c["valAuc"],
+                "—" if c.get("holdAuc") is None else "%.4f" % c["holdAuc"], c["sec"]))
+    live = [c for c in cands if c.get("nets") and c.get("valAuc") is not None]
+    if not live:
+        log("   ⏭ OMNI 신경망 — 모든 후보가 초기값을 못 이겼다(배운 게 없다). 나무만 쓴다.")
+        return None
+    best = max(live, key=lambda c: c["valAuc"])
+    nets, zv, zh = best["nets"], best["zv"], best["zh"]
+    gv = np.mean([b.predict(Atr["X"][val_al], num_iteration=it, raw_score=True) for b, it in boosters], axis=0)
     table, alpha = [], []
     for k, hz in enumerate(HORIZONS):
         jx = np.where(Av["hz"] == k)[0]
@@ -1391,6 +1415,10 @@ def train_nn(Atr, fit, val, Aho, boosters, log=print, val_al=None):
             row["why"] = "α 구간 %d행 — 모자라 0" % len(jx)
             table.append(row)
             continue
+        se = 1.0 / math.sqrt(3.0 * len(jx))
+        row["se"] = round(se, 5)
+        an = _auc(zv[jx], Av["y"][jx])
+        row["nnAuc"] = None if an is None else round(an, 5)
         best_a, best_v, v0 = 0.0, None, None
         for a in NN_ALPHAS:
             v = _auc((1.0 - a) * gv[jx] + a * zv[jx], Av["y"][jx])
@@ -1399,26 +1427,31 @@ def train_nn(Atr, fit, val, Aho, boosters, log=print, val_al=None):
                 v0 = v
             if v is not None and (best_v is None or v > best_v + 1e-12):
                 best_a, best_v = a, v
-        # ★나무에서 옮기려면 근거가 있어야 한다★ — 검증 이득이 AUC 표준오차 1/√(3n) 을 넘을 때만.
-        #   합성 실측: α 구간이 지평당 2천 행일 때 60분 머리가 α=1.0 을 골랐는데 홀드아웃에서는
-        #   신경망이 나무보다 0.01 나빴다(고르기 잡음). 이미 검증된 쪽(나무)을 기본값으로 둔다.
-        se = 1.0 / math.sqrt(3.0 * len(jx))
-        row["se"] = round(se, 5)
-        if best_v is None or v0 is None or (best_v - v0) <= se:
-            row["why"] = "검증 이득 %s ≤ 표준오차 %.4f — 나무 그대로" % (
-                "—" if best_v is None or v0 is None else "%+.4f" % (best_v - v0), se)
+        if an is None or an - 0.5 <= 2 * se:                                   # ②
+            row["why"] = "신경망 단독 %s — 0.5+2σ(%.4f) 못 넘음 · 나무 그대로" % (
+                "—" if an is None else "%.4f" % an, 0.5 + 2 * se)
+            best_a = 0.0
+        elif best_v is None or v0 is None or (best_v - v0) <= 2 * se:          # ③
+            row["why"] = "섞은 이득 %s ≤ 2σ %.4f — 나무 그대로" % (
+                "—" if best_v is None or v0 is None else "%+.4f" % (best_v - v0), 2 * se)
             best_a = 0.0
         alpha.append(float(best_a))
         table.append(row)
-    log("   · OMNI 신경망 %s → 몸통 %s → 머리 %d · 입력 %d칸(결측표시 %d) · 시드 %d · 최적 에폭 %s · %.0fs" % (
-        "numpy", "-".join(str(h) for h in NN_HID), len(HORIZONS), Zf.shape[1], len(spec["flags"]),
-        len(nets), [r["bestEpoch"] for r in recs], time.time() - t0))
-    log("   · OMNI 지평별 α(검증 뒤쪽 반에서만 고름) — " + " · ".join(
-        "%s %.1f(%d행)" % (r["hz"], a, r["n"]) for r, a in zip(table, alpha)))
+    cfg = best["cfg"]
+    log("   · OMNI 신경망 채택 %s(%s · 검증 AUC %.4f) · 입력 %d칸(결측표시 %d) · 네트 %d · 전체 %.0fs" % (
+        cfg["name"], "-".join(str(h) for h in cfg["hid"]), best["valAuc"], Zf.shape[1], len(spec["flags"]),
+        len(nets), time.time() - t0))
+    log("   · OMNI 지평별 α(검증 뒤쪽 반에서만) — " + " · ".join(
+        "%s %.1f(%d행%s)" % (r["hz"], a, r["n"], "" if a > 0 else " · " + str(r.get("why") or "")[:40])
+        for r, a in zip(table, alpha)))
     ex = nn_export(nets, spec)
-    return {"alpha": alpha, "zHold": zh, "export": ex, "alphaTable": table, "seeds": recs,
-            "hid": list(NN_HID), "inputDim": int(Zf.shape[1]), "nFlags": len(spec["flags"]),
-            "target": "ys" if "ys" in Atr else "y", "sec": round(time.time() - t0, 1)}
+    return {"alpha": alpha, "zHold": zh, "export": ex, "alphaTable": table,
+            "seeds": best["recs"], "cfg": cfg,
+            "grid": [{"cfg": c["cfg"], "valAuc": c.get("valAuc"), "holdAuc": c.get("holdAuc"),
+                      "nets": len(c.get("nets") or []), "bestSteps": [r["bestStep"] for r in c["recs"]],
+                      "sec": c["sec"]} for c in cands],
+            "hid": list(cfg["hid"]), "inputDim": int(Zf.shape[1]), "nFlags": len(spec["flags"]),
+            "target": cfg["target"], "sec": round(time.time() - t0, 1)}
 
 
 def train_model(A, log=print):
@@ -1618,16 +1651,27 @@ def score_raw(trees, x):
 #     관측에만 나오고 점수에는 안 들어간다(도움이 안 되면 안 쓴다).
 #   ★numpy 로 직접 짠다★ — torch 없이. 이유 둘: 자가검사가 CI 에서 torch 없이 돈다. 그리고
 #     워커(JS)가 같은 순전파를 한다 — 식이 여기 몇 줄로 다 보여야 두 쪽이 같다고 검사할 수 있다.
-NN_HID = (64, 32)
+NN_HID = (64, 32)               # 기본 모양(자가검사·구조 관측 기준). 실제 모양은 아래 후보에서 고른다.
 NN_CLIP = 5.0
 NN_FLAG_MIN = 0.005             # 결측률이 이보다 큰 칸만 '결측표시' 입력을 따로 준다
-NN_BATCH = 4096
-NN_LR = 1e-3
-NN_WD = 1e-4                    # 가중치 감쇠(AdamW 방식 — 기울기와 분리)
-NN_EPOCHS = 20
-NN_PATIENCE = 3
 NN_SEEDS = 2
 NN_ALPHAS = [i / 10.0 for i in range(11)]
+NN_EVAL_STEPS = 50              # 조기종료 검사 간격(스텝) — 에폭마다 보면 늦다
+NN_PATIENCE = 12                # 검사 몇 번 연속 안 좋아지면 멈추나
+NN_MAX_EPOCHS = 4
+# ══ [V33.428b] ★후보 구성 — 검증 뒤쪽 반(α 구간)에서 신경망 단독 AUC 로 고른다.★ ═════════════
+#   실데이터 첫 회차(2026-09-24 · 3,129,298행): lr 1e-3 · 64-32 · 에폭 단위 조기종료 → ★최적 에폭 0★
+#   (첫 에폭이 끝나기도 전에 검증손실이 초기값보다 나빠졌다 = 아무것도 못 배웠다). 신호가 AUC 0.51 수준으로
+#   약해 큰 학습률이 첫 에폭 안에 잡음으로 넘어간다. → 작은 학습률 · 강한 감쇠 · 50스텝마다 검사.
+#   그리고 한 구성에 걸지 않는다 — 신경망은 한 구성에 40초라 여러 개를 재 볼 수 있다.
+#   ★고르는 잣대는 검증(α 구간)이고, 홀드아웃은 고른 뒤 한 번만 잰다★(다른 후보의 홀드아웃은 기록만).
+NN_GRID = [
+    {"name": "A", "hid": (64, 32), "lr": 3e-4, "wd": 1e-4, "batch": 4096, "target": "ys"},
+    {"name": "B", "hid": (32, 16), "lr": 1e-4, "wd": 1e-3, "batch": 8192, "target": "ys"},
+    {"name": "C", "hid": (64, 32), "lr": 3e-4, "wd": 1e-4, "batch": 4096, "target": "y"},
+    {"name": "D", "hid": (128, 64), "lr": 1e-4, "wd": 3e-3, "batch": 8192, "target": "ys"},
+    {"name": "E", "hid": (32, 16), "lr": 3e-5, "wd": 1e-4, "batch": 2048, "target": "ys"},
+]
 
 
 def nn_spec(X, fit_ix):
@@ -1669,12 +1713,12 @@ def nn_inputs(X, spec, dtype="float32"):
     return np.concatenate([Z, F], axis=1).astype(dtype)
 
 
-def _nn_init(d0, rng):
+def _nn_init(d0, rng, hid=NN_HID):
     import numpy as np
-    dims = [d0] + list(NN_HID)
+    dims = [d0] + list(hid)
     W = [rng.normal(0, math.sqrt(2.0 / dims[i]), (dims[i], dims[i + 1])).astype(np.float32)
-         for i in range(len(NN_HID))]
-    b = [np.zeros(dims[i + 1], dtype=np.float32) for i in range(len(NN_HID))]
+         for i in range(len(hid))]
+    b = [np.zeros(dims[i + 1], dtype=np.float32) for i in range(len(hid))]
     Wh = (rng.normal(0, 0.01, (dims[-1], len(HORIZONS)))).astype(np.float32)
     bh = np.zeros(len(HORIZONS), dtype=np.float32)
     return {"W": W, "b": b, "Wh": Wh, "bh": bh}
@@ -1690,11 +1734,14 @@ def nn_logit(net, Z, hz):
     return O[np.arange(len(hz)), hz]
 
 
-def _nn_train_one(Z, hz, t, w, Zv, hzv, tv, wv, seed, log=print):
-    """AdamW · 미니배치 · 검증손실 조기종료. 반환 (net, 기록)."""
+def _nn_train_one(Z, hz, t, w, Zv, hzv, tv, wv, seed, log=print, cfg=None):
+    """AdamW · 미니배치 · 검증손실 조기종료(NN_EVAL_STEPS 스텝마다). 반환 (net, 기록).
+    기록의 bestStep 이 0 이면 ★초기값을 한 번도 못 이겼다★ — 배운 게 없다(호출부가 버린다)."""
     import numpy as np
+    cfg = cfg or NN_GRID[0]
+    hid, lr, wd, bs = tuple(cfg["hid"]), float(cfg["lr"]), float(cfg["wd"]), int(cfg["batch"])
     rng = np.random.default_rng(seed)
-    net = _nn_init(Z.shape[1], rng)
+    net = _nn_init(Z.shape[1], rng, hid)
     params = net["W"] + net["b"] + [net["Wh"], net["bh"]]
     m1 = [np.zeros_like(p) for p in params]
     m2 = [np.zeros_like(p) for p in params]
@@ -1709,15 +1756,18 @@ def _nn_train_one(Z, hz, t, w, Zv, hzv, tv, wv, seed, log=print):
         p = np.clip(p, 1e-7, 1 - 1e-7)
         return float(-(wvn * (tv * np.log(p) + (1 - tv) * np.log(1 - p))).sum())
 
-    best = (vloss(net), {k: ([a.copy() for a in v] if isinstance(v, list) else v.copy()) for k, v in net.items()}, 0)
-    hist = [round(best[0], 6)]
+    snap = lambda nt: {k: ([a.copy() for a in v] if isinstance(v, list) else v.copy()) for k, v in nt.items()}
+    v0 = vloss(net)
+    best = (v0, snap(net), 0)
+    hist = [round(v0, 6)]
     bad = 0
     n = len(t)
-    L = len(NN_HID)
-    for ep in range(1, NN_EPOCHS + 1):
+    L = len(hid)
+    stop = False
+    for ep in range(1, NN_MAX_EPOCHS + 1):
         perm = rng.permutation(n)
-        for a in range(0, n, NN_BATCH):
-            ix = perm[a:a + NN_BATCH]
+        for a in range(0, n, bs):
+            ix = perm[a:a + bs]
             x, hb, tb, wb = Z[ix], hz[ix], t[ix], wn[ix]
             acts = [x]
             h = x
@@ -1743,30 +1793,35 @@ def _nn_train_one(Z, hz, t, w, Zv, hzv, tv, wv, seed, log=print):
                     dh = dh @ net["W"][l].T
             grads = grads_W + grads_b + [gWh, gbh]
             step += 1
-            lr_t = NN_LR * math.sqrt(1 - b2 ** step) / (1 - b1 ** step)
-            for i, (pp, gg) in enumerate(zip(params, grads)):
-                m1[i] = b1 * m1[i] + (1 - b1) * gg
-                m2[i] = b2 * m2[i] + (1 - b2) * gg * gg
+            lr_t = lr * math.sqrt(1 - b2 ** step) / (1 - b1 ** step)
+            for q, (pp, gg) in enumerate(zip(params, grads)):
+                m1[q] = b1 * m1[q] + (1 - b1) * gg
+                m2[q] = b2 * m2[q] + (1 - b2) * gg * gg
                 if pp.ndim == 2:
-                    pp *= (1.0 - NN_LR * NN_WD)
-                pp -= (lr_t * m1[i] / (np.sqrt(m2[i]) + eps)).astype(np.float32)
-        vl = vloss(net)
-        hist.append(round(vl, 6))
-        if vl < best[0] - 1e-6:
-            best = (vl, {k: ([a.copy() for a in v] if isinstance(v, list) else v.copy()) for k, v in net.items()}, ep)
-            bad = 0
-        else:
-            bad += 1
-            if bad >= NN_PATIENCE:
-                break
-    return best[1], {"bestEpoch": best[2], "valLoss": hist, "seed": int(seed)}
+                    pp *= (1.0 - lr * wd)
+                pp -= (lr_t * m1[q] / (np.sqrt(m2[q]) + eps)).astype(np.float32)
+            if step % NN_EVAL_STEPS == 0:
+                vl = vloss(net)
+                hist.append(round(vl, 6))
+                if vl < best[0] - 1e-7:
+                    best = (vl, snap(net), step)
+                    bad = 0
+                else:
+                    bad += 1
+                    if bad >= NN_PATIENCE:
+                        stop = True
+                        break
+        if stop:
+            break
+    return best[1], {"bestStep": int(best[2]), "steps": int(step), "valLoss0": round(v0, 6),
+                     "valLossBest": round(best[0], 6), "evals": len(hist), "seed": int(seed)}
 
 
 def nn_export(nets, spec):
     """워커 형식 — 숫자는 float32 로 반올림한 값을 그대로(두 쪽이 같은 수를 본다)."""
     f = lambda a: [[float(v) for v in row] for row in a.tolist()] if a.ndim == 2 else [float(v) for v in a.tolist()]
     return {"cols": spec["cols"], "med": spec["med"], "sc": spec["sc"], "flags": spec["flags"],
-            "clip": spec["clip"], "hid": list(NN_HID), "act": "relu",
+            "clip": spec["clip"], "hid": [len(b) for b in nets[0]["b"]], "act": "relu",
             "nets": [{"W": [f(W) for W in n["W"]], "b": [f(b) for b in n["b"]],
                       "Wh": f(n["Wh"]), "bh": f(n["bh"])} for n in nets]}
 

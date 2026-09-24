@@ -459,10 +459,10 @@ def main():
             fails.append("강제 α 에서 probe 가 지평별로 섞이지 않았다(%d행)" % _bp)
         _vz = rep.get("nnViz") or {}
         _L = _vz.get("layers") or []
-        if len(_L) != 2 + len(omni.NN_HID) or _L[-1].get("size") != len(omni.HORIZONS):
+        if len(_L) != 2 + len(_ex["hid"]) or _L[-1].get("size") != len(omni.HORIZONS):
             fails.append("구조 관측 데이터 층 모양이 틀렸다: %s" % [l.get("size") for l in _L])
         _E = _vz.get("edges") or []
-        if len(_E) != len(omni.NN_HID) + 1 or not all(_E):
+        if len(_E) != len(_ex["hid"]) + 1 or not all(_E):
             fails.append("구조 관측 연결선이 층마다 없다: %s" % [len(e) for e in _E])
         elif any(not (0 <= e[2] <= 1) for es in _E for e in es):
             fails.append("구조 관측 연결선 세기가 0~1 밖")

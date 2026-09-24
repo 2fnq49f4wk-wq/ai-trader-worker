@@ -180,7 +180,9 @@ jobs:
     needs: deploy
     if: needs.deploy.outputs.ok == 'true' && github.event_name == 'workflow_dispatch' && inputs.omni_now
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # [V33.428b] 45 → 75분. 실측 회차(2026-09-24): 수집·표본 28분 + 학습 2분 = 30분. 신경망 후보 5개를
+    #   고르면 몇 분 더 든다. Modal 함수 자체 한도는 5400초(90분)라 그보다 짧게 둔다.
+    timeout-minutes: 75
     name: modal omni
     steps:
       - uses: actions/checkout@v4
