@@ -99,6 +99,8 @@ FEATS = [
 #        ★결과적으로 옳았다★ — 이제 그게 취향이 아니라 ★측정★ 이다.
 #      스위치는 남겨 둔다. 다음에 다른 칸을 재 볼 때 같은 방식(붙여서 재고, 안 올린다)을 쓴다.
 KSEC = os.environ.get("OMNI_KSEC") == "1"
+# [V33.428] 신경망 머리 — 기본 켬. OMNI_NN=0 이면 나무만(예전 그대로).
+NN_ON = os.environ.get("OMNI_NN", "1") != "0"
 KSEC_MIN = 20
 KSEC_SRC = {"k_r12": "m_r12", "k_r24": "m_r24", "k_sret": "s_ret", "k_gap": "s_gap",
             "k_relvol": "m_relvol12", "k_rv48": "m_rv48", "k_rsi": "m_rsi14", "k_vwdev": "s_vwapdev"}
@@ -1172,6 +1174,24 @@ def xsec_feats(A, log=print, min_n=KSEC_MIN):
     return A, info
 
 
+def _soft_rank(seg):
+    """묶음 안의 백분위 (순위 − 0.5) / n — 동점은 평균 순위. 0 과 1 에 닿지 않는다."""
+    import numpy as np
+    seg = np.asarray(seg, dtype=np.float64)
+    m = len(seg)
+    order = np.argsort(seg, kind="mergesort")
+    r = np.empty(m, dtype=np.float64)
+    ss = seg[order]
+    k = 0
+    while k < m:
+        j = k
+        while j + 1 < m and ss[j + 1] == ss[k]:
+            j += 1
+        r[order[k:j + 1]] = (k + j) / 2.0 + 0.5
+        k = j + 1
+    return r / m
+
+
 def xsec_label(A, log=print, min_n=XSEC_MIN):
     """(시장 · 지평 · 결정시각) 묶음 안에서 지평 수익을 중앙값과 견준다.
     중앙값과 정확히 같은 행은 버린다(어느 쪽도 아니다 — 추측하지 않는다).
@@ -1190,6 +1210,7 @@ def xsec_label(A, log=print, min_n=XSEC_MIN):
     starts = np.flatnonzero(newg)
     ends = np.append(starts[1:], n)
     y = np.zeros(n, dtype=np.int64)
+    ys = np.full(n, 0.5, dtype=np.float64)
     keep = np.zeros(n, dtype=bool)
     small = tie = used = 0
     for a, b in zip(starts, ends):
@@ -1203,10 +1224,15 @@ def xsec_label(A, log=print, min_n=XSEC_MIN):
         tie += int((b - a) - int(hi.sum()) - int(lo.sum()))
         y[a:b][hi] = 1
         keep[a:b] = hi | lo
+        ys[a:b] = _soft_rank(seg)
         used += 1
     sel = order[keep]
     B = {k: ([A["sym"][i] for i in sel] if k == "sym" else A[k][sel]) for k in A}
     B["y"] = y[keep]
+    # [V33.428] ★부드러운 순위★ — 같은 묶음 안에서의 백분위(0~1). 이진 라벨은 '중앙값보다 1bp 위' 와
+    #   '동료 중 1등' 을 같은 1 로 본다. 백분위는 그 차이를 학습에 준다(신경망은 이걸로 배운다).
+    #   ★평가는 여전히 이진 라벨로 한다★ — 잣대는 안 바꾼다.
+    B["ys"] = ys[keep]
     info.update(was=int(n), kept=int(len(sel)), groups=int(len(starts)), used=int(used),
                 dropSmall=int(small), dropTie=int(tie),
                 perHz={HORIZONS[k]: int((B["hz"] == k).sum()) for k in range(len(HORIZONS))
@@ -1324,6 +1350,77 @@ def holdout_edge(heads):
                                    % (auc, auc - 0.5, need)}
 
 
+def train_nn(Atr, fit, val, Aho, boosters, log=print, val_al=None):
+    """신경망 학습 + α 선택. val = 조기종료 구간 · val_al = α 고르는 구간(둘은 겹치지 않는다).
+    반환 None(끔) 또는 {alpha, zHold, export, ...}."""
+    import time
+    import numpy as np
+    if not NN_ON:
+        return None
+    if val_al is None or len(val_al) < 500:
+        log("   · OMNI 신경망 — α 를 고를 구간이 모자라 이번엔 끈다(%d행)" % (0 if val_al is None else len(val_al)))
+        return None
+    t0 = time.time()
+    spec = nn_spec(Atr["X"], fit)
+    Zf = nn_inputs(Atr["X"][fit], spec)
+    Zv = nn_inputs(Atr["X"][val], spec)
+    Zh = nn_inputs(Aho["X"], spec)
+    tgt = Atr["ys"] if "ys" in Atr else Atr["y"].astype(np.float64)
+    tf, tv = tgt[fit].astype(np.float32), tgt[val].astype(np.float64)
+    nets, recs = [], []
+    for sd in range(NN_SEEDS):
+        net, rec = _nn_train_one(Zf, Atr["hz"][fit], tf, Atr["w"][fit],
+                                 Zv, Atr["hz"][val], tv, Atr["w"][val], seed=17 + 1000 * sd, log=log)
+        nets.append(net)
+        recs.append(rec)
+    Za = nn_inputs(Atr["X"][val_al], spec)
+    zv = np.mean([nn_logit(n_, Za, Atr["hz"][val_al]) for n_ in nets], axis=0).astype(np.float64)
+    zh = np.mean([nn_logit(n_, Zh, Aho["hz"]) for n_ in nets], axis=0).astype(np.float64)
+    gv = np.mean([b.predict(Atr["X"][val_al], num_iteration=it, raw_score=True) for b, it in boosters], axis=0)
+    Av = take(Atr, val_al)
+    # ══ α 는 ★지평마다 하나★ — 합성 실측에서 신경망은 1d·5d·20d 에서, 나무는 30m·60m 에서 이겼다.
+    #   전체 하나로 고르면 행이 많은 단타 지평이 결정을 가져가 장타에서 이긴 신경망을 통째로 버린다.
+    #   지평마다 ★자기 α 구간 행만★ 으로 고른다. 행이 모자란 지평(<200)은 0(나무 그대로)이다 —
+    #   모르면 바꾸지 않는다.
+    table, alpha = [], []
+    for k, hz in enumerate(HORIZONS):
+        jx = np.where(Av["hz"] == k)[0]
+        row = {"hz": hz, "n": int(len(jx)), "auc": []}
+        if len(jx) < 200:
+            alpha.append(0.0)
+            row["why"] = "α 구간 %d행 — 모자라 0" % len(jx)
+            table.append(row)
+            continue
+        best_a, best_v, v0 = 0.0, None, None
+        for a in NN_ALPHAS:
+            v = _auc((1.0 - a) * gv[jx] + a * zv[jx], Av["y"][jx])
+            row["auc"].append(None if v is None else round(v, 5))
+            if a == 0.0:
+                v0 = v
+            if v is not None and (best_v is None or v > best_v + 1e-12):
+                best_a, best_v = a, v
+        # ★나무에서 옮기려면 근거가 있어야 한다★ — 검증 이득이 AUC 표준오차 1/√(3n) 을 넘을 때만.
+        #   합성 실측: α 구간이 지평당 2천 행일 때 60분 머리가 α=1.0 을 골랐는데 홀드아웃에서는
+        #   신경망이 나무보다 0.01 나빴다(고르기 잡음). 이미 검증된 쪽(나무)을 기본값으로 둔다.
+        se = 1.0 / math.sqrt(3.0 * len(jx))
+        row["se"] = round(se, 5)
+        if best_v is None or v0 is None or (best_v - v0) <= se:
+            row["why"] = "검증 이득 %s ≤ 표준오차 %.4f — 나무 그대로" % (
+                "—" if best_v is None or v0 is None else "%+.4f" % (best_v - v0), se)
+            best_a = 0.0
+        alpha.append(float(best_a))
+        table.append(row)
+    log("   · OMNI 신경망 %s → 몸통 %s → 머리 %d · 입력 %d칸(결측표시 %d) · 시드 %d · 최적 에폭 %s · %.0fs" % (
+        "numpy", "-".join(str(h) for h in NN_HID), len(HORIZONS), Zf.shape[1], len(spec["flags"]),
+        len(nets), [r["bestEpoch"] for r in recs], time.time() - t0))
+    log("   · OMNI 지평별 α(검증 뒤쪽 반에서만 고름) — " + " · ".join(
+        "%s %.1f(%d행)" % (r["hz"], a, r["n"]) for r, a in zip(table, alpha)))
+    ex = nn_export(nets, spec)
+    return {"alpha": alpha, "zHold": zh, "export": ex, "alphaTable": table, "seeds": recs,
+            "hid": list(NN_HID), "inputDim": int(Zf.shape[1]), "nFlags": len(spec["flags"]),
+            "target": "ys" if "ys" in Atr else "y", "sec": round(time.time() - t0, 1)}
+
+
 def train_model(A, log=print):
     """A 전체에서 분할 → 학습 → 홀드아웃 평가. 반환 (booster, report)."""
     import numpy as np
@@ -1359,6 +1456,26 @@ def train_model(A, log=print):
     if len(val) < 500:
         return None, {"ok": False, "why": "조기종료 검증 %d행 — 지평별로 나눌 표본이 모자라다" % len(val),
                       "cutoff": C}
+    # ══ [V33.428] ★섞는 비율(α)을 고르는 구간은 조기종료가 본 구간과 달라야 한다.★ ═════════════
+    #   나무는 조기종료로 검증 구간에 ★맞춰진★ 라운드에서 멈춘다(최대 400 중 하나를 고른다) —
+    #   그 구간에서 잰 나무 성적은 부풀어 있다. 같은 구간에서 α 를 고르면 α 가 나무 쪽으로 기운다
+    #   (합성 실측: 검증은 α=0.5 를 골랐는데 홀드아웃에서는 신경망 단독이 섞음보다 나았다).
+    #   → 검증을 지평마다 시간으로 반 가른다: 앞 반 = 조기종료(나무·신경망 둘 다), 뒤 반 = α.
+    #     신경망을 끄면(OMNI_NN=0) 예전처럼 검증 전체로 조기종료한다.
+    val_al = np.array([], dtype=np.int64)
+    if NN_ON:
+        _es, _al = [], []
+        for _k in range(len(HORIZONS)):
+            _ix = val[Atr["hz"][val] == _k]
+            if len(_ix) < 200:
+                _es.append(_ix)
+                continue
+            _m = float(np.median(Atr["td"][_ix]))
+            _es.append(_ix[Atr["td"][_ix] < _m])
+            _al.append(_ix[Atr["td"][_ix] >= _m])
+        if _al and sum(len(a) for a in _al) >= 500:
+            val = np.concatenate(_es)
+            val_al = np.concatenate(_al)
     dfit = lgb.Dataset(Atr["X"][fit], label=Atr["y"][fit], weight=Atr["w"][fit],
                        feature_name=MODEL_FEATS, free_raw_data=False)
     dval = lgb.Dataset(Atr["X"][val], label=Atr["y"][val], weight=Atr["w"][val], reference=dfit)
@@ -1385,8 +1502,27 @@ def train_model(A, log=print):
             pass
     raw = np.mean(raws, axis=0)
     dis = float(np.mean(np.std(raws, axis=0))) if len(raws) > 1 else 0.0   # 시드 불일치(불확실성)
+    # ══ [V33.428] 신경망 — 같은 fit/val 분할로 배우고, α 는 val 에서만 고른다 ═══════════════
+    nnr = train_nn(Atr, fit, val, Aho, boosters, log=log, val_al=val_al)
+    rawG = raw
+    alpha = nnr["alpha"] if nnr else [0.0] * len(HORIZONS)
+    if nnr:
+        _av = np.asarray(alpha, dtype=np.float64)[Aho["hz"]]
+        raw = (1.0 - _av) * rawG + _av * nnr["zHold"]
     p = 1.0 / (1.0 + np.exp(-raw))
     heads = evaluate_heads(p, Aho)
+    headsG = evaluate_heads(1.0 / (1.0 + np.exp(-rawG)), Aho) if nnr else heads
+    headsN = evaluate_heads(1.0 / (1.0 + np.exp(-nnr["zHold"])), Aho) if nnr else None
+    if nnr:
+        eG, eN, eB = holdout_edge(headsG), holdout_edge(headsN), holdout_edge(heads)
+        _fa = lambda e: "—" if e.get("auc") is None else "%.4f" % e["auc"]
+        log("   · OMNI 홀드아웃 가중 AUC — 나무 %s · 신경망 %s · 섞음(지평별 α %s) %s" % (
+            _fa(eG), _fa(eN), "/".join("%.1f" % a for a in alpha), _fa(eB)))
+        for hz in HORIZONS:
+            a, b_, c = (headsG.get(hz) or {}).get("auc"), (headsN.get(hz) or {}).get("auc"), (heads.get(hz) or {}).get("auc")
+            log("     %s  나무 %s · 신경망 %s · 섞음 %s" % (hz, "—" if a is None else "%.4f" % a,
+                                                    "—" if b_ is None else "%.4f" % b_, "—" if c is None else "%.4f" % c))
+        nnr["edgeG"], nnr["edgeN"], nnr["edgeB"] = eG, eN, eB
     best = int(np.mean([it for _, it in boosters]))
     # 지평별 행 수를 남긴다 — 불균형이 다시 생기면 ★로그에서 바로 보인다★(숫자를 숨기지 않는다)
     import collections as _co
@@ -1409,11 +1545,18 @@ def train_model(A, log=print):
     log("   · OMNI 지평 가중비중 학습 " + " · ".join("%s %.0f%%" % (h, v * 100) for h, v in _sf.items()))
     log("   · OMNI 지평 가중비중 검증 " + " · ".join("%s %.0f%%" % (h, v * 100) for h, v in _sv.items()))
     rep = {"ok": True, "cutoff": C, "innerCut": C2, "nTrain": int(len(fit)), "nVal": int(len(val)),
-           "hzFitShare": _sf, "hzValShare": _sv,
+           "hzFitShare": _sf, "hzValShare": _sv, "nValAlpha": int(len(val_al)),
            "nHold": int(len(ho)), "bestIter": best, "seeds": len(boosters), "seedDisagree": dis,
            "iters": [it for _, it in boosters], "heads": heads,
            "valGain": [float(v) for v in _vg],
            "hzMult": _hzMult, "hzTrain": _cnt(tr), "hzHold": _cnt(ho)}
+    if nnr:
+        rep["nn"] = {k: v for k, v in nnr.items() if k not in ("zHold", "nets")}
+        rep["nn"]["headsN"] = {hz: {k: (h or {}).get(k) for k in ("n", "auc", "acc")} for hz, h in (headsN or {}).items()}
+        rep["nn"]["headsG"] = {hz: {k: (h or {}).get(k) for k in ("n", "auc", "acc")} for hz, h in (headsG or {}).items()}
+        rep["nnExport"] = nnr["export"]
+        rep["nnViz"] = nn_viz(nnr["export"], headsN)
+    rep["alpha"] = alpha
     return (boosters, best), rep
 
 
@@ -1459,6 +1602,265 @@ def feature_gain(boosters):
 
 def score_raw(trees, x):
     return sum(score_tree(t, x) for t in trees)
+
+
+# ══ [V33.428] ★OMNI-NN — 한 몸통 · 다섯 머리 신경망★ ═══════════════════════════════════════
+#   나무 숲(GBDT)은 칸 하나씩 문턱으로 자른다. 칸들이 ★함께★ 움직이는 모양(예: 5분봉 반전 × 일봉
+#   추세 × 동료 대비 위치)은 여러 번 잘라야 겨우 흉내 낸다. 신경망은 그 조합을 연속으로 배운다.
+#   ★구조★: 입력(피처 + 매매법 + 결측표시) → 몸통 64 → 32 (ReLU, 모든 지평이 공유)
+#          → 지평별 머리 5개(30m · 60m · 1d · 5d · 20d) — 행의 지평에 해당하는 머리 하나만 답한다.
+#     몸통을 공유하므로 장타 행이 배운 '종목 성질' 이 단타 머리에도 쓰이고, 그 반대도 된다
+#     (한 모델이 여러 지평을 같이 배운다 — OMNI 의 원래 뜻 그대로).
+#   ★라벨★: 이진 라벨 대신 횡단면 ★백분위★(ys)로 배운다 — 중앙값 근처의 애매한 행과 동료 중
+#     1등을 구별한다. ★평가는 이진 라벨★ 그대로(잣대는 안 바꾼다).
+#   ★섞기★: 최종 로짓 = (1−α)·나무 + α·신경망. α 는 ★조기종료 검증 구간★ 에서만 고른다 —
+#     홀드아웃은 α 를 고르는 데 한 번도 안 쓴다(고른 뒤에 한 번 잰다). α=0 이면 신경망은 구조
+#     관측에만 나오고 점수에는 안 들어간다(도움이 안 되면 안 쓴다).
+#   ★numpy 로 직접 짠다★ — torch 없이. 이유 둘: 자가검사가 CI 에서 torch 없이 돈다. 그리고
+#     워커(JS)가 같은 순전파를 한다 — 식이 여기 몇 줄로 다 보여야 두 쪽이 같다고 검사할 수 있다.
+NN_HID = (64, 32)
+NN_CLIP = 5.0
+NN_FLAG_MIN = 0.005             # 결측률이 이보다 큰 칸만 '결측표시' 입력을 따로 준다
+NN_BATCH = 4096
+NN_LR = 1e-3
+NN_WD = 1e-4                    # 가중치 감쇠(AdamW 방식 — 기울기와 분리)
+NN_EPOCHS = 20
+NN_PATIENCE = 3
+NN_SEEDS = 2
+NN_ALPHAS = [i / 10.0 for i in range(11)]
+
+
+def nn_spec(X, fit_ix):
+    """입력 명세 — 칸 번호 · 중앙값 · 척도 · 결측표시 칸. ★학습(fit) 구간에서만★ 잰다."""
+    import numpy as np
+    cols = [k for k, nm in enumerate(MODEL_FEATS) if not nm.startswith("hz_")]
+    Xf = X[fit_ix][:, cols]
+    med, sc, flags = [], [], []
+    for j in range(len(cols)):
+        v = Xf[:, j]
+        ok = v[np.isfinite(v)]
+        if len(ok) < 10:
+            med.append(0.0); sc.append(1.0)
+        else:
+            m = float(np.median(ok))
+            q1, q3 = np.quantile(ok, [0.25, 0.75])
+            s = float(q3 - q1) / 1.349
+            if not (s > 1e-9):
+                s = float(np.std(ok))
+            if not (s > 1e-9):
+                s = 1.0
+            med.append(float(np.float32(m))); sc.append(float(np.float32(s)))
+        if (1.0 - len(ok) / max(1, len(v))) > NN_FLAG_MIN:
+            flags.append(j)
+    return {"cols": cols, "med": med, "sc": sc, "flags": flags, "clip": NN_CLIP}
+
+
+def nn_inputs(X, spec, dtype="float32"):
+    """design 행렬 → 신경망 입력. NaN 은 0(=중앙값) + 결측표시 1."""
+    import numpy as np
+    Z = X[:, spec["cols"]]
+    nanm = ~np.isfinite(Z)
+    med = np.asarray(spec["med"], dtype=np.float64)
+    sc = np.asarray(spec["sc"], dtype=np.float64)
+    Z = np.where(nanm, 0.0, (np.nan_to_num(Z) - med) / sc)
+    Z = np.clip(Z, -spec["clip"], spec["clip"])
+    Z = np.where(nanm, 0.0, Z)
+    F = nanm[:, spec["flags"]].astype(np.float64)
+    return np.concatenate([Z, F], axis=1).astype(dtype)
+
+
+def _nn_init(d0, rng):
+    import numpy as np
+    dims = [d0] + list(NN_HID)
+    W = [rng.normal(0, math.sqrt(2.0 / dims[i]), (dims[i], dims[i + 1])).astype(np.float32)
+         for i in range(len(NN_HID))]
+    b = [np.zeros(dims[i + 1], dtype=np.float32) for i in range(len(NN_HID))]
+    Wh = (rng.normal(0, 0.01, (dims[-1], len(HORIZONS)))).astype(np.float32)
+    bh = np.zeros(len(HORIZONS), dtype=np.float32)
+    return {"W": W, "b": b, "Wh": Wh, "bh": bh}
+
+
+def nn_logit(net, Z, hz):
+    """배치 순전파 → 행마다 ★자기 지평 머리★ 의 로짓."""
+    import numpy as np
+    h = Z
+    for W, b in zip(net["W"], net["b"]):
+        h = np.maximum(h @ W + b, 0.0)
+    O = h @ net["Wh"] + net["bh"]
+    return O[np.arange(len(hz)), hz]
+
+
+def _nn_train_one(Z, hz, t, w, Zv, hzv, tv, wv, seed, log=print):
+    """AdamW · 미니배치 · 검증손실 조기종료. 반환 (net, 기록)."""
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    net = _nn_init(Z.shape[1], rng)
+    params = net["W"] + net["b"] + [net["Wh"], net["bh"]]
+    m1 = [np.zeros_like(p) for p in params]
+    m2 = [np.zeros_like(p) for p in params]
+    b1, b2, eps = 0.9, 0.999, 1e-8
+    step = 0
+    wn = (w / w.mean()).astype(np.float32)
+    wvn = wv / wv.sum()
+
+    def vloss(nt):
+        z = nn_logit(nt, Zv, hzv).astype(np.float64)
+        p = 1.0 / (1.0 + np.exp(-z))
+        p = np.clip(p, 1e-7, 1 - 1e-7)
+        return float(-(wvn * (tv * np.log(p) + (1 - tv) * np.log(1 - p))).sum())
+
+    best = (vloss(net), {k: ([a.copy() for a in v] if isinstance(v, list) else v.copy()) for k, v in net.items()}, 0)
+    hist = [round(best[0], 6)]
+    bad = 0
+    n = len(t)
+    L = len(NN_HID)
+    for ep in range(1, NN_EPOCHS + 1):
+        perm = rng.permutation(n)
+        for a in range(0, n, NN_BATCH):
+            ix = perm[a:a + NN_BATCH]
+            x, hb, tb, wb = Z[ix], hz[ix], t[ix], wn[ix]
+            acts = [x]
+            h = x
+            for W, bb in zip(net["W"], net["b"]):
+                h = np.maximum(h @ W + bb, 0.0)
+                acts.append(h)
+            O = h @ net["Wh"] + net["bh"]
+            r = np.arange(len(ix))
+            z = O[r, hb]
+            p = 1.0 / (1.0 + np.exp(-z))
+            g = (wb * (p - tb) / len(ix)).astype(np.float32)          # dL/dz (가중 BCE 평균)
+            G = np.zeros_like(O)
+            G[r, hb] = g
+            grads_W, grads_b = [None] * L, [None] * L
+            gWh = acts[-1].T @ G
+            gbh = G.sum(0)
+            dh = G @ net["Wh"].T
+            for l in range(L - 1, -1, -1):
+                dh = dh * (acts[l + 1] > 0)
+                grads_W[l] = acts[l].T @ dh
+                grads_b[l] = dh.sum(0)
+                if l:
+                    dh = dh @ net["W"][l].T
+            grads = grads_W + grads_b + [gWh, gbh]
+            step += 1
+            lr_t = NN_LR * math.sqrt(1 - b2 ** step) / (1 - b1 ** step)
+            for i, (pp, gg) in enumerate(zip(params, grads)):
+                m1[i] = b1 * m1[i] + (1 - b1) * gg
+                m2[i] = b2 * m2[i] + (1 - b2) * gg * gg
+                if pp.ndim == 2:
+                    pp *= (1.0 - NN_LR * NN_WD)
+                pp -= (lr_t * m1[i] / (np.sqrt(m2[i]) + eps)).astype(np.float32)
+        vl = vloss(net)
+        hist.append(round(vl, 6))
+        if vl < best[0] - 1e-6:
+            best = (vl, {k: ([a.copy() for a in v] if isinstance(v, list) else v.copy()) for k, v in net.items()}, ep)
+            bad = 0
+        else:
+            bad += 1
+            if bad >= NN_PATIENCE:
+                break
+    return best[1], {"bestEpoch": best[2], "valLoss": hist, "seed": int(seed)}
+
+
+def nn_export(nets, spec):
+    """워커 형식 — 숫자는 float32 로 반올림한 값을 그대로(두 쪽이 같은 수를 본다)."""
+    f = lambda a: [[float(v) for v in row] for row in a.tolist()] if a.ndim == 2 else [float(v) for v in a.tolist()]
+    return {"cols": spec["cols"], "med": spec["med"], "sc": spec["sc"], "flags": spec["flags"],
+            "clip": spec["clip"], "hid": list(NN_HID), "act": "relu",
+            "nets": [{"W": [f(W) for W in n["W"]], "b": [f(b) for b in n["b"]],
+                      "Wh": f(n["Wh"]), "bh": f(n["bh"])} for n in nets]}
+
+
+def nn_score_row(ex, x, hz):
+    """★기준 채점기★ — 한 행을 파이썬 float(double)로. 워커 JS 가 이것을 한 줄씩 옮긴다.
+    x 는 design 행(NaN 또는 None = 결측), hz 는 지평 번호. 반환: 네트들의 로짓 평균."""
+    z0 = []
+    for j, c in enumerate(ex["cols"]):
+        v = x[c]
+        if v is None or v != v:
+            z0.append(0.0)
+        else:
+            u = (v - ex["med"][j]) / ex["sc"][j]
+            z0.append(ex["clip"] if u > ex["clip"] else (-ex["clip"] if u < -ex["clip"] else u))
+    for j in ex["flags"]:
+        v = x[ex["cols"][j]]
+        z0.append(1.0 if (v is None or v != v) else 0.0)
+    tot = 0.0
+    for net in ex["nets"]:
+        h = z0
+        for W, b in zip(net["W"], net["b"]):
+            nh = []
+            for k in range(len(b)):
+                s = b[k]
+                for i in range(len(h)):
+                    s += h[i] * W[i][k]
+                nh.append(s if s > 0 else 0.0)
+            h = nh
+        s = net["bh"][hz]
+        for i in range(len(h)):
+            s += h[i] * net["Wh"][i][hz]
+        tot += s
+    return tot / len(ex["nets"])
+
+
+def nn_viz(ex, heads_nn=None, top_in=3):
+    """구조 관측용 — ★실제 가중치★ 에서만 나온다(지어내지 않는다).
+      · 입력칸 세기 = 나가는 연결 |w| 합을 ★네트들에 걸쳐 평균★(입력칸은 네트마다 같은 칸이다)
+      · 은닉 뉴런 세기 · 연결선 = ★대표 네트 1개(첫 시드)★ 에서. 시드가 다른 네트끼리는 뉴런 번호가
+        대응하지 않는다 — 평균하면 뜻 없는 숫자가 된다.
+      · 연결선 = 뉴런마다 들어오는 연결 중 |w| 가 큰 top_in 개(전부 그리면 7천 줄이라 안 보인다).
+        값은 층 안 최대 |w| 로 나눈 0~1 과 부호.
+      · 머리 세기 = 신경망 단독의 홀드아웃 AUC − 0.5."""
+    names = [MODEL_FEATS[c] for c in ex["cols"]] + ["결측:" + MODEL_FEATS[ex["cols"][j]] for j in ex["flags"]]
+    nets = ex["nets"]
+    n0 = nets[0]
+    L = len(ex["hid"])
+
+    def out_strength(M):
+        return [sum(abs(v) for v in row) for row in M]
+
+    s_in = [0.0] * len(names)
+    for net in nets:
+        for i, v in enumerate(out_strength(net["W"][0])):
+            s_in[i] += v / len(nets)
+    lay = [{"name": "입력", "size": len(names), "names": names, "strength": s_in}]
+    for l in range(L):
+        M = n0["W"][l + 1] if l + 1 < L else n0["Wh"]
+        lay.append({"name": "몸통 %d" % (l + 1), "size": ex["hid"][l], "strength": out_strength(M)})
+    hs = []
+    for hz in HORIZONS:
+        a = ((heads_nn or {}).get(hz) or {}).get("auc")
+        hs.append(None if a is None else float(a) - 0.5)
+    lay.append({"name": "지평 머리", "size": len(HORIZONS), "names": list(HORIZONS), "strength": hs})
+    edges = []
+    mats = list(n0["W"]) + [n0["Wh"]]
+    for l, M in enumerate(mats):
+        mx = max((abs(v) for row in M for v in row), default=0.0) or 1.0
+        es = []
+        ncol = len(M[0]) if M else 0
+        k_in = top_in if l < len(mats) - 1 else max(top_in, 6)
+        for k in range(ncol):
+            col = sorted(((abs(M[i][k]), i, M[i][k]) for i in range(len(M))), reverse=True)[:k_in]
+            for a, i, w in col:
+                es.append([i, k, round(a / mx, 4), 1 if w >= 0 else -1])
+        edges.append(es)
+    return {"layers": lay, "edges": edges, "rep": "첫 시드 네트(은닉·연결) · 입력 세기는 네트 평균"}
+
+
+def _wavg_auc(p, A, ix=None):
+    """지평별 AUC 를 행 수로 가중평균 — holdout_edge 와 같은 잣대(α 고르기에 쓴다)."""
+    import numpy as np
+    tot = n = 0.0
+    for k in range(len(HORIZONS)):
+        jx = np.where(A["hz"] == k)[0] if ix is None else ix[A["hz"][ix] == k]
+        if len(jx) < 50:
+            continue
+        a = _auc(p[jx], A["y"][jx])
+        if a is None:
+            continue
+        tot += a * len(jx)
+        n += len(jx)
+    return (tot / n) if n else None
 
 
 # ─────────────────────────── 워커와 주고받기 ───────────────────────────
@@ -1658,7 +2060,7 @@ def _clean(o):
     return o
 
 
-def make_probe(boosters, best, A, n=PROBE_N, seed=5):
+def make_probe(boosters, best, A, n=PROBE_N, seed=5, nn=None, alpha=None):
     """정합 probe — 홀드아웃에서 장타·장중을 반씩(장타 행은 장중 칸이 NaN). 기대값은 lgb 자체의 raw."""
     import numpy as np
     rng = np.random.default_rng(seed)
@@ -1671,7 +2073,17 @@ def make_probe(boosters, best, A, n=PROBE_N, seed=5):
     if not isinstance(boosters, list):
         boosters = [(boosters, best)]
     raw = np.mean([b.predict(X, num_iteration=it, raw_score=True) for b, it in boosters], axis=0)
-    return [{"x": [None if v != v else float(v) for v in x], "raw": float(r)} for x, r in zip(X, raw)]
+    out = [{"x": [None if v != v else float(v) for v in x], "raw": float(r)} for x, r in zip(X, raw)]
+    if nn is not None and alpha and any(alpha):
+        # [V33.428] 섞인 로짓 — 신경망 몫은 ★기준 채점기(double)★ 로 낸다. 워커가 같은 식을 같은
+        #   순서로 돌리므로 비트까지 같아야 한다(1e-9 관문을 그대로 쓴다).
+        for pr, x, hk in zip(out, X, A["hz"][pick]):
+            zn = nn_score_row(nn, list(x), int(hk))
+            a = float(alpha[int(hk)])
+            pr["rawG"] = pr["raw"]
+            pr["rawN"] = zn
+            pr["raw"] = (1.0 - a) * pr["rawG"] + a * zn
+    return out
 
 
 def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
@@ -1697,9 +2109,26 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
     trees = export_model(boosters)
     gain = feature_gain(boosters)
     C, _, ho = split_cutoff(A)
-    probe = make_probe(boosters, best, take(A, ho))
+    _nnx = rep.get("nnExport")
+    _alpha = [float(a) for a in (rep.get("alpha") or [0.0] * len(HORIZONS))]
+    probe = make_probe(boosters, best, take(A, ho), nn=_nnx, alpha=_alpha)
     mine = [score_raw(trees, [NAN if v is None else v for v in pr["x"]]) for pr in probe]
-    pmax = max([abs(a - pr["raw"]) for a, pr in zip(mine, probe)] or [0.0])
+    pmax = max([abs(a - pr.get("rawG", pr["raw"])) for a, pr in zip(mine, probe)] or [0.0])
+    # [V33.428] 신경망 — 배치(float32 학습 경로)와 기준 채점기(double)가 같은 모델인가.
+    #   float32 누적 오차만큼은 다를 수 있다(1e-4 안). 그보다 크면 내보내기가 틀린 것이다.
+    nmax = 0.0
+    if _nnx is not None:
+        _Ah = take(A, ho)
+        _k = min(len(_Ah["y"]), 64)
+        _Z = nn_inputs(_Ah["X"][:_k], {"cols": _nnx["cols"], "med": _nnx["med"], "sc": _nnx["sc"],
+                                       "flags": _nnx["flags"], "clip": _nnx["clip"]}, dtype="float64")
+        import numpy as _np
+        _nets = [{"W": [_np.asarray(W) for W in n_["W"]], "b": [_np.asarray(b) for b in n_["b"]],
+                  "Wh": _np.asarray(n_["Wh"]), "bh": _np.asarray(n_["bh"])} for n_ in _nnx["nets"]]
+        _zb = _np.mean([nn_logit(n_, _Z, _Ah["hz"][:_k]) for n_ in _nets], axis=0)
+        for i in range(_k):
+            nmax = max(nmax, abs(float(_zb[i]) - nn_score_row(_nnx, list(_Ah["X"][i]), int(_Ah["hz"][i]))))
+        log("   · OMNI 신경망 내보내기 정합 — 배치 ↔ 기준 채점기 최대차 %.2g (%d행)" % (nmax, _k))
     log("   · OMNI 나무 %d(시드 %d · 불일치 %.4f) · 학습 %d · 조기종료검증 %d · 홀드아웃 %d (절단 %s) · 자체 정합 %.2g" % (
         len(trees), rep.get("seeds", 1), rep.get("seedDisagree", 0.0),
         rep["nTrain"], rep["nVal"], rep["nHold"],
@@ -1735,6 +2164,9 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
     if pmax > 1e-9:
         log("   ⚠️ OMNI 내보낸 나무가 LightGBM 과 다른 답을 낸다(%.3g) — 업로드하지 않는다" % pmax)
         return rep
+    if nmax > 1e-6:
+        log("   ⚠️ OMNI 내보낸 신경망이 학습한 신경망과 다른 답을 낸다(%.3g) — 업로드하지 않는다" % nmax)
+        return rep
     payload = _clean({"v": OMNI_VER, "feats": MODEL_FEATS, "horizons": HORIZONS, "setups": SETUPS,
                "consts": {"sess": SESS_MIN, "openUs": OPEN_MIN["us"], "openKr": OPEN_MIN["kr"],
                           "hLook": H_LOOKBACK, "dLook": D_LOOKBACK, "base": BASE_SEC},
@@ -1747,6 +2179,8 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
                "iters": rep.get("iters"), "valGain": rep.get("valGain"),
                "hzFitShare": rep.get("hzFitShare"), "hzValShare": rep.get("hzValShare"),
                "edge": rep.get("edge"),
+               # [V33.428] 신경망 — 가중치 · α · 구조 관측용 세기 · 나무/신경망/섞음 성적 비교
+               "nn": _nnx, "alpha": _alpha, "nnViz": rep.get("nnViz"), "nnRep": rep.get("nn"),
                # [V33.426] ★패널을 같이 올린다★ — 워커가 다시 만들면 종목 집합이 달라 랭크가 갈린다.
                "panelDay": _pday, "panel": _prows,
                "excl": excl, "trainedAt": int(time.time() * 1000), "params": LGB_PARAMS,

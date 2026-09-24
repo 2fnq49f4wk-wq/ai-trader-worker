@@ -84,8 +84,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.427">
-<script src="/neural-observatory.js?v=33.427" defer></script>
+<meta name="lux-build" content="V33.428">
+<script src="/neural-observatory.js?v=33.428" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -14714,7 +14714,15 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     }
     var okN=(d.headsOk||[]).length, heads=d.heads||[];
     var probeOk = (d.probeMaxDiff!=null && d.probeMaxDiff <= 1e-9);
-    sub.textContent = 'OMNI — 나무 '+(d.nTrees||0)+'그루 · 입력 '+(d.inputDim||0)+'칸(피처 '
+    /* [V33.428] 신경망 — 층 크기는 nnViz(실제 가중치에서 나온 구조)에서 읽는다. */
+    var NV = d.nnViz && d.nnViz.layers ? d.nnViz.layers : null;
+    var nnShape = NV ? NV.map(function(l){ return l.size; }).join('→') : null;
+    var AL = d.alpha || [];
+    var nnUsed = AL.filter(function(a){ return a>0; }).length;
+    var NR = d.nnRep || {};
+    var fa = function(e){ return (e && e.auc!=null)? e.auc.toFixed(4) : '—'; };
+    sub.textContent = 'OMNI — '+(NV? '신경망 '+nnShape+' (한 몸통 · 다섯 머리) + ' : '')
+      +'나무 '+(d.nTrees||0)+'그루 · 입력 '+(d.inputDim||0)+'칸(피처 '
       +((d.feats||[]).length)+' + 지평 '+((d.horizons||[]).length)+' + 매매법 '+((d.setups||[]).length)
       +') · 한 모델이 장타·단타를 같이 배운다 · ★섀도우(매매에 안 씀)★';
     /* [V33.425] ★확률의 뜻을 화면이 지어내지 않는다.★ 라벨 규약을 서버가 실어 오면 그대로 적는다 —
@@ -14737,7 +14745,11 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       chip('라벨', d.label? (LBLTXT[d.label]||d.label) : '—', d.label==='xsec'?'good':'') +
       (d.xsec? chip('횡단면 묶음', (d.xsec.used!=null?d.xsec.used.toLocaleString():'—')+'개 (최소 '
                +(d.xsecMin!=null?d.xsecMin:'—')+'종목)','') : '') +
-      (d.iters&&d.iters.length? chip('시드별 라운드', d.iters.join('·'),'') : '');
+      (d.iters&&d.iters.length? chip('시드별 라운드', d.iters.join('·'),'') : '') +
+      (NV? chip('신경망', nnShape+' · 네트 '+((NR.seeds||[]).length||'—')+'개', 'good') : chip('신경망', '아직 없음(나무만)', '')) +
+      (NV? chip('지평별 α(신경망 몫)', (d.horizons||[]).map(function(h,k){ return h+' '+(AL[k]!=null?(+AL[k]).toFixed(1):'—'); }).join(' · '),
+                nnUsed? 'good':'') : '') +
+      (NV? chip('홀드아웃 AUC 나무 / 신경망 / 섞음', fa(NR.edgeG)+' / '+fa(NR.edgeN)+' / '+fa(NR.edgeB), '') : '');
     if(ban){
       ban.className='nnv-banner '+(okN>0?'on':'off');
       ban.innerHTML = okN>0
@@ -14832,12 +14844,16 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         + '</div></div>'
         + (topHtml? '<div class="omni-lane-h">가장 많이 갈린 칸</div><div class="omni-tops">'+topHtml+'</div>':'')
       : '';
-    stage.innerHTML = '<div class="omni-wrap">'
+    /* [V33.428] ★SEQ 처럼 3D 로 그린다★ — 입력 다발 → 몸통 → 다섯 머리, 아래로는 나무 숲,
+       지평마다 α 로 섞여 확률이 된다. 선·점의 밝기는 전부 실제 값(가중치 · gain · AUC · α)이다. */
+    stage.innerHTML = '<div id="omniVol" class="omni-vol"></div><div class="omni-wrap">'
       + structHtml
       + '<div class="omni-lane-h">지평별 성적 — ★쓰는 지평만 쓴다★</div>'
       + '<div class="omni-heads">'+cards+'</div>'
       + '<div class="brain-map-foot">막대: 실제 정확도 · 회색선 = 무실력 기준선 · 주황선 = 발언 문턱 · 파란선 = 발언 구간 하한. '
       + '문턱을 넘지 못한 지평은 쓰지 않습니다(문턱을 내리지 않습니다).</div></div>';
+    try{ if(window.NeuralObservatory) window.NeuralObservatory.mount(document.getElementById('omniVol'),{kind:'omni',data:d}); }
+    catch(err){ var _ov=document.getElementById('omniVol'); if(_ov) _ov.textContent='3D 구조를 그리지 못했습니다: '+err.message; }
     var exTxt = '';
     try{
       var e=d.excl||{};
@@ -14848,7 +14864,12 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       + '<div class="nnv-comm-h">무엇을 어떻게 배웠나</div>'
       + '<div class="nnv-comm-b">'
       + '<p>원시 <b>5분봉·일봉</b>만 저장해 두고 피처·라벨은 학습기가 만듭니다(피처를 바꿔도 처음부터 다시 모으지 않습니다). '
-      + '라벨은 그 종목·그 시점의 <b>변동성에 비례한 삼중배리어</b>입니다 — 조용한 종목의 ±1% 와 요동치는 종목의 ±1% 를 같은 질문으로 만들지 않기 위해서입니다.</p>'
+      + '라벨은 <b>같은 시각·같은 시장 동료들의 중앙값보다 잘했는가</b>(횡단면 상대)입니다 — 시장 전체가 오르내리는 성분이 빠지므로 기본율이 언제나 50%입니다. '
+      + '신경망은 이진 라벨 대신 <b>동료 중 몇 번째였는가(백분위)</b>로 배우고, 성적은 이진 라벨로 똑같이 잽니다.</p>'
+      + (NV? '<p><b>신경망</b>: 입력 '+NV[0].size+'칸(결측표시 포함) → 몸통 '+NV.slice(1,-1).map(function(l){return l.size;}).join('→')
+          +' → 지평 머리 5개. 몸통은 모든 지평이 같이 쓰고, 행의 지평에 해당하는 머리 하나만 답합니다. '
+          +'최종 확률은 지평마다 <b>(1−α)·나무 + α·신경망</b>이고, α 는 <b>조기종료에 안 쓴 검증 구간</b>에서만 고릅니다 '
+          +'(이득이 표준오차보다 작으면 α=0 — 나무 그대로).</p>' : '')
       + '<p>한 모델이 지평 <b>'+((d.horizons||[]).map(function(h){return HZTXT[h]||h;}).join(' · '))+'</b> 과 '
       + '매매법 <b>'+((d.setups||[]).map(function(x){return STTXT[x]||x;}).join(' · '))+'</b> 를 <b>입력으로</b> 받습니다. '
       + '그래서 장타와 단타가 서로의 자료에서 배웁니다.</p>'
@@ -20148,11 +20169,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.427">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.427">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.427">
-<link rel="stylesheet" href="/model-evidence.css?v=33.427">
-<script src="/model-evidence.js?v=33.427"></script>
-<script src="/workspace-ui.js?v=33.427"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.428">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.428">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.428">
+<link rel="stylesheet" href="/model-evidence.css?v=33.428">
+<script src="/model-evidence.js?v=33.428"></script>
+<script src="/workspace-ui.js?v=33.428"></script>
 </body>
 </html>

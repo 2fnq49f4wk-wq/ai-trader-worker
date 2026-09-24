@@ -216,6 +216,25 @@ def fake_roundtrip(data):
     _bad = [k for r in _pn.values() for k in r if k not in omni.PANEL_FEATS]
     if _bad:
         fails.append("패널에 모르는 칸: %s" % sorted(set(_bad))[:3])
+    # [V33.428] 신경망이 본문에 실리는가 · α>0 이면 probe 가 섞인 값인가
+    _nnb = body.get("nn")
+    if not isinstance(_nnb, dict) or not _nnb.get("nets"):
+        fails.append("업로드 본문에 신경망이 없다")
+    elif not (isinstance(body.get("alpha"), list) and len(body["alpha"]) == len(omni.HORIZONS)):
+        fails.append("α 가 지평별 목록이 아니다: %r" % (body.get("alpha"),))
+    elif any(body["alpha"]):
+        _A = body["alpha"]
+        _nh = len(omni.FEATS)
+        _bad = []
+        for pr in body["probe"]:
+            _k = [i for i in range(len(omni.HORIZONS)) if pr["x"][_nh + i] == 1]
+            _a = _A[_k[0]] if _k else None
+            if _a is None or "rawN" not in pr or abs(pr["raw"] - ((1 - _a) * pr["rawG"] + _a * pr["rawN"])) > 1e-12:
+                _bad.append(pr)
+        if _bad:
+            fails.append("α=%s 인데 probe 가 지평별로 섞인 값이 아니다(%d행)" % (_A, len(_bad)))
+    print("왕복 신경망: α %s · 네트 %d · 입력 %d칸" % (body.get("alpha"), len((_nnb or {}).get("nets") or []),
+                                               len((_nnb or {}).get("cols") or []) + len((_nnb or {}).get("flags") or [])))
     print("패널 동봉: %s · 종목 %d · 칸 %d" % (
         body.get("panelDay"), len(_pn), len(next(iter(_pn.values()), {}))))
     print("왕복: 5분봉 조회 %d · 일봉 조회 %d · 나무 %d · probe %d · 본문 %.1f MB" % (
@@ -393,6 +412,66 @@ def main():
     if _e0["ok"]:
         fails.append("잡음 회차가 홀드아웃 실력 관문을 통과했다(AUC %.4f) — 관문이 아무것도 안 막는다"
                      % _e0["auc"])
+    # ══ [V33.428] ★신경망 머리★ — 심은 신호를 찾고, 잡음에서는 못 찾아야 한다 ══════════════
+    _nn1, _nn0 = rep.get("nn") or {}, rep0.get("nn") or {}
+    _eN1, _eN0 = _nn1.get("edgeN") or {}, _nn0.get("edgeN") or {}
+    print("신경망: 신호 있음 %s · 없음 %s · α %s/%s · α 구간 %s행(조기종료와 분리)" % (
+        _eN1.get("auc"), _eN0.get("auc"), rep.get("alpha"), rep0.get("alpha"), rep.get("nValAlpha")))
+    if not rep.get("nnExport"):
+        fails.append("신경망이 안 돌았다(nnExport 없음)")
+    else:
+        if not ((_eN1.get("auc") or 0) > 0.515):
+            fails.append("신경망이 심은 신호를 못 찾았다(홀드아웃 %s)" % _eN1.get("auc"))
+        if _eN0.get("ok"):
+            fails.append("잡음 회차에서 신경망이 홀드아웃 관문을 통과했다(%s)" % _eN0.get("auc"))
+        if not (rep.get("nValAlpha") or 0) >= 500:
+            fails.append("α 를 고른 구간이 없다 — 조기종료 구간에서 골랐다")
+        # 기준 채점기(double) ↔ 배치 순전파(double) — 같은 식인가
+        import numpy as _np2
+        _ex = rep["nnExport"]
+        _Ch, _trh, _hoh = omni.split_cutoff(A)
+        _pk = _np2.r_[_hoh[:150], _hoh[_np2.isin(A["hz"][_hoh], [3, 4])][:150]]   # 장타 행 = 장중 칸 결측
+        _Ah = omni.take(A, _pk)
+        _Z = omni.nn_inputs(_Ah["X"], _ex, dtype="float64")
+        _nets = [{"W": [_np2.asarray(W) for W in q["W"]], "b": [_np2.asarray(b) for b in q["b"]],
+                  "Wh": _np2.asarray(q["Wh"]), "bh": _np2.asarray(q["bh"])} for q in _ex["nets"]]
+        _zb = _np2.mean([omni.nn_logit(q, _Z, _Ah["hz"]) for q in _nets], axis=0)
+        _zr = _np2.array([omni.nn_score_row(_ex, list(x), int(h)) for x, h in zip(_Ah["X"], _Ah["hz"])])
+        _d = float(_np2.max(_np2.abs(_zb - _zr)))
+        _nanr = int(_np2.isnan(_Ah["X"]).any(axis=1).sum())
+        print("신경망 정합: 배치 ↔ 기준 채점기 %.2g (%d행 · 결측행 %d)" % (_d, len(_zr), _nanr))
+        if _nanr < 50:
+            fails.append("신경망 정합 검사에 결측 행이 모자라다(%d) — 결측표시 경로를 안 본다" % _nanr)
+        if _d > 1e-9:
+            fails.append("신경망 기준 채점기가 배치 순전파와 다르다(%.3g)" % _d)
+        # 섞는 경로 자체 — 실제 α 가 전부 0 이어도 probe 가 섞는 식을 확인한다(강제 α).
+        _fa = [0.3, 0.0, 0.7, 1.0, 0.5]
+        _pb = omni.make_probe(bst, best, omni.take(A, _hoh), nn=_ex, alpha=_fa)
+        _nh = len(omni.FEATS)
+        _bp = 0
+        for pr in _pb:
+            _k = [i for i in range(len(omni.HORIZONS)) if pr["x"][_nh + i] == 1][0]
+            if _fa[_k] == 0.0:
+                continue
+            if "rawN" not in pr or abs(pr["raw"] - ((1 - _fa[_k]) * pr["rawG"] + _fa[_k] * pr["rawN"])) > 1e-12:
+                _bp += 1
+        if _bp:
+            fails.append("강제 α 에서 probe 가 지평별로 섞이지 않았다(%d행)" % _bp)
+        _vz = rep.get("nnViz") or {}
+        _L = _vz.get("layers") or []
+        if len(_L) != 2 + len(omni.NN_HID) or _L[-1].get("size") != len(omni.HORIZONS):
+            fails.append("구조 관측 데이터 층 모양이 틀렸다: %s" % [l.get("size") for l in _L])
+        _E = _vz.get("edges") or []
+        if len(_E) != len(omni.NN_HID) + 1 or not all(_E):
+            fails.append("구조 관측 연결선이 층마다 없다: %s" % [len(e) for e in _E])
+        elif any(not (0 <= e[2] <= 1) for es in _E for e in es):
+            fails.append("구조 관측 연결선 세기가 0~1 밖")
+        # 연결선이 ★실제 가중치★ 에서 나왔는가 — 첫 층 한 뉴런의 최대 |w| 입력이 선으로 있어야 한다
+        elif _E and _ex:
+            _W0 = _ex["nets"][0]["W"][0]
+            _top = max(range(len(_W0)), key=lambda i: abs(_W0[i][0]))
+            if not any(e[0] == _top and e[1] == 0 for e in _E[0]):
+                fails.append("구조 관측 연결선이 실제 가중치 상위와 다르다(지어낸 선)")
     if fixture:
         import numpy as np
         # 고정물은 작게: 원본 장타·장중 각 100행 + 결측·0 을 넣은 같은 수. 값은 유효숫자 10자리로
@@ -418,6 +497,17 @@ def main():
         with open(fixture, "w", encoding="utf-8") as fh:
             json.dump(small, fh, separators=(",", ":"))
         print("고정물 저장:", fixture, "나무", nt, "행", len(small["rows"]), "NaN행", small["nanRows"])
+        # [V33.428] 신경망 고정물 — 워커 JS 순전파가 기준 채점기와 ★비트까지★ 같은지 게이트가 본다.
+        _ex = rep.get("nnExport")
+        if _ex:
+            _rows = [[None if v != v else float("%.10g" % v) for v in x] for x in X[sub]]
+            _hz = [int(np.argmax(x[len(omni.FEATS):len(omni.FEATS) + len(omni.HORIZONS)])) for x in X[sub]]
+            _exp = [omni.nn_score_row(_ex, [float("nan") if v is None else v for v in r], h) for r, h in zip(_rows, _hz)]
+            nfx = fixture.replace("omni-model.json", "omni-nn.json")
+            with open(nfx, "w", encoding="utf-8") as fh:
+                json.dump({"feats": omni.MODEL_FEATS, "nn": _ex, "rows": _rows, "hz": _hz, "z": _exp,
+                           "horizons": omni.HORIZONS}, fh, separators=(",", ":"))
+            print("신경망 고정물 저장:", nfx, "행", len(_rows))
     # ③ 워커 왕복 흉내 — 색인 → 묶음 조회 → 흘려 만들기 → 학습 → 업로드 본문(가짜 서버)
     fails += fake_roundtrip(data)
     if fails:

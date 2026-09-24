@@ -200,4 +200,4 @@ jobs:
         if: always()
         run: |
           [ -f omni.log ] || exit 0
-          { echo "### OMNI 복합모델 학습"; echo ""; echo '```'; grep -E 'OMNI' omni.log | head -40; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### OMNI 복합모델 학습"; echo ""; echo '```'; grep -E 'OMNI|^ +(30m|60m|1d|5d|20d) +나무' omni.log | head -70; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

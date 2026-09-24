@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.427";
+const _BUILD_VER = "V33.428";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -10537,13 +10537,16 @@ async function omniShadowScore(DB, opts) {
   if (ageD > OMNI_MODEL.panelMaxDays)
     return "[OMNI-SHADOW] 패널 " + pday + " 가 " + ageD + "일 낡았다(상한 " + OMNI_MODEL.panelMaxDays + ") — 채점하지 않는다";
   /* R2 도 같은 자다 — ★파일이 없다★ 와 ★읽다 실패했다★ 는 다른 사실이고 처방도 다르다. */
-  let trees = null, panel = null;
+  let trees = null, panel = null, mdl = null;
   try {
     const g = await R2.get(OMNI_MODEL.r2Key);
     if (!g) return "[OMNI-SHADOW] 모델 파일이 없다 " + OMNI_MODEL.r2Key + " — 다음 학습 회차를 기다린다";
-    trees = (JSON.parse(await g.text()) || {}).trees;
+    mdl = JSON.parse(await g.text()) || {};
+    trees = mdl.trees;
   } catch (e) { return "[OMNI-SHADOW] 모델 읽기 실패 " + OMNI_MODEL.r2Key + ": " + ((e && e.message) || e); }
   if (!Array.isArray(trees) || !trees.length) return "[OMNI-SHADOW] 모델 본문에 나무가 없다 " + OMNI_MODEL.r2Key;
+  /* [V33.428] 채점은 ★업로드 때 probe 로 검증한 그 식★(나무 + 지평별 α·신경망)으로 한다. */
+  const M = { trees: trees, nn: mdl.nn || null, alpha: mdl.nn ? mdl.alpha : null };
   try {
     const g = await R2.get(OMNI_MODEL.r2Panel);
     if (!g) return "[OMNI-SHADOW] 패널 파일이 없다 " + OMNI_MODEL.r2Panel + " — 다음 학습 회차를 기다린다";
@@ -10593,7 +10596,7 @@ async function omniShadowScore(DB, opts) {
     omniPanelFill(fi.x, prow);
     const tdec = b5.t[i] + OMNI_CONSTS.base;      // 학습기와 같다 — 봉이 ★닫힌★ 시각
     const put = function (td, hzi, fx) {
-      const raw = omniScoreRaw(trees, omniDesign(fx.x, fx.setup, hzi));
+      const raw = omniBlendRaw(M, omniDesign(fx.x, fx.setup, hzi), hzi);
       if (!isFinite(raw)) return;
       const p = 1 / (1 + Math.exp(-raw));
       stmts.push(DB.prepare(
@@ -11212,6 +11215,96 @@ function omniScoreRaw(trees, x) {
   return s;
 }
 
+/* ══ [V33.428] ★OMNI-NN — 한 몸통 · 다섯 머리 신경망★ (omni.py nn_score_row 를 한 줄씩 옮겼다) ══
+   입력 = design 행의 칸들(지평 원핫 제외)을 (x − 중앙값)/척도 로 펴고 ±clip 로 자른 값 + 결측표시.
+   몸통 = ReLU 층들(모든 지평이 공유) → 머리 = 행의 지평에 해당하는 ★하나★ 만 답한다. 네트 여럿이면 로짓 평균.
+   ★더하는 순서까지 파이썬과 같다★ — s = b[k]; s += h[i]·W[i][k] (i 오름차순). 그래서 고정물 400행에서
+   ★비트까지 같다★(check-omni-nn 실측 최대차 0). 순서만 바꾸면 1e-16 수준 차이라 게이트(≤1e-12)는
+   못 잡는다 — 그건 결함이 아니다. 게이트가 잡는 건 식이 달라지는 경우(clip · 결측표시 · 머리 · α)다. */
+const OMNI_NN = { maxNets: 4, maxHid: 256, maxLayers: 4 };
+function omniNnScore(nn, x, hz) {
+  const cols = nn.cols, med = nn.med, sc = nn.sc, clip = nn.clip;
+  const z0 = [];
+  for (let j = 0; j < cols.length; j++) {
+    const v = x[cols[j]];
+    if (v === null || v === undefined || v !== v) { z0.push(0); continue; }
+    const u = (v - med[j]) / sc[j];
+    z0.push(u > clip ? clip : (u < -clip ? -clip : u));
+  }
+  for (let q = 0; q < nn.flags.length; q++) {
+    const v = x[cols[nn.flags[q]]];
+    z0.push((v === null || v === undefined || v !== v) ? 1 : 0);
+  }
+  let tot = 0;
+  for (let m = 0; m < nn.nets.length; m++) {
+    const net = nn.nets[m];
+    let h = z0;
+    for (let l = 0; l < net.W.length; l++) {
+      const W = net.W[l], b = net.b[l], nh = new Array(b.length);
+      for (let k = 0; k < b.length; k++) {
+        let s = b[k];
+        for (let i = 0; i < h.length; i++) s += h[i] * W[i][k];
+        nh[k] = s > 0 ? s : 0;
+      }
+      h = nh;
+    }
+    let s = net.bh[hz];
+    for (let i = 0; i < h.length; i++) s += h[i] * net.Wh[i][hz];
+    tot += s;
+  }
+  return tot / nn.nets.length;
+}
+/* 최종 로짓 = (1−α[지평])·나무 + α[지평]·신경망. α 는 학습기가 ★검증 구간에서만★ 고른 값이고,
+   0 인 지평은 신경망을 계산하지도 않는다(나무 그대로 — 파이썬 식과 비트까지 같다). */
+function omniBlendRaw(model, x, hz) {
+  const g = omniScoreRaw(model.trees, x);
+  const a = (model.nn && Array.isArray(model.alpha)) ? _num(model.alpha[hz], 0) : 0;
+  if (!(a > 0)) return g;
+  return (1 - a) * g + a * omniNnScore(model.nn, x, hz);
+}
+/* 신경망 본문 검증 — 모양 · 유한값 · 범위. 틀리면 모델 전체를 받지 않는다(반쯤 맞는 모델은 없다). */
+function omniNnValidate(nn, alpha, D) {
+  const fin = function (a) { return Array.isArray(a) && a.every(function (v) { return typeof v === "number" && isFinite(v); }); };
+  if (nn == null) return null;
+  if (typeof nn !== "object") return "신경망 형식";
+  if (!Array.isArray(alpha) || alpha.length !== OMNI_HORIZONS.length ||
+      !alpha.every(function (a) { return typeof a === "number" && a >= 0 && a <= 1; }))
+    return "α 는 지평마다 0~1 이어야 한다";
+  const C = nn.cols;
+  if (!Array.isArray(C) || !C.length || !C.every(function (c) { return Number.isInteger(c) && c >= 0 && c < D; }))
+    return "신경망 입력 칸 번호";
+  if (!fin(nn.med) || nn.med.length !== C.length) return "신경망 중앙값";
+  if (!fin(nn.sc) || nn.sc.length !== C.length || !nn.sc.every(function (v) { return v > 0; })) return "신경망 척도";
+  if (!Array.isArray(nn.flags) || !nn.flags.every(function (j) { return Number.isInteger(j) && j >= 0 && j < C.length; }))
+    return "신경망 결측표시 칸";
+  if (!(typeof nn.clip === "number" && nn.clip > 0 && nn.clip <= 50)) return "신경망 clip";
+  if (!Array.isArray(nn.nets) || !nn.nets.length || nn.nets.length > OMNI_NN.maxNets) return "신경망 네트 수";
+  const d0 = C.length + nn.flags.length;
+  for (let m = 0; m < nn.nets.length; m++) {
+    const net = nn.nets[m];
+    if (!net || !Array.isArray(net.W) || !Array.isArray(net.b) || net.W.length !== net.b.length ||
+        !net.W.length || net.W.length > OMNI_NN.maxLayers) return "네트 " + m + " 층 모양";
+    let din = d0;
+    for (let l = 0; l < net.W.length; l++) {
+      const W = net.W[l], b = net.b[l];
+      if (!fin(b) || !b.length || b.length > OMNI_NN.maxHid) return "네트 " + m + " 층 " + l + " 편향";
+      if (!Array.isArray(W) || W.length !== din || !W.every(function (r) { return fin(r) && r.length === b.length; }))
+        return "네트 " + m + " 층 " + l + " 가중치 " + (Array.isArray(W) ? W.length : "?") + "×? ≠ " + din + "×" + b.length;
+      din = b.length;
+    }
+    if (!fin(net.bh) || net.bh.length !== OMNI_HORIZONS.length) return "네트 " + m + " 머리 편향";
+    if (!Array.isArray(net.Wh) || net.Wh.length !== din ||
+        !net.Wh.every(function (r) { return fin(r) && r.length === OMNI_HORIZONS.length; })) return "네트 " + m + " 머리 가중치";
+  }
+  return null;
+}
+/* design 행에서 지평 번호를 읽는다(원핫) — probe 행은 지평을 따로 싣지 않는다. */
+function _omHzOf(x) {
+  const o = OMNI_FEATS.length;
+  for (let k = 0; k < OMNI_HORIZONS.length; k++) if (x[o + k] === 1) return k;
+  return -1;
+}
+
 /* 업로드 검증 — 형식 · 피처 명세 · ★probe 재현★. 하나라도 어긋나면 받지 않는다. */
 function omniValidate(body) {
   const bad = function (m) { return { ok: false, err: m }; };
@@ -11240,11 +11333,18 @@ function omniValidate(body) {
       st.push(n.l, n.r);
     }
   }
+  /* [V33.428] 신경망 — 있으면 모양부터 본다. probe 는 ★섞인 값★ 이므로 같은 식으로 재현한다. */
+  const nnErr = omniNnValidate(body.nn, body.alpha, D);
+  if (nnErr) return bad(nnErr);
+  const M = { trees: T, nn: body.nn || null, alpha: body.nn ? body.alpha : null };
   const P = Array.isArray(body.probe) ? body.probe : [];
-  let md = 0, cnt = 0, nanRows = 0;
+  let md = 0, cnt = 0, nanRows = 0, nnRows = 0;
   for (const pr of P) {
     if (!pr || !Array.isArray(pr.x) || pr.x.length !== D || typeof pr.raw !== "number") continue;
-    const sc = omniScoreRaw(T, pr.x);
+    const hz = _omHzOf(pr.x);
+    if (hz < 0) continue;
+    const sc = omniBlendRaw(M, pr.x, hz);
+    if (M.nn && _num(M.alpha[hz], 0) > 0) nnRows++;
     const d = Math.abs(sc - pr.raw);
     if (!(d <= md)) md = d;          // NaN 도 잡는다
     cnt++;
@@ -11270,7 +11370,7 @@ function omniValidate(body) {
   if (cnt < OMNI_MODEL.minProbe) return bad("probe " + cnt + "행 < " + OMNI_MODEL.minProbe + " — 정합을 확인할 수 없으면 받지 않는다");
   if (!(md <= OMNI_MODEL.probeMaxDiff))
     return Object.assign(bad("정합 불일치 maxDiff " + md + " > " + OMNI_MODEL.probeMaxDiff + " — 트레이너와 워커가 다른 답을 낸다"), { probeN: cnt });
-  return { ok: true, probeN: cnt, probeMaxDiff: md, probeNanRows: nanRows, nodes: nodes, panelN: panelN };
+  return { ok: true, probeN: cnt, probeMaxDiff: md, probeNanRows: nanRows, probeNnRows: nnRows, nodes: nodes, panelN: panelN };
 }
 
 /* 머리(지평)별 사용 여부 — 트레이너의 홀드아웃 판정(ok · tau)을 그대로 따른다. 워커가 새로 판정하지 않는다
@@ -11325,6 +11425,10 @@ async function omniVizData(DB) {
     fwdAcc: (_fwd && _fwd.acc != null) ? +(_fwd.acc * 100).toFixed(1) : null,
     fwdByHz: (_fwd && _fwd.byHz && typeof _fwd.byHz === "object") ? _fwd.byHz : null,
     xsec: (m && m.xsec) || null, iters: (m && Array.isArray(m.iters)) ? m.iters : null,
+    /* [V33.428] 신경망 — 층 크기·뉴런 세기(실제 가중치에서)·지평별 α·나무/신경망/섞음 홀드아웃 비교 */
+    nnOn: !!(m && m.nnOn), alpha: (m && Array.isArray(m.alpha)) ? m.alpha : null,
+    nnViz: (m && m.nnViz) || null, nnRep: (m && m.nnRep) || null,
+    probeNnRows: m ? _num(m.probeNnRows, null) : null,
     /* [V33.423] ★구조★ — 입력 묶음별 기여도. 이름을 손으로 적지 않고 접두사로 가른다
        (칸이 늘면 묶음도 자동으로 따라온다 — 손목록이 드리프트할 자리를 없앤다). */
     groups: (!m || !Array.isArray(m.gain)) ? null : (function () {
@@ -26657,7 +26761,12 @@ async function handleRequest(request, env, ctx) {
                       panelN: vr.panelN || 0,
                       xsecMin: _num(body.xsecMin, null),
                       xsec: (body.xsec && typeof body.xsec === "object") ? body.xsec : null,
-                      iters: Array.isArray(body.iters) ? body.iters.map(function (v) { return _num(v, 0); }) : null };
+                      iters: Array.isArray(body.iters) ? body.iters.map(function (v) { return _num(v, 0); }) : null,
+                      /* [V33.428] 신경망 — 가중치는 R2 모델 파일에만(메타에서 뺀다). α 는 지평별.
+                         nnViz(구조 관측용 세기)와 nnRep(나무/신경망/섞음 홀드아웃 비교)은 메타에도. */
+                      nn: body.nn || null, alpha: body.nn ? body.alpha : null,
+                      nnViz: (body.nn && body.nnViz && typeof body.nnViz === "object") ? body.nnViz : null,
+                      nnRep: (body.nn && body.nnRep && typeof body.nnRep === "object") ? body.nnRep : null };
       try {
         const cur = await R2.get(OMNI_MODEL.r2Key);
         if (cur) await R2.put(OMNI_MODEL.r2Prev, await cur.text());
@@ -26671,10 +26780,11 @@ async function handleRequest(request, env, ctx) {
       try { await R2.put(OMNI_MODEL.r2Key, txt); }
       catch (e) { return Response.json({ error: "R2 저장 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
       const headsOk = omniHeadsOk(model.heads);
-      const meta = Object.assign({}, model, { trees: undefined, nTrees: body.trees.length, nodes: vr.nodes,
-        probeN: vr.probeN, probeMaxDiff: vr.probeMaxDiff, probeNanRows: vr.probeNanRows,
+      const meta = Object.assign({}, model, { trees: undefined, nn: undefined, nTrees: body.trees.length, nodes: vr.nodes,
+        probeN: vr.probeN, probeMaxDiff: vr.probeMaxDiff, probeNanRows: vr.probeNanRows, probeNnRows: vr.probeNnRows,
+        nnOn: !!model.nn,
         bytes: txt.length, r2Key: OMNI_MODEL.r2Key, headsOk: headsOk, mode: "shadow" });
-      delete meta.trees;
+      delete meta.trees; delete meta.nn;
       try { await setState(env.DB, OMNI_MODEL.metaKey, meta); } catch (e) {}
       return Response.json({ ok: true, nTrees: meta.nTrees, probeN: vr.probeN, probeMaxDiff: vr.probeMaxDiff,
                              probeNanRows: vr.probeNanRows, headsOk: headsOk, mode: "shadow",
@@ -51754,7 +51864,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

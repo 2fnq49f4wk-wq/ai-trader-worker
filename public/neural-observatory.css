@@ -28,6 +28,9 @@
    발언 문턱(주황) · 발언 구간 하한(파랑). "57%" 만 적으면 잘한 건지 알 수 없다 —
    기준선이 같은 자리에 있어야 숫자에 뜻이 생긴다. */
 .omni-wrap{display:flex;flex-direction:column;gap:14px;}
+/* [V33.428] OMNI 3D — 신경망 몸통·머리 + 나무 숲 + 섞음. 구조 카드 위에 한 칸. */
+.omni-vol{margin:0 0 16px;min-width:0;}
+@media(min-width:1025px){#page-nnviz .omni-vol .nerve-viewport{height:clamp(340px,52vh,580px)}}
 .omni-lane-h{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ops-ink3,#8b93a7);}
 .omni-heads{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;}
 .omni-head{border:1px solid var(--ops-line,#2a2f3d);border-radius:12px;padding:12px 14px;
