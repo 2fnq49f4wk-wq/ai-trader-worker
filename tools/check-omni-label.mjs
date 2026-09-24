@@ -142,6 +142,14 @@ chk(shadow && /R2\.get\(OMNI_MODEL\.r2Panel\)/.test(shadow) && !/omniBuildPanel\
     "워커가 패널을 스스로 만든다 — 종목 집합이 학습 때와 달라 랭크가 갈린다");
 /* [V33.426b] ★시간 예산★ — 종목 수로 자르면 워커가 죽는다(실측: 30종목에 3분 · 두 번 타임아웃).
    5분봉 파일 크기가 종목마다 들쭉날쭉해서 개수로는 못 맞춘다. */
+/* [V33.426d] ★"없다" 와 "못 읽었다" 를 같은 문장으로 말하지 않는다.★ 실측에서 이 단계가
+   "올라온 모델이 없다" 고 했는데 같은 시각 /api/omni-status 는 nTrees 51 을 돌려줬다 —
+   getState 가 D1 오류를 삼키고 기본값을 준 것이다. 그 한 줄이 조사 방향을 통째로 틀리게 만든다. */
+chk(shadow && /getState\(DB, OMNI_MODEL\.metaKey, null, true\)/.test(shadow),
+    "메타를 ★strict★ 로 읽는다(오류를 삼키지 않는다)",
+    "★D1 오류를 '모델이 없다' 로 말한다 — 있는 모델을 없다고 한다★");
+chk(shadow && /메타 읽기 실패\(D1\)/.test(shadow) && /모델 파일이 없다/.test(shadow) && /모델 읽기 실패/.test(shadow),
+    "'없다' · '못 읽었다' 를 ★다른 문장★ 으로 말한다", "두 사실이 같은 문장으로 나온다");
 chk(shadow && /Date\.now\(\) - nowMs > budgetMs/.test(shadow) && /ranOut = true; break;/.test(shadow),
     "섀도우 채점이 ★시간 예산★ 으로 끊는다(커서를 남기고 다음 회차가 잇는다)",
     "★종목 수로만 끊는다 — 5분봉이 큰 종목을 만나면 워커 호출이 통째로 타임아웃 난다★");

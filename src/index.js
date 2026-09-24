@@ -10399,7 +10399,14 @@ async function omniShadowScore(DB, opts) {
   const o = opts || {};
   const R2 = _bigR2();
   if (!R2) return "[OMNI-SHADOW] R2 미바인딩";
-  const meta = await _omniMeta(DB);
+  /* [V33.426d] ★"없다" 와 "못 읽었다" 를 같은 문장으로 말하지 않는다.★
+     실측(12:29): 이 단계가 "올라온 모델이 없다" 고 했는데, 같은 시각 /api/omni-status 는
+     nTrees 51 · panelN 1005 를 그대로 돌려줬다. 모델은 ★있었다★ — getState 가 D1 오류를
+     삼키고 기본값(null)을 준 것이다. 그 한 줄 때문에 "모델이 안 올라갔나" 를 다시 조사하게 된다.
+     → strict 로 읽어 오류를 받고, 오류면 ★오류라고 말하고 다음 회차에 다시 한다★. */
+  let meta = null;
+  try { meta = await getState(DB, OMNI_MODEL.metaKey, null, true); }
+  catch (e) { return "[OMNI-SHADOW] 메타 읽기 실패(D1) — 다음 회차에 다시 한다: " + ((e && e.message) || e); }
   if (!meta) return "[OMNI-SHADOW] 올라온 모델이 없다 — 채점할 것이 없다";
   if (meta.v !== OMNI_VER) return "[OMNI-SHADOW] 판 불일치 v" + meta.v + " → v" + OMNI_VER + " — 재학습 대기";
   /* 패널 신선도 — 낡은 랭크로 낸 확률은 학습 때의 그 확률이 아니다. */
@@ -10408,11 +10415,20 @@ async function omniShadowScore(DB, opts) {
   const ageD = _omPanelAgeDays(pday);
   if (ageD > OMNI_MODEL.panelMaxDays)
     return "[OMNI-SHADOW] 패널 " + pday + " 가 " + ageD + "일 낡았다(상한 " + OMNI_MODEL.panelMaxDays + ") — 채점하지 않는다";
+  /* R2 도 같은 자다 — ★파일이 없다★ 와 ★읽다 실패했다★ 는 다른 사실이고 처방도 다르다. */
   let trees = null, panel = null;
-  try { const g = await R2.get(OMNI_MODEL.r2Key); if (g) trees = (JSON.parse(await g.text()) || {}).trees; } catch (e) {}
-  if (!Array.isArray(trees) || !trees.length) return "[OMNI-SHADOW] 모델 본문을 못 읽었다 " + OMNI_MODEL.r2Key;
-  try { const g = await R2.get(OMNI_MODEL.r2Panel); if (g) panel = JSON.parse(await g.text()); } catch (e) {}
-  if (!panel || typeof panel !== "object") return "[OMNI-SHADOW] 패널 본문을 못 읽었다 " + OMNI_MODEL.r2Panel;
+  try {
+    const g = await R2.get(OMNI_MODEL.r2Key);
+    if (!g) return "[OMNI-SHADOW] 모델 파일이 없다 " + OMNI_MODEL.r2Key + " — 다음 학습 회차를 기다린다";
+    trees = (JSON.parse(await g.text()) || {}).trees;
+  } catch (e) { return "[OMNI-SHADOW] 모델 읽기 실패 " + OMNI_MODEL.r2Key + ": " + ((e && e.message) || e); }
+  if (!Array.isArray(trees) || !trees.length) return "[OMNI-SHADOW] 모델 본문에 나무가 없다 " + OMNI_MODEL.r2Key;
+  try {
+    const g = await R2.get(OMNI_MODEL.r2Panel);
+    if (!g) return "[OMNI-SHADOW] 패널 파일이 없다 " + OMNI_MODEL.r2Panel + " — 다음 학습 회차를 기다린다";
+    panel = JSON.parse(await g.text());
+  } catch (e) { return "[OMNI-SHADOW] 패널 읽기 실패 " + OMNI_MODEL.r2Panel + ": " + ((e && e.message) || e); }
+  if (!panel || typeof panel !== "object") return "[OMNI-SHADOW] 패널 본문 형식이 아니다 " + OMNI_MODEL.r2Panel;
   await omniShadowEnsure(DB);
 
   const uni = (DEFAULT_US || []).concat(DEFAULT_KR || []);
