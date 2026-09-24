@@ -153,9 +153,29 @@ chk(shadow && /메타 읽기 실패\(D1\)/.test(shadow) && /모델 파일이 없
 chk(shadow && /Date\.now\(\) - nowMs > budgetMs/.test(shadow) && /ranOut = true; break;/.test(shadow),
     "섀도우 채점이 ★시간 예산★ 으로 끊는다(커서를 남기고 다음 회차가 잇는다)",
     "★종목 수로만 끊는다 — 5분봉이 큰 종목을 만나면 워커 호출이 통째로 타임아웃 난다★");
-chk(/omniShadowScore\(DB, \{ perRun: 30, budgetMs: 45000 \}\)/.test(S) &&
-    /omniShadowScore\(env\.DB, \{ perRun: 30, budgetMs: 45000 \}\)/.test(S),
-    "예산을 ★크론·수동 둘 다★ 에 준다", "한쪽에만 줬다 — 다른 쪽이 또 죽는다");
+chk(/omniShadowScore\(DB, \{ perRun: OMNI_SHADOW\.perRun, budgetMs: 45000 \}\)/.test(S) &&
+    /omniShadowScore\(env\.DB, \{ perRun: OMNI_SHADOW\.perRun, budgetMs: 45000 \}\)/.test(S) &&
+    /omniShadowScore\(env\.DB, \{ budgetMs: _osOpen \? OMNI_SHADOW\.budgetInMs : OMNI_SHADOW\.budgetOffMs \}\)/.test(S),
+    "예산을 ★야간·수동·매틱 셋 다★ 에 준다", "한쪽에만 줬다 — 다른 쪽이 또 죽는다");
+/* [V33.427] ★하루 1회로는 전진검증이 영원히 안 쌓인다.★ 야간 _stg 는 하루 한 번 도장을 찍는다 —
+   거기에만 두면 섀도우 채점이 하루 ≈7종목 · 결정시각 1개라, 동료 20종목이 필요한 사후채점은
+   한 행도 못 잰다. 매 틱(잠금 뒤)에서도 돌아야 한다. */
+chk(/omniscore_lock/.test(S) && /const _osr = await omniShadowScore\(env\.DB/.test(S) &&
+    /const _ofr = await omniShadowResolve\(env\.DB/.test(S),
+    "섀도우 채점·사후채점이 ★매 틱(잠금 뒤)★ 에서도 돈다",
+    "★야간 하루 1회에만 돈다 — 사후채점이 동료 20종목을 영원히 못 모은다★");
+/* [V33.427] ★꼬리만 읽는다★ — 전체 5분봉 파일은 종목당 수 MB(≈6.7초 · 대부분 JSON.parse CPU). */
+chk(shadow && /_obTailLoad\(R2, sym\)/.test(shadow) && !/_obLoad\(/.test(shadow),
+    "섀도우 채점은 ★꼬리 파일만★ 읽는다(전체 파일을 안 연다)",
+    "★채점이 전체 봉 파일을 연다 — 매 틱에 두면 CPU 한도에 걸린다★");
+chk(/tparts\[res\] = merged;/.test(S) && /_obTailPut\(R2, sym, tparts, ent\.m, nowMs\)/.test(S),
+    "수집기가 전체 파일을 쓸 때 ★꼬리도 같이★ 쓴다", "꼬리가 안 써진다 — 채점이 영원히 '꼬리없음' 이다");
+/* [V33.427] ★장 마감에 걸린 장중 지평은 채점하지 않는다★ — 학습기가 안 만드는 행이고 영원히 못 잰다. */
+chk(shadow && /_omIntraOk\(b5\.t\[i\], mkt, OMNI_HORIZONS\[hzi\]\)/.test(shadow),
+    "장 마감에 걸린 30·60분은 채점하지 않는다(학습기 span 규칙과 같다 — check-omni-serve 가 전수 대조)",
+    "★마감에 걸린 장중 지평을 적는다 — 학습기가 안 만드는 행이고, 사후채점 대기열을 영원히 막는다★");
+chk(shadow && /DB\.batch\(stmts\.slice/.test(shadow), "기록을 ★몰아 쓴다★(종목마다 D1 을 부르지 않는다)",
+    "종목마다 5번씩 D1 을 부른다");
 chk(shadow && /일봉부족/.test(shadow), "장타 머리를 못 채점한 종목 수를 적는다", "못 채점한 걸 숨긴다");
 chk(shadow && /if \(ageD > OMNI_MODEL\.panelMaxDays\)/.test(shadow),
     "패널이 낡으면 ★채점을 멈춘다★", "낡은 랭크로 낸 확률을 그대로 적는다 — 학습 때의 그 확률이 아니다");
@@ -172,6 +192,12 @@ chk(grid && /t\.length - 2/.test(grid) && /% \(OMNI_CONSTS\.base \* 6\)/.test(gr
     "격자·진행중봉 규약이 학습기와 다르다");
 const resolve = jsfn(S, "async function omniShadowResolve");
 chk(resolve.length > 0, "omniShadowResolve() 가 있다", "적어만 두고 ★맞춰 보지 않는다★");
+/* [V33.427] ★못 잰 행이 대기열을 막지 않는다★ — 오래된 묶음부터 보므로, 봉이 끝내 안 오는 행이
+   20개 넘게 남은 묶음은 매번 맨 앞에 뽑혀 뒤를 전부 막는다. 지평+유예가 지나면 -1(못 잼)로 닫는다. */
+chk(resolve && /SET label=-1/.test(resolve) && /graceSec/.test(resolve),
+    "지평+유예가 지나도록 못 잰 행은 '못 잼(-1)' 으로 닫는다", "★못 잰 행이 사후채점 대기열을 영원히 막는다★");
+chk(resolve && /\(z\.p >= 0\.5 \? 1 : 0\) === lab/.test(resolve) && !/label IS NOT NULL/.test(resolve),
+    "성적은 실제로 잰 행(0·1)만 센다 — '못 잼' 은 성적에 안 들어간다", "'못 잼' 이 성적에 섞인다");
 chk(resolve && /_omMed\(/.test(resolve) && /xsecMin/.test(resolve),
     "사후채점이 ★동료 중앙값★ 과 ★최소 동료 수★ 를 쓴다(학습기와 같은 규약)",
     "사후채점 라벨이 학습기와 다르다 — 다른 자로 잰 성적이다");
