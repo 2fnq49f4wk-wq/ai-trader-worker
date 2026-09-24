@@ -10417,13 +10417,19 @@ async function omniShadowScore(DB, opts) {
 
   const uni = (DEFAULT_US || []).concat(DEFAULT_KR || []);
   if (!uni.length) return "[OMNI-SHADOW] 유니버스 비어 있음";
+  /* [V33.426b] ★시간 예산으로 자른다 — 종목 수로 자르면 안 된다.★
+     실측(회차 73): 30종목에 3분 넘게 걸려 워커 호출이 ★두 번 연속 타임아웃★ 났고 3회차에 겨우 끝났다.
+     5분봉 파일이 종목당 최대 4만 봉(수 MB)이라 한 종목 읽는 값이 들쭉날쭉하다 — 개수로는 못 맞춘다.
+     예산을 넘기면 그 자리에서 멈추고 커서를 남긴다(다음 회차가 이어서 돈다). 걸린 시간도 적는다. */
   const per = Math.max(1, _num(o.perRun, 30));
+  const budgetMs = Math.max(5000, _num(o.budgetMs, 45000));
   let cur = null; try { cur = await getState(DB, OMNI_MODEL.scoreCursor, null); } catch (e) {}
   let idx = (cur && cur.i >= 0) ? Math.floor(cur.i) % uni.length : 0;
   const nowMs = Date.now();
-  let done = 0, scored = 0, noBars = 0, noGrid = 0, noPanel = 0, rows = 0;
+  let done = 0, scored = 0, noBars = 0, noGrid = 0, noPanel = 0, noDaily = 0, rows = 0, ranOut = false;
   const seen = {};
   for (let k = 0; k < per; k++) {
+    if (Date.now() - nowMs > budgetMs) { ranOut = true; break; }
     const sym = uni[idx]; idx = (idx + 1) % uni.length; done++;
     const mkt = /\.(KS|KQ)$/.test(sym) ? "kr" : "us";
     const b5 = await _obLoad(R2, "5m", sym);
@@ -10436,7 +10442,8 @@ async function omniShadowScore(DB, opts) {
     /* ★학습기가 만든 행과 같은 모양으로만 채점한다.★ omni.py build_rows 는 두 종류의 행을 만든다:
        장중 결정점(30·60분·1일 — 5분봉 칸이 차 있다)과 장타 결정점(5·20일 — 장중 칸이 ★NaN★).
        장중 행으로 5·20일 머리를 채점하면 그 머리가 ★한 번도 본 적 없는 모양★ 을 먹인다. */
-    const bdOk = bd && Array.isArray(bd.t) && bd.t.length > OMNI_D_LOOKBACK;
+    const bdOk = bd && Array.isArray(bd.t) && bd.t.length > OMNI_D_LOOKBACK + 1;
+    if (!bdOk) noDaily++;                         // 장타 머리를 못 채점한 종목 — 숨기지 않는다
     let fi = null, fd = null;
     try { fi = omniFeatures(b5, bd || { t: [], o: [], h: [], l: [], c: [], v: [] }, i, mkt, false, null); }
     catch (e) { fi = null; }
@@ -10474,7 +10481,8 @@ async function omniShadowScore(DB, opts) {
   const stamps = Object.keys(seen).length;
   return "[OMNI-SHADOW] " + done + "종목 · 채점 " + scored + " · 기록 " + rows + "행 · 결정시각 " + stamps +
          "종 · 패널 " + pday + "(" + ageD + "일 전) · 봉없음 " + noBars + " · 격자없음 " + noGrid +
-         " · 패널없음 " + noPanel + " · 다음 커서 " + idx;
+         " · 패널없음 " + noPanel + " · 일봉부족 " + noDaily + " · " + Math.round((Date.now() - nowMs) / 1000) +
+         "s" + (ranOut ? "(예산소진)" : "") + " · 다음 커서 " + idx;
 }
 
 
@@ -27430,7 +27438,7 @@ async function handleRequest(request, env, ctx) {
         ["omnibars", function (DB) { try { resetFetchBudget(200); } catch (e) {} return omniBarsCollect(DB, { perRun: 40 }); }],
         /* [V33.426] OMNI 섀도우 채점 — 한 표도 안 넣는다. 실시간 확률을 적어 두고 지평이 지나면 채점한다.
            이게 있어야 "홀드아웃 0.51" 이 실시간에서도 남는지 알 수 있다. */
-        ["omniscore", function (DB) { return omniShadowScore(DB, { perRun: 30 }); }],
+        ["omniscore", function (DB) { return omniShadowScore(DB, { perRun: 30, budgetMs: 45000 }); }],
         ["omniresolve", function (DB) { return omniShadowResolve(DB, {}); }],
 
         // [V33.104] 전문가 재학습 앞 — 누출없는 STACK 표본 생성 후 기준선 갱신(크론과 동일 순서).
@@ -51321,7 +51329,7 @@ export default {
             // [V33.418] OMNI 원시 봉 — 수동 파이프라인과 ★같은 단계★ 를 같은 이름으로(check-pipeline-graph)
             await _stg("omnibars", async function () { try { resetFetchBudget(200); } catch (e) {} return await omniBarsCollect(env.DB, { perRun: 40 }); });
             // [V33.426] OMNI 섀도우 채점·사후채점 — 수동 파이프라인과 ★같은 이름★ 으로(check-pipeline-graph)
-            await _stg("omniscore", async function () { return await omniShadowScore(env.DB, { perRun: 30 }); });
+            await _stg("omniscore", async function () { return await omniShadowScore(env.DB, { perRun: 30, budgetMs: 45000 }); });
             await _stg("omniresolve", async function () { return await omniShadowResolve(env.DB, {}); });
             // [V12.122] ★재구축기 재학습 가속★ _stg는 하루 1회만 학습을 허용하는데, 표본풀이 재구축
             //   중(< rebuildTarget)엔 하루 안에도 풀이 크게 늘어난다(catch-up 수확이 매 틱 실행). GBDT가

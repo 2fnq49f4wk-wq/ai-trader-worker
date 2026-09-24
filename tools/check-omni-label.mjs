@@ -140,6 +140,15 @@ chk(shadow.length > 0, "omniShadowScore() 가 있다", "★워커가 OMNI 로 �
 chk(shadow && /R2\.get\(OMNI_MODEL\.r2Panel\)/.test(shadow) && !/omniBuildPanel\(/.test(shadow),
     "섀도우 채점이 ★트레이너가 준 패널★ 을 읽는다(직접 안 만든다)",
     "워커가 패널을 스스로 만든다 — 종목 집합이 학습 때와 달라 랭크가 갈린다");
+/* [V33.426b] ★시간 예산★ — 종목 수로 자르면 워커가 죽는다(실측: 30종목에 3분 · 두 번 타임아웃).
+   5분봉 파일 크기가 종목마다 들쭉날쭉해서 개수로는 못 맞춘다. */
+chk(shadow && /Date\.now\(\) - nowMs > budgetMs/.test(shadow) && /ranOut = true; break;/.test(shadow),
+    "섀도우 채점이 ★시간 예산★ 으로 끊는다(커서를 남기고 다음 회차가 잇는다)",
+    "★종목 수로만 끊는다 — 5분봉이 큰 종목을 만나면 워커 호출이 통째로 타임아웃 난다★");
+chk(/omniShadowScore\(DB, \{ perRun: 30, budgetMs: 45000 \}\)/.test(S) &&
+    /omniShadowScore\(env\.DB, \{ perRun: 30, budgetMs: 45000 \}\)/.test(S),
+    "예산을 ★크론·수동 둘 다★ 에 준다", "한쪽에만 줬다 — 다른 쪽이 또 죽는다");
+chk(shadow && /일봉부족/.test(shadow), "장타 머리를 못 채점한 종목 수를 적는다", "못 채점한 걸 숨긴다");
 chk(shadow && /if \(ageD > OMNI_MODEL\.panelMaxDays\)/.test(shadow),
     "패널이 낡으면 ★채점을 멈춘다★", "낡은 랭크로 낸 확률을 그대로 적는다 — 학습 때의 그 확률이 아니다");
 chk(shadow && /for \(let hzi = 0; hzi < 3; hzi\+\+\)/.test(shadow) && /for \(let hzi = 3; hzi < OMNI_HORIZONS\.length; hzi\+\+\)/.test(shadow),
