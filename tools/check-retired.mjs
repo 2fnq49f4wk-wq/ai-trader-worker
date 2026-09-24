@@ -18,6 +18,8 @@ import { RETIRED } from "./_retired.mjs";
 const S = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
 const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 const PY = readFileSync(new URL("../trainer/modal/modal_train.py", import.meta.url), "utf8");
+const TN = readFileSync(new URL("../.github/workflows/train-now.yml", import.meta.url), "utf8");
+const TNOPT = (/^\s*options: \[(.*)\]\s*$/m.exec(TN) || [, ""])[1];
 const M = await import("../src/index.js");
 let fails = 0;
 const chk = (c, ok, bad) => { if (c) console.log("  ok   " + ok); else { console.log("  FAIL " + (bad || ok)); fails++; } };
@@ -126,6 +128,20 @@ console.log("\n■ ⑤ 목록이 ★한 곳★ 에만 산다");
       `★${k} 탭이 남아 있다 — 눌러도 410 만 나온다★`);
     chk(!new RegExp(`\\['${k}',`).test(H), `사이드바 목록에 ${k} 가 없다`,
       `★사이드바에 ${k} 가 남아 있다★`);
+    /* [V33.426] ★손으로 돌리는 목록도 명부다.★ 퇴역 이름이 여기 남아 있으면 골라도
+       "모르는 단계" 로 끝난다 — 실제로 xalpha·flow·stack·stackbf 가 넉 달 남아 있었다. */
+    chk(!new RegExp(`[\\[, ]${k}(bf)?[,\\]]`).test(TNOPT), `수동 실행 목록에 ${k} 가 없다`,
+      `★수동 실행 목록에 ${k} 가 남아 있다 — 골라도 아무 일도 안 일어난다★`);
+  }
+  /* 그 목록의 이름은 ★워커의 _PIPE 에서 나온 것★ 이어야 한다(손으로 적으면 갈라진다). */
+  {
+    const i = S.indexOf("const _PIPE = ["), j = S.indexOf("\n      ];", i);
+    const pipe = [...S.slice(i, j).matchAll(/\["([a-z0-9_]+)",/g)].map(function (m) { return m[1]; });
+    const opts = TNOPT.split(",").map(function (z) { return z.trim(); }).filter(Boolean);
+    const orphan = opts.filter(function (o) { return o !== "all" && pipe.indexOf(o) < 0; });
+    chk(pipe.length > 0 && orphan.length === 0,
+      `수동 실행 목록 ${opts.length}개가 전부 _PIPE 에 있다`,
+      `★_PIPE 에 없는 단계를 고를 수 있다: ${orphan.join(", ")}★`);
   }
 }
 
