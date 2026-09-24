@@ -161,11 +161,16 @@ def fake_roundtrip(data):
     # 5분봉이 없는 종목 하나 — 장타 행은 만들어야 한다
     lone = sorted(index)[0]
     index[lone]["5m"] = None
+    # [V33.427] ★색인이 잊은 종목★ — 실측에서 D1 오류 한 번에 색인이 1,008 → 294칸으로 줄었다.
+    #   학습기는 색인이 아니라 유니버스로 청해야 한다. 봉은 R2 에 있으니 학습에 들어가야 한다.
+    forgot = sorted(index)[1]
+    del index[forgot]
+    universe = sorted(data)
     calls = {"5m": 0, "1d": 0}
 
     def fget(url, params=None, headers=None, timeout=None):
         if url.endswith("/api/omni-bars-index"):
-            return _Resp({"ok": True, "baseSec": 300, "index": {"v": 1, "s": index}})
+            return _Resp({"ok": True, "baseSec": 300, "index": {"v": 1, "s": index}, "universe": universe})
         res = params["res"]
         want = params["s"].split(",")
         if len(want) > 25:
@@ -199,7 +204,8 @@ def fake_roundtrip(data):
     if calls["5m"] < 2 or calls["1d"] < 1:
         fails.append("묶음 조회가 일어나지 않았다 %s" % calls)
     if body.get("nSym") != len(data):
-        fails.append("5분봉 없는 종목의 장타 행이 빠졌다(nSym %s ≠ %d)" % (body.get("nSym"), len(data)))
+        fails.append("5분봉 없는 종목의 장타 행이 빠졌거나 ★색인이 잊은 종목이 학습에서 빠졌다★(nSym %s ≠ %d)"
+                     % (body.get("nSym"), len(data)))
     # [V33.426] ★패널을 같이 싣는가★ — 워커는 이걸 그대로 쓴다. 안 실으면 섀도우 채점이 통째로 멎고,
     #   워커가 스스로 만들면 종목 집합이 학습 때와 달라 랭크가 갈린다(V33.423 이 피한 그 사고).
     _pn = body.get("panel") or {}

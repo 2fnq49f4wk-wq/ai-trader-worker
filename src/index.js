@@ -10262,6 +10262,44 @@ async function _obLoad(R2, res, sym) {
   catch (e) { return null; }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════════════════
+   [V33.427] ★수집기가 쌓은 봉을 지우고 있었다 — "못 읽었다" 를 "없다" 로 읽어서.★
+   실측(2026-09-24 13:38): `커버 5분봉 294/1008 · 신선해서 건너뜀 0 · 새 봉 +294,716(40종목)`.
+   전날 학습기는 1,008종목을 봤다. 색인이 통째로 날아가 있었고, 다시 받은 종목은 ★전부 처음 보는
+   종목처럼★ 합쳐졌다 — 옛 파일을 안 읽고 새로 받은 창(5분봉 60일)만으로 ★덮어썼다★.
+   사슬: getState 가 D1 오류를 삼키고 null → 수집기가 빈 색인 {s:{}} 로 시작 → 모든 종목 curVer=false →
+         옛 파일을 안 읽고 덮어씀(쌓은 이력 소실) → 끝에 ★1,008칸 색인을 40칸으로 덮어씀★ →
+         다음 회차부터는 줄어든 색인이 진짜가 되어 커서가 도는 대로 전 종목이 같은 일을 당한다.
+   _obLoad 도 같다 — 옛 파일 읽기가 한 번 실패하면 null 이고, 그러면 그 종목 이력을 덮어쓴다.
+   → 두 가지를 고친다:
+     ① ★읽기 실패는 실패다★ — 색인·옛 파일을 strict 로 읽고, 실패하면 ★아무것도 안 쓰고★ 물러난다.
+     ② ★파일이 스스로 판을 말한다★ — 파일에 ver 를 적는다. 색인에 그 종목이 없어도 파일이 있으면
+        (판이 맞거나, 판 표시가 없어도 간격이 그 해상도면) 합친다. 색인은 ★캐시★ 이지 진실이 아니다.
+        ※ ★키 이름은 v 가 아니다★ — 봉 파일에서 v 는 ★거래량 배열★ 이다. 처음에 merged.v 로 적었다가
+          게이트가 잡았다(거래량 칸이 숫자 1·2 로 덮일 뻔했다). check-omni-bars 가 그 자리를 막는다. */
+async function _obIndexLoad(DB) {
+  try {
+    const v = await getState(DB, "omnibars_index", null, true);
+    if (v && typeof v === "object" && v.s && typeof v.s === "object") return { ok: true, index: v, fresh: false };
+    return { ok: true, index: { v: 1, s: {} }, fresh: true };          // 행이 정말 없다 = 첫 회차
+  } catch (e) { return { ok: false, err: (e && e.message) || String(e) }; }
+}
+/* 옛 파일을 합칠지 — { ok, old, why }. ok=false 면 ★이 종목·해상도는 이번에 쓰지 않는다★. */
+async function _obPrevFor(R2, res, sym, meta) {
+  let old = null;
+  try {
+    const g = await R2.get(_obKey(res, sym));
+    if (!g) return { ok: true, old: null, why: "처음" };
+    old = JSON.parse(await g.text());
+  } catch (e) { return { ok: false, old: null, why: "옛파일 읽기 실패: " + ((e && e.message) || e) }; }
+  if (!old || !Array.isArray(old.t)) return { ok: true, old: null, why: "형식 아님" };
+  const want = OMNIBARS.ver[res];
+  if (meta && meta.v === want) return { ok: true, old: old, why: "색인 판 일치" };
+  if (old.ver === want) return { ok: true, old: old, why: "파일 판 일치(색인 없음)" };
+  if (old.ver == null && _obSpacingOk(old, res)) return { ok: true, old: old, why: "판 표시 없음·간격 정상" };
+  return { ok: true, old: null, why: "옛 판(합치지 않는다)" };
+}
+
 /* 한 종목·한 해상도를 받아온다(I/O 만). 실패는 null — 다음 바퀴에 다시 한다. */
 async function _obFetch(sym, res) {
   const isKR = /\.(KS|KQ)$/.test(sym);
@@ -10306,10 +10344,12 @@ async function omniBarsCollect(DB, opts) {
   const per = Math.max(1, _num(o.perRun, inHours ? OMNIBARS.perRunIn : OMNIBARS.perRunOff));
   let cur = null; try { cur = await getState(DB, "omnibars_cursor", null); } catch (e) {}
   let idx = (cur && cur.i >= 0) ? Math.floor(cur.i) % uni.length : 0;
-  let index = null; try { index = await getState(DB, "omnibars_index", null); } catch (e) {}
-  if (!index || typeof index !== "object" || !index.s) index = { v: 1, s: {} };
+  const _ixr = await _obIndexLoad(DB);
+  if (!_ixr.ok) return "[OMNI-BARS] 색인 읽기 실패(D1) — ★이번 회차는 아무것도 쓰지 않는다★(빈 색인으로 덮지 않는다): " + _ixr.err;
+  const index = _ixr.index;
+  const ixBefore = Object.keys(index.s).length;
   const nowMs = Date.now();
-  let done = 0, fetched = 0, skipped = 0, failed = 0, added = 0, tails = 0;
+  let done = 0, fetched = 0, skipped = 0, failed = 0, added = 0, tails = 0, adopted = 0, prevFail = 0;
   for (let k = 0; k < per; k++) {
     const sym = uni[idx]; idx = (idx + 1) % uni.length; done++;
     const ent = index.s[sym] || (index.s[sym] = { m: /\.(KS|KQ)$/.test(sym) ? "kr" : "us" });
@@ -10325,10 +10365,15 @@ async function omniBarsCollect(DB, opts) {
         failed++; ent[res] = Object.assign({}, meta || {}, { err: nowMs, bad: "spacing", g: fresh.g || null }); continue;
       }
       fetched++;
-      const old = curVer ? await _obLoad(R2, res, sym) : null;   // 옛 판(굵은 봉 가능)은 합치지 않는다
+      /* [V33.427] 색인이 아니라 ★파일★ 에 묻는다 — 색인이 그 종목을 잊었어도 쌓은 봉은 남긴다. */
+      const pv = await _obPrevFor(R2, res, sym, meta);
+      if (!pv.ok) { prevFail++; failed++; continue; }              // 못 읽었으면 ★덮어쓰지 않는다★
+      const old = pv.old;
+      if (old && !curVer) adopted++;
       const before = old && Array.isArray(old.t) ? old.t.length : 0;
       const merged = _obMerge(old, fresh, OMNIBARS.cap[res]);
       merged.s = sym; merged.res = res; merged.m = ent.m; merged.upd = nowMs;
+      merged.ver = OMNIBARS.ver[res];                               // 파일이 스스로 판을 말한다(v 는 거래량이다)
       try { await R2.put(_obKey(res, sym), JSON.stringify(merged)); }
       catch (e) { failed++; continue; }
       tparts[res] = merged;
@@ -10345,6 +10390,8 @@ async function omniBarsCollect(DB, opts) {
   const nSym = Object.keys(index.s).length;
   let n5 = 0, n1 = 0; for (const s in index.s) { if (index.s[s]["5m"] && index.s[s]["5m"].n) n5++; if (index.s[s]["1d"] && index.s[s]["1d"].n) n1++; }
   return "[OMNI-BARS] " + done + "종목 · 받음 " + fetched + " · 꼬리 " + tails + " · 신선해서 건너뜀 " + skipped + " · 실패 " + failed +
+         (prevFail ? "(옛파일 못읽음 " + prevFail + " — 안 덮음)" : "") +
+         (adopted ? " · 색인에 없던 파일 되살림 " + adopted : "") + " · 색인 " + ixBefore + "→" + Object.keys(index.s).length +
          " · 새 봉 +" + added + " · 커버 5분봉 " + n5 + "/" + uni.length + " · 일봉 " + n1 + "/" + uni.length +
          (inHours ? " (장중 — 적게)" : "") + " · 다음 커서 " + idx;
 }
@@ -26613,8 +26660,14 @@ async function handleRequest(request, env, ctx) {
     }
     if (path === "/api/omni-bars-index") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
-      const ix = await getState(env.DB, "omnibars_index", null);
-      return Response.json({ ok: true, baseSec: OMNIBARS.baseSec, index: ix || { v: 1, s: {} } }, { headers: cors });
+      /* [V33.427] ★읽기 실패를 빈 색인으로 돌려주지 않는다★ — 그러면 학습기가 조용히 0종목(또는 줄어든
+         종목)으로 학습한다. 실패면 503 이고, 학습기는 그걸 받으면 멈춘다(raise_for_status).
+         그리고 ★유니버스를 같이 준다★ — 학습기는 색인이 아니라 유니버스를 기준으로 봉을 청한다.
+         색인은 캐시다. 색인이 종목을 잊었어도 R2 에 봉이 있으면 학습에 들어가야 한다. */
+      const _ixr = await _obIndexLoad(env.DB);
+      if (!_ixr.ok) return Response.json({ error: "색인 읽기 실패(D1): " + _ixr.err }, { status: 503, headers: cors });
+      return Response.json({ ok: true, baseSec: OMNIBARS.baseSec, index: _ixr.index,
+                             universe: (DEFAULT_US || []).concat(DEFAULT_KR || []) }, { headers: cors });
     }
     if (path === "/api/omni-bars") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
@@ -26623,9 +26676,13 @@ async function handleRequest(request, env, ctx) {
       const res = url.searchParams.get("res") === "1d" ? "1d" : "5m";
       const syms = String(url.searchParams.get("s") || "").split(",").map(function (x) { return x.trim(); })
                      .filter(Boolean).slice(0, 25);
-      const bars = {};
-      for (const sym of syms) { const b = await _obLoad(R2, res, sym); if (b) bars[sym] = b; }
-      return Response.json({ ok: true, res: res, bars: bars, n: Object.keys(bars).length }, { headers: cors });
+      /* [V33.427] "없다" 와 "못 읽었다" 를 가른다 — 못 읽은 종목은 errs 로 돌려준다(학습기가 로그에 적는다). */
+      const bars = {}, errs = [];
+      for (const sym of syms) {
+        try { const g = await R2.get(_obKey(res, sym)); if (g) bars[sym] = JSON.parse(await g.text()); }
+        catch (e) { errs.push(sym); }
+      }
+      return Response.json({ ok: true, res: res, bars: bars, n: Object.keys(bars).length, errs: errs }, { headers: cors });
     }
     if (path === "/api/ml-export-intraday") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
@@ -51636,7 +51693,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

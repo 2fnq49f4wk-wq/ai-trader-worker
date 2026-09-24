@@ -1477,7 +1477,10 @@ def _get_bars(BASE, HDR, syms, res, log):
                 q = requests.get(BASE + "/api/omni-bars", params={"s": ",".join(chunk), "res": res},
                                  headers=HDR, timeout=120)
                 q.raise_for_status()
-                out.update(q.json().get("bars") or {})
+                _qj = q.json()
+                out.update(_qj.get("bars") or {})
+                if _qj.get("errs"):     # [V33.427] 워커가 ★못 읽은★ 종목 — 없는 것과 다르다. 숨기지 않는다.
+                    log("   ⚠️ OMNI 봉 읽기 실패 %s %s" % (res, ",".join(_qj["errs"][:6])))
                 break
             except Exception as e:  # noqa: BLE001 — 세 번 실패하면 그 묶음만 비운다(전체를 죽이지 않는다)
                 if attempt == 2:
@@ -1538,12 +1541,24 @@ def build_dataset_stream(BASE, HDR, log=print, limit=None):
     t0 = time.time()
     r = requests.get(BASE + "/api/omni-bars-index", headers=HDR, timeout=60)
     r.raise_for_status()
-    ix = (r.json().get("index") or {}).get("s") or {}
-    syms = sorted(ix)
+    _j = r.json()
+    ix = (_j.get("index") or {}).get("s") or {}
+    # [V33.427] ★색인이 아니라 유니버스를 기준으로 청한다.★ 색인은 수집기가 쓰는 캐시다 — 실측
+    #   (2026-09-24)에서 D1 읽기 오류 한 번에 색인이 1,008칸 → 294칸으로 줄었고, 그대로면 학습이
+    #   조용히 ⅓ 종목으로 돈다. 유니버스 종목은 전부 청하고, R2 에 봉이 있으면 쓴다.
+    uni = list(_j.get("universe") or [])
+    syms = sorted(set(ix) | set(uni))
+    for _s in syms:
+        if _s not in ix:
+            ix[_s] = {"m": "kr" if _s.endswith((".KS", ".KQ")) else "us"}
+    _miss = len([s for s in uni if s not in (_j.get("index") or {}).get("s", {})])
+    if uni:
+        log("   · OMNI 유니버스 %d종목 · 색인 %d칸 · 색인에 없는 종목 %d(그래도 청한다)" % (
+            len(uni), len((_j.get("index") or {}).get("s") or {}), _miss))
     if limit:
         syms = syms[:limit]
     daily = {}
-    for got in _get_bars(BASE, HDR, [s for s in syms if (ix[s].get("1d") or {}).get("n")], "1d", log):
+    for got in _get_bars(BASE, HDR, [s for s in syms if (ix[s].get("1d") or {}).get("n") or "1d" not in ix[s]], "1d", log):
         daily.update(got)
     # [V33.423] ★패널을 먼저 만든다★ — 횡단면 칸은 같은 날 다른 종목이 있어야 생긴다.
     #   일봉은 전부 받아 둔 상태이므로 여기가 유일하게 가능한 자리다(5분봉은 흘려서 버린다).
@@ -1563,7 +1578,7 @@ def build_dataset_stream(BASE, HDR, log=print, limit=None):
             parts.append(rows_to_arrays(rows))
             seen.add(s)
 
-    for got in _get_bars(BASE, HDR, [s for s in syms if (ix[s].get("5m") or {}).get("n")], "5m", log):
+    for got in _get_bars(BASE, HDR, [s for s in syms if (ix[s].get("5m") or {}).get("n") or "5m" not in ix[s]], "5m", log):
         for s, b5 in got.items():
             if s in ix:
                 n5 += 1

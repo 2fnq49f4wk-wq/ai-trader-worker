@@ -145,10 +145,67 @@ console.log("\n⑦ ★수집은 I/O 만 한다★ · 배선 · 경로");
   const C = strip(S.slice(i1, e2 + 1));
   const iOk = C.indexOf("_obSpacingOk(fresh, res)"), iPut = C.indexOf("R2.put(");
   chk(iOk > 0 && iPut > iOk, "간격이 틀린 응답은 ★저장 전에★ 거른다", "간격 검사가 저장 뒤에 있거나 없다");
-  chk(/const old = curVer \? await _obLoad\(/.test(C) && /meta\.v === OMNIBARS\.ver\[res\]/.test(C),
+  /* [V33.427] 판 판정은 _obPrevFor 로 옮겼다 — 아래 ⑥ 이 월 간격 '일봉' 을 실제로 흘려 거부를 확인한다. */
+  chk(/const pv = await _obPrevFor\(R2, res, sym, meta\);/.test(C) && /_obSpacingOk\(old, res\)/.test(S),
       "옛 판 파일은 합치지 않는다 — 굵은 봉이 새 일봉에 섞여 남지 않는다", "옛 판(굵은 봉)을 새 봉과 합친다");
   chk(M.OMNIBARS.ver["1d"] >= 2, "일봉 저장 판이 올라갔다(옛 range=max 파일을 새로 받는다)", "일봉 판이 그대로다 — 옛 굵은 파일이 신선하다고 건너뛴다");
   chk(/v: OMNIBARS\.ver\[res\]/.test(C) && /g: fresh\.g/.test(C), "색인에 판과 ★실제로 온 간격★ 을 적는다(학습기 로그에 나온다)", "색인에 판·간격이 없다");
 }
+
+console.log("\n⑥ [V33.427] ★못 읽었으면 쓰지 않는다 · 색인은 캐시다★ — 실제 실패를 흘려 넣어 본다");
+/* 실측(2026-09-24): D1 읽기 오류 한 번에 수집기가 빈 색인으로 시작했고, 다시 받은 종목의 쌓인 봉을
+   새 창만으로 덮어썼으며, 끝에 1,008칸 색인을 40칸으로 덮었다 — 커버리지가 294/1008 로 떨어졌다. */
+{
+  const fakeDB = (mode) => ({ prepare: () => ({ bind: () => ({ first: async () => {
+    if (mode === "throw") throw new Error("D1_ERROR: overloaded");
+    if (mode === "none") return null;
+    return { v: JSON.stringify({ v: 1, s: { AAA: { m: "us" } } }) };
+  } }) }) });
+  const r1 = await M._obIndexLoad(fakeDB("throw"));
+  chk(r1.ok === false, "색인 읽기 ★실패★ 는 실패로 돌아온다(빈 색인으로 바꿔치지 않는다)",
+      "★D1 오류를 빈 색인으로 돌려준다 — 수집기가 1,008칸 색인을 덮어쓴다★");
+  const r2 = await M._obIndexLoad(fakeDB("none"));
+  chk(r2.ok === true && r2.fresh === true && Object.keys(r2.index.s).length === 0, "행이 정말 없으면 첫 회차다(빈 색인 OK)",
+      "첫 회차를 실패로 본다 — 수집이 영영 시작 못 한다");
+  const r3 = await M._obIndexLoad(fakeDB("ok"));
+  chk(r3.ok === true && r3.index.s.AAA, "정상 행은 그대로 읽는다", "정상 색인을 못 읽는다");
+
+  const five = { t: [0, 300, 600, 900, 1200, 1500], o: [1,1,1,1,1,1], h: [1,1,1,1,1,1], l: [1,1,1,1,1,1], c: [1,1,1,1,1,1], v: [1,1,1,1,1,1] };
+  const monthly = { t: [0, 2592000, 5184000, 7776000, 10368000, 12960000], o: [1,1,1,1,1,1], h: [1,1,1,1,1,1], l: [1,1,1,1,1,1], c: [1,1,1,1,1,1], v: [1,1,1,1,1,1] };
+  const fakeR2 = (obj, thrw) => ({ get: async () => { if (thrw) throw new Error("R2 503"); return obj === null ? null : { text: async () => JSON.stringify(obj) }; } });
+  const p1 = await M._obPrevFor(fakeR2(null, true), "5m", "AAA", { v: 1 });
+  chk(p1.ok === false, "옛 파일 읽기 ★실패★ 면 ok=false — 그 종목은 이번에 안 쓴다(덮어쓰지 않는다)",
+      "★옛 파일을 못 읽었는데 '없다' 로 보고 새 창만으로 덮어쓴다 — 쌓은 이력이 사라진다★");
+  const p2 = await M._obPrevFor(fakeR2(null), "5m", "AAA", undefined);
+  chk(p2.ok === true && p2.old === null, "파일이 정말 없으면 처음이다", "없는 파일을 오류로 본다");
+  const p3 = await M._obPrevFor(fakeR2(Object.assign({ ver: M.OMNIBARS.ver["5m"] }, five)), "5m", "AAA", undefined);
+  chk(p3.ok && p3.old && p3.old.t.length === 6, "★색인이 그 종목을 잊었어도★ 파일에 판이 맞으면 합친다",
+      "★색인에 없다는 이유로 쌓인 봉을 버린다★");
+  const p4 = await M._obPrevFor(fakeR2(five), "5m", "AAA", undefined);
+  chk(p4.ok && p4.old && p4.old.t.length === 6, "판 표시가 없는 옛 파일도 간격이 5분이면 합친다(기존 파일 구제)",
+      "★판 표시 전의 파일을 전부 버린다 — 지금 R2 에 있는 봉이 전부 그렇다★");
+  const p5 = await M._obPrevFor(fakeR2(monthly), "1d", "AAA", undefined);
+  chk(p5.ok && p5.old === null, "대조: 간격이 한 달인 옛 '일봉' 은 합치지 않는다(판을 올린 이유 그대로)",
+      "★굵은 봉(월 간격)을 일봉에 섞는다★");
+  const p6 = await M._obPrevFor(fakeR2(five), "5m", "AAA", { v: M.OMNIBARS.ver["5m"] });
+  chk(p6.ok && p6.old, "색인이 판 일치를 말하면 합친다", "정상 경로가 깨졌다");
+
+  const col = (() => { const i = S.indexOf("async function omniBarsCollect("); let d = 0, k = S.indexOf("{", i);
+    for (; k < S.length; k++) { if (S[k] === "{") d++; else if (S[k] === "}") { d--; if (d === 0) break; } } return S.slice(i, k + 1); })();
+  const iFail = col.indexOf("if (!_ixr.ok) return"), iWrite = col.indexOf('setState(DB, "omnibars_index"');
+  chk(iFail > 0 && iWrite > iFail && !/getState\(DB, "omnibars_index"/.test(col),
+      "수집기는 색인을 strict 로 읽고, 실패하면 ★쓰기 전에★ 물러난다",
+      "★수집기가 색인 읽기 실패 뒤에도 끝까지 가서 색인을 덮어쓴다★");
+  /* ★v 는 거래량이다★ — 판 표시를 merged.v 로 적으면 거래량 배열이 숫자로 덮인다(실제로 그렇게 짰다가 여기서 잡혔다). */
+  chk(!/merged\.v\s*=/.test(col) && !/\bold\.v\b/.test(S.slice(S.indexOf("async function _obPrevFor"), S.indexOf("async function _obPrevFor") + 1500)),
+      "판 표시가 ★거래량 칸(v)★ 을 건드리지 않는다", "★판 표시를 v 에 적는다 — 모든 봉 파일의 거래량이 숫자 하나로 덮인다★");
+  chk(/if \(!pv\.ok\) \{ prevFail\+\+; failed\+\+; continue; \}/.test(col) && /merged\.ver = OMNIBARS\.ver\[res\];/.test(col),
+      "옛 파일을 못 읽으면 그 해상도는 건너뛴다 · 파일에 판을 적는다",
+      "옛 파일 읽기 실패 뒤에도 덮어쓴다 — 또는 파일이 판을 모른다");
+  chk(/const _ixr = await _obIndexLoad\(env\.DB\);\s*\n\s*if \(!_ixr\.ok\) return Response\.json\(\{ error: "색인 읽기 실패/.test(S) && /universe: \(DEFAULT_US/.test(S),
+      "학습기용 색인 엔드포인트는 실패를 503 으로 말하고 유니버스를 같이 준다",
+      "★엔드포인트가 D1 오류를 빈 색인으로 돌려준다 — 학습기가 조용히 0종목으로 돈다★");
+}
+
 console.log(fails === 0 ? "\n✓ OMNI 원시 봉 저장소 검사 통과" : "\n✗ " + fails + "건 실패");
 process.exit(fails ? 1 : 0);
