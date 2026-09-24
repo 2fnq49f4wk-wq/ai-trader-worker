@@ -12,6 +12,32 @@
 
 ## Current handoff
 
+- Status: **V33.427c — ★같은 병의 나머지 자리 41곳★ ("못 읽었다" 를 "없다" 로 읽고 같은 키에 되쓰기) · 게이트로 막음.**
+  ■ 뿌리(V33.427b 와 같다): `getState` 는 D1 오류를 삼키고 기본값을 준다 → 그 값을 고쳐 ★같은 키★ 에 쓰면
+    D1 이 한 번 삐끗할 때 쌓인 것이 기본값으로 덮인다. 저장소 전체를 스캔하니 이 모양이 ★41곳★ 이었다.
+  ■ 돈·위험 한도(가장 무거운 것):
+    · `/api/cash/add` — 누적 입금·출금·★TWR★ 을 ★쓰기 전에★ 엄격히 읽는다. 못 읽으면 503 · 아무것도 안 바꾼다.
+      (TWR 은 예전엔 입출금을 쓴 ★뒤에★ 느슨하게 읽어 factor 1 로 새로 시작할 수 있었다 → `pre` 인자로 미리 읽은 값을 넘김)
+    · `/api/reset_market` — 입출금 읽기를 ★포지션·거래 삭제 전으로★ 옮김(뒤에서 실패하면 반쪽 리셋이었다).
+    · `equity_peak:*` — 못 읽으면 지금 평가액이 새 고점으로 적혀 ★누적 낙폭이 0 으로 지워졌다★(폭락장 게이트가 눈을 감음).
+      이제 던지고 그 틱의 crashGate 만 건너뛴다(다른 crashGate 오류와 같은 처리 — 새 매매 동작은 안 만들었다).
+    · `ext_entry:*` 시간외 세션 진입 카운터 — 못 읽으면 0 에서 다시 세어 ★세션 상한을 넘길 수 있었다★.
+    · `crowd:*` 투표 — 못 읽으면 503.
+  ■ 학습·관측 누적: omni_fwd(★라벨 달기 전에★ 엄격히 읽고, 못 읽으면 이번 틱 아무것도 안 함 · 묶음 쓰기에
+    ★성공한 라벨만★ 센다 — 예전엔 쓰기 실패분도 세어 다음 틱에 두 번 셌다), 전진 원장(_lkey), mind_guard 이월,
+    FEATMIG(못 읽으면 이관 안 함 — '처음부터' 로 보면 이미 옮긴 행을 또 옮긴다), autotune_state, senti_lex ·
+    senti_learned · earn_corr · lsm_stats · optx_index · gate_stats · stin_stats(3) · sector_index · social:* ·
+    social_health · social_cal_buf · mcap_shares(2) · modal_retrain_auto · alltrain_bad · ml_track · 월간리포트 · EXTIMP.
+    (앞선 V33.427c 1차분: krhalt:state · analyst_rev · shock/final/blend cal buf · sector_group/signal_type stats ·
+     wai_qa_meter · memo_model · brain_drift · nnews_weights · news_stats · sector_news_sentiment.)
+  ■ 일부러 남긴 10곳(허용목록 · 사유 필수): 커서 4(ext_rr · qp_rr · rr_idx · hist_off — 처음부터 다시 돌아도 잃는 게 없다),
+    캐시 5(daily:*(통째 교체) · whatif_beta3 · heat_longret · sec_cik_map · ml_snap 진행표), 분기가 다른 1(국채 quote).
+  ■ 게이트 `tools/check-rmw.mjs`(배포 워크플로 연결 · 160종째): 정적 스캔(59쌍 발견 · 허용목록 밖 느슨 0 ·
+    코드에서 사라진 허용 항목도 실패 · 합성 대조) + 가짜 D1 읽기 실패 주입(고점·TWR·투표·OMNI 전진, 각각 대조군 포함).
+    돌연변이 9종 전부 잡힘(omni_fwd 느슨 · 쓰기실패 셈 · 고점 느슨 · TWR pre 무시 · TWR 느슨 · 투표 · senti_lex ·
+    ext_entry · mind_guard). `check-single-source` 앵커는 applyCashflowToTWR 서명 변경에 맞춰 갱신.
+  ■ 다음: 운영에서 omnibars 회차가 `되살림`·색인 증가를 보이는지, omniscore(꼬리 읽기)·omniresolve 가 쌓이는지 확인.
+    성능의 다음 지렛대는 새 입력(이벤트·수급·뉴스)이다 — 튜닝이 아니라(실측 holdout AUC 0.511).
 - Status: **V33.427b — ★수집기가 쌓은 봉을 지우고 있었다★ ("못 읽었다" 를 "없다" 로 읽어서) · 색인은 캐시로.**
   ■ 실측(2026-09-24 13:38 · 수동 omnibars): `커버 5분봉 294/1008 · 신선해서 건너뜀 0 · 새 봉 +294,716(40종목)`.
     전날 학습기는 ★1,008종목★ 을 봤다. 색인이 통째로 줄어 있었고, 다시 받은 종목은 전부 처음 보는

@@ -5175,7 +5175,9 @@ async function krHaltSnapshot(DB, now) {
   const t = now || new Date();
   const kst = getKST(t);
   const day = kstTradingDayKey(t);
-  let st = await getState(DB, "krhalt:state", null);
+  /* [V33.427c] 읽기 실패면 되쓰지 않는다 — 기본값으로 누적 상태를 덮는 사고(색인 1,008→294)와 같은 자리 */
+  let st = null, _rwKh = true;
+  try { st = await getState(DB, "krhalt:state", null, true); } catch (e) { _rwKh = false; }
   if (!st || st.day !== day) st = { day: day, obs: {}, fired: {} };
   const outMk = {};
   for (const key of Object.keys(KRHALT.sidecar)) {
@@ -5207,7 +5209,7 @@ async function krHaltSnapshot(DB, now) {
       m.fired = st.fired[key];
     }
   }
-  await setState(DB, "krhalt:state", st);
+  if (_rwKh) await setState(DB, "krhalt:state", st);
   return {
     day: day, kstMin: kst.totalMin,
     session: kst.totalMin >= KRHALT.openMin && kst.totalMin <= KRHALT.closeMin,
@@ -8469,7 +8471,7 @@ async function sentiLexLearnStep(DB) {
       let pulse = null;
       try { const sp = await getState(DB, "sector_pulse", null); pulse = sp && sp.g; } catch (e) {}
       {
-        const lex = (await getState(DB, "senti_lex", null)) || { w: {} };
+        const lex = (await getState(DB, "senti_lex", null, true)) || { w: {} };
         // [V33.68] ★1순위: 기사에 명시된 그 회사의 등락으로 배운다★
         //   종목 단위 라벨이 섹터 평균보다 훨씬 정확하다(반대 방향으로 잘못 배우는 일이 없다).
         let symHit = 0;
@@ -8579,7 +8581,7 @@ async function earnCorrLearnStep(DB) {
     const es = await getState(DB, "earnings_surprise", null);
     const map = (es && es.m) || null;
     if (!map) return null;
-    const st = (await getState(DB, "earn_corr", null)) || { b: {}, seen: {}, ts: 0 };
+    const st = (await getState(DB, "earn_corr", null, true)) || { b: {}, seen: {}, ts: 0 };
     const H = EARN_LEARN.horizonDays;
     const now = Date.now();
     let learned = 0;
@@ -8926,8 +8928,9 @@ const ANALYSTREV = {
 async function analystRevTrack(DB, prevBySym, nowBySym) {
   try {
     if (!nowBySym) return "";
-    let led = null;
-    try { led = await getState(DB, "analyst_rev", null); } catch (e) {}
+    /* [V33.427c] 읽기 실패면 되쓰지 않는다 — 기본값으로 누적 상태를 덮는 사고(색인 1,008→294)와 같은 자리 */
+    let led = null, _rwAr = true;
+    try { led = await getState(DB, "analyst_rev", null, true); } catch (e) { _rwAr = false; }
     if (!led || !led.bySym) led = { bySym: {}, ts: 0 };
     const now = Date.now();
     const cutoff = now - ANALYSTREV.windowDays * 86400000;
@@ -8966,7 +8969,7 @@ async function analystRevTrack(DB, prevBySym, nowBySym) {
     }
     led.ts = now;
     led.windowDays = ANALYSTREV.windowDays;
-    try { await setState(DB, "analyst_rev", led); } catch (e) {}
+    if (_rwAr) { try { await setState(DB, "analyst_rev", led); } catch (e) {} }
     return (nUp || nDn) ? (" · 목표가 개정 ▲" + nUp + " ▼" + nDn) : "";
   } catch (e) { return ""; }
 }
@@ -9356,7 +9359,7 @@ async function sentiLearnNightly(DB) {
   try {
     const snapKey = "senti_learn_snap";
     const prev = await getState(DB, snapKey, null);
-    const learned = (await getState(DB, "senti_learned", null)) || { tokens: {}, n: 0 };
+    const learned = (await getState(DB, "senti_learned", null, true)) || { tokens: {}, n: 0 };
     let updated = 0, labelInfo = [];
     if (prev && prev.groups && prev.ts && Date.now() - prev.ts > 16 * 3600000 && Date.now() - prev.ts < 40 * 3600000) {
       for (const g of Object.keys(prev.groups)) {
@@ -10642,6 +10645,14 @@ async function omniShadowResolve(DB, opts) {
   if (!R2) return "[OMNI-FWD] R2 미바인딩";
   await omniShadowEnsure(DB);
   const nowS = Math.floor(Date.now() / 1000);
+  /* [V33.427c] ★누적 성적은 라벨을 달기 ★전에★ 엄격히 읽는다.★
+     예전엔 라벨 UPDATE 를 다 한 뒤 getState 로 읽었는데, D1 이 잠깐 삐끗하면 null → 새 빈 성적으로
+     덮어써 그동안 쌓은 전진 정확도가 통째로 사라졌다. 게다가 라벨은 이미 달렸으니 그 행들은 다시
+     세지도 못한다. 이제 못 읽으면 이번 틱은 아무 것도 안 달고 물러난다 — 다음 틱에 그대로 다시 한다. */
+  let fwd = null;
+  try { fwd = await getState(DB, "omni_fwd", null, true); }
+  catch (e) { return "[OMNI-FWD] 누적 성적 읽기 실패(D1) — 이번엔 채점 안 함: " + ((e && e.message) || e); }
+  if (!fwd || fwd.ver !== OMNI_VER || !fwd.byHz) fwd = { ver: OMNI_VER, since: Date.now(), byHz: {}, n: 0, hits: 0 };
   /* [V33.427] ★못 잰 행을 영원히 대기열에 두지 않는다.★ 사후채점은 ★오래된 묶음부터★ 본다.
      봉이 끝내 안 오는 행(상장폐지·장기 거래정지·조기폐장)이 묶음에 20개 넘게 남으면 그 묶음이
      매번 맨 앞에 뽑혀 뒤의 묶음을 전부 막는다. 지평 + 유예가 지나도록 못 잰 행은 '못 잼(-1)' 으로
@@ -10694,18 +10705,26 @@ async function omniShadowResolve(DB, opts) {
       for (const z of mine) {
         if (!(z.fr > med) && !(z.fr < med)) { tie++; continue; }   // 중앙값과 같다 → 버린다
         const lab = z.fr > med ? 1 : 0;
-        upd.push(DB.prepare("UPDATE omni_shadow SET label=?, fr=?, res_ts=? WHERE id=?").bind(lab, z.fr, nowS, z.id));
-        const a = inc[hz] || (inc[hz] = { n: 0, hits: 0 });
-        a.n++; if ((z.p >= 0.5 ? 1 : 0) === lab) a.hits++;
-        didR++;
+        upd.push({ st: DB.prepare("UPDATE omni_shadow SET label=?, fr=?, res_ts=? WHERE id=?").bind(lab, z.fr, nowS, z.id),
+                   hz: hz, hit: (z.p >= 0.5 ? 1 : 0) === lab });
       }
     }
     didG++;
   }
-  for (let a = 0; a < upd.length; a += 50) { try { await DB.batch(upd.slice(a, a + 50)); } catch (e) {} }
+  /* [V33.427c] ★실제로 달린 라벨만 센다★ — 묶음 쓰기가 실패하면 그 행들은 다음 틱에 다시 채점된다.
+     예전엔 쓰기 실패와 상관없이 셌으므로, 실패한 묶음은 두 번 세어졌다. */
+  let wrFail = 0;
+  for (let a = 0; a < upd.length; a += 50) {
+    const chunk = upd.slice(a, a + 50);
+    try { await DB.batch(chunk.map(function (u) { return u.st; })); }
+    catch (e) { wrFail += chunk.length; continue; }
+    for (const u of chunk) {
+      const c = inc[u.hz] || (inc[u.hz] = { n: 0, hits: 0 });
+      c.n++; if (u.hit) c.hits++;
+      didR++;
+    }
+  }
   /* [V33.427] ★성적은 증분으로 쌓는다★ — 매 틱 전체 표를 GROUP BY 하지 않는다(하루 5천 행씩 는다). */
-  let fwd = null; try { fwd = await getState(DB, "omni_fwd", null); } catch (e) {}
-  if (!fwd || fwd.ver !== OMNI_VER || !fwd.byHz) fwd = { ver: OMNI_VER, since: Date.now(), byHz: {}, n: 0, hits: 0 };
   for (const hz in inc) {
     const b = fwd.byHz[hz] || (fwd.byHz[hz] = { n: 0, hits: 0 });
     b.n += inc[hz].n; b.hits += inc[hz].hits; b.acc = b.n ? b.hits / b.n : null;
@@ -10718,7 +10737,7 @@ async function omniShadowResolve(DB, opts) {
     const a = fwd.byHz[h];
     return a && a.n ? h + " " + (a.acc * 100).toFixed(1) + "%(" + a.n + ")" : null;
   }).filter(Boolean).join(" · ");
-  return "[OMNI-FWD] 묶음 " + didG + " 채점 · " + didR + "행 · 동점버림 " + tie + " · 봉없음 " + noBar +
+  return "[OMNI-FWD] 묶음 " + didG + " 채점 · " + didR + "행" + (wrFail ? "(쓰기실패 " + wrFail + ")" : "") + " · 동점버림 " + tie + " · 봉없음 " + noBar +
          " · 미도래 " + notReady + " · 못잼닫음 " + expired + (per ? " · 누적 " + per : "");
 }
 
@@ -13758,10 +13777,12 @@ async function computePortfolioValue(DB, market, cfg) {
 
 // 현금흐름(입출금) 발생 시 TWR 상태를 갱신한다.
 //   flow: 입금은 양수, 출금은 음수. valueBeforeFlow: 흐름 적용 직전 평가액.
-async function applyCashflowToTWR(DB, market, valueBeforeFlow, flow, cfg) {
+async function applyCashflowToTWR(DB, market, valueBeforeFlow, flow, cfg, pre) {
   const key = "twr:" + market;
   const initial = _initialCashFor(cfg, market);   // [V33.328] 채권 슬리브가 cm 금액으로 떨어지던 것 수정
-  let twr = await getState(DB, key, null);
+  /* [V33.427c] ★엄격히 읽는다★ — 못 읽은 것을 '없다' 로 보면 factor 1 로 새로 시작해
+     그동안의 시간가중수익률이 통째로 사라진다. 호출부가 쓰기 전에 미리 읽어 넘기면(pre) 그것을 쓴다. */
+  let twr = pre !== undefined ? pre : await getState(DB, key, null, true);
   if (!twr || typeof twr.factor !== "number" || typeof twr.lastValue !== "number") {
     twr = { factor: 1, lastValue: (typeof initial === "number" ? initial : valueBeforeFlow) };
   }
@@ -13878,7 +13899,9 @@ async function analyzeMarketRegime(DB, market) {
 // equity 고점 추적 + 현재 낙폭(%) 반환. 신고점이면 peak 갱신.
 async function updateEquityPeak(DB, market, equity) {
   const key = "equity_peak:" + market;
-  let peak = await getState(DB, key, null);
+  /* [V33.427c] ★엄격히 읽는다★ — 못 읽은 것을 '없다' 로 보면 지금 평가액이 새 고점으로 적혀
+     ★누적 낙폭이 영구히 0 으로 지워진다★(폭락장 게이트가 눈을 감는다). 못 읽으면 던지고 이번 틱만 건너뛴다. */
+  let peak = await getState(DB, key, null, true);
   if (typeof peak !== "number" || peak <= 0 || equity > peak) {
     peak = equity;
     await setState(DB, key, peak);
@@ -15395,7 +15418,7 @@ async function lsmScoreNightly(DB) {
     const cur = await getState(DB, "lsm_log", null);
     const rows = (cur && Array.isArray(cur.rows)) ? cur.rows : [];
     if (!rows.length) return "[LSM] 기록 없음 — 규칙과 다르게 말한 순간이 아직 없다";
-    const st = (await getState(DB, "lsm_stats", null)) || { n: 0, lsmBetter: 0, ruleBetter: 0, tie: 0, sumGain: 0 };
+    const st = (await getState(DB, "lsm_stats", null, true)) || { n: 0, lsmBetter: 0, ruleBetter: 0, tie: 0, sumGain: 0 };
     let scored = 0, pend = 0, noData = 0;
     for (const r of rows) {
       if (r.done) continue;
@@ -15669,7 +15692,7 @@ async function optMicroNightly(DB) {
     if (!n) return "[OPTX] 수집 0건" + (notes.length ? " — " + notes.join(", ") : "");
     /* 날짜별 한 행 + 색인. ★덮어쓰기가 아니라 날짜 키★ 라 하루 여러 번 돌아도 그날 것만 갱신된다. */
     await setState(DB, "optx:" + day, rec);
-    let idx = (await getState(DB, "optx_index", null)) || { days: [] };
+    let idx = (await getState(DB, "optx_index", null, true)) || { days: [] };
     if (!Array.isArray(idx.days)) idx.days = [];
     if (idx.days.indexOf(day) < 0) idx.days.push(day);
     idx.days.sort();
@@ -17782,7 +17805,7 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
           // [V33.97] 충격 프라이어 관측 적립 — 계수 실측은 사건 표본이 쌓인 뒤(지금은 수집만).
           if (typeof pos.meta.mlShockDz === "number" && pos.meta.mlShockDz !== 0) {
             try {
-              let sb2 = await getState(DB, "shock_cal_buf", null);
+              let sb2 = await getState(DB, "shock_cal_buf", null, true);   // [V33.427c] 실패하면 e3 로 — 되쓰지 않는다
               if (!sb2 || !Array.isArray(sb2.v)) sb2 = { v: [] };
               sb2.v = sb2.v.concat([[pos.meta.mlShockMode || "?", +pos.meta.mlShockDz.toFixed(3),
                                      +_num(_pPre, 0.5).toFixed(4), pnlPct > 0 ? 1 : 0]]).slice(-500);
@@ -17883,16 +17906,19 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
     if (fullClose) {
       // (1) 섹터 그룹 통계
       const grp = getSectorGroup(symbol, cfg);
-      const gs = await getState(DB, "sector_group_stats", {});
+      /* [V33.427c] 읽기 실패면 되쓰지 않는다 — 기본값으로 누적 상태를 덮는 사고(색인 1,008→294)와 같은 자리 */
+      let gs = {}, _rwGs = true;
+      try { gs = await getState(DB, "sector_group_stats", {}, true) || {}; } catch (e) { _rwGs = false; }
       if (!gs[grp]) gs[grp] = { trades: 0, wins: 0, sumPnlPct: 0 };
       if (gs[grp].trades >= 120) { gs[grp].trades = Math.round(gs[grp].trades / 2); gs[grp].wins = Math.round(gs[grp].wins / 2); gs[grp].sumPnlPct = gs[grp].sumPnlPct / 2; }
       gs[grp].trades++;
       if (_statPct > 0) gs[grp].wins++;
       gs[grp].sumPnlPct += _statPct;
-      await setState(DB, "sector_group_stats", gs);
+      if (_rwGs) await setState(DB, "sector_group_stats", gs);
       // (2) 신호 타입 통계 (TR_PULLBACK / TR_BREAKOUT)
       if (entrySignalName && SIGNAL_TYPES.indexOf(entrySignalName) >= 0) {
-        const ss = await getState(DB, "signal_type_stats", {});
+        let ss = {}, _rwSs = true;
+        try { ss = await getState(DB, "signal_type_stats", {}, true) || {}; } catch (e) { _rwSs = false; }
         if (!ss[entrySignalName]) ss[entrySignalName] = { trades: 0, wins: 0, sumPnlPct: 0 };
         const _e0 = ss[entrySignalName];
         // [V33.82] 켈리 계산에 필요한 이익/손실 분리 누적 — 종전엔 합계만 있어 손익비(b)를 못 구했다.
@@ -17912,7 +17938,7 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
         else { _e0.nLoss++; _e0.sumLoss += Math.abs(_statPct); }
         _e0.sumPnlPct += _statPct;
         _e0.nSq++; _e0.sumSq += _statPct * _statPct; _e0.sumSqPnl += _statPct;
-        await setState(DB, "signal_type_stats", ss);
+        if (_rwSs) await setState(DB, "signal_type_stats", ss);
       }
     }
   } catch (e) {}
@@ -18868,7 +18894,7 @@ async function refreshPriceShard(env, market, shard) {
   }
   if (sharesGot > 0) {
     try {
-      const exMap = (await getState(DB, "mcap_shares", {})) || {};
+      const exMap = (await getState(DB, "mcap_shares", {}, true)) || {};
       Object.assign(exMap, sharesUpd);
       await setState(DB, "mcap_shares", exMap);
     } catch (e) {}
@@ -19231,7 +19257,7 @@ async function autoTune(DB, cfg, regimes) {
 
       // 시장별 튠 상태 — 10건마다만 재조정
       const tuneKey = "autotune_state_" + market;
-      const tuneState = await getState(DB, tuneKey, { lastTunedAt: 0, tradeCountAtLastTune: 0, lastRegime: null, tuneSeq: 0, lastDir: {} });
+      const tuneState = await getState(DB, tuneKey, { lastTunedAt: 0, tradeCountAtLastTune: 0, lastRegime: null, tuneSeq: 0, lastDir: {} }, true);
       if (typeof tuneState.tuneSeq !== "number") tuneState.tuneSeq = 0;
       if (!tuneState.lastDir) tuneState.lastDir = {};
       const totalRes = await DB.prepare("SELECT COUNT(*) as c FROM trades WHERE side = ? AND market = ?")
@@ -21141,7 +21167,7 @@ async function runTradingCycle(env) {
       // [V81] 발행주식수/시총 맵 갱신 — 기존 값과 병합 저장(다른 시장·미수신 종목 보존)
       if (Object.keys(sharesUpd).length > 0) {
         try {
-          const exMap = (await getState(DB, "mcap_shares", {})) || {};
+          const exMap = (await getState(DB, "mcap_shares", {}, true)) || {};
           Object.assign(exMap, sharesUpd);
           await setState(DB, "mcap_shares", exMap);
         } catch (e) {}
@@ -23976,7 +24002,7 @@ async function runTradingCycle(env) {
       }
       // [V33.95] 게이트별 확률 통계 + 고확률 차단 표본을 적립한다(야간에 실측한다).
       try {
-        const _gs = (await getState(DB, "gate_stats", null)) || { by: {}, hi: [], ts: 0 };
+        const _gs = (await getState(DB, "gate_stats", null, true)) || { by: {}, hi: [], ts: 0 };
         _gs.by = _gs.by || {};
         for (const k of Object.keys(nobuyP)) {
           const s = nobuyP[k], o = _gs.by[k] || (_gs.by[k] = { n: 0, sumP: 0, hi: 0, maxP: 0 });
@@ -24054,7 +24080,7 @@ async function runTradingCycle(env) {
         if (__stinObs || _lab || _fl) {
           try {
             const _d0 = _stinDay();
-            const _p0 = (await getState(DB, "stin_stats", null)) || {};
+            const _p0 = (await getState(DB, "stin_stats", null, true)) || {};
             const _same = (_p0.day === _d0);
             await setState(DB, "stin_stats", Object.assign({}, _p0, {
               day: _d0,
@@ -24303,7 +24329,7 @@ async function runFastWatch(env, cronStart) {
             const _sKey = "ext_entry:" + market + ":" + _xs0 + ":" +
               (market === "kr" ? kstTradingDayKey(new Date())
                                : (function (p) { return p.year + "-" + p.month + "-" + p.date; })(getUSEt(new Date())));
-            const _ctr = (await getState(DB, _sKey, null)) || { n: 0 };
+            const _ctr = (await getState(DB, _sKey, null, true)) || { n: 0 };
             let _room = _num(_et.maxNewPerSession, 2) - _num(_ctr.n, 0);
             let _made = 0;                       // ★이 세션·이 시장에서만★ 센다(전체 누적과 섞이면 상한이 틀린다)
             if (_room > 0) {
@@ -25276,10 +25302,11 @@ async function handleRequest(request, env, ctx) {
           //   "오늘"이 0 으로 보인다(실제로는 +397 늘었는데도). 하루치 ins_ts 이력이 쌓이기
           //   전까지는 "추적 시작 이후 누적 증가"를 대신 보여줘 사용자가 증가를 확인할 수 있게 한다.
           const _tk = "ml_track:v" + _fv;
-          let _trk = await getState(env.DB, _tk, null);
+          let _trk = null, _trkOk = true;
+          try { _trk = await getState(env.DB, _tk, null, true); } catch (e) { _trkOk = false; }
           if (!_trk || !_trk.ts) {
             _trk = { ts: _now, total: _total };
-            try { ctx.waitUntil(setState(env.DB, _tk, _trk)); } catch (e) {}
+            if (_trkOk) { try { ctx.waitUntil(setState(env.DB, _tk, _trk)); } catch (e) {} }
           }
           samples = { total: _total, featVer: _fv,
                       today: (_rToday && _rToday.c) || 0,
@@ -25737,7 +25764,7 @@ async function handleRequest(request, env, ctx) {
             r = { ok: true, answer: _cc.answer, grounded: true, ai: "workers-ai", cached: true };
           } else {
             const _day = new Date().toISOString().slice(0, 10);
-            let _m = null; try { _m = await getState(env.DB, "wai_qa_meter", null); } catch (e) {}
+            let _m = null, _rwQm = true; try { _m = await getState(env.DB, "wai_qa_meter", null, true); } catch (e) { _rwQm = false; }
             if (!_m || _m.day !== _day) _m = { day: _day, n: 0 };
             if (_m.n < 600) {
               // [V32.27/29] 라이브 시장맥락 보강 — ★1회 배치 조회(getStates)★로 D1 왕복 1번만(CPU/D1 절약).
@@ -25763,7 +25790,7 @@ async function handleRequest(request, env, ctx) {
               const facts = r.answer + (ctxBits ? "\n\n[시장 맥락]" + ctxBits : "");
               const polished = await _aiNarrate(env, facts, "위 <사실>만 근거로, 사용자 질문에 시니어 애널리스트처럼 구체적으로 답해줘. 핵심 결론을 먼저, 근거엔 수치를 인용해.\n\n질문: " + q, { style: "6~10문장. 핵심 결론 먼저, 마지막에 유의점 한 줄.", corpus: { DB: env.DB, kind: "qa", ctx: ctx } });
               if (polished && polished.length > 30) {
-                _m.n++; try { await setState(env.DB, "wai_qa_meter", _m); } catch (e) {}
+                _m.n++; if (_rwQm) { try { await setState(env.DB, "wai_qa_meter", _m); } catch (e) {} }
                 try { const C = globalThis.__waiqaCache; C.set(_ck, { answer: polished, ts: Date.now() }); if (C.size > 200) C.delete(C.keys().next().value); } catch (e) {}
                 r = { ok: true, answer: polished, grounded: true, ai: "workers-ai" };
               }
@@ -27682,14 +27709,14 @@ async function handleRequest(request, env, ctx) {
            건너뛴 사실이 어디에도 남지 않으니 같은 자리를 무한히 오간다.
            → 죽은 단계를 ★누적 집합★ 으로 남긴다. 24시간이 지난 항목은 잊는다(일시적 사고를
              영구 장애로 굳히지 않는다). 완주하면 통째로 비운다. */
-        let _bad = {};
-        try { _bad = (await getState(env.DB, "alltrain_bad", null)) || {}; } catch (e0) {}
+        let _bad = {}, _badOk = true;
+        try { _bad = (await getState(env.DB, "alltrain_bad", null, true)) || {}; } catch (e0) { _badOk = false; }
         const _BADTTL = 24 * 3600000;
         for (const k in _bad) if (!(_num(_bad[k] && _bad[k].ts, 0) > Date.now() - _BADTTL)) delete _bad[k];
         if (_crashHit) {
           const _e = _bad[_crashHit] || { n: 0 };
           _bad[_crashHit] = { n: _num(_e.n, 0) + 1, ts: Date.now() };
-          try { await setState(env.DB, "alltrain_bad", _bad); } catch (e0) {}
+          if (_badOk) { try { await setState(env.DB, "alltrain_bad", _bad); } catch (e0) {} }
         }
         // 두 번 이상 죽인 단계는 전부 건너뛴다 — 하나가 아니라 집합이다.
         const _autoSkipList = Object.keys(_bad).filter(function (k) { return _num(_bad[k].n, 0) >= 2; });
@@ -28175,7 +28202,9 @@ async function handleRequest(request, env, ctx) {
       if (!sym || sym.length > 16 || !/^[A-Za-z0-9.^=\-]+$/.test(sym) || (side !== "buy" && side !== "sell")) {
         return Response.json({ error: "bad request" }, { status: 400, headers: cors });
       }
-      return Response.json(await crowdVote(env.DB, sym, side), { headers: cors });
+      /* [V33.427c] 표를 못 읽었으면 세지 않는다 — 0 에서 다시 세어 덮으면 쌓인 표가 사라진다. */
+      try { return Response.json(await crowdVote(env.DB, sym, side), { headers: cors }); }
+      catch (e) { return Response.json({ error: "투표 기록 읽기 실패(D1) — 세지 않았다. 잠시 뒤 다시", detail: (e && e.message) || String(e) }, { status: 503, headers: cors }); }
     }
 
     if (path === "/api/state") {
@@ -28929,14 +28958,23 @@ async function handleRequest(request, env, ctx) {
         return Response.json({ ok: false, error: "market must be us or kr" }, { status: 400, headers: cors });
       }
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      /* [V33.427c] 한 시장만 0 으로 — 읽기에 실패하면 기본값(전부 0)을 쓰게 되어 ★다른 시장의 입출금
+         기록까지 지운다★. 못 읽으면 초기화하지 않는다.
+         ※ 읽기는 ★지우기 전에★ 한다 — 뒤에서 실패하면 포지션·거래만 지워진 반쪽 리셋이 된다. */
+      let deposits, outflows;
+      try {
+        deposits = await getState(env.DB, "deposits", sleeveZeros(), true);
+        outflows = await getState(env.DB, "outflows", { us: 0, kr: 0, cm: 0 }, true);
+      } catch (e) {
+        return Response.json({ ok: false, error: "입출금 기록 읽기 실패(D1) — 초기화하지 않았다(다른 시장 기록 보호)",
+                               detail: (e && e.message) || String(e) }, { status: 503, headers: cors });
+      }
       // [V29] trades 삭제 = cash 자동 초기자본 복원 (단일 원장). positions도 삭제.
       await env.DB.prepare("DELETE FROM positions WHERE market = ?").bind(mkt).run();
       await env.DB.prepare("DELETE FROM trades WHERE market = ?").bind(mkt).run();
       await env.DB.prepare("DELETE FROM state WHERE k = ?").bind("cash_ckpt:" + mkt).run();
-      const deposits = await getState(env.DB, "deposits", sleeveZeros());
       deposits[mkt] = 0;
       await setState(env.DB, "deposits", deposits);
-      const outflows = await getState(env.DB, "outflows", { us: 0, kr: 0, cm: 0 });
       outflows[mkt] = 0;
       await setState(env.DB, "outflows", outflows);
       const initial = mkt === "us" ? cfg.initialCashUS : cfg.initialCashKR;
@@ -29011,8 +29049,18 @@ async function handleRequest(request, env, ctx) {
       const body = await request.json();
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const cash = await computeAllCash(env.DB, cfg);
-      const deposits = await getState(env.DB, "deposits", sleeveZeros());
-      const outflows = await getState(env.DB, "outflows", { us: 0, kr: 0 });
+      /* [V33.427c] ★돈이다.★ 누적 입금·출금을 못 읽었는데 기본값(0)에 이번 금액만 더해 쓰면
+         ★지금까지의 입출금 기록이 통째로 사라진다★(현금·수익률이 영구히 틀어진다). 못 읽으면 멈춘다. */
+      let deposits, outflows, _twrPre;
+      try {
+        deposits = await getState(env.DB, "deposits", sleeveZeros(), true);
+        outflows = await getState(env.DB, "outflows", { us: 0, kr: 0 }, true);
+        /* TWR 도 ★쓰기 전에★ 읽어 둔다 — 입출금을 쓴 뒤에 TWR 읽기가 실패하면 반쪽만 반영된다. */
+        _twrPre = { us: await getState(env.DB, "twr:us", null, true), kr: await getState(env.DB, "twr:kr", null, true) };
+      } catch (e) {
+        return Response.json({ ok: false, error: "입출금 기록 읽기 실패(D1) — 아무것도 바꾸지 않았다. 잠시 뒤 다시 시도",
+                               detail: (e && e.message) || String(e) }, { status: 503, headers: cors });
+      }
       const addUs = Number(body.us) || 0;
       const addKr = Number(body.kr) || 0;
       if (addUs === 0 && addKr === 0) {
@@ -29036,8 +29084,8 @@ async function handleRequest(request, env, ctx) {
       await setState(env.DB, "deposits", deposits);
       await setState(env.DB, "outflows", outflows);
       // TWR 구간 마감 (흐름 직전 평가액 → factor 누적, lastValue 갱신)
-      if (valBeforeUs !== null) await applyCashflowToTWR(env.DB, "us", valBeforeUs, addUs, cfg);
-      if (valBeforeKr !== null) await applyCashflowToTWR(env.DB, "kr", valBeforeKr, addKr, cfg);
+      if (valBeforeUs !== null) await applyCashflowToTWR(env.DB, "us", valBeforeUs, addUs, cfg, _twrPre.us);
+      if (valBeforeKr !== null) await applyCashflowToTWR(env.DB, "kr", valBeforeKr, addKr, cfg, _twrPre.kr);
       const newCash = await computeAllCash(env.DB, cfg);
       const msg = "CASHFLOW US:" + (addUs >= 0 ? "+" : "") + addUs + " KR:" + (addKr >= 0 ? "+" : "") + addKr +
                   " (US " + before.us + "->" + newCash.us + ", KR " + before.kr + "->" + newCash.kr + ")";
@@ -33065,7 +33113,11 @@ async function memoTrainNightly(DB) {
        저장하고 끝낸다. 외부가 멈추면(신선도 초과) 아래 종전 경로로 그대로 내려간다 —
        위원이 비는 일은 없다. */
     try {
-      const _ext = await getState(DB, "memo_model", null);
+      /* [V33.427c] 못 읽었는데 null 로 보면 "외부 모델이 없다" 로 떨어져 ★내부 학습이 Modal 모델을 덮는다★.
+         못 읽었으면 ⟳ 로 물러난다(_stg 가 완료 도장을 안 찍고 잠시 뒤 다시 부른다). */
+      let _ext = null;
+      try { _ext = await getState(DB, "memo_model", null, true); }
+      catch (e) { return "\u27F3 [MEMO] 모델 읽기 실패(D1) — 외부 모델을 덮지 않고 다음 회차에 다시 한다"; }
       const _extOk = !!(_ext && _ext.source === "external" && _ext.luxFeatVer === LUXML.featVer &&
                         Array.isArray(_ext.protos) && _ext.protos.length >= 8);
       const _ageH = _ext ? (Date.now() - _num(_ext.trainedAt, _num(_ext.ts, 0))) / 3600000 : 1e9;
@@ -36347,7 +36399,8 @@ async function icForwardCheck(DB, opts) {
     //   (아래 주석 참조) 새 줄과 섞으면 틀린 음수를 keepDays 동안 계속 끌고 간다. 버리고 다시 쌓는다.
     const _LEDVER = 3;                      // 줄 key 의미가 바뀌었다(모델버전 → 날짜) · 측정기준 정정
     let _led = null;
-    try { _led = await getState(DB, _lkey, null); } catch (e) {}
+    /* [V33.427c] 못 읽으면 물러난다 — 빈 원장으로 새로 시작해 덮어쓰면 쌓은 전진 표본이 사라진다. */
+    try { _led = await getState(DB, _lkey, null, true); } catch (e) { return null; }
     //   ★구판 원장은 버린다.★ 구판 줄은 hwm 없이 누적창을 통째로 세었으므로, 새 방식과 섞으면
     //   같은 표본을 두 번 세어 t 가 부풀어 오른다. 통계를 부풀리느니 며칠 다시 쌓는 게 낫다.
     if (!_led || !Array.isArray(_led.v) || _led.featVer !== o.featVer || _num(_led.ver, 1) !== _LEDVER)
@@ -37879,7 +37932,7 @@ async function stinBackfill(DB, opts) {
       ", range " + _bfRange + ")";
     try {
       const d0 = _stinDay();
-      const pv = (await getState(DB, "stin_stats", null)) || {};
+      const pv = (await getState(DB, "stin_stats", null, true)) || {};
       const same = (pv.day === d0);
       await setState(DB, "stin_stats", Object.assign({}, pv, {
         day: d0,
@@ -37915,7 +37968,7 @@ async function stinFlush(pend, DB) {
   if (DB) {
     try {
       const day = _stinDay();
-      const prev = (await getState(DB, "stin_stats", null)) || { total: 0, today: 0, day: day, files: 0 };
+      const prev = (await getState(DB, "stin_stats", null, true)) || { total: 0, today: 0, day: day, files: 0 };
       const sameDay = (prev.day === day);
       // [V33.103] Object.assign 으로 병합한다 — 종전엔 객체를 통째로 갈아끼워
       //   obsTotal·obsToday·labTotal·bfTotal(관측·라벨·백필 누적)이 flush 때마다 지워졌다.
@@ -39244,7 +39297,8 @@ async function mlBrainTrainNightly(DB) {
 // Page-Hinkley: 정확도가 상향 기준선 대비 누적하락하면 드리프트 플래그.
 async function _brainDriftUpdate(DB, valAcc) {
   try {
-    let ph = await getState(DB, "brain_drift", null);
+    let ph = null, _rwBd = true;
+    try { ph = await getState(DB, "brain_drift", null, true); } catch (e) { _rwBd = false; }   // [V33.427c]
     if (!ph) ph = { mean: valAcc, mT: 0, hist: [], shrink: false };
     ph.hist = (ph.hist || []).concat([+valAcc.toFixed(4)]).slice(-30);
     ph.mean = ph.mean + (valAcc - ph.mean) / Math.max(2, ph.hist.length);
@@ -39252,7 +39306,7 @@ async function _brainDriftUpdate(DB, valAcc) {
     const fired = ph.mT > BRAIN.phLambda;
     if (fired) { ph.shrink = true; ph.mT = 0; }
     else if (ph.hist.length >= 5) { ph.shrink = false; } // 안정되면 해제
-    await setState(DB, "brain_drift", ph);
+    if (_rwBd) await setState(DB, "brain_drift", ph);
     return fired ? " | ⚠드리프트감지→학습창축소" : (ph.shrink ? " | 창축소유지" : "");
   } catch (e) { return ""; }
 }
@@ -39902,12 +39956,14 @@ async function mlMindTrainNightly(DB) {
     //   guardMinLive건 미만이면 관측창이 채워지기 전 계속 리셋돼 distrust(자동불신·롤백)가 영구
     //   미발동(안전장치 유명무실)이었다. 이제 라이브 관측 이력을 보존(이월)하고 baseAcc만 새 모델
     //   기준으로 갱신 → 관측이 누적돼 자기감시가 실제로 작동. distrust 상태는 새 모델이므로 초기화.
-    let _prevGuard = null; try { _prevGuard = await getState(DB, "mind_guard", null); } catch (e) {}
+    /* [V33.427c] 못 읽었으면 가드를 건드리지 않는다 — 빈 관측창으로 덮으면 자기감시가 다시 눈을 감는다. */
+    let _prevGuard = null, _pgOk = true;
+    try { _prevGuard = await getState(DB, "mind_guard", null, true); } catch (e) { _pgOk = false; }
     const _carry = (_prevGuard && Array.isArray(_prevGuard.live)) ? _prevGuard.live.slice(-MIND.guardWindow) : [];
     // [V33.127] liveBase 는 ★라이브 분포의 성질★ 이라 모델 재학습과 무관하게 이어받는다.
     //   그래야 "새 모델이 예전 라이브보다 나빠졌는가" 를 물을 수 있다. 버리면 25건을 다시
     //   모으는 동안 가드가 눈을 감는다. baseAcc(검증)는 표시용으로만 남긴다.
-    await setState(DB, "mind_guard", { live: _carry, distrust: false, baseAcc: mind.valAcc,
+    if (_pgOk) await setState(DB, "mind_guard", { live: _carry, distrust: false, baseAcc: mind.valAcc,
       liveBase: _prevGuard ? _prevGuard.liveBase : null,
       liveBaseN: _prevGuard ? _prevGuard.liveBaseN : null,
       liveBaseAt: _prevGuard ? _prevGuard.liveBaseAt : null });
@@ -39957,7 +40013,10 @@ async function mlMindScore(DB, mind, featVec, ensCache) {
 // ── 3) 자기감시 자동롤백 가드 ──────────────────────────────
 async function mlGuardObserve(DB, predP, won) {
   try {
-    let g = await getState(DB, "mind_guard", null);
+    /* [V33.427c] ★읽기 실패로 '불신' 표시가 풀리면 안 된다★ — 기본값은 distrust:false 다.
+       되쓰면 퇴행으로 막아 둔 모델이 조용히 다시 신뢰된다. */
+    let g = null, _rwMg = true;
+    try { g = await getState(DB, "mind_guard", null, true); } catch (e) { _rwMg = false; }
     if (!g) g = { live: [], distrust: false, baseAcc: 0 };
     g.live = (g.live || []).concat([{ p: +(_num(predP, 0.5)).toFixed(3), w: won ? 1 : 0 }]).slice(-MIND.guardWindow);
     if (g.live.length >= MIND.guardMinLive) {
@@ -40016,7 +40075,7 @@ async function mlGuardObserve(DB, predP, won) {
         g.distrust = (_pB - liveAcc) > _need;   // 예전 라이브보다 '유의하게' 나빠졌을 때만 불신
       }
     }
-    await setState(DB, "mind_guard", g);
+    if (_rwMg) await setState(DB, "mind_guard", g);
     return g.distrust;
   } catch (e) { return false; }
 }
@@ -40316,7 +40375,7 @@ async function finalCalObserve(DB, pPreCal, won) {
   try {
     const p = _num(pPreCal, null);
     if (p == null || !(p > 0 && p < 1)) return;
-    let b = await getState(DB, "final_cal_buf", null);
+    let b = await getState(DB, "final_cal_buf", null, true);   // [V33.427c] 실패하면 바깥 catch — 되쓰지 않는다
     if (!b || !Array.isArray(b.v)) b = { v: [] };
     b.v = b.v.concat([[+p.toFixed(4), won ? 1 : 0]]).slice(-FINALCAL.window);
     b.ts = Date.now();
@@ -40407,7 +40466,7 @@ async function techPriorFitNightly(DB) {
 //   결과가 양수면 그 게이트는 돈을 막고 있는 것이고, 음수면 제 역할을 한 것이다.
 async function gateAuditNightly(DB) {
   try {
-    const gs = await getState(DB, "gate_stats", null);
+    const gs = await getState(DB, "gate_stats", null, true);
     if (!gs || !Array.isArray(gs.hi) || !gs.hi.length) return "[GATE] 고확률 차단 표본 없음";
     const H = _num((AI_PARAMS && AI_PARAMS.predictionHorizonDays) || 10, 10);
     const byR = {};
@@ -40480,7 +40539,7 @@ async function blendObserve(DB, tech, news, pCommittee, won) {
   try {
     const pc = _num(pCommittee, null);
     if (pc == null || !(pc > 0 && pc < 1)) return;
-    let b = await getState(DB, "blend_cal_buf", null);
+    let b = await getState(DB, "blend_cal_buf", null, true);   // [V33.427c] 실패하면 바깥 catch — 되쓰지 않는다
     if (!b || !Array.isArray(b.v)) b = { v: [] };
     b.v = b.v.concat([[+_num(tech, 0).toFixed(3), +_num(news, 0).toFixed(3), +pc.toFixed(4), won ? 1 : 0]])
              .slice(-BLENDCAL.window);
@@ -43370,7 +43429,7 @@ async function harvestDeepFetchNightly(DB, opts) {
         // KR 수확 진행오프셋(hv_seen) 초기화 — 삭제한 표본을 처음부터 다시 채우게.
         try {
           const _seenKey = "hv_seen:v" + LUXML.featVer;
-          const _seen = (await getState(DB, _seenKey, {})) || {};
+          const _seen = (await getState(DB, _seenKey, {}, true)) || {};
           let _changed = false;
           for (const s in _seen) { if (/\.(KS|KQ)$/.test(s)) { delete _seen[s]; _changed = true; } }
           if (_changed) await setState(DB, _seenKey, _seen);
@@ -43933,7 +43992,8 @@ async function mlFeatMigrate(DB, opts) {
   const iDay = names.indexOf("dayPct"), iR5 = names.indexOf("ret5"), iR20 = names.indexOf("ret20");
   if (iDay < 0 || iR5 < 0 || iR20 < 0) return { skip: "anchor" };
   let st = null;
-  try { st = await getState(DB, FEATMIG.key, null); } catch (e) {}
+  /* [V33.427c] 못 읽었으면 이관하지 않는다 — '처음부터' 로 보면 이미 옮긴 행을 다시 옮긴다. */
+  try { st = await getState(DB, FEATMIG.key, null, true); } catch (e) { return { skip: "state-read" }; }
   if (st && st.to === LUXML.featVer && st.done) return { done: true, migrated: _num(st.migrated, 0) };
   if (!st || st.to !== LUXML.featVer) {
     st = { to: LUXML.featVer, ti: 0, lastId: 0, migrated: 0, neutral: 0, skipped: 0, done: false, ts: Date.now() };
@@ -44987,7 +45047,7 @@ async function fundSectorOf(DB, symbol) {
    ★색인 하나★ 에 적어 두고, 여기서는 그 색인만 한 번 읽는다. */
 async function fundSectorIndexAdd(DB, symbol, sector) {
   try {
-    const idx = (await getState(DB, "sector_index", null)) || {};
+    const idx = (await getState(DB, "sector_index", null, true)) || {};
     const arr = idx[sector] || [];
     if (arr.indexOf(symbol) >= 0) return;
     arr.push(symbol);
@@ -45663,7 +45723,7 @@ const SOCIAL_SOURCES = [
 // 소스 건강 기록 — '0건' 이 수집실패인지 진짜 0인지 구분하기 위한 최소한의 장치.
 async function _socialHealth(DB, id, patch) {
   try {
-    const h = (await getState(DB, "social_health", null)) || {};
+    const h = (await getState(DB, "social_health", null, true)) || {};
     h[id] = Object.assign({}, h[id] || {}, patch, { ts: Date.now() });
     await setState(DB, "social_health", h);
   } catch (e) {}
@@ -45737,7 +45797,7 @@ async function socialFetchStep(DB) {
         const parsed = rsrc.parse(rj, rdCut, uni, now0);
         rdN = Object.keys(parsed.by).length;
         for (const sy of Object.keys(parsed.by)) {
-          const cur = (await getState(DB, "social:" + sy, null)) || {};
+          const cur = (await getState(DB, "social:" + sy, null, true)) || {};
           cur.rd = parsed.by[sy]; cur.rdTs = Date.now();
           await setState(DB, "social:" + sy, cur);
         }
@@ -45805,7 +45865,7 @@ async function socialFetchStep(DB) {
         if (!agg) { continue; }
         agg.pages = pages;
         if (agg.n < SOCIAL.minMsgs) { stOk++; continue; }   // 조회는 됐으나 신선 표본 부족 — 점수 없음
-        const cur = (await getState(DB, "social:" + sy, null)) || {};
+        const cur = (await getState(DB, "social:" + sy, null, true)) || {};
         cur.st = agg; cur.stTs = Date.now();
         await setState(DB, "social:" + sy, cur);
         stOk++; stMsgs += agg.n;
@@ -45852,7 +45912,7 @@ function socialScoreOf(rec) {
 async function socialObserveNightly(DB) {
   if (!SOCIAL.enabled) return null;
   try {
-    const b = (await getState(DB, "social_cal_buf", null)) || { v: [], pend: [] };
+    const b = (await getState(DB, "social_cal_buf", null, true)) || { v: [], pend: [] };
     if (!Array.isArray(b.v)) b.v = [];
     if (!Array.isArray(b.pend)) b.pend = [];
     // (1) 어제 적립분 라벨링
@@ -46180,7 +46240,7 @@ async function crowdGet(DB, symbol) {
 
 async function crowdVote(DB, symbol, side) {
   const key = "crowd:" + symbol;
-  const st = (await getState(DB, key, null)) || { buy: 0, sell: 0 };
+  const st = (await getState(DB, key, null, true)) || { buy: 0, sell: 0 };
   if (side === "buy") st.buy = (st.buy || 0) + 1; else st.sell = (st.sell || 0) + 1;
   st.ts = Date.now();
   await setState(DB, key, st);
@@ -46251,7 +46311,8 @@ async function mlNewsNextDayNightly(DB) {
     const marketSent = (sentiment.MARKET && typeof sentiment.MARKET.compound === "number") ? sentiment.MARKET.compound
       : (function () { let a = 0, n = 0; for (const g of Object.keys(sentiment)) { a += _num(sentiment[g].compound, 0); n++; } return n ? a / n : 0; })();
     const sentiPrev = (await getState(DB, "nnews_senti_prev", {})) || {};
-    let w = await getState(DB, "nnews_weights", null);
+    let w = null, _rwNw = true;
+    try { w = await getState(DB, "nnews_weights", null, true); } catch (e) { _rwNw = false; }   // [V33.427c] 배운 가중을 w0 로 덮지 않는다
     if (!w || typeof w.senti !== "number") w = Object.assign({}, NNEWS.w0);
     const today = new Date().toISOString().slice(0, 10);
     // (1) 어제 pending → 실현 라벨 온라인 학습
@@ -46307,7 +46368,7 @@ async function mlNewsNextDayNightly(DB) {
     for (const mk of Object.keys(byMkt)) { try { await setState(DB, "news_picks:" + mk, { ts: Date.now(), picks: byMkt[mk] }); } catch (e) {} }
     await setState(DB, "nnews_pending", { date: today, items: scored.slice(0, 80).map(function (s) { return { sym: s.sym, price: s.price, f: s.f }; }) });
     const sp = {}; for (const g of Object.keys(sentiment)) sp[g] = _num(sentiment[g].compound, 0); await setState(DB, "nnews_senti_prev", sp);
-    await setState(DB, "nnews_weights", w);
+    if (_rwNw) await setState(DB, "nnews_weights", w);
     const boost = {}; for (const s of top) boost[s.sym] = +_clamp(NNEWS.boostLo + (s.p - 0.5) * 2 * (NNEWS.boostHi - NNEWS.boostLo), NNEWS.boostLo, NNEWS.boostHi).toFixed(3);
     await setState(DB, "news_boost", { ts: Date.now(), map: boost });
     return "[NNEWS] 스코어 " + scored.length + "종목 top" + top.length + ", 학습 " + trained + "건, wSenti=" + w.senti.toFixed(2) + " wFund=" + w.fund.toFixed(2);
@@ -47071,14 +47132,14 @@ async function _luxWorldNews(DB, opts) {
   let marketSenti = null; try { marketSenti = +_scoreHeadlines(heads.slice(0, 60)).toFixed(3); } catch (e) {}
   if (!heads.length) return cached;
   // 일일 뉴스량 집계 — 오늘 새로 관측된 고유 헤드라인 누적(대략치)
-  let stats = null; try { stats = await getState(DB, "news_stats", null); } catch (e) {}
+  let stats = null, _rwNs = true; try { stats = await getState(DB, "news_stats", null, true); } catch (e) { _rwNs = false; }   // [V33.427c]
   const dayKey = localDateStr("kr");
   if (!stats || stats.day !== dayKey) stats = { day: dayKey, uniqSeen: 0, refreshes: 0, sampleKeys: [] };
   const prevKeys = {}; for (const kk of (stats.sampleKeys || [])) prevKeys[kk] = 1;
   let newCnt = 0; const keepKeys = (stats.sampleKeys || []).slice(-600);   // [V33.54] 1500→600(행 크기 축소)
   for (const k of Object.keys(byKey)) { if (!prevKeys[k]) { newCnt++; keepKeys.push(k); } }
   stats.uniqSeen += newCnt; stats.refreshes++; stats.sampleKeys = keepKeys.slice(-600); stats.lastTs = now;
-  try { await setState(DB, "news_stats", stats); } catch (e) {}
+  if (_rwNs) { try { await setState(DB, "news_stats", stats); } catch (e) {} }
   const out = { headlines: heads, ts: now, dedupN: heads.length, rawSeen: rawSeen, dropOld: dropOld, dropDup: dropDup, noDate: noDate,
     feedsOk: okFeeds, feedsWindow: feeds.length, feedsTotal: _WORLD_FEEDS.length, carried: carried, fetchMs: _fetchMs,
     multiSource: heads.filter(function (h) { return (h.sources || 1) >= 2; }).length,
@@ -48124,7 +48185,7 @@ const MODALAUTO = {
 async function _luxAutoRetrainModal(env) {
   try {
     const DB = env.DB;
-    const meta = (await getState(DB, "modal_retrain_auto", null)) || {};
+    const meta = (await getState(DB, "modal_retrain_auto", null, true)) || {};
     const now = Date.now();
     if (meta.checkTs && (now - meta.checkTs) < 30 * 60000) return;   // 30분 재확인 스로틀(매분 부하 방지)
     meta.checkTs = now;
@@ -49771,7 +49832,7 @@ async function mlMonthlyReport(DB, ym, force, env, ctx) {
             "위 월간 리포트 사실을 근거로, 펀드 운용역이 쓰는 '이달의 총평'을 작성해줘. 성과·시장국면·리스크·다음 달 방침을 흐름 있게 짚되 수치는 사실 그대로 인용. 투자권유는 피해.",
             { style: "8~12문장, 문단 2개 이내. 제목·머리말 없이 본문만.", maxTokens: 900, temperature: 0.4, corpus: { DB: DB, kind: "report" } });
           if (_sum && _sum.length > 120) {
-            const cur = await getState(DB, key, null);
+            const cur = await getState(DB, key, null, true);
             if (cur && cur.weekKey === _wk && !cur.aiSummary) {
               cur.text = "## 🧠 이달의 총평 (AI)\n" + _sum + "\n\n" + cur.text; cur.aiSummary = true;
               await setState(DB, key, cur);
@@ -50272,8 +50333,8 @@ async function sentiFetchAndStore(DB, sources, fetchImpl) {
     }
   }
   // 기존 state 로드(V83 섹터뉴스 수집분) — 덮지 말고 병합
-  let st = null;
-  try { st = await getState(DB, "sector_news_sentiment", null); } catch (e) {}
+  let st = null, _rwSn = true;
+  try { st = await getState(DB, "sector_news_sentiment", null, true); } catch (e) { _rwSn = false; }   // [V33.427c] 다른 출처 몫을 지우지 않는다
   if (!st || typeof st !== "object") st = {};
   if (!st.headlines) st.headlines = {};
   // 추가 소스 헤드라인 병합(V83 소비자 호환을 위해 {title} 객체로)
@@ -50297,7 +50358,7 @@ async function sentiFetchAndStore(DB, sources, fetchImpl) {
   if (!Object.keys(sentiment).length) return "[SENTI] 수집 0건 — 스킵";
   st.sentiment = sentiment;
   st.sentimentAt = Date.now();
-  try { await setState(DB, "sector_news_sentiment", st); } catch (e) {}
+  if (_rwSn) { try { await setState(DB, "sector_news_sentiment", st); } catch (e) {} }
   return "[SENTI] VADER " + Object.keys(sentiment).length + "그룹" + (fetched ? " (+소스 " + fetched + ")" : "") + " " +
          Object.keys(sentiment).map(function (g) { return g + ":" + sentiment[g].compound; }).join(" ");
 }
@@ -50617,7 +50678,7 @@ async function extImportObserve(env, request, res) {
       if (j && j.ok === false) ok = false;
     } catch (e) {}
     if (!ok && !err) err = "HTTP " + res.status;
-    const rec = (await getState(env.DB, EXTIMP_KEY, null)) || { by: {}, fails: [] };
+    const rec = (await getState(env.DB, EXTIMP_KEY, null, true)) || { by: {}, fails: [] };
     rec.by = rec.by || {}; rec.fails = rec.fails || [];
     const prev = rec.by[m[1]] || {};
     rec.by[m[1]] = {
@@ -51693,7 +51754,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

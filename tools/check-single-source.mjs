@@ -130,7 +130,7 @@ function cut(start, end) {
   if (users >= 3) ok(`초기자본을 고르는 곳 ${users}군데가 전부 같은 표를 쓴다`);
   else bad(`_initialCashFor 사용이 ${users}곳뿐이다 — 어딘가 제 사본으로 돌아갔다`);
 
-  const twr = cut("async function applyCashflowToTWR(DB, market, valueBeforeFlow, flow, cfg) {", "\n  let twr =");
+  const twr = cut("async function applyCashflowToTWR(DB, market, valueBeforeFlow, flow, cfg, pre) {", "\n  let twr =");
   if (!/initialCashCM/.test(twr)) ok("TWR 초기화가 더는 us/kr/cm 삼항을 쓰지 않는다");
   else bad("★TWR 초기화가 다시 삼항으로 돌아갔다 — 채권 슬리브가 통화가 다른 금액으로 시작한다★");
 }
