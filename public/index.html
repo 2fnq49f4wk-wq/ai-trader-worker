@@ -84,8 +84,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.428">
-<script src="/neural-observatory.js?v=33.428" defer></script>
+<meta name="lux-build" content="V33.429">
+<script src="/neural-observatory.js?v=33.429" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -14750,7 +14750,12 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       (NV? chip('지평별 α(신경망 몫)', (d.horizons||[]).map(function(h,k){ return h+' '+(AL[k]!=null?(+AL[k]).toFixed(1):'—'); }).join(' · '),
                 nnUsed? 'good':'') : '') +
       (NV? chip('홀드아웃 AUC 나무 / 신경망 / 섞음', fa(NR.edgeG)+' / '+fa(NR.edgeN)+' / '+fa(NR.edgeB)
-                + (NR.reverted? ' — 섞음이 나빠 나무 단독으로 되돌림' : ''), NR.reverted?'warn':'') : '');
+                + (NR.reverted? ' — 섞음이 나빠 나무 단독으로 되돌림' : ''), NR.reverted?'warn':'') : '') +
+      /* [V33.429] 나무 구성은 전진 교차검증(학습 영역 안의 세 시간 구간)이 고른다 — 홀드아웃은 안 본다 */
+      (d.cv && d.cv.table ? chip('나무 구성(전진 교차검증 '+(d.cv.folds||0)+'구간)',
+          (d.gbdt? d.gbdt.name+' · '+d.gbdt.why : '—') + ' · ' + d.cv.table.map(function(r){
+            return r.name+' '+(r.mean!=null? r.mean.toFixed(4):'—'); }).join(' / '),
+          (d.gbdt && d.gbdt.name!=='G0')?'good':'') : '');
     if(ban){
       ban.className='nnv-banner '+(okN>0?'on':'off');
       ban.innerHTML = okN>0
@@ -20170,11 +20175,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.428">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.428">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.428">
-<link rel="stylesheet" href="/model-evidence.css?v=33.428">
-<script src="/model-evidence.js?v=33.428"></script>
-<script src="/workspace-ui.js?v=33.428"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.429">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.429">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.429">
+<link rel="stylesheet" href="/model-evidence.css?v=33.429">
+<script src="/model-evidence.js?v=33.429"></script>
+<script src="/workspace-ui.js?v=33.429"></script>
 </body>
 </html>

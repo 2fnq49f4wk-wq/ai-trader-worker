@@ -1454,6 +1454,118 @@ def train_nn(Atr, fit, val, Aho, boosters, log=print, val_al=None):
             "target": cfg["target"], "sec": round(time.time() - t0, 1)}
 
 
+# ══ [V33.429] ★나무 구성을 ★여러 시간 구간★ 에서 고른다(전진 교차검증).★ ═══════════════════════
+#   신경망에서 배운 것: 절단 직전 한 구간(검증)에서의 우위는 다음 35일로 이어지지 않았다(3회 연속 1d).
+#   한 구간은 한 체제다. 그래서 구성을 고를 때 ★연속한 세 시간 구간★ 을 차례로 미래로 두고 잰다:
+#     구간 k: 학습 = 라벨 끝 < c_k (퍼징) · 조기종료 = 그 학습의 지평별 뒤쪽 15% · 평가 = c_k ≤ 결정 < c_{k+1}
+#   c_1..c_3 = 학습 영역(홀드아웃 앞) 결정시각의 70·80·90% 분위. ★홀드아웃은 여기서 한 번도 안 본다.★
+#   채택 규칙(기본값은 지금 구성 G0 — 증거가 있을 때만 바꾼다):
+#     평균 AUC 가 G0 보다 CV_MARGIN 이상 높고 · 세 구간 중 ★두 구간 이상★ 에서 G0 를 이겨야 한다.
+#   후보마다 시드 1개로 잰다(구성 비교용 — 최종 학습은 고른 구성으로 시드 4개).
+CV_FOLDS = (0.70, 0.80, 0.90)
+CV_MARGIN = 0.001
+CV_ON = os.environ.get("OMNI_CV", "1") != "0"
+GBDT_GRID = [
+    {"name": "G0", "why": "지금 구성", "p": {}},
+    {"name": "G1", "why": "강한 정규화(잎 15 · 잎당 2000행 · 칸 50% · L2 50 · lr .02)",
+     "p": {"num_leaves": 15, "min_data_in_leaf": 2000, "feature_fraction": 0.5, "lambda_l2": 50.0, "learning_rate": 0.02}},
+    {"name": "G2", "why": "부드러운 라벨(백분위 · cross_entropy)", "p": {"objective": "cross_entropy"}, "soft": True},
+    {"name": "G3", "why": "무작위 문턱(extra_trees) · 칸 50%", "p": {"extra_trees": True, "feature_fraction": 0.5}},
+    {"name": "G4", "why": "큰 나무(잎 63 · 잎당 1000행)", "p": {"num_leaves": 63, "min_data_in_leaf": 1000}},
+    {"name": "G5", "why": "부드러운 라벨 + 강한 정규화",
+     "p": {"objective": "cross_entropy", "num_leaves": 15, "min_data_in_leaf": 2000, "feature_fraction": 0.5,
+           "lambda_l2": 50.0, "learning_rate": 0.02}, "soft": True},
+]
+
+
+def _gbdt_fit(Atr, fit, val, cand, nt, seed=0):
+    """한 구성 · 한 시드 학습 → (booster, best_iter)."""
+    import lightgbm as lgb
+    lab = Atr["ys"] if (cand.get("soft") and "ys" in Atr) else Atr["y"]
+    dfit = lgb.Dataset(Atr["X"][fit], label=lab[fit], weight=Atr["w"][fit],
+                       feature_name=MODEL_FEATS, free_raw_data=False)
+    dval = lgb.Dataset(Atr["X"][val], label=lab[val], weight=Atr["w"][val], reference=dfit)
+    P = dict(LGB_PARAMS, num_threads=nt, seed=LGB_PARAMS["seed"] + seed * 101,
+             bagging_seed=LGB_PARAMS["seed"] + seed * 211, feature_fraction_seed=LGB_PARAMS["seed"] + seed * 307)
+    P.update(cand.get("p") or {})
+    b = lgb.train(P, dfit, num_boost_round=MAX_ROUNDS, valid_sets=[dval],
+                  callbacks=[lgb.early_stopping(EARLY_STOP, verbose=False)])
+    return b, int(b.best_iteration or b.current_iteration())
+
+
+def _hz_split(Atr, ix, frac=INNER_VAL_FRAC):
+    """ix 안에서 지평마다 뒤쪽 frac 을 조기종료로(퍼징: 학습 라벨 끝 < 조기종료 첫 결정)."""
+    import numpy as np
+    f, v = [], []
+    for k in range(len(HORIZONS)):
+        jx = ix[Atr["hz"][ix] == k]
+        if len(jx) < 200:
+            f.append(jx)
+            continue
+        c = float(np.quantile(Atr["td"][jx], 1 - frac))
+        f.append(jx[Atr["te"][jx] < c])
+        v.append(jx[Atr["td"][jx] >= c])
+    cat = lambda L: np.concatenate(L) if L else np.array([], dtype=np.int64)
+    return cat(f), cat(v)
+
+
+def cv_select(Atr, log=print):
+    """전진 교차검증으로 나무 구성을 고른다. 반환 (cand, table)."""
+    import time
+    import numpy as np
+    if not CV_ON or len(Atr["y"]) < 20000:
+        return GBDT_GRID[0], None
+    t0 = time.time()
+    nt = n_threads()
+    cuts = [float(np.quantile(Atr["td"], q)) for q in CV_FOLDS] + [float("inf")]
+    folds = []
+    for k in range(len(CV_FOLDS)):
+        tr = np.where(Atr["te"] < cuts[k])[0]
+        ev = np.where((Atr["td"] >= cuts[k]) & (Atr["td"] < cuts[k + 1]))[0]
+        fit, val = _hz_split(Atr, tr)
+        if len(fit) < 5000 or len(val) < 500 or len(ev) < 2000:
+            continue
+        folds.append((fit, val, ev, take(Atr, ev)))
+    if len(folds) < 2:
+        log("   · OMNI 교차검증 — 구간이 모자라 건너뛴다(%d)" % len(folds))
+        return GBDT_GRID[0], None
+    table = []
+    for cand in GBDT_GRID:
+        tc = time.time()
+        aucs = []
+        for fit, val, ev, Aev in folds:
+            try:
+                b, it = _gbdt_fit(Atr, fit, val, cand, nt)
+                p = b.predict(Atr["X"][ev], num_iteration=it, raw_score=True)
+                aucs.append(_wavg_auc(p, Aev))
+            except Exception as e:  # noqa: BLE001 — 한 후보가 죽어도 선택은 계속한다
+                log("   · OMNI 교차검증 %s 실패: %r" % (cand["name"], e))
+                aucs.append(None)
+        ok = [a for a in aucs if a is not None]
+        table.append({"name": cand["name"], "why": cand["why"], "folds": [None if a is None else round(a, 5) for a in aucs],
+                      "mean": (sum(ok) / len(ok)) if len(ok) == len(aucs) else None, "sec": round(time.time() - tc, 1)})
+    base = table[0]
+    pick = GBDT_GRID[0]
+    best = None
+    for cand, row in zip(GBDT_GRID[1:], table[1:]):
+        if row["mean"] is None or base["mean"] is None:
+            continue
+        wins = sum(1 for a, b in zip(row["folds"], base["folds"]) if a is not None and b is not None and a > b)
+        row["wins"] = wins
+        if row["mean"] - base["mean"] >= CV_MARGIN and wins >= 2 and (best is None or row["mean"] > best[1]["mean"]):
+            best = (cand, row)
+    if best:
+        pick = best[0]
+    for row in table:
+        log("   · OMNI 교차검증 %s %-34s 구간별 %s · 평균 %s%s · %.0fs" % (
+            row["name"], row["why"][:34], row["folds"], "—" if row["mean"] is None else "%.4f" % row["mean"],
+            "" if row["name"] == "G0" else " · G0 대비 %d/%d 승" % (row.get("wins", 0), len(folds)), row["sec"]))
+    log("   · OMNI 교차검증 채택 %s (%s) — 구간 %d개 · %.0fs%s" % (
+        pick["name"], pick["why"], len(folds), time.time() - t0,
+        "" if pick is not GBDT_GRID[0] else " · 기본값 유지(평균 +%.3f · 2승 이상 조건을 넘은 후보 없음)" % CV_MARGIN))
+    return pick, {"table": table, "pick": pick["name"], "folds": len(folds), "cuts": cuts[:-1]}
+
+
 def train_model(A, log=print):
     """A 전체에서 분할 → 학습 → 홀드아웃 평가. 반환 (booster, report)."""
     import numpy as np
@@ -1509,9 +1621,12 @@ def train_model(A, log=print):
         if _al and sum(len(a) for a in _al) >= 500:
             val = np.concatenate(_es)
             val_al = np.concatenate(_al)
-    dfit = lgb.Dataset(Atr["X"][fit], label=Atr["y"][fit], weight=Atr["w"][fit],
+    # [V33.429] 나무 구성은 전진 교차검증(학습 영역 안의 세 시간 구간)이 고른다 — 홀드아웃은 안 본다.
+    _cand, _cvrep = cv_select(Atr, log=log)
+    _lab = Atr["ys"] if (_cand.get("soft") and "ys" in Atr) else Atr["y"]
+    dfit = lgb.Dataset(Atr["X"][fit], label=_lab[fit], weight=Atr["w"][fit],
                        feature_name=MODEL_FEATS, free_raw_data=False)
-    dval = lgb.Dataset(Atr["X"][val], label=Atr["y"][val], weight=Atr["w"][val], reference=dfit)
+    dval = lgb.Dataset(Atr["X"][val], label=_lab[val], weight=Atr["w"][val], reference=dfit)
     Aho = take(A, ho)
     _nt = n_threads()
     log("   · OMNI 학습 스레드 %d (초과구독 방지 — 컨테이너에 준 코어만 쓴다)" % _nt)
@@ -1520,6 +1635,7 @@ def train_model(A, log=print):
         P = dict(LGB_PARAMS, num_threads=_nt, seed=LGB_PARAMS["seed"] + sd * 101,
                  bagging_seed=LGB_PARAMS["seed"] + sd * 211,
                  feature_fraction_seed=LGB_PARAMS["seed"] + sd * 307)
+        P.update(_cand.get("p") or {})
         b = lgb.train(P, dfit, num_boost_round=MAX_ROUNDS, valid_sets=[dval],
                       callbacks=[lgb.early_stopping(EARLY_STOP, verbose=False)])
         it = int(b.best_iteration or b.current_iteration())
@@ -1582,7 +1698,9 @@ def train_model(A, log=print):
            "nHold": int(len(ho)), "bestIter": best, "seeds": len(boosters), "seedDisagree": dis,
            "iters": [it for _, it in boosters], "heads": heads,
            "valGain": [float(v) for v in _vg],
-           "hzMult": _hzMult, "hzTrain": _cnt(tr), "hzHold": _cnt(ho)}
+           "hzMult": _hzMult, "hzTrain": _cnt(tr), "hzHold": _cnt(ho),
+           "gbdt": {"name": _cand["name"], "why": _cand["why"], "p": _cand.get("p") or {}, "soft": bool(_cand.get("soft"))},
+           "cv": _cvrep}
     if nnr:
         # 가중치(export)는 여기 싣지 않는다 — 본문 "nn" 에 한 번만. 여기 실으면 워커 메타(D1 한 행)에 들어간다.
         rep["nn"] = {k: v for k, v in nnr.items() if k not in ("zHold", "nets", "export")}
@@ -1615,8 +1733,8 @@ def export_model(boosters, best=None):
     out = []
     for b, it in boosters:
         dump = b.dump_model(num_iteration=it)
-        if dump.get("objective", "").split(" ")[0] != "binary":
-            raise ValueError("binary 목적만 지원")
+        if dump.get("objective", "").split(" ")[0] not in ("binary", "cross_entropy"):
+            raise ValueError("binary · cross_entropy 목적만 지원(둘 다 확률 = sigmoid(나무 합))")
         if len(dump.get("feature_names", [])) != len(MODEL_FEATS):
             raise ValueError("피처 수 불일치")
         for t in dump["tree_info"]:
@@ -2263,13 +2381,15 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
                "iters": rep.get("iters"), "valGain": rep.get("valGain"),
                "hzFitShare": rep.get("hzFitShare"), "hzValShare": rep.get("hzValShare"),
                "edge": rep.get("edge"),
+               # [V33.429] 나무 구성 · 전진 교차검증 표(구간별 AUC) — 화면이 "왜 이 구성인가" 를 그대로 보여 준다
+               "gbdt": rep.get("gbdt"), "cv": rep.get("cv"),
                # [V33.428] 신경망 — 가중치 · α · 구조 관측용 세기 · 나무/신경망/섞음 성적 비교
                "nn": _nnx, "alpha": _alpha, "nnViz": rep.get("nnViz"),
                "nnRep": dict(rep.get("nn") or {}, reverted=bool(rep.get("reverted")), alphaTried=rep.get("alphaTried"))
                         if rep.get("nn") else None,
                # [V33.426] ★패널을 같이 올린다★ — 워커가 다시 만들면 종목 집합이 달라 랭크가 갈린다.
                "panelDay": _pday, "panel": _prows,
-               "excl": excl, "trainedAt": int(time.time() * 1000), "params": LGB_PARAMS,
+               "excl": excl, "trainedAt": int(time.time() * 1000), "params": dict(LGB_PARAMS, **((rep.get("gbdt") or {}).get("p") or {})),
                "barrierK": BARRIER_K, "holdDays": HOLD_DAYS})
     body = json.dumps(payload, allow_nan=False, separators=(",", ":"))
     log("   · OMNI 업로드 크기 %.1f MB (패널 %s · 종목 %d)" % (

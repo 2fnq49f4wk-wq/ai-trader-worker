@@ -472,6 +472,19 @@ def main():
             _top = max(range(len(_W0)), key=lambda i: abs(_W0[i][0]))
             if not any(e[0] == _top and e[1] == 0 for e in _E[0]):
                 fails.append("구조 관측 연결선이 실제 가중치 상위와 다르다(지어낸 선)")
+    # [V33.429] ★전진 교차검증★ — 후보 전부 재고, 구간은 전부 홀드아웃 절단점 ★앞★ 이어야 한다
+    _cv = rep.get("cv") or {}
+    _C0, _, _ = omni.split_cutoff(A)
+    print("교차검증: 채택 %s · 구간 %s · 절단점 %s" % (_cv.get("pick"), _cv.get("folds"),
+          [round(c) for c in (_cv.get("cuts") or [])]))
+    if len(_cv.get("table") or []) != len(omni.GBDT_GRID):
+        fails.append("교차검증 표가 후보 수와 다르다(%d)" % len(_cv.get("table") or []))
+    if not (_cv.get("folds") or 0) >= 2:
+        fails.append("교차검증 구간이 2개 미만")
+    if any(c >= _C0 for c in (_cv.get("cuts") or [])):
+        fails.append("교차검증 구간이 홀드아웃 절단점을 넘는다 — 홀드아웃을 고르는 데 썼다")
+    if (rep.get("gbdt") or {}).get("name") != _cv.get("pick"):
+        fails.append("채택한 구성과 실제 학습 구성이 다르다")
     # [V33.428c] ★되돌림 안전장치★ — 실데이터 1회차처럼 섞음이 나무 단독보다 나쁘면 α 가 전부 0 이 돼야 한다
     _mk = lambda a: {hz: {"n": 20000, "auc": a} for hz in omni.HORIZONS}
     _r1 = omni.revert_if_worse({"heads": _mk(0.5068), "headsG": _mk(0.5113), "alpha": [0, 0, 0.5, 0, 0]}, log=lambda *a: None)

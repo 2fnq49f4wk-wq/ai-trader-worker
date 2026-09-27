@@ -98,5 +98,15 @@ console.log("\n⑤ 신경망 보고서는 작게 — 가중치가 섞여 와도 
   chk(M._omNnRepSlim(null) === null && M._omNnRepSlim([1]) === null, "빈 값·배열은 null", "★형식 검사 없음★");
 }
 
+console.log("\n⑥ 전진 교차검증 표 — 작게 · 숫자만");
+{
+  const c = M._omCvSlim({ pick: "G3", folds: 3, cuts: [1, 2, 3], junk: "x".repeat(5000),
+    table: [{ name: "G0", why: "지금 구성", folds: [0.51, NaN, 0.52], mean: 0.515, extra: [1, 2, 3] },
+            { name: "G3", why: "w".repeat(500), folds: [0.52, 0.53, 0.54], mean: 0.53, wins: 3 }] });
+  chk(c && c.pick === "G3" && c.table.length === 2 && c.table[0].folds[1] === null && !("extra" in c.table[0]) &&
+      c.table[1].why.length === 80 && !("junk" in c), "모르는 칸 버림 · NaN → null · 설명 80자", "★교차검증 표가 걸러지지 않는다★");
+  chk(M._omCvSlim(null) === null && M._omCvSlim({ table: "x" }) === null, "형식이 아니면 null", "★형식 검사 없음★");
+}
+
 console.log(fails ? "\n✗ OMNI-NN 검사 실패 " + fails : "\n✓ OMNI-NN 검사 통과");
 process.exit(fails ? 1 : 0);
