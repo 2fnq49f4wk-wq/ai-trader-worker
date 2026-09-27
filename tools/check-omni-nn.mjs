@@ -108,7 +108,7 @@ console.log("\n⑥ 전진 교차검증 표 — 작게 · 숫자만");
   chk(M._omCvSlim(null) === null && M._omCvSlim({ table: "x" }) === null, "형식이 아니면 null", "★형식 검사 없음★");
 }
 
-console.log("\n⑦ 이그드라실 3D — 모든 입력이 세 뿌리 중 하나에 · 떠 있는 선 없음 · 값이 없으면 밝히지 않는다");
+console.log("\n⑦ 눕힌 세계수 3D — 모든 입력이 뿌리 가닥 중 하나에 · 흰색만 · 떠 있는 선 없음 · 값이 없으면 밝히지 않는다");
 {
   const src = readFileSync(new URL("../public/neural-observatory.js", import.meta.url), "utf8");
   const G = {}; new Function("globalThis", "window", src)(G, G);
@@ -123,22 +123,28 @@ console.log("\n⑦ 이그드라실 3D — 모든 입력이 세 뿌리 중 하나
               heads: M.OMNI_HORIZONS.map((h) => ({ hz: h, auc: 0.51 })) };
   for (const [tag, dd] of [["신경망 있음", d], ["신경망 없음(옛 모델)", Object.assign({}, d, { nnViz: null, alpha: null })]]) {
     const sc = NO.omniScene(dd, { spread: 1 });
-    const wells = sc.groups.slice(0, 3);
+    const roots = sc.groups.filter((g) => sc.nodes[g.ids[0]] && sc.nodes[g.ids[0]].kind === "input");
     const inputs = sc.nodes.filter((n) => n.kind === "input");
     const want = dd.nnViz ? names.length : M.OMNI_FEATS.length;
     const dangling = sc.edges.filter((e) => !sc.nodes[e.a] || !sc.nodes[e.b]).length;
     const nonfinite = sc.nodes.filter((n) => ![n.x, n.y, n.z].every(Number.isFinite)).length;
     const badV = sc.edges.filter((e) => !(e.v >= 0 && e.v <= 1)).length;
-    chk(inputs.length === want && wells.every((g) => /샘|흐베르겔미르/.test(g.label)),
-      tag + ": 입력 " + inputs.length + "칸 전부 세 뿌리에 실렸다(" + wells.map((g) => g.count).join("/") + ")",
+    chk(inputs.length === want && roots.reduce((a, g) => a + g.count, 0) === want,
+      tag + ": 입력 " + inputs.length + "칸 전부 뿌리 " + roots.length + "가닥에 실렸다(" + roots.map((g) => g.count).join("/") + ")",
       "★" + tag + ": 뿌리에 안 실린 입력이 있다(" + inputs.length + " ≠ " + want + ")★");
     chk(dangling === 0 && nonfinite === 0 && badV === 0, tag + ": 떠 있는 선 0 · 좌표 전부 유한 · 선 세기 0~1",
       "★" + tag + ": 떠 있는 선 " + dangling + " · 비유한 좌표 " + nonfinite + " · 범위 밖 세기 " + badV + "★");
     const invented = sc.nodes.filter((n) => n.label === "수관 · 나무 숲" && n.v != null).length +
                      (dd.nnViz ? 0 : sc.nodes.filter((n) => n.kind === "input" && n.v != null).length);
     chk(invented === 0, tag + ": 값이 없는 곳(숲 잎 · 신경망 없는 입력)은 밝히지 않는다", "★값 없는 점 " + invented + "개를 밝혔다(지어낸 세기)★");
-    const apples = sc.nodes.filter((n) => /황금 사과/.test(n.name));
-    chk(apples.length === 5, tag + ": 황금 사과(지평별 최종 확률) 5개", "★사과 " + apples.length + "개★");
+    const tips = sc.nodes.filter((n) => /^최종 확률/.test(n.name));
+    chk(tips.length === 5, tag + ": 끝눈(지평별 최종 확률) 5개", "★끝눈 " + tips.length + "개★");
+    chk(!sc.nodes.some((n) => n.rgb) && !/rgba\('\s*\+/.test(src) && !/샘|이그드라실|황금 사과/.test(src),
+      tag + ": 흰색만 · 신화 이름 없음(사용자 지시)", "★색이나 신화 이름이 남아 있다★");
+    const xs = (lbl) => sc.nodes.filter((n) => lbl(n)).map((n) => n.x);
+    const mean = (a) => a.reduce((p, q) => p + q, 0) / Math.max(1, a.length);
+    chk(mean(xs((n) => n.kind === "input")) < mean(xs((n) => /^최종 확률/.test(n.name))),
+      tag + ": 옆으로 눕혔다 — 뿌리(왼쪽) → 끝눈(오른쪽)", "★좌→우 흐름이 아니다★");
   }
   const sc = NO.omniScene(d, { spread: 1 });
   const nullHead = sc.nodes.find((n) => n.name === "가지 · 60분 머리");

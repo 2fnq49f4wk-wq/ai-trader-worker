@@ -14850,17 +14850,13 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         + '</div></div>'
         + (topHtml? '<div class="omni-lane-h">가장 많이 갈린 칸</div><div class="omni-tops">'+topHtml+'</div>':'')
       : '';
-    /* [V33.428] ★SEQ 처럼 3D 로 그린다★ · [V33.429] ★이그드라실(세계수) 모양★ — 사용자 요청.
-       모양은 신화, 값은 전부 실측(가중치 · gain · AUC · α). 읽는 법을 그림 바로 아래에 적는다. */
+    /* [V33.428] ★SEQ 처럼 3D 로 그린다★ · [V33.429c] ★옆으로 눕힌 세계수 모양 · 흰색만★(사용자 지시 —
+       모양만 빌리고 신화 이름·색은 쓰지 않는다). 값은 전부 실측(가중치 · gain · AUC · α). */
     var yggLegend = '<div class="omni-ygg-legend">'
-      + '<span><i style="background:#e8be78"></i>우르드의 샘(과거) — 일봉·형식알파</span>'
-      + '<span><i style="background:#96c8ff"></i>미미르의 샘(지혜) — 횡단면·피어·맥락·매매법</span>'
-      + '<span><i style="background:#aaf0d2"></i>흐베르겔미르(원천) — 5분봉·세션·60분봉·결측</span>'
-      + '<span><i style="background:#f5f5eb"></i>줄기 — 공유 몸통(모든 지평이 같이 쓴다)</span>'
-      + '<span><i style="background:#ffeca8"></i>다섯 가지 — 지평 머리(신경망)</span>'
-      + '<span><i style="background:#96e196"></i>수관 — 나무 숲(GBDT)</span>'
-      + '<span><i style="background:#ffcd5a"></i>황금 사과 — 지평별 최종 확률 (1−α)·숲 + α·가지</span>'
-      + '<span class="omni-dim">밝을수록 값이 크다 · 끌어서 돌려 보세요 · 값이 없는 곳은 흐리게 둔다(지어내지 않는다)</span>'
+      + '<span>뿌리 — 입력 묶음(왼쪽)</span><span>줄기 — 공유 몸통(모든 지평이 같이 쓴다)</span>'
+      + '<span>가지 — 지평 머리(신경망)</span><span>수관 — 나무 숲(GBDT)</span>'
+      + '<span>끝눈 — 지평별 최종 확률 (1−α)·숲 + α·가지</span>'
+      + '<span class="omni-dim">밝을수록 값이 크다 · 끌어서 돌려 보세요 · 값이 없는 곳은 흐리게 둔다</span>'
       + '</div>';
     stage.innerHTML = '<div id="omniVol" class="omni-vol"></div>' + yggLegend + '<div class="omni-wrap">'
       + structHtml
