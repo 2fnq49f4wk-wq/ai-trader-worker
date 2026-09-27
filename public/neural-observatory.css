@@ -29,7 +29,10 @@
    기준선이 같은 자리에 있어야 숫자에 뜻이 생긴다. */
 .omni-wrap{display:flex;flex-direction:column;gap:14px;}
 /* [V33.428] OMNI 3D — 신경망 몸통·머리 + 나무 숲 + 섞음. 구조 카드 위에 한 칸. */
-.omni-vol{margin:0 0 16px;min-width:0;}
+.omni-vol{margin:0 0 10px;min-width:0;}
+.omni-ygg-legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0 0 16px;font-size:11px;color:var(--ops-ink2,#b6bdcc);}
+.omni-ygg-legend span{display:inline-flex;align-items:center;gap:6px;}
+.omni-ygg-legend i{width:9px;height:9px;border-radius:50%;display:inline-block;}
 @media(min-width:1025px){#page-nnviz .omni-vol .nerve-viewport{height:clamp(340px,52vh,580px)}}
 .omni-lane-h{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ops-ink3,#8b93a7);}
 .omni-heads{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;}
