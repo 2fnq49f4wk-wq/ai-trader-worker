@@ -2389,18 +2389,24 @@ def flow_compare(A, rep_with, log=print):
             a_, b_ = X[:, MODEL_FEATS.index(fk)], X[:, MODEL_FEATS.index(rk)]
             ok = kr & np.isfinite(a_) & np.isfinite(b_)
             c = float(np.corrcoef(a_[ok], b_[ok])[0, 1]) if ok.sum() >= 100 else None
+            # [V33.434b] 순위 상관도 — 수급 비율은 꼬리가 두꺼워 피어슨이 작게 나온다(2차 실측 0.105).
+            rc = (float(np.corrcoef(np.argsort(np.argsort(a_[ok])), np.argsort(np.argsort(b_[ok])))[0, 1])
+                  if ok.sum() >= 100 else None)
             out["align_" + fk] = c
-            log("   · OMNI 수급 정렬 점검 — corr(%s, %s) 한국 %d행 = %s (정상이면 뚜렷한 양수)"
-                % (fk, rk, int(ok.sum()), f(c)))
+            out["alignR_" + fk] = rc
+            log("   · OMNI 수급 정렬 점검 — corr(%s, %s) 한국 %d행 = %s · 순위 %s (정상이면 뚜렷한 양수)"
+                % (fk, rk, int(ok.sum()), f(c), f(rc)))
 
     # [V33.434] ③(b) ★수급이 있는 기간만★ — 1차 실험은 수급이 최근 ⅓ 에만 있어 '칸이 비었나' 가 곧
-    #   '옛날인가' 였다(결측 방향으로 시기를 배운다). 수급이 찬 행의 결정시각 10% 분위부터만 잘라
-    #   같은 규칙(같은 홀드아웃 절단 · 같은 교차검증)으로 채움/비움을 다시 잰다.
+    #   '옛날인가' 였다(결측 방향으로 시기를 배운다).
+    #   [V33.434b] 시각 분위로 자르면(2차 실측: 2023-07-27~ · 찬 행 21%) 백필이 깊은 몇 종목이 창을 끌어당겨
+    #   빈 행이 그대로 남는다. ★수급이 빈 한국 행을 뺀다★(미국 행은 동료로 남긴다) — 한국 행은 전부 찼으니
+    #   결측이 시기를 말할 수 없다. 같은 규칙(같은 홀드아웃 절단 · 같은 교차검증)으로 채움/비움을 다시 잰다.
     has = np.isfinite(X[:, cols]).any(axis=1)
     if has.sum() < 1000:
         return out
-    t0 = float(np.quantile(A["td"][has], 0.10))
-    sel = np.flatnonzero(A["td"] >= t0)
+    sel = np.flatnonzero(~kr | has)
+    t0 = float(A["td"][has].min())
     W = {k: ([A["sym"][i] for i in sel] if k == "sym" else A[k][sel]) for k in A}
     W0 = dict(W)
     W0["X"] = W["X"].copy()
@@ -2413,15 +2419,16 @@ def flow_compare(A, rep_with, log=print):
     finally:
         NN_ON = _nn
     import datetime as _dt
-    wf = float(has[sel].mean())
+    wf = float(has[sel][kr[sel]].mean()) if kr[sel].any() else 0.0
     ew1, ew0 = holdout_edge(rw1.get("heads")), holdout_edge(rw0.get("heads"))
     kw1, kw0 = kr_auc(rw1), kr_auc(rw0)
     gain = (kw1 - kw0) if (kw1 is not None and kw0 is not None) else None
-    log("   · OMNI 수급 실험(기간 한정 %s~) — %d행 · 수급 칸 찬 행 %.1f%% · 전체 비움 %s → 채움 %s · ★한국 행★ 비움 %s → 채움 %s"
-        % (_dt.datetime.fromtimestamp(t0, _dt.timezone.utc).strftime("%Y-%m-%d"), len(sel), wf * 100,
+    log("   · OMNI 수급 실험(수급 있는 한국 행만 · %s~) — %d행 · 한국 행 중 찬 비율 %.1f%% · 전체 비움 %s → 채움 %s · ★한국 행★ 비움 %s → 채움 %s"
+        % (_dt.datetime.fromtimestamp(t0, _dt.timezone.utc).strftime("%Y-%m-%d"), len(sel),
+           float(has[sel][kr[sel]].mean()) * 100 if kr[sel].any() else 0.0,
            f(ew0.get("auc")), f(ew1.get("auc")), f(kw0), f(kw1)))
     per_hz(rw1, rw0)
-    log("   · OMNI 수급 판정(기간 한정) — 한국 행 %s (채택 기준 +%.3f 이상 · 3구간 중 2구간 승은 다음 단계)"
+    log("   · OMNI 수급 판정(수급 있는 한국 행만) — 한국 행 %s (채택 기준 +%.3f 이상 · 3구간 중 2구간 승은 다음 단계)"
         % ("—" if gain is None else "%+.4f" % gain, FLOW_GAIN))
     out.update(win_t0=t0, win_rows=int(len(sel)), win_fill=wf, win_all0=ew0.get("auc"), win_all1=ew1.get("auc"),
                win_kr0=kw0, win_kr1=kw1, win_gain=gain)
