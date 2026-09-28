@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.429";
+const _BUILD_VER = "V33.430";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -10399,6 +10399,226 @@ async function omniBarsCollect(DB, opts) {
          (inHours ? " (장중 — 적게)" : "") + " · 다음 커서 " + idx;
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════
+   [V33.430] ★한국 종목 투자자별 순매수(수급) 이력 수집기★ — OMNI 에 ★지금 없는 정보★ 를 붙이는 첫 단계.
+   실측으로 확인한 것(V33.429c): 모델 구성·신경망·라벨 모양을 다 재 봐도 홀드아웃 AUC ≈ 0.51 이 천장.
+   남은 지렛대는 입력뿐이고, 워커에는 ★과거 이력이 있는★ 수급 계열이 없었다.
+   ■ 무엇을 모으나: 날짜별 외국인 순매매량 · 기관 순매매량 · 외국인 보유율 · 거래량 (종목별 일별).
+   ■ 어디서: 네이버. ★이 코드를 쓴 세션은 네이버에 닿지 못했다(샌드박스 403)★ — 응답 모양을 직접 못 봤다.
+     그래서 두 경로를 둔다: ① 모바일 JSON(trend) ② 종목 frgn HTML 표. 둘 다 ★칸 이름·위치로 추정하지 않고
+     검사한다★ — 날짜가 안 읽히거나 숫자가 없으면 그 행을 버리고, 쓸 만한 행이 없으면 ★저장하지 않는다★.
+     어느 경로가 됐는지·첫 행이 무엇인지를 로그에 남긴다(첫 운영 회차에서 모양을 확인하려고).
+   ■ 저장: R2 flows/v1/<종목>.json = { d:[yyyymmdd], f:[외국인], o:[기관], h:[보유율|null], v:[거래량|null] }
+     색인은 D1 omniflow_index — ★엄격히 읽는다★(V33.427b 사고: 못 읽은 색인을 빈 색인으로 덮으면 쌓은 게 사라진다).
+   ■ 백필: 한 회차에 종목당 몇 쪽씩 과거로 내려가고(커서를 색인에 남긴다), 목표 깊이에 닿으면 증분만 받는다.
+   ※ 이 계열은 ★재기 전에는 모델에 안 들어간다★ — 학습기 OMNI_FLOW=1 실험 회차가 먼저 잰다(업로드 거부).
+   ═══════════════════════════════════════════════════════════════════════════════════════ */
+const OMNIFLOW = {
+  prefix: "flows/v1/", ver: 1,
+  targetDays: 1300,          // 학습기 패널 창(1,200일) + 여유
+  pagesPerSymRun: 6,         // 한 회차에 한 종목 백필로 내려가는 쪽 수
+  perRunOff: 12, perRunIn: 3,
+  gapOffMs: 5 * 60000, gapInMs: 20 * 60000,
+  refreshH: 18,
+  jsonPage: 60, htmlRows: 20
+};
+function _ofKey(sym) { return OMNIFLOW.prefix + String(sym || "").replace(/[^A-Za-z0-9._^-]/g, "_") + ".json"; }
+/* "+1,234" · "-5,678" · "52.10%" · "" → 숫자|null */
+function _ofNum(v) {
+  if (typeof v === "number") return isFinite(v) ? v : null;
+  if (v == null) return null;
+  const t = String(v).replace(/[,%\s]/g, "").replace(/^\+/, "");
+  if (!t || !/^-?\d+(\.\d+)?$/.test(t)) return null;
+  const n = Number(t); return isFinite(n) ? n : null;
+}
+/* 날짜 → yyyymmdd 정수|null. "20240105" · "2024.01.05" · "2024-01-05T..." */
+function _ofDay(v) {
+  const m = /^(\d{4})[.\-/]?(\d{2})[.\-/]?(\d{2})/.exec(String(v == null ? "" : v).trim());
+  if (!m) return null;
+  const y = +m[1], mo = +m[2], d = +m[3];
+  if (y < 1990 || y > 2100 || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  return y * 10000 + mo * 100 + d;
+}
+/* ① JSON(trend) — 칸 이름을 ★모양으로★ 찾는다(정확한 이름을 확인하지 못했다). 반환 행 배열. */
+function _ofParseJson(j) {
+  const arr = Array.isArray(j) ? j : (j && Array.isArray(j.result) ? j.result : (j && Array.isArray(j.datas) ? j.datas : null));
+  if (!arr || !arr.length) return { rows: [], keys: null };
+  const keys = Object.keys(arr[0] || {});
+  const pick = function (re, not) { return keys.find(function (k) { return re.test(k) && !(not && not.test(k)); }) || null; };
+  const kD = pick(/^(bizdate|localTradedAt|tradeDate|date|dt)$/i) || pick(/date/i);
+  const kF = pick(/foreign.*(pure|net).*(buy|quant|vol)/i) || pick(/frgn.*(pure|net)/i);
+  const kO = pick(/organ.*(pure|net).*(buy|quant|vol)/i) || pick(/(inst|organ).*(pure|net)/i);
+  const kH = pick(/foreign.*hold.*ratio/i) || pick(/frgn.*(hold|rate)/i);
+  const kV = pick(/accumulatedTradingVolume|tradingVolume|^volume$/i);
+  const rows = [];
+  if (kD && kF && kO) {
+    for (const r of arr) {
+      const d = _ofDay(r[kD]), f = _ofNum(r[kF]), o = _ofNum(r[kO]);
+      if (d == null || f == null || o == null) continue;
+      rows.push({ d: d, f: f, o: o, h: kH ? _ofNum(r[kH]) : null, v: kV ? _ofNum(r[kV]) : null });
+    }
+  }
+  return { rows: rows, keys: keys, map: { d: kD, f: kF, o: kO, h: kH, v: kV } };
+}
+/* ② HTML(frgn 표) — 날짜 칸으로 시작하는 줄만. 칸: 날짜·종가·전일비·등락률·거래량·기관·외국인·보유주수·보유율 */
+function _ofParseHtml(html) {
+  const rows = [];
+  const trs = String(html || "").split(/<tr[\s>]/i);
+  for (const tr of trs) {
+    const cells = tr.split(/<\/td>/i).map(function (c) { return c.replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim(); });
+    if (cells.length < 9) continue;
+    /* 첫 칸 앞에는 <tr 의 속성 꼬리(onMouseOver="…">)가 남는다 — 날짜 모양만 뽑는다 */
+    const dm = /(\d{4}\.\d{2}\.\d{2})/.exec(cells[0]);
+    const d = dm ? _ofDay(dm[1]) : null;
+    if (d == null) continue;
+    const v = _ofNum(cells[4]), o = _ofNum(cells[5]), f = _ofNum(cells[6]), h = _ofNum(cells[8]);
+    if (f == null || o == null) continue;
+    rows.push({ d: d, f: f, o: o, h: h, v: v });
+  }
+  return { rows: rows };
+}
+/* 한 쪽 받기 — before(yyyymmdd) 이전 것. 반환 { rows, src, probe } | null */
+async function _ofFetchPage(code, page, beforeDay, mode) {
+  const H = { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" };
+  // ① JSON — bizdate 로 과거를 넘긴다(없으면 최신부터). mode "html" 이면 건너뛴다.
+  if (mode !== "html") try {
+    try { __fetchBudget.used++; } catch (e) {}
+    const url = "https://m.stock.naver.com/api/stock/" + code + "/trend?pageSize=" + OMNIFLOW.jsonPage +
+                (beforeDay ? "&bizdate=" + beforeDay : "");
+    const r = await fetch(url, { headers: H });
+    if (r.ok) {
+      let j = null; try { j = await r.json(); } catch (e) { j = null; }
+      const p = _ofParseJson(j);
+      if (p.rows.length) return { rows: p.rows, src: "json", probe: { keys: (p.keys || []).slice(0, 14), map: p.map } };
+    }
+  } catch (e) {}
+  if (mode === "json") return null;
+  // ② HTML — 쪽 번호로 과거를 넘긴다
+  try {
+    try { __fetchBudget.used++; } catch (e) {}
+    const r = await fetch("https://finance.naver.com/item/frgn.naver?code=" + code + "&page=" + page,
+                          { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com/" } });
+    if (!r.ok) return null;
+    const buf = await r.arrayBuffer();
+    let txt = ""; try { txt = new TextDecoder("euc-kr").decode(buf); } catch (e) { txt = new TextDecoder().decode(buf); }
+    const p = _ofParseHtml(txt);
+    if (p.rows.length) return { rows: p.rows, src: "html", probe: null };
+  } catch (e) {}
+  return null;
+}
+/* 날짜로 합친다 — 같은 날은 새 것이 이긴다. 오름차순 · 상한. */
+function _ofMerge(old, add, cap) {
+  const m = new Map();
+  if (old && Array.isArray(old.d)) for (let i = 0; i < old.d.length; i++)
+    m.set(old.d[i], { d: old.d[i], f: old.f[i], o: old.o[i], h: old.h ? old.h[i] : null, v: old.v ? old.v[i] : null });
+  for (const r of add || []) m.set(r.d, r);
+  const ks = Array.from(m.keys()).sort(function (a, b) { return a - b; }).slice(-cap);
+  const out = { d: [], f: [], o: [], h: [], v: [] };
+  for (const k of ks) { const r = m.get(k); out.d.push(r.d); out.f.push(r.f); out.o.push(r.o); out.h.push(r.h == null ? null : r.h); out.v.push(r.v == null ? null : r.v); }
+  return out;
+}
+async function _ofIndexLoad(DB) {
+  try {
+    const v = await getState(DB, "omniflow_index", null, true);
+    if (v && typeof v === "object" && v.s && typeof v.s === "object") return { ok: true, index: v, fresh: false };
+    return { ok: true, index: { v: 1, s: {} }, fresh: true };
+  } catch (e) { return { ok: false, err: (e && e.message) || String(e) }; }
+}
+function _ofDaysBetween(a, b) {
+  const t = function (k) { return Date.UTC(Math.floor(k / 10000), Math.floor(k / 100) % 100 - 1, k % 100); };
+  return Math.round((t(b) - t(a)) / 86400000);
+}
+async function omniFlowCollect(DB, opts) {
+  const o = opts || {};
+  const R2 = _bigR2();
+  if (!R2) return "[OMNI-FLOW] R2 미바인딩 — 수집 불가";
+  const uni = (DEFAULT_KR || []).slice();
+  if (!uni.length) return "[OMNI-FLOW] 한국 유니버스 비어 있음";
+  const inHours = (typeof isTradingWindow === "function") && isTradingWindow("kr");
+  const per = Math.max(1, _num(o.perRun, inHours ? OMNIFLOW.perRunIn : OMNIFLOW.perRunOff));
+  const _ixr = await _ofIndexLoad(DB);
+  if (!_ixr.ok) return "[OMNI-FLOW] 색인 읽기 실패(D1) — ★이번 회차는 아무것도 쓰지 않는다★: " + _ixr.err;
+  const index = _ixr.index;
+  let cur = null; try { cur = await getState(DB, "omniflow_cursor", null); } catch (e) {}
+  let idx = (cur && cur.i >= 0) ? Math.floor(cur.i) % uni.length : 0;
+  const nowMs = Date.now();
+  let done = 0, pages = 0, added = 0, failed = 0, prevFail = 0, skipped = 0, srcJ = 0, srcH = 0, deep = 0;
+  let probe = null;
+  for (let k = 0; k < per; k++) {
+    const sym = uni[idx]; idx = (idx + 1) % uni.length; done++;
+    const code = sym.split(".")[0];
+    const ent = index.s[sym] || (index.s[sym] = {});
+    const fresh = ent.upd && (nowMs - ent.upd) < OMNIFLOW.refreshH * 3600000;
+    const deepEnough = ent.first && ent.last && _ofDaysBetween(ent.first, ent.last) >= OMNIFLOW.targetDays;
+    if (fresh && (deepEnough || ent.end)) { skipped++; continue; }
+    /* 옛 파일은 ★엄격히★ — 못 읽었으면 이 종목은 이번에 안 쓴다(덮어쓰지 않는다). */
+    let old = null;
+    try { const g = await R2.get(_ofKey(sym)); if (g) old = JSON.parse(await g.text()); }
+    catch (e) { prevFail++; failed++; continue; }
+    const before = old && Array.isArray(old.d) ? old.d.length : 0;
+    const got = [];
+    // 새 것(첫 쪽) — 신선하지 않을 때만
+    let src = null;
+    if (!fresh) {
+      const p1 = await _ofFetchPage(code, 1, null);
+      pages++;
+      if (!p1) { failed++; ent.err = nowMs; continue; }
+      src = p1.src; if (!probe && p1.src === "json") probe = p1.probe;
+      if (!probe && p1.src === "html") probe = { html: true, first: p1.rows[0] };
+      got.push.apply(got, p1.rows);
+    }
+    // 과거로 — 깊이가 모자라고 끝에 닿지 않았으면
+    let firstKnown = Math.min(old && old.d && old.d.length ? old.d[0] : Infinity, got.length ? Math.min.apply(null, got.map(function (r) { return r.d; })) : Infinity);
+    let hPage = _num(ent.hp, 1);
+    for (let q = 0; q < OMNIFLOW.pagesPerSymRun && !ent.end; q++) {
+      const lastKnown = Math.max(old && old.d && old.d.length ? old.d[old.d.length - 1] : 0, got.length ? Math.max.apply(null, got.map(function (r) { return r.d; })) : 0);
+      if (isFinite(firstKnown) && lastKnown && _ofDaysBetween(firstKnown, lastKnown) >= OMNIFLOW.targetDays) break;
+      const useJson = (src || ent.src) !== "html" && !ent.jnp;   // jnp: JSON 이 과거로 안 넘어간다(확인됨)
+      const before1 = isFinite(firstKnown) ? firstKnown : null;
+      const pp = useJson ? await _ofFetchPage(code, 1, before1 ? _ofPrevDay(before1) : null, "json")
+                         : await _ofFetchPage(code, hPage + 1, null, "html");
+      pages++;
+      if (!pp || !pp.rows.length) { if (useJson) { ent.jnp = true; continue; } ent.end = true; break; }
+      const minD = Math.min.apply(null, pp.rows.map(function (r) { return r.d; }));
+      if (useJson) {
+        /* 더 과거가 안 온다 — 날짜 넘기기를 무시하는 것이다 → HTML 쪽 넘기기로 바꾼다. */
+        if (isFinite(firstKnown) && minD >= firstKnown) { ent.jnp = true; continue; }
+      } else {
+        hPage++;
+        /* HTML: 마지막 쪽을 넘기면 사이트가 같은 쪽을 또 준다 → 끝. 이미 아는 구간이면 다음 쪽으로(끝이 아니다). */
+        if (ent.hMin != null && minD === ent.hMin) { ent.end = true; break; }
+        ent.hMin = minD;
+        if (isFinite(firstKnown) && minD >= firstKnown) continue;
+      }
+      got.push.apply(got, pp.rows);
+      firstKnown = Math.min(firstKnown, minD);
+      deep++;
+    }
+    ent.hp = hPage;
+    if (!got.length) { ent.upd = nowMs; continue; }
+    const merged = _ofMerge(old, got, 6000);
+    const out = { s: sym, ver: OMNIFLOW.ver, upd: nowMs, src: src || ent.src || null,
+                  d: merged.d, f: merged.f, o: merged.o, h: merged.h, v: merged.v };
+    try { await R2.put(_ofKey(sym), JSON.stringify(out)); }
+    catch (e) { failed++; continue; }
+    if (out.src === "json") srcJ++; else if (out.src === "html") srcH++;
+    added += Math.max(0, merged.d.length - before);
+    Object.assign(ent, { n: merged.d.length, first: merged.d[0], last: merged.d[merged.d.length - 1], upd: nowMs, src: out.src, err: null });
+  }
+  index.upd = nowMs;
+  try { await setState(DB, "omniflow_index", index); } catch (e) {}
+  try { await setState(DB, "omniflow_cursor", { i: idx, at: nowMs }); } catch (e) {}
+  let cov = 0, full = 0; for (const s in index.s) { if (index.s[s].n) cov++; if (index.s[s].first && index.s[s].last && _ofDaysBetween(index.s[s].first, index.s[s].last) >= OMNIFLOW.targetDays) full++; }
+  return "[OMNI-FLOW] " + done + "종목 · 쪽 " + pages + " · 새 행 +" + added + " · 과거로 " + deep + "쪽 · 신선해서 건너뜀 " + skipped +
+         " · 실패 " + failed + (prevFail ? "(옛파일 못읽음 " + prevFail + " — 안 덮음)" : "") +
+         " · 출처 json " + srcJ + "/html " + srcH + " · 커버 " + cov + "/" + uni.length + " · 깊이 충분 " + full +
+         (probe ? " · 모양 " + JSON.stringify(probe).slice(0, 300) : "") + " · 다음 커서 " + idx;
+}
+function _ofPrevDay(k) {
+  const t = Date.UTC(Math.floor(k / 10000), Math.floor(k / 100) % 100 - 1, k % 100) - 86400000;
+  const d = new Date(t); return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════
    [V33.426] ★OMNI 섀도우 채점 — 여기까지 와야 "개발 끝" 이다.★
@@ -26848,6 +27068,26 @@ async function handleRequest(request, env, ctx) {
       }
       return Response.json({ ok: true, res: res, bars: bars, n: Object.keys(bars).length, errs: errs }, { headers: cors });
     }
+    /* [V33.430] 한국 종목 수급 이력 — 학습기(OMNI_FLOW 실험)용. 색인은 엄격히(못 읽으면 503 — 빈 색인을 주지 않는다). */
+    if (path === "/api/omni-flows-index") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const _fx = await _ofIndexLoad(env.DB);
+      if (!_fx.ok) return Response.json({ error: "수급 색인 읽기 실패(D1): " + _fx.err }, { status: 503, headers: cors });
+      return Response.json({ ok: true, index: _fx.index, universe: (DEFAULT_KR || []).slice(), targetDays: OMNIFLOW.targetDays }, { headers: cors });
+    }
+    if (path === "/api/omni-flows") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const R2 = _bigR2();
+      if (!R2) return Response.json({ error: "R2 미바인딩" }, { status: 503, headers: cors });
+      const syms = String(url.searchParams.get("s") || "").split(",").map(function (x) { return x.trim(); })
+                     .filter(Boolean).slice(0, 40);
+      const flows = {}, errs = [];
+      for (const sym of syms) {
+        try { const g = await R2.get(_ofKey(sym)); if (g) flows[sym] = JSON.parse(await g.text()); }
+        catch (e) { errs.push(sym); }
+      }
+      return Response.json({ ok: true, flows: flows, n: Object.keys(flows).length, errs: errs }, { headers: cors });
+    }
     if (path === "/api/ml-export-intraday") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const R2 = _bigR2();
@@ -27770,6 +28010,8 @@ async function handleRequest(request, env, ctx) {
         ["harvest", function (DB) { return mlMarketHarvestNightly(DB); }],
         // [V33.418] OMNI 원시 봉 — 야간에는 넉넉히 돈다(장외라 거래 사이클과 안 겹친다)
         ["omnibars", function (DB) { try { resetFetchBudget(200); } catch (e) {} return omniBarsCollect(DB, { perRun: 40 }); }],
+        // [V33.430] 한국 종목 수급 이력(외국인·기관 순매수) — OMNI_FLOW 실험의 재료
+        ["omniflow", function (DB) { try { resetFetchBudget(300); } catch (e) {} return omniFlowCollect(DB, { perRun: 30 }); }],
         /* [V33.426] OMNI 섀도우 채점 — 한 표도 안 넣는다. 실시간 확률을 적어 두고 지평이 지나면 채점한다.
            이게 있어야 "홀드아웃 0.51" 이 실시간에서도 남는지 알 수 있다. */
         ["omniscore", function (DB) { return omniShadowScore(DB, { perRun: OMNI_SHADOW.perRun, budgetMs: 45000 }); }],
@@ -51442,6 +51684,18 @@ export default {
             }
           } catch (e) { try { await log(env.DB, "ERROR", null, "[OMNI-BARS] " + ((e && e.message) || e)); } catch (e2) {} }
 
+          /* [V33.430] ★한국 종목 수급 이력 수집★ — 봉 수집기와 같은 모양(잠금 뒤 조금씩).
+             장외 5분마다 12종목 · 장중 20분마다 3종목. I/O 뿐이다(피처는 Modal 이 만든다). */
+          try {
+            const _ofLock = _num(await getState(env.DB, "omniflow_lock", 0), 0);
+            const _ofOpen = (typeof isTradingWindow === "function") && isTradingWindow("kr");
+            if (Date.now() - _ofLock > (_ofOpen ? OMNIFLOW.gapInMs : OMNIFLOW.gapOffMs)) {
+              await setState(env.DB, "omniflow_lock", Date.now());
+              const _ofr = await omniFlowCollect(env.DB, {});
+              await log(env.DB, "INFO", null, _ofr);
+            }
+          } catch (e) { try { await log(env.DB, "ERROR", null, "[OMNI-FLOW] " + ((e && e.message) || e)); } catch (e2) {} }
+
           /* [V33.427] ★OMNI 섀도우 채점·사후채점 — 매 틱(잠금 뒤).★
              야간 파이프라인의 _stg 는 ★하루 1회★ 도장을 찍는다. 거기에만 두면 섀도우 채점이 하루에
              한 번(≈7종목, 결정시각 1개) 돌고 — 사후채점은 같은 결정시각에 동료 20종목이 있어야 하므로
@@ -51714,6 +51968,7 @@ export default {
             await _stg("harvest", async function () { return await mlMarketHarvestNightly(env.DB); });
             // [V33.418] OMNI 원시 봉 — 수동 파이프라인과 ★같은 단계★ 를 같은 이름으로(check-pipeline-graph)
             await _stg("omnibars", async function () { try { resetFetchBudget(200); } catch (e) {} return await omniBarsCollect(env.DB, { perRun: 40 }); });
+            await _stg("omniflow", async function () { try { resetFetchBudget(300); } catch (e) {} return await omniFlowCollect(env.DB, { perRun: 30 }); });
             // [V33.426] OMNI 섀도우 채점·사후채점 — 수동 파이프라인과 ★같은 이름★ 으로(check-pipeline-graph)
             await _stg("omniscore", async function () { return await omniShadowScore(env.DB, { perRun: OMNI_SHADOW.perRun, budgetMs: 45000 }); });
             await _stg("omniresolve", async function () { return await omniShadowResolve(env.DB, {}); });
@@ -51891,7 +52146,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
