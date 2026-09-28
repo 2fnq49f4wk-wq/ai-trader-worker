@@ -91,8 +91,11 @@
   }
   /* [V33.429c] ★옆으로 눕힌 세계수 모양 · 흰색만★ — 모양만 빌린다(신화 그대로가 아니다). 흐름은 왼 → 오:
    *     뿌리(입력 묶음마다 한 가닥) → 줄기(공유 몸통 64 → 32) → 가지(지평 머리 5) → 수관(나무 숲) → 끝눈(최종 확률)
-   * [V33.430c] ★선이 겹쳐 보였다(사용자)★ — 뉴런마다 실제 연결 3개씩, 수백 줄을 한꺼번에 그려 줄기에 흰 덩어리가
-   *   생겼다. → ★평소엔 다발만★ 그린다(모두 실측의 합):
+   * [V33.432] ★선을 한 줄씩, 가늘게 — 합치지 말고 번지지 않게(사용자)★. V33.430c 의 다발(합)은 되돌렸다.
+   *   실제 연결은 전부 그리되, 선마다 경유점을 따로 줘서 가닥처럼 나란히 가게 한다(한곳에 몰려 뭉개지지 않게).
+   *   (아래는 V33.430c 설명 — 참고로 남긴다)
+   * [V33.430c] 선이 겹쳐 보였다 — 뉴런마다 실제 연결 3개씩, 수백 줄을 한꺼번에 그려 줄기에 흰 덩어리가
+   *   생겼다. → 평소엔 다발만 그렸다(모두 실측의 합):
    *     · 뿌리 가닥   = 그 묶음의 칸들을 잇는 가는 선 하나(구조)
    *     · 뿌리 → 줄기 = 묶음마다 굵은 선 하나(굵기 = 그 묶음 칸들의 나가는 |w| 합)
    *     · 몸통1 → 몸통2 = 리본 하나 · 몸통2 → 가지 = 다섯 줄(굵기 = 그 가지로 들어오는 |w| 합)
@@ -132,7 +135,7 @@
         if(j)edges.push({a:ids[j-1],b:ids[j],v:.5,strand:true});
       });
       // 뿌리 목(가닥이 줄기에 닿는 자리) — 구조 점(값 없음)
-      const c=add({x:X0-40*sp,y:Math.sin(ph)*28*sp,z:Math.cos(ph)*28*sp,l:groups.length,i:-1,v:null,
+      const c=add({x:X0-110*sp,y:Math.sin(ph)*100*sp,z:Math.cos(ph)*100*sp,l:groups.length,i:-1,v:null,
         name:OMNI_GROUPS[g][1]+' 뿌리 목',label:'뿌리 · '+OMNI_GROUPS[g][1],kind:'hidden',desc:'뿌리 가닥이 줄기에 닿는 자리'},ids);
       edges.push({a:ids[0],b:c,v:.5,strand:true});
       collar.push(c);gSum.push(ix.reduce((a,i)=>a+(finite(inRaw[i])?inRaw[i]:0),0));
@@ -142,9 +145,22 @@
     // ── 줄기: 몸통 층마다 원판 하나(옆에서 보면 기둥) ──
     const layerIds=[inId];
     const trunk=nv?nv.layers.slice(1,-1):[];
+    /* [V33.432] ★교차 줄이기 — 무게중심 배치★: 뉴런을 ★자기에게 들어오는 선들이 오는 각도★ 에 둔다.
+       (입력 i 의 각도 = 그 뿌리 묶음의 각도 · 몸통2 뉴런의 각도 = 들어오는 몸통1 뉴런들의 원형 평균)
+       이렇게 두면 가닥이 자기 부채꼴 안에서 들어와 서로 가로지르지 않는다. 값(v)은 그대로다. */
+    const gAng={};live.forEach(([ix,g],r)=>{gAng[g]=TAU*r/live.length+.3;});
+    const cmean=(angs)=>{if(!angs.length)return null;let x=0,y=0;for(const a of angs){x+=Math.cos(a);y+=Math.sin(a);}return Math.atan2(y,x);};
+    const angPrev=inNames.map(nm=>gAng[gOf(nm)]);
+    let prevAng=angPrev;
     trunk.forEach((ly,k)=>{
-      const ids=[],v=norm(ly.strength||[]),n=ly.size||v.length,x=X0+(k+.5)*(X1-X0)/Math.max(1,trunk.length),R=(58-k*14)*sp;
-      for(let i=0;i<n;i++){const a=i*2.39996323,r=Math.sqrt((i+.5)/n)*R;
+      const ids=[],v=norm(ly.strength||[]),n=ly.size||v.length,x=X0+(k+.5)*(X1-X0)/Math.max(1,trunk.length),R=(110-k*25)*sp;
+      const E=(nv&&nv.edges&&nv.edges[k])||[],src=Array.from({length:n},()=>[]);
+      E.forEach(([a,b])=>{if(src[b]&&prevAng[a]!=null)src[b].push(prevAng[a]);});
+      const ang=src.map((as,i)=>{const m=cmean(as);return m==null?i*2.39996323:m;});
+      const order=ang.map((a,i)=>i).sort((p,q)=>((ang[p]%TAU)+TAU)%TAU-((ang[q]%TAU)+TAU)%TAU);
+      const rank=new Array(n);order.forEach((i,q)=>{rank[i]=q;});
+      prevAng=ang;
+      for(let i=0;i<n;i++){const a=ang[i]+((rank[i]%3)-1)*.035,r=R*(.42+.58*((rank[i]*.618034)%1));
         add({x,y:Math.sin(a)*r,z:Math.cos(a)*r,l:groups.length,i,v:v[i],name:ly.name+' · #'+i,
           label:'줄기 · '+ly.name,kind:'hidden',
           desc:(v[i]==null?'':'나가는 연결 세기 '+(v[i]*100).toFixed(0)+'%(최대 대비) · ')+'모든 지평이 같이 쓴다 · 누르면 실제 연결선'},ids);}
@@ -157,21 +173,48 @@
         v:finite(e)?clamp(e/0.05,0,1):null,name:'가지 · '+(HZ_TXT[h]||h)+' 머리',label:'가지',kind:'output',
         desc:nv?(finite(e)?'신경망 단독 홀드아웃 AUC '+(0.5+e).toFixed(3):'홀드아웃 못 쟀다'):'신경망이 아직 없다'},bids);});
     layerIds.push(bids);groups.push({ids:bids,label:'가지 · 지평 머리',count:hz.length});
-    // ── 다발(평소 보이는 선) ──
+    // ── [V33.432] 가닥 — 실제 연결을 ★한 줄씩 전부★, 가늘게. 합치지 않는다(사용자). ──
+    //   겹쳐 번지지 않게 선마다 ★자기 길(via)★ 을 준다: 경유점은 그리지 않는 점(hidden)이고 선은 그 점들을 지나는 곡선이다.
+    //   · 뿌리 → 몸통1: 뿌리 묶음마다 좁은 통로(뿌리 목)를 선마다 조금씩 비켜 지나 나란히 가다가 원판 속 자기 뉴런으로 퍼진다
+    //   · 몸통1 → 몸통2: 가운데서 비틀린 밧줄(선마다 둘레의 다른 자리)
+    //   · 몸통2 → 가지: 가지 방향으로 부채꼴(선마다 옆으로 비켜 선다)
+    const via=(x,y,z)=>{nodes.push({x,y,z,hidden:true,l:-1,i:-1,v:null,name:'',label:'',kind:'via'});return nodes.length-1;};
     if(nv&&trunk.length){
-      const t1=layerIds[1],t2=layerIds[layerIds.length-2];
-      const gN=norm(gSum);
-      collar.forEach((c,q)=>edges.push({a:c,b:t1[Math.floor(t1.length/2)],v:gN[q]==null?.2:gN[q],bundle:true}));
-      if(trunk.length>1){const st=(nv.layers[1].strength||[]).filter(finite),m=st.length?st.reduce((a,b)=>a+b,0)/st.length:0;
-        edges.push({a:t1[0],b:t2[0],v:.8,bundle:true,ribbon:true,raw:m});}
-      const into=hz.map(()=>0);
-      const last=(nv.edges||[])[(nv.edges||[]).length-1]||[];
-      last.forEach(([i,k,v])=>{if(finite(v)&&into[k]!=null)into[k]+=v;});
-      const iN=norm(into);
-      bids.forEach((b,k)=>edges.push({a:t2[k%t2.length],b,v:iN[k]==null?.2:iN[k],bundle:true}));
-      // 뉴런 하나하나의 실제 선 — 누른 점에 닿은 것만 보인다
-      (nv.edges||[]).forEach((es,l)=>{const A=layerIds[l],B=layerIds[l+1];if(!A||!B)return;
-        es.forEach(([i,k,v])=>{if(A[i]!=null&&B[k]!=null&&finite(v))edges.push({a:A[i],b:B[k],v:clamp(v,0,1),measured:true,detail:true});});});
+      const L1=layerIds[1],L2=layerIds[layerIds.length-2];
+      const E=nv.edges||[];
+      // 입력 → 몸통1 (가닥 통로는 입력 묶음별)
+      const byCol={};(E[0]||[]).forEach(e=>{const g=gOf(inNames[e[0]]);(byCol[g]=byCol[g]||[]).push(e);});
+      live.forEach(([ix,g],r)=>{
+        const es=(byCol[g]||[]).slice().sort((a,b)=>a[1]-b[1]),ph=TAU*r/live.length+.3,n=es.length;
+        const cy=Math.sin(ph)*95*sp,cz=Math.cos(ph)*95*sp,ty=Math.cos(ph),tz=-Math.sin(ph);   // 통로(뿌리와 같은 각도) · 옆 방향
+        es.forEach(([a,b,v],q)=>{
+          const off=(q-(n-1)/2)*1.6*sp,A=inId[a],B=L1[b];
+          if(A==null||B==null||!finite(v))return;
+          const tb=nodes[B];
+          const v1=via(X0-95*sp,cy+ty*off,cz+tz*off);
+          const v2=via(X0-35*sp,cy*.35+tb.y*.65+ty*off*.5,cz*.35+tb.z*.65+tz*off*.5);
+          edges.push({a:A,b:B,path:[A,v1,v2,B],v:clamp(v,0,1),measured:true,strand:true});
+        });
+      });
+      // 몸통1 → 몸통2 (비틀린 밧줄)
+      const xm=(nodes[L1[0]].x+nodes[L2[0]].x)/2;
+      (trunk.length>1?(E[1]||[]):[]).forEach(([a,b,v],q)=>{
+        const A=L1[a],B=L2[b];if(A==null||B==null||!finite(v))return;
+        const na=nodes[A],nb=nodes[B],th=.9,my=(na.y+nb.y)/2*.55,mz=(na.z+nb.z)/2*.55;
+        const r0=10*sp+(q%7)*1.4*sp,ang=q*2.39996323;
+        const v1=via(xm,my*Math.cos(th)-mz*Math.sin(th)+Math.cos(ang)*r0*.3,my*Math.sin(th)+mz*Math.cos(th)+Math.sin(ang)*r0*.3);
+        edges.push({a:A,b:B,path:[A,v1,B],v:clamp(v,0,1),measured:true,strand:true});
+      });
+      // 몸통2 → 가지 (부채꼴)
+      const LE=E[E.length-1]||[];
+      const cnt=hz.map(()=>0);
+      LE.forEach(([a,b,v])=>{
+        const A=L2[a],B=bids[b];if(A==null||B==null||!finite(v))return;
+        const nb=nodes[B],q=cnt[b]++,off=(q-3)*2.2*sp;
+        const bx=(nodes[L2[0]].x+nb.x)/2,dy=nb.y*.45,dz=nb.z*.45,ln=Math.hypot(dy,dz)||1;
+        const v1=via(bx,dy+(-dz/ln)*off,dz+(dy/ln)*off);
+        edges.push({a:A,b:B,path:[A,v1,B],v:clamp(v,0,1),measured:true,strand:true});
+      });
     }
     // ── 수관: 나무 숲(오른쪽을 향한 반구 껍질) ──
     const seeds=Math.max(1,Math.min(8,d.seeds||1)),per=Math.max(20,Math.min(40,Math.round((d.nTrees||60)/seeds))),fid=[];
@@ -185,15 +228,15 @@
     const gmax=Math.max(1e-9,...Object.values(gshare).filter(finite));
     Object.keys(gIds).forEach((lbl,q)=>{const sh=gshare[OMNI_GAIN[lbl]],ids=gIds[lbl];
       if(!finite(sh)||!ids.length)return;
-      edges.push({a:ids[ids.length-1],b:fid[(q*7)%fid.length],v:clamp(sh/gmax,0,1),measured:true,detail:true});});
+      edges.push({a:ids[ids.length-1],b:fid[(q*7)%fid.length],v:clamp(sh/gmax,0,1),measured:true,detail:true});});   // 입력 묶음 gain — 누를 때만
     // ── 끝눈: 지평별 최종 확률 ──
     const heads=d.heads||[],aid=[];
     hz.forEach((h,k)=>{const hd=heads.find(x=>x&&x.hz===h)||{},a=finite(alpha[k])?alpha[k]:0,ph=TAU*k/hz.length+Math.PI/5,R=200*sp;
       const id=add({x:X1+470,y:Math.sin(ph)*R,z:Math.cos(ph)*R,l:groups.length,i:k,
         v:finite(hd.auc)?clamp((hd.auc-0.5)/0.05,0,1):null,name:'최종 확률 · '+(HZ_TXT[h]||h),label:'최종 확률',kind:'output',
         desc:'(1−α)·나무 숲 + α·가지 · α '+a.toFixed(1)+' · 홀드아웃 AUC '+(finite(hd.auc)?hd.auc.toFixed(3):'—')+(hd.ok?' · 발언 문턱 통과':' · 보류')},aid);
-      edges.push({a:fid[(k*per+Math.floor(per/2))%fid.length],b:id,v:clamp(1-a,0,1),measured:true,bundle:true});
-      if(a>0)edges.push({a:bids[k],b:id,v:clamp(a,0,1),measured:true,bundle:true});});
+      edges.push({a:fid[(k*per+Math.floor(per/2))%fid.length],b:id,v:clamp(1-a,0,1),measured:true,strand:true});
+      if(a>0)edges.push({a:bids[k],b:id,v:clamp(a,0,1),measured:true,strand:true});});
     groups.push({ids:aid,label:'최종 확률',count:hz.length});
     return {nodes,edges,groups};
   }
@@ -252,15 +295,17 @@
       scene=seq?sequence(d,s):om?omniScene(d,s):dense(layers);selected=-1;
       layerSelect.replaceChildren();room.querySelector('.nerve-layers').replaceChildren();
       scene.groups.forEach((g,i)=>{layerSelect.add(new Option(g.label,String(i)));const b=document.createElement('button');b.type='button';b.textContent=g.label+' / '+g.count;b.onclick=()=>inspect(g.ids[0]);room.querySelector('.nerve-layers').append(b);});
-      populate();info.textContent=seq?(scene.attn?'선택 시점의 실제 표본 어텐션을 표시합니다.':'어텐션 표본 없음 · 구조만 표시합니다.'):om?(d.nnViz?'모든 뉴런을 표시합니다. 굵은 선은 묶음별 실제 가중치의 합입니다. 점을 누르면 그 뉴런의 실제 연결선만 보입니다.':'신경망이 아직 안 올라왔습니다 — 나무 숲 구조만 표시합니다.'):'모든 뉴런을 표시합니다. 선은 연결 구조의 요약이며 개별 가중치가 아닙니다.';
+      populate();info.textContent=seq?(scene.attn?'선택 시점의 실제 표본 어텐션을 표시합니다.':'어텐션 표본 없음 · 구조만 표시합니다.'):om?(d.nnViz?'모든 뉴런과 실제 연결을 한 줄씩 그립니다(밝을수록 |w| 큼). 점을 누르면 그 뉴런의 선이 밝아집니다.':'신경망이 아직 안 올라왔습니다 — 나무 숲 구조만 표시합니다.'):'모든 뉴런을 표시합니다. 선은 연결 구조의 요약이며 개별 가중치가 아닙니다.';
       dirty=true;wake();
     }
     function signals(){
       if(!s.motion)return;
-      const edges=scene.edges.filter(e=>!e.detail&&!e.strand),step=Math.max(1,Math.ceil(edges.length/100));
+      const edges=scene.edges.filter(e=>!e.detail&&(!e.strand||e.path)),step=Math.max(1,Math.ceil(edges.length/100));
       ctx.fillStyle='rgba(255,255,255,.85)';ctx.beginPath();
       for(let i=0;i<edges.length;i+=step){
         const e=edges[i],a=points[e.a],b=points[e.b],t=(phase*.3+i*.618)%1,u=1-t;
+        if(e.path){const P=e.path.map(id=>points[id]),f=t*(P.length-1),k=Math.min(P.length-2,Math.floor(f)),r=f-k;
+          const x=P[k].x+(P[k+1].x-P[k].x)*r,y=P[k].y+(P[k+1].y-P[k].y)*r;ctx.moveTo(x+1.2,y);ctx.arc(x,y,1.2,0,TAU);continue;}
         const bend=vol?0:Math.min(30,Math.abs(b.x-a.x)*.2);
         const x=u*u*u*a.x+3*u*t*(a.x+b.x)/2+t*t*t*b.x;
         const y=u*u*u*a.y+3*u*u*t*(a.y-bend)+3*u*t*t*(b.y+bend)+t*t*t*b.y;
@@ -292,15 +337,22 @@
       for(let i=0;i<edges.length;i++){
         const e=edges[i],a=points[e.a],b=points[e.b],focus=selected===e.a||selected===e.b;
         if(e.detail&&!focus)continue;               // [V33.430c] 개별 가중치 선은 누른 점에 닿은 것만
-        ctx.strokeStyle=focus?'rgba(255,255,255,.85)':e.attention?'rgba(255,255,255,'+(.2+.7*e.v)+')':
-          e.strand?'rgba(255,255,255,.22)':e.bundle?'rgba(255,255,255,'+(.18+.5*e.v)+')':
+        ctx.strokeStyle=focus?'rgba(255,255,255,.95)':e.attention?'rgba(255,255,255,'+(.2+.7*e.v)+')':
+          e.strand?'rgba(255,255,255,'+((.16+.5*e.v)*(selected>=0?.22:1))+')':e.bundle?'rgba(255,255,255,'+(.18+.5*e.v)+')':
           e.measured?'rgba(255,255,255,'+(.04+.5*e.v)+')':'rgba(255,255,255,.10)';
-        ctx.lineWidth=e.attention?1+e.v*3:e.ribbon?14:e.bundle?1+e.v*6:e.strand?.8:e.measured?.4+e.v*1.6:focus?1:.5;
-        ctx.beginPath();ctx.moveTo(a.x,a.y);const bend=vol?0:Math.min(30,Math.abs(b.x-a.x)*.2);
+        ctx.lineWidth=e.attention?1+e.v*3:e.ribbon?14:e.bundle?1+e.v*6:e.strand?(focus?1.2:.45+.75*e.v):e.measured?.4+e.v*1.6:focus?1:.5;
+        ctx.beginPath();ctx.moveTo(a.x,a.y);
+        if(e.path){                                   // [V33.432] 경유점을 지나는 매끈한 곡선(가닥)
+          const P=e.path.map(id=>points[id]);
+          for(let q=1;q<P.length-1;q++){const mx=(P[q].x+P[q+1].x)/2,my=(P[q].y+P[q+1].y)/2;ctx.quadraticCurveTo(P[q].x,P[q].y,q===P.length-2?P[q+1].x:mx,q===P.length-2?P[q+1].y:my);}
+          ctx.stroke();continue;
+        }
+        const bend=vol?0:Math.min(30,Math.abs(b.x-a.x)*.2);
         ctx.bezierCurveTo((a.x+b.x)/2,a.y-bend,(a.x+b.x)/2,b.y+bend,b.x,b.y);ctx.stroke();
       }
       const order=points.map((p,i)=>i).sort((a,b)=>points[b].z-points[a].z);
       for(const i of order){const p=points[i],n=scene.nodes[i],v=n.v==null?.15:clamp(Math.abs(n.v),0,1),sel=i===selected;
+        if(n.hidden)continue;                          // 경유점은 그리지 않는다
         const r=sel?5:clamp((seq?2.2:om?(n.kind==='output'?4.2:1.9):narrow?.55:1.4)*Math.sqrt(s.zoom)*p.k,narrow?.45:1,om&&n.kind==='output'?7:4);
         const pulse=vol&&s.motion?.08*Math.sin(phase*2-n.l*.7+i*.09):0;
         ctx.fillStyle='rgba(255,255,255,'+clamp(.35+v*.6+pulse,.2,1)+')';ctx.beginPath();ctx.arc(p.x,p.y,r,0,TAU);ctx.fill();
@@ -320,7 +372,7 @@
       if(dirty||s.motion||s.spin)raf=requestAnimationFrame(tick);
     }
     function wake(){if(!dead&&!raf&&visible&&!document.hidden)raf=requestAnimationFrame(tick);}
-    const resize=new ResizeObserver(()=>{const r=viewport.getBoundingClientRect();w=Math.max(1,r.width);h=Math.max(1,r.height);const ratio=Math.min(devicePixelRatio||1,1.5);canvas.width=Math.round(w*ratio);canvas.height=Math.round(h*ratio);ctx.setTransform(ratio,0,0,ratio,0,0);dirty=true;wake();});
+    const resize=new ResizeObserver(()=>{const r=viewport.getBoundingClientRect();w=Math.max(1,r.width);h=Math.max(1,r.height);const ratio=Math.min(devicePixelRatio||1,vol?2:1.5);canvas.width=Math.round(w*ratio);canvas.height=Math.round(h*ratio);ctx.setTransform(ratio,0,0,ratio,0,0);dirty=true;wake();});
     const intersection=new IntersectionObserver(entries=>{visible=entries[0].isIntersecting;if(!visible&&raf){cancelAnimationFrame(raf);raf=0;}wake();});
     const visibility=()=>{if(document.hidden&&raf){cancelAnimationFrame(raf);raf=0;}else wake();};
     const reduce=()=>{if(reduced.matches){s.motion=s.spin=false;motion.setAttribute('aria-pressed','false');spin?.setAttribute('aria-pressed','false');}dirty=true;wake();};
@@ -330,7 +382,7 @@
       if(other){const before=Math.hypot(old.x-other.x,old.y-other.y),after=Math.hypot(e.clientX-other.x,e.clientY-other.y);if(before>4)s.zoom=clamp(s.zoom*after/before,.6,8);s.panX+=dx/2;s.panY+=dy/2;}
       else if(vol&&!e.shiftKey){s.yaw-=dx*.006;s.pitch=clamp(s.pitch+dy*.006,-1.2,1.2);}else{s.panX+=dx;s.panY+=dy;}
       if(Math.abs(dx)+Math.abs(dy)>2)moved=true;pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});dirty=true;wake();};
-    canvas.onpointerup=e=>{pointers.delete(e.pointerId);if(moved)return;const r=canvas.getBoundingClientRect();let hit=-1,best=225;points.forEach((p,i)=>{const dist=(p.x-e.clientX+r.left)**2+(p.y-e.clientY+r.top)**2;if(dist<best){best=dist;hit=i;}});if(hit>=0)inspect(hit);};
+    canvas.onpointerup=e=>{pointers.delete(e.pointerId);if(moved)return;const r=canvas.getBoundingClientRect();let hit=-1,best=225;points.forEach((p,i)=>{if(scene.nodes[i].hidden)return;const dist=(p.x-e.clientX+r.left)**2+(p.y-e.clientY+r.top)**2;if(dist<best){best=dist;hit=i;}});if(hit>=0)inspect(hit);};
     canvas.onpointercancel=e=>pointers.delete(e.pointerId);
     canvas.onwheel=e=>{if(!e.ctrlKey)return;e.preventDefault();s.zoom=clamp(s.zoom*Math.exp(-e.deltaY*.002),.6,8);dirty=true;wake();};
     canvas.onkeydown=e=>{if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','+','-','Home'].includes(e.key)){e.preventDefault();if(e.key==='Home'){s.zoom=1;s.panX=s.panY=0;}else if(e.key==='+'||e.key==='-')s.zoom=clamp(s.zoom*(e.key==='+'?1.2:1/1.2),.6,8);else if(vol){s.yaw+=e.key==='ArrowLeft'?-.1:e.key==='ArrowRight'?.1:0;s.pitch=clamp(s.pitch+(e.key==='ArrowUp'?-.1:e.key==='ArrowDown'?.1:0),-1.2,1.2);}else{s.panX+=e.key==='ArrowLeft'?-20:e.key==='ArrowRight'?20:0;s.panY+=e.key==='ArrowUp'?-20:e.key==='ArrowDown'?20:0;}dirty=true;wake();}};

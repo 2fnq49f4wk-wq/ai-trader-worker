@@ -147,15 +147,21 @@ console.log("\n⑦ 눕힌 세계수 3D — 모든 입력이 뿌리 가닥 중 �
       tag + ": 옆으로 눕혔다 — 뿌리(왼쪽) → 끝눈(오른쪽)", "★좌→우 흐름이 아니다★");
   }
   const sc = NO.omniScene(d, { spread: 1 });
-  /* [V33.430c] ★선이 겹쳐 보였다(사용자)★ — 평소 보이는 선(다발)은 적어야 하고, 뉴런별 실제 선은 누를 때만 */
-  const visible = sc.edges.filter((e) => !e.detail && !e.strand);
-  const detail = sc.edges.filter((e) => e.detail);
+  /* [V33.432] ★선을 한 줄씩, 가늘게 — 합치지 말고 번지지 않게(사용자)★ */
   const nnLines = d.nnViz.edges.reduce((a, es) => a + es.length, 0);
-  chk(visible.length <= 40 && detail.length >= nnLines && sc.edges.filter((e) => e.measured && !e.detail && !e.bundle).length === 0,
-    "평소 보이는 선 " + visible.length + "개(다발) · 뉴런별 실제 선 " + detail.length + "개는 누를 때만",
-    "★선이 너무 많이 보인다(" + visible.length + ") 또는 뉴런별 선이 늘 보인다★");
+  const strands = sc.edges.filter((e) => e.path);
+  const viaOwner = new Map();
+  let shared = 0;
+  for (const e of strands) for (const id of e.path.slice(1, -1)) { if (viaOwner.has(id)) shared++; viaOwner.set(id, e); }
+  chk(strands.length === nnLines && !sc.edges.some((e) => e.bundle || e.ribbon),
+    "실제 연결 " + nnLines + "개를 한 줄씩 전부 그린다(합친 다발 없음)", "★합친 선이 있거나 빠진 연결이 있다(" + strands.length + "/" + nnLines + ")★");
+  chk(shared === 0 && strands.every((e) => e.path.slice(1, -1).every((id) => sc.nodes[id].hidden)),
+    "선마다 자기 경유점(공유 0 · 전부 숨은 점) — 한곳에 몰리지 않는다", "★경유점을 선끼리 나눠 쓴다(" + shared + ")★");
   const eng = src.slice(src.indexOf("function draw("), src.indexOf("function tick("));
-  chk(/if\(e\.detail&&!focus\)continue;/.test(eng), "그리기: detail 선은 누른 점에 닿을 때만 그린다", "★그리기가 detail 을 늘 그린다★");
+  const lw = /e\.strand\?\(focus\?([\d.]+):([\d.]+)\+([\d.]+)\*e\.v\)/.exec(eng);
+  chk(lw && +lw[1] <= 1.5 && (+lw[2] + +lw[3]) <= 1.3 && /if\(n\.hidden\)continue;/.test(eng),
+    "가늘다(평소 ≤" + (lw ? (+lw[2] + +lw[3]).toFixed(2) : "?") + "px · 누른 선 ≤" + (lw ? lw[1] : "?") + "px) · 경유점은 안 그린다",
+    "★선이 굵거나 경유점을 그린다★");
   const nullHead = sc.nodes.find((n) => n.name === "가지 · 60분 머리");
   chk(nullHead && nullHead.v === null, "홀드아웃을 못 잰 머리는 흐리게(v=null)", "★못 잰 머리에 세기를 지어냈다★");
 }
