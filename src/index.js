@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.436";
+const _BUILD_VER = "V33.437";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -11625,6 +11625,64 @@ async function _omniMeta(DB) {
 }
 /* [V33.422] OMNI 관측 데이터 — ★나무를 싣지 않는다★(MB급). 머리별 성적 · 정합 증거 ·
    무엇을 배웠는지(지평·매매법)만 보낸다. 화면은 이것만으로 "쓰는가/왜 안 쓰는가" 를 말한다. */
+/* ══ [V33.437] ★구조 전부★ — 사용자: "노드랑 파라미터 전부 다 띄워라". ══════════════════════════════
+   nnViz 는 뉴런마다 들어오는 |w| 상위 3개뿐이다(318줄). 여기서는 ★첫 네트의 가중치 전부★(입력→몸통1→몸통2→머리)와
+   ★나무 전부의 분기★(분기마다 어느 입력을 보는지 · 잎 수 · 잎 값 크기)를 화면에 보낸다.
+   값은 행렬마다 최대 |w| 로 나눠 int8(−127~127) 로 줄인다 — ★모양을 보는 용도★ 이고, 채점은 원본(R2 model.json) 그대로다.
+   모델 파일이 1.7MB 라 요청마다 읽지 않는다: 가져온 판(importedAt)이 같으면 격리 메모리에서 돌려준다. */
+let _omStructMemo = null;
+function _omQ8(rows) {
+  const r = rows.length, c = r ? rows[0].length : 0;
+  let mx = 0;
+  for (let i = 0; i < r; i++) for (let k = 0; k < c; k++) { const a = Math.abs(rows[i][k]); if (a > mx) mx = a; }
+  const u = new Uint8Array(r * c), sc = mx > 0 ? 127 / mx : 0;
+  for (let i = 0; i < r; i++) for (let k = 0; k < c; k++) u[i * c + k] = (Math.round(rows[i][k] * sc) + 256) & 255;
+  let bin = "";
+  for (let j = 0; j < u.length; j += 8192) bin += String.fromCharCode.apply(null, u.subarray(j, j + 8192));
+  return { r: r, c: c, s: mx, d: btoa(bin) };
+}
+function _omTreeSummary(tr) {
+  const fs = [];
+  let leaves = 0, lsum = 0;
+  const walk = function (n, dep) {
+    if (!n || dep > 64) return;
+    if (n.w !== undefined) { leaves++; lsum += Math.abs(n.w); return; }
+    fs.push(n.f);
+    walk(n.l, dep + 1); walk(n.r, dep + 1);
+  };
+  walk(tr, 0);
+  return [leaves, Math.round((leaves ? lsum / leaves : 0) * 1e5)].concat(fs);
+}
+async function omniStructure(DB) {
+  const meta = await _omniMeta(DB);
+  if (!meta) return { ok: false, why: "아직 업로드된 모델이 없다" };
+  const key = _num(meta.importedAt, 0) || _num(meta.trainedAt, 0);
+  if (_omStructMemo && _omStructMemo.key === key) return _omStructMemo.v;
+  const R2 = _bigR2();
+  if (!R2) return { ok: false, why: "R2 미바인딩" };
+  let mdl = null;
+  try {
+    const g = await R2.get(OMNI_MODEL.r2Key);
+    if (!g) return { ok: false, why: "모델 파일이 없다 " + OMNI_MODEL.r2Key };
+    mdl = JSON.parse(await g.text()) || {};
+  } catch (e) { return { ok: false, why: "모델 읽기 실패: " + ((e && e.message) || e) }; }
+  let net = null;
+  const nn = mdl.nn, n0 = nn && Array.isArray(nn.nets) ? nn.nets[0] : null;
+  if (n0 && Array.isArray(n0.W) && n0.W.length) {
+    const names = nn.cols.map(function (c) { return OMNI_MODEL_FEATS[c] || ("#" + c); })
+      .concat(nn.flags.map(function (j) { return "결측:" + (OMNI_MODEL_FEATS[nn.cols[j]] || ("#" + j)); }));
+    const mats = n0.W.map(_omQ8).concat([_omQ8(n0.Wh)]);
+    net = { names: names, cols: nn.cols.slice(), sizes: [names.length].concat(n0.b.map(function (b) { return b.length; }), [n0.bh.length]),
+            mats: mats, nets: nn.nets.length };
+  }
+  const trees = Array.isArray(mdl.trees) ? mdl.trees.map(_omTreeSummary) : [];
+  const v = { ok: true, v: meta.v, at: key, feats: OMNI_MODEL_FEATS, horizons: OMNI_HORIZONS,
+              seeds: _num(meta.seeds, 1), net: net, trees: trees,
+              params: (net ? net.mats.reduce(function (a, m) { return a + m.r * m.c; }, 0) : 0) };
+  _omStructMemo = { key: key, v: v };
+  return v;
+}
+
 async function omniVizData(DB) {
   const m = await _omniMeta(DB);
   /* [V33.426] ★전진 성적★ — 섀도우 채점이 적어 둔 확률을 지평 뒤에 맞춰 본 결과.
@@ -26395,6 +26453,10 @@ async function handleRequest(request, env, ctx) {
       return Response.json(_ov, { headers: cors });
     }
 
+    if (path === "/api/omni-structure") {   // [V33.437] OMNI 구조 전부(가중치 · 나무 분기) — 화면 전용
+      const st = await omniStructure(env.DB);
+      return Response.json(st, { status: st.ok ? 200 : 404, headers: Object.assign({ "Cache-Control": "public, max-age=300" }, cors) });
+    }
     if (path === "/api/nn-viz") {
       /* [V33.422] 기본값을 dnn → gbdt 로. DNN 은 퇴역했고, 종전엔 ★모르는 키가 전부 DNN 으로
          샜다★(V33.308 이 고친 그 병). 퇴역한 모델이 기본 폴백이면 그 병이 되살아난다. */

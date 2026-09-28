@@ -84,8 +84,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.436">
-<script src="/neural-observatory.js?v=33.436" defer></script>
+<meta name="lux-build" content="V33.437">
+<script src="/neural-observatory.js?v=33.437" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -14853,13 +14853,12 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         + '</div></div>'
         + (topHtml? '<div class="omni-lane-h">가장 많이 갈린 칸</div><div class="omni-tops">'+topHtml+'</div>':'')
       : '';
-    /* [V33.428] ★3D 로 그린다★ · [V33.433] ★홀로그램 구체 신경망 핵★(사용자 요청 — 형태만 빌리고 고유 이름은 쓰지 않는다) · [V33.435] 바큇살 선으로 정돈 · [V33.436] 참고 그림처럼 금빛 고리 구체.
+    /* [V33.428] ★3D 로 그린다★ · [V33.433] ★홀로그램 구체 신경망 핵★(사용자 요청 — 형태만 빌리고 고유 이름은 쓰지 않는다) · [V33.435] 바큇살 선으로 정돈 · [V33.436] 참고 그림처럼 금빛 고리 구체 · [V33.437] 새 엔진 — 파라미터 전부 · 금빛 하나.
        값은 전부 실측(가중치 · gain · AUC · α). 읽는 법을 그림 바로 아래에 적는다. */
     var yggLegend = '<div class="omni-ygg-legend">'
-      + '<span>바깥 고리 — 입력 묶음마다 기운 고리 하나(밝은 호 = 그 묶음의 칸들)</span><span>안쪽 — 공유 몸통(가장 센 입력 바로 안쪽에 선다)</span>'
-      + '<span>중심 핵 — 지평 머리 5(신경망)</span><span>둘레 고리 — 나무 숲(GBDT)</span>'
-      + '<span>위성 — 지평별 최종 확률 (1−α)·숲 + α·핵</span>'
-      + '<span class="omni-dim">선 = 뉴런마다 가장 센 실제 연결 한 줄(밝을수록 큼) · 점을 누르면 그 뉴런의 연결 전부 · 끌어서 돌려 보세요 · 도는 고리·빛줄기·불꽃·홍채는 장식(값 없음)</span>'
+      + '<span>바깥 껍질 — 입력 칸 전부</span><span>안쪽 두 껍질 — 공유 몸통 뉴런 전부</span><span>핵 둘레 — 지평 머리 5</span>'
+      + '<span>기운 고리 — 나무 전부(조각 하나 = 나무 하나 · 눈금 = 분기)</span>'
+      + '<span class="omni-dim">선 = 신경망 가중치 전부와 나무 분기 전부(밝을수록 값이 크다) · 점을 누르면 그 점의 선만 · 도는 고리·홍채·빛줄기는 장식</span>'
       + '</div>';
     stage.innerHTML = '<div id="omniVol" class="omni-vol"></div>' + yggLegend + '<div class="omni-wrap">'
       + structHtml
@@ -20185,11 +20184,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.436">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.436">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.436">
-<link rel="stylesheet" href="/model-evidence.css?v=33.436">
-<script src="/model-evidence.js?v=33.436"></script>
-<script src="/workspace-ui.js?v=33.436"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.437">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.437">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.437">
+<link rel="stylesheet" href="/model-evidence.css?v=33.437">
+<script src="/model-evidence.js?v=33.437"></script>
+<script src="/workspace-ui.js?v=33.437"></script>
 </body>
 </html>
