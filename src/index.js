@@ -10417,8 +10417,10 @@ async function omniBarsCollect(DB, opts) {
 const OMNIFLOW = {
   prefix: "flows/v1/", ver: 1,
   targetDays: 1300,          // 학습기 패널 창(1,200일) + 여유
-  pagesPerSymRun: 6,         // 한 회차에 한 종목 백필로 내려가는 쪽 수
-  perRunOff: 12, perRunIn: 3,
+  /* [V33.434] 6쪽 → 20쪽(≈1,200일)·종목 12 → 6. 실측: 6쪽이면 종목당 360일/방문이라 1,300일에 4바퀴(≈하루 반).
+     20쪽이면 한 방문에 끝난다. 한 틱 요청 수는 6×21=126(종전 12×7=84 와 같은 급 — 수동 1회차 210쪽도 문제없었다). */
+  pagesPerSymRun: 20,        // 한 회차에 한 종목 백필로 내려가는 쪽 수
+  perRunOff: 6, perRunIn: 2,
   gapOffMs: 5 * 60000, gapInMs: 20 * 60000,
   refreshH: 18,
   jsonPage: 60, htmlRows: 20
