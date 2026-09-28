@@ -138,7 +138,7 @@ console.log("\n⑦ 홀로그램 구체 핵 — 껍질 순서 · 실제 연결 �
     const badV = sc.edges.filter((e) => !(e.v >= 0 && e.v <= 1)).length;
     chk(dangling === 0 && nonfinite === 0 && badV === 0, tag + ": 떠 있는 선 0 · 좌표 유한 · 선 세기 0~1",
       "★떠 있는 선 " + dangling + " · 비유한 " + nonfinite + " · 범위 밖 " + badV + "★");
-    const invented = sc.nodes.filter((n) => (/나무 숲/.test(n.name) || n.hidden) && n.v != null).length +
+    const invented = sc.nodes.filter((n) => (/나무 숲/.test(n.name) || n.hidden || n.deco) && n.v != null).length +
                      (dd.nnViz ? 0 : inputs.filter((n) => n.v != null).length);
     chk(invented === 0, tag + ": 값 없는 점(고리 눈금 · 안내선 · 신경망 없는 입력)은 밝히지 않는다", "★지어낸 세기 " + invented + "★");
     chk(vis.filter((n) => /^위성 · .* 최종 확률$/.test(n.name)).length === 5, tag + ": 위성(지평별 최종 확률) 5개", "★위성 수가 틀렸다★");
@@ -172,7 +172,7 @@ console.log("\n⑦ 홀로그램 구체 핵 — 껍질 순서 · 실제 연결 �
   }
   const eng = src.slice(src.indexOf("function draw("), src.indexOf("function tick("));
   const lw = /e\.strand\?\(focus\?([\d.]+):([\d.]+)\+([\d.]+)\*e\.v\)/.exec(eng);
-  chk(lw && +lw[1] <= 1.5 && (+lw[2] + +lw[3]) <= 1.3 && /if\(n\.hidden\)continue;/.test(eng),
+  chk(lw && +lw[1] <= 1.5 && (+lw[2] + +lw[3]) <= 1.3 && /if\(n\.hidden(\|\|n\.deco)?\)continue;/.test(eng) && /filter\(i=>!scene\.nodes\[i\]\.hidden/.test(eng),
     "선이 가늘다(≤" + (lw ? (+lw[2] + +lw[3]).toFixed(2) : "?") + "px) · 숨은 점은 안 그린다", "★선이 굵거나 숨은 점을 그린다★");
   chk(!/자비스|JARVIS|Jarvis|울트론|Ultron|어벤저스|Avengers|이그드라실|Yggdrasil/.test(src),
     "영화·신화 이름을 소스·화면에 쓰지 않는다(형태만 빌린다)", "★고유 이름이 들어가 있다★");

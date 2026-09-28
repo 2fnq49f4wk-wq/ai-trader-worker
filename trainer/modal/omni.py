@@ -2428,10 +2428,72 @@ def flow_compare(A, rep_with, log=print):
            float(has[sel][kr[sel]].mean()) * 100 if kr[sel].any() else 0.0,
            f(ew0.get("auc")), f(ew1.get("auc")), f(kw0), f(kw1)))
     per_hz(rw1, rw0)
-    log("   · OMNI 수급 판정(수급 있는 한국 행만) — 한국 행 %s (채택 기준 +%.3f 이상 · 3구간 중 2구간 승은 다음 단계)"
+    log("   · OMNI 수급 판정(수급 있는 한국 행만) — 한국 행 %s (채택 기준 +%.3f 이상 · 구간 판정은 아래)"
         % ("—" if gain is None else "%+.4f" % gain, FLOW_GAIN))
     out.update(win_t0=t0, win_rows=int(len(sel)), win_fill=wf, win_all0=ew0.get("auc"), win_all1=ew1.get("auc"),
                win_kr0=kw0, win_kr1=kw1, win_gain=gain)
+    # [V33.436] 두 번째 조건(3구간 중 2구간 승) — 같은 회차에서 판정을 끝낸다. 장중만 따로도 본다(3차 실측: 이득이 장중에 몰림).
+    _pk = ((rep_with.get("cv") or {}).get("pick")) or GBDT_GRID[0]["name"]
+    pick = next((c for c in GBDT_GRID if c["name"] == _pk), GBDT_GRID[0])
+    NN_ON = False
+    try:
+        fo = flow_folds(W, W0, pick, log=log)
+    finally:
+        NN_ON = _nn
+    def kr_intra(rep):
+        tot = n = 0.0
+        for hz in ("30m", "60m"):
+            k = kr_hz(rep, hz)
+            if k.get("auc") is not None and k.get("n", 0) >= 50:
+                tot += k["auc"] * k["n"]
+                n += k["n"]
+        return (tot / n) if n else None
+    ki1, ki0 = kr_intra(rw1), kr_intra(rw0)
+    gi = (ki1 - ki0) if (ki1 is not None and ki0 is not None) else None
+    ok_all = gain is not None and gain >= FLOW_GAIN and fo.get("all_wins", 0) >= 2
+    ok_in = gi is not None and gi >= FLOW_GAIN and fo.get("intra_wins", 0) >= 2
+    log("   · OMNI 수급 최종 판정 — 전체 %s(홀드 %s · 구간 %d승) · 장중 %s(홀드 %s · 구간 %d승) · 기준 +%.3f & 2승"
+        % ("통과" if ok_all else "미달", "—" if gain is None else "%+.4f" % gain, fo.get("all_wins", 0),
+           "통과" if ok_in else "미달", "—" if gi is None else "%+.4f" % gi, fo.get("intra_wins", 0), FLOW_GAIN))
+    out.update(folds=fo, intra_gain=gi, adopt_all=ok_all, adopt_intra=ok_in)
+    return out
+
+
+def flow_folds(W, W0, pick, log=print):
+    """[V33.436] 수급 채택의 두 번째 조건 — ★3구간 중 2구간 승★. 홀드아웃은 건드리지 않는다(학습 구간 안에서만).
+    cv_select 와 같은 전진 구간(70/80/90% 분위)에서 채움(W)·비움(W0)을 같은 행·같은 구성으로 학습해
+    한국 행 AUC 를 지평 묶음별(전체 · 장중 30m+60m)로 견준다. 반환 {"all": [(비움, 채움)…], "intra": […]}."""
+    import numpy as np
+    W, _ = balance_horizons(W, log=lambda *a: None)
+    W0, _ = balance_horizons(W0, log=lambda *a: None)
+    C, tr, _ho = split_cutoff(W)
+    nt = n_threads()
+    tdt = W["td"][tr]
+    cuts = [float(np.quantile(tdt, q)) for q in CV_FOLDS] + [float("inf")]
+    kr = W["mkt"] == 1
+    intra = np.isin(W["hz"], [HORIZONS.index("30m"), HORIZONS.index("60m")])
+    out = {"all": [], "intra": []}
+    for k in range(len(CV_FOLDS)):
+        trk = tr[W["te"][tr] < cuts[k]]
+        ev = tr[(W["td"][tr] >= cuts[k]) & (W["td"][tr] < cuts[k + 1])]
+        fit, val = _hz_split(W, trk)
+        if len(fit) < 5000 or len(val) < 500 or len(ev) < 2000:
+            continue
+        row = {}
+        for tag, AA in (("0", W0), ("1", W)):
+            b, it = _gbdt_fit(AA, fit, val, pick, nt)
+            p = b.predict(AA["X"][ev], num_iteration=it, raw_score=True)
+            for nm, m in (("all", kr[ev]), ("intra", kr[ev] & intra[ev])):
+                row[nm + tag] = _auc(p[m], W["y"][ev][m]) if m.sum() >= 200 else None
+        for nm in ("all", "intra"):
+            out[nm].append((row[nm + "0"], row[nm + "1"]))
+    f = lambda v: "—" if v is None else "%.4f" % v
+    for nm, lab in (("all", "한국 전체"), ("intra", "한국 장중(30m·60m)")):
+        pr = out[nm]
+        wins = sum(1 for a, b in pr if a is not None and b is not None and b > a)
+        out[nm + "_wins"] = wins
+        log("   · OMNI 수급 전진 구간(%s) — %s · 채움 승 %d/%d" % (
+            lab, " · ".join("비움 %s → 채움 %s" % (f(a), f(b)) for a, b in pr), wins, len(pr)))
     return out
 
 
