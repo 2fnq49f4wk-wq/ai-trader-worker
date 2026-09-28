@@ -89,14 +89,16 @@
     }
     return {nodes,edges,groups,attn};
   }
-  /* [V33.429c] ★옆으로 눕힌 세계수 모양★ — 사용자 지시: 모양만 빌린다(신화 그대로가 아니다) ·
-   *   옆으로 눕힌다 · 흰색만. 신화 이름·색은 쓰지 않는다. 흐름은 왼쪽 → 오른쪽:
-   *     뿌리(입력 묶음마다 한 가닥, 왼쪽으로 퍼진다) → 줄기(공유 몸통 64 → 32, 가로 나선)
-   *     → 가지(지평 머리 5개, 오른쪽으로 벌어진다) → 수관(나무 숲 GBDT, 가지 위를 덮는다)
-   *     → 끝눈(지평별 최종 확률 = (1−α)·숲 + α·가지)
-   * 흰색 하나로만 그리고 ★밝기 = 실측값★: 입력 = 나가는 |w| 합 · 줄기 = 대표 네트 세기 · 선 = 뉴런마다
-   *   들어오는 |w| 상위 · 뿌리→수관 = 입력 묶음 gain · 가지→끝눈 = α · 수관→끝눈 = 1−α · 가지/끝눈 = 홀드아웃 AUC.
-   *   값이 없으면 흐리게(v=null) — 지어내지 않는다. */
+  /* [V33.429c] ★옆으로 눕힌 세계수 모양 · 흰색만★ — 모양만 빌린다(신화 그대로가 아니다). 흐름은 왼 → 오:
+   *     뿌리(입력 묶음마다 한 가닥) → 줄기(공유 몸통 64 → 32) → 가지(지평 머리 5) → 수관(나무 숲) → 끝눈(최종 확률)
+   * [V33.430c] ★선이 겹쳐 보였다(사용자)★ — 뉴런마다 실제 연결 3개씩, 수백 줄을 한꺼번에 그려 줄기에 흰 덩어리가
+   *   생겼다. → ★평소엔 다발만★ 그린다(모두 실측의 합):
+   *     · 뿌리 가닥   = 그 묶음의 칸들을 잇는 가는 선 하나(구조)
+   *     · 뿌리 → 줄기 = 묶음마다 굵은 선 하나(굵기 = 그 묶음 칸들의 나가는 |w| 합)
+   *     · 몸통1 → 몸통2 = 리본 하나 · 몸통2 → 가지 = 다섯 줄(굵기 = 그 가지로 들어오는 |w| 합)
+   *     · 가지 → 끝눈 = α · 수관 → 끝눈 = 1−α · 뿌리 묶음 → 수관 = gain 비중
+   *   뉴런 하나하나의 실제 가중치 선(detail)은 ★그 점을 눌렀을 때만★ 그 점에 닿은 것만 보인다.
+   * 밝기·굵기 = 실측값. 값이 없으면 흐리게(v=null) — 지어내지 않는다. */
   const OMNI_GROUPS=[['m_','5분봉'],['s_','세션'],['h_','60분봉'],['d_','일봉'],['a_','형식알파'],
     ['q_','횡단면'],['p_','피어'],['x_','맥락'],['st_','매매법'],['결측:','결측표시']];
   const OMNI_GAIN={'5분봉':'5분봉(단타)','세션':'세션','60분봉':'60분봉','일봉':'일봉(장타)','형식알파':'형식알파',
@@ -110,56 +112,72 @@
     const norm=a=>{const m=Math.max(1e-12,...a.filter(finite).map(Math.abs));return a.map(v=>finite(v)?v/m:null);};
     const add=(n,g)=>{g.push(nodes.length);nodes.push(n);return nodes.length-1;};
     const sp=s.spread;
-    const X0=-170,X1=170;                       // 줄기의 왼쪽 밑동 · 오른쪽 끝
-    // ── 뿌리: 입력 묶음마다 한 가닥. 밑동에서 왼쪽으로 부채처럼 퍼진다(y·z 로 벌어진다) ──
+    const X0=-200,X1=200;
+    // ── 뿌리: 묶음마다 한 가닥(왼쪽으로 부채꼴). 가닥 안은 가는 선 하나로 잇는다 ──
     const inNames=nv?nv.layers[0].names:(d.feats||[]);
-    const inV=nv?norm(nv.layers[0].strength):inNames.map(()=>null);
+    const inRaw=nv?(nv.layers[0].strength||[]):[];
+    const inV=nv?norm(inRaw):inNames.map(()=>null);
     const gOf=nm=>{const g=OMNI_GROUPS.findIndex(([p])=>String(nm).indexOf(p)===0);return g<0?7:g;};
     const byG=OMNI_GROUPS.map(()=>[]);
     inNames.forEach((nm,i)=>byG[gOf(nm)].push(i));
     const live=byG.map((ix,g)=>[ix,g]).filter(([ix])=>ix.length);
-    const inId=new Array(inNames.length),gIds={};
+    const inId=new Array(inNames.length),gIds={},collar=[],gSum=[];
     live.forEach(([ix,g],r)=>{
-      const ph=TAU*r/live.length+.3,ids=[];            // 가닥 방향(줄기를 축으로 한 둘레각)
+      const ph=TAU*r/live.length+.3,ids=[];
       ix.forEach((i,j)=>{
-        const u=(j+.5)/ix.length,len=(60+300*u)*sp;     // 밑동에서 멀수록 가늘게 퍼진다
-        const rad=(18+150*Math.pow(u,1.4))*sp,tw=ph+.6*u,a=j*2.39996323,jr=3+7*u;
-        inId[i]=add({x:X0-len+Math.cos(a)*jr,y:Math.sin(tw)*rad+Math.sin(a)*jr,z:Math.cos(tw)*rad+Math.cos(a)*jr,
+        const u=(j+.5)/ix.length,len=(90+280*u)*sp,rad=(40+170*Math.pow(u,1.2))*sp,tw=ph+.35*u;
+        inId[i]=add({x:X0-len,y:Math.sin(tw)*rad,z:Math.cos(tw)*rad,
           l:groups.length,i,v:inV[i],name:inNames[i],label:'뿌리 · '+OMNI_GROUPS[g][1],kind:'input',
           desc:OMNI_GROUPS[g][1]+(inV[i]==null?' · 입력 칸':' · 나가는 연결 세기 '+(inV[i]*100).toFixed(0)+'%(최대 대비)')},ids);
+        if(j)edges.push({a:ids[j-1],b:ids[j],v:.5,strand:true});
       });
+      // 뿌리 목(가닥이 줄기에 닿는 자리) — 구조 점(값 없음)
+      const c=add({x:X0-40*sp,y:Math.sin(ph)*28*sp,z:Math.cos(ph)*28*sp,l:groups.length,i:-1,v:null,
+        name:OMNI_GROUPS[g][1]+' 뿌리 목',label:'뿌리 · '+OMNI_GROUPS[g][1],kind:'hidden',desc:'뿌리 가닥이 줄기에 닿는 자리'},ids);
+      edges.push({a:ids[0],b:c,v:.5,strand:true});
+      collar.push(c);gSum.push(ix.reduce((a,i)=>a+(finite(inRaw[i])?inRaw[i]:0),0));
       gIds[OMNI_GROUPS[g][1]]=ids;
-      groups.push({ids,label:OMNI_GROUPS[g][1],count:ix.length});
+      groups.push({ids,label:OMNI_GROUPS[g][1],count:ix.length,at:ids[ix.length-1]});   // 이름표는 가닥 바깥 끝에
     });
-    // ── 줄기: 공유 몸통이 가로로 누운 나선 ──
+    // ── 줄기: 몸통 층마다 원판 하나(옆에서 보면 기둥) ──
     const layerIds=[inId];
     const trunk=nv?nv.layers.slice(1,-1):[];
     trunk.forEach((ly,k)=>{
-      const ids=[],v=norm(ly.strength||[]),n=ly.size||v.length,span=(X1-X0)/Math.max(1,trunk.length);
-      const xa=X0+k*span,rr=(34-k*8)*sp;
-      for(let i=0;i<n;i++){const a=i*2.39996323,x=xa+span*.1+span*.8*(i+.5)/n;
-        add({x,y:Math.sin(a)*rr,z:Math.cos(a)*rr,l:groups.length,i,v:v[i],name:ly.name+' · #'+i,
+      const ids=[],v=norm(ly.strength||[]),n=ly.size||v.length,x=X0+(k+.5)*(X1-X0)/Math.max(1,trunk.length),R=(58-k*14)*sp;
+      for(let i=0;i<n;i++){const a=i*2.39996323,r=Math.sqrt((i+.5)/n)*R;
+        add({x,y:Math.sin(a)*r,z:Math.cos(a)*r,l:groups.length,i,v:v[i],name:ly.name+' · #'+i,
           label:'줄기 · '+ly.name,kind:'hidden',
-          desc:v[i]==null?'':'나가는 연결 세기 '+(v[i]*100).toFixed(0)+'%(최대 대비) · 모든 지평이 같이 쓴다'},ids);}
+          desc:(v[i]==null?'':'나가는 연결 세기 '+(v[i]*100).toFixed(0)+'%(최대 대비) · ')+'모든 지평이 같이 쓴다 · 누르면 실제 연결선'},ids);}
       layerIds.push(ids);groups.push({ids,label:ly.name+' · '+n,count:n});
     });
-    // ── 가지: 지평 머리 5개가 오른쪽으로 벌어진다 ──
+    // ── 가지: 지평 머리 5 ──
     const hl=nv?nv.layers[nv.layers.length-1]:null,hv=hl?hl.strength||[]:[],bids=[];
-    hz.forEach((h,k)=>{const ph=TAU*k/hz.length+Math.PI/5,e=hv[k],R=130*sp;
-      add({x:X1+150,y:Math.sin(ph)*R,z:Math.cos(ph)*R,l:groups.length,i:k,
+    hz.forEach((h,k)=>{const ph=TAU*k/hz.length+Math.PI/5,e=hv[k],R=150*sp;
+      add({x:X1+170,y:Math.sin(ph)*R,z:Math.cos(ph)*R,l:groups.length,i:k,
         v:finite(e)?clamp(e/0.05,0,1):null,name:'가지 · '+(HZ_TXT[h]||h)+' 머리',label:'가지',kind:'output',
         desc:nv?(finite(e)?'신경망 단독 홀드아웃 AUC '+(0.5+e).toFixed(3):'홀드아웃 못 쟀다'):'신경망이 아직 없다'},bids);});
     layerIds.push(bids);groups.push({ids:bids,label:'가지 · 지평 머리',count:hz.length});
-    if(nv)(nv.edges||[]).forEach((es,l)=>{const A=layerIds[l],B=layerIds[l+1];if(!A||!B)return;
-      es.forEach(([i,k,v])=>{if(A[i]!=null&&B[k]!=null&&finite(v))edges.push({a:A[i],b:B[k],v:clamp(v,0,1),measured:true});});});
-    // 신경망이 없으면 뿌리가 곧장 가지 자리로 오지 않는다 — 줄기 없이 숲만 있다(구조 그대로).
-    // ── 수관: 나무 숲(시드마다 잎 뭉치) — 가지 끝을 반구로 덮는다 ──
+    // ── 다발(평소 보이는 선) ──
+    if(nv&&trunk.length){
+      const t1=layerIds[1],t2=layerIds[layerIds.length-2];
+      const gN=norm(gSum);
+      collar.forEach((c,q)=>edges.push({a:c,b:t1[Math.floor(t1.length/2)],v:gN[q]==null?.2:gN[q],bundle:true}));
+      if(trunk.length>1){const st=(nv.layers[1].strength||[]).filter(finite),m=st.length?st.reduce((a,b)=>a+b,0)/st.length:0;
+        edges.push({a:t1[0],b:t2[0],v:.8,bundle:true,ribbon:true,raw:m});}
+      const into=hz.map(()=>0);
+      const last=(nv.edges||[])[(nv.edges||[]).length-1]||[];
+      last.forEach(([i,k,v])=>{if(finite(v)&&into[k]!=null)into[k]+=v;});
+      const iN=norm(into);
+      bids.forEach((b,k)=>edges.push({a:t2[k%t2.length],b,v:iN[k]==null?.2:iN[k],bundle:true}));
+      // 뉴런 하나하나의 실제 선 — 누른 점에 닿은 것만 보인다
+      (nv.edges||[]).forEach((es,l)=>{const A=layerIds[l],B=layerIds[l+1];if(!A||!B)return;
+        es.forEach(([i,k,v])=>{if(A[i]!=null&&B[k]!=null&&finite(v))edges.push({a:A[i],b:B[k],v:clamp(v,0,1),measured:true,detail:true});});});
+    }
+    // ── 수관: 나무 숲(오른쪽을 향한 반구 껍질) ──
     const seeds=Math.max(1,Math.min(8,d.seeds||1)),per=Math.max(20,Math.min(40,Math.round((d.nTrees||60)/seeds))),fid=[];
-    // 수관 = 오른쪽을 향한 반구 껍질(피보나치 점) — 가지 끝이 그 안쪽에 들어간다
-    const NL=seeds*per,CX=X1+215,CR=175*sp;
-    for(let q=0;q<NL;q++){const ux=-.25+1.25*(q+.5)/NL,rr=Math.sqrt(Math.max(0,1-ux*ux)),az=q*2.39996323,sd=q%seeds;
-      const sh=.88+.12*Math.cos(q*1.7);                 // 잎 겹의 두께
-      add({x:CX+ux*CR*sh*.8,y:Math.sin(az)*rr*CR*sh,z:Math.cos(az)*rr*CR*sh,l:groups.length,i:q,v:null,
+    const NL=seeds*per,CX=X1+230,CR=190*sp;
+    for(let q=0;q<NL;q++){const ux=-.2+1.2*(q+.5)/NL,rr=Math.sqrt(Math.max(0,1-ux*ux)),az=q*2.39996323,sd=q%seeds;
+      add({x:CX+ux*CR*.75,y:Math.sin(az)*rr*CR,z:Math.cos(az)*rr*CR,l:groups.length,i:q,v:null,
         name:'나무 숲 · 시드 '+(sd+1),label:'수관 · 나무 숲',kind:'hidden',
         desc:(d.nTrees||0)+'그루 · 시드 '+seeds+'개 앙상블'+(d.gbdt?' · 구성 '+d.gbdt.name+'('+d.gbdt.why+')':'')+' · 잎은 구조 약식'},fid);}
     groups.push({ids:fid,label:'나무 숲 · '+(d.nTrees||0)+'그루',count:d.nTrees||0});
@@ -167,15 +185,15 @@
     const gmax=Math.max(1e-9,...Object.values(gshare).filter(finite));
     Object.keys(gIds).forEach((lbl,q)=>{const sh=gshare[OMNI_GAIN[lbl]],ids=gIds[lbl];
       if(!finite(sh)||!ids.length)return;
-      edges.push({a:ids[0],b:fid[(q*7)%fid.length],v:clamp(sh/gmax,0,1)*.6,measured:true});});
+      edges.push({a:ids[ids.length-1],b:fid[(q*7)%fid.length],v:clamp(sh/gmax,0,1),measured:true,detail:true});});
     // ── 끝눈: 지평별 최종 확률 ──
     const heads=d.heads||[],aid=[];
-    hz.forEach((h,k)=>{const hd=heads.find(x=>x&&x.hz===h)||{},a=finite(alpha[k])?alpha[k]:0,ph=TAU*k/hz.length+Math.PI/5,R=175*sp;
-      const id=add({x:X1+420,y:Math.sin(ph)*R,z:Math.cos(ph)*R,l:groups.length,i:k,
+    hz.forEach((h,k)=>{const hd=heads.find(x=>x&&x.hz===h)||{},a=finite(alpha[k])?alpha[k]:0,ph=TAU*k/hz.length+Math.PI/5,R=200*sp;
+      const id=add({x:X1+470,y:Math.sin(ph)*R,z:Math.cos(ph)*R,l:groups.length,i:k,
         v:finite(hd.auc)?clamp((hd.auc-0.5)/0.05,0,1):null,name:'최종 확률 · '+(HZ_TXT[h]||h),label:'최종 확률',kind:'output',
         desc:'(1−α)·나무 숲 + α·가지 · α '+a.toFixed(1)+' · 홀드아웃 AUC '+(finite(hd.auc)?hd.auc.toFixed(3):'—')+(hd.ok?' · 발언 문턱 통과':' · 보류')},aid);
-      edges.push({a:fid[(k*per+Math.floor(per/2))%fid.length],b:id,v:clamp(1-a,0,1),measured:true});
-      edges.push({a:bids[k],b:id,v:clamp(a,0,1),measured:true});});
+      edges.push({a:fid[(k*per+Math.floor(per/2))%fid.length],b:id,v:clamp(1-a,0,1),measured:true,bundle:true});
+      if(a>0)edges.push({a:bids[k],b:id,v:clamp(a,0,1),measured:true,bundle:true});});
     groups.push({ids:aid,label:'최종 확률',count:hz.length});
     return {nodes,edges,groups};
   }
@@ -234,12 +252,12 @@
       scene=seq?sequence(d,s):om?omniScene(d,s):dense(layers);selected=-1;
       layerSelect.replaceChildren();room.querySelector('.nerve-layers').replaceChildren();
       scene.groups.forEach((g,i)=>{layerSelect.add(new Option(g.label,String(i)));const b=document.createElement('button');b.type='button';b.textContent=g.label+' / '+g.count;b.onclick=()=>inspect(g.ids[0]);room.querySelector('.nerve-layers').append(b);});
-      populate();info.textContent=seq?(scene.attn?'선택 시점의 실제 표본 어텐션을 표시합니다.':'어텐션 표본 없음 · 구조만 표시합니다.'):om?(d.nnViz?'모든 뉴런을 표시합니다. 선은 뉴런마다 들어오는 실제 가중치 상위 연결입니다(밝을수록 |w| 큼).':'신경망이 아직 안 올라왔습니다 — 나무 숲 구조만 표시합니다.'):'모든 뉴런을 표시합니다. 선은 연결 구조의 요약이며 개별 가중치가 아닙니다.';
+      populate();info.textContent=seq?(scene.attn?'선택 시점의 실제 표본 어텐션을 표시합니다.':'어텐션 표본 없음 · 구조만 표시합니다.'):om?(d.nnViz?'모든 뉴런을 표시합니다. 굵은 선은 묶음별 실제 가중치의 합입니다. 점을 누르면 그 뉴런의 실제 연결선만 보입니다.':'신경망이 아직 안 올라왔습니다 — 나무 숲 구조만 표시합니다.'):'모든 뉴런을 표시합니다. 선은 연결 구조의 요약이며 개별 가중치가 아닙니다.';
       dirty=true;wake();
     }
     function signals(){
       if(!s.motion)return;
-      const edges=scene.edges,step=Math.max(1,Math.ceil(edges.length/100));
+      const edges=scene.edges.filter(e=>!e.detail&&!e.strand),step=Math.max(1,Math.ceil(edges.length/100));
       ctx.fillStyle='rgba(255,255,255,.85)';ctx.beginPath();
       for(let i=0;i<edges.length;i+=step){
         const e=edges[i],a=points[e.a],b=points[e.b],t=(phase*.3+i*.618)%1,u=1-t;
@@ -273,8 +291,11 @@
       const edges=scene.edges;
       for(let i=0;i<edges.length;i++){
         const e=edges[i],a=points[e.a],b=points[e.b],focus=selected===e.a||selected===e.b;
-        ctx.strokeStyle=focus?'rgba(255,255,255,.85)':e.attention?'rgba(255,255,255,'+(.2+.7*e.v)+')':e.measured?'rgba(255,255,255,'+(.04+.5*e.v)+')':'rgba(255,255,255,.10)';
-        ctx.lineWidth=e.attention?1+e.v*3:e.measured?.4+e.v*1.6:focus?1:.5;
+        if(e.detail&&!focus)continue;               // [V33.430c] 개별 가중치 선은 누른 점에 닿은 것만
+        ctx.strokeStyle=focus?'rgba(255,255,255,.85)':e.attention?'rgba(255,255,255,'+(.2+.7*e.v)+')':
+          e.strand?'rgba(255,255,255,.22)':e.bundle?'rgba(255,255,255,'+(.18+.5*e.v)+')':
+          e.measured?'rgba(255,255,255,'+(.04+.5*e.v)+')':'rgba(255,255,255,.10)';
+        ctx.lineWidth=e.attention?1+e.v*3:e.ribbon?14:e.bundle?1+e.v*6:e.strand?.8:e.measured?.4+e.v*1.6:focus?1:.5;
         ctx.beginPath();ctx.moveTo(a.x,a.y);const bend=vol?0:Math.min(30,Math.abs(b.x-a.x)*.2);
         ctx.bezierCurveTo((a.x+b.x)/2,a.y-bend,(a.x+b.x)/2,b.y+bend,b.x,b.y);ctx.stroke();
       }
@@ -286,7 +307,10 @@
         if(sel||v>.8&&i%8===0){ctx.strokeStyle=sel?'#fff':'rgba(255,255,255,.15)';ctx.beginPath();ctx.arc(p.x,p.y,r+3,0,TAU);ctx.stroke();}
       }
       ctx.font='10px monospace';ctx.fillStyle='#bcbcbc';ctx.textAlign='center';
-      scene.groups.forEach(g=>{if(!g.ids.length)return;const gp=g.ids.map(id=>points[id]);const x=gp.reduce((sum,p)=>sum+p.x,0)/gp.length;const y=Math.max(14,Math.min(...gp.map(p=>p.y))-10);ctx.fillText(g.label,x,y);});
+      // [V33.430c] 좁은 화면에서는 나무 그림의 이름표를 그리지 않는다(겹치고 잘린다) — 같은 이름이 아래 버튼에 있다
+      if(!(om&&w<600))scene.groups.forEach(g=>{if(!g.ids.length)return;
+        if(g.at!=null&&points[g.at]){const p=points[g.at];ctx.textAlign='right';ctx.fillText(g.label,p.x-8,p.y+3);ctx.textAlign='center';return;}
+        const gp=g.ids.map(id=>points[id]);const x=gp.reduce((sum,p)=>sum+p.x,0)/gp.length;const y=Math.max(14,Math.min(...gp.map(p=>p.y))-10);ctx.fillText(g.label,x,y);});
       if(seq){const g=scene.groups[0];for(let t=0;t<L;t+=Math.max(1,Math.ceil(L/5))){const id=g.ids.find(id=>scene.nodes[id].t===t);if(id!=null){const p=points[id];ctx.fillText('t'+t,p.x,Math.min(h-26,p.y+40));}}}
       if(!vol){cache.width=canvas.width;cache.height=canvas.height;cache.getContext('2d').drawImage(canvas,0,0);cached=true;}
       signals();record(started);

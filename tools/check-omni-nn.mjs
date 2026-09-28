@@ -147,6 +147,15 @@ console.log("\n⑦ 눕힌 세계수 3D — 모든 입력이 뿌리 가닥 중 �
       tag + ": 옆으로 눕혔다 — 뿌리(왼쪽) → 끝눈(오른쪽)", "★좌→우 흐름이 아니다★");
   }
   const sc = NO.omniScene(d, { spread: 1 });
+  /* [V33.430c] ★선이 겹쳐 보였다(사용자)★ — 평소 보이는 선(다발)은 적어야 하고, 뉴런별 실제 선은 누를 때만 */
+  const visible = sc.edges.filter((e) => !e.detail && !e.strand);
+  const detail = sc.edges.filter((e) => e.detail);
+  const nnLines = d.nnViz.edges.reduce((a, es) => a + es.length, 0);
+  chk(visible.length <= 40 && detail.length >= nnLines && sc.edges.filter((e) => e.measured && !e.detail && !e.bundle).length === 0,
+    "평소 보이는 선 " + visible.length + "개(다발) · 뉴런별 실제 선 " + detail.length + "개는 누를 때만",
+    "★선이 너무 많이 보인다(" + visible.length + ") 또는 뉴런별 선이 늘 보인다★");
+  const eng = src.slice(src.indexOf("function draw("), src.indexOf("function tick("));
+  chk(/if\(e\.detail&&!focus\)continue;/.test(eng), "그리기: detail 선은 누른 점에 닿을 때만 그린다", "★그리기가 detail 을 늘 그린다★");
   const nullHead = sc.nodes.find((n) => n.name === "가지 · 60분 머리");
   chk(nullHead && nullHead.v === null, "홀드아웃을 못 잰 머리는 흐리게(v=null)", "★못 잰 머리에 세기를 지어냈다★");
 }
