@@ -108,7 +108,7 @@ console.log("\n⑥ 전진 교차검증 표 — 작게 · 숫자만");
   chk(M._omCvSlim(null) === null && M._omCvSlim({ table: "x" }) === null, "형식이 아니면 null", "★형식 검사 없음★");
 }
 
-console.log("\n⑦ 홀로그램 구체 핵 — 껍질 순서 · 실제 연결 한 줄씩 · 지어낸 세기 없음 · 선이 짧게(무게중심)");
+console.log("\n⑦ 홀로그램 구체 핵 — 껍질 순서 · 실제 연결 한 줄씩 · 지어낸 세기 없음 · 평소엔 가장 센 한 줄 · 구면 호");
 {
   const src = readFileSync(new URL("../public/neural-observatory.js", import.meta.url), "utf8");
   const G = {}; new Function("globalThis", "window", src)(G, G);
@@ -147,15 +147,27 @@ console.log("\n⑦ 홀로그램 구체 핵 — 껍질 순서 · 실제 연결 �
       const rIn = mean(inputs.map(rad)), r1 = byLabel(/^몸통 1$/), r2 = byLabel(/^몸통 2$/), r0 = byLabel(/^핵$/);
       chk(rIn > r1 && r1 > r2 && r2 > r0, "껍질 순서: 입력 " + rIn.toFixed(0) + " > 몸통1 " + r1.toFixed(0) + " > 몸통2 " + r2.toFixed(0) + " > 핵 " + r0.toFixed(0),
         "★껍질 순서가 틀렸다★");
-      const lines = sc.edges.filter((e) => e.strand && !e.detail && !/위성/.test(sc.nodes[e.b].name));
+      /* [V33.435] 평소엔 뉴런마다 가장 센 한 줄(핵으로 드는 선은 전부) · 나머지는 점을 누르면(detail).
+         ★실제 연결은 하나도 빠지지 않는다★(전부 선으로 있다) · 합친 선 없음. */
+      const all = sc.edges.filter((e) => e.strand && !/위성/.test(sc.nodes[e.b].name));
+      const lines = all.filter((e) => !e.detail);
       const nnLines = nnViz.edges.reduce((a, es) => a + es.length, 0);
-      chk(lines.length === nnLines && !sc.edges.some((e) => e.bundle || e.ribbon), "실제 연결 " + nnLines + "개를 한 줄씩(합친 선 없음)",
-        "★연결 수가 다르다(" + lines.length + "/" + nnLines + ")★");
+      const wantMain = nnViz.edges.slice(0, -1).reduce((a, es) => a + new Set(es.map((x) => x[1])).size, 0) + nnViz.edges[nnViz.edges.length - 1].length;
+      chk(all.length === nnLines && !sc.edges.some((e) => e.bundle || e.ribbon), "실제 연결 " + nnLines + "개가 전부 한 줄씩 있다(합친 선 없음)",
+        "★연결 수가 다르다(" + all.length + "/" + nnLines + ")★");
+      chk(lines.length === wantMain, "평소 보이는 선 " + lines.length + "개 = 뉴런마다 가장 센 한 줄 + 핵으로 드는 선(나머지는 누르면)",
+        "★평소 선 수가 틀렸다(" + lines.length + "/" + wantMain + ")★");
+      /* 질서: 호는 구 한가운데를 가로지르지 않는다 — 경유점의 반지름이 두 끝 반지름 사이에 있다 */
+      const cut = all.filter((e) => (e.path || []).slice(1, -1).some((id) => { const r = rad(sc.nodes[id]), ra = rad(sc.nodes[e.a]), rb = rad(sc.nodes[e.b]);
+        return r < Math.min(ra, rb) - 1e-6 || r > Math.max(ra, rb) + 1e-6; })).length;
+      chk(all.every((e) => Array.isArray(e.path) && e.path.length >= 3) && cut === 0, "실제 연결은 구면을 따라 휘는 호(구를 직선으로 가로지르지 않는다)",
+        "★직선이거나 구 안쪽을 가로지르는 선 " + cut + "★");
       /* 무게중심 배치가 선을 짧게 만드는가 — 입력→몸통1 선의 평균 각도 차가 무작위 배치(≈90°)보다 한참 작아야 */
       const ang = (a, b) => { const u = [a.x, a.y, a.z], w = [b.x, b.y, b.z]; const d0 = u.reduce((p, x, k) => p + x * w[k], 0) / (rad(a) * rad(b)); return Math.acos(Math.max(-1, Math.min(1, d0))) * 180 / Math.PI; };
       const l0 = lines.filter((e) => sc.nodes[e.a].kind === "input");
       const mA = mean(l0.map((e) => ang(sc.nodes[e.a], sc.nodes[e.b])));
-      chk(mA < 60, "입력→몸통1 선 평균 각도 " + mA.toFixed(0) + "° — 무게중심 배치로 짧다(무작위 ≈90°)", "★선이 구를 가로지른다(" + mA.toFixed(0) + "°)★");
+      chk(mA < 15, "평소 보이는 입력→몸통1 선 평균 각도 " + mA.toFixed(1) + "° — 가장 센 입력 바로 안쪽이라 바큇살처럼 짧다(무작위 ≈90°)",
+        "★선이 구를 가로지른다(" + mA.toFixed(1) + "°)★");
     }
   }
   const eng = src.slice(src.indexOf("function draw("), src.indexOf("function tick("));
@@ -167,6 +179,22 @@ console.log("\n⑦ 홀로그램 구체 핵 — 껍질 순서 · 실제 연결 �
   const sc = NO.omniScene(d, { spread: 1 });
   const nullHead = sc.nodes.find((n) => n.name === "핵 · 60분 머리");
   chk(nullHead && nullHead.v === null, "홀드아웃을 못 잰 머리는 흐리게(v=null)", "★못 잰 머리에 세기를 지어냈다★");
+}
+
+console.log("\n⑧ 섀도우 표시 — OMNI(섀도우)를 '판 불일치' 로 적지 않는다");
+{
+  /* [V33.435] 사용자 화면: 판도 맞고 학습도 된 OMNI 가 '모델 판 불일치' 로 떴다. 서버 rosterCls 는 state "shadow" 를
+     내는데 화면의 글자 함수들이 shadow 를 몰라 맨 끝 갈래('판 불일치')로 떨어졌다. 세 곳 모두 shadow 갈래가 있어야 한다. */
+  const ev = readFileSync(new URL("../public/model-evidence.js", import.meta.url), "utf8");
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  const tt = ev.slice(ev.indexOf("function tierText("), ev.indexOf("window.renderModelEvidence"));
+  chk(/st==='shadow'/.test(tt) && tt.indexOf("st==='shadow'") < tt.lastIndexOf("return '모델 판 불일치'"),
+    "모델 카드: shadow 갈래가 '모델 판 불일치' 보다 먼저", "★모델 카드가 섀도우를 판 불일치로 적는다★");
+  const tag = html.slice(html.indexOf("    tag: function(key){"), html.indexOf("    chipCls: function(key)"));
+  chk(/st === 'shadow'/.test(tag), "명부 글자(LUXR.tag): shadow 갈래 있음", "★LUXR.tag 가 섀도우를 판 불일치로 적는다★");
+  chk(/shadow:'◌'/.test(html) && /shadow:'섀도우 — /.test(html), "명부 불·설명(GLYPH·COLOR·TXT)에 shadow 있음", "★명부 불에 shadow 가 없다★");
+  const cm = html.slice(html.indexOf("var CMCLS"), html.indexOf("var CMCLS") + 1500);
+  chk(/stt === 'shadow'/.test(cm), "위원 목록 글자: shadow 갈래 있음", "★위원 목록이 섀도우를 판 불일치로 적는다★");
 }
 
 console.log(fails ? "\n✗ OMNI-NN 검사 실패 " + fails : "\n✓ OMNI-NN 검사 통과");

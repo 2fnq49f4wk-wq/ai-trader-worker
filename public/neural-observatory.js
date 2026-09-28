@@ -91,19 +91,23 @@
   }
   /* [V33.433] ★홀로그램 구체 신경망 핵★ — 사용자: "옴니 디자인 버리고 영화 속 AI 비서처럼 3D 로".
    *   (영화 이름·로고는 쓰지 않는다 — 빛나는 구체 격자라는 ★형태★ 만 빌린다.)
-   *   바깥 껍질 = 입력 칸(묶음마다 위도 띠) → 중간 껍질 = 몸통1 → 안쪽 껍질 = 몸통2 → 중심 핵 = 지평 머리 5
-   *   적도 고리 = 나무 숲(GBDT, 시드마다 호) · 바깥 위성 5 = 지평별 최종 확률 (1−α)·숲 + α·핵
-   * 자리 잡기: 몸통 뉴런은 ★들어오는 선들의 방향 평균★(구면 무게중심)에 둔다 → 선이 거의 반지름 방향으로 짧게
-   *   떨어져 한곳에 뭉개지지 않는다. 선은 실제 연결을 한 줄씩, 가늘게(합치지 않는다).
+   * [V33.435] ★질서★ — 사용자: "느낌은 좋은데 너무 무질서해 보인다". 느낌(호박색 가는 선 · 하늘색 고리 · 위성 ·
+   *   자동회전)은 그대로 두고 자리와 선을 정돈했다.
+   *   ① 입력 = 바깥 껍질의 ★묶음별 판(板)★: 묶음마다 경도 구역 하나 · 위도 5줄 격자에 칸이 줄지어 선다(묶음 사이 틈).
+   *   ② 몸통 뉴런 = ★가장 센 입력 바로 안쪽★(몸통1 → 중간 껍질 · 몸통2 → 안쪽 껍질) · 핵 = 중심 고리.
+   *      평소엔 뉴런마다 가장 센 연결 한 줄만 — 바큇살처럼 반지름 방향으로 떨어진다. 나머지 실제 연결은 점을 누르면.
+   *   ③ 선 = 실제 연결을 한 줄씩 ★구면을 따라 안쪽으로 휘는 호★(방향은 구면 보간 · 반지름은 선형) — 구 한가운데를
+   *      직선으로 가로지르던 것이 무질서의 주범이었다.
+   *   ④ 무작위 이웃 그물 → ★묶음 판의 격자선★ · 고리선(구조 표시 · 값 없음).
    * 밝기 = 실측값(입력 = 나가는 |w| 합 · 몸통 = 대표 네트 세기 · 선 = |w| · 핵 = 신경망 홀드아웃 AUC ·
-   *   위성 = 섞은 홀드아웃 AUC · 위성 선 = α / 1−α). 값이 없으면 흐리게 — 지어내지 않는다.
-   *   위도·경도 안내선과 고리 눈금은 ★구조 표시★(값 없음)다. */
+   *   위성 = 섞은 홀드아웃 AUC · 위성 선 = α / 1−α). 값이 없으면 흐리게 — 지어내지 않는다. */
   const OMNI_GROUPS=[['m_','5분봉'],['s_','세션'],['h_','60분봉'],['d_','일봉'],['a_','형식알파'],
     ['q_','횡단면'],['p_','피어'],['x_','맥락'],['st_','매매법'],['결측:','결측표시']];
   const OMNI_GAIN={'5분봉':'5분봉(단타)','세션':'세션','60분봉':'60분봉','일봉':'일봉(장타)','형식알파':'형식알파',
     '횡단면':'횡단면·피어','피어':'횡단면·피어','맥락':'맥락','매매법':'매매법'};
   const HZ_TXT={'30m':'30분','60m':'60분','1d':'1일','5d':'5일','20d':'20일'};
   const CORE='255,184,92', HUD='130,220,255', CORE_HI='255,226,170';
+  const OM_ROWS=[-.62,-.31,0,.31,.62];          // 입력 판의 위도 5줄(라디안)
   function omniScene(d,s){
     const nodes=[],edges=[],groups=[];
     const nv=d.nnViz&&Array.isArray(d.nnViz.layers)?d.nnViz:null;
@@ -111,81 +115,110 @@
     const alpha=Array.isArray(d.alpha)?d.alpha:hz.map(()=>0);
     const norm=a=>{const m=Math.max(1e-12,...a.filter(finite).map(Math.abs));return a.map(v=>finite(v)?v/m:null);};
     const add=(n,g)=>{g.push(nodes.length);nodes.push(n);return nodes.length-1;};
-    const sp=s.spread,R3=300*sp,R2=248*sp,R1=196*sp,R0=40*sp;
+    const sp=s.spread,R3=300*sp,R2=232*sp,R1=168*sp,R0=40*sp;
+    const sph=(lon,lat)=>[Math.cos(lat)*Math.cos(lon),Math.sin(lat),Math.cos(lat)*Math.sin(lon)];
     const unit=(x,y,z)=>{const l=Math.hypot(x,y,z)||1;return [x/l,y/l,z/l];};
-    const fib=(k,n)=>{const y=1-2*(k+.5)/n,r=Math.sqrt(Math.max(0,1-y*y)),t=k*2.39996323;return [Math.cos(t)*r,y,Math.sin(t)*r];};
-    // ── 바깥 껍질: 입력(묶음마다 연속한 위도 띠) ──
+    const via=(p)=>{nodes.push({x:p[0],y:p[1],z:p[2],hidden:true,l:-1,i:-1,v:null,name:'',label:'',kind:'via'});return nodes.length-1;};
+    const dir=[],rad=[];
+    const guide=(a,b,o)=>edges.push(Object.assign({a,b,v:.3,guide:true,straight:true},o||{}));
+    // ── ① 바깥 껍질: 묶음별 판(경도 구역 · 위도 5줄) ──
     const inNames=nv?nv.layers[0].names:(d.feats||[]);
     const inRaw=nv?(nv.layers[0].strength||[]):[];
     const inV=nv?norm(inRaw):inNames.map(()=>null);
     const gOf=nm=>{const g=OMNI_GROUPS.findIndex(([p])=>String(nm).indexOf(p)===0);return g<0?7:g;};
-    const order=inNames.map((nm,i)=>i).sort((a,b)=>gOf(inNames[a])-gOf(inNames[b])||a-b);
-    const inId=new Array(inNames.length),dir=[],gIds={};
-    order.forEach((i,k)=>{const u=fib(k,order.length);
-      const g=gOf(inNames[i]);
-      const id=add({x:u[0]*R3,y:u[1]*R3,z:u[2]*R3,l:0,i,v:inV[i],name:inNames[i],label:'입력 · '+OMNI_GROUPS[g][1],kind:'input',rgb:CORE,
-        desc:OMNI_GROUPS[g][1]+(inV[i]==null?' · 입력 칸':' · 나가는 연결 세기 '+(inV[i]*100).toFixed(0)+'%(최대 대비)')},(gIds[g]=gIds[g]||[]));
-      inId[i]=id;dir[id]=u;});
-    Object.keys(gIds).map(Number).sort((a,b)=>a-b).forEach(g=>{const ids=gIds[g];
-      groups.push({ids,label:OMNI_GROUPS[g][1],count:ids.length,at:ids[Math.floor(ids.length/2)]});});
+    const gIds={},members={};
+    inNames.forEach((nm,i)=>{(members[gOf(nm)]=members[gOf(nm)]||[]).push(i);});
+    const gKeys=Object.keys(members).map(Number).sort((a,b)=>a-b),NR=OM_ROWS.length;
+    const cols=gKeys.map(g=>Math.ceil(members[g].length/NR)),C=cols.reduce((p,q)=>p+q,0)+gKeys.length;   // 묶음마다 틈 한 칸
+    const pitch=TAU/Math.max(1,C),inId=new Array(inNames.length);
+    let col=0;
+    gKeys.forEach((g,q)=>{const ms=members[g],nc=cols[q],grid=[];
+      for(let c=0;c<nc;c++){const m=Math.min(NR,ms.length-c*NR),r0=Math.floor((NR-m)/2);grid.push([]);
+        for(let r=0;r<m;r++){const i=ms[c*NR+r],u=sph((col+c+.5)*pitch,OM_ROWS[r0+r]);
+          const id=add({x:u[0]*R3,y:u[1]*R3,z:u[2]*R3,l:0,i,v:inV[i],name:inNames[i],label:'입력 · '+OMNI_GROUPS[g][1],kind:'input',rgb:CORE,
+            desc:OMNI_GROUPS[g][1]+(inV[i]==null?' · 입력 칸':' · 나가는 연결 세기 '+(inV[i]*100).toFixed(0)+'%(최대 대비)')},(gIds[g]=gIds[g]||[]));
+          inId[i]=id;dir[id]=u;rad[id]=R3;grid[c][r0+r]=id;}}
+      // 판의 격자선(구조 표시): 같은 줄 이웃 · 같은 열 이웃
+      for(let c=0;c<nc;c++)for(let r=0;r<NR;r++){const id=grid[c][r];if(id==null)continue;
+        if(c+1<nc&&grid[c+1][r]!=null)guide(id,grid[c+1][r],{mesh:true});
+        if(r+1<NR&&grid[c][r+1]!=null)guide(id,grid[c][r+1],{mesh:true});}
+      // 묶음 이름표(앞쪽을 향할 때만) — 판 위쪽 바깥
+      const lu=sph((col+nc/2)*pitch,-.8),lid=via([lu[0]*R3*1.08,lu[1]*R3*1.08,lu[2]*R3*1.08]);
+      nodes[lid].tag=OMNI_GROUPS[g][1];nodes[lid].front=true;
+      col+=nc+1;});
+    gKeys.forEach(g=>{const ids=gIds[g];groups.push({ids,label:OMNI_GROUPS[g][1],count:ids.length,at:ids[Math.floor(ids.length/2)]});});
     groups.forEach((g,q)=>g.ids.forEach(id=>{nodes[id].l=q;}));
-    // ── 몸통 껍질: 들어오는 선들의 방향 평균에 ──
+    // ── ② 몸통 껍질: ★가장 센 입력 바로 안쪽★ — 평소 보이는 선이 반지름 방향 바큇살이 된다 ──
+    //   (같은 입력을 고른 뉴런이 여럿이면 경도로 반 칸씩 비켜 선다 — 한 점에 겹치지 않는다)
+    const top1={};                      // 층 → {도착 뉴런: 가장 센 들어오는 연결의 출발 번호}
+    if(nv)(nv.edges||[]).forEach((es,l)=>{const t={};es.forEach(([i,k,v])=>{if(finite(v)&&(t[k]==null||v>t[k][1]))t[k]=[i,v];});top1[l]=t;});
     const layerIds=[inId];
     const trunk=nv?nv.layers.slice(1,-1):[];
     let prev=inId;
     trunk.forEach((ly,k)=>{
-      const ids=[],v=norm(ly.strength||[]),n=ly.size||v.length,R=k?R1:R2;
-      const E=(nv.edges&&nv.edges[k])||[],acc=Array.from({length:n},()=>[0,0,0,0]);
-      E.forEach(([a,b,w])=>{const pid=prev[a];if(pid==null||!acc[b])return;const u=dir[pid];const ww=finite(w)?w:0;
-        acc[b][0]+=u[0]*ww;acc[b][1]+=u[1]*ww;acc[b][2]+=u[2]*ww;acc[b][3]+=ww;});
+      const ids=[],v=norm(ly.strength||[]),n=ly.size||v.length,R=k?R1:R2,t1=top1[k]||{},used={};
       for(let i=0;i<n;i++){
-        const f=fib(i,n),a=acc[i],u=a[3]>0?unit(a[0]*.88/a[3]+f[0]*.12,a[1]*.88/a[3]+f[1]*.12,a[2]*.88/a[3]+f[2]*.12):f;
+        let u;const src=t1[i]!=null?prev[t1[i][0]]:null;
+        if(src!=null){const du=dir[src],lon=Math.atan2(du[2],du[0]),lat=Math.asin(clamp(du[1],-1,1)),c=used[src]=(used[src]||0)+1;
+          const sh=(c-1)?(c%2?-1:1)*Math.ceil((c-1)/2)*pitch*.42:0;u=sph(lon+sh,lat*(k?.8:.9));}
+        else u=sph(TAU*i/n,0);
         const id=add({x:u[0]*R,y:u[1]*R,z:u[2]*R,l:groups.length,i,v:v[i],name:ly.name+' · #'+i,label:ly.name,kind:'hidden',rgb:CORE,
-          desc:(v[i]==null?'':'나가는 연결 세기 '+(v[i]*100).toFixed(0)+'%(최대 대비) · ')+'모든 지평이 같이 쓴다 · 누르면 실제 연결선'},ids);
-        dir[id]=u;}
+          desc:(v[i]==null?'':'나가는 연결 세기 '+(v[i]*100).toFixed(0)+'%(최대 대비) · ')+'모든 지평이 같이 쓴다 · 누르면 실제 연결선 전부'},ids);
+        dir[id]=u;rad[id]=R;}
       layerIds.push(ids);groups.push({ids,label:ly.name+' · '+n,count:n});prev=ids;
     });
     // ── 중심 핵: 지평 머리 5(적도 작은 고리) ──
     const hl=nv?nv.layers[nv.layers.length-1]:null,hv=hl?hl.strength||[]:[],bids=[];
     hz.forEach((h,k)=>{const t=TAU*k/hz.length,e=hv[k];
-      add({x:Math.cos(t)*R0,y:0,z:Math.sin(t)*R0,l:groups.length,i:k,v:finite(e)?clamp(e/0.05,0,1):null,
+      const id=add({x:Math.cos(t)*R0,y:0,z:Math.sin(t)*R0,l:groups.length,i:k,v:finite(e)?clamp(e/0.05,0,1):null,
         name:'핵 · '+(HZ_TXT[h]||h)+' 머리',label:'핵',kind:'output',rgb:CORE_HI,
-        desc:nv?(finite(e)?'신경망 단독 홀드아웃 AUC '+(0.5+e).toFixed(3):'홀드아웃 못 쟀다'):'신경망이 아직 없다'},bids);});
+        desc:nv?(finite(e)?'신경망 단독 홀드아웃 AUC '+(0.5+e).toFixed(3):'홀드아웃 못 쟀다'):'신경망이 아직 없다'},bids);
+      dir[id]=[Math.cos(t),0,Math.sin(t)];rad[id]=R0;});
+    bids.forEach((id,j)=>guide(id,bids[(j+1)%bids.length],{mesh:true}));
     layerIds.push(bids);groups.push({ids:bids,label:'핵 · 지평 머리',count:hz.length});
-    // ── 실제 연결: 한 줄씩(반지름 방향 · 합치지 않는다) ──
+    // ── ③ 실제 연결: 한 줄씩 · 구면을 따라 안쪽으로 휘는 호(합치지 않는다) ──
+    const SEG=6;
+    const arc=(a,b)=>{const ua=dir[a],ub=dir[b],ra=rad[a],rb=rad[b],path=[a];
+      const dot=clamp(ua[0]*ub[0]+ua[1]*ub[1]+ua[2]*ub[2],-1,1),om=Math.acos(dot),so=Math.sin(om);
+      for(let q=1;q<SEG;q++){const t=q/SEG,r=ra+(rb-ra)*t;
+        const f0=so>1e-6?Math.sin((1-t)*om)/so:1-t,f1=so>1e-6?Math.sin(t*om)/so:t;
+        const u=unit(ua[0]*f0+ub[0]*f1,ua[1]*f0+ub[1]*f1,ua[2]*f0+ub[2]*f1);
+        path.push(via([u[0]*r,u[1]*r,u[2]*r]));}
+      path.push(b);return path;};
     if(nv)(nv.edges||[]).forEach((es,l)=>{const A=layerIds[l],B=layerIds[l+1];if(!A||!B)return;
-      es.forEach(([i,k,v])=>{if(A[i]!=null&&B[k]!=null&&finite(v))edges.push({a:A[i],b:B[k],v:clamp(v,0,1),measured:true,strand:true,straight:true});});});
-    // ── 격자(구조 표시 · 값 없음): 바깥 껍질의 이웃한 입력끼리 가는 선 — 홀로그램 그물 ──
-    {const ids=inId.filter(x=>x!=null),seen=new Set();
-      ids.forEach(a=>{const na=nodes[a];
-        const near=ids.filter(b=>b!==a).map(b=>[b,(nodes[b].x-na.x)**2+(nodes[b].y-na.y)**2+(nodes[b].z-na.z)**2]).sort((p,q)=>p[1]-q[1]).slice(0,3);
-        near.forEach(([b])=>{const k=a<b?a+':'+b:b+':'+a;if(seen.has(k))return;seen.add(k);edges.push({a,b,v:.3,guide:true,mesh:true,straight:true});});});}
-    // ── 안내선(구조 표시 · 값 없음): 바깥 껍질의 위도 3개 · 경도 4개 ──
-    const ring=(pts,label)=>{const ids=[];pts.forEach(p=>{nodes.push({x:p[0],y:p[1],z:p[2],hidden:true,l:-1,i:-1,v:null,name:'',label:'',kind:'via'});ids.push(nodes.length-1);});
-      for(let q=0;q<ids.length;q++)edges.push({a:ids[q],b:ids[(q+1)%ids.length],v:.3,guide:true,straight:true});};
-    for(const lat of [-.5,0,.5]){const r=Math.sqrt(1-lat*lat)*R3*1.02;ring(Array.from({length:48},(_,q)=>[Math.cos(TAU*q/48)*r,lat*R3*1.02,Math.sin(TAU*q/48)*r]));}
-    for(let m=0;m<4;m++){const t=Math.PI*m/4;ring(Array.from({length:48},(_,q)=>{const a=TAU*q/48;return [Math.cos(a)*Math.cos(t)*R3*1.02,Math.sin(a)*R3*1.02,Math.cos(a)*Math.sin(t)*R3*1.02];}));}
+      const last=l===nv.edges.length-1,t1=top1[l]||{};
+      es.forEach(([i,k,v])=>{if(A[i]!=null&&B[k]!=null&&finite(v)){
+        // 평소엔 뉴런마다 ★가장 센 한 줄★(핵으로 드는 선은 전부) · 나머지는 그 점을 누르면(detail)
+        const main=last||(t1[k]&&t1[k][0]===i);
+        edges.push({a:A[i],b:B[k],v:clamp(v,0,1),measured:true,strand:true,detail:!main,path:arc(A[i],B[k])});}});});
+    // ── 구의 윤곽(구조 표시 · 값 없음): 적도 · 자오선 둘 ──
+    const ring=(pts)=>{const ids=pts.map(via);for(let q=0;q<ids.length;q++)guide(ids[q],ids[(q+1)%ids.length]);};
+    const RO=R3*1.05;
+    ring(Array.from({length:64},(_,q)=>[Math.cos(TAU*q/64)*RO,0,Math.sin(TAU*q/64)*RO]));
+    for(const Rk of [R2,R1])ring(Array.from({length:48},(_,q)=>[Math.cos(TAU*q/48)*Rk,0,Math.sin(TAU*q/48)*Rk]));
+    for(const t of [0,Math.PI/2])ring(Array.from({length:64},(_,q)=>{const a=TAU*q/64;return [Math.cos(a)*Math.cos(t)*RO,Math.sin(a)*RO,Math.cos(a)*Math.sin(t)*RO];}));
     // ── 적도 고리: 나무 숲(시드마다 호 · 눈금은 구조 약식) ──
     const seeds=Math.max(1,Math.min(8,d.seeds||1)),per=Math.max(12,Math.min(30,Math.round((d.nTrees||60)/seeds/3))),fid=[];
-    const RR=345*sp,gap=.08;
-    for(let sd=0;sd<seeds;sd++)for(let j=0;j<per;j++){const t=TAU*sd/seeds+gap/2+(TAU/seeds-gap)*(j+.5)/per,tilt=.18;
-      add({x:Math.cos(t)*RR,y:Math.sin(t)*RR*Math.sin(tilt),z:Math.sin(t)*RR*Math.cos(tilt),l:groups.length,i:sd*per+j,v:null,
+    const RR=350*sp,gap=.08;
+    for(let sd=0;sd<seeds;sd++)for(let j=0;j<per;j++){const t=TAU*sd/seeds+gap/2+(TAU/seeds-gap)*(j+.5)/per;
+      add({x:Math.cos(t)*RR,y:0,z:Math.sin(t)*RR,l:groups.length,i:sd*per+j,v:null,
         name:'나무 숲 · 시드 '+(sd+1),label:'고리 · 나무 숲',kind:'hidden',rgb:HUD,
         desc:(d.nTrees||0)+'그루 · 시드 '+seeds+'개 앙상블'+(d.gbdt?' · 구성 '+d.gbdt.name+'('+d.gbdt.why+')':'')+' · 눈금은 구조 약식'},fid);
-      if(j)edges.push({a:fid[fid.length-2],b:fid[fid.length-1],v:.5,guide:true,hud:true,straight:true});}
+      if(j)guide(fid[fid.length-2],fid[fid.length-1],{hud:true});}
     groups.push({ids:fid,label:'고리 · 나무 숲 '+(d.nTrees||0)+'그루',count:d.nTrees||0});
     const gshare={};(d.groups||[]).forEach(g=>{gshare[g.name]=g.share;});
     const gmax=Math.max(1e-9,...Object.values(gshare).filter(finite));
-    Object.keys(gIds).forEach((g,q)=>{const sh=gshare[OMNI_GAIN[OMNI_GROUPS[g][1]]],ids=gIds[g];
-      if(!finite(sh)||!ids.length)return;
+    gKeys.forEach((g,q)=>{const sh=gshare[OMNI_GAIN[OMNI_GROUPS[g][1]]],ids=gIds[g];
+      if(!finite(sh)||!ids||!ids.length)return;
       edges.push({a:ids[Math.floor(ids.length/2)],b:fid[(q*7)%fid.length],v:clamp(sh/gmax,0,1),measured:true,detail:true,straight:true});});
     // ── 위성: 지평별 최종 확률 ──
     const heads=d.heads||[],aid=[];
-    hz.forEach((h,k)=>{const hd=heads.find(x=>x&&x.hz===h)||{},a=finite(alpha[k])?alpha[k]:0,t=TAU*k/hz.length,RS=410*sp;
-      const id=add({x:Math.cos(t)*RS,y:-40*sp,z:Math.sin(t)*RS,l:groups.length,i:k,
+    hz.forEach((h,k)=>{const hd=heads.find(x=>x&&x.hz===h)||{},a=finite(alpha[k])?alpha[k]:0,t=TAU*k/hz.length,RS=420*sp;
+      const id=add({x:Math.cos(t)*RS,y:0,z:Math.sin(t)*RS,l:groups.length,i:k,
         v:finite(hd.auc)?clamp((hd.auc-0.5)/0.05,0,1):null,name:'위성 · '+(HZ_TXT[h]||h)+' 최종 확률',label:'최종 확률',kind:'output',rgb:HUD,tag:HZ_TXT[h]||h,
         desc:'(1−α)·나무 숲 + α·핵 · α '+a.toFixed(1)+' · 홀드아웃 AUC '+(finite(hd.auc)?hd.auc.toFixed(3):'—')+(hd.ok?' · 발언 문턱 통과':' · 보류')},aid);
-      edges.push({a:fid[(k*per+Math.floor(per/2))%fid.length],b:id,v:clamp(1-a,0,1),measured:true,strand:true,straight:true,hud:true});
+      const fk=fid.reduce((best,f)=>{const n=nodes[f],dd=(n.x-Math.cos(t)*RR)**2+(n.z-Math.sin(t)*RR)**2;return dd<best[1]?[f,dd]:best;},[fid[0],Infinity])[0];
+      edges.push({a:fk,b:id,v:clamp(1-a,0,1),measured:true,strand:true,straight:true,hud:true});
       if(a>0)edges.push({a:bids[k],b:id,v:clamp(a,0,1),measured:true,strand:true,straight:true});});
     groups.push({ids:aid,label:'위성 · 최종 확률',count:hz.length});
     return {nodes,edges,groups};
@@ -245,7 +278,7 @@
       scene=seq?sequence(d,s):om?omniScene(d,s):dense(layers);selected=-1;
       layerSelect.replaceChildren();room.querySelector('.nerve-layers').replaceChildren();
       scene.groups.forEach((g,i)=>{layerSelect.add(new Option(g.label,String(i)));const b=document.createElement('button');b.type='button';b.textContent=g.label+' / '+g.count;b.onclick=()=>inspect(g.ids[0]);room.querySelector('.nerve-layers').append(b);});
-      populate();info.textContent=seq?(scene.attn?'선택 시점의 실제 표본 어텐션을 표시합니다.':'어텐션 표본 없음 · 구조만 표시합니다.'):om?(d.nnViz?'모든 뉴런과 실제 연결을 한 줄씩 그립니다(밝을수록 |w| 큼). 점을 누르면 그 뉴런의 선만 남습니다. 위도·경도선과 고리 눈금은 구조 표시입니다.':'신경망이 아직 안 올라왔습니다 — 나무 숲 구조만 표시합니다.'):'모든 뉴런을 표시합니다. 선은 연결 구조의 요약이며 개별 가중치가 아닙니다.';
+      populate();info.textContent=seq?(scene.attn?'선택 시점의 실제 표본 어텐션을 표시합니다.':'어텐션 표본 없음 · 구조만 표시합니다.'):om?(d.nnViz?'뉴런마다 가장 센 실제 연결 한 줄을 그립니다(밝을수록 |w| 큼). 점을 누르면 그 뉴런의 실제 연결이 전부 나옵니다. 격자선·고리선·고리 눈금은 구조 표시입니다.':'신경망이 아직 안 올라왔습니다 — 나무 숲 구조만 표시합니다.'):'모든 뉴런을 표시합니다. 선은 연결 구조의 요약이며 개별 가중치가 아닙니다.';
       dirty=true;wake();
     }
     function signals(){
@@ -278,7 +311,7 @@
       });
       let xmin=Infinity,xmax=-Infinity,ymin=Infinity,ymax=-Infinity;
       for(const p of raw){xmin=Math.min(xmin,p.x);xmax=Math.max(xmax,p.x);ymin=Math.min(ymin,p.y);ymax=Math.max(ymax,p.y);}
-      const fit=Math.min((w-48)/Math.max(1,xmax-xmin),(h-65)/Math.max(1,ymax-ymin));
+      const fit=Math.min((w-(om?120:48))/Math.max(1,xmax-xmin),(h-65)/Math.max(1,ymax-ymin));   // om: 위성 이름표 자리
       const scale=Math.max(.01,fit)*s.zoom,cx=(xmin+xmax)/2,cy=(ymin+ymax)/2;
       points=raw.map(p=>({x:(p.x-cx)*scale+w/2+s.panX,y:(p.y-cy)*scale+h/2+s.panY,z:p.z,k:p.k}));
       const dfOf=p=>clamp(.18+.82*(1-(p.z+320)/640),.12,1);   // 깊이 → 투명도(앞 1 · 뒤 0.12)
@@ -292,7 +325,7 @@
         // [V33.433] 깊이 — 구의 뒤쪽(먼 쪽)은 흐리게. 앞뒤가 한 평면에 겹쳐 엉켜 보이던 것을 푼다(홀로그램의 깊이).
         const df=om?Math.min(dfOf(a),dfOf(b)):1;
         ctx.globalAlpha=df;
-        if(e.guide){ctx.strokeStyle='rgba('+HUD+','+(e.hud?.55:e.mesh?.13:.07)+')';ctx.lineWidth=e.hud?1:.5;
+        if(e.guide){ctx.strokeStyle='rgba('+HUD+','+(e.hud?.55:e.mesh?.24:.08)+')';ctx.lineWidth=e.hud?1:.5;
           ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();continue;}
         ctx.strokeStyle=focus?'rgba(255,255,255,.95)':e.attention?'rgba(255,255,255,'+(.2+.7*e.v)+')':
           e.strand?'rgba('+ec+','+((om?.1+.38*e.v:.16+.5*e.v)*(selected>=0?.22:1))+')':e.bundle?'rgba(255,255,255,'+(.18+.5*e.v)+')':
@@ -320,7 +353,9 @@
       ctx.font='10px monospace';ctx.fillStyle='#bcbcbc';ctx.textAlign='center';
       // [V33.430c] 좁은 화면에서는 나무 그림의 이름표를 그리지 않는다(겹치고 잘린다) — 같은 이름이 아래 버튼에 있다
       // [V33.433] 구체 핵은 묶음 이름표를 그리지 않는다(구 안쪽에 겹친다) — 아래 버튼·설명에 있다. 위성엔 지평 이름.
-      if(om){ctx.textAlign='left';for(let q=0;q<scene.nodes.length;q++){const n=scene.nodes[q];if(n.tag&&points[q])ctx.fillText(n.tag,points[q].x+9,points[q].y+3);}ctx.textAlign='center';}
+      if(om){const drawn=[];for(let q=0;q<scene.nodes.length;q++){const n=scene.nodes[q],p=points[q];if(!n.tag||!p)continue;
+        if(n.front){const f=dfOf(p);if(f<.72||drawn.some(o=>Math.abs(o.x-p.x)<n.tag.length*11&&Math.abs(o.y-p.y)<14))continue;drawn.push(p);ctx.globalAlpha=f*.8;ctx.textAlign='center';ctx.fillStyle='rgb('+HUD+')';ctx.fillText(n.tag,p.x,p.y);ctx.fillStyle='#bcbcbc';ctx.globalAlpha=1;continue;}
+        ctx.textAlign='left';ctx.fillText(n.tag,p.x+9,p.y+3);}ctx.textAlign='center';}
       if(!om)scene.groups.forEach(g=>{if(!g.ids.length)return;
         if(g.at!=null&&points[g.at]){const p=points[g.at];ctx.textAlign='right';ctx.fillText(g.label,p.x-8,p.y+3);ctx.textAlign='center';return;}
         const gp=g.ids.map(id=>points[id]);const x=gp.reduce((sum,p)=>sum+p.x,0)/gp.length;const y=Math.max(14,Math.min(...gp.map(p=>p.y))-10);ctx.fillText(g.label,x,y);});
