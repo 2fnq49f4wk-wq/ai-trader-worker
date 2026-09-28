@@ -122,6 +122,7 @@ FLOW_RAW = ["w_fr5", "w_fr20", "w_or5", "w_or20", "w_fh20"]
 FLOW_Q = ["q_fr5", "q_fr20", "q_or5", "q_or20", "q_fh20"]
 FLOW_FEATS = FLOW_RAW + FLOW_Q
 FLOW_MIN_DAYS = 21
+FLOW_GAIN = 0.005          # [V33.434] 수급 채택 기준 — 한국 행 홀드아웃 AUC 가 이만큼은 올라야 한다(문턱 아님 · 낮추지 않는다)
 if FLOW:
     FEATS = FEATS + FLOW_FEATS
     PANEL_FEATS = PANEL_FEATS + FLOW_FEATS
@@ -2367,11 +2368,64 @@ def flow_compare(A, rep_with, log=print):
     f = lambda v: "—" if v is None else "%.4f" % v
     log("   · OMNI 수급 실험 — 수급 칸이 찬 행 %.1f%% · 전체 홀드아웃 AUC 비움 %s → 채움 %s · ★한국 행★ 비움 %s → 채움 %s"
         % (fill * 100, f(e0.get("auc")), f(e1.get("auc")), f(k0), f(k1)))
-    for hz in HORIZONS:
-        a0 = ((rep0.get("heads") or {}).get(hz) or {}).get("byMkt", {}).get("kr", {}).get("auc")
-        a1 = (((rep_with.get("headsG") or rep_with.get("heads") or {}).get(hz) or {}).get("byMkt") or {}).get("kr", {}).get("auc")
-        log("     %s 한국  비움 %s · 채움 %s" % (hz, f(a0), f(a1)))
-    return {"fill": fill, "all0": e0.get("auc"), "all1": e1.get("auc"), "kr0": k0, "kr1": k1}
+    def kr_hz(rep, hz):
+        return (((rep.get("headsG") or rep.get("heads") or {}).get(hz) or {}).get("byMkt") or {}).get("kr") or {}
+
+    def per_hz(rep1, rep0_):
+        for hz in HORIZONS:
+            b0, b1 = kr_hz(rep0_, hz), kr_hz(rep1, hz)
+            log("     %s 한국  비움 %s · 채움 %s · n %s" % (hz, f(b0.get("auc")), f(b1.get("auc")), b1.get("n", "—")))
+    per_hz(rep_with, rep0)
+    out = {"fill": fill, "all0": e0.get("auc"), "all1": e1.get("auc"), "kr0": k0, "kr1": k1}
+    if not cols:
+        return out
+
+    # [V33.434] ② 정렬 점검 — 같은 창의 외국인 순매수와 수익은 뚜렷한 양의 상관이어야 한다.
+    #   하루 밀려 붙었거나 날짜가 틀리면 이 값이 0 근처로 무너진다(미래 혼입이면 비정상적으로 크다).
+    X = A["X"]
+    kr = A["mkt"] == 1
+    for fk, rk in (("w_fr5", "d_r5"), ("w_fr20", "d_r20")):
+        if fk in MODEL_FEATS and rk in MODEL_FEATS:
+            a_, b_ = X[:, MODEL_FEATS.index(fk)], X[:, MODEL_FEATS.index(rk)]
+            ok = kr & np.isfinite(a_) & np.isfinite(b_)
+            c = float(np.corrcoef(a_[ok], b_[ok])[0, 1]) if ok.sum() >= 100 else None
+            out["align_" + fk] = c
+            log("   · OMNI 수급 정렬 점검 — corr(%s, %s) 한국 %d행 = %s (정상이면 뚜렷한 양수)"
+                % (fk, rk, int(ok.sum()), f(c)))
+
+    # [V33.434] ③(b) ★수급이 있는 기간만★ — 1차 실험은 수급이 최근 ⅓ 에만 있어 '칸이 비었나' 가 곧
+    #   '옛날인가' 였다(결측 방향으로 시기를 배운다). 수급이 찬 행의 결정시각 10% 분위부터만 잘라
+    #   같은 규칙(같은 홀드아웃 절단 · 같은 교차검증)으로 채움/비움을 다시 잰다.
+    has = np.isfinite(X[:, cols]).any(axis=1)
+    if has.sum() < 1000:
+        return out
+    t0 = float(np.quantile(A["td"][has], 0.10))
+    sel = np.flatnonzero(A["td"] >= t0)
+    W = {k: ([A["sym"][i] for i in sel] if k == "sym" else A[k][sel]) for k in A}
+    W0 = dict(W)
+    W0["X"] = W["X"].copy()
+    W0["X"][:, cols] = np.nan
+    _nn = NN_ON
+    NN_ON = False
+    try:
+        _, rw1 = train_model(W, log=lambda *a: None)
+        _, rw0 = train_model(W0, log=lambda *a: None)
+    finally:
+        NN_ON = _nn
+    import datetime as _dt
+    wf = float(has[sel].mean())
+    ew1, ew0 = holdout_edge(rw1.get("heads")), holdout_edge(rw0.get("heads"))
+    kw1, kw0 = kr_auc(rw1), kr_auc(rw0)
+    gain = (kw1 - kw0) if (kw1 is not None and kw0 is not None) else None
+    log("   · OMNI 수급 실험(기간 한정 %s~) — %d행 · 수급 칸 찬 행 %.1f%% · 전체 비움 %s → 채움 %s · ★한국 행★ 비움 %s → 채움 %s"
+        % (_dt.datetime.fromtimestamp(t0, _dt.timezone.utc).strftime("%Y-%m-%d"), len(sel), wf * 100,
+           f(ew0.get("auc")), f(ew1.get("auc")), f(kw0), f(kw1)))
+    per_hz(rw1, rw0)
+    log("   · OMNI 수급 판정(기간 한정) — 한국 행 %s (채택 기준 +%.3f 이상 · 3구간 중 2구간 승은 다음 단계)"
+        % ("—" if gain is None else "%+.4f" % gain, FLOW_GAIN))
+    out.update(win_t0=t0, win_rows=int(len(sel)), win_fill=wf, win_all0=ew0.get("auc"), win_all1=ew1.get("auc"),
+               win_kr0=kw0, win_kr1=kw1, win_gain=gain)
+    return out
 
 
 def revert_if_worse(rep, log=print):
