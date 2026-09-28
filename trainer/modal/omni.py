@@ -110,6 +110,22 @@ if KSEC:
 
 PANEL_FEATS = ["q_r1", "q_r5", "q_r20", "q_rv20", "q_rsi", "q_volr", "q_hi252", "q_ill",
                "p_ex1", "p_ex5", "p_ex20", "p_beta60", "p_corr60", "p_disp", "p_n"]
+# ══ [V33.430] ★한국 종목 수급(외국인·기관 순매수) — 실험 스위치(재기만 · 업로드 거부)★ ═══════════════
+#   워커 수집기(omniFlowCollect)가 모은 일별 순매수 이력을 ★패널★ 로 붙인다(전일 확정 일봉과 같은 날짜 규칙 —
+#   그 날짜까지 확정된 값만 본다). 미국 종목은 수급이 없으므로 NaN(모르면 모른다).
+#     w_fr5·w_fr20 = 외국인 순매수 합 / 거래량 합(5·20일) · w_or5·w_or20 = 기관 같은 식 · w_fh20 = 외국인 보유율 20일 변화(%p)
+#     q_* = 같은 날 한국 종목 안에서의 분위(0~1)
+#   ★재기 전에는 안 올린다★ — OMNI_FLOW=1 회차는 같은 표본으로 '수급 칸 비움(기준선)' 과 '채움' 을 둘 다 학습해
+#   한국 행의 홀드아웃 AUC 를 나란히 적고, run() 이 업로드를 거부한다(KSEC 와 같은 규율).
+FLOW = os.environ.get("OMNI_FLOW") == "1"
+FLOW_RAW = ["w_fr5", "w_fr20", "w_or5", "w_or20", "w_fh20"]
+FLOW_Q = ["q_fr5", "q_fr20", "q_or5", "q_or20", "q_fh20"]
+FLOW_FEATS = FLOW_RAW + FLOW_Q
+FLOW_MIN_DAYS = 21
+if FLOW:
+    FEATS = FEATS + FLOW_FEATS
+    PANEL_FEATS = PANEL_FEATS + FLOW_FEATS
+    NN_ON = False               # 실험은 나무끼리 비교한다(신경망은 따로 흔들려 비교를 흐린다)
 PANEL_MIN = 20          # 이보다 적으면 랭크를 만들지 않는다(모르면 모른다)
 PANEL_SRC = {"q_r1": "d_r1", "q_r5": "d_r5", "q_r20": "d_r20", "q_rv20": "d_rv20",
              "q_rsi": "d_rsi14", "q_volr": "d_volr", "q_hi252": "d_hi252", "q_ill": "a_ill20"}
@@ -509,7 +525,35 @@ def _qrank(vals):
     return out
 
 
-def build_panel(daily_by_sym, mkt_by_sym, day_key):
+def flow_feats(fl, day_key):
+    """한 종목 수급 이력 → 그 날짜(포함)까지의 수급 칸. 모자라면 NaN. ★미래를 안 본다★(날짜 ≤ day_key)."""
+    import bisect
+    out = {k: NAN for k in FLOW_RAW}
+    if not fl or not fl.get("d"):
+        return out
+    d = fl["d"]
+    i = bisect.bisect_right(d, int(day_key)) - 1
+    if i < FLOW_MIN_DAYS - 1:
+        return out
+    f, o, h, v = fl.get("f") or [], fl.get("o") or [], fl.get("h") or [], fl.get("v") or []
+
+    def ratio(x, n):
+        a = i - n + 1
+        num = [x[k] for k in range(a, i + 1) if k < len(x) and x[k] is not None]
+        den = [v[k] for k in range(a, i + 1) if k < len(v) and v[k] is not None and v[k] > 0]
+        if len(num) < n or len(den) < n:
+            return NAN
+        s_ = float(sum(den))
+        return _fin(float(sum(num)) / s_) if s_ > 0 else NAN
+
+    out["w_fr5"], out["w_fr20"] = ratio(f, 5), ratio(f, 20)
+    out["w_or5"], out["w_or20"] = ratio(o, 5), ratio(o, 20)
+    if i < len(h) and i - 20 >= 0 and h[i] is not None and h[i - 20] is not None:
+        out["w_fh20"] = _fin(float(h[i]) - float(h[i - 20]))
+    return out
+
+
+def build_panel(daily_by_sym, mkt_by_sym, day_key, flows=None):
     """그 날짜(현지 날짜 키)의 패널. 반환 {sym: {패널칸: 값}}.
     ★그 날짜까지 확정된 일봉만★ 본다 — 미래를 한 칸도 안 읽는다."""
     per = {}
@@ -578,13 +622,23 @@ def build_panel(daily_by_sym, mkt_by_sym, day_key):
             row["p_disp"] = disp
             row["p_n"] = float(n)
             out[s2] = row
+        # [V33.430] 수급 — 이 시장에서 수급 이력이 있는 종목만. 원값 + 같은 날 분위.
+        if FLOW and flows:
+            ff = {s2: flow_feats(flows.get(s2), day_key) for s2 in syms}
+            for raw, q in zip(FLOW_RAW, FLOW_Q):
+                col = [ff[s2][raw] for s2 in syms]
+                have = [c for c in col if c == c]
+                rk = _qrank([c if c == c else None for c in col]) if len(have) >= PANEL_MIN else [None] * len(col)
+                for a, s2 in enumerate(syms):
+                    out[s2][raw] = ff[s2][raw]
+                    out[s2][q] = rk[a] if rk[a] is not None else NAN
     return out
 
 
 PANEL_MAX_DAYS = 1200      # 패널을 만드는 날 수 상한(최근부터) — 학습 시간이 종목×날로 늘어나는 걸 막는다
 
 
-def build_panels(daily_by_sym, mkt_by_sym, max_days=PANEL_MAX_DAYS):
+def build_panels(daily_by_sym, mkt_by_sym, max_days=PANEL_MAX_DAYS, flows=None):
     """여러 날의 패널을 한 번에. 반환 {날짜키: {sym: 패널행}}.
     날짜는 ★일봉이 실제로 있는 날★ 만 — 없는 날의 패널을 지어내지 않는다."""
     keys = set()
@@ -595,7 +649,7 @@ def build_panels(daily_by_sym, mkt_by_sym, max_days=PANEL_MAX_DAYS):
     days = sorted(keys)[-max_days:]
     out = {}
     for dk in days:
-        pr = build_panel(daily_by_sym, mkt_by_sym, dk)
+        pr = build_panel(daily_by_sym, mkt_by_sym, dk, flows=flows)
         if pr:
             out[dk] = pr
     return out
@@ -2111,6 +2165,26 @@ def latest_panel(panels):
     return dk, out
 
 
+def get_flows(BASE, HDR, syms, log=print):
+    """[V33.430] 워커에서 한국 종목 수급 이력을 받는다(40종목씩). 색인을 못 읽으면(503) 실험을 멈춘다."""
+    import requests
+    r = requests.get(BASE + "/api/omni-flows-index", headers=HDR, timeout=60)
+    r.raise_for_status()
+    out, errs = {}, 0
+    for a in range(0, len(syms), 40):
+        part = syms[a:a + 40]
+        rr = requests.get(BASE + "/api/omni-flows", params={"s": ",".join(part)}, headers=HDR, timeout=120)
+        rr.raise_for_status()
+        j = rr.json()
+        out.update(j.get("flows") or {})
+        errs += len(j.get("errs") or [])
+    deep = sum(1 for f in out.values() if len(f.get("d") or []) >= 250)
+    span = [len(f.get("d") or []) for f in out.values()]
+    log("   · OMNI 수급(실험) — 한국 %d종목 중 이력 %d · 250일 이상 %d · 중앙 %s일 · 못읽음 %d" % (
+        len(syms), len(out), deep, sorted(span)[len(span) // 2] if span else "—", errs))
+    return out
+
+
 def build_dataset_stream(BASE, HDR, log=print, limit=None):
     """★흘려서★ 만든다 — 5분봉을 묶음으로 받아 곧바로 행으로 바꾸고 원시 봉은 버린다.
     저장소가 커져도(종목당 5분봉 4만 개) 원시 봉 전체를 한꺼번에 메모리에 올리지 않는다."""
@@ -2141,7 +2215,8 @@ def build_dataset_stream(BASE, HDR, log=print, limit=None):
     # [V33.423] ★패널을 먼저 만든다★ — 횡단면 칸은 같은 날 다른 종목이 있어야 생긴다.
     #   일봉은 전부 받아 둔 상태이므로 여기가 유일하게 가능한 자리다(5분봉은 흘려서 버린다).
     _t1 = time.time()
-    panels = build_panels(daily, {s: ix[s].get("m", "us") for s in syms})
+    flows = get_flows(BASE, HDR, [s for s in syms if ix[s].get("m") == "kr"], log) if FLOW else None
+    panels = build_panels(daily, {s: ix[s].get("m", "us") for s in syms}, flows=flows)
     log("   · OMNI 패널 %d일 (종목 %d · %.0fs) — 횡단면 랭크·시장 상대가 여기서 나온다" % (
         len(panels), len(daily), time.time() - _t1))
     parts = []
@@ -2262,6 +2337,43 @@ def make_probe(boosters, best, A, n=PROBE_N, seed=5, nn=None, alpha=None):
     return out
 
 
+def flow_compare(A, rep_with, log=print):
+    """[V33.430] 같은 표본에서 ★수급 칸만 비우고★ 다시 학습해 나란히 적는다(기준선). 한국 행만 따로도 잰다.
+    rep_with 는 수급 칸을 채운 학습의 보고서다. 두 쪽 모두 같은 절단·같은 교차검증 규칙이다."""
+    import numpy as np
+    cols = [MODEL_FEATS.index(k) for k in FLOW_FEATS if k in MODEL_FEATS]
+    B = dict(A)
+    B["X"] = A["X"].copy()
+    B["X"][:, cols] = np.nan
+    fill = float(np.isfinite(A["X"][:, cols]).any(axis=1).mean()) if cols else 0.0
+    global NN_ON
+    _nn = NN_ON
+    NN_ON = False                     # 비교는 나무끼리(신경망은 따로 흔들린다)
+    try:
+        _, rep0 = train_model(B, log=lambda *a: None)
+    finally:
+        NN_ON = _nn
+
+    def kr_auc(rep):
+        tot = n = 0.0
+        for h in (rep.get("headsG") or rep.get("heads") or {}).values():
+            k = ((h or {}).get("byMkt") or {}).get("kr") or {}
+            if k.get("auc") is not None and k.get("n", 0) >= 50:
+                tot += k["auc"] * k["n"]
+                n += k["n"]
+        return (tot / n) if n else None
+    e1, e0 = holdout_edge(rep_with.get("headsG") or rep_with.get("heads")), holdout_edge(rep0.get("heads"))
+    k1, k0 = kr_auc(rep_with), kr_auc(rep0)
+    f = lambda v: "—" if v is None else "%.4f" % v
+    log("   · OMNI 수급 실험 — 수급 칸이 찬 행 %.1f%% · 전체 홀드아웃 AUC 비움 %s → 채움 %s · ★한국 행★ 비움 %s → 채움 %s"
+        % (fill * 100, f(e0.get("auc")), f(e1.get("auc")), f(k0), f(k1)))
+    for hz in HORIZONS:
+        a0 = ((rep0.get("heads") or {}).get(hz) or {}).get("byMkt", {}).get("kr", {}).get("auc")
+        a1 = (((rep_with.get("headsG") or rep_with.get("heads") or {}).get(hz) or {}).get("byMkt") or {}).get("kr", {}).get("auc")
+        log("     %s 한국  비움 %s · 채움 %s" % (hz, f(a0), f(a1)))
+    return {"fill": fill, "all0": e0.get("auc"), "all1": e1.get("auc"), "kr0": k0, "kr1": k1}
+
+
 def revert_if_worse(rep, log=print):
     """[V33.428c] 섞은 홀드아웃이 나무 단독보다 낮으면 α 를 전부 0 으로 — 나무 단독의 머리 성적으로 올린다."""
     if rep.get("headsG") and any(rep.get("alpha") or []):
@@ -2357,6 +2469,12 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
             % (len(trees), _its, _med, _edge.get("why")))
         rep["ok"] = False
         rep["why"] = _edge.get("why") or "나무 %d그루" % len(trees)
+        return rep
+    if FLOW:
+        flow_compare(A, rep, log=log)
+        log("   ⏭ OMNI ★수급 실험 회차★ — 칸이 워커 채점에 아직 없다. 재기만 하고 올리지 않는다.")
+        rep["ok"] = False
+        rep["why"] = "OMNI_FLOW 실험 회차 — 업로드 안 함"
         return rep
     if KSEC:
         log("   ⏭ OMNI ★장중 횡단면 실험 회차★ — 칸이 워커에 없다. 재기만 하고 올리지 않는다.")

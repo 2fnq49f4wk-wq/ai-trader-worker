@@ -186,7 +186,7 @@ def fake_roundtrip(data):
     obp = omni.build_panels
     requests.get, requests.post = fget, fpost
     #   왕복 검사에서도 패널 창을 줄인다 — 재는 것은 ★배선★ 이지 패널 크기가 아니다.
-    omni.build_panels = lambda d, m, max_days=PANEL_DAYS: obp(d, m, PANEL_DAYS)
+    omni.build_panels = lambda d, m, max_days=PANEL_DAYS, flows=None: obp(d, m, PANEL_DAYS, flows=flows)
     try:
         pl = omni.run("http://w", "k", {"x-train-key": "k"}, upload=True, log=lambda *a: None)
     finally:
@@ -485,6 +485,16 @@ def main():
         fails.append("교차검증 구간이 홀드아웃 절단점을 넘는다 — 홀드아웃을 고르는 데 썼다")
     if (rep.get("gbdt") or {}).get("name") != _cv.get("pick"):
         fails.append("채택한 구성과 실제 학습 구성이 다르다")
+    # [V33.430] ★수급 칸 날짜 맞춤★ — 그 날짜(포함)까지만 본다(미래 한 칸도 안 본다) · 모자라면 NaN
+    _fl = {"d": list(range(20240101, 20240131)), "f": [1.0] * 29 + [1000.0], "o": [-1.0] * 30,
+           "h": [10.0 + 0.1 * k for k in range(30)], "v": [100.0] * 30}
+    _a = omni.flow_feats(_fl, 20240129)              # 마지막 날(20240130)은 미래 — 안 봐야 한다
+    _b = omni.flow_feats(_fl, 20240130)
+    _c = omni.flow_feats(_fl, 20240110)              # 20일 창이 안 찬다
+    if not (abs(_a["w_fr5"] - 0.01) < 1e-12 and abs(_b["w_fr5"] - (4 + 1000) / 500.0) < 1e-12
+            and abs(_a["w_or20"] + 0.01) < 1e-12 and abs(_a["w_fh20"] - 2.0) < 1e-9 and _c["w_fr20"] != _c["w_fr20"]):
+        fails.append("수급 칸 날짜 맞춤이 틀렸다: %s / %s / %s" % (_a, _b, _c))
+    print("수급 칸 날짜 맞춤: 전날까지 w_fr5 %.4f · 당일 포함 %.4f · 창 부족 → NaN" % (_a["w_fr5"], _b["w_fr5"]))
     # [V33.428c] ★되돌림 안전장치★ — 실데이터 1회차처럼 섞음이 나무 단독보다 나쁘면 α 가 전부 0 이 돼야 한다
     _mk = lambda a: {hz: {"n": 20000, "auc": a} for hz in omni.HORIZONS}
     _r1 = omni.revert_if_worse({"heads": _mk(0.5068), "headsG": _mk(0.5113), "alpha": [0, 0, 0.5, 0, 0]}, log=lambda *a: None)

@@ -34,6 +34,10 @@ on:
         default: false
       # [V33.425g] 장중 횡단면 칸을 붙여 ★값이 있는지만★ 재는 실험 회차. 워커에 없는 칸이므로
       #   이 회차는 업로드하지 않는다(omni.run 이 거부한다 — 실험이 운영에 안 섞인다).
+      omni_flow:
+        description: 'OMNI 한국 수급 칸 실험(재기만 · 업로드 안 함) — omni_now 와 함께'
+        type: boolean
+        default: false
       omni_ksec:
         description: 'OMNI 장중 횡단면 칸 실험(재기만 · 업로드 안 함) — omni_now 와 함께'
         type: boolean
@@ -197,7 +201,7 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           set -o pipefail
-          modal run trainer/modal/modal_train.py::omni_job --ksec ${{ inputs.omni_ksec && 1 || 0 }} 2>&1 | tee omni.log
+          modal run trainer/modal/modal_train.py::omni_job --ksec ${{ inputs.omni_ksec && 1 || 0 }} --flow ${{ inputs.omni_flow && 1 || 0 }} 2>&1 | tee omni.log
       - name: OMNI summary
         if: always()
         run: |
