@@ -108,61 +108,64 @@ console.log("\n⑥ 전진 교차검증 표 — 작게 · 숫자만");
   chk(M._omCvSlim(null) === null && M._omCvSlim({ table: "x" }) === null, "형식이 아니면 null", "★형식 검사 없음★");
 }
 
-console.log("\n⑦ 눕힌 세계수 3D — 모든 입력이 뿌리 가닥 중 하나에 · 흰색만 · 떠 있는 선 없음 · 값이 없으면 밝히지 않는다");
+console.log("\n⑦ 홀로그램 구체 핵 — 껍질 순서 · 실제 연결 한 줄씩 · 지어낸 세기 없음 · 선이 짧게(무게중심)");
 {
   const src = readFileSync(new URL("../public/neural-observatory.js", import.meta.url), "utf8");
   const G = {}; new Function("globalThis", "window", src)(G, G);
   const NO = G.NeuralObservatory;
   const names = FX.nn.cols.map((c) => FX.feats[c]).concat(FX.nn.flags.map((j) => "결측:" + FX.feats[FX.nn.cols[j]]));
   const L = (n, sz) => ({ name: n, size: sz, strength: Array.from({ length: sz }, (_, i) => (i % 7) / 7) });
+  const E0 = [], E1 = [], E2 = [];
+  for (let k = 0; k < 64; k++) for (let q = 0; q < 3; q++) E0.push([(k * 7 + q * 13) % names.length, k, 0.2 + 0.1 * q, 1]);
+  for (let k = 0; k < 32; k++) for (let q = 0; q < 3; q++) E1.push([(k * 5 + q * 11) % 64, k, 0.3, 1]);
+  for (let k = 0; k < 5; k++) for (let q = 0; q < 6; q++) E2.push([(k * 3 + q * 5) % 32, k, 0.5, -1]);
   const nnViz = { layers: [Object.assign(L("입력", names.length), { names }), L("몸통 1", 64), L("몸통 2", 32),
                            { name: "지평 머리", size: 5, names: M.OMNI_HORIZONS, strength: [0.01, null, 0.02, 0.0, 0.03] }],
-                  edges: [[[0, 0, 0.5, 1], [3, 5, 1, -1]], [[1, 2, 0.3, 1]], [[4, 0, 0.9, 1], [2, 4, 0.2, -1]]] };
+                  edges: [E0, E1, E2] };
   const d = { horizons: M.OMNI_HORIZONS, feats: M.OMNI_FEATS, nTrees: 73, seeds: 4, alpha: [0, 0, 0.5, 0, 0], nnViz,
               groups: [{ name: "일봉(장타)", share: 0.3 }, { name: "5분봉(단타)", share: 0.2 }],
               heads: M.OMNI_HORIZONS.map((h) => ({ hz: h, auc: 0.51 })) };
+  const rad = (n) => Math.hypot(n.x, n.y, n.z);
+  const mean = (a) => a.reduce((p, q) => p + q, 0) / Math.max(1, a.length);
   for (const [tag, dd] of [["신경망 있음", d], ["신경망 없음(옛 모델)", Object.assign({}, d, { nnViz: null, alpha: null })]]) {
     const sc = NO.omniScene(dd, { spread: 1 });
-    const roots = sc.groups.filter((g) => sc.nodes[g.ids[0]] && sc.nodes[g.ids[0]].kind === "input");
-    const inputs = sc.nodes.filter((n) => n.kind === "input");
+    const vis = sc.nodes.filter((n) => !n.hidden);
+    const inputs = vis.filter((n) => n.kind === "input");
     const want = dd.nnViz ? names.length : M.OMNI_FEATS.length;
+    chk(inputs.length === want, tag + ": 입력 " + inputs.length + "칸 전부 바깥 껍질에", "★입력이 빠졌다(" + inputs.length + "/" + want + ")★");
     const dangling = sc.edges.filter((e) => !sc.nodes[e.a] || !sc.nodes[e.b]).length;
     const nonfinite = sc.nodes.filter((n) => ![n.x, n.y, n.z].every(Number.isFinite)).length;
     const badV = sc.edges.filter((e) => !(e.v >= 0 && e.v <= 1)).length;
-    chk(inputs.length === want && roots.reduce((a, g) => a + g.count, 0) === want,
-      tag + ": 입력 " + inputs.length + "칸 전부 뿌리 " + roots.length + "가닥에 실렸다(" + roots.map((g) => g.count).join("/") + ")",
-      "★" + tag + ": 뿌리에 안 실린 입력이 있다(" + inputs.length + " ≠ " + want + ")★");
-    chk(dangling === 0 && nonfinite === 0 && badV === 0, tag + ": 떠 있는 선 0 · 좌표 전부 유한 · 선 세기 0~1",
-      "★" + tag + ": 떠 있는 선 " + dangling + " · 비유한 좌표 " + nonfinite + " · 범위 밖 세기 " + badV + "★");
-    const invented = sc.nodes.filter((n) => n.label === "수관 · 나무 숲" && n.v != null).length +
-                     (dd.nnViz ? 0 : sc.nodes.filter((n) => n.kind === "input" && n.v != null).length);
-    chk(invented === 0, tag + ": 값이 없는 곳(숲 잎 · 신경망 없는 입력)은 밝히지 않는다", "★값 없는 점 " + invented + "개를 밝혔다(지어낸 세기)★");
-    const tips = sc.nodes.filter((n) => /^최종 확률/.test(n.name));
-    chk(tips.length === 5, tag + ": 끝눈(지평별 최종 확률) 5개", "★끝눈 " + tips.length + "개★");
-    chk(!sc.nodes.some((n) => n.rgb) && !/rgba\('\s*\+/.test(src) && !/샘|이그드라실|황금 사과/.test(src),
-      tag + ": 흰색만 · 신화 이름 없음(사용자 지시)", "★색이나 신화 이름이 남아 있다★");
-    const xs = (lbl) => sc.nodes.filter((n) => lbl(n)).map((n) => n.x);
-    const mean = (a) => a.reduce((p, q) => p + q, 0) / Math.max(1, a.length);
-    chk(mean(xs((n) => n.kind === "input")) < mean(xs((n) => /^최종 확률/.test(n.name))),
-      tag + ": 옆으로 눕혔다 — 뿌리(왼쪽) → 끝눈(오른쪽)", "★좌→우 흐름이 아니다★");
+    chk(dangling === 0 && nonfinite === 0 && badV === 0, tag + ": 떠 있는 선 0 · 좌표 유한 · 선 세기 0~1",
+      "★떠 있는 선 " + dangling + " · 비유한 " + nonfinite + " · 범위 밖 " + badV + "★");
+    const invented = sc.nodes.filter((n) => (/나무 숲/.test(n.name) || n.hidden) && n.v != null).length +
+                     (dd.nnViz ? 0 : inputs.filter((n) => n.v != null).length);
+    chk(invented === 0, tag + ": 값 없는 점(고리 눈금 · 안내선 · 신경망 없는 입력)은 밝히지 않는다", "★지어낸 세기 " + invented + "★");
+    chk(vis.filter((n) => /^위성 · .* 최종 확률$/.test(n.name)).length === 5, tag + ": 위성(지평별 최종 확률) 5개", "★위성 수가 틀렸다★");
+    if (dd.nnViz) {
+      const byLabel = (re) => mean(vis.filter((n) => re.test(n.label)).map(rad));
+      const rIn = mean(inputs.map(rad)), r1 = byLabel(/^몸통 1$/), r2 = byLabel(/^몸통 2$/), r0 = byLabel(/^핵$/);
+      chk(rIn > r1 && r1 > r2 && r2 > r0, "껍질 순서: 입력 " + rIn.toFixed(0) + " > 몸통1 " + r1.toFixed(0) + " > 몸통2 " + r2.toFixed(0) + " > 핵 " + r0.toFixed(0),
+        "★껍질 순서가 틀렸다★");
+      const lines = sc.edges.filter((e) => e.strand && !e.detail && !/위성/.test(sc.nodes[e.b].name));
+      const nnLines = nnViz.edges.reduce((a, es) => a + es.length, 0);
+      chk(lines.length === nnLines && !sc.edges.some((e) => e.bundle || e.ribbon), "실제 연결 " + nnLines + "개를 한 줄씩(합친 선 없음)",
+        "★연결 수가 다르다(" + lines.length + "/" + nnLines + ")★");
+      /* 무게중심 배치가 선을 짧게 만드는가 — 입력→몸통1 선의 평균 각도 차가 무작위 배치(≈90°)보다 한참 작아야 */
+      const ang = (a, b) => { const u = [a.x, a.y, a.z], w = [b.x, b.y, b.z]; const d0 = u.reduce((p, x, k) => p + x * w[k], 0) / (rad(a) * rad(b)); return Math.acos(Math.max(-1, Math.min(1, d0))) * 180 / Math.PI; };
+      const l0 = lines.filter((e) => sc.nodes[e.a].kind === "input");
+      const mA = mean(l0.map((e) => ang(sc.nodes[e.a], sc.nodes[e.b])));
+      chk(mA < 60, "입력→몸통1 선 평균 각도 " + mA.toFixed(0) + "° — 무게중심 배치로 짧다(무작위 ≈90°)", "★선이 구를 가로지른다(" + mA.toFixed(0) + "°)★");
+    }
   }
-  const sc = NO.omniScene(d, { spread: 1 });
-  /* [V33.432] ★선을 한 줄씩, 가늘게 — 합치지 말고 번지지 않게(사용자)★ */
-  const nnLines = d.nnViz.edges.reduce((a, es) => a + es.length, 0);
-  const strands = sc.edges.filter((e) => e.path);
-  const viaOwner = new Map();
-  let shared = 0;
-  for (const e of strands) for (const id of e.path.slice(1, -1)) { if (viaOwner.has(id)) shared++; viaOwner.set(id, e); }
-  chk(strands.length === nnLines && !sc.edges.some((e) => e.bundle || e.ribbon),
-    "실제 연결 " + nnLines + "개를 한 줄씩 전부 그린다(합친 다발 없음)", "★합친 선이 있거나 빠진 연결이 있다(" + strands.length + "/" + nnLines + ")★");
-  chk(shared === 0 && strands.every((e) => e.path.slice(1, -1).every((id) => sc.nodes[id].hidden)),
-    "선마다 자기 경유점(공유 0 · 전부 숨은 점) — 한곳에 몰리지 않는다", "★경유점을 선끼리 나눠 쓴다(" + shared + ")★");
   const eng = src.slice(src.indexOf("function draw("), src.indexOf("function tick("));
   const lw = /e\.strand\?\(focus\?([\d.]+):([\d.]+)\+([\d.]+)\*e\.v\)/.exec(eng);
   chk(lw && +lw[1] <= 1.5 && (+lw[2] + +lw[3]) <= 1.3 && /if\(n\.hidden\)continue;/.test(eng),
-    "가늘다(평소 ≤" + (lw ? (+lw[2] + +lw[3]).toFixed(2) : "?") + "px · 누른 선 ≤" + (lw ? lw[1] : "?") + "px) · 경유점은 안 그린다",
-    "★선이 굵거나 경유점을 그린다★");
-  const nullHead = sc.nodes.find((n) => n.name === "가지 · 60분 머리");
+    "선이 가늘다(≤" + (lw ? (+lw[2] + +lw[3]).toFixed(2) : "?") + "px) · 숨은 점은 안 그린다", "★선이 굵거나 숨은 점을 그린다★");
+  chk(!/자비스|JARVIS|Jarvis|울트론|Ultron|어벤저스|Avengers|이그드라실|Yggdrasil/.test(src),
+    "영화·신화 이름을 소스·화면에 쓰지 않는다(형태만 빌린다)", "★고유 이름이 들어가 있다★");
+  const sc = NO.omniScene(d, { spread: 1 });
+  const nullHead = sc.nodes.find((n) => n.name === "핵 · 60분 머리");
   chk(nullHead && nullHead.v === null, "홀드아웃을 못 잰 머리는 흐리게(v=null)", "★못 잰 머리에 세기를 지어냈다★");
 }
 
