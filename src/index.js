@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.444";
+const _BUILD_VER = "V33.445";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -25381,10 +25381,13 @@ async function handleRequest(request, env, ctx) {
         const g = await R2c.get(rKey);
         if (g) {
           const md = g.customMetadata || {}, bAt = Number(md.at || 0), rAge = Date.now() - bAt;
-          if (md.ver === _BUILD_VER && rAge >= 0 && rAge < staleMs) {
+          /* [V33.445] 옛 판(배포 전) 사본도 ★먼저 주고★ 뒤에서 새 판으로 다시 만든다 — 판이 다르면 버렸더니 배포 직후 첫 방문이
+             D1 콜드 빌드를 기다리다 15초 제한에 끊겼다(운영 실측: 배포 직후 [AI 관제실] mode 조회 실패). */
+          if (rAge >= 0 && rAge < staleMs) {
             const body = await g.text();
-            store[key] = { ts: bAt, str: body };          // L1 워밍
-            if (rAge > freshMs) { const p = refresh(); if (p && ctx && ctx.waitUntil) ctx.waitUntil(p); }
+            const same = md.ver === _BUILD_VER;
+            store[key] = { ts: same ? bAt : 0, str: body };          // L1 워밍(옛 판이면 곧바로 낡은 것으로)
+            if (!same || rAge > freshMs) { const p = refresh(); if (p && ctx && ctx.waitUntil) ctx.waitUntil(p); }
             return new Response(body, { headers: jhdr });
           }
         }

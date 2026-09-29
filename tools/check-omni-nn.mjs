@@ -235,7 +235,7 @@ console.log("\n⑦ 홀로그램 핵(V33.437 새 엔진) — 가중치·분기 �
       "구조 탭 응답 R2 사본(1분·10분 SWR) · 새로고침만 fresh=1 · 구조 전부 R2 캐시", "★구조 탭 응답이 매번 D1 을 다시 읽는다★"); }
   /* [V33.443] 공통 SWR(swrJson)의 L2 가 caches.default 뿐이었다 — workers.dev 에선 저장이 안 된다(운영: /api/ai-mode 15초 초과로 끊김).
      R2 를 L2b 로(빌드 버전은 메타데이터로 확인). */
-  chk(/R2c\.put\(rKey, str, \{ customMetadata: \{ at: String\(ts\), ver: _BUILD_VER \} \}\)/.test(wsrc) && /const g = await R2c\.get\(rKey\)/.test(wsrc) && /md\.ver === _BUILD_VER/.test(wsrc),
+  chk(/R2c\.put\(rKey, str, \{ customMetadata: \{ at: String\(ts\), ver: _BUILD_VER \} \}\)/.test(wsrc) && /const g = await R2c\.get\(rKey\)/.test(wsrc) && /const same = md\.ver === _BUILD_VER;/.test(wsrc) && /if \(!same \|\| rAge > freshMs\)/.test(wsrc),
     "공통 SWR 의 공유 저장소가 R2 에도 있다(workers.dev 에서 동작)", "★공통 SWR 이 workers.dev 에서 공유 저장소 없이 D1 을 다시 친다★");
   chk(/path === "\/api\/omni-structure"/.test(wsrc) && /async function omniStructure\(DB, touch\)/.test(wsrc) && /omniStructure\(env\.DB, true\)/.test(wsrc) && /_omStructMemo\.key === key/.test(wsrc),
     "워커: 구조 전부 경로(/api/omni-structure) · 판이 같으면 메모리에서", "★구조 경로가 없다★");
