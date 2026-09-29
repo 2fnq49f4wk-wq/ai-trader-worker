@@ -5,16 +5,28 @@
  *   · /api/nn-viz?model=omni · /api/omni-structure 의 상태·크기·시간과 요약
  *   · 화면 캡처(JPEG base64 를 로그에 "IMG <이름> <조각>" 으로 — 아티팩트를 못 받는 곳에서도 읽히게)
  * 읽기 전용이다(GET 만 · 버튼은 탭 전환만). 사용법: node tools/ui-probe-omni.mjs <url> */
-import { chromium } from "playwright";
+import { chromium, webkit, devices } from "playwright";
 const BASE = (process.argv[2] || "").replace(/\/$/, "");
 if (!BASE) { console.error("usage: node tools/ui-probe-omni.mjs <url>"); process.exit(2); }
 const LINES = [];
 const out = (k, v) => { const l = "PROBE " + k + " " + (typeof v === "string" ? v : JSON.stringify(v)); LINES.push(l); console.log(l); };
 const WANT_IMG = process.env.IMG === "1";
-const b = await chromium.launch();
-for (const [tag, vp] of [["desktop", { width: 1440, height: 900, deviceScaleFactor: 1 }], ["mobile", { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }]]) {
-  const ctx = await b.newContext({ viewport: { width: vp.width, height: vp.height }, deviceScaleFactor: vp.deviceScaleFactor, isMobile: vp.isMobile, hasTouch: vp.hasTouch });
+// [V33.444] 사용자: "OMNI 열면 사이트가 터진다" — 크롬만 재던 것을 ★아이폰 사파리(WebKit)★ 까지. 그리고 사람이 하듯 탭을 오가고
+//   창 높이를 흔들어(주소창) 탭이 죽는지(crash) · 응답하는지 · 긴 작업이 있는지 본다.
+const ENG = (process.env.ENGINES || "chromium,webkit").split(",");
+const runs = [];
+if (ENG.includes("chromium")) { runs.push(["desktop", chromium, { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 }]);
+  runs.push(["mobile", chromium, { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true }]); }
+if (ENG.includes("webkit")) runs.push(["iphone", webkit, Object.assign({}, devices["iPhone 13"])]);
+const browsers = {};
+for (const [tag, eng, copts] of runs) {
+  const bname = eng === webkit ? "webkit" : "chromium";
+  const b = browsers[bname] || (browsers[bname] = await eng.launch());
+  const ctx = await b.newContext(copts);
+  // 처음부터 긴 작업을 모은다(탭을 여는 순간의 막힘까지)
+  await ctx.addInitScript(() => { window.__lt = []; try { new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__lt.push(Math.round(e.duration)); }).observe({ type: "longtask", buffered: true }); } catch (e) {} });
   const p = await ctx.newPage();
+  let crashed = 0; p.on("crash", () => { crashed++; });
   const errs = [], nets = [];
   p.on("pageerror", (e) => errs.push("pageerror: " + e.message));
   p.on("console", (m) => { if (m.type() === "error" || m.type() === "warning") errs.push(m.type() + ": " + m.text().slice(0, 200)); });
@@ -77,6 +89,26 @@ for (const [tag, vp] of [["desktop", { width: 1440, height: 900, deviceScaleFact
     return o;
   });
   out(tag + ".api", sum);
+  // ── 부하: 탭 오가기 × 6 · 보기 전환 × 2 · 창 높이 흔들기 × 6 → 탭이 살아 있나 ──
+  try {
+    for (let i = 0; i < 6; i++) {
+      await p.evaluate(() => window.switchNnModel && window.switchNnModel("gbdt")); await p.waitForTimeout(500);
+      await p.evaluate(() => window.switchNnModel && window.switchNnModel("omni")); await p.waitForTimeout(900);
+    }
+    for (let i = 0; i < 2; i++) {
+      await p.evaluate(() => window.luxBrainView && window.luxBrainView("operations")); await p.waitForTimeout(500);
+      await p.evaluate(() => window.luxBrainView && window.luxBrainView("models")); await p.waitForTimeout(900);
+    }
+    const vs = p.viewportSize();
+    for (let i = 0; i < 6; i++) { await p.setViewportSize({ width: vs.width, height: vs.height - (i % 2 ? 0 : 90) }); await p.waitForTimeout(250); }
+    await p.waitForTimeout(3000);
+    const alive = await Promise.race([p.evaluate(() => 1 + 1), new Promise((r) => setTimeout(() => r("timeout"), 5000))]);
+    const after = await p.evaluate(() => { const c = document.querySelector("#omniVol canvas"); return { canvases: document.querySelectorAll("canvas").length,
+      mode: c ? c.dataset.mode : null, ready: c ? c.dataset.ready || null : null, fail: c ? c.dataset.workerFail || null : null,
+      longTasks: (window.__lt || []).length, longTaskMax: Math.max(0, ...(window.__lt || [])), longTaskSum: (window.__lt || []).reduce((a, x) => a + x, 0),
+      heapMB: performance.memory ? +(performance.memory.usedJSHeapSize / 1e6).toFixed(1) : null }; }).catch((e) => ({ err: String(e) }));
+    out(tag + ".stress", Object.assign({ alive: alive === 2, crashed }, after));
+  } catch (e) { out(tag + ".stress", { error: String(e).slice(0, 300), crashed }); }
   // 화면 캡처 — OMNI 3D 부분만(IMG=1 일 때만 — 로그가 커진다)
   if (WANT_IMG) try {
     const el = await p.$("#omniVol");
@@ -87,7 +119,7 @@ for (const [tag, vp] of [["desktop", { width: 1440, height: 900, deviceScaleFact
   } catch (e) { out(tag + ".img_err", String(e)); }
   await ctx.close();
 }
-await b.close();
+for (const k in browsers) await browsers[k].close();
 // 요약을 로그 끝에 한 번 더 — 로그 끝만 읽어도 전부 보이게
 console.log("=== SUMMARY ===");
 for (const l of LINES) console.log("SUMMARY " + l.slice(6, 1400));

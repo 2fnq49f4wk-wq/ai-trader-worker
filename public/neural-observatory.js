@@ -112,8 +112,8 @@
     for(let i=0;i<out.length;i++){let q=bin.charCodeAt(i);if(q>127)q-=256;out[i]=Math.abs(q)/127;}
     return out;
   }
-  function omniCore(d,st){
-    d=d||{};
+  function omniCore(d,st,opt){
+    d=d||{};const noLines=!!(opt&&opt.noLines);   // [V33.444] noLines: 메인 스레드(워커가 그릴 때)는 선을 안 만든다 — 점 번호는 그대로
     const net=st&&st.ok&&st.net&&Array.isArray(st.net.mats)?st.net:null;
     const nv=!net&&d.nnViz&&Array.isArray(d.nnViz.layers)?d.nnViz:null;
     const hz=d.horizons||(st&&st.horizons)||['30m','60m','1d','5d','20d'];
@@ -121,7 +121,7 @@
     const LA=[],LB=[],LS=[],LK=[];               // 선: 두 끝 · 세기(0~1) · 종류(0 w1 · 1 w2 · 2 머리 · 3 분기 · 4 장식 · 5 나무 몸)
     const rings=[];
     const pt=(x,y,z,k,v,nm,rg,ra)=>{X.push(x,y,z);K.push(k);V.push(v==null||!finite(v)?NaN:v);NM.push(nm||'');RG.push(rg==null?-1:rg);RA.push(ra||0);return K.length-1;};
-    const ln=(a,b,s,k)=>{LA.push(a);LB.push(b);LS.push(s);LK.push(k);};
+    const ln=(a,b,s,k)=>{if(noLines)return;LA.push(a);LB.push(b);LS.push(s);LK.push(k);};
     const unit=(x,y,z)=>{const l=Math.hypot(x,y,z)||1;return [x/l,y/l,z/l];};
     const fib=(j,n)=>{const y=1-2*(j+.5)/n,r=Math.sqrt(Math.max(0,1-y*y)),t=j*2.39996323;return [Math.cos(t)*r,y,Math.sin(t)*r];};
     const ringOf=(nrm,R,w)=>{const n=unit(...nrm),t=Math.abs(n[1])<.9?[0,1,0]:[1,0,0];
@@ -190,7 +190,9 @@
     for(let q=0;q<10;q++){const u=unit(rnd()-.5,rnd()-.5,rnd()-.5),w=unit(-u[0]+(rnd()-.5),-u[1]+(rnd()-.5),-u[2]+(rnd()-.5)),Ra=R_IN*(1.25+rnd()*.3),Rb=R_IN*(.8+rnd()*.5);
       ln(pt(u[0]*Ra,u[1]*Ra,u[2]*Ra,5,NaN,''),pt(w[0]*Rb,w[1]*Rb,w[2]*Rb,5,NaN,''),.35,4);}
     const n=K.length;
-    return {n,P:new Float32Array(X),kind:Uint8Array.from(K),val:Float32Array.from(V),name:NM,
+    // 흐르는 빛(연출)이 지나갈 선: 신경망 선 중 가장 센 120개 — [V33.444] 여기서 만든다(워커도 쓰게. 예전엔 메인만 만들어 워커에선 안 돌았다)
+    const top=[];if(LA.length){const idx=[];for(let j=0;j<LK.length;j++)if(LK[j]<=2)idx.push(j);idx.sort((a,b)=>LS[b]-LS[a]);for(let j=0;j<Math.min(120,idx.length);j++)top.push(idx[j]);}
+    return {n,top,P:new Float32Array(X),kind:Uint8Array.from(K),val:Float32Array.from(V),name:NM,
       ring:Int16Array.from(RG),ang:Float32Array.from(RA),rings,
       la:Int32Array.from(LA),lb:Int32Array.from(LB),ls:Float32Array.from(LS),lk:Uint8Array.from(LK),
       groups,hz,tbody,shells:[R_IN,R_H1,R_H2],bands:trees.length?treeRings:[],info:{params:mats?net.mats.reduce((a,m)=>a+m.r*m.c,0):0,splits:trees.reduce((a,t)=>a+t.length-2,0),trees:trees.length,
@@ -334,7 +336,8 @@
           if(draws%10===1)postMessage({type:'stats',nodes:sc.n,edges:r.lines,drawn:r.drawn,strokes:r.strokes,draws,averageMs:(ms/draws).toFixed(2)});}}
       if(dirty||v.motion||v.spin)kick();}
     function size(m){W=m.w;H=m.h;cv.width=Math.round(W*m.ratio);cv.height=Math.round(H*m.ratio);ctx.setTransform(m.ratio,0,0,m.ratio,0,0);
-      v.small=new OffscreenCanvas(Math.max(1,Math.round(W/2)),Math.max(1,Math.round(H/2)));}
+      const sw=Math.max(1,Math.round(W/2)),sh=Math.max(1,Math.round(H/2));   // [V33.444] 보조 캔버스는 재사용(크기만) — 매번 새로 만들면 캔버스 메모리가 쌓인다
+      if(v.small){if(v.small.width!==sw)v.small.width=sw;if(v.small.height!==sh)v.small.height=sh;}else v.small=new OffscreenCanvas(sw,sh);}
     self.onmessage=e=>{const m=e.data;
       if(m.type==='init'){cv=m.canvas;ctx=cv.getContext('2d');d=m.d;Object.assign(v,m.flags||{});size(m);sc=omniCore(d,m.st||null);postMessage({type:'ready'});}
       else if(m.type==='scene'){sc=omniCore(d,m.st);v.selected=-1;}
@@ -348,6 +351,9 @@
       else if(m.type==='pick'){let hit=-1,best=200;if(sc&&sc.SX)for(let i=0;i<sc.n;i++){if(sc.kind[i]>4)continue;const dd=(sc.SX[i]-m.x)**2+(sc.SY[i]-m.y)**2;if(dd<best){best=dd;hit=i;}}
         postMessage({type:'picked',id:hit});return;}
       else if(m.type==='run'){run=m.on;}
+      else if(m.type==='count'){let c=0;if(sc)for(let j=0;j<sc.la.length;j++)if(sc.la[j]===m.id||sc.lb[j]===m.id)c++;postMessage({type:'count',id:m.id,n:c});return;}
+      else if(m.type==='dispose'){   // [V33.444] 캔버스 메모리를 즉시 돌려주고 스스로 닫는다(아이폰 사파리는 캔버스 메모리 한도를 넘으면 탭을 죽인다)
+        run=false;sc=null;try{if(cv){cv.width=0;cv.height=0;}if(v.small){v.small.width=0;v.small.height=0;}}catch(e){}try{self.close();}catch(e){}return;}
       dirty=true;kick();};
   }
   function mountCore(host,config){
@@ -375,8 +381,7 @@
     btn('화면 맞춤',()=>{v.zoom=1;v.panX=v.panY=0;v.yaw=.4;v.pitch=.32;send({type:'reset'});});
     const fmt=x=>Number(x).toLocaleString('ko-KR');
     function build(st){
-      sc=omniCore(d,st);v.selected=-1;
-      const idx=[];for(let j=0;j<sc.la.length;j++)if(sc.lk[j]<=2)idx.push(j);idx.sort((a,b)=>sc.ls[b]-sc.ls[a]);sc.top=idx.slice(0,120);
+      sc=omniCore(d,st,{noLines:!!wk});v.selected=-1;   // 워커가 그리면 메인은 선 3.7만 개를 만들 이유가 없다(이름·묶음·값만)
       const lr=room.querySelector('.nerve-layers');lr.replaceChildren();layerSel.replaceChildren();
       sc.groups.forEach((g,q)=>{layerSel.add(new Option(g.label+' · '+g.ids.length,String(q)));
         const b=document.createElement('button');b.type='button';b.textContent=g.label+' / '+fmt(g.ids.length);b.onclick=()=>inspect(g.ids[0]);lr.append(b);});
@@ -388,8 +393,10 @@
     }
     function populate(){nodeSel.replaceChildren();const g=sc.groups[+layerSel.value||0];if(!g)return;g.ids.forEach(id=>nodeSel.add(new Option(sc.name[id].split(' — ')[0],String(id))));}
     function inspect(id){v.selected=id;send({type:'select',id});const g=sc.groups.findIndex(x=>x.ids.includes(id));if(g>=0){layerSel.value=String(g);populate();nodeSel.value=String(id);}
-      let cnt=0;for(let j=0;j<sc.la.length;j++)if(sc.la[j]===id||sc.lb[j]===id)cnt++;
-      const vv=sc.val[id];info.textContent=sc.name[id]+' · 닿은 선 '+fmt(cnt)+'개'+(vv===vv?' · 세기 '+(vv*100).toFixed(0)+'%(최대 대비)':' · 값 없음');dirty=true;wake();}
+      const vv=sc.val[id],base=sc.name[id],tail=(vv===vv?' · 세기 '+(vv*100).toFixed(0)+'%(최대 대비)':' · 값 없음');
+      if(wk){info.textContent=base+tail;send({type:'count',id});}   // 선은 워커에만 있다 — 개수는 워커가 센다
+      else{let cnt=0;for(let j=0;j<sc.la.length;j++)if(sc.la[j]===id||sc.lb[j]===id)cnt++;info.textContent=base+' · 닿은 선 '+fmt(cnt)+'개'+tail;}
+      dirty=true;wake();}
     layerSel.onchange=()=>{populate();inspect(+nodeSel.value);};nodeSel.onchange=()=>inspect(+nodeSel.value);
     // ── 대체 경로(메인 스레드) 그리기 ──
     function frame(){const t0=performance.now();const r=drawCore(ctx,sc,v,w,h,t);draws++;ms+=performance.now()-t0;
@@ -407,23 +414,30 @@
         if(m.type==='ready'){alive=true;clearTimeout(wdog);canvas.dataset.ready='1';}
         else if(m.type==='stats'){for(const k of ['nodes','edges','drawn','strokes','draws','averageMs'])canvas.dataset[k]=m[k];}
         else if(m.type==='picked'){if(m.id>=0)inspect(m.id);else{v.selected=-1;send({type:'select',id:-1});}}
+        else if(m.type==='count'){if(m.id===v.selected&&sc){const vv=sc.val[m.id];info.textContent=sc.name[m.id]+' · 닿은 선 '+fmt(m.n)+'개'+(vv===vv?' · 세기 '+(vv*100).toFixed(0)+'%(최대 대비)':' · 값 없음');}}
         else if(m.type==='lite'){v.lite=true;v.glow=false;glowBtn.setAttribute('aria-pressed','false');canvas.dataset.lite='1';}};
       wk.onerror=()=>toMain('error');
     }else ctx=canvas.getContext('2d');
     // 스레드가 죽거나(스크립트 못 읽음 · 보안정책) 8초 안에 ★살아 있다(ready)★ 는 답이 없으면 → 캔버스를 새로 만들어 메인 스레드 정지 화면으로.
     // [V33.440] 예전엔 '첫 장면' 을 기다렸다 — 그림이 화면 밖이면 워커는 일부러 안 그리는데(절전) 그걸 실패로 보고
     //   멀쩡한 워커를 끄고 메인 스레드로 떨어졌다(운영 실측 workerFail=timeout). 그게 '멈춤 · 디자인과 다름' 의 원인이었다.
-    let alive=false,wdog=0;
+    let alive=false,wdog=0,lastSt=config.structure||null;
     function toMain(why){if(!wk||dead)return;try{wk.terminate();}catch(e){}wk=null;clearTimeout(wdog);
       const nc=canvas.cloneNode(false);canvas.replaceWith(nc);canvas=nc;bind();canvas.dataset.mode='main';canvas.dataset.workerFail=why;
       ctx=canvas.getContext('2d');still=true;v.motion=v.spin=false;mot.setAttribute('aria-pressed','false');spin.setAttribute('aria-pressed','false');
-      sizeMain();dirty=true;wake();}
+      build(lastSt);sizeMain();dirty=true;wake();}
     function sizeMain(){const ratio=Math.min(devicePixelRatio||1,w<600?1.5:2);
       canvas.width=Math.round(w*ratio);canvas.height=Math.round(h*ratio);ctx.setTransform(ratio,0,0,ratio,0,0);
-      v.small=document.createElement('canvas');v.small.width=Math.max(1,Math.round(w/2));v.small.height=Math.max(1,Math.round(h/2));/* 반 해상도 — 번짐이 좁고 맑다 */}
-    const ro=new ResizeObserver(()=>{const r=vp.getBoundingClientRect();w=Math.max(1,r.width);h=Math.max(1,r.height);
+      if(!v.small)v.small=document.createElement('canvas');const sw=Math.max(1,Math.round(w/2)),sh=Math.max(1,Math.round(h/2));/* 반 해상도 — 번짐이 좁고 맑다 · 재사용 */
+      if(v.small.width!==sw)v.small.width=sw;if(v.small.height!==sh)v.small.height=sh;}
+    // [V33.444] 크기 변화는 ★모아서 한 번★ · 2px 미만은 무시 — 휴대폰은 주소창이 들락날락할 때마다 크기가 바뀌고,
+    //   그때마다 캔버스를 다시 잡으면(수 MB) 아이폰 사파리의 캔버스 메모리 한도를 넘겨 탭이 죽는다.
+    let rzT=0,rw=0,rh=0,sized=false;
+    const applySize=()=>{const r=vp.getBoundingClientRect(),nw=Math.max(1,Math.round(r.width)),nh=Math.max(1,Math.round(r.height));
+      if(sized&&Math.abs(nw-rw)<2&&Math.abs(nh-rh)<2)return;sized=true;rw=nw;rh=nh;w=nw;h=nh;
       if(wk){send({type:'size',w,h,ratio:Math.min(devicePixelRatio||1,w<600?1.5:2)});return;}
-      sizeMain();dirty=true;wake();});
+      sizeMain();dirty=true;wake();};
+    const ro=new ResizeObserver(()=>{if(!sized){applySize();return;}clearTimeout(rzT);rzT=setTimeout(applySize,150);});
     const io=new IntersectionObserver(e=>{visible=e[0].isIntersecting;send({type:'run',on:visible&&!document.hidden});if(!visible&&raf){cancelAnimationFrame(raf);raf=0;}wake();});
     const vis=()=>{send({type:'run',on:visible&&!document.hidden});if(document.hidden&&raf){cancelAnimationFrame(raf);raf=0;}else wake();};
     const ptr=new Map();let moved=false;
@@ -448,9 +462,13 @@
     }
     bind();
     const red=()=>{if(reduced.matches){v.motion=v.spin=false;mot.setAttribute('aria-pressed','false');spin.setAttribute('aria-pressed','false');flags();}dirty=true;wake();};
-    function destroy(){dead=true;cancelAnimationFrame(raf);clearTimeout(idleT);clearInterval(gc);clearTimeout(wdog);ro.disconnect();io.disconnect();document.removeEventListener('visibilitychange',vis);reduced.removeEventListener('change',red);
-      if(wk){wk.terminate();wk=null;}if(active?.destroy===destroy)active=null;}
-    active={destroy};
+    function destroy(){if(dead)return;dead=true;cancelAnimationFrame(raf);clearTimeout(idleT);clearInterval(gc);clearTimeout(wdog);clearTimeout(rzT);ro.disconnect();io.disconnect();document.removeEventListener('visibilitychange',vis);reduced.removeEventListener('change',red);
+      // [V33.444] ★캔버스 메모리를 바로 돌려준다★ — 버린 캔버스를 쓰레기 수집에 맡기면 다시 그릴 때마다 쌓인다(아이폰 사파리는 한도를 넘으면 탭을 죽인다)
+      if(wk){const w0=wk;wk=null;try{w0.postMessage({type:'dispose'});}catch(e){}setTimeout(()=>{try{w0.terminate();}catch(e){}},300);}
+      else{try{canvas.width=0;canvas.height=0;}catch(e){}}
+      try{if(v.small){v.small.width=0;v.small.height=0;v.small=null;}}catch(e){}
+      sc=null;host.__omniLive=false;if(active?.destroy===destroy)active=null;}
+    active={destroy};host.__omniLive=true;
     build(config.structure||null);
     if(wk){const r=vp.getBoundingClientRect();w=Math.max(1,r.width);h=Math.max(1,r.height);const off=canvas.transferControlToOffscreen();
       send({type:'init',canvas:off,d,st:config.structure||null,w,h,ratio:Math.min(devicePixelRatio||1,w<600?1.5:2),flags:{motion:v.motion,spin:v.spin,glow:v.glow}},[off]);
@@ -458,7 +476,7 @@
     ro.observe(vp);io.observe(vp);document.addEventListener('visibilitychange',vis);reduced.addEventListener('change',red);
     // 화면이 없는 채로 남으면 스레드를 거둔다(다른 탭으로 옮겨 host 가 지워진 경우)
     gc=setInterval(()=>{if(!host.isConnected)destroy();},2000);
-    if(!config.structure&&typeof fetch==='function')fetch(config.structureUrl||'/api/omni-structure').then(r=>r.ok?r.json():null).then(st=>{if(!dead&&st&&st.ok){build(st);send({type:'scene',st});}}).catch(()=>{});
+    if(!config.structure&&typeof fetch==='function')fetch(config.structureUrl||'/api/omni-structure').then(r=>r.ok?r.json():null).then(st=>{if(!dead&&st&&st.ok){lastSt=st;build(st);send({type:'scene',st});}}).catch(()=>{});
     return active;
   }
   let active=null;

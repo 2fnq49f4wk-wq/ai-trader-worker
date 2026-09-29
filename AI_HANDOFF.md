@@ -12,6 +12,13 @@
 
 ## Current handoff
 
+- Status: **V33.444 — "OMNI 열면 사이트가 터진다"(사용자, V33.443 뒤에도) — 캔버스·스레드 누적을 끊는다.**
+  ■ 가설(크롬 헤드리스에선 재현 안 됨 → 아이폰 사파리 캔버스 메모리 한도): OMNI 탭은 한 번 열어도 캐시 그림 · 새 응답 · '모델' 보기 전환으로
+    NNV_renderOmni 가 서너 번 불리고, 그때마다 캔버스(수 MB)+워커+보조 캔버스를 새로 만들고 안 돌려줬다. 휴대폰은 주소창마다 크기 재할당.
+  ■ 고침: ① 같은 학습 판(v·trainedAt·importedAt·nTrees)이면 살아 있는 #omniVol 요소를 새 자리로 옮겨 붙인다(재생성 없음)
+    ② 정리 때 캔버스 크기 0 · 워커에 dispose → 캔버스 0 · self.close ③ ResizeObserver 150ms 모아서 · 2px 미만 무시 · 보조 캔버스 재사용
+    ④ 워커가 그리면 메인은 선 없이 장면(omniCore noLines — 점 번호 동일) · 선 개수는 워커가 센다 ⑤ 흐르는 빛 선(top)을 장면이 만든다(워커에서 안 돌던 버그).
+  ■ 시험장: 12번 다시 그려도 캔버스 1개 · 힙 5.3 → 3.2MB · 오류 0. ui-probe 에 WebKit(iPhone 13) + 부하(탭 6회 · 보기 2회 · 높이 6회 · crash·응답·긴 작업) 추가.
 - Status: **운영 최종 확인(ui-probe run 36541350256 · V33.443) — OMNI 화면 정상.**
   ■ 데스크톱·모바일: 콘솔 오류 0 · 워커(mode=worker · ready) · 메인 긴 작업 0(데스크톱) / 1건 102ms(모바일, 페이지 부팅) ·
     그림 표시 135~138ms · /api/nn-viz 62~86ms · /api/omni-structure 76~132ms · /api/pipeline 185~510ms(첫 요청) → 2~6ms.

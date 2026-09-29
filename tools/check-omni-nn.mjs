@@ -205,6 +205,18 @@ console.log("\n⑦ 홀로그램 핵(V33.437 새 엔진) — 가중치·분기 �
       "★실제 규모에서 하얗게 탄다(" + e1.toFixed(0) + ")★");
     const c3 = mk(); const lodN = NO.drawCore(c3, scB, { yaw: .4, pitch: .3, zoom: 1, panX: 0, panY: 0, selected: -1, motion: false, spin: false, glow: false, small: null, lod: true }, 1200, 400, 0).drawn;
     chk(lodN <= 5000, "움직이는 중(lod)엔 모델 크기와 무관하게 ≤ 5,000줄 (실제 규모 " + lodN + ")", "★끄는 동안 선이 너무 많다(" + lodN + ")★"); }
+  /* [V33.444] "OMNI 열면 사이트가 터진다" — 캔버스·스레드를 다시 그릴 때마다 새로 만들고 안 돌려줬다(아이폰 사파리 캔버스 메모리 한도).
+     정리 때 캔버스 크기 0 · 워커 dispose → self.close · 크기 변화 모아서 · 보조 캔버스 재사용 · 메인은 선 없이 · 같은 판이면 그림 재사용. */
+  { const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+    chk(/type:'dispose'/.test(mc) && /m\.type==='dispose'/.test(src) && /self\.close\(\)/.test(src) && /canvas\.width=0;canvas\.height=0;/.test(mc) && /v\.small\.width=0/.test(mc),
+      "그림을 치울 때 캔버스 메모리를 돌려주고(크기 0) 워커가 스스로 닫는다", "★버린 캔버스·스레드가 쌓인다★");
+    chk(/rzT=setTimeout\(applySize,150\)/.test(mc) && /Math\.abs\(nw-rw\)<2/.test(mc) && /if\(v\.small\)\{if\(v\.small\.width!==sw\)/.test(src),
+      "크기 변화는 모아서 한 번 · 2px 미만 무시 · 보조 캔버스 재사용", "★주소창이 들락날락할 때마다 캔버스를 다시 잡는다★");
+    chk(/omniCore\(d,st,\{noLines:!!wk\}\)/.test(mc) && /type:'count'/.test(mc), "워커가 그리면 메인 스레드는 선 없이(개수는 워커가 센다)", "★메인이 선 3.7만 개를 다시 만든다★");
+    chk(/_keep\.__omniLive && window\.__omniVolKey===_ovKey/.test(html) && /_ph\.replaceWith\(_keep\)/.test(html),
+      "같은 학습 판이면 살아 있는 그림을 옮겨 붙인다(다시 만들지 않는다)", "★다시 렌더할 때마다 그림을 새로 만든다★");
+    const scN = NO.omniCore(d, st, { noLines: true });
+    chk(scN.n === sc.n && scN.la.length === 0 && sc.top.length > 0, "선 없는 장면도 점 번호가 같다(선택이 워커와 맞는다) · 흐르는 빛 선은 장면이 만든다", "★점 번호가 어긋난다★"); }
   chk(/let still=!wk;/.test(mc) && /motion:!reduced\.matches&&!still,spin:!reduced\.matches&&!still/.test(mc),
     "워커를 못 쓰면 정지 화면으로 시작(자동회전·흐르는 빛 끔)", "★대체 경로가 계속 그린다★");
   chk(/clearInterval\(gc\)/.test(mc) && /wk\.terminate\(\)/.test(mc), "다시 그릴 때 워커·감시 타이머를 거둔다", "★스레드·타이머가 쌓인다★");

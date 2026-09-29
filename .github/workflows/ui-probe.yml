@@ -51,7 +51,7 @@ jobs:
       - name: 브라우저 준비
         run: |
           npm i --no-save --no-audit --no-fund playwright@1
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps chromium webkit
 
       - name: OMNI 화면 측정
         if: steps.url.outputs.url != ''

@@ -84,8 +84,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.443">
-<script src="/neural-observatory.js?v=33.443" defer></script>
+<meta name="lux-build" content="V33.444">
+<script src="/neural-observatory.js?v=33.444" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -14867,7 +14867,14 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       + '<div class="omni-heads">'+cards+'</div>'
       + '<div class="brain-map-foot">막대: 실제 정확도 · 회색선 = 무실력 기준선 · 주황선 = 발언 문턱 · 파란선 = 발언 구간 하한. '
       + '문턱을 넘지 못한 지평은 쓰지 않습니다(문턱을 내리지 않습니다).</div></div>';
-    try{ if(window.NeuralObservatory) window.NeuralObservatory.mount(document.getElementById('omniVol'),{kind:'omni',data:d}); }
+    /* [V33.444] ★같은 모델이면 그림을 다시 만들지 않는다★ — 이 함수는 한 번 열 때도 캐시 그림 · 새 응답 · '모델' 보기 전환으로
+       서너 번 불린다. 그때마다 캔버스(수 MB)와 그리기 스레드를 새로 만들어, 아이폰 사파리에선 캔버스 메모리 한도를 넘겨 탭이 죽었다.
+       살아 있는 그림(같은 학습 판)이 있으면 그 요소를 새 자리로 옮겨 붙인다(캔버스·스레드 그대로). */
+    try{
+      var _ph=document.getElementById('omniVol'), _ovKey=[d.v,d.trainedAt,d.importedAt,d.nTrees].join('|'), _keep=window.__omniVolEl;
+      if(_ph && _keep && _keep!==_ph && _keep.__omniLive && window.__omniVolKey===_ovKey){ _ph.replaceWith(_keep); }
+      else if(window.NeuralObservatory && _ph){ window.NeuralObservatory.mount(_ph,{kind:'omni',data:d}); window.__omniVolEl=_ph; window.__omniVolKey=_ovKey; }
+    }
     catch(err){ var _ov=document.getElementById('omniVol'); if(_ov) _ov.textContent='3D 구조를 그리지 못했습니다: '+err.message; }
     var exTxt = '';
     try{
@@ -20185,11 +20192,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.443">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.443">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.443">
-<link rel="stylesheet" href="/model-evidence.css?v=33.443">
-<script src="/model-evidence.js?v=33.443"></script>
-<script src="/workspace-ui.js?v=33.443"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.444">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.444">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.444">
+<link rel="stylesheet" href="/model-evidence.css?v=33.444">
+<script src="/model-evidence.js?v=33.444"></script>
+<script src="/workspace-ui.js?v=33.444"></script>
 </body>
 </html>
