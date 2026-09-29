@@ -32,6 +32,9 @@ for (const [tag, vp] of [["desktop", { width: 1440, height: 900, deviceScaleFact
   // 구조 탭 → OMNI
   await p.evaluate(() => { const n = document.querySelector('.nav-item[data-page="nnviz"]'); if (n) n.click(); });
   await p.waitForTimeout(1500);
+  // 구조 관측은 '모델' 보기에서만 보인다(운영 보기는 #nnvStruct 를 숨긴다) — 사용자가 하는 순서 그대로
+  await p.evaluate(() => { if (typeof window.luxBrainView === "function") window.luxBrainView("models"); });
+  await p.waitForTimeout(800);
   await p.evaluate(() => { if (typeof window.switchNnModel === "function") window.switchNnModel("omni"); });
   const tw = Date.now();
   await p.waitForSelector("#omniVol canvas", { state: "attached", timeout: 30000 }).catch(() => {});

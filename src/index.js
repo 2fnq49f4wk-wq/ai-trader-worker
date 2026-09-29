@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.441";
+const _BUILD_VER = "V33.442";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -11400,7 +11400,7 @@ function omniFeatures(b5, bd, i, mkt, dailyRow, jIn) {
    → 경로가 OMNI_VER 을 품는다. 판을 올리면 자리가 자동으로 갈라지고, 옛 판은 옛 자리에 남는다.
      손으로 적지 않는다 — check-omni-label 이 "경로가 OMNI_VER 에서 나오는가" 를 본다. */
 /* [V33.440] 구조 탭 응답 R2 사본 — 1분은 그대로, 10분까지는 먼저 주고 뒤에서 갱신. */
-const NNVIZ_CACHE = { freshMs: 60000, staleMs: 600000 };
+const NNVIZ_CACHE = { freshMs: 60000, staleMs: 6 * 3600000 };   // [V33.442] 10분 → 6시간: 사본 없는 첫 요청이 여전히 10초(운영 실측)였다. 1분 지나면 늘 뒤에서 갱신한다.
 const OMNI_MODEL = { r2Key: "omni/v" + OMNI_VER + "/model.json", r2Prev: "omni/v" + OMNI_VER + "/model.prev.json",
                      r2Panel: "omni/v" + OMNI_VER + "/panel.json", metaKey: "omni_meta",
                      probeMaxDiff: 1e-9, minProbe: 50, maxTrees: 3000, maxNodes: 400000,
@@ -11655,11 +11655,11 @@ function _omTreeSummary(tr) {
   walk(tr, 0);
   return [leaves, Math.round((leaves ? lsum / leaves : 0) * 1e5)].concat(fs);
 }
-async function omniStructure(DB) {
+async function omniStructure(DB, touch) {
   const meta = await _omniMeta(DB);
   if (!meta) return { ok: false, why: "아직 업로드된 모델이 없다" };
   const key = _num(meta.importedAt, 0) || _num(meta.trainedAt, 0);
-  if (_omStructMemo && _omStructMemo.key === key) return _omStructMemo.v;
+  if (_omStructMemo && _omStructMemo.key === key && !touch) return _omStructMemo.v;
   const R2 = _bigR2();
   if (!R2) return { ok: false, why: "R2 미바인딩" };
   /* [V33.440] 모델 파일(수 MB · 나무 993그루)을 요청마다 읽고 풀면 2초가 걸렸다(운영 실측). 한 번 줄인 결과(≈80KB)를
@@ -11667,7 +11667,10 @@ async function omniStructure(DB) {
   const sKey = "omni/v" + OMNI_VER + "/structure.json";
   try {
     const gs = await R2.get(sKey);
-    if (gs) { const c = JSON.parse(await gs.text()); if (c && c.ok && c.at === key) { _omStructMemo = { key: key, v: c }; return c; } }
+    if (gs) { const t0 = await gs.text(), c = JSON.parse(t0); if (c && c.ok && c.at === key) { _omStructMemo = { key: key, v: c };
+      // [V33.442] 판이 같음을 확인했으면 저장 시각을 새로 찍는다 — 경로의 사본 창(6시간)이 이 시각으로 잰다
+      if (touch) { try { await R2.put(sKey, t0, { httpMetadata: { contentType: "application/json" } }); } catch (e) {} }
+      return c; } }
   } catch (e) { /* 캐시가 깨졌으면 원본에서 다시 */ }
   let mdl = null;
   try {
@@ -26464,8 +26467,25 @@ async function handleRequest(request, env, ctx) {
     }
 
     if (path === "/api/omni-structure") {   // [V33.437] OMNI 구조 전부(가중치 · 나무 분기) — 화면 전용
+      /* [V33.442] 줄인 결과는 R2 에 있는데, 판 확인에 D1 모델 요약을 먼저 읽느라 7초가 걸렸다(운영 실측).
+         구조 탭 응답과 같은 사본 방식: 사본이 6시간 안이면 D1 없이 바로 주고, 1분이 지났으면 뒤에서 판을 확인해 갈아 끼운다. */
+      const R2s = _bigR2(), cKey = "omni/v" + OMNI_VER + "/structure.json";
+      if (R2s) {
+        try {
+          const tc = Date.now(), g = await R2s.get(cKey);
+          if (g) {
+            const age = Date.now() - Date.parse(g.uploaded);
+            if (age >= 0 && age < NNVIZ_CACHE.staleMs) {
+              const txt = await g.text();
+              if (age >= NNVIZ_CACHE.freshMs && ctx && ctx.waitUntil) ctx.waitUntil(omniStructure(env.DB, true).catch(function () {}));
+              return new Response(txt, { headers: Object.assign({ "Content-Type": "application/json", "Cache-Control": "public, max-age=300",
+                "X-Cache": age < NNVIZ_CACHE.freshMs ? "hit" : "stale", "Server-Timing": "r2cache;dur=" + (Date.now() - tc) }, cors) });
+            }
+          }
+        } catch (e) { /* 사본을 못 읽으면 새로 */ }
+      }
       const st = await omniStructure(env.DB);
-      return Response.json(st, { status: st.ok ? 200 : 404, headers: Object.assign({ "Cache-Control": "public, max-age=300" }, cors) });
+      return Response.json(st, { status: st.ok ? 200 : 404, headers: Object.assign({ "Cache-Control": "public, max-age=300", "X-Cache": "miss" }, cors) });
     }
     if (path === "/api/nn-viz") {
       /* [V33.422] 기본값을 dnn → gbdt 로. DNN 은 퇴역했고, 종전엔 ★모르는 키가 전부 DNN 으로

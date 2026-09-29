@@ -218,10 +218,10 @@ console.log("\n⑦ 홀로그램 핵(V33.437 새 엔진) — 가중치·분기 �
      화면 '새로고침' 만 fresh=1 로 건너뛴다. 구조 전부도 R2 에 줄인 결과를 둔다. */
   { const h = wsrc.slice(wsrc.indexOf('if (path === "/api/nn-viz") {'), wsrc.indexOf('if (path === "/api/whatif")'));
     const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
-    chk(/const NNVIZ_CACHE = \{ freshMs: 60000, staleMs: 600000 \}/.test(wsrc) && /_R2v\.get\(_vKey\)/.test(h) && /ctx\.waitUntil\(_nnVizBuild\(\)/.test(h) && /get\("fresh"\) !== "1"/.test(h)
+    chk(/const NNVIZ_CACHE = \{ freshMs: 60000, staleMs: 6 \* 3600000 \}/.test(wsrc) && /_R2v\.get\(_vKey\)/.test(h) && /ctx\.waitUntil\(_nnVizBuild\(\)/.test(h) && /get\("fresh"\) !== "1"/.test(h)
         && /refreshOnly===1\?'&fresh=1':''/.test(html) && /omni\/v" \+ OMNI_VER \+ "\/structure\.json"/.test(wsrc),
       "구조 탭 응답 R2 사본(1분·10분 SWR) · 새로고침만 fresh=1 · 구조 전부 R2 캐시", "★구조 탭 응답이 매번 D1 을 다시 읽는다★"); }
-  chk(/path === "\/api\/omni-structure"/.test(wsrc) && /async function omniStructure\(DB\)/.test(wsrc) && /_omStructMemo\.key === key/.test(wsrc),
+  chk(/path === "\/api\/omni-structure"/.test(wsrc) && /async function omniStructure\(DB, touch\)/.test(wsrc) && /omniStructure\(env\.DB, true\)/.test(wsrc) && /_omStructMemo\.key === key/.test(wsrc),
     "워커: 구조 전부 경로(/api/omni-structure) · 판이 같으면 메모리에서", "★구조 경로가 없다★");
 }
 

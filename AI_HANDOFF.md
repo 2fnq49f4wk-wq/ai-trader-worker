@@ -12,6 +12,12 @@
 
 ## Current handoff
 
+- Status: **V33.442 — 운영 재측정(ui-probe run 36538952566) 뒤 마저 고침.**
+  ■ 실측: /api/nn-viz?model=omni 사본 적중 178ms(10초 → 0.18초) · 그러나 사본 없는 첫 요청은 여전히 10.5초(D1 9.4초) ·
+    /api/omni-structure 7.2초(R2 결과는 있는데 판 확인용 D1 모델 요약 읽기가 느림) · 워커 mode=worker · ready=1(양쪽).
+    구조 관측(#nnvStruct)은 '모델' 보기에서만 보인다(운영 보기는 숨긴다) — 점검 도구가 luxBrainView('models') 후 연다.
+  ■ 고침: 사본을 먼저 주는 창 10분 → 6시간(1분 지나면 늘 뒤에서 갱신) · /api/omni-structure 도 같은 사본 방식(D1 없이 R2 바로 ·
+    뒤에서 판 확인 · 판이 같으면 저장 시각만 새로 찍어 창을 잇는다).
 - Status: **V33.441 — 구조 탭 응답 10초 → R2 사본(운영 실측 Server-Timing: data 9310ms · roster 715ms).**
   ■ ui-probe run 36537903923: 모바일 mode=worker · ready=1(V33.440 감시 고침 확인) · /api/omni-structure 2170 → 513ms(R2 캐시) ·
     그러나 /api/nn-viz?model=omni 10.0초 — omniVizData 의 D1 읽기(모델 요약 · omni_fwd) 가 9.3초(주기 작업과 겹친 D1 재시도).
