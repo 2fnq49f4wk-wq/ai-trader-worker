@@ -84,8 +84,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.440">
-<script src="/neural-observatory.js?v=33.440" defer></script>
+<meta name="lux-build" content="V33.441">
+<script src="/neural-observatory.js?v=33.441" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -14473,7 +14473,8 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       stage.innerHTML='<div class="nnv-empty">불러오는 중…</div>';
       try{ var c2=localStorage.getItem(cacheKey); if(c2){ painted = (NNV_render(JSON.parse(c2), model) !== false); } }catch(e){}
     }
-    fetch('/api/nn-viz?model='+encodeURIComponent(model)).then(function(r){return r.json();}).then(function(d){
+    /* [V33.440] 서버는 이 응답을 R2 사본으로 준다(1분 · 10분까지 먼저 주고 뒤에서 갱신). 헤더 '새로고침' 만 사본을 건너뛴다. */
+    fetch('/api/nn-viz?model='+encodeURIComponent(model)+(refreshOnly===1?'&fresh=1':'')).then(function(r){return r.json();}).then(function(d){
       if(reqId !== NNV.seq) return;   // ★이미 다른 탭으로 옮겼다 — 이 응답은 그 화면의 것이 아니다★
       /* [V33.301] 어느 탭을 열든 명부부터 넣는다. 아래 렌더러들은 '합류 상태' 를
          d.admit 으로 다시 계산하지 않고 이 명부에서 읽는다. */
@@ -20184,11 +20185,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.440">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.440">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.440">
-<link rel="stylesheet" href="/model-evidence.css?v=33.440">
-<script src="/model-evidence.js?v=33.440"></script>
-<script src="/workspace-ui.js?v=33.440"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.441">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.441">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.441">
+<link rel="stylesheet" href="/model-evidence.css?v=33.441">
+<script src="/model-evidence.js?v=33.441"></script>
+<script src="/workspace-ui.js?v=33.441"></script>
 </body>
 </html>

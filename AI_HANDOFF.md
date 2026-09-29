@@ -12,6 +12,12 @@
 
 ## Current handoff
 
+- Status: **V33.441 — 구조 탭 응답 10초 → R2 사본(운영 실측 Server-Timing: data 9310ms · roster 715ms).**
+  ■ ui-probe run 36537903923: 모바일 mode=worker · ready=1(V33.440 감시 고침 확인) · /api/omni-structure 2170 → 513ms(R2 캐시) ·
+    그러나 /api/nn-viz?model=omni 10.0초 — omniVizData 의 D1 읽기(모델 요약 · omni_fwd) 가 9.3초(주기 작업과 겹친 D1 재시도).
+  ■ 고침: /api/nn-viz 응답 전체를 R2 cache/nn-viz/<model>.json 에(customMetadata.at) — 1분 안 그대로 · 10분 안 먼저 주고
+    ctx.waitUntil 로 뒤에서 갱신 · ?fresh=1 은 건너뜀(화면 헤더 '새로고침' = openNnViz(1)). workers.dev 라 Cloudflare 캐시 API 는 못 쓴다.
+    응답 헤더 X-Cache(hit/stale/miss) · X-Cache-Age · Server-Timing.
 - Status: **V33.440 — OMNI 화면 '여전히 멈춤 · 디자인과 다름'(사용자) — ★운영 실측으로★ 원인 둘 찾아 고침.**
   ■ 진단 도구: `.github/workflows/ui-probe.yml` + `tools/ui-probe-omni.mjs` — 운영 주소를 헤드리스로 열어 OMNI 탭의
     메인 스레드 막힘 · 콘솔 오류 · 캔버스 상태 · 구조/뷰 응답(크기·시간·Server-Timing) · (선택) 화면 캡처를 로그에 남긴다. 샌드박스는 운영 주소에 못 닿는다.

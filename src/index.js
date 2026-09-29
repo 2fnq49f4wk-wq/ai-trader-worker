@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.440";
+const _BUILD_VER = "V33.441";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -11399,6 +11399,8 @@ function omniFeatures(b5, bd, i, mkt, dailyRow, jIn) {
    되살리는 순간 "오를 확률" 과 "동료보다 잘할 확률" 이 뒤섞인다.
    → 경로가 OMNI_VER 을 품는다. 판을 올리면 자리가 자동으로 갈라지고, 옛 판은 옛 자리에 남는다.
      손으로 적지 않는다 — check-omni-label 이 "경로가 OMNI_VER 에서 나오는가" 를 본다. */
+/* [V33.440] 구조 탭 응답 R2 사본 — 1분은 그대로, 10분까지는 먼저 주고 뒤에서 갱신. */
+const NNVIZ_CACHE = { freshMs: 60000, staleMs: 600000 };
 const OMNI_MODEL = { r2Key: "omni/v" + OMNI_VER + "/model.json", r2Prev: "omni/v" + OMNI_VER + "/model.prev.json",
                      r2Panel: "omni/v" + OMNI_VER + "/panel.json", metaKey: "omni_meta",
                      probeMaxDiff: 1e-9, minProbe: 50, maxTrees: 3000, maxNodes: 400000,
@@ -26472,35 +26474,60 @@ async function handleRequest(request, env, ctx) {
       if (_retired(modelSel))
         return Response.json({ kind: modelSel, reqModel: modelSel, retired: RETIRED[modelSel],
           error: modelSel + " 는 퇴역했다 — " + _retiredWhy(modelSel) }, { status: 410, headers: cors });
-      // [V33.150] 신규 위원 5종 추가 — 선형(계수) / 원형(기억) 은 트리·층 렌더러로 못 그린다.
-      const _tv0 = Date.now();
-      const data = modelSel === "mind" ? await mlMindVizData(env.DB)
-        : (["gbdt", "xgb", "lgb", "cat"].indexOf(modelSel) !== -1) ? await mlTreeVizData(env.DB, modelSel)
-        : (modelSel === "seq") ? await mlSeqVizData(env.DB)
-        : (modelSel === "memo") ? await mlMemoVizData(env.DB)
-        : (modelSel === "omni") ? await omniVizData(env.DB)     // [V33.422] 복합모델 관측
-        : (_LINVIZ[modelSel] ? await mlLinearVizData(env.DB, modelSel)
-        : await mlTreeVizData(env.DB, "gbdt"));
-      /* [V33.301] 모델 탭 하나만 열어도 ★명부를 함께 싣는다★ — 그 탭의 '합류 상태' 글자와
-         옆 탭의 점이 서로 다른 근거로 그려지면 그게 곧 이 사고의 다음 재발이다. */
-      const _tv1 = Date.now();
-      try { if (data && typeof data === "object") data.roster = await buildRoster(env.DB); } catch (e) {}
-      const _tv2 = Date.now();
-      /* [V33.308] ★응답은 자기가 어느 탭의 것인지 반드시 말한다.★
-         종전엔 화면이 "이 그림이 내가 누른 탭의 것인가" 를 확인할 방법이 없었다. 탭을 빨리
-         옮기면 ★먼저 보낸 느린 응답이 나중에 도착해 새 탭 화면을 덮어썼다★ — DNN 이
-         제일 무거워서(21MB 청크) 대개 DNN 이 뒤늦게 튀어나왔다. "memo 를 눌렀는데 dnn 이
-         보인다" 가 그것이다. 화면은 reqModel 로 응답을 골라 버릴 수 있어야 한다.
-         그리고 kind 는 모델키와 같아야 한다(overview·mind·gbdt…·dnn 전부) — 어긋나면
-         화면의 분기가 엉뚱한 렌더러로 간다. 서버가 먼저 확인한다. */
-      try {
-        if (data && typeof data === "object") {
-          data.reqModel = modelSel;
-          if (data.kind !== modelSel) data.kindMismatch = String(data.kind == null ? "(없음)" : data.kind);
-        }
-      } catch (e) {}
-      /* [V33.440] 어디가 느린지 숫자로 — 운영 실측 OMNI 탭 5.3초. 화면 점검(ui-probe)이 이 헤더를 읽는다. */
-      return Response.json(data, { headers: Object.assign({ "Server-Timing": "data;dur=" + (_tv1 - _tv0) + ", roster;dur=" + (_tv2 - _tv1) }, cors) });
+      /* [V33.440] ★구조 탭 응답을 R2 사본으로(SWR)★ — 운영 실측: OMNI 탭 10.0초(모델 요약 D1 읽기 9.3초 · 명부 0.7초).
+         D1 이 바쁠 때(주기 작업과 겹침) 재시도가 쌓인다. 이 주소는 workers.dev 라 Cloudflare 캐시 API 가 안 먹는다 → R2 에 둔다.
+         1분 안 = 사본 그대로 · 10분 안 = 사본을 먼저 주고 뒤에서 새로 계산해 갈아 끼운다 · 그 밖 = 새로 계산.
+         ?fresh=1 은 사본을 건너뛴다(화면의 '새로고침' 이 쓴다). */
+      const _R2v = _bigR2(), _vKey = "cache/nn-viz/" + String(modelSel).replace(/[^a-z0-9_]/gi, "") + ".json";
+      const _nnVizBuild = async function () {
+        // [V33.150] 신규 위원 5종 추가 — 선형(계수) / 원형(기억) 은 트리·층 렌더러로 못 그린다.
+        const _tv0 = Date.now();
+        const data = modelSel === "mind" ? await mlMindVizData(env.DB)
+          : (["gbdt", "xgb", "lgb", "cat"].indexOf(modelSel) !== -1) ? await mlTreeVizData(env.DB, modelSel)
+          : (modelSel === "seq") ? await mlSeqVizData(env.DB)
+          : (modelSel === "memo") ? await mlMemoVizData(env.DB)
+          : (modelSel === "omni") ? await omniVizData(env.DB)     // [V33.422] 복합모델 관측
+          : (_LINVIZ[modelSel] ? await mlLinearVizData(env.DB, modelSel)
+          : await mlTreeVizData(env.DB, "gbdt"));
+        /* [V33.301] 모델 탭 하나만 열어도 ★명부를 함께 싣는다★ — 그 탭의 '합류 상태' 글자와
+           옆 탭의 점이 서로 다른 근거로 그려지면 그게 곧 이 사고의 다음 재발이다. */
+        const _tv1 = Date.now();
+        try { if (data && typeof data === "object") data.roster = await buildRoster(env.DB); } catch (e) {}
+        const _tv2 = Date.now();
+        /* [V33.308] ★응답은 자기가 어느 탭의 것인지 반드시 말한다.★
+           종전엔 화면이 "이 그림이 내가 누른 탭의 것인가" 를 확인할 방법이 없었다. 탭을 빨리
+           옮기면 ★먼저 보낸 느린 응답이 나중에 도착해 새 탭 화면을 덮어썼다★ — DNN 이
+           제일 무거워서(21MB 청크) 대개 DNN 이 뒤늦게 튀어나왔다. "memo 를 눌렀는데 dnn 이
+           보인다" 가 그것이다. 화면은 reqModel 로 응답을 골라 버릴 수 있어야 한다.
+           그리고 kind 는 모델키와 같아야 한다(overview·mind·gbdt…·dnn 전부) — 어긋나면
+           화면의 분기가 엉뚱한 렌더러로 간다. 서버가 먼저 확인한다. */
+        try {
+          if (data && typeof data === "object") {
+            data.reqModel = modelSel;
+            if (data.kind !== modelSel) data.kindMismatch = String(data.kind == null ? "(없음)" : data.kind);
+          }
+        } catch (e) {}
+        /* [V33.440] 어디가 느린지 숫자로 — 운영 실측 OMNI 탭 5.3초. 화면 점검(ui-probe)이 이 헤더를 읽는다. */
+        const _txt = JSON.stringify(data);
+        if (_R2v) { try { await _R2v.put(_vKey, _txt, { httpMetadata: { contentType: "application/json" }, customMetadata: { at: String(Date.now()) } }); } catch (e) {} }
+        return { txt: _txt, st: "data;dur=" + (_tv1 - _tv0) + ", roster;dur=" + (_tv2 - _tv1) };
+      };
+      if (_R2v && url.searchParams.get("fresh") !== "1") {
+        try {
+          const _tc = Date.now(), g = await _R2v.get(_vKey);
+          if (g) {
+            const age = Date.now() - Number((g.customMetadata || {}).at || 0);
+            if (age >= 0 && age < NNVIZ_CACHE.staleMs) {
+              const txt = await g.text();
+              if (age >= NNVIZ_CACHE.freshMs && ctx && ctx.waitUntil) ctx.waitUntil(_nnVizBuild().catch(function () {}));
+              return new Response(txt, { headers: Object.assign({ "Content-Type": "application/json", "X-Cache": age < NNVIZ_CACHE.freshMs ? "hit" : "stale",
+                "X-Cache-Age": String(Math.round(age / 1000)), "Server-Timing": "r2cache;dur=" + (Date.now() - _tc) }, cors) });
+            }
+          }
+        } catch (e) { /* 사본을 못 읽으면 새로 계산 */ }
+      }
+      const _built = await _nnVizBuild();
+      return new Response(_built.txt, { headers: Object.assign({ "Content-Type": "application/json", "X-Cache": "miss", "Server-Timing": _built.st }, cors) });
     }
 
     // ── [V12.24 What-If] 거시 시나리오 시뮬레이터 — "금리 +1%p면? 유가 -10%면?" ──
