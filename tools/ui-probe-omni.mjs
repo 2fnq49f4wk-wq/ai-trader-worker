@@ -33,6 +33,9 @@ for (const [tag, vp] of [["desktop", { width: 1440, height: 900, deviceScaleFact
   await p.evaluate(() => { const n = document.querySelector('.nav-item[data-page="nnviz"]'); if (n) n.click(); });
   await p.waitForTimeout(1500);
   await p.evaluate(() => { if (typeof window.switchNnModel === "function") window.switchNnModel("omni"); });
+  const tw = Date.now();
+  await p.waitForSelector("#omniVol canvas", { state: "attached", timeout: 30000 }).catch(() => {});
+  out(tag + ".omni_appear_ms", Date.now() - tw);
   await p.waitForTimeout(1000);
   // 그림이 화면 안에 오게(화면 밖이면 워커가 일부러 쉰다) — 숨은 조상이 있으면 그것도 적는다
   out(tag + ".visibility", await p.evaluate(() => { const v = document.getElementById("omniVol"); if (!v) return null; v.scrollIntoView({ block: "center" });
