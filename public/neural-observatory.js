@@ -196,7 +196,7 @@
       groups,hz,tbody,shells:[R_IN,R_H1,R_H2],bands:trees.length?treeRings:[],info:{params:mats?net.mats.reduce((a,m)=>a+m.r*m.c,0):0,splits:trees.reduce((a,t)=>a+t.length-2,0),trees:trees.length,
         nets:net?net.nets:0,full:!!mats,inputs:nIn,sizes:[nIn].concat(hidSizes,[hz.length])}};
   }
-  const OM_LEVELS=14,OM_KGAIN=[.55,.8,1,.7,.45,.9];   // 종류별 밝기 배율(투명도) — w1 은 7천 줄이라 낮게
+  const OM_LEVELS=14,OM_KGAIN=[.55,.8,1,.7,.45,.9],OM_LOD=4;   // OM_LOD: 움직이는 중(대체 경로) 이 단계 밑은 건너뛴다   // 종류별 밝기 배율(투명도) — w1 은 7천 줄이라 낮게
   function drawCore(ctx,sc,v,W,H,t){
     // 1) 도는 점(나무 조각·눈금·장식 고리)의 3D 위치 → 2) 투영(형식 배열에 · 객체 없음)
     const n=sc.n,P=sc.P;
@@ -250,25 +250,29 @@
       ctx.stroke();strokes++;ctx.lineCap='butt';}
     // 4) 선 — 밝기 단계별로 묶어 단계마다 한 번에(선택된 점에 닿은 선은 따로)
     const la=sc.la,lb=sc.lb,ls=sc.ls,lk=sc.lk,m=la.length,sel=v.selected,dim=sel>=0?.35:1;
-    if(!sc.bk){sc.bk=Array.from({length:OM_LEVELS},()=>[]);}
-    const bk=sc.bk;for(const b of bk)b.length=0;
-    const hi=[];
+    // [V33.439] 단계 나누기는 ★미리 잡아 둔 형식 배열★ 에(계수 정렬 두 번) — 장면마다 수만 번 배열을 늘려 쓰레기 수집이 돌던 것을 없앤다.
+    //   v.lod(움직이는 중 · 대체 경로) 면 거의 안 보이는 단계는 건너뛴다 — 멈추면 전부 다시 그린다.
+    if(!sc.lv||sc.lv.length!==m){sc.lv=new Uint8Array(m);sc.cnt=new Int32Array(OM_LEVELS);sc.off=new Int32Array(OM_LEVELS+1);sc.pos=new Int32Array(OM_LEVELS);sc.buf=new Float32Array(m*4);}
+    const lv=sc.lv,cnt=sc.cnt,off=sc.off,pos=sc.pos,buf=sc.buf,lodMin=v.lod?OM_LOD:(v.lite?1:0);
+    cnt.fill(0);let nh=0,drawn=0;
     for(let j=0;j<m;j++){const a=la[j],b=lb[j];
-      if(sel>=0&&(a===sel||b===sel)){hi.push(a,b);continue;}
-      const f=ls[j]*OM_KGAIN[lk[j]]*(df(a)+df(b))*.5*dim,q=Math.min(OM_LEVELS-1,Math.floor(Math.pow(f,.62)*OM_LEVELS));
-      if(q<=0&&v.lite)continue;bk[q<0?0:q].push(SX[a],SY[a],SX[b],SY[b]);}
+      if(sel>=0&&(a===sel||b===sel)){lv[j]=254;nh++;continue;}
+      let q=Math.floor(Math.pow(ls[j]*OM_KGAIN[lk[j]]*(df(a)+df(b))*.5*dim,.62)*OM_LEVELS);q=q<0?0:q>OM_LEVELS-1?OM_LEVELS-1:q;
+      if(q<lodMin){lv[j]=255;continue;}lv[j]=q;cnt[q]++;}
+    off[0]=0;for(let q=0;q<OM_LEVELS;q++){off[q+1]=off[q]+cnt[q];pos[q]=off[q]*4;}
+    for(let j=0;j<m;j++){const q=lv[j];if(q>=OM_LEVELS)continue;const p=pos[q],a=la[j],b=lb[j];buf[p]=SX[a];buf[p+1]=SY[a];buf[p+2]=SX[b];buf[p+3]=SY[b];pos[q]=p+4;}
     // 폭 1px · 투명도로 가늘게 보이게 — 1px 미만 선은 래스터화가 2배 넘게 느리다(실측), 보이는 밝기는 같다
     // [V33.438] 대비를 올린다 — 흐린 단계는 더 옅게(안개가 걷힌다) · 센 단계는 더 또렷하게
     ctx.lineWidth=1;
-    for(let q=0;q<OM_LEVELS;q++){const L=bk[q];if(!L.length)continue;
+    for(let q=0;q<OM_LEVELS;q++){if(!cnt[q])continue;drawn+=cnt[q];
       ctx.strokeStyle='rgba('+GOLD+','+(.004+.5*(q/(OM_LEVELS-1))**2.1).toFixed(4)+')';ctx.beginPath();
-      for(let j=0;j<L.length;j+=4){ctx.moveTo(L[j],L[j+1]);ctx.lineTo(L[j+2],L[j+3]);}ctx.stroke();strokes++;}
+      for(let j=off[q]*4,e=off[q+1]*4;j<e;j+=4){ctx.moveTo(buf[j],buf[j+1]);ctx.lineTo(buf[j+2],buf[j+3]);}ctx.stroke();strokes++;}
     // 나무 몸: 나무마다 꺾은선 하나(밝기 단계 4개로 묶어)
-    for(let lv=1;lv<=4;lv++){ctx.strokeStyle='rgba('+GOLD+','+(.065*lv*dim).toFixed(3)+')';ctx.lineWidth=1;ctx.beginPath();
-      for(const tb of sc.tbody){if(Math.min(4,Math.ceil(tb.v*4))!==lv)continue;const I=tb.ids;ctx.moveTo(SX[I[0]],SY[I[0]]);for(let q=1;q<I.length;q++)ctx.lineTo(SX[I[q]],SY[I[q]]);}
+    for(let tl=v.lod?3:1;tl<=4;tl++){ctx.strokeStyle='rgba('+GOLD+','+(.065*tl*dim).toFixed(3)+')';ctx.lineWidth=1;ctx.beginPath();
+      for(const tb of sc.tbody){if(Math.min(4,Math.ceil(tb.v*4))!==tl)continue;const I=tb.ids;ctx.moveTo(SX[I[0]],SY[I[0]]);for(let q=1;q<I.length;q++)ctx.lineTo(SX[I[q]],SY[I[q]]);}
       ctx.stroke();strokes++;}
-    if(hi.length){ctx.strokeStyle='rgba('+GOLD+',.85)';ctx.lineWidth=1;ctx.beginPath();
-      for(let j=0;j<hi.length;j+=2){ctx.moveTo(SX[hi[j]],SY[hi[j]]);ctx.lineTo(SX[hi[j+1]],SY[hi[j+1]]);}ctx.stroke();strokes++;}
+    if(nh){ctx.strokeStyle='rgba('+GOLD+',.85)';ctx.lineWidth=1;ctx.beginPath();drawn+=nh;
+      for(let j=0;j<m;j++){if(lv[j]!==254)continue;ctx.moveTo(SX[la[j]],SY[la[j]]);ctx.lineTo(SX[lb[j]],SY[lb[j]]);}ctx.stroke();strokes++;}
     // 5) 신호(연출): 가장 센 선들 위를 흐르는 작은 빛
     if(v.motion&&sc.top){ctx.fillStyle='rgba('+GOLD+',.9)';ctx.beginPath();
       for(let j=0;j<sc.top.length;j++){const e=sc.top[j],u=(t*.35+j*.618)%1,x=SX[la[e]]+(SX[lb[e]]-SX[la[e]])*u,y=SY[la[e]]+(SY[lb[e]]-SY[la[e]])*u;
@@ -276,7 +280,7 @@
     // 6) 점 — 분기 눈금·장식 점은 1px, 뉴런·나무·머리는 원(값이 클수록 진하게 · 값 없음은 흐리게)
     const kind=sc.kind,val=sc.val;
     ctx.fillStyle='rgba('+GOLD+',.45)';ctx.beginPath();      // 분기 눈금 — 한 경로에 모아 한 번에 채운다
-    for(let i=0;i<n;i++){if(kind[i]!==6||df(i)<.3)continue;ctx.rect(SX[i]-.6,SY[i]-.6,1.2,1.2);}ctx.fill();
+    if(!v.lod)for(let i=0;i<n;i++){if(kind[i]!==6||df(i)<.3)continue;ctx.rect(SX[i]-.6,SY[i]-.6,1.2,1.2);}ctx.fill();
     for(let lvl=0;lvl<4;lvl++){ctx.fillStyle='rgba('+GOLD+','+(.25+.25*lvl)+')';ctx.beginPath();
       for(let i=0;i<n;i++){const k=kind[i];if(k>4)continue;const vv=val[i],b=(vv===vv?vv:.1)*df(i),q=Math.min(3,Math.floor(b*4));if(q!==lvl)continue;
         const r=k===3?4.2:k===4?1.6:k===0?1.9:1.7;ctx.moveTo(SX[i]+r,SY[i]);ctx.arc(SX[i],SY[i],r*Math.sqrt(v.zoom),0,TAU);}
@@ -291,8 +295,8 @@
     // 번짐은 큰 캔버스를 베끼지 않는다(그게 가장 비쌌다) — ★밝은 선 단계와 뉴런만★ 1/4 캔버스에 다시 긋고 키워 더한다
     if(v.glow&&v.small){const sm=v.small,sx=sm.getContext('2d'),k=sm.width/W;
       sx.setTransform(1,0,0,1,0,0);sx.clearRect(0,0,sm.width,sm.height);sx.setTransform(k,0,0,k,0,0);sx.globalCompositeOperation='lighter';
-      sx.lineWidth=1.2;for(let q=Math.floor(OM_LEVELS*.7);q<OM_LEVELS;q++){const L=bk[q];if(!L.length)continue;
-        sx.strokeStyle='rgba('+GOLD+','+(.5*(q/(OM_LEVELS-1))**2).toFixed(3)+')';sx.beginPath();for(let j=0;j<L.length;j+=4){sx.moveTo(L[j],L[j+1]);sx.lineTo(L[j+2],L[j+3]);}sx.stroke();}
+      sx.lineWidth=1.2;for(let q=Math.floor(OM_LEVELS*.7);q<OM_LEVELS;q++){if(!cnt[q])continue;
+        sx.strokeStyle='rgba('+GOLD+','+(.5*(q/(OM_LEVELS-1))**2).toFixed(3)+')';sx.beginPath();for(let j=off[q]*4,e=off[q+1]*4;j<e;j+=4){sx.moveTo(buf[j],buf[j+1]);sx.lineTo(buf[j+2],buf[j+3]);}sx.stroke();}
       sx.fillStyle='rgba('+GOLD+',.5)';sx.beginPath();for(let i=0;i<n;i++){if(kind[i]>4)continue;const vv=val[i];if(!(vv>.5))continue;sx.moveTo(SX[i]+2.4,SY[i]);sx.arc(SX[i],SY[i],2.4,0,TAU);}sx.fill();
       ctx.globalAlpha=.32;ctx.drawImage(sm,0,0,W,H);ctx.globalAlpha=1;}
     ctx.globalCompositeOperation='source-over';
@@ -300,73 +304,153 @@
     ctx.font='10px monospace';ctx.textAlign='left';ctx.fillStyle='rgba('+GOLD+',.85)';
     ctx.textAlign='center';   // 이름표는 핵에서 바깥쪽으로 밀어 겹치지 않게
     sc.groups.find(x=>x.kind===3).ids.forEach((i,k)=>{const dx=SX[i]-ox,dy=SY[i]-oy,l=Math.hypot(dx,dy)||1;ctx.fillText(OM_HZ[sc.hz[k]]||sc.hz[k],SX[i]+dx/l*18,SY[i]+dy/l*18+3);});
-    return {strokes,lines:m};
+    return {strokes,lines:m,drawn};
+  }
+  /* [V33.439] ★그리기는 별도 스레드에서★ — 사용자: "OMNI 뇌 구조를 보면 사이트가 계속 멈춘다".
+   *   원인: 선 1.8만 개를 초당 30번 ★메인 스레드★ 에서 그렸다. 한 장면이 수십~수백 ms 인 기기에선 그동안
+   *   스크롤·클릭·다른 화면 갱신이 전부 멈춘다. → OffscreenCanvas 를 Worker 로 넘겨 거기서 장면을 짓고 그린다.
+   *   메인 스레드는 입력(끌기·확대·선택)만 전한다. 그림이 무거워도 사이트는 안 멈춘다.
+   *   Worker 를 못 쓰는 브라우저: 정지 화면으로 시작(자동회전·흐르는 빛 끔) · 끄는 동안엔 흐린 단계 생략(lod) ·
+   *   손을 떼면 전부 한 번 그린다. */
+  /* 별도 스레드는 ★이 파일 자체★ 로 띄운다(같은 출처). blob: 주소는 사이트 CSP(script-src 'self')가 막는다 —
+     막히면 캔버스를 넘긴 뒤 스레드가 죽어 그림이 빈칸이 된다. 이 파일이 워커 안에서 읽히면 맨 끝에서 omWorkerMain 을 켠다. */
+  const OM_SELF=(typeof document!=='undefined'&&document.currentScript&&document.currentScript.src)||'/neural-observatory.js';
+  function omWorkerMain(){
+    let cv=null,ctx=null,sc=null,d=null,W=1,H=1,run=true,t=0,last=0,dirty=true,draws=0,ms=0,gap=33,seen=0,pending=false;
+    const v={yaw:.4,pitch:.32,zoom:1,panX:0,panY:0,selected:-1,motion:true,spin:true,glow:true,small:null,lite:false,lod:false};
+    const raf=typeof self.requestAnimationFrame==='function'?f=>self.requestAnimationFrame(f):f=>setTimeout(()=>f(performance.now()),16);
+    const kick=()=>{if(!pending&&run&&sc){pending=true;raf(loop);}};
+    function loop(now){pending=false;if(!run||!sc)return;
+      if(now-last>=1000/30){const dt=Math.min(.1,(now-last)/1000);
+        if(last&&(v.motion||v.spin)){gap=gap*.8+(now-last)*.2;if(++seen>8&&gap>55&&!v.lite){v.lite=true;v.glow=false;postMessage({type:'lite'});}if(seen>8&&gap>110)v.slow=true;}
+        v.lod=!!v.slow&&(v.motion||v.spin);   // 아주 느린 기기: 움직이는 동안만 흐린 단계 생략 · 멈추면 전부
+        last=now;if(v.motion||v.spin)t+=dt;if(v.spin)v.yaw+=dt*.08;
+        if(dirty||v.motion||v.spin){const t0=performance.now(),r=drawCore(ctx,sc,v,W,H,t);draws++;ms+=performance.now()-t0;dirty=false;
+          if(draws%10===1)postMessage({type:'stats',nodes:sc.n,edges:r.lines,drawn:r.drawn,strokes:r.strokes,draws,averageMs:(ms/draws).toFixed(2)});}}
+      if(dirty||v.motion||v.spin)kick();}
+    function size(m){W=m.w;H=m.h;cv.width=Math.round(W*m.ratio);cv.height=Math.round(H*m.ratio);ctx.setTransform(m.ratio,0,0,m.ratio,0,0);
+      v.small=new OffscreenCanvas(Math.max(1,Math.round(W/2)),Math.max(1,Math.round(H/2)));}
+    self.onmessage=e=>{const m=e.data;
+      if(m.type==='init'){cv=m.canvas;ctx=cv.getContext('2d');d=m.d;Object.assign(v,m.flags||{});size(m);sc=omniCore(d,m.st||null);}
+      else if(m.type==='scene'){sc=omniCore(d,m.st);v.selected=-1;}
+      else if(m.type==='size'){size(m);}
+      else if(m.type==='flags'){Object.assign(v,m.flags);}
+      else if(m.type==='orbit'){v.yaw-=m.dx*.006;v.pitch=clamp(v.pitch+m.dy*.006,-1.3,1.3);v.spin=false;}
+      else if(m.type==='pan'){v.panX+=m.dx;v.panY+=m.dy;}
+      else if(m.type==='zoom'){v.zoom=clamp(v.zoom*m.f,.5,8);}
+      else if(m.type==='reset'){v.zoom=1;v.panX=v.panY=0;v.yaw=.4;v.pitch=.32;}
+      else if(m.type==='select'){v.selected=m.id;}
+      else if(m.type==='pick'){let hit=-1,best=200;if(sc&&sc.SX)for(let i=0;i<sc.n;i++){if(sc.kind[i]>4)continue;const dd=(sc.SX[i]-m.x)**2+(sc.SY[i]-m.y)**2;if(dd<best){best=dd;hit=i;}}
+        postMessage({type:'picked',id:hit});return;}
+      else if(m.type==='run'){run=m.on;}
+      dirty=true;kick();};
   }
   function mountCore(host,config){
     const d=config.data||{},reduced=matchMedia('(prefers-reduced-motion: reduce)');
-    const v={yaw:.4,pitch:.32,zoom:1,panX:0,panY:0,selected:-1,motion:!reduced.matches,spin:!reduced.matches,glow:true,small:null};
     host.innerHTML='<section class="nerve-room"><header class="nerve-heading"><div><span class="nerve-kicker">HOLOGRAPHIC NEURAL CORE</span><h3>모든 뉴런 · 모든 가중치 · 모든 나무 분기</h3></div><span class="nerve-status">3D / ALL PARAMETERS</span></header><div class="nerve-controls"></div><div class="nerve-viewport omni-core-vp"><canvas tabindex="0" role="img" aria-label="OMNI 신경망과 나무 숲의 모든 파라미터를 금빛 선으로 그린 3D 구조"></canvas><div class="nerve-corner">DRAG TO ORBIT</div></div><div class="nerve-layers"></div><div class="nerve-inspector"><label>층 <select class="nerve-layer"></select></label><label>노드 <select class="nerve-node"></select></label><output aria-live="polite"></output></div><footer class="nerve-note">선 밝기 = 실제 값의 크기(신경망 |가중치| · 나무 잎 값). 유리 껍질·아크릴 띠·반사광·흐르는 빛·홍채·빛줄기는 장식이며 값이 없습니다.</footer></section>';
-    const room=host.firstElementChild,vp=room.querySelector('.nerve-viewport'),canvas=room.querySelector('canvas'),ctx=canvas.getContext('2d');
+    const room=host.firstElementChild,vp=room.querySelector('.nerve-viewport');let canvas=room.querySelector('canvas');
     const controls=room.querySelector('.nerve-controls'),info=room.querySelector('output'),layerSel=room.querySelector('.nerve-layer'),nodeSel=room.querySelector('.nerve-node');
-    let sc=null,raf=0,last=0,t=0,w=1,h=1,dead=false,visible=true,draws=0,ms=0,dirty=true,gap=33,seen=0;
-    const btn=(txt,fn,pr)=>{const b=document.createElement('button');b.type='button';b.textContent=txt;if(pr!=null)b.setAttribute('aria-pressed',pr);b.onclick=()=>{fn(b);dirty=true;wake();};controls.append(b);return b;};
+    // 별도 스레드를 쓸 수 있나 — 안 되면 대체 경로(메인 스레드 · 정지 화면 시작)
+    let wk=null;
+    if(!config.noWorker&&typeof Worker==='function'&&typeof OffscreenCanvas==='function'&&canvas.transferControlToOffscreen){
+      try{wk=new Worker(config.workerUrl||OM_SELF);}catch(e){wk=null;}
+    }
+    let still=!wk;   // 대체 경로는 정지 화면으로 시작 — 계속 그리면 그게 곧 멈춤이다
+    const v={yaw:.4,pitch:.32,zoom:1,panX:0,panY:0,selected:-1,motion:!reduced.matches&&!still,spin:!reduced.matches&&!still,glow:true,small:null,lite:false,lod:false};
+    canvas.dataset.mode=wk?'worker':'main';
+    let sc=null,ctx=null,raf=0,last=0,t=0,w=1,h=1,dead=false,visible=true,draws=0,ms=0,dirty=true,gap=33,seen=0,idleT=0,gc=0;
+    const send=(m,tr)=>{if(wk)wk.postMessage(m,tr||[]);};
+    const btn=(txt,fn,pr)=>{const b=document.createElement('button');b.type='button';b.textContent=txt;if(pr!=null)b.setAttribute('aria-pressed',pr);b.onclick=()=>{fn(b);flags();dirty=true;wake();};controls.append(b);return b;};
+    const flags=()=>send({type:'flags',flags:{motion:v.motion,spin:v.spin,glow:v.glow}});
     const mot=btn('신호 움직임',b=>{v.motion=!v.motion;b.setAttribute('aria-pressed',v.motion);},v.motion);
     const spin=btn('자동회전',b=>{v.spin=!v.spin;b.setAttribute('aria-pressed',v.spin);},v.spin);
     const glowBtn=btn('빛 번짐',b=>{v.glow=!v.glow;b.setAttribute('aria-pressed',v.glow);},v.glow);
-    btn('−',()=>v.zoom=clamp(v.zoom/1.25,.5,8)).setAttribute('aria-label','축소');
-    btn('+',()=>v.zoom=clamp(v.zoom*1.25,.5,8)).setAttribute('aria-label','확대');
-    btn('화면 맞춤',()=>{v.zoom=1;v.panX=v.panY=0;v.yaw=.4;v.pitch=.32;});
+    btn('−',()=>{v.zoom=clamp(v.zoom/1.25,.5,8);send({type:'zoom',f:1/1.25});}).setAttribute('aria-label','축소');
+    btn('+',()=>{v.zoom=clamp(v.zoom*1.25,.5,8);send({type:'zoom',f:1.25});}).setAttribute('aria-label','확대');
+    btn('화면 맞춤',()=>{v.zoom=1;v.panX=v.panY=0;v.yaw=.4;v.pitch=.32;send({type:'reset'});});
     const fmt=x=>Number(x).toLocaleString('ko-KR');
     function build(st){
       sc=omniCore(d,st);v.selected=-1;
-      // 신호가 흐를 선: 신경망 선 중 가장 센 120개(연출 — 세기 자체는 선 밝기가 말한다)
       const idx=[];for(let j=0;j<sc.la.length;j++)if(sc.lk[j]<=2)idx.push(j);idx.sort((a,b)=>sc.ls[b]-sc.ls[a]);sc.top=idx.slice(0,120);
       const lr=room.querySelector('.nerve-layers');lr.replaceChildren();layerSel.replaceChildren();
       sc.groups.forEach((g,q)=>{layerSel.add(new Option(g.label+' · '+g.ids.length,String(q)));
         const b=document.createElement('button');b.type='button';b.textContent=g.label+' / '+fmt(g.ids.length);b.onclick=()=>inspect(g.ids[0]);lr.append(b);});
       const I=sc.info,sum=document.createElement('button');sum.type='button';sum.disabled=true;
       sum.textContent=I.full?('가중치 '+fmt(I.params)+'개 전부 · 나무 '+fmt(I.trees)+'그루 · 분기 '+fmt(I.splits)+'개 전부'):'대표 연결만(구조 전부를 아직 못 받았다)';lr.append(sum);
-      populate();info.textContent=I.full?'신경망 '+I.sizes.join('→')+' · 가중치 '+fmt(I.params)+'개와 나무 분기 '+fmt(I.splits)+'개를 전부 한 줄씩 그립니다. 점을 누르면 그 점의 선만 밝게 남습니다.':'구조 전부를 받는 중이거나 없습니다 — 대표 연결(뉴런마다 상위 3개)만 그립니다.';
+      populate();info.textContent=(I.full?'신경망 '+I.sizes.join('→')+' · 가중치 '+fmt(I.params)+'개와 나무 분기 '+fmt(I.splits)+'개를 전부 한 줄씩 그립니다. 점을 누르면 그 점의 선만 밝게 남습니다.':'구조 전부를 받는 중이거나 없습니다 — 대표 연결(뉴런마다 상위 3개)만 그립니다.')
+        +(still?' (이 브라우저는 별도 스레드 그리기를 못 해 정지 화면으로 시작합니다 — 끌어서 돌려 보세요)':'');
       dirty=true;wake();
     }
     function populate(){nodeSel.replaceChildren();const g=sc.groups[+layerSel.value||0];if(!g)return;g.ids.forEach(id=>nodeSel.add(new Option(sc.name[id].split(' — ')[0],String(id))));}
-    function inspect(id){v.selected=id;const g=sc.groups.findIndex(x=>x.ids.includes(id));if(g>=0){layerSel.value=String(g);populate();nodeSel.value=String(id);}
+    function inspect(id){v.selected=id;send({type:'select',id});const g=sc.groups.findIndex(x=>x.ids.includes(id));if(g>=0){layerSel.value=String(g);populate();nodeSel.value=String(id);}
       let cnt=0;for(let j=0;j<sc.la.length;j++)if(sc.la[j]===id||sc.lb[j]===id)cnt++;
       const vv=sc.val[id];info.textContent=sc.name[id]+' · 닿은 선 '+fmt(cnt)+'개'+(vv===vv?' · 세기 '+(vv*100).toFixed(0)+'%(최대 대비)':' · 값 없음');dirty=true;wake();}
     layerSel.onchange=()=>{populate();inspect(+nodeSel.value);};nodeSel.onchange=()=>inspect(+nodeSel.value);
+    // ── 대체 경로(메인 스레드) 그리기 ──
     function frame(){const t0=performance.now();const r=drawCore(ctx,sc,v,w,h,t);draws++;ms+=performance.now()-t0;
-      canvas.dataset.nodes=sc.n;canvas.dataset.edges=r.lines;canvas.dataset.strokes=r.strokes;canvas.dataset.draws=draws;canvas.dataset.averageMs=(ms/draws).toFixed(2);dirty=false;}
-    function tick(now){raf=0;if(dead)return;if(!host.isConnected){destroy();return;}if(!visible||document.hidden)return;
+      canvas.dataset.nodes=sc.n;canvas.dataset.edges=r.lines;canvas.dataset.drawn=r.drawn;canvas.dataset.strokes=r.strokes;canvas.dataset.draws=draws;canvas.dataset.averageMs=(ms/draws).toFixed(2);dirty=false;}
+    function tick(now){raf=0;if(dead||wk)return;if(!host.isConnected){destroy();return;}if(!visible||document.hidden)return;
       if(now-last>=1000/30){const dt=Math.min(.1,(now-last)/1000);
-        // [V33.437] 느린 기기 — 장면 간격 이동평균이 55ms 를 넘으면 가벼운 모드(번짐 끔 · 거의 안 보이는 단계 생략)
-        if(last&&(v.motion||v.spin)){gap=gap*.9+(now-last)*.1;if(++seen>30&&gap>55&&!v.lite){v.lite=true;v.glow=false;glowBtn.setAttribute('aria-pressed','false');canvas.dataset.lite='1';}}
+        if(last&&(v.motion||v.spin)){gap=gap*.8+(now-last)*.2;if(++seen>8&&gap>55&&!v.lite){v.lite=true;v.glow=false;glowBtn.setAttribute('aria-pressed','false');canvas.dataset.lite='1';}if(seen>8&&gap>110)v.slow=true;}
+        if(v.slow&&!ptr.size)v.lod=v.motion||v.spin;
         last=now;if(v.motion||v.spin)t+=dt;if(v.spin)v.yaw+=dt*.08;if(dirty||v.motion||v.spin)frame();}
       if(dirty||v.motion||v.spin)raf=requestAnimationFrame(tick);}
-    function wake(){if(!dead&&!raf&&visible&&!document.hidden)raf=requestAnimationFrame(tick);}
+    function wake(){if(wk||dead||raf||!visible||document.hidden)return;raf=requestAnimationFrame(tick);}
+    // ── 별도 스레드 경로 ──
+    if(wk){
+      wk.onmessage=e=>{const m=e.data;if(dead)return;
+        if(m.type==='stats'){firstFrame=true;clearTimeout(wdog);for(const k of ['nodes','edges','drawn','strokes','draws','averageMs'])canvas.dataset[k]=m[k];}
+        else if(m.type==='picked'){if(m.id>=0)inspect(m.id);else{v.selected=-1;send({type:'select',id:-1});}}
+        else if(m.type==='lite'){v.lite=true;v.glow=false;glowBtn.setAttribute('aria-pressed','false');canvas.dataset.lite='1';}};
+      wk.onerror=()=>toMain('error');
+    }else ctx=canvas.getContext('2d');
+    // 스레드가 죽거나(스크립트 못 읽음 · 보안정책) 5초 안에 첫 장면이 없으면 → 캔버스를 새로 만들어 메인 스레드 정지 화면으로
+    let firstFrame=false,wdog=0;
+    function toMain(why){if(!wk||dead)return;try{wk.terminate();}catch(e){}wk=null;clearTimeout(wdog);
+      const nc=canvas.cloneNode(false);canvas.replaceWith(nc);canvas=nc;bind();canvas.dataset.mode='main';canvas.dataset.workerFail=why;
+      ctx=canvas.getContext('2d');still=true;v.motion=v.spin=false;mot.setAttribute('aria-pressed','false');spin.setAttribute('aria-pressed','false');
+      sizeMain();dirty=true;wake();}
+    function sizeMain(){const ratio=Math.min(devicePixelRatio||1,w<600?1.5:2);
+      canvas.width=Math.round(w*ratio);canvas.height=Math.round(h*ratio);ctx.setTransform(ratio,0,0,ratio,0,0);
+      v.small=document.createElement('canvas');v.small.width=Math.max(1,Math.round(w/2));v.small.height=Math.max(1,Math.round(h/2));/* 반 해상도 — 번짐이 좁고 맑다 */}
     const ro=new ResizeObserver(()=>{const r=vp.getBoundingClientRect();w=Math.max(1,r.width);h=Math.max(1,r.height);
-      const ratio=Math.min(devicePixelRatio||1,w<600?1.5:2);canvas.width=Math.round(w*ratio);canvas.height=Math.round(h*ratio);ctx.setTransform(ratio,0,0,ratio,0,0);
-      v.small=document.createElement('canvas');v.small.width=Math.max(1,Math.round(w/2));v.small.height=Math.max(1,Math.round(h/2));/* 반 해상도 — 번짐이 좁고 맑다 */dirty=true;wake();});
-    const io=new IntersectionObserver(e=>{visible=e[0].isIntersecting;if(!visible&&raf){cancelAnimationFrame(raf);raf=0;}wake();});
-    const vis=()=>{if(document.hidden&&raf){cancelAnimationFrame(raf);raf=0;}else wake();};
+      if(wk){send({type:'size',w,h,ratio:Math.min(devicePixelRatio||1,w<600?1.5:2)});return;}
+      sizeMain();dirty=true;wake();});
+    const io=new IntersectionObserver(e=>{visible=e[0].isIntersecting;send({type:'run',on:visible&&!document.hidden});if(!visible&&raf){cancelAnimationFrame(raf);raf=0;}wake();});
+    const vis=()=>{send({type:'run',on:visible&&!document.hidden});if(document.hidden&&raf){cancelAnimationFrame(raf);raf=0;}else wake();};
     const ptr=new Map();let moved=false;
-    canvas.onpointerdown=e=>{canvas.setPointerCapture(e.pointerId);ptr.set(e.pointerId,{x:e.clientX,y:e.clientY});moved=false;v.spin=false;spin.setAttribute('aria-pressed','false');};
+    const settle=()=>{clearTimeout(idleT);idleT=setTimeout(()=>{if(v.lod){v.lod=false;dirty=true;wake();}},180);};   // 대체 경로: 손을 떼면 전부 다시
+    function bind(){
+    canvas.onpointerdown=e=>{canvas.setPointerCapture(e.pointerId);ptr.set(e.pointerId,{x:e.clientX,y:e.clientY});moved=false;v.spin=false;spin.setAttribute('aria-pressed','false');flags();};
     canvas.onpointermove=e=>{const o=ptr.get(e.pointerId);if(!o)return;const dx=e.clientX-o.x,dy=e.clientY-o.y,other=[...ptr.entries()].find(([k])=>k!==e.pointerId)?.[1];
-      if(other){const b0=Math.hypot(o.x-other.x,o.y-other.y),b1=Math.hypot(e.clientX-other.x,e.clientY-other.y);if(b0>4)v.zoom=clamp(v.zoom*b1/b0,.5,8);}
-      else if(e.shiftKey){v.panX+=dx;v.panY+=dy;}else{v.yaw-=dx*.006;v.pitch=clamp(v.pitch+dy*.006,-1.3,1.3);}
-      if(Math.abs(dx)+Math.abs(dy)>2)moved=true;ptr.set(e.pointerId,{x:e.clientX,y:e.clientY});dirty=true;wake();};
-    canvas.onpointerup=e=>{ptr.delete(e.pointerId);if(moved||!sc||!sc.SX)return;const r=canvas.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;let hit=-1,best=200;
+      if(other){const b0=Math.hypot(o.x-other.x,o.y-other.y),b1=Math.hypot(e.clientX-other.x,e.clientY-other.y);if(b0>4){v.zoom=clamp(v.zoom*b1/b0,.5,8);send({type:'zoom',f:b1/b0});}}
+      else if(e.shiftKey){v.panX+=dx;v.panY+=dy;send({type:'pan',dx,dy});}else{v.yaw-=dx*.006;v.pitch=clamp(v.pitch+dy*.006,-1.3,1.3);send({type:'orbit',dx,dy});}
+      if(Math.abs(dx)+Math.abs(dy)>2){moved=true;if(!wk){v.lod=true;settle();}}ptr.set(e.pointerId,{x:e.clientX,y:e.clientY});dirty=true;wake();};
+    canvas.onpointerup=e=>{ptr.delete(e.pointerId);if(moved||!sc)return;const r=canvas.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
+      if(wk){send({type:'pick',x,y});return;}
+      if(!sc.SX)return;let hit=-1,best=200;
       for(let i=0;i<sc.n;i++){if(sc.kind[i]>4)continue;const dd=(sc.SX[i]-x)**2+(sc.SY[i]-y)**2;if(dd<best){best=dd;hit=i;}}
       if(hit>=0)inspect(hit);else{v.selected=-1;dirty=true;wake();}};
     canvas.onpointercancel=e=>ptr.delete(e.pointerId);
-    canvas.onwheel=e=>{if(!e.ctrlKey)return;e.preventDefault();v.zoom=clamp(v.zoom*Math.exp(-e.deltaY*.002),.5,8);dirty=true;wake();};
+    canvas.onwheel=e=>{if(!e.ctrlKey)return;e.preventDefault();const f=Math.exp(-e.deltaY*.002);v.zoom=clamp(v.zoom*f,.5,8);send({type:'zoom',f});if(!wk){v.lod=true;settle();}dirty=true;wake();};
     canvas.onkeydown=e=>{const k=e.key;if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','+','-','Home','Escape'].includes(k))return;e.preventDefault();
-      if(k==='Home'){v.zoom=1;v.panX=v.panY=0;}else if(k==='Escape')v.selected=-1;else if(k==='+'||k==='-')v.zoom=clamp(v.zoom*(k==='+'?1.2:1/1.2),.5,8);
-      else{v.yaw+=k==='ArrowLeft'?-.1:k==='ArrowRight'?.1:0;v.pitch=clamp(v.pitch+(k==='ArrowUp'?-.1:k==='ArrowDown'?.1:0),-1.3,1.3);}dirty=true;wake();};
-    const red=()=>{if(reduced.matches){v.motion=v.spin=false;mot.setAttribute('aria-pressed','false');spin.setAttribute('aria-pressed','false');}dirty=true;wake();};
-    function destroy(){dead=true;cancelAnimationFrame(raf);ro.disconnect();io.disconnect();document.removeEventListener('visibilitychange',vis);reduced.removeEventListener('change',red);if(active?.destroy===destroy)active=null;}
-    active={destroy};ro.observe(vp);io.observe(vp);document.addEventListener('visibilitychange',vis);reduced.addEventListener('change',red);
+      if(k==='Home'){v.zoom=1;v.panX=v.panY=0;send({type:'reset'});}else if(k==='Escape'){v.selected=-1;send({type:'select',id:-1});}
+      else if(k==='+'||k==='-'){const f=k==='+'?1.2:1/1.2;v.zoom=clamp(v.zoom*f,.5,8);send({type:'zoom',f});}
+      else{const dx=k==='ArrowLeft'?16.7:k==='ArrowRight'?-16.7:0,dy=k==='ArrowUp'?-16.7:k==='ArrowDown'?16.7:0;v.yaw-=dx*.006;v.pitch=clamp(v.pitch+dy*.006,-1.3,1.3);send({type:'orbit',dx,dy});}dirty=true;wake();};
+    }
+    bind();
+    const red=()=>{if(reduced.matches){v.motion=v.spin=false;mot.setAttribute('aria-pressed','false');spin.setAttribute('aria-pressed','false');flags();}dirty=true;wake();};
+    function destroy(){dead=true;cancelAnimationFrame(raf);clearTimeout(idleT);clearInterval(gc);clearTimeout(wdog);ro.disconnect();io.disconnect();document.removeEventListener('visibilitychange',vis);reduced.removeEventListener('change',red);
+      if(wk){wk.terminate();wk=null;}if(active?.destroy===destroy)active=null;}
+    active={destroy};
     build(config.structure||null);
-    if(!config.structure&&typeof fetch==='function')fetch(config.structureUrl||'/api/omni-structure').then(r=>r.ok?r.json():null).then(st=>{if(!dead&&st&&st.ok)build(st);}).catch(()=>{});
+    if(wk){const r=vp.getBoundingClientRect();w=Math.max(1,r.width);h=Math.max(1,r.height);const off=canvas.transferControlToOffscreen();
+      send({type:'init',canvas:off,d,st:config.structure||null,w,h,ratio:Math.min(devicePixelRatio||1,w<600?1.5:2),flags:{motion:v.motion,spin:v.spin,glow:v.glow}},[off]);
+      wdog=setTimeout(()=>{if(!firstFrame)toMain('timeout');},5000);}
+    ro.observe(vp);io.observe(vp);document.addEventListener('visibilitychange',vis);reduced.addEventListener('change',red);
+    // 화면이 없는 채로 남으면 스레드를 거둔다(다른 탭으로 옮겨 host 가 지워진 경우)
+    gc=setInterval(()=>{if(!host.isConnected)destroy();},2000);
+    if(!config.structure&&typeof fetch==='function')fetch(config.structureUrl||'/api/omni-structure').then(r=>r.ok?r.json():null).then(st=>{if(!dead&&st&&st.ok){build(st);send({type:'scene',st});}}).catch(()=>{});
     return active;
   }
   let active=null;
@@ -504,5 +588,7 @@
     active={destroy};resize.observe(viewport);intersection.observe(viewport);document.addEventListener('visibilitychange',visibility);reduced.addEventListener('change',reduce);rebuild();
     return active;
   }
-  root.NeuralObservatory={mount,dense,sequence,attention,project,omniCore,drawCore};
+  root.NeuralObservatory={mount,dense,sequence,attention,project,omniCore,drawCore,omWorkerMain};
+  // [V33.439] 이 파일이 ★Worker 안에서★ 읽히면(OMNI 별도 스레드) 그리기 루프를 켠다 — 창에서는 아무 일도 없다
+  if(typeof WorkerGlobalScope!=='undefined'&&typeof self!=='undefined'&&self instanceof WorkerGlobalScope)omWorkerMain();
 })(typeof window!=='undefined'?window:globalThis);

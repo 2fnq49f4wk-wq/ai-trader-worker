@@ -172,6 +172,26 @@ console.log("\n⑦ 홀로그램 핵(V33.437 새 엔진) — 가중치·분기 �
   const ga = /ctx\.globalAlpha=([\d.]+);ctx\.drawImage\(sm/.exec(dc);
   chk(!/fillRect\(0,0,W,H\)/.test(dc) && /Math\.round\(w\/2\)/.test(src) && ga && +ga[1] <= .35 && /아크릴 띠/.test(dc) && /sc\.shells/.test(dc),
     "맑은 아크릴: 전면 광채 없음 · 번짐 반 해상도 · 세기 " + (ga ? ga[1] : "?") + " ≤ .35 · 아크릴 띠·유리 껍질", "★다시 뿌옇게 그린다★");
+  /* [V33.439] ★사이트가 멈추지 않는다★ — 사용자: "OMNI 뇌 구조를 보면 사이트가 계속 멈춘다".
+     그리기는 별도 스레드(OffscreenCanvas → Worker) · 워커 소스가 실제로 번역된다 · 대체 경로는 정지 화면으로 시작 ·
+     움직이는 동안 흐린 단계 생략(lod) · 다시 그릴 때 감시 타이머를 거둔다. */
+  const mc = src.slice(src.indexOf("function mountCore("), src.indexOf("  let active=null;"));
+  /* 워커는 ★이 파일 자체★(같은 출처)로 — blob: 은 사이트 CSP(script-src 'self')가 막아 캔버스를 넘긴 뒤 빈칸이 된다.
+     워커 안에서 읽히면 그리기 루프를 스스로 켠다 · 실패하거나 5초 안에 첫 장면이 없으면 새 캔버스로 메인 스레드 정지 화면. */
+  const wsrc2 = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const csp = (/"script-src ([^"]*)"/.exec(wsrc2) || [])[1] || "";
+  chk(/new Worker\(config\.workerUrl\|\|OM_SELF\)/.test(mc) && !/createObjectURL|new Blob\(/.test(src) && !/blob:/.test(csp.replace(/;.*$/, "")) &&
+      /self instanceof WorkerGlobalScope\)omWorkerMain\(\)/.test(src) && /transferControlToOffscreen\(\)/.test(mc),
+    "그리기는 별도 스레드 — 워커 = 이 파일(같은 출처 · CSP script-src 'self' 로 허용) · 워커 안에서 스스로 시작", "★메인 스레드에서 그리거나 CSP 가 막는 워커다★");
+  chk(/function toMain\(why\)/.test(mc) && /canvas\.cloneNode\(false\)/.test(mc) && /wk\.onerror=\(\)=>toMain\('error'\)/.test(mc) && /toMain\('timeout'\)/.test(mc),
+    "워커가 죽거나 5초 안에 첫 장면이 없으면 → 새 캔버스 · 메인 스레드 정지 화면", "★워커 실패 때 빈칸으로 남는다★");
+  chk(/let still=!wk;/.test(mc) && /motion:!reduced\.matches&&!still,spin:!reduced\.matches&&!still/.test(mc),
+    "워커를 못 쓰면 정지 화면으로 시작(자동회전·흐르는 빛 끔)", "★대체 경로가 계속 그린다★");
+  chk(/clearInterval\(gc\)/.test(mc) && /wk\.terminate\(\)/.test(mc), "다시 그릴 때 워커·감시 타이머를 거둔다", "★스레드·타이머가 쌓인다★");
+  { const calls2 = { stroke: 0, fill: 0 }; const c2 = mk(); c2.stroke = () => calls2.stroke++;
+    const full = NO.drawCore(c2, sc, { yaw: .4, pitch: .3, zoom: 1, panX: 0, panY: 0, selected: -1, motion: false, spin: false, glow: false, small: null }, 1200, 400, 0).drawn;
+    const lod = NO.drawCore(c2, sc, { yaw: .4, pitch: .3, zoom: 1, panX: 0, panY: 0, selected: -1, motion: false, spin: false, glow: false, small: null, lod: true }, 1200, 400, 0).drawn;
+    chk(full === sc.la.length && lod < full * .6, "멈춰 있으면 선 " + full + "개 전부 · 움직이는 중(lod)엔 " + lod + "개", "★lod 가 안 줄인다(" + lod + "/" + full + ")★"); }
   chk(!/자비스|JARVIS|Jarvis|울트론|Ultron|어벤저스|Avengers|이그드라실|Yggdrasil/.test(src),
     "영화·신화 이름을 소스·화면에 쓰지 않는다(형태만 빌린다)", "★고유 이름이 들어가 있다★");
   chk(/path === "\/api\/omni-structure"/.test(wsrc) && /async function omniStructure\(DB\)/.test(wsrc) && /_omStructMemo\.key === key/.test(wsrc),
