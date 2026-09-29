@@ -140,7 +140,7 @@
     const extra=[];{const have=new Set(names);trees.forEach(t=>{for(let j=2;j<t.length;j++){const nm=tf[t[j]];if(nm!=null&&!have.has(nm)){have.add(nm);extra.push(nm);}}});}
     const inNames=names.concat(extra),nIn=inNames.length;
     const order=inNames.map((n,i)=>i).sort((a,b)=>omGroup(inNames[a])-omGroup(inNames[b])||a-b);
-    const inPt=new Array(nIn),R_IN=300,R_H1=208,R_H2=138,R_HD=58;
+    const inPt=new Array(nIn),R_IN=300,R_H1=208,R_H2=138,R_HD=72;
     // 입력 세기 = 나가는 |w| 합(첫 행렬) — 측정값. 없으면 NaN(흐리게)
     const rowSum=(M,r,c)=>{const o=new Float64Array(r);for(let i=0;i<r;i++){let s=0;for(let k=0;k<c;k++)s+=M[i*c+k];o[i]=s;}return o;};
     const nrm01=a=>{let m=0;for(const v of a)if(v>m)m=v;return Array.from(a,v=>m>0?v/m:NaN);};
@@ -193,7 +193,7 @@
     return {n,P:new Float32Array(X),kind:Uint8Array.from(K),val:Float32Array.from(V),name:NM,
       ring:Int16Array.from(RG),ang:Float32Array.from(RA),rings,
       la:Int32Array.from(LA),lb:Int32Array.from(LB),ls:Float32Array.from(LS),lk:Uint8Array.from(LK),
-      groups,hz,tbody,info:{params:mats?net.mats.reduce((a,m)=>a+m.r*m.c,0):0,splits:trees.reduce((a,t)=>a+t.length-2,0),trees:trees.length,
+      groups,hz,tbody,shells:[R_IN,R_H1,R_H2],bands:trees.length?treeRings:[],info:{params:mats?net.mats.reduce((a,m)=>a+m.r*m.c,0):0,splits:trees.reduce((a,t)=>a+t.length-2,0),trees:trees.length,
         nets:net?net.nets:0,full:!!mats,inputs:nIn,sizes:[nIn].concat(hidSizes,[hz.length])}};
   }
   const OM_LEVELS=14,OM_KGAIN=[.55,.8,1,.7,.45,.9];   // 종류별 밝기 배율(투명도) — w1 은 7천 줄이라 낮게
@@ -211,11 +211,43 @@
       SX[i]=xr*k*scale+ox;SY[i]=yr*k*scale+oy;SZ[i]=dp;}
     const df=i=>{const q=.2+.8*(1-(SZ[i]+380)/760);return q<.12?.12:q>1?1:q;};
     ctx.clearRect(0,0,W,H);
-    // 3) 핵 광채 — 방사 그라데이션 한 번
-    const g=ctx.createRadialGradient(ox,oy,0,ox,oy,340*scale);
-    g.addColorStop(0,'rgba('+GOLD+',.20)');g.addColorStop(.18,'rgba('+GOLD+',.07)');g.addColorStop(1,'rgba('+GOLD+',0)');
-    ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
     ctx.globalCompositeOperation='lighter';
+    // 3) [V33.438] ★맑은 아크릴★ — 넓게 깔던 광채(뿌옇게 보인 원인)를 걷고, 유리 같은 껍질 셋:
+    //    가장자리로 갈수록 진해지는 면(프레넬) · 또렷한 테두리 · 왼쪽 위 반사광 호 · 반짝임. 모두 장식(값 없음).
+    let strokes=0;
+    {const rim=[],sh=sc.shells||[];
+      for(let q=0;q<sh.length;q++){const rr=sh[q]*scale;
+        const g=ctx.createRadialGradient(ox,oy,rr*.62,ox,oy,rr);g.addColorStop(0,'rgba('+GOLD+',0)');g.addColorStop(.86,'rgba('+GOLD+','+(.018+.008*q)+')');g.addColorStop(1,'rgba('+GOLD+','+(.075-.012*q)+')');
+        ctx.fillStyle=g;ctx.beginPath();ctx.arc(ox,oy,rr,0,TAU);ctx.fill();rim.push(rr);}
+      ctx.lineWidth=1;ctx.strokeStyle='rgba('+GOLD+',.42)';ctx.beginPath();for(const rr of rim){ctx.moveTo(ox+rr,oy);ctx.arc(ox,oy,rr,0,TAU);}ctx.stroke();strokes++;
+      ctx.strokeStyle='rgba('+GOLD+',.13)';ctx.beginPath();for(const rr of rim){ctx.moveTo(ox+rr*.975,oy);ctx.arc(ox,oy,rr*.975,0,TAU);}ctx.stroke();strokes++;
+      ctx.lineWidth=2.6;ctx.lineCap='round';ctx.strokeStyle='rgba('+GOLD+',.8)';ctx.beginPath();   // 반사광(왼쪽 위)
+      for(const rr of rim){const a0=-2.62,a1=-1.86;ctx.moveTo(ox+Math.cos(a0)*rr*.93,oy+Math.sin(a0)*rr*.93);ctx.arc(ox,oy,rr*.93,a0,a1);}ctx.stroke();strokes++;
+      ctx.lineWidth=1.2;ctx.strokeStyle='rgba('+GOLD+',.22)';ctx.beginPath();   // 맞은편 약한 반사
+      for(const rr of rim){const a0=.55,a1=1.15;ctx.moveTo(ox+Math.cos(a0)*rr*.95,oy+Math.sin(a0)*rr*.95);ctx.arc(ox,oy,rr*.95,a0,a1);}ctx.stroke();strokes++;
+      ctx.lineCap='butt';ctx.fillStyle='rgba('+GOLD+',.85)';ctx.beginPath();
+      for(const rr of rim){const x=ox+Math.cos(-2.35)*rr*.84,y=oy+Math.sin(-2.35)*rr*.84;ctx.moveTo(x+1.8,y);ctx.arc(x,y,1.8,0,TAU);}ctx.fill();
+      // 핵 렌즈: 작고 맑은 빛(넓게 번지지 않는다)
+      const cr=62*scale,cg=ctx.createRadialGradient(ox,oy,0,ox,oy,cr);cg.addColorStop(0,'rgba('+GOLD+',.5)');cg.addColorStop(.35,'rgba('+GOLD+',.12)');cg.addColorStop(1,'rgba('+GOLD+',0)');
+      ctx.fillStyle=cg;ctx.beginPath();ctx.arc(ox,oy,cr,0,TAU);ctx.fill();}
+    // 4) ★아크릴 띠★ — 나무 고리를 폭 있는 투명 띠로: 반투명 면 + 날카로운 두 모서리(앞 진하게 · 뒤 옅게) + 띠를 따라 흐르는 반사광
+    const bands=sc.bands||[];
+    if(bands.length){const M=120,hw=9,bx=[],by=[],bz=[];
+      const pj=(x,y,z)=>{const xr=x*cy+z*sy,zr=-x*sy+z*cy,yr=y*cp-zr*sp,dp=y*sp+zr*cp,k=900/(900+dp);bx.push(xr*k*scale+ox);by.push(yr*k*scale+oy);bz.push(dp);};
+      bands.forEach(ri=>{const R=sc.rings[ri],e1=R.e1,e2=R.e2,nn=[e1[1]*e2[2]-e1[2]*e2[1],e1[2]*e2[0]-e1[0]*e2[2],e1[0]*e2[1]-e1[1]*e2[0]];
+        for(let j=0;j<M;j++){const a=TAU*j/M,c=Math.cos(a)*R.R,s2=Math.sin(a)*R.R,x=e1[0]*c+e2[0]*s2,y=e1[1]*c+e2[1]*s2,z=e1[2]*c+e2[2]*s2;
+          pj(x+nn[0]*hw,y+nn[1]*hw,z+nn[2]*hw);pj(x-nn[0]*hw,y-nn[1]*hw,z-nn[2]*hw);}});
+      ctx.fillStyle='rgba('+GOLD+',.05)';ctx.beginPath();
+      for(let b=0;b<bands.length;b++)for(let j=0;j<M;j++){const i0=(b*M+j)*2,i1=(b*M+(j+1)%M)*2;
+        ctx.moveTo(bx[i0],by[i0]);ctx.lineTo(bx[i1],by[i1]);ctx.lineTo(bx[i1+1],by[i1+1]);ctx.lineTo(bx[i0+1],by[i0+1]);ctx.closePath();}
+      ctx.fill();
+      for(const front of [false,true]){ctx.lineWidth=front?1.1:1;ctx.strokeStyle='rgba('+GOLD+','+(front?.62:.16)+')';ctx.beginPath();
+        for(let b=0;b<bands.length;b++)for(let j=0;j<M;j++)for(let e=0;e<2;e++){const i0=(b*M+j)*2+e,i1=(b*M+(j+1)%M)*2+e;if((bz[i0]+bz[i1]<0)!==front)continue;
+          ctx.moveTo(bx[i0],by[i0]);ctx.lineTo(bx[i1],by[i1]);}ctx.stroke();strokes++;}
+      ctx.lineWidth=1.8;ctx.lineCap='round';ctx.strokeStyle='rgba('+GOLD+',.95)';ctx.beginPath();   // 흐르는 반사광(연출)
+      for(let b=0;b<bands.length;b++)for(let g2=0;g2<2;g2++){const j0=Math.floor(((t*(.09+.03*b)+g2*.5+b*.21)%1)*M);
+        for(let j=0;j<9;j++){const e=(j0+j)%M,f2=(j0+j+1)%M,i0=(b*M+e)*2,i1=(b*M+f2)*2;ctx.moveTo(bx[i0],by[i0]);ctx.lineTo(bx[i1],by[i1]);}}
+      ctx.stroke();strokes++;ctx.lineCap='butt';}
     // 4) 선 — 밝기 단계별로 묶어 단계마다 한 번에(선택된 점에 닿은 선은 따로)
     const la=sc.la,lb=sc.lb,ls=sc.ls,lk=sc.lk,m=la.length,sel=v.selected,dim=sel>=0?.35:1;
     if(!sc.bk){sc.bk=Array.from({length:OM_LEVELS},()=>[]);}
@@ -223,12 +255,13 @@
     const hi=[];
     for(let j=0;j<m;j++){const a=la[j],b=lb[j];
       if(sel>=0&&(a===sel||b===sel)){hi.push(a,b);continue;}
-      const f=ls[j]*OM_KGAIN[lk[j]]*(df(a)+df(b))*.5*dim,q=Math.min(OM_LEVELS-1,Math.floor(Math.sqrt(f)*OM_LEVELS));
+      const f=ls[j]*OM_KGAIN[lk[j]]*(df(a)+df(b))*.5*dim,q=Math.min(OM_LEVELS-1,Math.floor(Math.pow(f,.62)*OM_LEVELS));
       if(q<=0&&v.lite)continue;bk[q<0?0:q].push(SX[a],SY[a],SX[b],SY[b]);}
     // 폭 1px · 투명도로 가늘게 보이게 — 1px 미만 선은 래스터화가 2배 넘게 느리다(실측), 보이는 밝기는 같다
-    ctx.lineWidth=1;let strokes=0;
+    // [V33.438] 대비를 올린다 — 흐린 단계는 더 옅게(안개가 걷힌다) · 센 단계는 더 또렷하게
+    ctx.lineWidth=1;
     for(let q=0;q<OM_LEVELS;q++){const L=bk[q];if(!L.length)continue;
-      ctx.strokeStyle='rgba('+GOLD+','+(.008+.32*(q/(OM_LEVELS-1))**2).toFixed(4)+')';ctx.beginPath();
+      ctx.strokeStyle='rgba('+GOLD+','+(.004+.5*(q/(OM_LEVELS-1))**2.1).toFixed(4)+')';ctx.beginPath();
       for(let j=0;j<L.length;j+=4){ctx.moveTo(L[j],L[j+1]);ctx.lineTo(L[j+2],L[j+3]);}ctx.stroke();strokes++;}
     // 나무 몸: 나무마다 꺾은선 하나(밝기 단계 4개로 묶어)
     for(let lv=1;lv<=4;lv++){ctx.strokeStyle='rgba('+GOLD+','+(.065*lv*dim).toFixed(3)+')';ctx.lineWidth=1;ctx.beginPath();
@@ -248,6 +281,9 @@
       for(let i=0;i<n;i++){const k=kind[i];if(k>4)continue;const vv=val[i],b=(vv===vv?vv:.1)*df(i),q=Math.min(3,Math.floor(b*4));if(q!==lvl)continue;
         const r=k===3?4.2:k===4?1.6:k===0?1.9:1.7;ctx.moveTo(SX[i]+r,SY[i]);ctx.arc(SX[i],SY[i],r*Math.sqrt(v.zoom),0,TAU);}
       ctx.fill();}
+    ctx.strokeStyle='rgba('+GOLD+',.4)';ctx.lineWidth=.9;ctx.beginPath();   // 아크릴 구슬 — 값이 큰 뉴런에 얇은 투명 테
+    for(let i=0;i<n;i++){const k=kind[i];if(k>3)continue;const vv=val[i];if(!(vv>.6)||df(i)<.5)continue;const r=(k===3?9:4.2)*Math.sqrt(v.zoom);ctx.moveTo(SX[i]+r,SY[i]);ctx.arc(SX[i],SY[i],r,0,TAU);}
+    ctx.stroke();strokes++;
     ctx.fillStyle='rgba('+GOLD+',.12)';ctx.beginPath();   // 머리 후광
     for(const i of sc.groups.find(x=>x.kind===3).ids){ctx.moveTo(SX[i]+11,SY[i]);ctx.arc(SX[i],SY[i],11,0,TAU);}ctx.fill();
     if(sel>=0){ctx.strokeStyle='rgba('+GOLD+',.95)';ctx.lineWidth=1.2;ctx.beginPath();ctx.arc(SX[sel],SY[sel],7,0,TAU);ctx.stroke();}
@@ -255,20 +291,21 @@
     // 번짐은 큰 캔버스를 베끼지 않는다(그게 가장 비쌌다) — ★밝은 선 단계와 뉴런만★ 1/4 캔버스에 다시 긋고 키워 더한다
     if(v.glow&&v.small){const sm=v.small,sx=sm.getContext('2d'),k=sm.width/W;
       sx.setTransform(1,0,0,1,0,0);sx.clearRect(0,0,sm.width,sm.height);sx.setTransform(k,0,0,k,0,0);sx.globalCompositeOperation='lighter';
-      sx.lineWidth=1.6;for(let q=Math.floor(OM_LEVELS*.55);q<OM_LEVELS;q++){const L=bk[q];if(!L.length)continue;
+      sx.lineWidth=1.2;for(let q=Math.floor(OM_LEVELS*.7);q<OM_LEVELS;q++){const L=bk[q];if(!L.length)continue;
         sx.strokeStyle='rgba('+GOLD+','+(.5*(q/(OM_LEVELS-1))**2).toFixed(3)+')';sx.beginPath();for(let j=0;j<L.length;j+=4){sx.moveTo(L[j],L[j+1]);sx.lineTo(L[j+2],L[j+3]);}sx.stroke();}
-      sx.fillStyle='rgba('+GOLD+',.6)';sx.beginPath();for(let i=0;i<n;i++){if(kind[i]>4)continue;sx.moveTo(SX[i]+3,SY[i]);sx.arc(SX[i],SY[i],3,0,TAU);}sx.fill();
-      ctx.globalAlpha=.6;ctx.drawImage(sm,0,0,W,H);ctx.globalAlpha=1;}
+      sx.fillStyle='rgba('+GOLD+',.5)';sx.beginPath();for(let i=0;i<n;i++){if(kind[i]>4)continue;const vv=val[i];if(!(vv>.5))continue;sx.moveTo(SX[i]+2.4,SY[i]);sx.arc(SX[i],SY[i],2.4,0,TAU);}sx.fill();
+      ctx.globalAlpha=.32;ctx.drawImage(sm,0,0,W,H);ctx.globalAlpha=1;}
     ctx.globalCompositeOperation='source-over';
     // 8) 이름표: 머리(지평)만
     ctx.font='10px monospace';ctx.textAlign='left';ctx.fillStyle='rgba('+GOLD+',.85)';
-    sc.groups.find(x=>x.kind===3).ids.forEach((i,k)=>ctx.fillText(OM_HZ[sc.hz[k]]||sc.hz[k],SX[i]+9,SY[i]+3));
+    ctx.textAlign='center';   // 이름표는 핵에서 바깥쪽으로 밀어 겹치지 않게
+    sc.groups.find(x=>x.kind===3).ids.forEach((i,k)=>{const dx=SX[i]-ox,dy=SY[i]-oy,l=Math.hypot(dx,dy)||1;ctx.fillText(OM_HZ[sc.hz[k]]||sc.hz[k],SX[i]+dx/l*18,SY[i]+dy/l*18+3);});
     return {strokes,lines:m};
   }
   function mountCore(host,config){
     const d=config.data||{},reduced=matchMedia('(prefers-reduced-motion: reduce)');
     const v={yaw:.4,pitch:.32,zoom:1,panX:0,panY:0,selected:-1,motion:!reduced.matches,spin:!reduced.matches,glow:true,small:null};
-    host.innerHTML='<section class="nerve-room"><header class="nerve-heading"><div><span class="nerve-kicker">HOLOGRAPHIC NEURAL CORE</span><h3>모든 뉴런 · 모든 가중치 · 모든 나무 분기</h3></div><span class="nerve-status">3D / ALL PARAMETERS</span></header><div class="nerve-controls"></div><div class="nerve-viewport omni-core-vp"><canvas tabindex="0" role="img" aria-label="OMNI 신경망과 나무 숲의 모든 파라미터를 금빛 선으로 그린 3D 구조"></canvas><div class="nerve-corner">DRAG TO ORBIT</div></div><div class="nerve-layers"></div><div class="nerve-inspector"><label>층 <select class="nerve-layer"></select></label><label>노드 <select class="nerve-node"></select></label><output aria-live="polite"></output></div><footer class="nerve-note">선 밝기 = 실제 값의 크기(신경망 |가중치| · 나무 잎 값). 도는 고리·홍채·빛줄기·흐르는 빛은 장식이며 값이 없습니다.</footer></section>';
+    host.innerHTML='<section class="nerve-room"><header class="nerve-heading"><div><span class="nerve-kicker">HOLOGRAPHIC NEURAL CORE</span><h3>모든 뉴런 · 모든 가중치 · 모든 나무 분기</h3></div><span class="nerve-status">3D / ALL PARAMETERS</span></header><div class="nerve-controls"></div><div class="nerve-viewport omni-core-vp"><canvas tabindex="0" role="img" aria-label="OMNI 신경망과 나무 숲의 모든 파라미터를 금빛 선으로 그린 3D 구조"></canvas><div class="nerve-corner">DRAG TO ORBIT</div></div><div class="nerve-layers"></div><div class="nerve-inspector"><label>층 <select class="nerve-layer"></select></label><label>노드 <select class="nerve-node"></select></label><output aria-live="polite"></output></div><footer class="nerve-note">선 밝기 = 실제 값의 크기(신경망 |가중치| · 나무 잎 값). 유리 껍질·아크릴 띠·반사광·흐르는 빛·홍채·빛줄기는 장식이며 값이 없습니다.</footer></section>';
     const room=host.firstElementChild,vp=room.querySelector('.nerve-viewport'),canvas=room.querySelector('canvas'),ctx=canvas.getContext('2d');
     const controls=room.querySelector('.nerve-controls'),info=room.querySelector('output'),layerSel=room.querySelector('.nerve-layer'),nodeSel=room.querySelector('.nerve-node');
     let sc=null,raf=0,last=0,t=0,w=1,h=1,dead=false,visible=true,draws=0,ms=0,dirty=true,gap=33,seen=0;
@@ -308,7 +345,7 @@
     function wake(){if(!dead&&!raf&&visible&&!document.hidden)raf=requestAnimationFrame(tick);}
     const ro=new ResizeObserver(()=>{const r=vp.getBoundingClientRect();w=Math.max(1,r.width);h=Math.max(1,r.height);
       const ratio=Math.min(devicePixelRatio||1,w<600?1.5:2);canvas.width=Math.round(w*ratio);canvas.height=Math.round(h*ratio);ctx.setTransform(ratio,0,0,ratio,0,0);
-      v.small=document.createElement('canvas');v.small.width=Math.max(1,Math.round(w/4));v.small.height=Math.max(1,Math.round(h/4));dirty=true;wake();});
+      v.small=document.createElement('canvas');v.small.width=Math.max(1,Math.round(w/2));v.small.height=Math.max(1,Math.round(h/2));/* 반 해상도 — 번짐이 좁고 맑다 */dirty=true;wake();});
     const io=new IntersectionObserver(e=>{visible=e[0].isIntersecting;if(!visible&&raf){cancelAnimationFrame(raf);raf=0;}wake();});
     const vis=()=>{if(document.hidden&&raf){cancelAnimationFrame(raf);raf=0;}else wake();};
     const ptr=new Map();let moved=false;

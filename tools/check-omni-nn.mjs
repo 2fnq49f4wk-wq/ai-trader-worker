@@ -160,12 +160,18 @@ console.log("\n⑦ 홀로그램 핵(V33.437 새 엔진) — 가중치·분기 �
   // 묶어 긋기 — 선이 1.8만 개여도 획 호출은 수십 번
   const calls = { stroke: 0, fill: 0 };
   const nop = () => {}, grad = { addColorStop: nop };
-  const mk = () => ({ canvas: { width: 300, height: 100 }, createRadialGradient: () => grad, fillRect: nop, clearRect: nop, beginPath: nop, moveTo: nop, lineTo: nop, arc: nop, rect: nop,
+  const mk = () => ({ canvas: { width: 300, height: 100 }, createRadialGradient: () => grad, fillRect: nop, clearRect: nop, beginPath: nop, moveTo: nop, lineTo: nop, arc: nop, rect: nop, closePath: nop,
     fillText: nop, drawImage: nop, setTransform: nop, stroke: () => calls.stroke++, fill: () => calls.fill++, getContext: null });
   const ctx = mk(), small = { width: 300, height: 100, getContext: () => mk() };
   const r = NO.drawCore(ctx, sc, { yaw: .4, pitch: .3, zoom: 1, panX: 0, panY: 0, selected: 5, motion: true, spin: true, glow: true, small }, 1200, 400, 1.3);
   chk(r.lines === sc.la.length && calls.stroke <= 45 && calls.fill <= 20,
     "선 " + r.lines + "개를 획 " + calls.stroke + "번 · 채움 " + calls.fill + "번에(단계별로 묶어)", "★선마다 긋는다(획 " + calls.stroke + " · 채움 " + calls.fill + ")★");
+  /* [V33.438] ★맑게(아크릴)★ — 사용자: "뿌연 느낌 말고 맑으면서 반투명하게". 뿌옇던 원인 둘을 다시 못 들이게:
+     화면 전체를 덮는 광채(fillRect 0,0,W,H) 금지 · 번짐은 반 해상도(w/2) · 세기 ≤ .35. 아크릴 띠·유리 껍질이 있다. */
+  const dc = src.slice(src.indexOf("function drawCore("), src.indexOf("function mountCore("));
+  const ga = /ctx\.globalAlpha=([\d.]+);ctx\.drawImage\(sm/.exec(dc);
+  chk(!/fillRect\(0,0,W,H\)/.test(dc) && /Math\.round\(w\/2\)/.test(src) && ga && +ga[1] <= .35 && /아크릴 띠/.test(dc) && /sc\.shells/.test(dc),
+    "맑은 아크릴: 전면 광채 없음 · 번짐 반 해상도 · 세기 " + (ga ? ga[1] : "?") + " ≤ .35 · 아크릴 띠·유리 껍질", "★다시 뿌옇게 그린다★");
   chk(!/자비스|JARVIS|Jarvis|울트론|Ultron|어벤저스|Avengers|이그드라실|Yggdrasil/.test(src),
     "영화·신화 이름을 소스·화면에 쓰지 않는다(형태만 빌린다)", "★고유 이름이 들어가 있다★");
   chk(/path === "\/api\/omni-structure"/.test(wsrc) && /async function omniStructure\(DB\)/.test(wsrc) && /_omStructMemo\.key === key/.test(wsrc),
