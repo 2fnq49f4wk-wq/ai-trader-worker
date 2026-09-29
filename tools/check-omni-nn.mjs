@@ -185,6 +185,26 @@ console.log("\n⑦ 홀로그램 핵(V33.437 새 엔진) — 가중치·분기 �
     "그리기는 별도 스레드 — 워커 = 이 파일(같은 출처 · CSP script-src 'self' 로 허용) · 워커 안에서 스스로 시작", "★메인 스레드에서 그리거나 CSP 가 막는 워커다★");
   chk(/function toMain\(why\)/.test(mc) && /canvas\.cloneNode\(false\)/.test(mc) && /wk\.onerror=\(\)=>toMain\('error'\)/.test(mc) && /toMain\('timeout'\)/.test(mc),
     "워커가 죽거나 5초 안에 첫 장면이 없으면 → 새 캔버스 · 메인 스레드 정지 화면", "★워커 실패 때 빈칸으로 남는다★");
+  /* [V33.440] 운영 실측(ui-probe): 그림이 화면 밖이면 워커가 절전으로 안 그리는데, '5초 안에 첫 장면' 을 실패로 보고
+     멀쩡한 워커를 끄고 메인 스레드로 떨어졌다(workerFail=timeout) — 그게 '멈춤 · 디자인과 다름' 이었다.
+     → 워커는 init 을 받자마자 ready 를 보내고, 감시는 ready 만 기다린다. */
+  chk(/sc=omniCore\(d,m\.st\|\|null\);postMessage\(\{type:'ready'\}\)/.test(src) && /if\(!alive\)toMain\('timeout'\)/.test(mc) && !/firstFrame/.test(mc),
+    "워커 감시는 '살아 있다(ready)' 만 본다 — 화면 밖 절전을 실패로 보지 않는다", "★화면 밖이면 멀쩡한 워커를 끈다★");
+  /* 실제 규모(신경망 111→128→64→5 · 나무 993)에서 하얗게 타지 않는다 — 총 노출(투명도×선분)이 시험 모델의 1.8배 이내 */
+  { let seed = 3; const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+    const gs = () => { let u = 0; for (let i = 0; i < 6; i++) u += rnd(); return (u - 3) / 1.2; };
+    const mat = (r, c, k) => _omQ8(Array.from({ length: r }, () => Array.from({ length: c }, () => gs() * k * (rnd() < .1 ? 3 : 1))));
+    const bigTrees = []; for (let t = 0; t < 993; t++) { const ns = 8 + Math.floor(rnd() * 12), row = [ns + 1, Math.round((.5 + rnd()) * 1e3)]; for (let q = 0; q < ns; q++) row.push(Math.floor(rnd() * TM.feats.length * .8)); bigTrees.push(row); }
+    const big = Object.assign({}, st, { net: Object.assign({}, st.net, { sizes: [names.length, 128, 64, 5], mats: [mat(names.length, 128, .1), mat(128, 64, .12), mat(64, 5, .2)] }), trees: bigTrees });
+    const expo = (scn) => { let segs = 0, e = 0; const c = mk(); c.beginPath = () => { segs = 0; }; c.lineTo = () => { segs++; };
+      c.stroke = function () { const a = +(/,([\d.]+)\)$/.exec(this.strokeStyle || "") || [0, 0])[1]; e += a * segs; };
+      NO.drawCore(c, scn, { yaw: .4, pitch: .3, zoom: 1, panX: 0, panY: 0, selected: -1, motion: false, spin: false, glow: false, small: null }, 1200, 400, 0); return e; };
+    const scB = NO.omniCore(d, big), e0 = expo(sc), e1 = expo(scB);
+    // 1200×400 화면 기준 절대 상한 2300(V33.440 실측 1953 · 하얗게 타던 V33.439 설정은 이 값을 크게 넘었다)
+    chk(e1 <= 2300, "실제 규모(선 " + scB.la.length + "개) 총 노출 " + e1.toFixed(0) + " ≤ 2300 — 하얗게 타지 않는다(작은 모델 " + e0.toFixed(0) + ")",
+      "★실제 규모에서 하얗게 탄다(" + e1.toFixed(0) + ")★");
+    const c3 = mk(); const lodN = NO.drawCore(c3, scB, { yaw: .4, pitch: .3, zoom: 1, panX: 0, panY: 0, selected: -1, motion: false, spin: false, glow: false, small: null, lod: true }, 1200, 400, 0).drawn;
+    chk(lodN <= 5000, "움직이는 중(lod)엔 모델 크기와 무관하게 ≤ 5,000줄 (실제 규모 " + lodN + ")", "★끄는 동안 선이 너무 많다(" + lodN + ")★"); }
   chk(/let still=!wk;/.test(mc) && /motion:!reduced\.matches&&!still,spin:!reduced\.matches&&!still/.test(mc),
     "워커를 못 쓰면 정지 화면으로 시작(자동회전·흐르는 빛 끔)", "★대체 경로가 계속 그린다★");
   chk(/clearInterval\(gc\)/.test(mc) && /wk\.terminate\(\)/.test(mc), "다시 그릴 때 워커·감시 타이머를 거둔다", "★스레드·타이머가 쌓인다★");

@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.439";
+const _BUILD_VER = "V33.440";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -11660,6 +11660,13 @@ async function omniStructure(DB) {
   if (_omStructMemo && _omStructMemo.key === key) return _omStructMemo.v;
   const R2 = _bigR2();
   if (!R2) return { ok: false, why: "R2 미바인딩" };
+  /* [V33.440] 모델 파일(수 MB · 나무 993그루)을 요청마다 읽고 풀면 2초가 걸렸다(운영 실측). 한 번 줄인 결과(≈80KB)를
+     R2 에 판 표시(at)와 함께 둔다 — 다른 격리도 그것을 읽는다. 판이 바뀌면 다시 계산해 덮어쓴다. */
+  const sKey = "omni/v" + OMNI_VER + "/structure.json";
+  try {
+    const gs = await R2.get(sKey);
+    if (gs) { const c = JSON.parse(await gs.text()); if (c && c.ok && c.at === key) { _omStructMemo = { key: key, v: c }; return c; } }
+  } catch (e) { /* 캐시가 깨졌으면 원본에서 다시 */ }
   let mdl = null;
   try {
     const g = await R2.get(OMNI_MODEL.r2Key);
@@ -11680,6 +11687,7 @@ async function omniStructure(DB) {
               seeds: _num(meta.seeds, 1), net: net, trees: trees,
               params: (net ? net.mats.reduce(function (a, m) { return a + m.r * m.c; }, 0) : 0) };
   _omStructMemo = { key: key, v: v };
+  try { await R2.put(sKey, JSON.stringify(v), { httpMetadata: { contentType: "application/json" } }); } catch (e) { /* 못 써도 이번 응답은 낸다 */ }
   return v;
 }
 
@@ -26465,6 +26473,7 @@ async function handleRequest(request, env, ctx) {
         return Response.json({ kind: modelSel, reqModel: modelSel, retired: RETIRED[modelSel],
           error: modelSel + " 는 퇴역했다 — " + _retiredWhy(modelSel) }, { status: 410, headers: cors });
       // [V33.150] 신규 위원 5종 추가 — 선형(계수) / 원형(기억) 은 트리·층 렌더러로 못 그린다.
+      const _tv0 = Date.now();
       const data = modelSel === "mind" ? await mlMindVizData(env.DB)
         : (["gbdt", "xgb", "lgb", "cat"].indexOf(modelSel) !== -1) ? await mlTreeVizData(env.DB, modelSel)
         : (modelSel === "seq") ? await mlSeqVizData(env.DB)
@@ -26474,7 +26483,9 @@ async function handleRequest(request, env, ctx) {
         : await mlTreeVizData(env.DB, "gbdt"));
       /* [V33.301] 모델 탭 하나만 열어도 ★명부를 함께 싣는다★ — 그 탭의 '합류 상태' 글자와
          옆 탭의 점이 서로 다른 근거로 그려지면 그게 곧 이 사고의 다음 재발이다. */
+      const _tv1 = Date.now();
       try { if (data && typeof data === "object") data.roster = await buildRoster(env.DB); } catch (e) {}
+      const _tv2 = Date.now();
       /* [V33.308] ★응답은 자기가 어느 탭의 것인지 반드시 말한다.★
          종전엔 화면이 "이 그림이 내가 누른 탭의 것인가" 를 확인할 방법이 없었다. 탭을 빨리
          옮기면 ★먼저 보낸 느린 응답이 나중에 도착해 새 탭 화면을 덮어썼다★ — DNN 이
@@ -26488,7 +26499,8 @@ async function handleRequest(request, env, ctx) {
           if (data.kind !== modelSel) data.kindMismatch = String(data.kind == null ? "(없음)" : data.kind);
         }
       } catch (e) {}
-      return Response.json(data, { headers: cors });
+      /* [V33.440] 어디가 느린지 숫자로 — 운영 실측 OMNI 탭 5.3초. 화면 점검(ui-probe)이 이 헤더를 읽는다. */
+      return Response.json(data, { headers: Object.assign({ "Server-Timing": "data;dur=" + (_tv1 - _tv0) + ", roster;dur=" + (_tv2 - _tv1) }, cors) });
     }
 
     // ── [V12.24 What-If] 거시 시나리오 시뮬레이터 — "금리 +1%p면? 유가 -10%면?" ──
@@ -36584,7 +36596,12 @@ function rosterCls(o) {
 /* role: chair·expert = ★좌석★(위원회 표결 인원). combiner(STACK)·quadrant(이중헤드)·
    prior(RULE)는 표결 인원이 아니다 — 좌석에 섞으면 두 화면의 'n/m 가동' 이 또 달라진다. */
 const ROSTER_SEAT_ROLES = { chair: 1, expert: 1 };
+/* [V33.440] 명부는 D1 을 여러 번 읽는다. 구조 탭을 열 때마다(캐시로 먼저 그림 + 새 응답 = 두 번) 다시 짓던 것을
+   ★격리 메모리에 15초★ 둔다. 같은 격리의 모든 화면이 같은 명부를 받으니 단일 출처는 그대로다. */
+let _rosterMemo = null;
 async function buildRoster(DB) {
+  const _rNow = Date.now();
+  if (_rosterMemo && _rNow - _rosterMemo.at < 15000) return _rosterMemo.v;
   const out = [];
   const add = function (key, name, role, o) {
     /* [V33.422] ★퇴역 위원은 명부에 오르지 않는다.★ 사이드바와 구조관측이 이 배열 하나를
@@ -36769,6 +36786,7 @@ async function buildRoster(DB) {
        : (_omOk.length ? ("섀도우 — 문턱을 넘은 머리 " + _omOk.join("·") + " (아직 매매에 안 쓴다)")
                        : "섀도우 — 모든 지평이 발언 문턱 미달(쓰지 않는다)"))
   });
+  _rosterMemo = { at: _rNow, v: out };
   return out;
 }
 /* 명부에서 좌석 집계 — 두 화면이 같은 함수로 센다(각자 세면 또 갈라진다). */

@@ -8,6 +8,11 @@ name: 화면 점검 (OMNI 구조)
 
 on:
   workflow_dispatch:
+    inputs:
+      img:
+        description: '화면 캡처를 로그에 싣는다(IMG 줄 · 로그가 커진다)'
+        type: boolean
+        default: false
 
 concurrency:
   group: ui-probe
@@ -52,6 +57,7 @@ jobs:
         if: steps.url.outputs.url != ''
         env:
           URL: ${{ steps.url.outputs.url }}
+          IMG: ${{ inputs.img && '1' || '0' }}
         run: node tools/ui-probe-omni.mjs "$URL" | tee probe.log
 
       - name: 요약

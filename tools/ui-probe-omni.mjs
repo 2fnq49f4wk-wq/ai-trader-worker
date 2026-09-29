@@ -8,7 +8,9 @@
 import { chromium } from "playwright";
 const BASE = (process.argv[2] || "").replace(/\/$/, "");
 if (!BASE) { console.error("usage: node tools/ui-probe-omni.mjs <url>"); process.exit(2); }
-const out = (k, v) => console.log("PROBE " + k + " " + (typeof v === "string" ? v : JSON.stringify(v)));
+const LINES = [];
+const out = (k, v) => { const l = "PROBE " + k + " " + (typeof v === "string" ? v : JSON.stringify(v)); LINES.push(l); console.log(l); };
+const WANT_IMG = process.env.IMG === "1";
 const b = await chromium.launch();
 for (const [tag, vp] of [["desktop", { width: 1440, height: 900, deviceScaleFactor: 1 }], ["mobile", { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }]]) {
   const ctx = await b.newContext({ viewport: { width: vp.width, height: vp.height }, deviceScaleFactor: vp.deviceScaleFactor, isMobile: vp.isMobile, hasTouch: vp.hasTouch });
@@ -20,7 +22,8 @@ for (const [tag, vp] of [["desktop", { width: 1440, height: 900, deviceScaleFact
     const u = rq.url();
     if (!/\/api\/(nn-viz\?model=omni|omni-structure)|neural-observatory\.js/.test(u)) return;
     try { const r = await rq.response(); const t = rq.timing(); const body = await r.body().catch(() => Buffer.alloc(0));
-      nets.push({ u: u.replace(BASE, ""), s: r.status(), kb: +(body.length / 1024).toFixed(1), ms: Math.round(t.responseEnd), sw: r.fromServiceWorker() }); } catch (e) {}
+      const h = await r.allHeaders().catch(() => ({}));
+      nets.push({ u: u.replace(BASE, ""), s: r.status(), kb: +(body.length / 1024).toFixed(1), ms: Math.round(t.responseEnd), sw: r.fromServiceWorker(), st: h["server-timing"] || null }); } catch (e) {}
   });
   const t0 = Date.now();
   await p.goto(BASE + "/", { waitUntil: "domcontentloaded", timeout: 60000 });
@@ -31,6 +34,11 @@ for (const [tag, vp] of [["desktop", { width: 1440, height: 900, deviceScaleFact
   await p.waitForTimeout(1500);
   await p.evaluate(() => { if (typeof window.switchNnModel === "function") window.switchNnModel("omni"); });
   await p.waitForTimeout(1000);
+  // 그림이 화면 안에 오게(화면 밖이면 워커가 일부러 쉰다) — 숨은 조상이 있으면 그것도 적는다
+  out(tag + ".visibility", await p.evaluate(() => { const v = document.getElementById("omniVol"); if (!v) return null; v.scrollIntoView({ block: "center" });
+    let e = v, hid = null; while (e && e !== document.body) { const cs = getComputedStyle(e); if (cs.display === "none" || cs.visibility === "hidden") { hid = (e.id ? "#" + e.id : "") + "." + String(e.className).split(" ").join("."); break; } e = e.parentElement; }
+    const r = v.getBoundingClientRect(); return { rect: [Math.round(r.width), Math.round(r.height)], hiddenBy: hid }; }));
+  await p.waitForTimeout(1500);
   // 10초 동안 메인 스레드가 얼마나 막히나
   const jank = await p.evaluate(() => new Promise((res) => {
     let lt = 0, n = 0, maxGap = 0, prev = performance.now();
@@ -63,8 +71,8 @@ for (const [tag, vp] of [["desktop", { width: 1440, height: 900, deviceScaleFact
     return o;
   });
   out(tag + ".api", sum);
-  // 화면 캡처 — OMNI 3D 부분만
-  try {
+  // 화면 캡처 — OMNI 3D 부분만(IMG=1 일 때만 — 로그가 커진다)
+  if (WANT_IMG) try {
     const el = await p.$("#omniVol");
     const buf = el ? await el.screenshot({ type: "jpeg", quality: 55 }) : await p.screenshot({ type: "jpeg", quality: 45 });
     const b64 = buf.toString("base64");
@@ -74,3 +82,6 @@ for (const [tag, vp] of [["desktop", { width: 1440, height: 900, deviceScaleFact
   await ctx.close();
 }
 await b.close();
+// 요약을 로그 끝에 한 번 더 — 로그 끝만 읽어도 전부 보이게
+console.log("=== SUMMARY ===");
+for (const l of LINES) console.log("SUMMARY " + l.slice(6, 1400));

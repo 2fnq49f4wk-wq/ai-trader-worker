@@ -196,7 +196,7 @@
       groups,hz,tbody,shells:[R_IN,R_H1,R_H2],bands:trees.length?treeRings:[],info:{params:mats?net.mats.reduce((a,m)=>a+m.r*m.c,0):0,splits:trees.reduce((a,t)=>a+t.length-2,0),trees:trees.length,
         nets:net?net.nets:0,full:!!mats,inputs:nIn,sizes:[nIn].concat(hidSizes,[hz.length])}};
   }
-  const OM_LEVELS=14,OM_KGAIN=[.55,.8,1,.7,.45,.9],OM_LOD=4;   // OM_LOD: 움직이는 중(대체 경로) 이 단계 밑은 건너뛴다   // 종류별 밝기 배율(투명도) — w1 은 7천 줄이라 낮게
+  const OM_LEVELS=14,OM_KGAIN=[.55,.8,1,.35,.45,.9],OM_LOD=4,OM_LOD_MAX=5000,OM_ALPHA_EXP=3.4;   // OM_ALPHA_EXP: 단계 → 투명도 곡선(대비형 · 크기 순서 그대로) — 약한 가중치는 투명에 가깝게, 센 것만 또렷하게   // OM_LOD: 움직이는 중(대체 경로) 이 단계 밑은 건너뛴다   // 종류별 밝기 배율(투명도) — w1 은 7천 줄이라 낮게
   function drawCore(ctx,sc,v,W,H,t){
     // 1) 도는 점(나무 조각·눈금·장식 고리)의 3D 위치 → 2) 투영(형식 배열에 · 객체 없음)
     const n=sc.n,P=sc.P;
@@ -253,22 +253,27 @@
     // [V33.439] 단계 나누기는 ★미리 잡아 둔 형식 배열★ 에(계수 정렬 두 번) — 장면마다 수만 번 배열을 늘려 쓰레기 수집이 돌던 것을 없앤다.
     //   v.lod(움직이는 중 · 대체 경로) 면 거의 안 보이는 단계는 건너뛴다 — 멈추면 전부 다시 그린다.
     if(!sc.lv||sc.lv.length!==m){sc.lv=new Uint8Array(m);sc.cnt=new Int32Array(OM_LEVELS);sc.off=new Int32Array(OM_LEVELS+1);sc.pos=new Int32Array(OM_LEVELS);sc.buf=new Float32Array(m*4);}
-    const lv=sc.lv,cnt=sc.cnt,off=sc.off,pos=sc.pos,buf=sc.buf,lodMin=v.lod?OM_LOD:(v.lite?1:0);
+    const lv=sc.lv,cnt=sc.cnt,off=sc.off,pos=sc.pos,buf=sc.buf;let lodMin=v.lite?1:0;
+    // [V33.440] ★노출 = 선 수에 반비례★ — 실제 모델(선 3.7만)은 시험 모델(1.8만)의 두 배라 가산 합성이 하얗게 타 버렸다(운영 캡처).
+    const expo=Math.max(.3,Math.min(1,15000/Math.max(1,m)));
     cnt.fill(0);let nh=0,drawn=0;
     for(let j=0;j<m;j++){const a=la[j],b=lb[j];
       if(sel>=0&&(a===sel||b===sel)){lv[j]=254;nh++;continue;}
       let q=Math.floor(Math.pow(ls[j]*OM_KGAIN[lk[j]]*(df(a)+df(b))*.5*dim,.62)*OM_LEVELS);q=q<0?0:q>OM_LEVELS-1?OM_LEVELS-1:q;
-      if(q<lodMin){lv[j]=255;continue;}lv[j]=q;cnt[q]++;}
+      lv[j]=q;cnt[q]++;}
+    // 움직이는 중(lod): 밝은 단계부터 ★최대 OM_LOD_MAX 줄★ 까지만 — 모델이 커져도 끄는 동안의 비용이 일정하다
+    if(v.lod){let acc=0,q=OM_LEVELS-1;for(;q>0;q--){if(acc+cnt[q]>OM_LOD_MAX)break;acc+=cnt[q];}lodMin=Math.max(lodMin,q+1,OM_LOD);}
+    for(let q=0;q<lodMin;q++)cnt[q]=0;
     off[0]=0;for(let q=0;q<OM_LEVELS;q++){off[q+1]=off[q]+cnt[q];pos[q]=off[q]*4;}
-    for(let j=0;j<m;j++){const q=lv[j];if(q>=OM_LEVELS)continue;const p=pos[q],a=la[j],b=lb[j];buf[p]=SX[a];buf[p+1]=SY[a];buf[p+2]=SX[b];buf[p+3]=SY[b];pos[q]=p+4;}
+    for(let j=0;j<m;j++){const q=lv[j];if(q>=OM_LEVELS||q<lodMin)continue;const p=pos[q],a=la[j],b=lb[j];buf[p]=SX[a];buf[p+1]=SY[a];buf[p+2]=SX[b];buf[p+3]=SY[b];pos[q]=p+4;}
     // 폭 1px · 투명도로 가늘게 보이게 — 1px 미만 선은 래스터화가 2배 넘게 느리다(실측), 보이는 밝기는 같다
     // [V33.438] 대비를 올린다 — 흐린 단계는 더 옅게(안개가 걷힌다) · 센 단계는 더 또렷하게
     ctx.lineWidth=1;
     for(let q=0;q<OM_LEVELS;q++){if(!cnt[q])continue;drawn+=cnt[q];
-      ctx.strokeStyle='rgba('+GOLD+','+(.004+.5*(q/(OM_LEVELS-1))**2.1).toFixed(4)+')';ctx.beginPath();
+      ctx.strokeStyle='rgba('+GOLD+','+((.003+.55*(q/(OM_LEVELS-1))**OM_ALPHA_EXP)*expo).toFixed(4)+')';ctx.beginPath();
       for(let j=off[q]*4,e=off[q+1]*4;j<e;j+=4){ctx.moveTo(buf[j],buf[j+1]);ctx.lineTo(buf[j+2],buf[j+3]);}ctx.stroke();strokes++;}
     // 나무 몸: 나무마다 꺾은선 하나(밝기 단계 4개로 묶어)
-    for(let tl=v.lod?3:1;tl<=4;tl++){ctx.strokeStyle='rgba('+GOLD+','+(.065*tl*dim).toFixed(3)+')';ctx.lineWidth=1;ctx.beginPath();
+    for(let tl=v.lod?3:1;tl<=4;tl++){ctx.strokeStyle='rgba('+GOLD+','+(.065*tl*dim*Math.min(1,300/Math.max(1,sc.tbody.length))**.5).toFixed(3)+')';ctx.lineWidth=1;ctx.beginPath();
       for(const tb of sc.tbody){if(Math.min(4,Math.ceil(tb.v*4))!==tl)continue;const I=tb.ids;ctx.moveTo(SX[I[0]],SY[I[0]]);for(let q=1;q<I.length;q++)ctx.lineTo(SX[I[q]],SY[I[q]]);}
       ctx.stroke();strokes++;}
     if(nh){ctx.strokeStyle='rgba('+GOLD+',.85)';ctx.lineWidth=1;ctx.beginPath();drawn+=nh;
@@ -331,7 +336,7 @@
     function size(m){W=m.w;H=m.h;cv.width=Math.round(W*m.ratio);cv.height=Math.round(H*m.ratio);ctx.setTransform(m.ratio,0,0,m.ratio,0,0);
       v.small=new OffscreenCanvas(Math.max(1,Math.round(W/2)),Math.max(1,Math.round(H/2)));}
     self.onmessage=e=>{const m=e.data;
-      if(m.type==='init'){cv=m.canvas;ctx=cv.getContext('2d');d=m.d;Object.assign(v,m.flags||{});size(m);sc=omniCore(d,m.st||null);}
+      if(m.type==='init'){cv=m.canvas;ctx=cv.getContext('2d');d=m.d;Object.assign(v,m.flags||{});size(m);sc=omniCore(d,m.st||null);postMessage({type:'ready'});}
       else if(m.type==='scene'){sc=omniCore(d,m.st);v.selected=-1;}
       else if(m.type==='size'){size(m);}
       else if(m.type==='flags'){Object.assign(v,m.flags);}
@@ -399,13 +404,16 @@
     // ── 별도 스레드 경로 ──
     if(wk){
       wk.onmessage=e=>{const m=e.data;if(dead)return;
-        if(m.type==='stats'){firstFrame=true;clearTimeout(wdog);for(const k of ['nodes','edges','drawn','strokes','draws','averageMs'])canvas.dataset[k]=m[k];}
+        if(m.type==='ready'){alive=true;clearTimeout(wdog);canvas.dataset.ready='1';}
+        else if(m.type==='stats'){for(const k of ['nodes','edges','drawn','strokes','draws','averageMs'])canvas.dataset[k]=m[k];}
         else if(m.type==='picked'){if(m.id>=0)inspect(m.id);else{v.selected=-1;send({type:'select',id:-1});}}
         else if(m.type==='lite'){v.lite=true;v.glow=false;glowBtn.setAttribute('aria-pressed','false');canvas.dataset.lite='1';}};
       wk.onerror=()=>toMain('error');
     }else ctx=canvas.getContext('2d');
-    // 스레드가 죽거나(스크립트 못 읽음 · 보안정책) 5초 안에 첫 장면이 없으면 → 캔버스를 새로 만들어 메인 스레드 정지 화면으로
-    let firstFrame=false,wdog=0;
+    // 스레드가 죽거나(스크립트 못 읽음 · 보안정책) 8초 안에 ★살아 있다(ready)★ 는 답이 없으면 → 캔버스를 새로 만들어 메인 스레드 정지 화면으로.
+    // [V33.440] 예전엔 '첫 장면' 을 기다렸다 — 그림이 화면 밖이면 워커는 일부러 안 그리는데(절전) 그걸 실패로 보고
+    //   멀쩡한 워커를 끄고 메인 스레드로 떨어졌다(운영 실측 workerFail=timeout). 그게 '멈춤 · 디자인과 다름' 의 원인이었다.
+    let alive=false,wdog=0;
     function toMain(why){if(!wk||dead)return;try{wk.terminate();}catch(e){}wk=null;clearTimeout(wdog);
       const nc=canvas.cloneNode(false);canvas.replaceWith(nc);canvas=nc;bind();canvas.dataset.mode='main';canvas.dataset.workerFail=why;
       ctx=canvas.getContext('2d');still=true;v.motion=v.spin=false;mot.setAttribute('aria-pressed','false');spin.setAttribute('aria-pressed','false');
@@ -446,7 +454,7 @@
     build(config.structure||null);
     if(wk){const r=vp.getBoundingClientRect();w=Math.max(1,r.width);h=Math.max(1,r.height);const off=canvas.transferControlToOffscreen();
       send({type:'init',canvas:off,d,st:config.structure||null,w,h,ratio:Math.min(devicePixelRatio||1,w<600?1.5:2),flags:{motion:v.motion,spin:v.spin,glow:v.glow}},[off]);
-      wdog=setTimeout(()=>{if(!firstFrame)toMain('timeout');},5000);}
+      wdog=setTimeout(()=>{if(!alive)toMain('timeout');},8000);}
     ro.observe(vp);io.observe(vp);document.addEventListener('visibilitychange',vis);reduced.addEventListener('change',red);
     // 화면이 없는 채로 남으면 스레드를 거둔다(다른 탭으로 옮겨 host 가 지워진 경우)
     gc=setInterval(()=>{if(!host.isConnected)destroy();},2000);
