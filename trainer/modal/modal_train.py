@@ -4096,7 +4096,7 @@ if _OMNI_IMAGE is not None:
     #   조기종료가 즉시 멈추지 않으면 라운드도 실제로 돈다. 그릇을 먼저 키운다(잘려서 못 배우면
     #   '성능이 안 난다' 와 구별이 안 된다).
     @app.function(image=_OMNI_IMAGE, secrets=[modal.Secret.from_name("lux-dnn")],
-                  timeout=5400, cpu=8.0, memory=32768)
+                  timeout=6900, cpu=8.0, memory=32768)
     def omni_job(upload: bool = True, limit: int = 0, ksec: int = 0, flow: int = 0):
         import os
         import sys
