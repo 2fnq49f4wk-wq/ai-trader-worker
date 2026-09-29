@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.442";
+const _BUILD_VER = "V33.443";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -25323,11 +25323,18 @@ async function handleRequest(request, env, ctx) {
     //   그대로 재배포됐다. 국면 분류를 고쳐도 화면이 안 바뀌던 원인.
     //   → 캐시 키에 빌드 버전을 섞는다. 배포 = 새 키 = 자동 무효화(수동 조작 불필요).
     const ekey = new Request("https://swr-cache.internal/" + _BUILD_VER + "/" + encodeURIComponent(key));
+    /* [V33.443] ★L2 를 R2 에도.★ 이 주소는 workers.dev 라 caches.default 가 아무것도 저장하지 않는다(Cloudflare 제약) —
+       그래서 콜드 아이솔레이트마다 D1 로 다시 빌드했고, D1 이 바쁠 때 /api/ai-mode 가 15초를 넘겨 화면이 끊었다(운영 실측).
+       같은 값을 R2 에도 둔다(빌드 버전은 메타데이터로 — 배포하면 옛 판은 버려진다). */
+    const R2c = (typeof _bigR2 === "function") ? _bigR2() : null, rKey = "cache/swr/" + encodeURIComponent(key) + ".json";
     const put = function (str, ts) {
+      const ps = [];
       try {
-        return caches.default.put(ekey, new Response(str, { headers: {
-          "content-type": "application/json", "cache-control": "s-maxage=900", "x-built-at": String(ts) } }))["catch"](function () {});
-      } catch (e) { return Promise.resolve(); }
+        ps.push(caches.default.put(ekey, new Response(str, { headers: {
+          "content-type": "application/json", "cache-control": "s-maxage=900", "x-built-at": String(ts) } }))["catch"](function () {}));
+      } catch (e) {}
+      if (R2c) { try { ps.push(R2c.put(rKey, str, { customMetadata: { at: String(ts), ver: _BUILD_VER } })["catch"](function () {})); } catch (e) {} }
+      return Promise.all(ps);
     };
     const refresh = function () {
       const bk = "__b_" + key;
@@ -25368,6 +25375,21 @@ async function handleRequest(request, env, ctx) {
         }
       }
     } catch (e) {}
+    // ── L2b: R2 (workers.dev 에서 실제로 동작하는 공유 저장소) ──
+    if (R2c) {
+      try {
+        const g = await R2c.get(rKey);
+        if (g) {
+          const md = g.customMetadata || {}, bAt = Number(md.at || 0), rAge = Date.now() - bAt;
+          if (md.ver === _BUILD_VER && rAge >= 0 && rAge < staleMs) {
+            const body = await g.text();
+            store[key] = { ts: bAt, str: body };          // L1 워밍
+            if (rAge > freshMs) { const p = refresh(); if (p && ctx && ctx.waitUntil) ctx.waitUntil(p); }
+            return new Response(body, { headers: jhdr });
+          }
+        }
+      } catch (e) {}
+    }
     /* ── 콜드: 실제 빌드(이때만 D1을 친다) ──
        [V33.190] ★단일비행(single-flight).★ 종전에는 여기가 동시성에 무방비였다. 콜드
        아이솔레이트에 사용자 열 명이 동시에 들어오면 ★같은 것을 만드는 빌드가 열 개★ 돌고,

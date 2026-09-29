@@ -20,7 +20,7 @@ for (const [tag, vp] of [["desktop", { width: 1440, height: 900, deviceScaleFact
   p.on("console", (m) => { if (m.type() === "error" || m.type() === "warning") errs.push(m.type() + ": " + m.text().slice(0, 200)); });
   p.on("requestfinished", async (rq) => {
     const u = rq.url();
-    if (!/\/api\/(nn-viz\?model=omni|omni-structure)|neural-observatory\.js/.test(u)) return;
+    if (!/\/api\/(nn-viz\?model=omni|omni-structure|ai-mode|pipeline)|neural-observatory\.js/.test(u)) return;
     try { const r = await rq.response(); const t = rq.timing(); const body = await r.body().catch(() => Buffer.alloc(0));
       const h = await r.allHeaders().catch(() => ({}));
       nets.push({ u: u.replace(BASE, ""), s: r.status(), kb: +(body.length / 1024).toFixed(1), ms: Math.round(t.responseEnd), sw: r.fromServiceWorker(), st: h["server-timing"] || null }); } catch (e) {}

@@ -12,6 +12,12 @@
 
 ## Current handoff
 
+- Status: **V33.443 — 공통 SWR(swrJson) 의 공유 저장소를 R2 로도(운영: /api/ai-mode 15초 초과 → 'AI 관제실 mode 조회 실패').**
+  ■ ui-probe run 36540099905(V33.442): OMNI — 데스크톱·모바일 모두 mode=worker · ready · 메인 긴 작업 0 · 장면 ≈3.6ms ·
+    /api/nn-viz 284ms(r2cache) · /api/omni-structure 217ms(r2cache). 남은 오류: [AI 관제실] mode 조회 AbortError(15초 제한).
+  ■ 원인: swrJson 의 L2 = caches.default — workers.dev 에선 저장이 안 된다(Cloudflare 제약). 콜드 아이솔레이트마다 D1 재빌드.
+  ■ 고침: put 이 R2 cache/swr/<key>.json 에도(customMetadata at·ver) · L2 미스면 R2 를 본다(ver === _BUILD_VER 일 때만).
+    이 헬퍼를 쓰는 조회 전부(ai-mode·pipeline·ml-status 등)에 적용. 게이트 ⑦ 에 확인 추가.
 - Status: **V33.442 — 운영 재측정(ui-probe run 36538952566) 뒤 마저 고침.**
   ■ 실측: /api/nn-viz?model=omni 사본 적중 178ms(10초 → 0.18초) · 그러나 사본 없는 첫 요청은 여전히 10.5초(D1 9.4초) ·
     /api/omni-structure 7.2초(R2 결과는 있는데 판 확인용 D1 모델 요약 읽기가 느림) · 워커 mode=worker · ready=1(양쪽).
