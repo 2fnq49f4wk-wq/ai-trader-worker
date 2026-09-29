@@ -12,6 +12,10 @@
 
 ## Current handoff
 
+- Status: **운영 최종 확인(ui-probe run 36541350256 · V33.443) — OMNI 화면 정상.**
+  ■ 데스크톱·모바일: 콘솔 오류 0 · 워커(mode=worker · ready) · 메인 긴 작업 0(데스크톱) / 1건 102ms(모바일, 페이지 부팅) ·
+    그림 표시 135~138ms · /api/nn-viz 62~86ms · /api/omni-structure 76~132ms · /api/pipeline 185~510ms(첫 요청) → 2~6ms.
+    (헤드리스는 GPU 가 없어 lite 모드로 떨어진다 — 실기기 GPU 에선 전부 그린다.)
 - Status: **V33.443 — 공통 SWR(swrJson) 의 공유 저장소를 R2 로도(운영: /api/ai-mode 15초 초과 → 'AI 관제실 mode 조회 실패').**
   ■ ui-probe run 36540099905(V33.442): OMNI — 데스크톱·모바일 모두 mode=worker · ready · 메인 긴 작업 0 · 장면 ≈3.6ms ·
     /api/nn-viz 284ms(r2cache) · /api/omni-structure 217ms(r2cache). 남은 오류: [AI 관제실] mode 조회 AbortError(15초 제한).
