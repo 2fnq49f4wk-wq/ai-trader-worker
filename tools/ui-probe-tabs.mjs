@@ -42,7 +42,7 @@ for (const [tag, eng, copts] of runs) {
     if (!sc || sc === document.body) sc = document.scrollingElement;
     const max = sc.scrollHeight - sc.clientHeight; sc.scrollTop = max; const at = sc.scrollTop;
     const cards = rail ? rail.querySelectorAll(".nlv-scancard").length : 0;
-    setTimeout(() => res({ scroller: sc.id || sc.className || sc.tagName, max: Math.round(max), at: Math.round(at), after: Math.round(sc.scrollTop), yanked: Math.round(at - sc.scrollTop), cards }), 7000);
+    setTimeout(() => res({ scroller: sc.id || sc.className || sc.tagName, max: Math.round(max), at: Math.round(at), after: Math.round(sc.scrollTop), maxAfter: Math.round(sc.scrollHeight - sc.clientHeight), yanked: Math.round(at - sc.scrollTop), cards }), 7000);
   })));
   for (const view of ["operations", "research", "models"]) {
     await p.evaluate((v) => window.luxBrainView && window.luxBrainView(v), view);

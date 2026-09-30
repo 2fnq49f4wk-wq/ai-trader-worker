@@ -84,8 +84,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.446">
-<script src="/neural-observatory.js?v=33.446" defer></script>
+<meta name="lux-build" content="V33.447">
+<script src="/neural-observatory.js?v=33.447" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -17918,7 +17918,7 @@ html:root .page > *{ flex-shrink:0; }
       if(pEl) pEl.textContent = '—';
       if(vdEl) vdEl.textContent = '스캔 결과 대기';
       if(subEl) subEl.textContent = '유니버스 확인 중';
-      var c0 = $id('nlvTpChart'); if(c0) c0.innerHTML = '<div class="nlv-empty">스캔 결과를 기다리는 중…</div>';
+      var c0 = $id('nlvTpChart'); if(c0){ c0.style.opacity = ''; c0.innerHTML = '<div class="nlv-empty">스캔 결과를 기다리는 중…</div>'; }
       var t0 = $id('nlvTpTa'); if(t0) t0.innerHTML = '';
       var w0 = $id('nlvTpWhy'); if(w0) w0.innerHTML = '';
       return;
@@ -17948,20 +17948,25 @@ html:root .page > *{ flex-shrink:0; }
     TP.sym = sym;
     var seq = TP.seq = (TP.seq || 0) + 1;
     TP.wait = null;
-    if(TP.cache[sym]){ drawLineChart(box, TP.cache[sym], sym); return; }
-    box.innerHTML = '<div class="nlv-empty">차트 불러오는 중…</div>';
+    if(TP.cache[sym]){ box.style.opacity = ''; drawLineChart(box, TP.cache[sym], sym); return; }
+    // [V33.447] 이미 그려진 차트가 있으면 ★그대로 두고 흐리게만★ — 짧은 '불러오는 중' 문구로 바꾸면 카드 높이가
+    //   2.2초마다 줄었다 늘어 아래쪽을 읽던 화면이 출렁였다(scrollhold 45px).
+    if(box.querySelector('svg')) box.style.opacity = '.55';
+    else box.innerHTML = '<div class="nlv-empty">차트 불러오는 중…</div>';
     TP.wait = fetch('/api/chart?symbol=' + encodeURIComponent(sym) + '&interval=1d&range=6mo')
       .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function(dd){
         if(TP.seq !== seq) return;
         TP.wait = null;
         var cs = (dd && dd.candles) || [];
-        if(cs.length < 2){ box.innerHTML = '<div class="nlv-empty">일봉 데이터 없음</div>'; return; }
+        if(cs.length < 2){ box.style.opacity = ''; box.innerHTML = '<div class="nlv-empty">일봉 데이터 없음</div>'; return; }
         TP.cache[sym] = cs;
+        box.style.opacity = '';
         if(TP.sym === sym) drawLineChart(box, cs, sym);
       })['catch'](function(){
         if(TP.seq !== seq) return;
         TP.wait = null;
+        box.style.opacity = '';
         box.innerHTML = '<div class="nlv-empty">차트 조회 실패</div>';
       });
   }
@@ -20211,11 +20216,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.446">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.446">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.446">
-<link rel="stylesheet" href="/model-evidence.css?v=33.446">
-<script src="/model-evidence.js?v=33.446"></script>
-<script src="/workspace-ui.js?v=33.446"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.447">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.447">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.447">
+<link rel="stylesheet" href="/model-evidence.css?v=33.447">
+<script src="/model-evidence.js?v=33.447"></script>
+<script src="/workspace-ui.js?v=33.447"></script>
 </body>
 </html>

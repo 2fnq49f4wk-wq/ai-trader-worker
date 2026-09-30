@@ -40,7 +40,8 @@ check(/function renderOpsBrief\(d\)/.test(html) && /renderOpsBrief\(d\)/.test(ht
 // scan filmstrip drives, per the user's explicit request ("최우선 후보 말고 실시간으로 스캔하는
 // 종목 그래프랑 확률 ... 띄우라고"). renderOpsBrief's own top-signal summary is untouched.
 const nodes = new Map();
-const el = id => { if (!nodes.has(id)) nodes.set(id, { textContent:'', innerHTML:'' }); return nodes.get(id); };
+const el = id => { if (!nodes.has(id)) nodes.set(id, { textContent:'', innerHTML:'', style:{},
+  /* 가짜 차트('chart:')를 svg 로 본다 */ querySelector(sel){ return sel === 'svg' && /^chart:/.test(this.innerHTML) ? {} : null; } }); return nodes.get(id); };
 const pending = new Map();
 const ctx = vm.createContext({
   $id:el, ago:()=> '1m', quoteOf:()=> null, esc:String, console,
@@ -89,6 +90,16 @@ ctx.loadTopPickChart('ERROR');
 pending.get('ERROR').resolve({ok:false,status:500,json:async()=>({candles:[{c:1},{c:2}]})});
 await new Promise(resolve=>setImmediate(resolve));
 check(el('nlvTpChart').innerHTML.includes('조회 실패'), '차트 HTTP 오류를 데이터로 그리지 않는다', 'HTTP 오류 응답을 차트로 그렸다');
+ctx.TP.cache.KEEP = [{c:1},{c:2}];
+ctx.loadTopPickChart('KEEP');
+ctx.loadTopPickChart('SLOW');
+check(el('nlvTpChart').innerHTML === 'chart:KEEP' && el('nlvTpChart').style.opacity === '.55',
+  '새 종목 차트를 받는 동안 이전 차트를 흐리게 남긴다 — 카드 높이가 출렁이지 않는다',
+  "새 종목을 받는 동안 차트를 짧은 '불러오는 중' 문구로 바꿨다 — 2.2초마다 카드 높이가 줄었다 늘어 화면이 출렁인다");
+pending.get('SLOW').resolve({ok:true,json:async()=>({candles:[{c:5},{c:6}]})});
+await new Promise(resolve=>setImmediate(resolve));
+check(el('nlvTpChart').innerHTML === 'chart:SLOW' && el('nlvTpChart').style.opacity === '',
+  '새 차트가 오면 흐림을 푼다', '새 차트가 왔는데 흐린 채로 남았다');
 ctx.SCAN.list = []; ctx.SCAN.idx = 0;
 ctx.renderCore();
 check(el('nlvTpSym').textContent === '—', '스캔 결과가 비어 있으면 억지로 종목을 지어내지 않는다', '스캔 결과가 없는데도 종목을 표시한다');
