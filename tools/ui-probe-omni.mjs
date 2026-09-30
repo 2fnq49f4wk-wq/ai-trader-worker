@@ -6,6 +6,24 @@
  *   · 화면 캡처(JPEG base64 를 로그에 "IMG <이름> <조각>" 으로 — 아티팩트를 못 받는 곳에서도 읽히게)
  * 읽기 전용이다(GET 만 · 버튼은 탭 전환만). 사용법: node tools/ui-probe-omni.mjs <url> */
 import { chromium, webkit, devices } from "playwright";
+import zlib from "node:zlib";
+// [V33.448] 캡처를 로그에 싣지 않고 ★밝기 격자★ 로 읽는다 — 사용자 캡처(아이폰): 그림이 왼쪽 위 2/3 에만 그려지고
+//   나머지(ㄱ자)엔 옛 장면이 남아 있었다. PNG 를 풀어 3×3 칸마다 '켜진 픽셀' 비율을 낸다.
+//   바른 그림: 가운데 칸이 가장 밝고 좌우·위아래가 비슷. 결함: 오른쪽 열·아래 행만 비거나(2/3) 거꾸로 꽉 찬다(옛 장면).
+function pngGrid(buf, N = 3) {
+  let o = 8, w = 0, h = 0, ct = 0; const idat = [];
+  while (o < buf.length) { const len = buf.readUInt32BE(o), type = buf.toString("ascii", o + 4, o + 8), d = buf.subarray(o + 8, o + 8 + len);
+    if (type === "IHDR") { w = d.readUInt32BE(0); h = d.readUInt32BE(4); ct = d[9]; } else if (type === "IDAT") idat.push(d); else if (type === "IEND") break; o += 12 + len; }
+  const bpp = ct === 6 ? 4 : 3, raw = zlib.inflateSync(Buffer.concat(idat)), stride = w * bpp, px = Buffer.alloc(h * stride);
+  for (let y = 0; y < h; y++) { const f = raw[y * (stride + 1)], src = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1)), row = px.subarray(y * stride, (y + 1) * stride), up = y ? px.subarray((y - 1) * stride, y * stride) : null;
+    for (let i = 0; i < stride; i++) { const a = i >= bpp ? row[i - bpp] : 0, b = up ? up[i] : 0, c = up && i >= bpp ? up[i - bpp] : 0; let v = src[i];
+      if (f === 1) v += a; else if (f === 2) v += b; else if (f === 3) v += (a + b) >> 1; else if (f === 4) { const p0 = a + b - c, pa = Math.abs(p0 - a), pb = Math.abs(p0 - b), pc = Math.abs(p0 - c); v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c; }
+      row[i] = v & 255; } }
+  const lit = Array(N * N).fill(0), tot = Array(N * N).fill(0);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = y * stride + x * bpp, L = px[i] * .3 + px[i + 1] * .59 + px[i + 2] * .11, c = Math.min(N - 1, Math.floor(y * N / h)) * N + Math.min(N - 1, Math.floor(x * N / w)); tot[c]++; if (L > 60) lit[c]++; }
+  return { size: [w, h], lit: lit.map((v, i) => +(v / tot[i] * 100).toFixed(1)) };
+}
+async function gridOf(p) { try { const el = await p.$("#omniVol .nerve-viewport"); if (!el) return null; await el.scrollIntoViewIfNeeded().catch(() => {}); return pngGrid(await el.screenshot({ type: "png" })); } catch (e) { return { err: String(e).slice(0, 160) }; } }
 const BASE = (process.argv[2] || "").replace(/\/$/, "");
 if (!BASE) { console.error("usage: node tools/ui-probe-omni.mjs <url>"); process.exit(2); }
 const LINES = [];
@@ -65,6 +83,7 @@ for (const [tag, eng, copts] of runs) {
     setTimeout(() => { clearInterval(iv); if (po) po.disconnect(); res({ longTaskMs: Math.round(lt), longTasks: n, maxTimerDelayMs: Math.round(maxGap) }); }, 10000);
   }));
   out(tag + ".jank", jank);
+  out(tag + ".grid.open", await gridOf(p));
   const st = await p.evaluate(() => {
     const vol = document.getElementById("omniVol"), c = vol && vol.querySelector("canvas");
     const r = vol ? vol.getBoundingClientRect() : null;
@@ -108,6 +127,15 @@ for (const [tag, eng, copts] of runs) {
       longTasks: (window.__lt || []).length, longTaskMax: Math.max(0, ...(window.__lt || [])), longTaskSum: (window.__lt || []).reduce((a, x) => a + x, 0),
       heapMB: performance.memory ? +(performance.memory.usedJSHeapSize / 1e6).toFixed(1) : null }; }).catch((e) => ({ err: String(e) }));
     out(tag + ".stress", Object.assign({ alive: alive === 2, crashed }, after));
+    await p.evaluate(() => { const v = document.getElementById("omniVol"); if (v) v.scrollIntoView({ block: "center" }); });
+    await p.waitForTimeout(1500);
+    out(tag + ".grid.stress", await gridOf(p));
+    // 사람이 하듯 페이지를 위아래로 굴린 뒤(주소창 · 스크롤) 다시 본다
+    for (let i = 0; i < 6; i++) { await p.mouse.wheel(0, i % 2 ? -400 : 400).catch(() => {}); await p.waitForTimeout(300); }
+    await p.evaluate(() => { const v = document.getElementById("omniVol"); if (v) v.scrollIntoView({ block: "center" }); });
+    await p.waitForTimeout(1500);
+    out(tag + ".grid.scroll", await gridOf(p));
+    out(tag + ".canvas", await p.evaluate(() => { const c = document.querySelector("#omniVol canvas"); return c ? Object.assign({}, c.dataset) : null; }));
   } catch (e) { out(tag + ".stress", { error: String(e).slice(0, 300), crashed }); }
   // 화면 캡처 — OMNI 3D 부분만(IMG=1 일 때만 — 로그가 커진다)
   if (WANT_IMG) try {
