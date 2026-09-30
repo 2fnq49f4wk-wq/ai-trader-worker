@@ -25,6 +25,10 @@ on:
         description: '실기기 멈춤 기록(/api/client-perf)만 읽어 요약 — 브라우저를 띄우지 않는다'
         type: boolean
         default: false
+      returns:
+        description: '수익률 진단 — 거래 원장을 구간·청산·진입 전략·보유 시간별로(tools/probe-returns.mjs) · 브라우저 없음'
+        type: boolean
+        default: false
 
 concurrency:
   group: ui-probe
@@ -79,14 +83,20 @@ jobs:
         with:
           node-version: '22'
 
+      - name: 수익률 진단
+        if: inputs.returns && steps.url.outputs.url != ''
+        env:
+          URL: ${{ steps.url.outputs.url }}
+        run: node tools/probe-returns.mjs "$URL" || true
+
       - name: 브라우저 준비
-        if: ${{ !inputs.devlog }}
+        if: ${{ !inputs.devlog && !inputs.returns }}
         run: |
           npm i --no-save --no-audit --no-fund playwright@1
           npx playwright install --with-deps chromium webkit
 
       - name: OMNI 화면 측정
-        if: steps.url.outputs.url != '' && !inputs.devlog
+        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns
         env:
           URL: ${{ steps.url.outputs.url }}
           IMG: ${{ inputs.img && '1' || '0' }}
