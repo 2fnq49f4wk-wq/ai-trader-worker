@@ -12,6 +12,12 @@
 
 ## Current handoff
 
+- Status: **V33.452 — '사이트가 멈춘다' 의 실체: 인트로가 늦은 서버 응답을 12초 상한까지 기다렸다(운영 점검 run 36701961217).**
+  ■ 휴대폰 속도 크롬: 인트로 cap(12초)에 열림 · 남은 것 데이터(/api/state 15초+ 무응답) · 국채 · 시장심리. 아이폰: /api/bonds 4.5초 · /api/diag 2.8초.
+  ■ /api/state 의 L2(caches.default)는 workers.dev 에서 저장이 안 돼 새 아이솔레이트마다 D1 풀 빌드(10~18초) → R2 사본(L2b · 10분 · 쓰기 1분 1회)을 먼저.
+  ■ /api/bonds(종목마다 D1 · 5분마다 외부 시세를 요청 안에서) · /api/diag → swrJson(사본 먼저 · 뒤에서 새로).
+  ■ 인트로 상한 12초 → 6.5초(check-boot-paint 갱신 + 서버 캐시 2항).
+  ■ 캡처 확인(ui-probe-shots 가지): OMNI 새 디자인 정상 · 층/노드 선택 상자가 아이폰에서 흰 바탕(글자 안 보임) → V33.451 에서 고침.
 - Status: **V33.450 — 운영 프로파일(ui-probe perf=true · run 36700216478)로 찾은 메인 스레드 낭비 제거.**
   ■ 크롬(휴대폰 흉내 · CPU 4배 느리게) 자기 시간 상위: showPage 195ms(pg.scrollTop=0 이 요소 1만 개 페이지 배치를 억지로) ·
     부팅 폴링 콜백 186ms · scanVisible 126ms(getBoundingClientRect 2.2초마다) · fmtNum 83 · _fmtPubDate 66 · fmtTradeTime 33(서식기 매번 생성).

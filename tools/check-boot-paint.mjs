@@ -113,10 +113,11 @@ console.log("\n  — LUXBOOT 을 실제로 돌려 본 결과 —");
   let opened = null;
   B.whenReady((why) => { opened = why; });
   B.need('영영끝나지않음');
-  await advance(11000);
+  // [V33.451] 상한 12초 → 6.5초 — 운영 점검: 늦은 패널 셋 때문에 인트로가 12초 동안 멈춰 있었다("사이트가 멈춘다")
+  await advance(6000);
   ok(opened === null, "상한 전에는 계속 기다린다");
-  await advance(2000);
-  ok(opened === 'cap', "★영영 안 끝나도 상한에서 연다★ (기다리다 못 여는 일은 없다)");
+  await advance(1000);
+  ok(opened === 'cap', "★영영 안 끝나도 상한(7초 안)에서 연다★ (기다리다 못 여는 일은 없다 · 늦은 패널이 사이트를 붙잡지 않는다)");
 }
 { // 약속이 아닌 것을 넘겨도 멈추지 않는다(패널 로더는 반환값이 제각각이다)
   const { B, advance } = makeBoot();
@@ -150,6 +151,15 @@ ok(/window\.__luxBootTracked/.test(H), "첫 회차만 센다(이후 폴링은 �
 ok(/LUXBOOT\.whenReady\(removeIntro\)/.test(H), "인트로가 ★준비 완료★ 를 기다린다");
 ok(!/setTimeout\(removeIntro, 4200\);\n/.test(H.replace(/else setTimeout\(removeIntro, 4200\);[^\n]*/, "")),
    "★고정 4.2초 제거★ 는 사라졌다(추적기가 없을 때의 후퇴 경로만 남는다)");
+
+// [V33.451] 인트로가 기다리는 서버 응답이 콜드 아이솔레이트에서 풀 빌드를 기다리지 않게(workers.dev 는 caches.default 가 저장 안 함)
+{
+  const W = readFileSync("src/index.js", "utf8");
+  ok(/__r2Key = "cache\/state\/state\.json"/.test(W) && /── L2b: R2 사본/.test(W) && /__r2Put\(__c\)/.test(W),
+     "/api/state: R2 사본(10분 안)을 먼저 주고 뒤에서 새로 — 새 아이솔레이트 첫 요청이 D1 풀 빌드(10~18초)를 기다리지 않는다");
+  ok(/swrJson\("bonds", 30000, 600000/.test(W) && /swrJson\("diag", 20000, 600000/.test(W),
+     "/api/bonds · /api/diag: SWR(사본 먼저 · 뒤에서 새로) — 인트로가 4.5초·2.8초를 기다리지 않는다");
+}
 
 console.log(fail ? `\n✗ 접속 첫 화면 계약 ${fail}건 실패 (총 ${n})` : `\n✓ 접속 첫 화면 계약 통과 (${n}개 단언)`);
 process.exit(fail ? 1 : 0);

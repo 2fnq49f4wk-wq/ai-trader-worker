@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.451";
+const _BUILD_VER = "V33.452";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -28904,15 +28904,25 @@ async function handleRequest(request, env, ctx) {
      //   각자 콜드 캐시로 풀 빌드를 반복했다(측정: 폴링 5회 중 3회가 9~23s). colo 단위로 공유되는
      //   Edge Cache(caches.default)를 L2로 둬서 "같은 지역 사용자는 누가 먼저 빌드했든 재사용"한다.
      const __edgeKey = new Request("https://state-cache.internal/api/state");
+     /* [V33.451] ★L2b = R2 사본★ — 이 주소는 workers.dev 라 caches.default 가 ★아무것도 저장하지 않는다★(L2 는 빈 껍데기였다).
+        그래서 새 아이솔레이트의 첫 요청은 늘 풀 빌드(D1 10~18초)를 기다렸고, 화면은 인트로 '시스템 준비 6/9' 에서
+        12초 상한까지 멈춰 있었다(운영 점검 run 36701961217: /api/state 15초 넘게 무응답). R2 사본(10분 안)을 먼저 주고 뒤에서 새로 짓는다.
+        쓰기는 아이솔레이트마다 1분에 한 번까지(R2 쓰기 비용). */
+     const __R2s = (typeof _bigR2 === "function") ? _bigR2() : null, __r2Key = "cache/state/state.json", R2_USABLE_MS = 600000;
+     const __r2Put = function (c) {
+       if (!__R2s || (globalThis.__stateR2At && Date.now() - globalThis.__stateR2At < 60000)) return null;
+       globalThis.__stateR2At = Date.now();
+       return __R2s.put(__r2Key, c.str, { httpMetadata: { contentType: "application/json" }, customMetadata: { at: String(c.ts) } }).catch(function () {});
+     };
      const __refresh = function () {
        if (globalThis.__stateBuilding) return null;
        globalThis.__stateBuilding = true;
        return __buildState().then(function (pl) {
          const c = __mkCache(pl);
          globalThis.__stateCache = c;
-         return caches.default.put(__edgeKey, new Response(c.str, { headers: {
+         return Promise.all([caches.default.put(__edgeKey, new Response(c.str, { headers: {
            "content-type": "application/json", "cache-control": "s-maxage=300", "x-built-at": String(c.ts) } }))
-           .catch(function () {});
+           .catch(function () {}), __r2Put(c)]);
        }).catch(function () {}).then(function () { globalThis.__stateBuilding = false; });
      };
      // [V32.1] FRESH_MS 8s→12s — 프론트 폴링(10s)마다 백그라운드 재빌드가 돌아 D1을 계속
@@ -28947,13 +28957,28 @@ async function handleRequest(request, env, ctx) {
          }
        }
      } catch (e) {}
+     // ── L2b: R2 사본(아이솔레이트·지역 무관) ──
+     if (__R2s) {
+       try {
+         const __g = await __R2s.get(__r2Key);
+         const __rAt = __g && __g.customMetadata ? +(__g.customMetadata.at || 0) : 0;
+         const __rage = Date.now() - __rAt;
+         if (__g && __rAt && __rage >= 0 && __rage < R2_USABLE_MS) {
+           const __body = await __g.text();
+           globalThis.__stateCache = { ts: __rAt, data: null, str: __body };
+           const __bp = __refresh();
+           if (__bp && ctx && ctx.waitUntil) ctx.waitUntil(__bp);
+           return new Response(__body, { headers: Object.assign({ "X-Cache": "r2", "X-State-Age": String(Math.round(__rage / 1000)) }, __jh) });
+         }
+       } catch (e) {}
+     }
      // ── 콜드(어느 캐시에도 없음) → 동기 빌드. 이때만 기다린다 ──
      try {
       const __pl = await __buildState();
       const __c = __mkCache(__pl);
       globalThis.__stateCache = __c;
-      const __pp = caches.default.put(__edgeKey, new Response(__c.str, { headers: {
-        "content-type": "application/json", "cache-control": "s-maxage=300", "x-built-at": String(__c.ts) } })).catch(function () {});
+      const __pp = Promise.all([caches.default.put(__edgeKey, new Response(__c.str, { headers: {
+        "content-type": "application/json", "cache-control": "s-maxage=300", "x-built-at": String(__c.ts) } })).catch(function () {}), __r2Put(__c)]);
       if (ctx && ctx.waitUntil) ctx.waitUntil(__pp);
       return new Response(__c.str, { headers: __jh });
      } catch (e) {
@@ -29747,6 +29772,9 @@ async function handleRequest(request, env, ctx) {
 
     // === [BOND] 국채 슬리브 조회 — 미국(bdus)+한국(bdkr) + 금리 ===
     if (path === "/api/bonds") {
+      /* [V33.451] ★SWR★ — 운영 점검: 첫 화면 인트로가 국채 4.5초를 기다렸다(종목마다 D1 왕복 · 5분마다 외부 시세를 요청 안에서 받음).
+         30초 안 = 사본 · 10분 안 = 사본을 먼저 주고 뒤에서 새로(외부 시세 보충도 뒤에서). */
+      return await swrJson("bonds", 30000, 600000, async function () {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const cash = await computeAllCash(env.DB, cfg);
       // [FIX] 장 마감 중엔 runAltSleeveCycle이 시세를 안 받아 watchlist가 빔(TLT만 marketContext가 채움).
@@ -29798,7 +29826,8 @@ async function handleRequest(request, env, ctx) {
         else { try { await setState(env.DB, "quote:" + y.symbol, Object.assign({ ts: Date.now() }, q)); } catch (e) {} }
         yields.push({ symbol: y.symbol, label: y.label, name: y.name, rate: (q && q.price != null) ? q.price : null, dayPct: (q && typeof q.dayPct === "number") ? q.dayPct : null, prevClose: (q && q.prevClose != null) ? q.prevClose : null });
       }
-      return Response.json({ realtime: cfg.altRealtime !== false, tradeTime: "실시간(장중)", us: out.us, kr: out.kr, yields: yields, symbols: { us: BONDS_US, kr: BONDS_KR } }, { headers: cors });
+      return { realtime: cfg.altRealtime !== false, tradeTime: "실시간(장중)", us: out.us, kr: out.kr, yields: yields, symbols: { us: BONDS_US, kr: BONDS_KR } };
+      });
     }
 
     // === [BOND] 국채 슬리브 수동 실행 (테스트) — ?key=bdus|bdkr|cm ===
@@ -30733,6 +30762,9 @@ async function handleRequest(request, env, ctx) {
     }
 
     if (path === "/api/diag") {
+      /* [V33.451] ★SWR★ — 운영 점검: 첫 화면 인트로가 진단(시장심리 카드) 2.8초를 기다렸다(전 종목 시세 행을 읽는다).
+         20초 안 = 사본 · 10분 안 = 사본을 먼저 주고 뒤에서 새로. */
+      return await swrJson("diag", 20000, 600000, async function () {
       const lock = await getState(env.DB, "lock:cycle", null);
       const lastTick = await getState(env.DB, "last_tick", null);
       const lastHeartbeat = await getState(env.DB, "last_heartbeat", null);
@@ -30790,7 +30822,7 @@ async function handleRequest(request, env, ctx) {
           headroomPct: +((((lim.shutdownAt || 0.9)) - Math.max(reqR, cpuR)) * 100).toFixed(2)
         };
       } catch (e) {}
-      return Response.json({
+      return {
         now: now,
         lock: lock,
         lockAgeSec: lock && lock.until ? Math.round((lock.until - now) / 1000) : null,
@@ -30809,7 +30841,8 @@ async function handleRequest(request, env, ctx) {
         usage: usageDiag,
         staleOrMissing: staleSyms.slice(0, 20),
         cfg: { enabled: cfg.enabled, marketHoursOnly: cfg.marketHoursOnly, cycleLockTTL: cfg.cycleLockTTL }
-      }, { headers: cors });
+      };
+      });
     }
     return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not Found", { status: 404, headers: cors });
   } catch (e) {

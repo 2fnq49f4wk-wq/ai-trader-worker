@@ -30,7 +30,9 @@
    이 블록은 ★가장 앞★ 에 둔다 — 뒤에 오는 어떤 스크립트도 LUXBOOT 를 부를 수 있어야 한다. */
 window.LUXBOOT = (function () {
   var MIN_MS = 4200;    // 인트로 애니메이션을 끝까지 보여준다(종전과 같은 길이)
-  var CAP_MS = 12000;   // 준비가 안 끝나도 이 시각에는 연다
+  // [V33.451] 12초 → 6.5초 — 운영 점검(run 36701961217 · 휴대폰 속도): 국채·시장심리·상태 응답이 늦자 인트로가 12초 상한까지
+  //   '시스템 준비 6/9' 에 멈춰 있었다(사용자: "사이트가 멈춘다"). 늦은 패널은 제 칸에서 '불러오는 중' 으로 채워진다.
+  var CAP_MS = 6500;    // 준비가 안 끝나도 이 시각에는 연다
   var t0 = Date.now();
   var pend = {}, total = 0, fin = 0, cbs = [], opened = false;
   function paint() {
@@ -86,8 +88,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.451">
-<script src="/neural-observatory.js?v=33.451" defer></script>
+<meta name="lux-build" content="V33.452">
+<script src="/neural-observatory.js?v=33.452" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -20240,11 +20242,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.451">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.451">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.451">
-<link rel="stylesheet" href="/model-evidence.css?v=33.451">
-<script src="/model-evidence.js?v=33.451"></script>
-<script src="/workspace-ui.js?v=33.451"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.452">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.452">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.452">
+<link rel="stylesheet" href="/model-evidence.css?v=33.452">
+<script src="/model-evidence.js?v=33.452"></script>
+<script src="/workspace-ui.js?v=33.452"></script>
 </body>
 </html>
