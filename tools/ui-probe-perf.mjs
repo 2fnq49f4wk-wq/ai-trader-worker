@@ -47,6 +47,11 @@ async function run(tag, eng, copts, throttle) {
   const ctx = await b.newContext(copts);
   await ctx.addInitScript(INIT);
   const p = await ctx.newPage();
+  // 첫 15초 네트워크 폭포(주소 · 시작 · 걸린 시간) — 인트로가 무엇을 기다리는지
+  const tNav = Date.now(), net = [];
+  p.on("requestfinished", (rq) => { const u = rq.url().replace(BASE, ""); if (!/^\/api\/|\.js|\.css|fonts/.test(u)) return; const t = rq.timing();
+    net.push([u.slice(0, 60), Math.round(t.startTime - tNav), Math.round(t.responseEnd)]); });
+  p.on("requestfailed", (rq) => { net.push([rq.url().replace(BASE, "").slice(0, 60), -1, rq.failure() && rq.failure().errorText]); });
   const errs = []; p.on("pageerror", (e) => errs.push(e.message.slice(0, 160))); p.on("console", (m) => { if (m.type() === "error") errs.push(m.text().slice(0, 160)); });
   let cdp = null;
   if (throttle) { cdp = await ctx.newCDPSession(p); await cdp.send("Emulation.setCPUThrottlingRate", { rate: throttle }); await cdp.send("Profiler.enable"); await cdp.send("Profiler.setSamplingInterval", { interval: 500 }); await cdp.send("Profiler.start"); }
@@ -55,7 +60,11 @@ async function run(tag, eng, copts, throttle) {
   out(tag + ".dcl_ms", Date.now() - t0);
   await p.waitForLoadState("load", { timeout: 60000 }).catch(() => {});
   out(tag + ".load_ms", Date.now() - t0);
-  await p.waitForTimeout(5000);
+  // 인트로가 걷힐 때까지(최대 15초)
+  await p.waitForFunction(() => window.__luxBootOpen, null, { timeout: 15000 }).catch(() => {});
+  out(tag + ".boot", await p.evaluate(() => ({ open: window.__luxBootOpen || null, done: window.__luxBootDone || null })));
+  await p.waitForTimeout(2000);
+  out(tag + ".net_first", net.filter((x) => x[1] < 16000).sort((a, b) => (b[2] || 0) - (a[2] || 0)).slice(0, 25));
   await shot(p, tag + ".home");
   // 두뇌 관측(운영 보기)
   await p.evaluate(() => { window.__phase = "nnviz-open"; const n = document.querySelector('.nav-item[data-page="nnviz"]'); if (n) n.click(); });

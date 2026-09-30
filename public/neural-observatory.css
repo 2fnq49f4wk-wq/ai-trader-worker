@@ -6,6 +6,9 @@
 #page-nnviz .nerve-status{font:9px monospace;color:#aaa;white-space:nowrap}
 #page-nnviz .nerve-controls{display:flex;flex-wrap:wrap;gap:6px;padding:10px 16px;border-bottom:1px solid #282828;align-items:center}
 #page-nnviz .nerve-room button,#page-nnviz .nerve-room select{font:11px system-ui,sans-serif;color:#ddd;background:#131313;border:1px solid #3b3b3b;border-radius:0;min-height:36px;padding:6px 10px;cursor:pointer;max-width:100%}
+/* [V33.450] 아이폰 사파리는 appearance 를 끄지 않으면 선택 상자를 기본(흰 바탕)으로 그려 옅은 글자가 안 보였다(운영 캡처) — 어두운 바탕 + 화살표 직접 */
+#page-nnviz .nerve-room select{-webkit-appearance:none;appearance:none;background-color:#131313;color:#e6e6e6;padding-right:28px;background-image:linear-gradient(45deg,transparent 50%,#9a9a9a 50%),linear-gradient(135deg,#9a9a9a 50%,transparent 50%);background-position:calc(100% - 15px) 55%,calc(100% - 10px) 55%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+#page-nnviz .nerve-room select option{background:#131313;color:#e6e6e6}
 #page-nnviz .nerve-room button:hover,#page-nnviz .nerve-room button[aria-pressed=true]{background:#ededed;color:#080808;border-color:#ededed}
 #page-nnviz .nerve-room :focus-visible{outline:2px solid white;outline-offset:2px}
 #page-nnviz .nerve-controls label{font-size:10px;color:#aaa;display:flex;gap:5px;align-items:center}

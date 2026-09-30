@@ -48,6 +48,8 @@ window.LUXBOOT = (function () {
   function open(why) {
     if (opened) return;
     opened = true;
+    // [V33.450] 언제 · 왜 열렸고 무엇이 남았는지 남긴다 — 운영 점검(ui-probe perf)이 '인트로가 무엇을 기다렸나' 를 읽는다
+    try { var left = []; for (var k in pend) if (pend[k] === 1) left.push(k); window.__luxBootOpen = { why: why, ms: Date.now() - t0, left: left }; } catch (e) {}
     var list = cbs; cbs = [];
     for (var i = 0; i < list.length; i++) { try { list[i](why); } catch (e) {} }
   }
@@ -56,7 +58,7 @@ window.LUXBOOT = (function () {
     need: function (name) { if (pend[name]) return; pend[name] = 1; total++; paint(); },
     done: function (name) {
       if (!pend[name] || pend[name] === 2) { return; }
-      pend[name] = 2; fin++; paint(); check();
+      pend[name] = 2; fin++; try { (window.__luxBootDone = window.__luxBootDone || []).push([name, Date.now() - t0]); } catch (e) {} paint(); check();
     },
     whenReady: function (cb) { if (opened) { try { cb('ready'); } catch (e) {} } else cbs.push(cb); },
     state: function () { return { total: total, done: fin, opened: opened, elapsed: Date.now() - t0 }; },
