@@ -12,6 +12,12 @@
 
 ## Current handoff
 
+- Status: **V33.457 — "OMNI 열고 스크롤하면 완전히 멈춘다"(아이폰) · CI 로 재현 불가 → ① 아이폰 정지 화면 ② 실기기 멈춤 기록.**
+  ■ ① 아이폰·아이패드(UA · MacIntel+터치): 워커 OffscreenCanvas 를 띄우지 않고 메인 경로 정지 화면(가만히 있으면 0장 · 끌 때 밝은 선만 · 손 떼면 한 번).
+    CI WebKit 에서 OMNI 보일 때만 스크롤 중 0.5~0.8초 굳음이 있었다(크롬 없음). config.worker=true 로 강제 워커. 로컬(아이폰 UA 크롬)에서 동작 확인.
+  ■ ② /api/client-perf(POST: 4KB·20건·IP 없음 · R2 diag/client-perf.json 최근 300 / GET: 최근 60) + 화면 감시(0.2초 타이머 · 0.4초 넘는 굳음 ·
+    백그라운드 제외 · 30초에 한 번 sendBeacon) + 탭이 죽고 다시 열린 흔적(sessionStorage 숨소리). ui-probe devlog=true 로 읽는다.
+  ■ 다음: 사용자가 아이폰에서 OMNI·스크롤을 해 본 뒤 devlog 로 실제 굳음(화면·모드·스크롤 여부)을 확인해 원인을 좁힌다.
 - Status: **V33.456 운영 확인(run 36721415891): 휴대폰 속도·아이폰 모두 인트로 4.2초 'ready' · 요청 전부 0.9초/1.4초 안 · OMNI 0.75~0.9초 · 오류 0.**
   ■ 직전 run 36720716995(판 바뀐 배포 직후)에선 휴대폰 속도 쪽 요청 9건이 함께 ~7.5초 · OMNI 미표시 — D1 이 붐비는 배포 직후 순간(SWR 사본 전부 뒤갱신 +
     새 아이솔레이트의 매매 사이클 전 종목 일봉 통째 읽기). ui-probe-perf 에 omni_missing(그 순간 두뇌 무대 상태) 추가.

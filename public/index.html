@@ -73,6 +73,51 @@ window.LUXBOOT = (function () {
     }
   };
 })();
+/* [V33.457] ★실기기 멈춤 기록★ — 사용자(아이폰): "OMNI 열고 스크롤하면 사이트가 완전히 멈춘다". CI 브라우저로는 재현이 안 돼서
+   실제 기기가 스스로 적어 보낸다: 화면이 0.4초 넘게 굳은 순간(화면 · 모델 탭 · OMNI 그리기 방식 · 스크롤 중?) + 탭이 죽고 다시 열린 흔적.
+   가볍게: 0.2초 타이머 하나 · 굳은 게 있을 때만 30초에 한 번 sendBeacon · 개인정보 없음. */
+(function () {
+  try {
+    var q = [], last = performance.now(), lastScroll = 0, lastSend = 0, hiddenAt = 0;
+    function ctx() {
+      var o = { pg: '', md: '', vw: '', om: '', sc: (Date.now() - lastScroll) < 1200 };
+      try {
+        var pg = document.querySelector('.page.active'); o.pg = pg ? pg.id.replace('page-', '') : '';
+        var nn = document.getElementById('page-nnviz'); o.vw = nn ? (nn.getAttribute('data-brain-view') || '') : '';
+        var tb = document.querySelector('#nnvTabs .nnv-tab.active'); o.md = tb ? (tb.getAttribute('data-model') || '') : '';
+        var c = document.querySelector('#omniVol canvas');
+        if (c) o.om = (c.dataset.mode || '') + (c.dataset.ios ? '/ios' : '') + (c.dataset.lite ? '/lite' : '') + (c.dataset.ready ? '/ready' : '');
+      } catch (e) {}
+      return o;
+    }
+    function send(force) {
+      if (!q.length || (!force && Date.now() - lastSend < 30000)) return;
+      lastSend = Date.now();
+      var meta = document.querySelector('meta[name="lux-build"]');
+      var body = JSON.stringify({ build: meta ? meta.content : '', ua: (navigator.userAgent || '').slice(0, 140),
+        vp: (window.innerWidth || 0) + 'x' + (window.innerHeight || 0), ev: q.splice(0, 20) });
+      try { if (navigator.sendBeacon) navigator.sendBeacon('/api/client-perf', new Blob([body], { type: 'application/json' }));
+            else fetch('/api/client-perf', { method: 'POST', body: body, keepalive: true, headers: { 'content-type': 'application/json' } }); } catch (e) {}
+    }
+    document.addEventListener('scroll', function () { lastScroll = Date.now(); }, { capture: true, passive: true });
+    document.addEventListener('visibilitychange', function () { if (document.hidden) { hiddenAt = Date.now(); send(true); } });
+    window.addEventListener('pagehide', function () { send(true); });
+    setInterval(function () {
+      var n = performance.now(), g = n - last - 200; last = n;
+      if (document.hidden || Date.now() - hiddenAt < 1500) return;   // 백그라운드 절전은 멈춤이 아니다
+      if (g > 400) { var o = ctx(); o.ms = Math.round(g); o.at = Date.now(); o.k = 'stall'; q.push(o); if (q.length > 40) q.shift(); send(false); }
+    }, 200);
+    // 탭이 죽고 다시 열렸나 — 직전 세션이 2초마다 남긴 숨소리가 10초 안에 끊겼는데(정상 종료면 pagehide 가 지운다) 새로 열렸으면 기록(열린 방식 포함)
+    var K = 'luxAlive';
+    try {
+      var prev = JSON.parse(sessionStorage.getItem(K) || 'null');
+      var nav = (performance.getEntriesByType && performance.getEntriesByType('navigation')[0]) || {};
+      if (prev && Date.now() - prev.at < 10000) { prev.k = 'reopen:' + String(nav.type || '?').slice(0, 8); prev.ms = Date.now() - prev.at; q.push(prev); setTimeout(function () { send(true); }, 8000); }
+    } catch (e) {}
+    setInterval(function () { try { var o = ctx(); o.at = Date.now(); sessionStorage.setItem(K, JSON.stringify(o)); } catch (e) {} }, 2000);
+    window.addEventListener('pagehide', function () { try { sessionStorage.removeItem(K); } catch (e) {} });
+  } catch (e) {}
+})();
 /* 자원(이미지·스크립트·스타일)이 다 붙었는가 — 인트로 뒤에 레이아웃이 튀지 않게 한다. */
 LUXBOOT.need('자원');
 window.addEventListener('load', function () { LUXBOOT.done('자원'); });
@@ -88,8 +133,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.456">
-<script src="/neural-observatory.js?v=33.456" defer></script>
+<meta name="lux-build" content="V33.457">
+<script src="/neural-observatory.js?v=33.457" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -20251,11 +20296,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.456">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.456">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.456">
-<link rel="stylesheet" href="/model-evidence.css?v=33.456">
-<script src="/model-evidence.js?v=33.456"></script>
-<script src="/workspace-ui.js?v=33.456"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.457">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.457">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.457">
+<link rel="stylesheet" href="/model-evidence.css?v=33.457">
+<script src="/model-evidence.js?v=33.457"></script>
+<script src="/workspace-ui.js?v=33.457"></script>
 </body>
 </html>

@@ -373,12 +373,17 @@
     const controls=room.querySelector('.nerve-controls'),info=room.querySelector('output'),layerSel=room.querySelector('.nerve-layer'),nodeSel=room.querySelector('.nerve-node');
     // 별도 스레드를 쓸 수 있나 — 안 되면 대체 경로(메인 스레드 · 정지 화면 시작)
     let wk=null;
-    if(!config.noWorker&&typeof Worker==='function'&&typeof OffscreenCanvas==='function'&&canvas.transferControlToOffscreen){
+    /* [V33.457] ★아이폰·아이패드는 별도 스레드 그리기를 쓰지 않고 정지 화면으로★ — 사용자(아이폰): "OMNI 를 열고 스크롤하면 사이트 기능이 완전히 멈춘다".
+       CI 의 WebKit 에서도 OMNI 가 보일 때만 스크롤 중 0.5~0.8초 굳음이 있었다(크롬엔 없음). 사파리의 워커 OffscreenCanvas 는 새 기능이라
+       자리 표시 캔버스 갱신이 메인 스레드와 얽힌다. 아이폰에선 아예 그리기 스레드를 띄우지 않고 한 장만 그린다 — 끌 때만 다시(밝은 선만),
+       손을 떼면 전부 한 번. 스크롤 동안엔 그릴 것이 없다. 자동회전은 버튼으로 켤 수 있다(그때도 밝은 선만). config.worker=true 면 강제로 워커. */
+    const IOS=config.worker!==true&&typeof navigator!=='undefined'&&(/iP(hone|ad|od)/.test(navigator.userAgent||'')||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1));
+    if(!config.noWorker&&!IOS&&typeof Worker==='function'&&typeof OffscreenCanvas==='function'&&canvas.transferControlToOffscreen){
       try{wk=new Worker(config.workerUrl||OM_SELF);}catch(e){wk=null;}
     }
     let still=!wk;   // 대체 경로는 정지 화면으로 시작 — 계속 그리면 그게 곧 멈춤이다
     const v={yaw:.4,pitch:.32,zoom:1,panX:0,panY:0,selected:-1,motion:!reduced.matches&&!still,spin:!reduced.matches&&!still,glow:true,small:null,lite:false,lod:false};
-    canvas.dataset.mode=wk?'worker':'main';
+    canvas.dataset.mode=wk?'worker':'main';if(IOS){canvas.dataset.ios='1';v.slow=true;}   // 아이폰: 움직이는 동안은 밝은 단계만(lod)
     let scrolling=false,scrT=0,mcost=0,sc=null,ctx=null,raf=0,last=0,t=0,w=1,h=1,dead=false,visible=true,draws=0,ms=0,dirty=true,gap=33,seen=0,idleT=0,gc=0;
     const send=(m,tr)=>{if(wk)wk.postMessage(m,tr||[]);};
     const btn=(txt,fn,pr)=>{const b=document.createElement('button');b.type='button';b.textContent=txt;if(pr!=null)b.setAttribute('aria-pressed',pr);b.onclick=()=>{fn(b);flags();dirty=true;wake();};controls.append(b);return b;};
@@ -398,7 +403,7 @@
       const I=sc.info,sum=document.createElement('button');sum.type='button';sum.disabled=true;
       sum.textContent=I.full?('가중치 '+fmt(I.params)+'개 전부 · 나무 '+fmt(I.trees)+'그루 · 분기 '+fmt(I.splits)+'개 전부'):'대표 연결만(구조 전부를 아직 못 받았다)';lr.append(sum);
       populate();info.textContent=(I.full?'신경망 '+I.sizes.join('→')+' · 가중치 '+fmt(I.params)+'개와 나무 분기 '+fmt(I.splits)+'개를 전부 한 줄씩 그립니다. 점을 누르면 그 점의 선만 밝게 남습니다.':'구조 전부를 받는 중이거나 없습니다 — 대표 연결(뉴런마다 상위 3개)만 그립니다.')
-        +(still?' (이 브라우저는 별도 스레드 그리기를 못 해 정지 화면으로 시작합니다 — 끌어서 돌려 보세요)':'');
+        +(still?(IOS?' (아이폰·아이패드에서는 멈춤을 막으려고 정지 화면으로 시작합니다 — 끌어서 돌리거나 자동회전을 켜 보세요)':' (이 브라우저는 별도 스레드 그리기를 못 해 정지 화면으로 시작합니다 — 끌어서 돌려 보세요)'):'');
       dirty=true;wake();
     }
     function populate(){nodeSel.replaceChildren();const g=sc.groups[+layerSel.value||0];if(!g)return;g.ids.forEach(id=>nodeSel.add(new Option(sc.name[id].split(' — ')[0],String(id))));}

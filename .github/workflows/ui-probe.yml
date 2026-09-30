@@ -21,6 +21,10 @@ on:
         description: '멈춤 추적 — CPU 프로파일(휴대폰 속도) · 아이폰 굳은 구간 · OMNI 로딩 시간 · 캡처(img 와 함께)'
         type: boolean
         default: false
+      devlog:
+        description: '실기기 멈춤 기록(/api/client-perf)만 읽어 요약 — 브라우저를 띄우지 않는다'
+        type: boolean
+        default: false
 
 concurrency:
   group: ui-probe
@@ -54,17 +58,35 @@ jobs:
             | python3 -c 'import sys,json;d=json.load(sys.stdin);print((d.get("result") or {}).get("subdomain") or "")' 2>/dev/null)
           [ -n "$SUB" ] && echo "url=https://$NAME.$SUB.workers.dev" >> "$GITHUB_OUTPUT" || echo "url=" >> "$GITHUB_OUTPUT"
 
+      - name: 실기기 멈춤 기록 읽기
+        if: inputs.devlog && steps.url.outputs.url != ''
+        env:
+          URL: ${{ steps.url.outputs.url }}
+        run: |
+          curl -sS --max-time 30 "$URL/api/client-perf" -o devlog.json || true
+          python3 - <<'PY'
+          import json
+          try: d = json.load(open("devlog.json"))
+          except Exception as e: print("DEVLOG 읽기 실패", e); raise SystemExit(0)
+          print("DEVLOG n", d.get("n"))
+          for r in d.get("recent", [])[:60]:
+              ev = r.get("ev", [])
+              print("DEVLOG", r.get("build"), r.get("vp"), (r.get("ua") or "")[:90])
+              for e in ev: print("DEVLOG   ", e.get("k"), e.get("ms"), "ms", "pg="+str(e.get("pg")), "vw="+str(e.get("vw")), "md="+str(e.get("md")), "om="+str(e.get("om")), "scroll" if e.get("sc") else "")
+          PY
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
       - name: 브라우저 준비
+        if: ${{ !inputs.devlog }}
         run: |
           npm i --no-save --no-audit --no-fund playwright@1
           npx playwright install --with-deps chromium webkit
 
       - name: OMNI 화면 측정
-        if: steps.url.outputs.url != ''
+        if: steps.url.outputs.url != '' && !inputs.devlog
         env:
           URL: ${{ steps.url.outputs.url }}
           IMG: ${{ inputs.img && '1' || '0' }}

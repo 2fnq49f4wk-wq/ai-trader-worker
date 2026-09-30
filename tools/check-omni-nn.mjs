@@ -184,6 +184,9 @@ console.log("\n⑦ 홀로그램 핵(V33.437 새 엔진) — 가중치·분기 �
     const mc = src.slice(src.indexOf("function mountCore("), src.indexOf("  let active=null;") > 0 ? src.length : src.length);
     chk(/addEventListener\('scroll',onScroll,\{capture:true,passive:true\}\)/.test(mc) && /removeEventListener\('scroll',onScroll,true\)/.test(mc) && /!scrolling/.test(mc),
       "페이지를 굴리는 동안은 그리지 않는다(스크롤에 양보 · 정리 때 떼어 냄)", "★스크롤 중에도 그린다(아이폰 끊김)★");
+    // [V33.457] 아이폰·아이패드: 그리기 스레드 없이 정지 화면(끌 때만 밝은 선 · 손 떼면 한 번) — "OMNI 열고 스크롤하면 완전히 멈춘다"
+    chk(/const IOS=config\.worker!==true&&/.test(mc) && /if\(!config\.noWorker&&!IOS&&typeof Worker/.test(mc) && /if\(IOS\)\{canvas\.dataset\.ios='1';v\.slow=true;\}/.test(mc),
+      "아이폰·아이패드는 그리기 스레드를 띄우지 않고 정지 화면으로 시작(움직일 땐 밝은 선만)", "★아이폰에서 워커 OffscreenCanvas 로 계속 그린다(스크롤 멈춤 보고)★");
     // [V33.448] "옛날 디자인으로 보인다": ① 구조 응답(아이폰 5초)을 기다리는 동안 성긴 대표 연결 그림 ② 쉬었다 온 긴 간격 때문에 번짐·흐린 선을 끔
     chk(/localStorage\.getItem\(ck\)/.test(mc) && /function keep\(txt\)/.test(mc) && /stT=setTimeout\(\(\)=>start\(null\),10000\)/.test(mc) && /if\(st0\)start\(st0\)/.test(mc),
       "구조는 브라우저에 보관해 다음부터 바로 전부 · 처음엔 받을 때까지 기다린다(성긴 대체 그림을 먼저 띄우지 않는다)", "★구조를 받기 전에 대표 연결 그림을 띄운다★");

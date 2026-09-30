@@ -166,6 +166,11 @@ ok(!/setTimeout\(removeIntro, 4200\);\n/.test(H.replace(/else setTimeout\(remove
      "/api/heatmap: SWR(R2 사본 6시간) · 1Y/5Y 외부 조회는 뒤에서 — 대시보드 지도가 2.4~3.5초 기다리던 것");
   ok(/const _taBuild = async function/.test(W) && /ctx\.waitUntil\(_taBuild\(\)/.test(W) && /__taScrBuilding/.test(W),
      "/api/ta-screener: 사본(24시간) 먼저 · 다시 계산(전 종목 일봉 통째 읽기 — D1 을 몇 초 붙잡는다)은 뒤에서 하나만");
+  const cp = W.slice(W.indexOf('if (path === "/api/client-perf") {'), W.indexOf('// [V32.54] GET /api/selfcheck'));
+  ok(/t\.length <= 4096/.test(cp) && /\.slice\(0, 20\)/.test(cp) && /arr\.length > 300/.test(cp) && !/cf-connecting-ip|_clientKey/.test(cp),
+     "/api/client-perf: 4KB · 20건 · 최근 300건만 · IP 를 남기지 않는다(실기기 멈춤 기록)");
+  ok(/sendBeacon\('\/api\/client-perf'/.test(H) && /if \(g > 400\)/.test(H) && /document\.hidden \|\| Date\.now\(\) - hiddenAt < 1500/.test(H),
+     "화면: 0.4초 넘는 굳음만 · 백그라운드 절전은 빼고 · 30초에 한 번 보낸다");
   ok(/const _bondFill = async function/.test(bd) && /ctx\.waitUntil\(_bondFill\(\)/.test(bd) && !/await _bondFill\(/.test(bd),
      "/api/bonds: 외부 시세 보충은 뒤에서(ctx.waitUntil) — 첫 요청이 외부 시세를 기다려 16초 넘게 무응답이던 것");
 }

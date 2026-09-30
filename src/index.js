@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.456";
+const _BUILD_VER = "V33.457";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -26293,6 +26293,35 @@ async function handleRequest(request, env, ctx) {
        그 응답은 SWR 사본이라 배포 직후엔 옛 판 사본을 먼저 준다 → 새 판 화면에 "새 버전 V33.450 나왔어요" 가 거꾸로 떴다(운영 캡처). */
     if (path === "/api/build") {
       return Response.json({ build: _BUILD_VER }, { headers: Object.assign({ "cache-control": "no-store" }, cors) });
+    }
+    /* [V33.457] ★실기기 멈춤 기록★ — 사용자(아이폰): "OMNI 를 열고 스크롤하면 완전히 멈춘다". CI 의 WebKit 은 실제 아이폰과 달라 재현이 안 된다.
+       화면이 0.4초 넘게 굳은 순간(어느 화면 · 어느 모델 탭 · OMNI 그리기 방식 · 스크롤 중이었나)과 탭이 죽고 다시 열린 흔적을 기기가 보낸다.
+       IP·쿠키는 남기지 않는다. 크기 4KB · 항목 20개 · 문자열 길이 제한 · 최근 300건만(R2 한 파일). 한도기(POST=쓰기 비용)를 그대로 지난다. */
+    if (path === "/api/client-perf") {
+      const R2p = (typeof _bigR2 === "function") ? _bigR2() : null, pk = "diag/client-perf.json";
+      if (request.method === "POST") {
+        let j = null;
+        try { const t = await request.text(); if (t.length <= 4096) j = JSON.parse(t); } catch (e) { j = null; }
+        if (!j || typeof j !== "object" || !R2p) return Response.json({ ok: false }, { status: 400, headers: cors });
+        const sv = function (x, n) { return String(x == null ? "" : x).slice(0, n); };
+        const nv = function (x) { const v = Number(x); return isFinite(v) ? Math.round(v) : null; };
+        const ev = (Array.isArray(j.ev) ? j.ev : []).slice(0, 20).map(function (e) {
+          return { ms: nv(e && e.ms), at: nv(e && e.at), pg: sv(e && e.pg, 20), md: sv(e && e.md, 16), vw: sv(e && e.vw, 16),
+                   om: sv(e && e.om, 24), sc: !!(e && e.sc), k: sv(e && e.k, 16) };
+        });
+        const rec = { ts: Date.now(), build: sv(j.build, 12), ua: sv(j.ua, 140), vp: sv(j.vp, 20), ev: ev };
+        const put = (async function () {
+          let arr = [];
+          try { const g = await R2p.get(pk); if (g) { const x = JSON.parse(await g.text()); if (Array.isArray(x)) arr = x; } } catch (e) {}
+          arr.push(rec); if (arr.length > 300) arr = arr.slice(arr.length - 300);
+          try { await R2p.put(pk, JSON.stringify(arr), { httpMetadata: { contentType: "application/json" } }); } catch (e) {}
+        })();
+        if (ctx && ctx.waitUntil) ctx.waitUntil(put); else await put;
+        return new Response(null, { status: 204, headers: cors });
+      }
+      let arr = [];
+      try { const g = R2p ? await R2p.get(pk) : null; if (g) { const x = JSON.parse(await g.text()); if (Array.isArray(x)) arr = x; } } catch (e) {}
+      return Response.json({ n: arr.length, recent: arr.slice(-60).reverse() }, { headers: Object.assign({ "cache-control": "no-store" }, cors) });
     }
     // [V32.54] GET /api/selfcheck — 시스템 자가진단(사이트 오류·파이프라인 지연·모델 상태). SWR 1분.
     if (path === "/api/selfcheck") {
