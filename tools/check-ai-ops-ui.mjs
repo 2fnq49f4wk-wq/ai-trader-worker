@@ -186,6 +186,20 @@ check(feedGridRules.length === 0,
   '판정 로그가 그리드 규칙을 물려받았다(매달린 선택자 의심) — 로그 글자가 세로로 쌓인다: '
     + feedGridRules.map(r => r.sel.replace(/\s+/g, ' ')).join(' / '));
 
+// [V33.446] 카드 줄 자동 넘김(2.2초)이 ★페이지 전체★ 를 되감으면 아래로 읽던 화면이 붙잡혀 "멈춘다" —
+//   레일만 가로로 밀고(scrollIntoView 금지) · 두뇌 페이지가 떠 있고 보일 때만 넘긴다.
+{
+  const i0 = html.indexOf('  function scanHighlight(){'), i1 = html.indexOf('  function stopScan(){', i0);
+  const body = i0 > 0 && i1 > i0 ? html.slice(i0, i1).replace(/\/\/[^\n]*/g, '') : '';
+  check(!!body && !/scrollIntoView/.test(body) && /rail\.scrollTo\(|rail\.scrollLeft\s*=/.test(body),
+    '스캔 카드 줄은 레일만 가로로 민다 — 페이지를 끌어당기지 않는다',
+    'scanHighlight 가 scrollIntoView 를 쓰거나 레일만 미는 코드가 없다 — 2.2초마다 페이지가 되감긴다');
+  check(/function scanVisible\(el\)\{[\s\S]*?document\.hidden[\s\S]*?page-nnviz[\s\S]*?getBoundingClientRect/.test(body)
+    && /setInterval\(function\(\)\{[\s\S]*?scanVisible\(/.test(body),
+    '스캔 자동 넘김은 두뇌 페이지가 떠 있고 보일 때만 돈다',
+    '스캔 자동 넘김이 보이지 않을 때도 돈다(차트·지표 요청·다시 그리기 낭비)');
+}
+
 if (failures) {
   console.error(`\n✗ AI 작동 관제실 계약 ${failures}건 실패`);
   process.exit(1);
