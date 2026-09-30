@@ -212,7 +212,12 @@
       const xr=x*cy+z*sy,zr=-x*sy+z*cy,yr=y*cp-zr*sp,dp=y*sp+zr*cp,k=900/(900+dp);
       SX[i]=xr*k*scale+ox;SY[i]=yr*k*scale+oy;SZ[i]=dp;}
     const df=i=>{const q=.2+.8*(1-(SZ[i]+380)/760);return q<.12?.12:q>1?1:q;};
-    ctx.clearRect(0,0,W,H);
+    // [V33.448] ★장면마다 배율을 다시 건다 · 캔버스 전체를 지운다★ — 아이폰 사파리 캡처: 그림이 왼쪽 위 2/3 에만 그려지고
+    //   나머지(ㄱ자)엔 옛 장면이 남았다. 캔버스 크기를 바꾸면(주소창 · 보기 전환) 사파리가 배율(1.5)을 풀어 버려
+    //   1배로 그려졌고, 지우기도 그 1배 영역(2/3)만 지웠다. 이제 크기가 어떻든 실제 캔버스 크기에서 배율을 계산해 매번 건다.
+    const cvs=ctx.canvas;
+    ctx.setTransform(1,0,0,1,0,0);ctx.globalAlpha=1;ctx.globalCompositeOperation='source-over';
+    if(cvs&&cvs.width){ctx.clearRect(0,0,cvs.width,cvs.height);ctx.setTransform(cvs.width/W,0,0,cvs.height/H,0,0);}else ctx.clearRect(0,0,W,H);
     ctx.globalCompositeOperation='lighter';
     // 3) [V33.438] ★맑은 아크릴★ — 넓게 깔던 광채(뿌옇게 보인 원인)를 걷고, 유리 같은 껍질 셋:
     //    가장자리로 갈수록 진해지는 면(프레넬) · 또렷한 테두리 · 왼쪽 위 반사광 호 · 반짝임. 모두 장식(값 없음).
@@ -323,25 +328,30 @@
      막히면 캔버스를 넘긴 뒤 스레드가 죽어 그림이 빈칸이 된다. 이 파일이 워커 안에서 읽히면 맨 끝에서 omWorkerMain 을 켠다. */
   const OM_SELF=(typeof document!=='undefined'&&document.currentScript&&document.currentScript.src)||'/neural-observatory.js';
   function omWorkerMain(){
-    let cv=null,ctx=null,sc=null,d=null,W=1,H=1,run=true,t=0,last=0,dirty=true,draws=0,ms=0,gap=33,seen=0,pending=false;
+    let cv=null,ctx=null,sc=null,d=null,W=1,H=1,run=true,t=0,last=0,dirty=true,draws=0,ms=0,gap=33,seen=0,pending=false,cost=0;
     const v={yaw:.4,pitch:.32,zoom:1,panX:0,panY:0,selected:-1,motion:true,spin:true,glow:true,small:null,lite:false,lod:false};
     const raf=typeof self.requestAnimationFrame==='function'?f=>self.requestAnimationFrame(f):f=>setTimeout(()=>f(performance.now()),16);
     const kick=()=>{if(!pending&&run&&sc){pending=true;raf(loop);}};
     function loop(now){pending=false;if(!run||!sc)return;
-      if(now-last>=1000/30){const dt=Math.min(.1,(now-last)/1000);
-        if(last&&(v.motion||v.spin)){gap=gap*.8+(now-last)*.2;if(++seen>8&&gap>55&&!v.lite){v.lite=true;v.glow=false;postMessage({type:'lite'});}if(seen>8&&gap>110)v.slow=true;}
+      // [V33.448] ★느린 기기는 장면 간격을 늘린다★ — 그리기에 걸린 시간의 2.5배를 쉬어 이 스레드가 한 코어를 다 쓰지 않게(아이폰: 발열·페이지 전체 끊김)
+      if(now-last>=(dirty&&!(v.motion||v.spin)?Math.max(16,cost*1.5):Math.max(1000/30,cost*2.5))){const dt=Math.min(.1,(now-last)/1000);
+        // [V33.448] 장면 간격(gap)은 ★쉬었다 온 간격(0.25초 넘음)은 빼고★ 잰다 — 스크롤 멈춤·화면 밖·절전 뒤의 긴 간격이 섞여
+        //   멀쩡한 기기에서 번짐과 흐린 선을 꺼 버렸다("옛날 디자인처럼 보인다"). 그리기 시간(cost)은 래스터를 못 재서 간격이 주 신호다.
+        const iv=now-last;if(last&&iv<250&&(v.motion||v.spin)){gap=gap*.8+iv*.2;if(++seen>8&&(gap>55||cost>40)&&!v.lite){v.lite=true;v.glow=false;postMessage({type:'lite'});}if(seen>8&&(gap>110||cost>80))v.slow=true;}
         v.lod=!!v.slow&&(v.motion||v.spin);   // 아주 느린 기기: 움직이는 동안만 흐린 단계 생략 · 멈추면 전부
         last=now;if(v.motion||v.spin)t+=dt;if(v.spin)v.yaw+=dt*.08;
-        if(dirty||v.motion||v.spin){const t0=performance.now(),r=drawCore(ctx,sc,v,W,H,t);draws++;ms+=performance.now()-t0;dirty=false;
+        if(dirty||v.motion||v.spin){const t0=performance.now(),r=drawCore(ctx,sc,v,W,H,t),dm=performance.now()-t0;draws++;ms+=dm;cost=cost?cost*.8+dm*.2:dm;dirty=false;
           if(draws%10===1)postMessage({type:'stats',nodes:sc.n,edges:r.lines,drawn:r.drawn,strokes:r.strokes,draws,averageMs:(ms/draws).toFixed(2)});}}
       if(dirty||v.motion||v.spin)kick();}
-    function size(m){W=m.w;H=m.h;cv.width=Math.round(W*m.ratio);cv.height=Math.round(H*m.ratio);ctx.setTransform(m.ratio,0,0,m.ratio,0,0);
+    // 같은 크기면 캔버스를 다시 잡지 않는다 — 폭·높이를 대입하는 것만으로 캔버스가 비워지고 상태가 풀린다(사파리 결함의 방아쇠)
+    function size(m){const cw=Math.round(m.w*m.ratio),ch=Math.round(m.h*m.ratio);W=m.w;H=m.h;
+      if(cv.width!==cw)cv.width=cw;if(cv.height!==ch)cv.height=ch;ctx.setTransform(cw/W,0,0,ch/H,0,0);
       const sw=Math.max(1,Math.round(W/2)),sh=Math.max(1,Math.round(H/2));   // [V33.444] 보조 캔버스는 재사용(크기만) — 매번 새로 만들면 캔버스 메모리가 쌓인다
       if(v.small){if(v.small.width!==sw)v.small.width=sw;if(v.small.height!==sh)v.small.height=sh;}else v.small=new OffscreenCanvas(sw,sh);}
     self.onmessage=e=>{const m=e.data;
       if(m.type==='init'){cv=m.canvas;ctx=cv.getContext('2d');d=m.d;Object.assign(v,m.flags||{});size(m);sc=omniCore(d,m.st||null);postMessage({type:'ready'});}
-      else if(m.type==='scene'){sc=omniCore(d,m.st);v.selected=-1;}
-      else if(m.type==='size'){size(m);}
+      else if(m.type==='scene'){if(!d)return;sc=omniCore(d,m.st);v.selected=-1;}
+      else if(m.type==='size'){if(!cv)return;size(m);}
       else if(m.type==='flags'){Object.assign(v,m.flags);}
       else if(m.type==='orbit'){v.yaw-=m.dx*.006;v.pitch=clamp(v.pitch+m.dy*.006,-1.3,1.3);v.spin=false;}
       else if(m.type==='pan'){v.panX+=m.dx;v.panY+=m.dy;}
@@ -369,7 +379,7 @@
     let still=!wk;   // 대체 경로는 정지 화면으로 시작 — 계속 그리면 그게 곧 멈춤이다
     const v={yaw:.4,pitch:.32,zoom:1,panX:0,panY:0,selected:-1,motion:!reduced.matches&&!still,spin:!reduced.matches&&!still,glow:true,small:null,lite:false,lod:false};
     canvas.dataset.mode=wk?'worker':'main';
-    let sc=null,ctx=null,raf=0,last=0,t=0,w=1,h=1,dead=false,visible=true,draws=0,ms=0,dirty=true,gap=33,seen=0,idleT=0,gc=0;
+    let scrolling=false,scrT=0,mcost=0,sc=null,ctx=null,raf=0,last=0,t=0,w=1,h=1,dead=false,visible=true,draws=0,ms=0,dirty=true,gap=33,seen=0,idleT=0,gc=0;
     const send=(m,tr)=>{if(wk)wk.postMessage(m,tr||[]);};
     const btn=(txt,fn,pr)=>{const b=document.createElement('button');b.type='button';b.textContent=txt;if(pr!=null)b.setAttribute('aria-pressed',pr);b.onclick=()=>{fn(b);flags();dirty=true;wake();};controls.append(b);return b;};
     const flags=()=>send({type:'flags',flags:{motion:v.motion,spin:v.spin,glow:v.glow}});
@@ -399,15 +409,15 @@
       dirty=true;wake();}
     layerSel.onchange=()=>{populate();inspect(+nodeSel.value);};nodeSel.onchange=()=>inspect(+nodeSel.value);
     // ── 대체 경로(메인 스레드) 그리기 ──
-    function frame(){const t0=performance.now();const r=drawCore(ctx,sc,v,w,h,t);draws++;ms+=performance.now()-t0;
+    function frame(){const t0=performance.now();const r=drawCore(ctx,sc,v,w,h,t),dm=performance.now()-t0;draws++;ms+=dm;mcost=mcost?mcost*.8+dm*.2:dm;
       canvas.dataset.nodes=sc.n;canvas.dataset.edges=r.lines;canvas.dataset.drawn=r.drawn;canvas.dataset.strokes=r.strokes;canvas.dataset.draws=draws;canvas.dataset.averageMs=(ms/draws).toFixed(2);dirty=false;}
-    function tick(now){raf=0;if(dead||wk)return;if(!host.isConnected){destroy();return;}if(!visible||document.hidden)return;
+    function tick(now){raf=0;if(dead||wk||!sc)return;if(!host.isConnected){destroy();return;}if(!visible||document.hidden)return;
       if(now-last>=1000/30){const dt=Math.min(.1,(now-last)/1000);
-        if(last&&(v.motion||v.spin)){gap=gap*.8+(now-last)*.2;if(++seen>8&&gap>55&&!v.lite){v.lite=true;v.glow=false;glowBtn.setAttribute('aria-pressed','false');canvas.dataset.lite='1';}if(seen>8&&gap>110)v.slow=true;}
+        const iv=now-last;if(last&&iv<250&&(v.motion||v.spin)){gap=gap*.8+iv*.2;if(++seen>8&&(gap>55||mcost>40)&&!v.lite){v.lite=true;v.glow=false;glowBtn.setAttribute('aria-pressed','false');canvas.dataset.lite='1';}if(seen>8&&(gap>110||mcost>80))v.slow=true;}
         if(v.slow&&!ptr.size)v.lod=v.motion||v.spin;
         last=now;if(v.motion||v.spin)t+=dt;if(v.spin)v.yaw+=dt*.08;if(dirty||v.motion||v.spin)frame();}
       if(dirty||v.motion||v.spin)raf=requestAnimationFrame(tick);}
-    function wake(){if(wk||dead||raf||!visible||document.hidden)return;raf=requestAnimationFrame(tick);}
+    function wake(){if(wk||dead||raf||!visible||document.hidden||scrolling)return;raf=requestAnimationFrame(tick);}
     // ── 별도 스레드 경로 ──
     if(wk){
       wk.onmessage=e=>{const m=e.data;if(dead)return;
@@ -438,8 +448,14 @@
       if(wk){send({type:'size',w,h,ratio:Math.min(devicePixelRatio||1,w<600?1.5:2)});return;}
       sizeMain();dirty=true;wake();};
     const ro=new ResizeObserver(()=>{if(!sized){applySize();return;}clearTimeout(rzT);rzT=setTimeout(applySize,150);});
-    const io=new IntersectionObserver(e=>{visible=e[0].isIntersecting;send({type:'run',on:visible&&!document.hidden});if(!visible&&raf){cancelAnimationFrame(raf);raf=0;}wake();});
-    const vis=()=>{send({type:'run',on:visible&&!document.hidden});if(document.hidden&&raf){cancelAnimationFrame(raf);raf=0;}else wake();};
+    // [V33.448] ★페이지를 굴리는 동안은 그리지 않는다★ — 사용자: "화면 움직이면 이상하게 보인다 · 멈춘다". 스크롤 중엔 마지막 장면을
+    //   그대로 두고(GPU·코어를 스크롤에 양보) 손을 떼고 0.22초 뒤 다시 돈다.
+    const runOn=()=>visible&&!document.hidden&&!scrolling;
+    const onScroll=e=>{const tg=e&&e.target;if(tg&&tg!==document&&!(tg.contains&&tg.contains(vp)))return;   // 그림을 품은 스크롤(페이지)만 — 카드 줄 가로 넘김 등은 무시
+      if(!scrolling){scrolling=true;send({type:'run',on:false});if(raf){cancelAnimationFrame(raf);raf=0;}}
+      clearTimeout(scrT);scrT=setTimeout(()=>{scrolling=false;send({type:'run',on:runOn()});wake();},220);};
+    const io=new IntersectionObserver(e=>{visible=e[0].isIntersecting;send({type:'run',on:runOn()});if(!visible&&raf){cancelAnimationFrame(raf);raf=0;}wake();});
+    const vis=()=>{send({type:'run',on:runOn()});if(document.hidden&&raf){cancelAnimationFrame(raf);raf=0;}else wake();};
     const ptr=new Map();let moved=false;
     const settle=()=>{clearTimeout(idleT);idleT=setTimeout(()=>{if(v.lod){v.lod=false;dirty=true;wake();}},180);};   // 대체 경로: 손을 떼면 전부 다시
     function bind(){
@@ -462,21 +478,37 @@
     }
     bind();
     const red=()=>{if(reduced.matches){v.motion=v.spin=false;mot.setAttribute('aria-pressed','false');spin.setAttribute('aria-pressed','false');flags();}dirty=true;wake();};
-    function destroy(){if(dead)return;dead=true;cancelAnimationFrame(raf);clearTimeout(idleT);clearInterval(gc);clearTimeout(wdog);clearTimeout(rzT);ro.disconnect();io.disconnect();document.removeEventListener('visibilitychange',vis);reduced.removeEventListener('change',red);
+    function destroy(){if(dead)return;dead=true;cancelAnimationFrame(raf);clearTimeout(idleT);clearInterval(gc);clearTimeout(wdog);clearTimeout(rzT);clearTimeout(scrT);ro.disconnect();io.disconnect();document.removeEventListener('visibilitychange',vis);document.removeEventListener('scroll',onScroll,true);reduced.removeEventListener('change',red);
       // [V33.444] ★캔버스 메모리를 바로 돌려준다★ — 버린 캔버스를 쓰레기 수집에 맡기면 다시 그릴 때마다 쌓인다(아이폰 사파리는 한도를 넘으면 탭을 죽인다)
       if(wk){const w0=wk;wk=null;try{w0.postMessage({type:'dispose'});}catch(e){}setTimeout(()=>{try{w0.terminate();}catch(e){}},300);}
       else{try{canvas.width=0;canvas.height=0;}catch(e){}}
       try{if(v.small){v.small.width=0;v.small.height=0;v.small=null;}}catch(e){}
       sc=null;host.__omniLive=false;if(active?.destroy===destroy)active=null;}
     active={destroy};host.__omniLive=true;
-    build(config.structure||null);
-    if(wk){const r=vp.getBoundingClientRect();w=Math.max(1,r.width);h=Math.max(1,r.height);const off=canvas.transferControlToOffscreen();
-      send({type:'init',canvas:off,d,st:config.structure||null,w,h,ratio:Math.min(devicePixelRatio||1,w<600?1.5:2),flags:{motion:v.motion,spin:v.spin,glow:v.glow}},[off]);
-      wdog=setTimeout(()=>{if(!alive)toMain('timeout');},8000);}
-    ro.observe(vp);io.observe(vp);document.addEventListener('visibilitychange',vis);reduced.addEventListener('change',red);
+    /* [V33.448] ★구조를 받은 뒤에 그리기 시작한다★ — 운영 실측(아이폰): 구조 응답이 5초 걸리는 동안 '대표 연결만' 그린 성긴 그림이
+       떠 있다가 바뀌었다(사용자: "옛날 디자인으로 보인다"). 이제:
+         · 받은 구조를 브라우저에 보관(같은 학습 판 열쇠) → 다음부터는 열자마자 전부 그린다. 뒤에서 새로 받아 다르면 갈아 끼운다.
+         · 보관본이 없으면 '구조 불러오는 중' 만 띄우고 기다린다(10초 넘거나 실패하면 그때 대표 연결로). */
+    const ck=config.cacheKey?'omniSt:'+config.cacheKey:null;
+    let cachedTxt=null,started=false,stT=0,st0=config.structure||null;
+    if(!st0&&ck){try{cachedTxt=localStorage.getItem(ck);if(cachedTxt){const j=JSON.parse(cachedTxt);if(j&&j.ok)st0=j;else cachedTxt=null;}}catch(e){cachedTxt=null;}}
+    function start(st){if(started||dead)return;started=true;clearTimeout(stT);lastSt=st;build(st);
+      if(wk){const r=vp.getBoundingClientRect();w=Math.max(1,r.width);h=Math.max(1,r.height);const off=canvas.transferControlToOffscreen();
+        send({type:'init',canvas:off,d,st:st||null,w,h,ratio:Math.min(devicePixelRatio||1,w<600?1.5:2),flags:{motion:v.motion,spin:v.spin,glow:v.glow}},[off]);
+        wdog=setTimeout(()=>{if(!alive)toMain('timeout');},8000);}}
+    function keep(txt){if(!ck)return;try{for(let i=localStorage.length-1;i>=0;i--){const k=localStorage.key(i);if(k&&k.indexOf('omniSt:')===0&&k!==ck)localStorage.removeItem(k);}localStorage.setItem(ck,txt);}catch(e){}}
+    if(st0)start(st0);
+    else{info.textContent='구조 전부(가중치 · 나무 분기)를 불러오는 중…';stT=setTimeout(()=>start(null),10000);}
+    ro.observe(vp);io.observe(vp);document.addEventListener('visibilitychange',vis);document.addEventListener('scroll',onScroll,{capture:true,passive:true});reduced.addEventListener('change',red);
     // 화면이 없는 채로 남으면 스레드를 거둔다(다른 탭으로 옮겨 host 가 지워진 경우)
     gc=setInterval(()=>{if(!host.isConnected)destroy();},2000);
-    if(!config.structure&&typeof fetch==='function')fetch(config.structureUrl||'/api/omni-structure').then(r=>r.ok?r.json():null).then(st=>{if(!dead&&st&&st.ok){lastSt=st;build(st);send({type:'scene',st});}}).catch(()=>{});
+    if(!config.structure&&typeof fetch==='function')fetch(config.structureUrl||'/api/omni-structure').then(r=>r.ok?r.text():null).then(txt=>{
+        if(dead)return;let st=null;try{st=txt?JSON.parse(txt):null;}catch(e){}
+        if(!st||!st.ok){start(null);return;}
+        keep(txt);if(!started){start(st);return;}
+        if(txt===cachedTxt)return;   // 보관본과 같으면 다시 짓지 않는다
+        lastSt=st;build(st);send({type:'scene',st});}).catch(()=>{start(null);});
+    else if(!st0)start(null);
     return active;
   }
   let active=null;

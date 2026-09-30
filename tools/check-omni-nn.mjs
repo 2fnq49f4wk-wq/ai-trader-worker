@@ -166,6 +166,32 @@ console.log("\n⑦ 홀로그램 핵(V33.437 새 엔진) — 가중치·분기 �
   const r = NO.drawCore(ctx, sc, { yaw: .4, pitch: .3, zoom: 1, panX: 0, panY: 0, selected: 5, motion: true, spin: true, glow: true, small }, 1200, 400, 1.3);
   chk(r.lines === sc.la.length && calls.stroke <= 45 && calls.fill <= 20,
     "선 " + r.lines + "개를 획 " + calls.stroke + "번 · 채움 " + calls.fill + "번에(단계별로 묶어)", "★선마다 긋는다(획 " + calls.stroke + " · 채움 " + calls.fill + ")★");
+  /* [V33.448] ★배율을 잃은 캔버스에서도 바르게★ — 아이폰 사파리 캡처: 그림이 왼쪽 위 2/3 에만, 나머지엔 옛 장면.
+     캔버스 크기가 바뀌면 사파리가 배율(1.5)을 풀어 1배로 그렸고, 지우기도 1배 영역만 했다.
+     배율이 풀린(단위 행렬) 가짜 캔버스(1.5배 크기)를 주고: 캔버스 전체를 지우는가 · 그리기 전에 1.5배를 다시 거는가. */
+  {
+    const T = { k: 1 }, clears = [], strokeK = [];
+    const rc = Object.assign(mk(), { canvas: { width: 1800, height: 600 }, setTransform: (a) => { T.k = a; },
+      clearRect: (x, y, w, h) => clears.push(w * T.k >= 1800 && h * T.k >= 600), stroke: () => strokeK.push(T.k) });
+    NO.drawCore(rc, sc, { yaw: .4, pitch: .3, zoom: 1, panX: 0, panY: 0, selected: -1, motion: false, spin: false, glow: false, small: null }, 1200, 400, 0);
+    chk(clears.some(Boolean) && strokeK.length && strokeK.every((k) => Math.abs(k - 1.5) < 1e-9),
+      "배율이 풀린 캔버스도 전체를 지우고 1.5배로 다시 건다(왼쪽 위 2/3 결함 없음)",
+      "★배율이 풀리면 일부만 지우거나 1배로 그린다(clear " + clears.join(",") + " · 배율 " + [...new Set(strokeK)].join(",") + ")★");
+    const wm = src.slice(src.indexOf("function omWorkerMain("), src.indexOf("function mountCore("));
+    chk(/if\(cv\.width!==cw\)cv\.width=cw/.test(wm) && /cost\*2\.5/.test(wm),
+      "워커: 같은 크기면 캔버스를 다시 잡지 않는다 · 그리기 시간의 2.5배를 쉰다(느린 기기)",
+      "★워커가 같은 크기에도 캔버스를 다시 잡거나 느린 기기에서 쉬지 않는다★");
+    const mc = src.slice(src.indexOf("function mountCore("), src.indexOf("  let active=null;") > 0 ? src.length : src.length);
+    chk(/addEventListener\('scroll',onScroll,\{capture:true,passive:true\}\)/.test(mc) && /removeEventListener\('scroll',onScroll,true\)/.test(mc) && /!scrolling/.test(mc),
+      "페이지를 굴리는 동안은 그리지 않는다(스크롤에 양보 · 정리 때 떼어 냄)", "★스크롤 중에도 그린다(아이폰 끊김)★");
+    // [V33.448] "옛날 디자인으로 보인다": ① 구조 응답(아이폰 5초)을 기다리는 동안 성긴 대표 연결 그림 ② 쉬었다 온 긴 간격 때문에 번짐·흐린 선을 끔
+    chk(/localStorage\.getItem\(ck\)/.test(mc) && /function keep\(txt\)/.test(mc) && /stT=setTimeout\(\(\)=>start\(null\),10000\)/.test(mc) && /if\(st0\)start\(st0\)/.test(mc),
+      "구조는 브라우저에 보관해 다음부터 바로 전부 · 처음엔 받을 때까지 기다린다(성긴 대체 그림을 먼저 띄우지 않는다)", "★구조를 받기 전에 대표 연결 그림을 띄운다★");
+    const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+    chk(/NeuralObservatory\.mount\(_ph,\{kind:'omni',data:d,cacheKey:_ovKey\}\)/.test(html), "화면이 학습 판 열쇠(cacheKey)를 넘긴다", "★보관 열쇠를 안 넘긴다 — 판이 바뀌어도 옛 구조를 쓸 수 있다★");
+    chk((wm.match(/iv<250/g) || []).length === 1 && (mc.match(/iv<250/g) || []).length === 1,
+      "느림 판정에서 쉬었다 온 간격(>0.25초)은 뺀다(워커 · 대체 경로)", "★스크롤 멈춤·화면 밖 간격이 느림 판정에 섞인다★");
+  }
   /* [V33.438] ★맑게(아크릴)★ — 사용자: "뿌연 느낌 말고 맑으면서 반투명하게". 뿌옇던 원인 둘을 다시 못 들이게:
      화면 전체를 덮는 광채(fillRect 0,0,W,H) 금지 · 번짐은 반 해상도(w/2) · 세기 ≤ .35. 아크릴 띠·유리 껍질이 있다. */
   const dc = src.slice(src.indexOf("function drawCore("), src.indexOf("function mountCore("));
