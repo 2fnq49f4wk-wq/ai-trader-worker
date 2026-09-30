@@ -260,7 +260,7 @@
     // [V33.439] 단계 나누기는 ★미리 잡아 둔 형식 배열★ 에(계수 정렬 두 번) — 장면마다 수만 번 배열을 늘려 쓰레기 수집이 돌던 것을 없앤다.
     //   v.lod(움직이는 중 · 대체 경로) 면 거의 안 보이는 단계는 건너뛴다 — 멈추면 전부 다시 그린다.
     if(!sc.lv||sc.lv.length!==m){sc.lv=new Uint8Array(m);sc.cnt=new Int32Array(OM_LEVELS);sc.off=new Int32Array(OM_LEVELS+1);sc.pos=new Int32Array(OM_LEVELS);sc.buf=new Float32Array(m*4);}
-    const lv=sc.lv,cnt=sc.cnt,off=sc.off,pos=sc.pos,buf=sc.buf;let lodMin=v.lite?1:0;
+    const lv=sc.lv,cnt=sc.cnt,off=sc.off,pos=sc.pos,buf=sc.buf;let lodMin=(v.lite||v.skip0)?1:0;   // skip0(아이폰): 가장 옅은 단계(선 3.5만 · 한 줄 투명도 ≈0.1%)만 건너뛴다 — 번짐은 그대로
     // [V33.440] ★노출 = 선 수에 반비례★ — 실제 모델(선 3.7만)은 시험 모델(1.8만)의 두 배라 가산 합성이 하얗게 타 버렸다(운영 캡처).
     const expo=Math.max(.3,Math.min(1,15000/Math.max(1,m)));
     cnt.fill(0);let nh=0,drawn=0;
@@ -383,7 +383,7 @@
     }
     let still=!wk;   // 대체 경로는 정지 화면으로 시작 — 계속 그리면 그게 곧 멈춤이다
     const v={yaw:.4,pitch:.32,zoom:1,panX:0,panY:0,selected:-1,motion:!reduced.matches&&!still,spin:!reduced.matches&&!still,glow:true,small:null,lite:false,lod:false};
-    canvas.dataset.mode=wk?'worker':'main';if(IOS){canvas.dataset.ios='1';v.slow=true;}   // 아이폰: 움직이는 동안은 밝은 단계만(lod)
+    canvas.dataset.mode=wk?'worker':'main';if(IOS){canvas.dataset.ios='1';v.slow=true;v.skip0=true;}   // [V33.458] 아이폰은 메인 스레드에서 그리므로 거의 안 보이는 최저 단계를 뺀다(운영 측정: 한 장 0.88초 굳음 → 약 1/15)   // 아이폰: 움직이는 동안은 밝은 단계만(lod)
     let scrolling=false,scrT=0,mcost=0,sc=null,ctx=null,raf=0,last=0,t=0,w=1,h=1,dead=false,visible=true,draws=0,ms=0,dirty=true,gap=33,seen=0,idleT=0,gc=0;
     const send=(m,tr)=>{if(wk)wk.postMessage(m,tr||[]);};
     const btn=(txt,fn,pr)=>{const b=document.createElement('button');b.type='button';b.textContent=txt;if(pr!=null)b.setAttribute('aria-pressed',pr);b.onclick=()=>{fn(b);flags();dirty=true;wake();};controls.append(b);return b;};
