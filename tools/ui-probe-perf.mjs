@@ -18,6 +18,24 @@ const INIT = () => {
   setInterval(() => { const n = performance.now(), g = n - prev; if (g > 80) window.__stalls.push([window.__phase, Math.round(n), Math.round(g)]); prev = n; }, 16);
   try { new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__lt.push([window.__phase, Math.round(e.startTime), Math.round(e.duration)]); }).observe({ type: "longtask", buffered: true }); } catch (e) {}
 };
+// CPU 프로파일 요약: 자기 시간 상위 + ★포함 시간★ 상위(누가 부른 일인지 — 부팅처럼 한 함수가 여러 일을 부를 때)
+function cpuReport(label, profile) {
+  const dt = profile.timeDeltas || [], byId = new Map(profile.nodes.map((n) => [n.id, n])), parent = new Map();
+  for (const n of profile.nodes) for (const c of (n.children || [])) parent.set(c, n.id);
+  const key = (n) => { const cf = n.callFrame, url = (cf.url || "").replace(BASE, "").split("?")[0]; return (cf.functionName || "(anon)") + " " + (url || "-") + ":" + (cf.lineNumber + 1); };
+  const skip = (n) => /^\((idle|program|root|garbage collector)\)$/.test(n.callFrame.functionName);
+  const self = new Map(), incl = new Map();
+  for (let i = 0; i < profile.samples.length; i++) {
+    const d = dt[i] || 0; let id = profile.samples[i], n = byId.get(id); if (!n || skip(n)) continue;
+    self.set(key(n), (self.get(key(n)) || 0) + d);
+    const seen = new Set();
+    while (n) { if (!skip(n)) { const k = key(n); if (!seen.has(k)) { seen.add(k); incl.set(k, (incl.get(k) || 0) + d); } } id = parent.get(id); n = id != null ? byId.get(id) : null; }
+  }
+  const fmt = (m, k) => [...m].sort((a, b) => b[1] - a[1]).slice(0, k).map(([x, us]) => Math.round(us / 1000) + "ms " + x);
+  out(label + ".cpu_self", fmt(self, 20));
+  out(label + ".cpu_incl", fmt(incl, 20));
+  out(label + ".cpu_total_ms", Math.round([...self.values()].reduce((a, x) => a + x, 0) / 1000));
+}
 async function omniTimes(p, t0) {
   // 캔버스 → 워커 준비 → 구조 전부(설명 문구에 '전부 한 줄씩')
   const r = { canvas: null, ready: null, full: null };
@@ -63,6 +81,7 @@ async function run(tag, eng, copts, throttle) {
   // 인트로가 걷힐 때까지(최대 15초)
   await p.waitForFunction(() => window.__luxBootOpen, null, { timeout: 15000 }).catch(() => {});
   out(tag + ".boot", await p.evaluate(() => ({ open: window.__luxBootOpen || null, done: window.__luxBootDone || null })));
+  if (cdp) { cpuReport(tag + ".load", (await cdp.send("Profiler.stop")).profile); await cdp.send("Profiler.start"); }
   await p.waitForTimeout(2000);
   out(tag + ".net_first", net.filter((x) => x[1] < 16000).sort((a, b) => (b[2] || 0) - (a[2] || 0)).slice(0, 25));
   await shot(p, tag + ".home");
@@ -98,19 +117,7 @@ async function run(tag, eng, copts, throttle) {
   });
   out(tag + ".page", pg);
   out(tag + ".errors", errs.slice(0, 10));
-  if (cdp) {
-    const { profile } = await cdp.send("Profiler.stop");
-    const dt = profile.timeDeltas || [], self = new Map(), byId = new Map(profile.nodes.map((n) => [n.id, n]));
-    for (let i = 0; i < profile.samples.length; i++) self.set(profile.samples[i], (self.get(profile.samples[i]) || 0) + (dt[i] || 0));
-    const agg = new Map();
-    for (const [id, us] of self) { const n = byId.get(id), cf = n.callFrame, url = (cf.url || "").replace(BASE, "").split("?")[0];
-      if (cf.functionName === "(idle)" || cf.functionName === "(program)") continue;
-      const k = (cf.functionName || "(anon)") + " " + (url || "-") + ":" + (cf.lineNumber + 1); agg.set(k, (agg.get(k) || 0) + us); }
-    const top = [...agg].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([k, us]) => Math.round(us / 1000) + "ms " + k);
-    out(tag + ".cpu_top", top);
-    const total = [...agg.values()].reduce((a, x) => a + x, 0);
-    out(tag + ".cpu_total_ms", Math.round(total / 1000));
-  }
+  if (cdp) cpuReport(tag + ".after", (await cdp.send("Profiler.stop")).profile);
   await b.close();
 }
 const iphone = Object.assign({}, devices["iPhone 13"]);
