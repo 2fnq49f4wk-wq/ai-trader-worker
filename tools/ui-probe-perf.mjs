@@ -97,7 +97,12 @@ async function run(tag, eng, copts, throttle) {
   // 모델 보기 → OMNI
   await p.evaluate(() => { window.__phase = "omni-open"; if (window.luxBrainView) window.luxBrainView("models"); if (window.switchNnModel) window.switchNnModel("omni"); });
   const tw = Date.now();
-  out(tag + ".omni_times", await omniTimes(p, tw));
+  const ot = await omniTimes(p, tw);
+  out(tag + ".omni_times", ot);
+  if (ot.canvas == null) out(tag + ".omni_missing", await p.evaluate(() => { const st = document.getElementById("nnvStage");
+    const tab = document.querySelector('#nnvTabs .nnv-tab.active'); const pg = document.getElementById("page-nnviz");
+    return { stage: st ? st.innerHTML.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 300) : null, activeTab: tab ? tab.getAttribute("data-model") : null,
+             view: pg ? pg.getAttribute("data-brain-view") : null, hasSwitch: typeof window.switchNnModel, cache: (function(){ try { return !!localStorage.getItem("nnvCache_omni"); } catch (e) { return "err"; } })() }; }));
   await p.evaluate(() => { const v = document.getElementById("omniVol"); if (v) v.scrollIntoView({ block: "center" }); window.__phase = "omni-view"; });
   await p.waitForTimeout(4000);
   await shot(p, tag + ".omni");
