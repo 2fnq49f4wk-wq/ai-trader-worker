@@ -9,7 +9,8 @@ const out = (k, v) => console.log("RET " + k + " " + (typeof v === "string" ? v 
 const get = async (p) => { const r = await fetch(BASE + p, { headers: { "cache-control": "no-cache" } }); if (!r.ok) throw new Error(p + " HTTP " + r.status); return r.json(); };
 const trades = (await get("/api/trades?limit=5000")).slice().sort((a, b) => a.ts - b.ts);
 out("n", { trades: trades.length, from: trades.length ? new Date(trades[0].ts).toISOString() : null, to: trades.length ? new Date(trades[trades.length - 1].ts).toISOString() : null });
-const tag = (r) => String(r || "").trim().split(/[\s(:,]/)[0].replace(/[+\-]?\d.*$/, "") || "?";
+const tag = (r) => { const t = String(r || "").trim(), br = (t.match(/^(\[[^\]]+\])+/) || [""])[0], rest = t.slice(br.length).trim();
+  const w = rest.split(/[\s(:,]/)[0].replace(/[+\-]?\d.*$/, ""); return (br + (w ? " " + w : "")) || "?"; };   // 매수: [AI][TREND] 신호 · 매도: [TREND] STOP
 const isSell = (t) => /sell/i.test(t.side);
 // FIFO 짝짓기: 매도마다 진입 전략·보유 시간
 const book = new Map(), sells = [];
