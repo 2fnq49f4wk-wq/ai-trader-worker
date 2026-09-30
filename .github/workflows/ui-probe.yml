@@ -17,6 +17,10 @@ on:
         description: '두뇌 관측 전체(보기 3 · 모델 탭 11)를 탭마다 잰다'
         type: boolean
         default: false
+      perf:
+        description: '멈춤 추적 — CPU 프로파일(휴대폰 속도) · 아이폰 굳은 구간 · OMNI 로딩 시간 · 캡처(img 와 함께)'
+        type: boolean
+        default: false
 
 concurrency:
   group: ui-probe
@@ -63,7 +67,8 @@ jobs:
           URL: ${{ steps.url.outputs.url }}
           IMG: ${{ inputs.img && '1' || '0' }}
         run: |
-          if [ "${{ inputs.tabs }}" = "true" ]; then node tools/ui-probe-tabs.mjs "$URL" | tee probe.log; else node tools/ui-probe-omni.mjs "$URL" | tee probe.log; fi
+          if [ "${{ inputs.perf }}" = "true" ]; then node tools/ui-probe-perf.mjs "$URL" | tee probe.log
+          elif [ "${{ inputs.tabs }}" = "true" ]; then node tools/ui-probe-tabs.mjs "$URL" | tee probe.log; else node tools/ui-probe-omni.mjs "$URL" | tee probe.log; fi
 
       - name: 요약
         if: always()
