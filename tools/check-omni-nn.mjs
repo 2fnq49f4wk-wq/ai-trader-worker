@@ -250,8 +250,10 @@ console.log("\n⑦ 홀로그램 핵(V33.437 새 엔진) — 가중치·분기 �
       "같은 학습 판이면 살아 있는 그림을 옮겨 붙인다(다시 만들지 않는다)", "★다시 렌더할 때마다 그림을 새로 만든다★");
     const scN = NO.omniCore(d, st, { noLines: true });
     chk(scN.n === sc.n && scN.la.length === 0 && sc.top.length > 0, "선 없는 장면도 점 번호가 같다(선택이 워커와 맞는다) · 흐르는 빛 선은 장면이 만든다", "★점 번호가 어긋난다★"); }
-  chk(/let still=!wk;/.test(mc) && /motion:!reduced\.matches&&!still,spin:!reduced\.matches&&!still/.test(mc),
-    "워커를 못 쓰면 정지 화면으로 시작(자동회전·흐르는 빛 끔)", "★대체 경로가 계속 그린다★");
+  // [V33.459] 아이폰은 기능을 살린다(사용자 "기능들 다 살려놔라") — 대신 초당 20장 · 움직일 땐 밝은 선만(lod) · 스크롤·화면 밖이면 쉰다
+  chk(/let still=!wk&&!IOS;/.test(mc) && /motion:!reduced\.matches&&!still,spin:!reduced\.matches&&!still/.test(mc)
+      && /now-last>=\(IOS\?1000\/20:1000\/30\)/.test(mc) && /v\.slow=true;v\.skip0=true;/.test(mc),
+    "워커를 못 쓰면 정지 화면(자동회전·흐르는 빛 끔) · 아이폰만 가볍게 움직인다(초당 20장 · 밝은 선만)", "★대체 경로가 계속 그린다(아이폰 경량 조건 없이)★");
   chk(/clearInterval\(gc\)/.test(mc) && /wk\.terminate\(\)/.test(mc), "다시 그릴 때 워커·감시 타이머를 거둔다", "★스레드·타이머가 쌓인다★");
   { const calls2 = { stroke: 0, fill: 0 }; const c2 = mk(); c2.stroke = () => calls2.stroke++;
     const full = NO.drawCore(c2, sc, { yaw: .4, pitch: .3, zoom: 1, panX: 0, panY: 0, selected: -1, motion: false, spin: false, glow: false, small: null }, 1200, 400, 0).drawn;

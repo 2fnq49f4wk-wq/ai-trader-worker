@@ -381,7 +381,9 @@
     if(!config.noWorker&&!IOS&&typeof Worker==='function'&&typeof OffscreenCanvas==='function'&&canvas.transferControlToOffscreen){
       try{wk=new Worker(config.workerUrl||OM_SELF);}catch(e){wk=null;}
     }
-    let still=!wk;   // 대체 경로는 정지 화면으로 시작 — 계속 그리면 그게 곧 멈춤이다
+    let still=!wk&&!IOS;   // 대체 경로는 정지 화면으로 시작 — 계속 그리면 그게 곧 멈춤이다
+    // [V33.459] 아이폰은 ★기능을 살린다★(사용자: "기능들 다 살려놔라") — 자동회전·신호 움직임을 켜 두되 메인 스레드에서 가볍게:
+    //   초당 20장 · 움직이는 동안 밝은 선만(최대 5천) · 스크롤 중·화면 밖·탭 숨김이면 멈춤 · 멈추면 전부 한 장.
     const v={yaw:.4,pitch:.32,zoom:1,panX:0,panY:0,selected:-1,motion:!reduced.matches&&!still,spin:!reduced.matches&&!still,glow:true,small:null,lite:false,lod:false};
     canvas.dataset.mode=wk?'worker':'main';if(IOS){canvas.dataset.ios='1';v.slow=true;v.skip0=true;}   // [V33.458] 아이폰은 메인 스레드에서 그리므로 거의 안 보이는 최저 단계를 뺀다(운영 측정: 한 장 0.88초 굳음 → 약 1/15)   // 아이폰: 움직이는 동안은 밝은 단계만(lod)
     let scrolling=false,scrT=0,mcost=0,sc=null,ctx=null,raf=0,last=0,t=0,w=1,h=1,dead=false,visible=true,draws=0,ms=0,dirty=true,gap=33,seen=0,idleT=0,gc=0;
@@ -403,7 +405,7 @@
       const I=sc.info,sum=document.createElement('button');sum.type='button';sum.disabled=true;
       sum.textContent=I.full?('가중치 '+fmt(I.params)+'개 전부 · 나무 '+fmt(I.trees)+'그루 · 분기 '+fmt(I.splits)+'개 전부'):'대표 연결만(구조 전부를 아직 못 받았다)';lr.append(sum);
       populate();info.textContent=(I.full?'신경망 '+I.sizes.join('→')+' · 가중치 '+fmt(I.params)+'개와 나무 분기 '+fmt(I.splits)+'개를 전부 한 줄씩 그립니다. 점을 누르면 그 점의 선만 밝게 남습니다.':'구조 전부를 받는 중이거나 없습니다 — 대표 연결(뉴런마다 상위 3개)만 그립니다.')
-        +(still?(IOS?' (아이폰·아이패드에서는 멈춤을 막으려고 정지 화면으로 시작합니다 — 끌어서 돌리거나 자동회전을 켜 보세요)':' (이 브라우저는 별도 스레드 그리기를 못 해 정지 화면으로 시작합니다 — 끌어서 돌려 보세요)'):'');
+        +(IOS?' (아이폰·아이패드: 움직이는 동안은 밝은 선만 그리고, 멈추거나 스크롤하면 쉽니다)':still?' (이 브라우저는 별도 스레드 그리기를 못 해 정지 화면으로 시작합니다 — 끌어서 돌려 보세요)':'');
       dirty=true;wake();
     }
     function populate(){nodeSel.replaceChildren();const g=sc.groups[+layerSel.value||0];if(!g)return;g.ids.forEach(id=>nodeSel.add(new Option(sc.name[id].split(' — ')[0],String(id))));}
@@ -417,8 +419,8 @@
     function frame(){const t0=performance.now();const r=drawCore(ctx,sc,v,w,h,t),dm=performance.now()-t0;draws++;ms+=dm;mcost=mcost?mcost*.8+dm*.2:dm;
       canvas.dataset.nodes=sc.n;canvas.dataset.edges=r.lines;canvas.dataset.drawn=r.drawn;canvas.dataset.strokes=r.strokes;canvas.dataset.draws=draws;canvas.dataset.averageMs=(ms/draws).toFixed(2);dirty=false;}
     function tick(now){raf=0;if(dead||wk||!sc)return;if(!host.isConnected){destroy();return;}if(!visible||document.hidden)return;
-      if(now-last>=1000/30){const dt=Math.min(.1,(now-last)/1000);
-        const iv=now-last;if(last&&iv<250&&(v.motion||v.spin)){gap=gap*.8+iv*.2;if(++seen>8&&(gap>55||mcost>40)&&!v.lite){v.lite=true;v.glow=false;glowBtn.setAttribute('aria-pressed','false');canvas.dataset.lite='1';}if(seen>8&&(gap>110||mcost>80))v.slow=true;}
+      if(now-last>=(IOS?1000/20:1000/30)){const dt=Math.min(.1,(now-last)/1000);
+        const iv=now-last;if(last&&iv<250&&(v.motion||v.spin)){gap=gap*.8+iv*.2;if(++seen>8&&(gap>(IOS?90:55)||mcost>40)&&!v.lite){v.lite=true;v.glow=false;glowBtn.setAttribute('aria-pressed','false');canvas.dataset.lite='1';}if(seen>8&&(gap>110||mcost>80))v.slow=true;}
         if(v.slow&&!ptr.size)v.lod=v.motion||v.spin;
         last=now;if(v.motion||v.spin)t+=dt;if(v.spin)v.yaw+=dt*.08;if(dirty||v.motion||v.spin)frame();}
       if(dirty||v.motion||v.spin)raf=requestAnimationFrame(tick);}

@@ -2687,7 +2687,9 @@ const SIGNAL_TYPES = [
   //   즉 "실현 기대값으로 고른다"고 만든 장치가 신규 6종에 대해서는
   //   ★손으로 적은 confidence 비교★ 로 퇴화한다 — 바로 그것을 안 하려고 만든 장치인데.
   //   표본이 쌓이길 기다리는 문제가 아니라 영원히 쌓이지 않는 구조였다.
-  "XR_FLOW", "VT_TREND", "VS_REV", "PR_OU", "XS_ARB", "HA_REV"
+  "XR_FLOW", "VT_TREND", "VS_REV", "PR_OU", "XS_ARB", "HA_REV",
+  // [V33.459] ★AI 진입도 성과를 쌓는다★ — 없어서 켈리 비중·가지치기·자가치유가 AI 진입을 전혀 못 봤다(원장: AI-SCALP 승률 22.7%)
+  "AI_PRIMARY", "AI_SCALP"
 ];
 // [V33.82] ★켈리 기준 신호별 베팅 비중★ (사용자 지시: 집중투자)
 //   종전 가중은 [0.7, 1.3] 범위였다. 즉 아무리 좋은 신호도 30% 더 사는 게 전부고,
@@ -3044,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.458";
+const _BUILD_VER = "V33.459";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -17850,6 +17852,88 @@ async function extBuyGuard(DB, market, qty, price, signal, cfg, opts, now) {
   const scaled = Math.floor(qty * _clamp(_num(et.sizeMult, 0.5), 0, 1));
   return { ok: scaled > 0, qty: scaled, why: scaled > 0 ? null : "size_zero" };
 }
+/* ══ [V33.459] ★실적 관문 — 지는 진입은 스스로 멈춘다★ ═══════════════════════════════════════
+   사용자: "수익률이 점점 떨어지는데 문제 찾아서 수정하고 수익률 올리는 방향으로 AI 다시 설계해".
+   운영 원장 진단(tools/probe-returns.mjs · 1,305건 · 06-03~09-28):
+     · 미국 [AI-SCALP] 최근 30일 22건 승률 22.7% · [RULE][SCALP] 승률 37.5% · 4시간 안 청산 승률 26% · 30분 안 0/10
+     · 한국 [AI][TREND] 최근 30일 21건 승률 38% 평균 −1.47% · 한국 전체 PF 0.69(−5.4%)
+     · 5일 넘게 들고 간 매매는 미국 승률 60% · +3,462달러 — 버는 쪽과 잃는 쪽이 뚜렷하다.
+   그런데 AI 진입(AI_PRIMARY · AI_SCALP)은 SIGNAL_TYPES 에 없어 신호 성과(signal_type_stats)가 ★한 건도 쌓이지 않았다★ —
+   켈리 비중도 가지치기도 자가치유도 이들을 못 봤다. 지는 진입이 그대로 계속 들어갔다.
+   이 관문은 ★원장 그 자체★ 로 판정한다(추정·모델 없음): 시장 × 진입 주체(AI-SCALP/AI/RULE) × 전략(SCALP/TREND/SNAP)마다
+   최근 45일의 청산 성과(최근 40건까지)를 재서
+     · n ≥ 15 이고 평균 수익률 < 0 이고 PF < 0.8 → 새 진입을 ★막는다★(7일)
+     · 7일 뒤 → 반 크기로 다시 해 본다(시험). 시험 동안의 청산만 센다 — 8건 넘게 쌓였는데 여전히 지면 다시 막고, 이기면 풀어 준다.
+   문턱을 낮추거나 모델을 바꾸는 것이 아니라, 실제로 돈을 잃고 있는 진입을 멈추는 것이다. 막힌 목록은 /api/perf-gate 로 본다. */
+const PERF_GATE = { windowDays: 45, maxN: 40, minN: 15, blockPf: 0.8, coolDays: 7, probationMult: 0.5, probationMinN: 8 };
+function _pgTag(reason) {
+  const m = String(reason || "").match(/^\[([A-Z-]+)\]\[([A-Z-]+)\]/);
+  return m ? (m[1] + ":" + m[2]) : null;
+}
+function _pgStats(list) {
+  const n = list.length; if (!n) return { n: 0, mean: null, pf: null, win: null };
+  let s = 0, gp = 0, gl = 0, w = 0;
+  for (const x of list) { s += x; if (x > 0) { gp += x; w++; } else gl += -x; }
+  return { n: n, mean: +(s / n).toFixed(3), pf: gl > 0 ? +(gp / gl).toFixed(3) : (gp > 0 ? 99 : null), win: +(w / n * 100).toFixed(1) };
+}
+async function perfGateLoad(DB, force) {
+  const g = globalThis;
+  if (!force && g.__perfGate && Date.now() - g.__perfGate.at < 15 * 60000) return g.__perfGate;
+  const now = Date.now(), D = 86400000;
+  let st = null, _rwPg = true;
+  try { st = await getState(DB, "perf_gate", null, true); } catch (e) { _rwPg = false; }   // 엄격 읽기 — 못 읽으면 되쓰지 않는다(막힘 기록을 지우지 않게)
+  if (!st) st = { v: 1, keys: {} };
+  if (!st.keys || typeof st.keys !== "object") st.keys = {};
+  // 매도의 진입 주체는 같은 시장·종목의 먼저 들어온 매수(FIFO)에서 온다 — 창보다 30일 앞 매수까지 읽는다
+  const rows = ((await DB.prepare("SELECT ts, market, symbol, side, qty, pnl_pct, reason FROM trades WHERE ts > ? ORDER BY ts")
+    .bind(now - (PERF_GATE.windowDays + 30) * D).all()) || {}).results || [];
+  const book = new Map(), closed = {};
+  for (const t of rows) {
+    const k = t.market + "|" + t.symbol;
+    if (!/sell/i.test(t.side)) { const tg = _pgTag(t.reason); (book.get(k) || book.set(k, []).get(k)).push({ qty: +t.qty, tag: tg }); continue; }
+    const q = book.get(k) || []; let need = +t.qty, first = null;
+    while (need > 1e-9 && q.length) { const b = q[0]; if (!first) first = b; const u = Math.min(need, b.qty); b.qty -= u; need -= u; if (b.qty <= 1e-9) q.shift(); }
+    if (!first || !first.tag || t.pnl_pct == null || !(t.ts > now - PERF_GATE.windowDays * D)) continue;
+    const key = t.market + ":" + first.tag;
+    (closed[key] || (closed[key] = [])).push({ ts: t.ts, pct: +t.pnl_pct });
+  }
+  let changed = false;
+  const keys = new Set(Object.keys(closed).concat(Object.keys(st.keys)));
+  const out = {};
+  for (const key of keys) {
+    const k0 = st.keys[key] || {};
+    let mode = k0.mode || "open";
+    const since = k0.since || 0, resetAt = k0.resetAt || 0;
+    if (mode === "blocked" && now - since >= PERF_GATE.coolDays * D) { mode = "probation"; k0.resetAt = now; changed = true; }
+    const all = (closed[key] || []).filter(function (x) { return mode !== "probation" || x.ts >= (k0.resetAt || resetAt); });
+    const recent = all.slice(-PERF_GATE.maxN).map(function (x) { return x.pct; });
+    const s2 = _pgStats(recent);
+    const bad = s2.mean != null && s2.mean < 0 && s2.pf != null && s2.pf < PERF_GATE.blockPf;
+    if (mode === "open" && s2.n >= PERF_GATE.minN && bad) { mode = "blocked"; k0.since = now; changed = true; }
+    else if (mode === "probation" && s2.n >= PERF_GATE.probationMinN) {
+      if (bad || (s2.mean != null && s2.mean < 0)) { mode = "blocked"; k0.since = now; } else { mode = "open"; k0.since = 0; k0.resetAt = 0; }
+      changed = true;
+    }
+    if (k0.mode !== mode) { k0.mode = mode; changed = true; }
+    st.keys[key] = k0;
+    out[key] = { mode: mode, since: k0.since || null, n: s2.n, mean: s2.mean, pf: s2.pf, win: s2.win };
+  }
+  if (changed && _rwPg) { st.at = now; try { await setState(DB, "perf_gate", st); } catch (e) {} }
+  g.__perfGate = { at: now, keys: out };
+  return g.__perfGate;
+}
+// 이 진입을 해도 되나 — { ok, mult, why }
+async function perfGateCheck(DB, market, signal, strategy) {
+  try {
+    const tag = ((signal && signal.isAiScalp) ? "AI-SCALP" : (signal && signal.isAiPrimary) ? "AI" : "RULE") + ":" + String(strategy || "").toUpperCase();
+    const pg = await perfGateLoad(DB, false);
+    const e = pg.keys[market + ":" + tag];
+    if (!e || e.mode === "open") return { ok: true, mult: 1, key: market + ":" + tag };
+    if (e.mode === "blocked") return { ok: false, mult: 0, key: market + ":" + tag, why: "최근 " + e.n + "건 평균 " + e.mean + "% · PF " + e.pf };
+    return { ok: true, mult: PERF_GATE.probationMult, key: market + ":" + tag, why: "시험 중(반 크기)" };
+  } catch (e) { return { ok: true, mult: 1 }; }   // 원장을 못 읽으면 막지 않는다(판정 불가 ≠ 손실)
+}
+
 async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, cfg, cash, opts) {
   // [V9.1] 입력 검증 — 비정상 가격/수량으로 인한 유령거래·NaN 방어
   if (!(typeof price === "number" && isFinite(price) && price > 0)) {
@@ -17864,6 +17948,11 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   const _extGuard = await extBuyGuard(DB, market, qty, price, signal, cfg, opts, Date.now());
   if (!_extGuard.ok) { await log(DB, "INFO", symbol, "BUY 시간외 차단 [" + _extGuard.why + "]"); return cash; }
   qty = _extGuard.qty;
+
+  // [V33.459] 실적 관문 — 이 시장에서 이 진입 주체·전략이 원장상 지고 있으면 막거나(7일) 반 크기로 시험한다
+  const _pg = (typeof perfGateCheck === "function") ? await perfGateCheck(DB, market, signal, strategy) : { ok: true, mult: 1 };
+  if (!_pg.ok) { await log(DB, "INFO", symbol, "BUY 실적 관문 차단 [" + _pg.key + "] " + (_pg.why || "")); return cash; }
+  if (_pg.mult < 1) { qty = Math.floor(qty * _pg.mult); if (qty <= 0) return cash; }
 
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
   // [V33.92] 슬리피지(FillModel)를 수수료와 같은 방식의 비용률로 얹는다.
@@ -26322,6 +26411,11 @@ async function handleRequest(request, env, ctx) {
       let arr = [];
       try { const g = R2p ? await R2p.get(pk) : null; if (g) { const x = JSON.parse(await g.text()); if (Array.isArray(x)) arr = x; } } catch (e) {}
       return Response.json({ n: arr.length, recent: arr.slice(-60).reverse() }, { headers: Object.assign({ "cache-control": "no-store" }, cors) });
+    }
+    // [V33.459] GET /api/perf-gate — 실적 관문의 현재 판정(시장 × 진입 주체 × 전략 · 최근 45일 원장)
+    if (path === "/api/perf-gate") {
+      const pg = await perfGateLoad(env.DB, url.searchParams.get("fresh") === "1");
+      return Response.json({ at: pg.at, rule: PERF_GATE, keys: pg.keys }, { headers: Object.assign({ "cache-control": "no-store" }, cors) });
     }
     // [V32.54] GET /api/selfcheck — 시스템 자가진단(사이트 오류·파이프라인 지연·모델 상태). SWR 1분.
     if (path === "/api/selfcheck") {

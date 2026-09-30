@@ -71,3 +71,6 @@ try {
   out("positions", { us: ((st.positions || {}).us || {}).list ? st.positions.us.list.length : null, kr: ((st.positions || {}).kr || {}).list ? st.positions.kr.list.length : null });
   out("twr", st.twr || null);
 } catch (e) { out("state_err", String(e)); }
+// [V33.459] 실적 관문의 지금 판정(막힘 · 시험 · 열림)
+try { const pgj = await get("/api/perf-gate?fresh=1"); out("perf_gate", Object.entries(pgj.keys || {}).map(([k, v]) => k + " " + v.mode + " n" + v.n + " avg" + v.mean + " pf" + v.pf + " win" + v.win)); }
+catch (e) { out("perf_gate_err", String(e)); }

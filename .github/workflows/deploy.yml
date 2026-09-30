@@ -373,6 +373,9 @@ jobs:
       #   그러면서도 실패·무응답에 걸려 영영 안 열리는 일은 없는지 — 실제로 돌려 본다.
       - name: Boot first-paint check
         run: node tools/check-boot-paint.mjs
+      # [V33.459] 실적 관문 — 원장상 지는 진입(시장 × 주체 × 전략)은 막고 7일 뒤 반 크기로 시험한다. 실행으로 확인.
+      - name: Performance gate check
+        run: node tools/check-perf-gate.mjs
       # [V33.368] ★게이트 133종을 전부 통과하고도 배포가 3판 연속 막혔다★ —
       #   게이트가 코드만 보고 그 코드가 배포되는 길(러너 시간 예산)은 안 봤기 때문이다.
       #   예약 워크플로가 GPU 학습을 붙잡고 기다리면 월 6,600분을 태운다(한도 2,000분).
