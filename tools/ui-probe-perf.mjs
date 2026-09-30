@@ -33,9 +33,13 @@ async function omniTimes(p, t0) {
   }
   return r;
 }
+// 캡처: SHOTS_DIR 가 있으면 파일로(워크플로가 ui-probe-shots 가지에 올린다 — 로그 조각보다 가볍다) · 없으면 로그의 IMG 줄
+const SHOTS = process.env.SHOTS_DIR || "";
 async function shot(p, name) {
   if (!WANT_IMG) return;
-  try { const buf = await p.screenshot({ type: "jpeg", quality: 42 }); const b64 = buf.toString("base64");
+  try { const buf = await p.screenshot({ type: "jpeg", quality: 55, fullPage: false });
+    if (SHOTS) { (await import("node:fs")).writeFileSync(SHOTS + "/" + name + ".jpg", buf); out(name + ".img_kb", +(buf.length / 1024).toFixed(1)); return; }
+    const b64 = buf.toString("base64");
     for (let i = 0; i < b64.length; i += 4000) console.log("IMG " + name + " " + b64.slice(i, i + 4000)); out(name + ".img_kb", +(buf.length / 1024).toFixed(1)); } catch (e) { out(name + ".img_err", String(e).slice(0, 120)); }
 }
 async function run(tag, eng, copts, throttle) {

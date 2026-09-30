@@ -31,6 +31,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     name: OMNI 화면 측정
+    permissions:
+      contents: write   # 캡처를 ui-probe-shots 가지에만 올린다(main 은 건드리지 않는다 · 배포 트리거 없음)
     steps:
       - uses: actions/checkout@v4
 
@@ -66,9 +68,22 @@ jobs:
         env:
           URL: ${{ steps.url.outputs.url }}
           IMG: ${{ inputs.img && '1' || '0' }}
+          SHOTS_DIR: ${{ inputs.perf && inputs.img && format('{0}/shots', github.workspace) || '' }}
         run: |
+          [ -n "$SHOTS_DIR" ] && mkdir -p "$SHOTS_DIR"
           if [ "${{ inputs.perf }}" = "true" ]; then node tools/ui-probe-perf.mjs "$URL" | tee probe.log
           elif [ "${{ inputs.tabs }}" = "true" ]; then node tools/ui-probe-tabs.mjs "$URL" | tee probe.log; else node tools/ui-probe-omni.mjs "$URL" | tee probe.log; fi
+
+      - name: 캡처 올리기(ui-probe-shots 가지)
+        if: always() && inputs.perf && inputs.img
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -d shots ] && [ -n "$(ls shots)" ] || exit 0
+          cd shots && git init -q && git checkout -q -b ui-probe-shots
+          echo "run ${{ github.run_id }} · $(date -u +%FT%TZ)" > RUN.txt
+          git add . && git -c user.name=ui-probe -c user.email=ui-probe@users.noreply.github.com commit -qm "ui-probe 캡처 run ${{ github.run_id }}"
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" ui-probe-shots
 
       - name: 요약
         if: always()
