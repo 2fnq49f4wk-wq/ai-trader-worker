@@ -68,6 +68,7 @@ console.log("⑤ 배선");
 chk(/const _pg = \(typeof perfGateCheck === "function"\) \? await perfGateCheck\(DB, market, signal, strategy\)/.test(S) && /BUY 실적 관문 차단/.test(S),
   "executeBuy 가 관문을 지난다(막히면 거래 없음 · 시험이면 반 크기)", "★executeBuy 가 관문을 안 지난다★");
 chk(/"AI_PRIMARY", "AI_SCALP"\s*\n\];/.test(S), "AI 진입도 SIGNAL_TYPES 에 있다(켈리·가지치기·자가치유가 본다)", "★AI 진입이 신호 성과에서 빠졌다★");
+chk(/perfGateCheck\(DB, "cm", null, "cm-swing"\)/.test(S) && /perfGateCheck\(DB, mk, null, sleeve\.label \+ "-swing"\)/.test(S), "원자재·국채 매수도 관문을 지난다(원장 태그와 같은 열쇠)", "★원자재·국채가 관문을 안 지난다★");
 chk(/if \(path === "\/api\/perf-gate"\)/.test(S), "/api/perf-gate 로 판정을 볼 수 있다", "★판정을 볼 곳이 없다★");
 if (fails) { console.error("\n✗ 실적 관문 검사 실패 " + fails); process.exit(1); }
 console.log("\n✓ 실적 관문 검사 통과");

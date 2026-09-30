@@ -12,6 +12,10 @@
 
 ## Current handoff
 
+- Status: **V33.460 — 실적 관문 운영 판정(run 36790982408) 확인 · 원자재·국채 매수도 관문 경유.**
+  ■ 막힘: kr:AI:TREND(40건 평균 −1.16% PF 0.48) · us:RULE:SCALP(25건 −0.43% PF 0.07) · us:AI-SCALP:SCALP(22건 −0.17% PF 0.41) · cm:RULE:CM-SWING(16건 −0.58% PF 0.68).
+  ■ 열림: us:AI:TREND(40건 +0.51% PF 1.52) · us:RULE:TREND(PF 1.92) · us:RULE:SNAP(PF 10.5) 등. kr:AI-SCALP 는 6건(15 미만)이라 판정 전.
+  ■ executeBuyCM·executeBuyAlt 도 perfGateCheck(원장 태그와 같은 열쇠) — 전엔 cm 이 '막힘' 이어도 효과가 없었다.
 - Status: **V33.459 — 수익률 하락 원인 진단 · 실적 관문 · AI 진입 성과 누적 · 아이폰 OMNI 기능 복구.**
   ■ 원장 진단(ui-probe returns=true · run 36790050057 · 1,305건 06-03~09-28): 한국 PF 0.69(−539만 · −5.4%) 매달 손실 · 미국 승률 64→38%.
     미국 [AI-SCALP] 30일 22건 승률 22.7% · [RULE][SCALP] 37.5% · 4시간 안 청산 승률 26% · 30분 안 0/10 · 5일+ 보유 승률 60% +3,462달러.

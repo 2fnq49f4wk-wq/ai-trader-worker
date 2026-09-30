@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.459";
+const _BUILD_VER = "V33.460";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -20255,6 +20255,10 @@ async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash)
   }
   qty = Math.floor(qty);
   if (qty <= 0) return cash;
+  // [V33.459] 실적 관문 — 원장 태그 [RULE][CM-SWING] 과 같은 열쇠(cm:RULE:CM-SWING)
+  const _pgC = (typeof perfGateCheck === "function") ? await perfGateCheck(DB, "cm", null, "cm-swing") : { ok: true, mult: 1 };
+  if (!_pgC.ok) { await log(DB, "INFO", symbol, "[CM] BUY 실적 관문 차단 [" + _pgC.key + "] " + (_pgC.why || "")); return cash; }
+  if (_pgC.mult < 1) { qty = Math.floor(qty * _pgC.mult); if (qty <= 0) return cash; }
 
   const feeRate = cfg.feeUS || 0.0001;
   const unitCost = price * (1 + feeRate + _slipRate("cm", Date.now()));   // [V33.92] 슬리피지 포함
@@ -20739,6 +20743,10 @@ async function executeBuyAlt(DB, sleeve, symbol, qty, price, signal, dailyAtr, c
   if (!(typeof price === "number" && isFinite(price) && price > 0)) { await log(DB, "WARN", symbol, "[" + sleeve.label + "] BUY bad price"); return cash; }
   if (!(typeof qty === "number" && isFinite(qty) && qty > 0)) return cash;
   qty = Math.floor(qty); if (qty <= 0) return cash;
+  // [V33.459] 실적 관문 — 원장 태그 [RULE][<라벨>-SWING] 과 같은 열쇠
+  const _pgA = (typeof perfGateCheck === "function") ? await perfGateCheck(DB, mk, null, sleeve.label + "-swing") : { ok: true, mult: 1 };
+  if (!_pgA.ok) { await log(DB, "INFO", symbol, "[" + sleeve.label + "] BUY 실적 관문 차단 [" + _pgA.key + "] " + (_pgA.why || "")); return cash; }
+  if (_pgA.mult < 1) { qty = Math.floor(qty * _pgA.mult); if (qty <= 0) return cash; }
   const feeRate = sleeve.isKRW ? (cfg.feeKR || 0) : (cfg.feeUS || 0.0001);
   const unitCost = price * (1 + feeRate + _slipRate(mk, Date.now()));   // [V33.92]
   let availCash;
