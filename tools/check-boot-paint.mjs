@@ -157,7 +157,7 @@ ok(!/setTimeout\(removeIntro, 4200\);\n/.test(H.replace(/else setTimeout\(remove
   const W = readFileSync("src/index.js", "utf8");
   ok(/__r2Key = "cache\/state\/state\.json"/.test(W) && /── L2b: R2 사본/.test(W) && /__r2Put\(__c\)/.test(W) && /R2_USABLE_MS = 6 \* 3600000/.test(W) && /\{"stale":true,"staleAgeMs":/.test(W),
      "/api/state: R2 사본(6시간 안 · 오래되면 stale 표시)을 먼저 주고 뒤에서 새로 — 뜸한 방문도 D1 풀 빌드(15초+)를 기다리지 않는다");
-  ok(/swrJson\("bonds", 30000, 600000/.test(W) && /swrJson\("diag", 20000, 600000/.test(W),
+  ok(/swrJson\("bonds", 30000, 6 \* 3600000/.test(W) && /swrJson\("diag", 20000, 6 \* 3600000/.test(W),
      "/api/bonds · /api/diag: SWR(사본 먼저 · 뒤에서 새로) — 인트로가 4.5초·2.8초를 기다리지 않는다");
   const bd = W.slice(W.indexOf('if (path === "/api/bonds") {'), W.indexOf("// === [BOND] 국채 슬리브 수동 실행"));
   ok(/if \(path === "\/api\/build"\) \{\s*return Response\.json\(\{ build: _BUILD_VER \}/.test(W) && /fetch\('\/api\/build', \{ cache:'no-store' \}\)/.test(H),

@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.453";
+const _BUILD_VER = "V33.454";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -29781,7 +29781,7 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/bonds") {
       /* [V33.451] ★SWR★ — 운영 점검: 첫 화면 인트로가 국채 4.5초를 기다렸다(종목마다 D1 왕복 · 5분마다 외부 시세를 요청 안에서 받음).
          30초 안 = 사본 · 10분 안 = 사본을 먼저 주고 뒤에서 새로(외부 시세 보충도 뒤에서). */
-      return await swrJson("bonds", 30000, 600000, async function () {
+      return await swrJson("bonds", 30000, 6 * 3600000, async function () {   // [V33.454] 10분 → 6시간: 뜸한 방문의 첫 요청이 차가운 빌드(16초+)를 기다렸다
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const cash = await computeAllCash(env.DB, cfg);
       // [FIX] 장 마감 중엔 runAltSleeveCycle이 시세를 안 받아 watchlist가 빔(TLT만 marketContext가 채움).
@@ -30781,7 +30781,7 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/diag") {
       /* [V33.451] ★SWR★ — 운영 점검: 첫 화면 인트로가 진단(시장심리 카드) 2.8초를 기다렸다(전 종목 시세 행을 읽는다).
          20초 안 = 사본 · 10분 안 = 사본을 먼저 주고 뒤에서 새로. */
-      return await swrJson("diag", 20000, 600000, async function () {
+      return await swrJson("diag", 20000, 6 * 3600000, async function () {   // [V33.454] 10분 → 6시간(같은 이유)
       const lock = await getState(env.DB, "lock:cycle", null);
       const lastTick = await getState(env.DB, "last_tick", null);
       const lastHeartbeat = await getState(env.DB, "last_heartbeat", null);

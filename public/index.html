@@ -88,8 +88,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.453">
-<script src="/neural-observatory.js?v=33.453" defer></script>
+<meta name="lux-build" content="V33.454">
+<script src="/neural-observatory.js?v=33.454" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -11535,7 +11535,12 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       .then(function(r){
         _apply(r);
         // 마지막 성공 스냅샷 저장(전체 거래내역 제외 — 용량 절약)
-        try { localStorage.setItem('bootBundle', JSON.stringify({ state: r[0], trades: r[1] })); } catch(e){}
+        // [V33.454] ★1분에 한 번만★ — 10초 폴링마다 상태 전체(≈0.8MB)를 문자열로 만들어 localStorage 에 쓰던 것이
+        //   메인 스레드를 가장 오래 잡았다(운영 프로파일 285ms · 휴대폰 속도). 첫 화면용 사본이라 1분 묵어도 된다.
+        if (!window.__bootSavedAt || Date.now() - window.__bootSavedAt > 60000) {
+          window.__bootSavedAt = Date.now();
+          try { localStorage.setItem('bootBundle', JSON.stringify({ state: r[0], trades: r[1] })); } catch(e){}
+        }
       })['catch'](function(e){ toast('로드 실패: '+e.message); });
     /* [V33.367] ★첫 회차만★ 부팅 준비로 센다 — 이후 10초 폴링은 인트로와 무관하다.
        실패해도 track 이 done 을 부른다(성공이 아니라 '끝남' 을 센다). */
@@ -17010,6 +17015,9 @@ html:root .page > *{ flex-shrink:0; }
     //   화면 구간별로 레일 폭이 달라져도(1000~1279는 168px) FAB 위치가 정확히 따라간다.
     var shown = RAIL.el && !RAIL.el.hidden && window.innerWidth >= 1000;
     var w = shown ? Math.round(RAIL.el.getBoundingClientRect().width) || RAIL_W : 0;
+    // [V33.454] 값이 같으면 쓰지 않는다 — 문서 뿌리의 CSS 변수를 쓰면 페이지 전체 스타일을 다시 계산한다(운영 프로파일 164ms · 휴대폰 속도)
+    if(RAIL.__w === w) return;
+    RAIL.__w = w;
     document.documentElement.style.setProperty('--rail-w', w + 'px');
   }
   // [V33.1] 우측 사이드바는 "AI 두뇌" 페이지 전용 — 다른 페이지에선 감춘다.
@@ -20243,11 +20251,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.453">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.453">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.453">
-<link rel="stylesheet" href="/model-evidence.css?v=33.453">
-<script src="/model-evidence.js?v=33.453"></script>
-<script src="/workspace-ui.js?v=33.453"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.454">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.454">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.454">
+<link rel="stylesheet" href="/model-evidence.css?v=33.454">
+<script src="/model-evidence.js?v=33.454"></script>
+<script src="/workspace-ui.js?v=33.454"></script>
 </body>
 </html>
