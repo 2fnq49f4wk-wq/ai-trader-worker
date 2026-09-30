@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.452";
+const _BUILD_VER = "V33.453";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -26289,6 +26289,11 @@ async function handleRequest(request, env, ctx) {
       });
     }
 
+    /* [V33.453] GET /api/build — ★지금 배포된 판만★ 낸다(캐시 없음). 화면의 '새 버전' 배너가 /api/selfcheck 의 build 를 읽었는데,
+       그 응답은 SWR 사본이라 배포 직후엔 옛 판 사본을 먼저 준다 → 새 판 화면에 "새 버전 V33.450 나왔어요" 가 거꾸로 떴다(운영 캡처). */
+    if (path === "/api/build") {
+      return Response.json({ build: _BUILD_VER }, { headers: Object.assign({ "cache-control": "no-store" }, cors) });
+    }
     // [V32.54] GET /api/selfcheck — 시스템 자가진단(사이트 오류·파이프라인 지연·모델 상태). SWR 1분.
     if (path === "/api/selfcheck") {
       return await swrJson("selfcheck", 60000, 3600000, async function () {
@@ -28908,7 +28913,7 @@ async function handleRequest(request, env, ctx) {
         그래서 새 아이솔레이트의 첫 요청은 늘 풀 빌드(D1 10~18초)를 기다렸고, 화면은 인트로 '시스템 준비 6/9' 에서
         12초 상한까지 멈춰 있었다(운영 점검 run 36701961217: /api/state 15초 넘게 무응답). R2 사본(10분 안)을 먼저 주고 뒤에서 새로 짓는다.
         쓰기는 아이솔레이트마다 1분에 한 번까지(R2 쓰기 비용). */
-     const __R2s = (typeof _bigR2 === "function") ? _bigR2() : null, __r2Key = "cache/state/state.json", R2_USABLE_MS = 600000;
+     const __R2s = (typeof _bigR2 === "function") ? _bigR2() : null, __r2Key = "cache/state/state.json", R2_USABLE_MS = 6 * 3600000;   // [V33.453] 10분 → 6시간: 방문이 뜸하면 사본이 늘 만료돼 첫 방문이 15초+ 를 기다렸다(운영 점검). 2.5분 넘은 사본은 stale 표시
      const __r2Put = function (c) {
        if (!__R2s || (globalThis.__stateR2At && Date.now() - globalThis.__stateR2At < 60000)) return null;
        globalThis.__stateR2At = Date.now();
@@ -28964,8 +28969,10 @@ async function handleRequest(request, env, ctx) {
          const __rAt = __g && __g.customMetadata ? +(__g.customMetadata.at || 0) : 0;
          const __rage = Date.now() - __rAt;
          if (__g && __rAt && __rage >= 0 && __rage < R2_USABLE_MS) {
-           const __body = await __g.text();
+           let __body = await __g.text();
            globalThis.__stateCache = { ts: __rAt, data: null, str: __body };
+           // 오래된 사본은 그렇다고 말한다(다음 폴링은 뒤에서 새로 지은 값) — 본문 앞에 두 칸만 붙인다(다시 직렬화하지 않는다)
+           if (__rage > USABLE_MS && __body.charAt(0) === "{") __body = '{"stale":true,"staleAgeMs":' + __rage + "," + __body.slice(1);
            const __bp = __refresh();
            if (__bp && ctx && ctx.waitUntil) ctx.waitUntil(__bp);
            return new Response(__body, { headers: Object.assign({ "X-Cache": "r2", "X-State-Age": String(Math.round(__rage / 1000)) }, __jh) });
@@ -29780,6 +29787,9 @@ async function handleRequest(request, env, ctx) {
       // [FIX] 장 마감 중엔 runAltSleeveCycle이 시세를 안 받아 watchlist가 빔(TLT만 marketContext가 채움).
       //   저장된 quote 중 누락/오래된(15분+) 게 있으면 온디맨드 1배치로 보충(예산 안전: 캐시 5분).
       let onDemand = {};
+      /* [V33.453] ★외부 시세 보충은 뒤에서★ — 운영 점검: 첫 요청이 외부 시세(수십 종목)와 저장을 요청 안에서 기다려 16초 넘게
+         무응답이었고, 인트로가 '국채' 하나 때문에 상한까지 멈췄다. 이제 저장된 시세로 바로 답하고 보충은 ctx.waitUntil 로. */
+      const _bondFill = async function () {
       try {
         const cacheTs = await getState(env.DB, "bonds_quote_fetch_ts", 0);
         const stale = !cacheTs || (Date.now() - cacheTs) > 5 * 60 * 1000;
@@ -29798,10 +29808,17 @@ async function handleRequest(request, env, ctx) {
               const q = onDemand[s];
               if (q && q.price != null) await saveQuoteAlt(env.DB, (BOND_KR_SYMBOLS.indexOf(s) >= 0 ? "bdkr" : "bdus"), { symbol: s, price: q.price, prevClose: q.prevClose, dayPct: q.dayPct }, true);
             }
+            // 국채 금리도 저장한다(종전엔 응답 만들며 저장했다 — 이제 응답은 저장된 값을 읽는다)
+            for (const ys of TREASURY_YIELD_SYMBOLS) { const q = onDemand[ys]; if (q && q.price != null) { try { await setState(env.DB, "quote:" + ys, Object.assign({ ts: Date.now() }, q)); } catch (e) {} } }
             await setState(env.DB, "bonds_quote_fetch_ts", Date.now());
           }
         }
       } catch (e) {}
+      };
+      if (ctx && ctx.waitUntil && !globalThis.__bondFilling) {
+        globalThis.__bondFilling = true;
+        ctx.waitUntil(_bondFill().catch(function () {}).then(function () { globalThis.__bondFilling = false; }));
+      }
       const out = { us: { cash: (typeof cash.bdus === "number" ? cash.bdus : cfg.initialCashBDUS), initialCash: cfg.initialCashBDUS, positions: [], watchlist: [] },
                     kr: { cash: (typeof cash.bdkr === "number" ? cash.bdkr : cfg.initialCashBDKR), initialCash: cfg.initialCashBDKR, positions: [], watchlist: [] } };
       const groups = [{ k: "bdus", list: BONDS_US, side: out.us }, { k: "bdkr", list: BONDS_KR, side: out.kr }];
