@@ -84,8 +84,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.449">
-<script src="/neural-observatory.js?v=33.449" defer></script>
+<meta name="lux-build" content="V33.450">
+<script src="/neural-observatory.js?v=33.450" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -5383,9 +5383,14 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     }
   }
 
+  /* [V33.450] ★서식기(Intl)를 한 번만 만든다★ — 운영 프로파일(휴대폰 속도): fmtNum 83ms · _fmtPubDate 66ms · fmtTradeTime 33ms.
+     toLocaleString(옵션) 과 new Intl.DateTimeFormat 은 부를 때마다 서식기를 새로 짓는다(가장 비싼 부분). 결과 문자열은 같다. */
+  var _nfCache = {};
   function fmtNum(n, dec) {
     if (typeof n !== 'number' || !isFinite(n)) return '-';  // [버그수정] Infinity도 차단
-    return n.toLocaleString(undefined, { maximumFractionDigits: dec != null ? dec : 2 });
+    var k = dec != null ? dec : 2;
+    var f = _nfCache[k] || (_nfCache[k] = new Intl.NumberFormat(undefined, { maximumFractionDigits: k }));
+    return f.format(n);
   }
 
   /* [V33.351 · A-7] 시간외 값의 ★나이★ — 휴장 중에 남아 있는 마지막 체결가에 붙인다.
@@ -5441,9 +5446,12 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   //   브라우저 타임존(KST)로 보면 미국 새벽 거래가 다음날로 넘어가 달력·표가 어긋났음 → 시장 TZ로 통일.
   function _mktTz(market){ return (market === 'kr' || market === 'bdkr') ? 'Asia/Seoul' : 'America/New_York'; }
   function _mktTzLabel(market){ return (market === 'kr' || market === 'bdkr') ? 'KST' : 'ET'; }
+  var _dtfCache = {};   // [V33.450] 서식기 재사용(시장 시간대별)
+  function _dtf(key, loc, opt){ return _dtfCache[key] || (_dtfCache[key] = new Intl.DateTimeFormat(loc, opt)); }
   function tradeYMD(ts, market){
     try {
-      var parts = new Intl.DateTimeFormat('en-CA', { timeZone: _mktTz(market), year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(ts));
+      var _tz = _mktTz(market);
+      var parts = _dtf('ymd|' + _tz, 'en-CA', { timeZone: _tz, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(ts));
       var o = {}; parts.forEach(function(p){ o[p.type] = p.value; });
       return { y: +o.year, m: +o.month - 1, d: +o.day };
     } catch (e) { var d = new Date(ts); return { y: d.getFullYear(), m: d.getMonth(), d: d.getDate() }; }
@@ -5451,7 +5459,8 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   function fmtTradeTime(ts, market){
     if (!ts) return '-';
     try {
-      var s = new Intl.DateTimeFormat('en-CA', { timeZone: _mktTz(market), year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(ts));
+      var _tz = _mktTz(market);
+      var s = _dtf('full|' + _tz, 'en-CA', { timeZone: _tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(ts));
       return s.replace(',', '') + ' ' + _mktTzLabel(market);
     } catch (e) { return fmtFullTime(ts); }
   }
@@ -7394,11 +7403,12 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     body.innerHTML = html;
   }
 
+  var _pubFmt = null;   // [V33.450] 서식기 재사용(뉴스 수백 건 × 10초마다)
   function _fmtPubDate(str) {
     try {
       var d = new Date(str);
       if (isNaN(d.getTime())) return str;
-      return d.toLocaleString('ko-KR', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' });
+      return (_pubFmt || (_pubFmt = new Intl.DateTimeFormat('ko-KR', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }))).format(d);
     } catch(e) { return str; }
   }
 
@@ -12968,7 +12978,9 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     if(ni) ni.classList.add('active');
     try{localStorage.setItem('luxPage',id);}catch(e){}
     // 페이지 전환 시 스크롤 상단으로 초기화
-    if(pg) pg.scrollTop = 0;
+    // [V33.450] 다음 그리기 직전에 — 여기서 바로 쓰면 방금 드러난 페이지(요소 1만 개)의 배치를 억지로 한 번 더 계산했다
+    //   (운영 프로파일: showPage 195ms · 뒤이은 렌더가 배치를 또 흔들어 두 번 계산).
+    if(pg) requestAnimationFrame(function(){ if(pg.scrollTop) pg.scrollTop = 0; });
     // [V88] 게이팅된 렌더는 전환 즉시 1회 그려 빈 화면/지연 방지
     if (id === 'dashboard') {
       try { if (window.__lastQuotesArr) renderWatchlist(window.__lastQuotesArr); } catch(e){}
@@ -19440,17 +19452,27 @@ html:root .page > *{ flex-shrink:0; }
   }
   function scanRailTo(rail, card){
     if(!rail || !card || !scanVisible(rail)) return;
+    // [V33.450] 위치 읽기는 다음 그리기 직전에 — 방금 히어로·카드를 고친 직후 읽으면 배치를 한 번 더 억지로 계산한다
+    requestAnimationFrame(function(){ scanRailNow(rail, card); });
+  }
+  function scanRailNow(rail, card){
+    if(!card.isConnected) return;
     var reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     var rr = rail.getBoundingClientRect(), cr = card.getBoundingClientRect();
     var left = rail.scrollLeft + (cr.left - rr.left) - (rr.width - cr.width) / 2;
     try{ rail.scrollTo({ left: Math.max(0, left), behavior: reduce ? 'auto' : 'smooth' }); }catch(e){ rail.scrollLeft = Math.max(0, left); }
   }
   // 두뇌 페이지가 떠 있고 · 탭이 보이고 · 카드 줄이 화면 안에 있을 때만 움직인다
+  // [V33.450] ★보이는지는 IntersectionObserver 가 알려 준다★ — getBoundingClientRect 를 2.2초마다 부르면 요소 1만 개 페이지의
+  //   배치를 억지로 계산했다(운영 프로파일: scanVisible 126ms · 휴대폰 속도). 관찰자는 배치가 끝난 뒤 알려 주므로 공짜다.
+  var _scanSeen = typeof WeakMap === 'function' ? new WeakMap() : null, _scanIO = null;
   function scanVisible(el){
     if(document.hidden) return false;
     var pg = $id('page-nnviz'); if(pg && !pg.classList.contains('active')) return false;
-    var r = el.getBoundingClientRect();
-    return r.width > 0 && r.bottom > 0 && r.top < (window.innerHeight || 0);
+    if(!_scanSeen || typeof IntersectionObserver !== 'function') return true;
+    if(!_scanIO) _scanIO = new IntersectionObserver(function(es){ es.forEach(function(e){ _scanSeen.set(e.target, e.isIntersecting); }); });
+    if(!_scanSeen.has(el)){ _scanSeen.set(el, false); _scanIO.observe(el); }
+    return _scanSeen.get(el) === true;
   }
   function startScan(){
     if(SCAN.timer) return;
@@ -20216,11 +20238,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.449">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.449">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.449">
-<link rel="stylesheet" href="/model-evidence.css?v=33.449">
-<script src="/model-evidence.js?v=33.449"></script>
-<script src="/workspace-ui.js?v=33.449"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.450">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.450">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.450">
+<link rel="stylesheet" href="/model-evidence.css?v=33.450">
+<script src="/model-evidence.js?v=33.450"></script>
+<script src="/workspace-ui.js?v=33.450"></script>
 </body>
 </html>

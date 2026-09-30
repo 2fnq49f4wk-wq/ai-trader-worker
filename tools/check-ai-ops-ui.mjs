@@ -205,7 +205,9 @@ check(feedGridRules.length === 0,
   check(!!body && !/scrollIntoView/.test(body) && /rail\.scrollTo\(|rail\.scrollLeft\s*=/.test(body),
     '스캔 카드 줄은 레일만 가로로 민다 — 페이지를 끌어당기지 않는다',
     'scanHighlight 가 scrollIntoView 를 쓰거나 레일만 미는 코드가 없다 — 2.2초마다 페이지가 되감긴다');
-  check(/function scanVisible\(el\)\{[\s\S]*?document\.hidden[\s\S]*?page-nnviz[\s\S]*?getBoundingClientRect/.test(body)
+  // [V33.450] 보이는지는 IntersectionObserver 로(getBoundingClientRect 를 2.2초마다 부르면 요소 1만 개 페이지 배치를 억지로 계산 — 운영 126ms)
+  const sv = (body.match(/function scanVisible\(el\)\{[\s\S]*?\n  \}/) || [""])[0];
+  check(/document\.hidden/.test(sv) && /page-nnviz/.test(sv) && /IntersectionObserver/.test(sv) && !/getBoundingClientRect/.test(sv)
     && /setInterval\(function\(\)\{[\s\S]*?scanVisible\(/.test(body),
     '스캔 자동 넘김은 두뇌 페이지가 떠 있고 보일 때만 돈다',
     '스캔 자동 넘김이 보이지 않을 때도 돈다(차트·지표 요청·다시 그리기 낭비)');

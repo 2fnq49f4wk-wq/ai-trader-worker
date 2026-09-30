@@ -12,6 +12,12 @@
 
 ## Current handoff
 
+- Status: **V33.450 — 운영 프로파일(ui-probe perf=true · run 36700216478)로 찾은 메인 스레드 낭비 제거.**
+  ■ 크롬(휴대폰 흉내 · CPU 4배 느리게) 자기 시간 상위: showPage 195ms(pg.scrollTop=0 이 요소 1만 개 페이지 배치를 억지로) ·
+    부팅 폴링 콜백 186ms · scanVisible 126ms(getBoundingClientRect 2.2초마다) · fmtNum 83 · _fmtPubDate 66 · fmtTradeTime 33(서식기 매번 생성).
+  ■ 고침: scrollTop 은 다음 그리기 직전(rAF) · scanVisible 은 IntersectionObserver · 카드 줄 위치 읽기도 rAF · Intl 서식기 재사용.
+  ■ WebKit(아이폰 13 흉내) 로드 중 3.1초 굳음(0.57→3.6초 · DCL 전) — index.html 1.3MB(인라인 JS 780KB · CSS 400KB · 요소 1.3만).
+    CI WebKit(리눅스 · 소프트웨어 그리기)이 실제 아이폰보다 느릴 수 있어 원인 확정 전. 캡처는 ui-probe-shots 가지(perf+img).
 - Status: **V33.449 — 운영 확인(run 36687651367 · V33.448): 아이폰·모바일 그린 선 37,169 전부(전엔 lite 로 2천) · 격자 고름 · 오류 0 · crash 0.**
   ■ 남은 것: 첫 방문 구조 응답 9.5초(데스크톱 · 사본 6시간 창 밖 → D1 판 확인). → 구조 사본 창 7일(OMNI_ST_STALE_MS) · 뒤에서 판 확인.
     화면은 at(학습 판)을 expectAt(d.importedAt||d.trainedAt)과 대조 — 다르면 보관하지 않고 6초 뒤 no-store 로 한 번 더 받는다.
