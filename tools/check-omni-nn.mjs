@@ -188,7 +188,11 @@ console.log("\n⑦ 홀로그램 핵(V33.437 새 엔진) — 가중치·분기 �
     chk(/localStorage\.getItem\(ck\)/.test(mc) && /function keep\(txt\)/.test(mc) && /stT=setTimeout\(\(\)=>start\(null\),10000\)/.test(mc) && /if\(st0\)start\(st0\)/.test(mc),
       "구조는 브라우저에 보관해 다음부터 바로 전부 · 처음엔 받을 때까지 기다린다(성긴 대체 그림을 먼저 띄우지 않는다)", "★구조를 받기 전에 대표 연결 그림을 띄운다★");
     const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
-    chk(/NeuralObservatory\.mount\(_ph,\{kind:'omni',data:d,cacheKey:_ovKey\}\)/.test(html), "화면이 학습 판 열쇠(cacheKey)를 넘긴다", "★보관 열쇠를 안 넘긴다 — 판이 바뀌어도 옛 구조를 쓸 수 있다★");
+    chk(/NeuralObservatory\.mount\(_ph,\{kind:'omni',data:d,cacheKey:_ovKey,expectAt:\(d\.importedAt\|\|d\.trainedAt\|\|null\)\}\)/.test(html)
+        && /const atOk=j=>/.test(mc) && /if\(same\)keep\(txt\)/.test(mc),
+      "화면이 학습 판 열쇠(cacheKey)와 판(expectAt)을 넘기고, 판이 다른 구조는 보관하지 않는다", "★판 대조 없이 구조를 보관한다 — 재학습 뒤 옛 구조가 남는다★");
+    chk(/const OMNI_ST_STALE_MS = 7 \* 24 \* 3600000/.test(wsrc) && /age < OMNI_ST_STALE_MS/.test(wsrc),
+      "구조 사본은 7일까지 먼저 주고 뒤에서 판 확인(첫 방문 9.5초 없앰)", "★구조 사본 창이 짧다 — 첫 방문이 D1 판 확인을 기다린다★");
     chk((wm.match(/iv<250/g) || []).length === 1 && (mc.match(/iv<250/g) || []).length === 1,
       "느림 판정에서 쉬었다 온 간격(>0.25초)은 뺀다(워커 · 대체 경로)", "★스크롤 멈춤·화면 밖 간격이 느림 판정에 섞인다★");
   }

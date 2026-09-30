@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.448";
+const _BUILD_VER = "V33.449";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -11400,7 +11400,10 @@ function omniFeatures(b5, bd, i, mkt, dailyRow, jIn) {
    → 경로가 OMNI_VER 을 품는다. 판을 올리면 자리가 자동으로 갈라지고, 옛 판은 옛 자리에 남는다.
      손으로 적지 않는다 — check-omni-label 이 "경로가 OMNI_VER 에서 나오는가" 를 본다. */
 /* [V33.440] 구조 탭 응답 R2 사본 — 1분은 그대로, 10분까지는 먼저 주고 뒤에서 갱신. */
-const NNVIZ_CACHE = { freshMs: 60000, staleMs: 6 * 3600000 };   // [V33.442] 10분 → 6시간: 사본 없는 첫 요청이 여전히 10초(운영 실측)였다. 1분 지나면 늘 뒤에서 갱신한다.
+const NNVIZ_CACHE = { freshMs: 60000, staleMs: 6 * 3600000 };
+/* [V33.448] 구조(가중치·나무 분기) 사본은 ★학습 판이 바뀔 때만★ 달라진다 — 6시간 창을 넘기면 첫 방문이 D1 판 확인(운영 실측 9.5초)을 기다렸다.
+   7일까지는 사본을 먼저 주고 뒤에서 판을 확인해 갈아 끼운다. 판이 틀린 사본은 화면이 at(학습 판)로 걸러 보관하지 않고 한 번 더 받는다. */
+const OMNI_ST_STALE_MS = 7 * 24 * 3600000;   // [V33.442] 10분 → 6시간: 사본 없는 첫 요청이 여전히 10초(운영 실측)였다. 1분 지나면 늘 뒤에서 갱신한다.
 const OMNI_MODEL = { r2Key: "omni/v" + OMNI_VER + "/model.json", r2Prev: "omni/v" + OMNI_VER + "/model.prev.json",
                      r2Panel: "omni/v" + OMNI_VER + "/panel.json", metaKey: "omni_meta",
                      probeMaxDiff: 1e-9, minProbe: 50, maxTrees: 3000, maxNodes: 400000,
@@ -26500,7 +26503,7 @@ async function handleRequest(request, env, ctx) {
           const tc = Date.now(), g = await R2s.get(cKey);
           if (g) {
             const age = Date.now() - Date.parse(g.uploaded);
-            if (age >= 0 && age < NNVIZ_CACHE.staleMs) {
+            if (age >= 0 && age < OMNI_ST_STALE_MS) {
               const txt = await g.text();
               if (age >= NNVIZ_CACHE.freshMs && ctx && ctx.waitUntil) ctx.waitUntil(omniStructure(env.DB, true).catch(function () {}));
               return new Response(txt, { headers: Object.assign({ "Content-Type": "application/json", "Cache-Control": "public, max-age=300",

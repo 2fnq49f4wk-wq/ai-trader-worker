@@ -491,7 +491,9 @@
          · 보관본이 없으면 '구조 불러오는 중' 만 띄우고 기다린다(10초 넘거나 실패하면 그때 대표 연결로). */
     const ck=config.cacheKey?'omniSt:'+config.cacheKey:null;
     let cachedTxt=null,started=false,stT=0,st0=config.structure||null;
-    if(!st0&&ck){try{cachedTxt=localStorage.getItem(ck);if(cachedTxt){const j=JSON.parse(cachedTxt);if(j&&j.ok)st0=j;else cachedTxt=null;}}catch(e){cachedTxt=null;}}
+    // 학습 판(at) 대조 — 서버는 판 확인 전 사본을 먼저 줄 수 있다(빠르게). 판이 다른 구조는 보관하지 않고 잠시 뒤 한 번 더 받는다.
+    const atOk=j=>!!(j&&j.ok)&&(config.expectAt==null||j.at==null||j.at===config.expectAt);
+    if(!st0&&ck){try{cachedTxt=localStorage.getItem(ck);if(cachedTxt){const j=JSON.parse(cachedTxt);if(atOk(j))st0=j;else cachedTxt=null;}}catch(e){cachedTxt=null;}}
     function start(st){if(started||dead)return;started=true;clearTimeout(stT);lastSt=st;build(st);
       if(wk){const r=vp.getBoundingClientRect();w=Math.max(1,r.width);h=Math.max(1,r.height);const off=canvas.transferControlToOffscreen();
         send({type:'init',canvas:off,d,st:st||null,w,h,ratio:Math.min(devicePixelRatio||1,w<600?1.5:2),flags:{motion:v.motion,spin:v.spin,glow:v.glow}},[off]);
@@ -502,12 +504,16 @@
     ro.observe(vp);io.observe(vp);document.addEventListener('visibilitychange',vis);document.addEventListener('scroll',onScroll,{capture:true,passive:true});reduced.addEventListener('change',red);
     // 화면이 없는 채로 남으면 스레드를 거둔다(다른 탭으로 옮겨 host 가 지워진 경우)
     gc=setInterval(()=>{if(!host.isConnected)destroy();},2000);
-    if(!config.structure&&typeof fetch==='function')fetch(config.structureUrl||'/api/omni-structure').then(r=>r.ok?r.text():null).then(txt=>{
+    let retried=false;
+    const getSt=(fresh)=>fetch((config.structureUrl||'/api/omni-structure')+(fresh?'?r='+Date.now():''),fresh?{cache:'no-store'}:undefined).then(r=>r.ok?r.text():null).then(txt=>{
         if(dead)return;let st=null;try{st=txt?JSON.parse(txt):null;}catch(e){}
         if(!st||!st.ok){start(null);return;}
-        keep(txt);if(!started){start(st);return;}
+        const same=atOk(st);
+        if(same)keep(txt);else if(!retried){retried=true;setTimeout(()=>{if(!dead)getSt(true);},6000);}   // 옛 판 사본 — 서버가 뒤에서 갈아 끼운 뒤 다시
+        if(!started){start(st);return;}
         if(txt===cachedTxt)return;   // 보관본과 같으면 다시 짓지 않는다
-        lastSt=st;build(st);send({type:'scene',st});}).catch(()=>{start(null);});
+        cachedTxt=txt;lastSt=st;build(st);send({type:'scene',st});}).catch(()=>{start(null);});
+    if(!config.structure&&typeof fetch==='function')getSt(false);
     else if(!st0)start(null);
     return active;
   }
