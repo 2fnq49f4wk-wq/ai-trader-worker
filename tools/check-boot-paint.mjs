@@ -162,6 +162,8 @@ ok(!/setTimeout\(removeIntro, 4200\);\n/.test(H.replace(/else setTimeout\(remove
   const bd = W.slice(W.indexOf('if (path === "/api/bonds") {'), W.indexOf("// === [BOND] 국채 슬리브 수동 실행"));
   ok(/if \(path === "\/api\/build"\) \{\s*return Response\.json\(\{ build: _BUILD_VER \}/.test(W) && /fetch\('\/api\/build', \{ cache:'no-store' \}\)/.test(H),
      "'새 버전' 배너는 캐시 없는 /api/build 로 판을 본다(SWR 사본의 옛 판으로 거꾸로 된 배너가 뜨지 않는다)");
+  ok(/return await swrJson\("heatmap", 60000, 6 \* 3600000/.test(W) && /ctx\.waitUntil\(_lrBuild\(\)\)/.test(W) && !/globalThis\.__hmCache/.test(W),
+     "/api/heatmap: SWR(R2 사본 6시간) · 1Y/5Y 외부 조회는 뒤에서 — 대시보드 지도가 2.4~3.5초 기다리던 것");
   ok(/const _bondFill = async function/.test(bd) && /ctx\.waitUntil\(_bondFill\(\)/.test(bd) && !/await _bondFill\(/.test(bd),
      "/api/bonds: 외부 시세 보충은 뒤에서(ctx.waitUntil) — 첫 요청이 외부 시세를 기다려 16초 넘게 무응답이던 것");
 }

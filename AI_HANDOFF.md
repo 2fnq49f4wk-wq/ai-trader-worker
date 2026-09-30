@@ -12,6 +12,9 @@
 
 ## Current handoff
 
+- Status: **V33.455 — /api/heatmap(대시보드 지도 2.4~3.5초) → swrJson(1분 · R2 사본 6시간) · 1Y/5Y 외부 월봉 조회는 ctx.waitUntil.**
+  ■ heat_longret 는 이제 읽고-고쳐-쓰기가 아니다(새로 만든 값을 씀) → check-rmw 허용목록에서 뺐다. check-boot-paint +1항.
+  ■ renderFvHeatmapInto 는 이미 대시보드에서만 · 25초 스로틀 · SVG 재사용 — 손대지 않음.
 - Status: **V33.454 운영 확인(run 36706174467 · 배포 직후): 인트로 휴대폰 속도·아이폰 모두 4.2초(최소 애니메이션)에 'ready' 로 열림.**
   ■ 9개 시스템 전부 1.8~1.9초 안 · /api/state 0.5~0.7초 · bonds 0.46~0.53초 · diag 0.54~1.3초 · OMNI 구조 전부 0.68~0.84초 · 오류 0.
   ■ 전: 인트로 12초 상한(데이터·국채·시장심리 16초+ 무응답). 폴링 콜백 285→66ms.

@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.454";
+const _BUILD_VER = "V33.455";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -29019,10 +29019,10 @@ async function handleRequest(request, env, ctx) {
     //   quote: 저장 경로가 여러 곳이라 필드가 소실될 수 있는 구조적 문제를 우회한다.
     //   일봉 캐시(daily:)에서 직접 계산 — 단일 D1 쿼리, 추가 fetch 0. 60초 메모리 캐시.
     if (path === "/api/heatmap") {
+      /* [V33.455] ★SWR★ — 운영 점검: 대시보드 지도가 2.4~3.5초(아이솔레이트 메모리 60초 캐시뿐 · 차가우면 전 종목 일봉 수 MB 를 읽고 푼다).
+         1분 안 = 사본 · 6시간 안 = 사본을 먼저 주고 뒤에서 새로(R2 사본이라 새 아이솔레이트도 바로). 1Y/5Y 외부 조회도 뒤에서. */
       try {
-        if (globalThis.__hmCache && Date.now() - globalThis.__hmCache.ts < 60000) {
-          return Response.json(globalThis.__hmCache.data, { headers: cors });
-        }
+        return await swrJson("heatmap", 60000, 6 * 3600000, async function () {
         // ── (1) 단기(1W/1M/3M)·거래량 — 일봉 캐시에서 계산 ──
         // [V12.131c] 이 daily:% 전체 스캔(977종목 × 320~2400봉, 수 MB)은 prefetch가 쓰는 것과
         //   동일하다. 대시보드 부팅 시 동시 호출되면 D1이 이 쿼리 여러 개를 한꺼번에 받아
@@ -29065,8 +29065,7 @@ async function handleRequest(request, env, ctx) {
         //   하루 1회 빌드, state(heat_longret)에 저장. 518종목 ÷ 40 = ~13 subrequest (이 요청에서만, 동시 1회 락).
         let longret = await getState(env.DB, "heat_longret", null);
         const lrStale = !longret || !longret.ts || (Date.now() - longret.ts) > 24 * 3600 * 1000;
-        if (lrStale && !globalThis.__hmLrBuilding) {
-          globalThis.__hmLrBuilding = true;
+        const _lrBuild = async function () {
           try {
             const cfg0 = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
             const usSyms = (cfg0.usTickers || []).filter(function(s){ return !s.endsWith(".KS") && !s.endsWith(".KQ"); });
@@ -29105,12 +29104,13 @@ async function handleRequest(request, env, ctx) {
               } catch (e) { /* 청크 실패 — 다음 청크 계속 */ }
             }
             if (Object.keys(lr).length >= 50) {
-              longret = { ts: Date.now(), data: lr };
-              await setState(env.DB, "heat_longret", longret);
+              await setState(env.DB, "heat_longret", { ts: Date.now(), data: lr });
             }
           } catch (e) {
           } finally { globalThis.__hmLrBuilding = false; }
-        }
+        };
+        // 외부 월봉 조회(수십 번)는 응답을 붙잡지 않는다 — 지금은 있는 값으로 그리고 다음 갱신에 반영
+        if (lrStale && !globalThis.__hmLrBuilding && ctx && ctx.waitUntil) { globalThis.__hmLrBuilding = true; ctx.waitUntil(_lrBuild()); }
         // 머지 — spark 값이 항상 우선 (일봉 캐시 근사치보다 정확)
         if (longret && longret.data) {
           for (const sym in longret.data) {
@@ -29120,10 +29120,9 @@ async function handleRequest(request, env, ctx) {
             if (v.ret5y != null) out[sym].ret5y = v.ret5y;
           }
         }
-        const payload = { ok: true, ts: Date.now(), n: Object.keys(out).length,
+        return { ok: true, ts: Date.now(), n: Object.keys(out).length,
           longretTs: longret ? longret.ts : null, data: out };
-        globalThis.__hmCache = { ts: Date.now(), data: payload };
-        return Response.json(payload, { headers: cors });
+        });
       } catch (e) {
         return Response.json({ ok: false, error: e.message }, { status: 500, headers: cors });
       }
