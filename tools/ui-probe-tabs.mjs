@@ -32,6 +32,18 @@ for (const [tag, eng, copts] of runs) {
   out(tag + ".home", await measure(p, 3000));
   await p.evaluate(() => { const n = document.querySelector('.nav-item[data-page="nnviz"]'); if (n) n.click(); });
   await p.waitForTimeout(2500);
+  // [V33.446] 아래로 내려 읽는 사람의 화면이 ★되감기는지★ — 카드 줄 자동 넘김이 페이지를 끌어당기던 것(yanked>0 이면 되감김)
+  await p.evaluate(() => window.luxBrainView && window.luxBrainView("operations"));
+  await p.waitForTimeout(2500);
+  out(tag + ".scrollhold", await p.evaluate(() => new Promise((res) => {
+    const rail = document.getElementById("nlvScanRail");
+    let sc = rail && rail.parentElement;
+    while (sc && sc !== document.body) { const o = getComputedStyle(sc).overflowY; if ((o === "auto" || o === "scroll") && sc.scrollHeight > sc.clientHeight + 4) break; sc = sc.parentElement; }
+    if (!sc || sc === document.body) sc = document.scrollingElement;
+    const max = sc.scrollHeight - sc.clientHeight; sc.scrollTop = max; const at = sc.scrollTop;
+    const cards = rail ? rail.querySelectorAll(".nlv-scancard").length : 0;
+    setTimeout(() => res({ scroller: sc.id || sc.className || sc.tagName, max: Math.round(max), at: Math.round(at), after: Math.round(sc.scrollTop), yanked: Math.round(at - sc.scrollTop), cards }), 7000);
+  })));
   for (const view of ["operations", "research", "models"]) {
     await p.evaluate((v) => window.luxBrainView && window.luxBrainView(v), view);
     await p.waitForTimeout(1500);
