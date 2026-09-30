@@ -3044,7 +3044,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.455";
+const _BUILD_VER = "V33.456";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -29022,44 +29022,74 @@ async function handleRequest(request, env, ctx) {
       /* [V33.455] ★SWR★ — 운영 점검: 대시보드 지도가 2.4~3.5초(아이솔레이트 메모리 60초 캐시뿐 · 차가우면 전 종목 일봉 수 MB 를 읽고 푼다).
          1분 안 = 사본 · 6시간 안 = 사본을 먼저 주고 뒤에서 새로(R2 사본이라 새 아이솔레이트도 바로). 1Y/5Y 외부 조회도 뒤에서. */
       try {
-        return await swrJson("heatmap", 60000, 6 * 3600000, async function () {
+        return await swrJson("heatmap", 15 * 60000, 6 * 3600000, async function () {   // [V33.456] 신선 1분 → 15분: 일봉은 하루 단위로만 바뀐다
         // ── (1) 단기(1W/1M/3M)·거래량 — 일봉 캐시에서 계산 ──
         // [V12.131c] 이 daily:% 전체 스캔(977종목 × 320~2400봉, 수 MB)은 prefetch가 쓰는 것과
         //   동일하다. 대시보드 부팅 시 동시 호출되면 D1이 이 쿼리 여러 개를 한꺼번에 받아
         //   과부하로 떨어졌다(실측: heatmap 500 D1_ERROR). 공유 캐시(__allDailyCache)를 재사용한다.
-        let _hmDaily;
-        if (globalThis.__allDailyCache && Date.now() - globalThis.__allDailyCache.ts < 600000) {
-          _hmDaily = globalThis.__allDailyCache.map;
-        } else {
-          const rows0 = await env.DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
-          _hmDaily = {};
-          for (const r of (rows0.results || [])) {
-            try { _hmDaily[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
-          }
-          globalThis.__allDailyCache = { ts: Date.now(), map: _hmDaily };
-        }
-        const rows = { results: Object.keys(_hmDaily).map(function (s) { return { k: "daily:" + s, __d: _hmDaily[s] }; }) };
+        /* [V33.456] ★일봉을 워커에서 풀지 않는다★ — 운영 점검(V33.455 직후): 이 조회가 뒤에서 돌 때 종목 980개 × 수십 KB(수십 MB)를
+           JSON.parse 하느라 아이솔레이트 한 스레드가 수 초 막혔고, 같은 아이솔레이트의 다른 요청 7개(뉴스·환율·실적…)가 ★똑같이 8.2초★ 씩 기다렸다.
+           지도에 필요한 건 종목마다 종가 몇 개와 거래량뿐이다 → D1(SQLite json_extract)이 그 값만 뽑아 작은 행으로 준다. */
         const out = {};
-        for (const r of (rows.results || [])) {
-          let d = r.__d; if (!d) continue;
-          const closes = d && d.closes;
-          if (!closes || closes.length < 10) continue;
-          const sym = r.k.slice(6);
-          const len = closes.length;
-          let vol = (d.vol != null) ? d.vol : null, avgVol20 = (d.avgVol20 != null) ? d.avgVol20 : null;
-          if ((vol == null || avgVol20 == null) && d.volumes && d.volumes.length >= 21) {
-            const vs = d.volumes, vn = vs.length;
-            if (vol == null) vol = vs[vn - 1];
-            if (avgVol20 == null) { let s = 0; for (let i = vn - 21; i < vn - 1; i++) s += vs[i]; avgVol20 = s / 20; }
+        let _hmSqlOk = false;
+        try {
+          const _vs = []; for (let i = 2; i <= 21; i++) _vs.push("COALESCE(json_extract(v,'$.volumes[#-" + i + "]'),0)");
+          const _hr = await env.DB.prepare("SELECT k, json_array_length(v,'$.closes') n," +
+            " json_extract(v,'$.closes[#-1]') c0, json_extract(v,'$.closes[#-6]') c5, json_extract(v,'$.closes[#-21]') c20," +
+            " json_extract(v,'$.closes[#-61]') c60, json_extract(v,'$.closes[#-253]') c252, json_extract(v,'$.closes[0]') cf," +
+            " json_extract(v,'$.ret1y') r1y, json_extract(v,'$.ret5y') r5y, json_extract(v,'$.vol') vol, json_extract(v,'$.avgVol20') av," +
+            " json_array_length(v,'$.volumes') vn, json_extract(v,'$.volumes[#-1]') vl, (" + _vs.join("+") + ")/20.0 va" +
+            " FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
+          const _rt = function (last, past) { return (typeof last === "number" && typeof past === "number" && past > 0) ? (last - past) / past * 100 : null; };
+          for (const r of (_hr.results || [])) {
+            const len = _num(r.n, 0); if (len < 10) continue;
+            const m1y = Math.min(252, len - 1);
+            out[r.k.slice(6)] = {
+              return5: len >= 6 ? _rt(r.c0, r.c5) : null,
+              return20: len >= 21 ? _rt(r.c0, r.c20) : null,
+              return60: len >= 61 ? _rt(r.c0, r.c60) : null,
+              ret1y: (r.r1y != null) ? r.r1y : _rt(r.c0, m1y === 252 ? r.c252 : r.cf),
+              ret5y: (r.r5y != null) ? r.r5y : null,
+              vol: (r.vol != null) ? r.vol : (_num(r.vn, 0) >= 21 ? r.vl : null),
+              avgVol20: (r.av != null) ? r.av : (_num(r.vn, 0) >= 21 ? r.va : null)
+            };
           }
-          out[sym] = {
-            return5: getNDayReturn(closes, 5),
-            return20: getNDayReturn(closes, 20),
-            return60: getNDayReturn(closes, 60),
-            ret1y: (d.ret1y != null) ? d.ret1y : getNDayReturn(closes, Math.min(252, len - 1)),
-            ret5y: (d.ret5y != null) ? d.ret5y : null,
-            vol: vol, avgVol20: avgVol20
-          };
+          _hmSqlOk = true;
+        } catch (e) { /* 경로 문법을 못 쓰는 DB 면 아래 옛 방식으로 */ }
+        if (!_hmSqlOk) {
+          let _hmDaily;
+          if (globalThis.__allDailyCache && Date.now() - globalThis.__allDailyCache.ts < 600000) {
+            _hmDaily = globalThis.__allDailyCache.map;
+          } else {
+            const rows0 = await env.DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
+            _hmDaily = {};
+            for (const r of (rows0.results || [])) {
+              try { _hmDaily[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
+            }
+            globalThis.__allDailyCache = { ts: Date.now(), map: _hmDaily };
+          }
+          const rows = { results: Object.keys(_hmDaily).map(function (s) { return { k: "daily:" + s, __d: _hmDaily[s] }; }) };
+          for (const r of (rows.results || [])) {
+            let d = r.__d; if (!d) continue;
+            const closes = d && d.closes;
+            if (!closes || closes.length < 10) continue;
+            const sym = r.k.slice(6);
+            const len = closes.length;
+            let vol = (d.vol != null) ? d.vol : null, avgVol20 = (d.avgVol20 != null) ? d.avgVol20 : null;
+            if ((vol == null || avgVol20 == null) && d.volumes && d.volumes.length >= 21) {
+              const vs = d.volumes, vn = vs.length;
+              if (vol == null) vol = vs[vn - 1];
+              if (avgVol20 == null) { let s = 0; for (let i = vn - 21; i < vn - 1; i++) s += vs[i]; avgVol20 = s / 20; }
+            }
+            out[sym] = {
+              return5: getNDayReturn(closes, 5),
+              return20: getNDayReturn(closes, 20),
+              return60: getNDayReturn(closes, 60),
+              ret1y: (d.ret1y != null) ? d.ret1y : getNDayReturn(closes, Math.min(252, len - 1)),
+              ret5y: (d.ret5y != null) ? d.ret5y : null,
+              vol: vol, avgVol20: avgVol20
+            };
+          }
         }
         // ── (2) [V69] 1Y/5Y — spark 배치(월봉 5년)로 즉시 확보. 일봉 캐시가 5y로 갱신되길 기다릴 필요 없음.
         //   하루 1회 빌드, state(heat_longret)에 저장. 518종목 ÷ 40 = ~13 subrequest (이 요청에서만, 동시 1회 락).
@@ -30360,47 +30390,61 @@ async function handleRequest(request, env, ctx) {
       if (url.searchParams.get("force") !== "1" && cached && cached.ts && (Date.now() - cached.ts) < 30 * 60 * 1000) {
         return Response.json(cached, { headers: cors });
       }
-      try {
-        const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
-        const syms = (cfg.usTickers || []).concat(cfg.krTickers || []);
-        // [V32.1] ★CPU 과부하·"스캔 실패" 수정★ 종전엔 종목마다 await getState(daily:*)로 D1을 800회
-        //   왕복해 요청이 CPU 한도(1102)에 걸려 JSON이 아닌 에러로 끝났다. 일봉 전체를 단일 쿼리로
-        //   한 번에 로드(10분 아이솔레이트 캐시 공유)해 왕복을 800→1로 줄인다.
-        let __allDaily = null;
-        if (globalThis.__allDailyCache && Date.now() - globalThis.__allDailyCache.ts < 600000) {
-          __allDaily = globalThis.__allDailyCache.map;
-        } else {
-          __allDaily = {};
-          try {
-            const drows = await env.DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
-            for (const r of (drows.results || [])) { try { __allDaily[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {} }
-            globalThis.__allDailyCache = { ts: Date.now(), map: __allDaily };
-          } catch (e) {}
-        }
-        const groups = {};
-        let scanned = 0, skipped = 0;
-        for (const sym of syms) {
-          const daily = __allDaily[sym];
-          if (!daily || !daily.closes || daily.closes.length < 30) { skipped++; continue; }
-          const ta = taDetectPatterns(daily);
-          scanned++;
-          if (!ta || !ta.patterns.length) continue;
-          const isKR = /\.(KS|KQ)$/.test(sym);
-          const label = isKR ? (NAME_MAP[sym] || sym.replace(/\.(KS|KQ)$/, "")) : sym;
-          ta.patterns.forEach(function(p){
-            const g = groups[p.name] || (groups[p.name] = { name: p.name, dir: p.dir, kind: p.kind, items: [] });
-            g.items.push({ symbol: sym, label: label, market: isKR ? "kr" : "us", score: ta.score });
+      /* [V33.456] ★사본 먼저 · 다시 계산은 뒤에서★ — 30분이 지나면 요청 안에서 전 종목 일봉(수십 MB)을 D1 에서 통째로 읽었다.
+         D1 은 질의를 한 줄로 처리하므로 그 몇 초 동안 다른 모든 요청의 조회가 줄을 섰다(운영 점검: 뉴스·환율·실적 등 7건이 똑같이 8.2초).
+         24시간 안 사본이 있으면 바로 주고, 다시 계산은 한 번에 하나만 뒤에서. */
+      const _taBuild = async function () {
+          const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+          const syms = (cfg.usTickers || []).concat(cfg.krTickers || []);
+          // [V32.1] ★CPU 과부하·"스캔 실패" 수정★ 종전엔 종목마다 await getState(daily:*)로 D1을 800회
+          //   왕복해 요청이 CPU 한도(1102)에 걸려 JSON이 아닌 에러로 끝났다. 일봉 전체를 단일 쿼리로
+          //   한 번에 로드(10분 아이솔레이트 캐시 공유)해 왕복을 800→1로 줄인다.
+          let __allDaily = null;
+          if (globalThis.__allDailyCache && Date.now() - globalThis.__allDailyCache.ts < 600000) {
+            __allDaily = globalThis.__allDailyCache.map;
+          } else {
+            __allDaily = {};
+            try {
+              const drows = await env.DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
+              for (const r of (drows.results || [])) { try { __allDaily[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {} }
+              globalThis.__allDailyCache = { ts: Date.now(), map: __allDaily };
+            } catch (e) {}
+          }
+          const groups = {};
+          let scanned = 0, skipped = 0;
+          for (const sym of syms) {
+            const daily = __allDaily[sym];
+            if (!daily || !daily.closes || daily.closes.length < 30) { skipped++; continue; }
+            const ta = taDetectPatterns(daily);
+            scanned++;
+            if (!ta || !ta.patterns.length) continue;
+            const isKR = /\.(KS|KQ)$/.test(sym);
+            const label = isKR ? (NAME_MAP[sym] || sym.replace(/\.(KS|KQ)$/, "")) : sym;
+            ta.patterns.forEach(function(p){
+              const g = groups[p.name] || (groups[p.name] = { name: p.name, dir: p.dir, kind: p.kind, items: [] });
+              g.items.push({ symbol: sym, label: label, market: isKR ? "kr" : "us", score: ta.score });
+            });
+          }
+          // 차트 패턴 우선, 그 안에서 종목 수 많은 순
+          const list = Object.keys(groups).map(function(k){ return groups[k]; });
+          list.sort(function(a, b){
+            if (a.kind !== b.kind) return a.kind === "chart" ? -1 : 1;
+            return b.items.length - a.items.length;
           });
+          list.forEach(function(g){ g.items.sort(function(a, b){ return b.score - a.score; }); });
+          const payload = { groups: list, scanned: scanned, skipped: skipped, total: syms.length, ts: Date.now() };
+          try { await setState(env.DB, ck, payload); } catch (e2) {}
+          return payload;
+      };
+      if (url.searchParams.get("force") !== "1" && cached && cached.ts && (Date.now() - cached.ts) < 24 * 3600 * 1000 && ctx && ctx.waitUntil) {
+        if (!globalThis.__taScrBuilding) {
+          globalThis.__taScrBuilding = true;
+          ctx.waitUntil(_taBuild().catch(function () {}).then(function () { globalThis.__taScrBuilding = false; }));
         }
-        // 차트 패턴 우선, 그 안에서 종목 수 많은 순
-        const list = Object.keys(groups).map(function(k){ return groups[k]; });
-        list.sort(function(a, b){
-          if (a.kind !== b.kind) return a.kind === "chart" ? -1 : 1;
-          return b.items.length - a.items.length;
-        });
-        list.forEach(function(g){ g.items.sort(function(a, b){ return b.score - a.score; }); });
-        const payload = { groups: list, scanned: scanned, skipped: skipped, total: syms.length, ts: Date.now() };
-        try { await setState(env.DB, ck, payload); } catch (e2) {}
+        return Response.json(cached, { headers: cors });
+      }
+      try {
+        const payload = await _taBuild();
         return Response.json(payload, { headers: cors });
       } catch (e) {
         if (cached) return Response.json(cached, { headers: cors });
