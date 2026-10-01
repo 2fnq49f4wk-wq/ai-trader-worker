@@ -263,8 +263,8 @@ console.log("\n⑦ 홀로그램 핵(V33.437 새 엔진) — 가중치·분기 �
      tick 안에서 3D 를 돌리지 않는다(yaw 를 바꾸지 않는다). 기능(자동회전·신호 움직임)은 아이폰에서도 켜진 채 시작. */
   chk(/let still=!wk&&!IOS;/.test(mc) && /motion:!reduced\.matches&&!still,spin:!reduced\.matches&&!still/.test(mc)
       && /spinEl\.animate\(\[\{transform:'rotate\(0turn\)'\},\{transform:'rotate\(1turn\)'\}\]/.test(mc) && /S=Math\.ceil\(Math\.hypot\(w,h\)\)/.test(mc)
-      && /v\.budget=v\.lod\?0:OM_CHUNK/.test(mc) && /pend=drawRest\(ctx,sc,v,S,S,pend,OM_CHUNK\)/.test(mc) && /OM_CHUNK=6000/.test(src),
-    "아이폰: 자동회전은 CSS(GPU)로 그림째 · 다시 그리기는 한 장면 6천 줄씩 나눠서 · 기능은 켜진 채", "★아이폰 메인 스레드가 3D 회전을 계속 그린다★");
+      && /v\.budget=v\.lod\?0:OM_CHUNK/.test(mc) && /pend=drawRest\(ctx,sc,v,S,S,pend,OM_CHUNK\)/.test(mc) && /OM_CHUNK=3000/.test(src),
+    "아이폰: 자동회전은 CSS(GPU)로 그림째 · 다시 그리기는 한 장면 3천 줄씩 나눠서 · 기능은 켜진 채", "★아이폰 메인 스레드가 3D 회전을 계속 그린다★");
   { const tk = mc.slice(mc.indexOf("function tick(now){"), mc.indexOf("function fxFrame(){"));
     chk(tk.length > 0 && !/yaw/.test(tk) && /if\(!runOn\(\)\)return;/.test(tk), "메인 경로 박자(tick)는 3D 를 돌리지 않고 · 스크롤·화면 밖이면 바로 쉰다", "★메인 경로가 박자마다 3D 를 돌린다★"); }
   { // 나눠 그리기 = 한 번에 그리기(가산 합성 · 같은 단계 · 같은 선 수)

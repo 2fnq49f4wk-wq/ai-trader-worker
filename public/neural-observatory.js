@@ -213,7 +213,7 @@
       groups,hz,tbody,shells:[R_IN,R_H1,R_H2],bands:trees.length?treeRings:[],info:{params:mats?net.mats.reduce((a,m)=>a+m.r*m.c,0):0,splits:trees.reduce((a,t)=>a+t.length-2,0),trees:trees.length,
         nets:net?net.nets:0,full:!!mats,inputs:nIn,sizes:[nIn].concat(hidSizes,[hz.length])}};
   }
-  const OM_LEVELS=14,OM_KGAIN=[.55,.8,1,.35,.45,.9],OM_LOD=4,OM_LOD_MAX=5000,OM_ALPHA_EXP=3.4,OM_CHUNK=6000;   // OM_CHUNK: 메인 경로가 한 장면에 긋는 선 상한(나머지는 다음 장면들에)   // OM_ALPHA_EXP: 단계 → 투명도 곡선(대비형 · 크기 순서 그대로) — 약한 가중치는 투명에 가깝게, 센 것만 또렷하게   // OM_LOD: 움직이는 중(대체 경로) 이 단계 밑은 건너뛴다   // 종류별 밝기 배율(투명도) — w1 은 7천 줄이라 낮게
+  const OM_LEVELS=14,OM_KGAIN=[.55,.8,1,.35,.45,.9],OM_LOD=4,OM_LOD_MAX=5000,OM_ALPHA_EXP=3.4,OM_CHUNK=3000;   // OM_CHUNK: 메인 경로가 한 장면에 긋는 선 상한(나머지는 다음 장면들에) · [V33.465] 6천→3천: CI 아이폰(소프트웨어 그리기)에서 한 장면 0.45~1.1초   // OM_ALPHA_EXP: 단계 → 투명도 곡선(대비형 · 크기 순서 그대로) — 약한 가중치는 투명에 가깝게, 센 것만 또렷하게   // OM_LOD: 움직이는 중(대체 경로) 이 단계 밑은 건너뛴다   // 종류별 밝기 배율(투명도) — w1 은 7천 줄이라 낮게
   function drawCore(ctx,sc,v,W,H,t){
     // 1) 도는 점(나무 조각·눈금·장식 고리)의 3D 위치 → 2) 투영(형식 배열에 · 객체 없음)
     const n=sc.n,P=sc.P;
@@ -458,7 +458,7 @@
         const b=document.createElement('button');b.type='button';b.textContent=g.label+' / '+fmt(g.ids.length);b.onclick=()=>inspect(g.ids[0]);lr.append(b);});
       const I=sc.info,sum=document.createElement('button');sum.type='button';sum.disabled=true;
       sum.textContent=I.full?('가중치 '+fmt(I.params)+'개 전부 · 나무 '+fmt(I.trees)+'그루 · 분기 '+fmt(I.splits)+'개 전부'):'대표 연결만(구조 전부를 아직 못 받았다)';lr.append(sum);
-      populate();info.textContent=(I.full?'신경망 '+I.sizes.join('→')+' · 가중치 '+fmt(I.params)+'개와 나무 분기 '+fmt(I.splits)+'개를 전부 한 줄씩 그립니다. 점을 누르면 그 점의 선만 밝게 남습니다.':'구조 전부를 받는 중이거나 없습니다 — 대표 연결(뉴런마다 상위 3개)만 그립니다.')
+      populate();info.textContent=(I.full?'신경망 '+I.sizes.join('→')+' · 가중치 '+fmt(I.params)+'개와 나무 분기 '+fmt(I.splits)+'개를 전부 한 줄씩 그립니다. 선이 모인 자리를 누르면 그 뉴런의 선만 밝게 남습니다.':'구조 전부를 받는 중이거나 없습니다 — 대표 연결(뉴런마다 상위 3개)만 그립니다.')
         +(IOS?' (아이폰·아이패드: 자동회전은 화면 전체를 가볍게 돌리고, 끌면 3D 로 돕니다 · 스크롤하는 동안은 쉽니다)':still?' (이 브라우저는 별도 스레드 그리기를 못 해 정지 화면으로 시작합니다 — 끌어서 돌려 보세요)':'');
       dirty=true;wake();
     }
