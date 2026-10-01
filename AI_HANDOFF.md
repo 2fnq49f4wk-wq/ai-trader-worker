@@ -12,6 +12,13 @@
 
 ## Current handoff
 
+- Status: **V33.461 — "OMNI 열고 스크롤하면 완전히 멈춘다" 의 실체: 그림 칸이 touch-action:none 이라 손가락으로 위아래 밀면 페이지가 0px 스크롤.**
+  ■ 재현(로컬 크롬 · Pixel 7 · CDP 터치 이벤트): 옛 CSS 에선 OMNI 위 위로 216px 밀기 → 스크롤 0 · 새 CSS → 255px(그림 밖 대조 251px).
+    폰에선 그림 칸이 화면 폭 전부 · 높이 절반 가까이라 '사이트가 굳은 것' 처럼 보였다. 데스크톱(마우스)·CI 측정은 이걸 못 잡았다.
+  ■ 고침: @media(pointer:coarse) canvas{touch-action:pan-y} — 위아래는 스크롤 · 좌우로 밀어 돌리기(안내 문구도) · 일반 엔진(SEQ 등)도.
+    대시보드 S&P 지도도 같은 병(host.style.touchAction='none' · 폰 폭 전부 × 600px) → 확대했을 때만 none · 아니면 pan-y.
+    지도 휠: Ctrl/⌘ 또는 확대 중일 때만 확대(아니면 페이지 스크롤).
+  ■ 실기기 기록: 방문 1회 비컨 · 갑작스런 종료 탐지를 localStorage(10분)로 — 지금까지 사용자 기기 기록이 0건이었다(다른 탭으로 열면 sessionStorage 가 비었다).
 - Status: **V33.460 — 실적 관문 운영 판정(run 36790982408) 확인 · 원자재·국채 매수도 관문 경유.**
   ■ 막힘: kr:AI:TREND(40건 평균 −1.16% PF 0.48) · us:RULE:SCALP(25건 −0.43% PF 0.07) · us:AI-SCALP:SCALP(22건 −0.17% PF 0.41) · cm:RULE:CM-SWING(16건 −0.58% PF 0.68).
   ■ 열림: us:AI:TREND(40건 +0.51% PF 1.52) · us:RULE:TREND(PF 1.92) · us:RULE:SNAP(PF 10.5) 등. kr:AI-SCALP 는 6건(15 미만)이라 판정 전.

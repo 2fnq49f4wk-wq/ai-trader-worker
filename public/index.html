@@ -107,15 +107,20 @@ window.LUXBOOT = (function () {
       if (document.hidden || Date.now() - hiddenAt < 1500) return;   // 백그라운드 절전은 멈춤이 아니다
       if (g > 400) { var o = ctx(); o.ms = Math.round(g); o.at = Date.now(); o.k = 'stall'; q.push(o); if (q.length > 40) q.shift(); send(false); }
     }, 200);
-    // 탭이 죽고 다시 열렸나 — 직전 세션이 2초마다 남긴 숨소리가 10초 안에 끊겼는데(정상 종료면 pagehide 가 지운다) 새로 열렸으면 기록(열린 방식 포함)
-    var K = 'luxAlive';
+    // 탭이 죽고 다시 열렸나 — [V33.461] sessionStorage(탭마다 따로) → localStorage: 멈춘 탭을 닫고 새 탭으로 열어도 남는다 · 10분 안.
+    //   직전 숨소리(2초마다)가 정상 종료(pagehide·숨김) 표시 없이 끊겼으면 'abrupt' — 그때 어느 화면·OMNI 방식·스크롤 중이었는지.
+    var K = 'luxAlive2';
     try {
-      var prev = JSON.parse(sessionStorage.getItem(K) || 'null');
+      var prev = JSON.parse(localStorage.getItem(K) || 'null');
       var nav = (performance.getEntriesByType && performance.getEntriesByType('navigation')[0]) || {};
-      if (prev && Date.now() - prev.at < 10000) { prev.k = 'reopen:' + String(nav.type || '?').slice(0, 8); prev.ms = Date.now() - prev.at; q.push(prev); setTimeout(function () { send(true); }, 8000); }
+      if (prev && !prev.clean && Date.now() - prev.at < 600000) { prev.k = 'abrupt:' + String(nav.type || '?').slice(0, 8); prev.ms = Date.now() - prev.at; delete prev.clean; q.push(prev); }
     } catch (e) {}
-    setInterval(function () { try { var o = ctx(); o.at = Date.now(); sessionStorage.setItem(K, JSON.stringify(o)); } catch (e) {} }, 2000);
-    window.addEventListener('pagehide', function () { try { sessionStorage.removeItem(K); } catch (e) {} });
+    var beat = function (clean) { try { var o = ctx(); o.at = Date.now(); if (clean) o.clean = 1; localStorage.setItem(K, JSON.stringify(o)); } catch (e) {} };
+    setInterval(function () { if (!document.hidden) beat(false); }, 2000);
+    window.addEventListener('pagehide', function () { beat(true); });
+    document.addEventListener('visibilitychange', function () { if (document.hidden) beat(true); });
+    // 방문 한 번 — 실기기가 이 판을 실제로 열었는지(기기·판)부터 알 수 있게(5초 뒤 · 그때 화면)
+    setTimeout(function () { var o = ctx(); o.k = 'visit'; o.ms = 0; o.at = Date.now(); q.push(o); send(true); }, 5000);
   } catch (e) {}
 })();
 /* 자원(이미지·스크립트·스타일)이 다 붙었는가 — 인트로 뒤에 레이아웃이 튀지 않게 한다. */
@@ -133,8 +138,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.460">
-<script src="/neural-observatory.js?v=33.460" defer></script>
+<meta name="lux-build" content="V33.461">
+<script src="/neural-observatory.js?v=33.461" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -6397,6 +6402,9 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     // [V95] 줌 경로 진입 시 오버사이즈 팬 상태가 남아있으면 원복(혼합 제스처 방어)
     if (host.__fvPan) { svg.style.width = '100%'; svg.style.height = '100%'; svg.style.position = ''; svg.style.left = ''; svg.style.top = ''; host.__fvPan = null; }
     fvClampCam(c);
+    // [V33.461] 확대돼 있을 때만 손가락 끌기를 지도가 받는다 — 확대 안 된 지도(폰 화면 폭 전부 · 높이 600px)가 늘 touch-action:none 이라
+    //   그 위를 위아래로 밀면 대시보드가 꿈쩍 안 했다("스크롤하면 멈춘다"). 두 손가락 확대는 pan-y 에서도 지도가 받는다.
+    host.style.touchAction = (c.w < c.bw - 0.5) ? 'none' : 'pan-y';
     var zl = host.__fvZoomLbl, zs = c.bw / c.w;
     if (zl) zl.textContent = zs <= 1.01 ? '' : ('×' + zs.toFixed(1));
     if (interactive) {
@@ -6501,8 +6509,11 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     if (host.__fvZoomBound) return;
     host.__fvZoomBound = true;
     var ptrs = {}, drag = null, pinch = null;
-    host.style.touchAction = 'none';
+    host.style.touchAction = 'pan-y';   // [V33.461] 처음엔 확대 전 — 위아래 밀기는 페이지 스크롤(확대하면 fvApplyCam 이 none 으로)
     host.addEventListener('wheel', function(e){
+      // [V33.461] 휠은 Ctrl/⌘ 를 누르거나 이미 확대돼 있을 때만 지도 확대 — 아니면 페이지가 스크롤된다(지도 위에서 스크롤이 멈추던 것)
+      var _c0 = fvCam(host);
+      if (!(e.ctrlKey || e.metaKey) && !(_c0.bw && _c0.w < _c0.bw - 0.5)) return;
       e.preventDefault();
       fvZoomAt(host, e.clientX, e.clientY, e.deltaY < 0 ? 1.18 : 1 / 1.18);
     }, { passive: false });
@@ -20296,11 +20307,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.460">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.460">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.460">
-<link rel="stylesheet" href="/model-evidence.css?v=33.460">
-<script src="/model-evidence.js?v=33.460"></script>
-<script src="/workspace-ui.js?v=33.460"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.461">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.461">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.461">
+<link rel="stylesheet" href="/model-evidence.css?v=33.461">
+<script src="/model-evidence.js?v=33.461"></script>
+<script src="/workspace-ui.js?v=33.461"></script>
 </body>
 </html>

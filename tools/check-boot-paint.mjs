@@ -171,6 +171,13 @@ ok(!/setTimeout\(removeIntro, 4200\);\n/.test(H.replace(/else setTimeout\(remove
      "/api/client-perf: 4KB · 20건 · 최근 300건만 · IP 를 남기지 않는다(실기기 멈춤 기록)");
   ok(/sendBeacon\('\/api\/client-perf'/.test(H) && /if \(g > 400\)/.test(H) && /document\.hidden \|\| Date\.now\(\) - hiddenAt < 1500/.test(H),
      "화면: 0.4초 넘는 굳음만 · 백그라운드 절전은 빼고 · 30초에 한 번 보낸다");
+  // [V33.461] 손가락으로 위아래 밀면 페이지가 스크롤돼야 한다 — 큰 그림 칸(OMNI · S&P 지도)이 touch-action:none 이면 '스크롤하면 멈춘다'
+  const NOCSS = readFileSync("public/neural-observatory.css", "utf8");
+  ok(/@media \(pointer:coarse\)\{#page-nnviz \.nerve-viewport canvas\{touch-action:pan-y\}\}/.test(NOCSS),
+     "OMNI·신경망 그림: 손가락 기기에선 위아래 밀기가 페이지 스크롤(좌우로 밀어 돌린다)");
+  ok(/host\.style\.touchAction = \(c\.w < c\.bw - 0\.5\) \? 'none' : 'pan-y';/.test(H) && /if \(!\(e\.ctrlKey \|\| e\.metaKey\) && !\(_c0\.bw && _c0\.w < _c0\.bw - 0\.5\)\) return;/.test(H),
+     "S&P 지도: 확대했을 때만 끌기·휠을 지도가 받는다(아니면 페이지 스크롤)");
+  ok(/var K = 'luxAlive2';/.test(H) && /o\.k = 'visit'/.test(H), "실기기 기록: 방문 1회 · 갑작스런 종료(localStorage · 10분)");
   ok(/const _bondFill = async function/.test(bd) && /ctx\.waitUntil\(_bondFill\(\)/.test(bd) && !/await _bondFill\(/.test(bd),
      "/api/bonds: 외부 시세 보충은 뒤에서(ctx.waitUntil) — 첫 요청이 외부 시세를 기다려 16초 넘게 무응답이던 것");
 }
