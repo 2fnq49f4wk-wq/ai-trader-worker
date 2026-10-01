@@ -36,15 +36,17 @@ export function OmniStage({ d }: { d: any }) {
 function GL({ sc, interactive, onPick, spin = true, motion = true, apiRef }: { sc: any; interactive: boolean; onPick?: (id: number) => void; spin?: boolean; motion?: boolean; apiRef?: React.MutableRefObject<OmniView | null> }) {
   const host = useRef<HTMLDivElement>(null);
   const [fallback, setFallback] = useState(false);
+  const [slow, setSlow] = useState<string | null>(null);
   useEffect(() => {
     if (!host.current) return;
     const reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const view = createOmniGL(host.current, sc, { interactive, spin: spin && !reduce, motion: motion && !reduce, onPick: onPick ? (id) => onPick(id) : undefined });
+    const view = createOmniGL(host.current, sc, { interactive, spin: spin && !reduce, motion: motion && !reduce, onPick: onPick ? (id) => onPick(id) : undefined, onSlow: (w) => setSlow(w) });
     if (!view.ok) { setFallback(true); return; }
     if (apiRef) apiRef.current = view;
     return () => { view.destroy(); if (apiRef) apiRef.current = null; };
   }, [sc, interactive]);
-  return <div ref={host} className="absolute inset-0">{fallback && <StaticCore sc={sc} />}</div>;
+  return <div ref={host} className="absolute inset-0">{fallback && <StaticCore sc={sc} />}
+    {slow && <span className="pointer-events-none absolute bottom-3 left-3 z-10 text-[10.5px] text-[#e6cfe0]/60">{slow === "soft" ? "그래픽 가속이 없어 정지 화면" : "느려서 자동 움직임을 멈췄다"}</span>}</div>;
 }
 
 /* No WebGL: draw the same scene once with the 2D engine — a still image costs nothing after that. */

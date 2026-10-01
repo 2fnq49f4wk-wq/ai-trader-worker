@@ -118,7 +118,9 @@ async function run(tag, eng, copts, throttle) {
   await p.waitForTimeout(1500);
   await shot(p, tag + ".nnviz-scrolled");
   // 모델 보기 → OMNI
-  await p.evaluate(() => { window.__phase = "omni-open"; try { localStorage.setItem("bsModel", "omni"); } catch (e) {} if (window.luxBrainView) window.luxBrainView("models"); if (window.switchNnModel) window.switchNnModel("omni"); });
+  await p.evaluate(() => { window.__phase = "omni-open"; try { localStorage.setItem("bsModel", "omni"); } catch (e) {} if (window.luxBrainView) window.luxBrainView("models"); });
+  await p.waitForTimeout(2500);   // [V33.467] 스튜디오가 붙으면 옛 OMNI(숨김 워커)를 따로 띄우지 않는다 — 실제 사용자처럼
+  await p.evaluate(() => { if (!document.querySelector("#brain-studio main") && window.switchNnModel) window.switchNnModel("omni"); });
   const tw = Date.now();
   const ot = await omniTimes(p, tw);
   out(tag + ".omni_times", ot);

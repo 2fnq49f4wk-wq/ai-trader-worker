@@ -12,6 +12,10 @@
 
 ## Current handoff
 
+- Status: **V33.467 — 운영 확인(run 36833422009 · V33.466): 스튜디오 붙음(양쪽) · 휴대폰 OMNI 위 스와이프 201/216px · 구조 전부 ~1초 · 오류 0.**
+  ■ 남은 것: CI 브라우저는 GPU 가 없어 WebGL 이 소프트웨어 — 계속 돌리면 굳음(휴대폰 흉내 최대 1.7초 · 아이폰 흉내 0.37초 반복).
+    → failIfMajorPerformanceCaveat 로 가속 없는 기기를 알아내 정지 화면(손댈 때만 다시) · 장면 간격 EMA 가 75ms(전체 화면 90ms) 넘으면 자동 움직임을 스스로 끔.
+  ■ ui-probe-perf: 스튜디오가 붙으면 옛 OMNI(숨김 워커)를 띄우지 않는다(실제 사용자 경로와 같게).
 - Status: **V33.466 — '02 모델 구조' 를 Brain Studio(React+Tailwind · WebGL)로 새로 · 두뇌 화면 머리 정리.**
   ■ 사용자: "저급해 보인다 · 스크롤 근본 해결 · 움직일 때 렉 · 모델 구조창이 복잡 · 정보가 여기저기". 실기기 기록은 V33.462 방문 뒤 없음(새 판 기록 0).
   ■ studio/(소스 · node_modules 제외) → public/brain-studio.js(IIFE 한 파일 · CSS 를 #brain-studio 안에만 주입 · Preflight 끔).

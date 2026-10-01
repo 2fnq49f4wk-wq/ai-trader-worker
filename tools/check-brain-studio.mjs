@@ -32,6 +32,8 @@ const fr = GL.slice(GL.indexOf("function frame("), GL.indexOf("function kick("))
 chk(/getContext\("webgl"/.test(GL) && (fr.match(/gl\.drawArrays\(gl\.LINES, 0, nV\)/g) || []).length === 1 && !/stroke\(|lineTo\(/.test(fr),
   "장면마다 선 전체를 drawArrays 한 번 · 장면 안에서 2D 로 선을 긋지 않는다", "★장면마다 CPU 로 선을 긋는다★");
 chk(/IntersectionObserver/.test(GL) && /document\.hidden/.test(fr) && /now - last < 31/.test(fr), "화면 밖·숨김이면 쉬고 · 화면 속 3D 는 초당 30장", "★보이지 않을 때도 그린다★");
+chk(/failIfMajorPerformanceCaveat: true/.test(GL) && /spin: opts\.spin && !soft, motion: opts\.motion && !soft/.test(GL) && /ema > \(opts\.interactive \? 90 : 75\)\) \{ v\.spin = false; v\.motion = false;/.test(GL),
+  "가속 없는 기기(소프트웨어 WebGL)는 정지 화면 · 장면 간격이 느리면 자동 움직임을 스스로 멈춘다", "★가속 없는 기기에서도 계속 돌린다(CI 휴대폰 흉내: 1.7초 굳음)★");
 chk(/NO\.omniCore\(d, st && st\.ok \? st : null\)/.test(OS), "장면 데이터는 사이트의 omniCore 그대로(값을 지어내지 않는다)", "★장면을 따로 지어낸다★");
 console.log("⑤ 사이트 배선");
 const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8"), WU = readFileSync(new URL("../public/workspace-ui.js", import.meta.url), "utf8"), WL = readFileSync(new URL("../public/workspace-layout.css", import.meta.url), "utf8");

@@ -63,7 +63,7 @@ export type OmniView = {
   reset(): void; zoomBy(f: number): void; ok: boolean; why?: string;
 };
 
-export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: boolean; spin: boolean; motion: boolean; onPick?: (id: number, sc: any) => void }): OmniView {
+export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: boolean; spin: boolean; motion: boolean; onPick?: (id: number, sc: any) => void; onSlow?: (why: string) => void }): OmniView {
   const wrap = document.createElement("div");
   wrap.style.cssText = "position:absolute;inset:0;overflow:hidden";
   const cv = document.createElement("canvas");
@@ -74,7 +74,12 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
   labels.style.cssText = "position:absolute;inset:0;pointer-events:none;font:10px ui-monospace,Menlo,monospace;color:rgba(255,206,182,.9)";
   wrap.append(deco, cv, labels); host.append(wrap);
 
-  const gl = (cv.getContext("webgl", { alpha: true, antialias: true, premultipliedAlpha: true, powerPreference: "low-power" }) as WebGLRenderingContext | null);
+  /* 그래픽 가속이 없는 기기(소프트웨어 WebGL)는 계속 돌리면 그게 곧 멈춤이다 — 먼저 '가속 있음' 만 받아 보고,
+     없으면 한 장만 그리고(손댈 때만 다시) 자동 움직임은 끈다. */
+  const base = { alpha: true, antialias: true, premultipliedAlpha: true, powerPreference: "low-power" as WebGLPowerPreference };
+  let soft = false;
+  let gl = cv.getContext("webgl", Object.assign({ failIfMajorPerformanceCaveat: true }, base)) as WebGLRenderingContext | null;
+  if (!gl) { gl = cv.getContext("webgl", base) as WebGLRenderingContext | null; soft = !!gl; }
   if (!gl) { wrap.remove(); return { ok: false, why: "nogl", destroy() {}, setSpin() {}, setMotion() {}, reset() {}, zoomBy() {} }; }
 
   const sh = (t: number, src: string) => { const s = gl.createShader(t)!; gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) || "shader"); return s; };
@@ -136,7 +141,9 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
   gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE); gl.disable(gl.DEPTH_TEST); gl.clearColor(0, 0, 0, 0);
 
   // ── view state ──
-  const v = { yaw: .4, pitch: .32, zoom: 1, panX: 0, panY: 0, sel: -1, spin: opts.spin, motion: opts.motion, t: 0 };
+  const v = { yaw: .4, pitch: .32, zoom: 1, panX: 0, panY: 0, sel: -1, spin: opts.spin && !soft, motion: opts.motion && !soft, t: 0 };
+  if (soft && opts.onSlow) setTimeout(() => opts.onSlow && opts.onSlow("soft"), 0);
+  let ema = 0, seen = 0;   // 자동 움직임 중 장면 간격(ms) — 느리면 스스로 멈춘다
   let W = 1, H = 1, dpr = 1, raf = 0, last = 0, dead = false, visible = true, decoKey = "";
   const heads: number[] = (sc.groups.find((g: any) => g.kind === 3) || { ids: [] }).ids;
   const hz: string[] = sc.hz || [];
@@ -173,7 +180,10 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
   function frame(now: number) {
     raf = 0; if (dead || !visible || document.hidden) return;
     if (!opts.interactive && last && now - last < 31 && (v.spin || v.motion) && !ptr.size) { kick(); return; }   // inline view: 30 fps is plenty (battery)
-    const dt = last ? Math.min(.1, (now - last) / 1000) : 0; last = now;
+    const iv = last ? now - last : 0;
+    if (iv > 0 && iv < 1000 && (v.spin || v.motion) && !ptr.size) { ema = ema ? ema * .85 + iv * .15 : iv;
+      if (++seen > 12 && ema > (opts.interactive ? 90 : 75)) { v.spin = false; v.motion = false; if (opts.onSlow) opts.onSlow("slow"); } }
+    const dt = last ? Math.min(.1, iv / 1000) : 0; last = now;
     if (v.spin) v.yaw += dt * .08;
     if (v.motion) v.t += dt;
     drawDeco();
