@@ -55,6 +55,11 @@ for (const mk of [...new Set(S.map((s) => s.market))]) {
   const hb = (m) => m == null ? "?" : m < 30 ? "<30m" : m < 240 ? "<4h" : m < 1440 ? "<1d" : m < 7200 ? "<5d" : "5d+";
   const gH = group(A.filter((s) => s.ts > now - 60 * D), (s) => hb(s.holdMin));
   out(mk + ".hold_60d", [...gH].map(([k, v]) => [k, agg(v)]).map(([k, a]) => k + " n" + a.n + " win" + a.win + " avg" + a.avgPct + " Σ" + a.sumPnl));
+  // [V33.464] 손절선 넘는 손실(90일) — 갭(장 시작 직후 청산)인가 장중인가. 시각은 한국=KST · 그 밖=UTC
+  const tz = mk === "kr" ? 9 : 0, hm = (ts) => new Date(ts + tz * 3600000).toISOString().slice(5, 16).replace("T", " ");
+  const B = A.filter((s) => s.ts > now - 90 * D && s.pct < -5.3);
+  out(mk + ".beyond_stop_90d", { n: B.length, of: A.filter((s) => s.ts > now - 90 * D).length, sumPnl: Math.round(B.reduce((a, s) => a + (s.pnl || 0), 0)),
+    rows: B.sort((a, b) => a.pct - b.pct).slice(0, 25).map((s) => s.symbol + " " + s.pct.toFixed(2) + "% @" + hm(s.ts) + " hold" + s.holdMin + "m " + s.entry + " → " + s.exit) });
   // 가장 많이 잃은 종목(60일)
   const gS = group(A.filter((s) => s.ts > now - 60 * D), (s) => s.symbol);
   out(mk + ".worst_symbols_60d", [...gS].map(([k, v]) => [k, agg(v)]).sort((x, y) => x[1].sumPnl - y[1].sumPnl).slice(0, 10).map(([k, a]) => k + " n" + a.n + " win" + a.win + " avg" + a.avgPct + " Σ" + a.sumPnl));
