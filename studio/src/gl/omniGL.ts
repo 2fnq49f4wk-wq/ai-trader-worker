@@ -60,7 +60,7 @@ const STRIDE = 9; // aP(3) aRing aAng aS aK aAB(2)
 
 export type OmniView = {
   destroy(): void; setSpin(on: boolean): void; setMotion(on: boolean): void;
-  reset(): void; zoomBy(f: number): void; ok: boolean; why?: string;
+  reset(): void; zoomBy(f: number): void; select(id: number): void; ok: boolean; why?: string;
 };
 
 export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: boolean; spin: boolean; motion: boolean; onPick?: (id: number, sc: any) => void; onSlow?: (why: string) => void }): OmniView {
@@ -80,13 +80,13 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
   let soft = false;
   let gl = cv.getContext("webgl", Object.assign({ failIfMajorPerformanceCaveat: true }, base)) as WebGLRenderingContext | null;
   if (!gl) { gl = cv.getContext("webgl", base) as WebGLRenderingContext | null; soft = !!gl; }
-  if (!gl) { wrap.remove(); return { ok: false, why: "nogl", destroy() {}, setSpin() {}, setMotion() {}, reset() {}, zoomBy() {} }; }
+  if (!gl) { wrap.remove(); return { ok: false, why: "nogl", destroy() {}, setSpin() {}, setMotion() {}, reset() {}, zoomBy() {}, select() {} }; }
 
   const sh = (t: number, src: string) => { const s = gl.createShader(t)!; gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) || "shader"); return s; };
   const pr = gl.createProgram()!;
   try { gl.attachShader(pr, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, FS)); gl.linkProgram(pr); }
-  catch (e) { wrap.remove(); return { ok: false, why: String(e), destroy() {}, setSpin() {}, setMotion() {}, reset() {}, zoomBy() {} }; }
-  if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) { wrap.remove(); return { ok: false, why: "link", destroy() {}, setSpin() {}, setMotion() {}, reset() {}, zoomBy() {} }; }
+  catch (e) { wrap.remove(); return { ok: false, why: String(e), destroy() {}, setSpin() {}, setMotion() {}, reset() {}, zoomBy() {}, select() {} }; }
+  if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) { wrap.remove(); return { ok: false, why: "link", destroy() {}, setSpin() {}, setMotion() {}, reset() {}, zoomBy() {}, select() {} }; }
   gl.useProgram(pr);
 
   // ── geometry (once) ──
@@ -255,5 +255,6 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
     setMotion(on) { v.motion = on; last = 0; kick(); },
     reset() { v.yaw = Y0; v.pitch = .32; v.zoom = Z0; v.panX = v.panY = 0; v.sel = -1; kick(); },
     zoomBy(f) { v.zoom = Math.max(.5, Math.min(6, v.zoom * f)); kick(); },
+    select(id) { if (v.sel === id) return; v.sel = id; kick(); },
   };
 }

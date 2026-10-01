@@ -3,7 +3,8 @@ import * as Tabs from "@radix-ui/react-tabs";
 import { MODELS, type ModelKey, stateOf, HZ, f1, pctv, n0, ago, toneColor } from "../models";
 import { Badge, Bars, Empty, Facts, Kpis, type KpiT, Section } from "./ui";
 import { ModelNet, OmniStage } from "./OmniStage";
-import { buildNet } from "../gl/netScenes";
+import { buildNet, seqBlocks } from "../gl/netScenes";
+import { cached, nnPath } from "../data";
 
 type Built = { kpis: KpiT[]; structure: ReactNode; evidence: ReactNode; facts: [string, ReactNode][] };
 
@@ -64,7 +65,10 @@ const BUILD: Record<string, (d: any, ov: any) => Built> = {
       { k: "투표 지분", v: f1(d.w, 3), hint: d.trusted ? "잠정 합류" : "보류" },
       { k: "구조", v: `${d.layers}×${d.heads}`, hint: `블록×헤드 · L=${d.L} · d=${d.d}` },
     ],
-    structure: <Section title="어텐션 — 어느 봉이 어느 봉을 보는가" aside="행=보는 봉 · 열=보이는 봉"><Attn d={d} /></Section>,
+    structure: <>
+      <Section title="블록이 보는 것" aside="이 표본(종목·시점 하나)의 실제 어텐션"><SeqBlocks d={d} /></Section>
+      <Section title="어텐션 — 어느 봉이 어느 봉을 보는가" aside="행=보는 봉 · 열=보이는 봉"><Attn d={d} /></Section>
+    </>,
     evidence: <Section title="입력별 영향력" aside="최대 대비"><Bars rows={feats(d)} unit="%" /></Section>,
     facts: [["합류 경로", d.admitWhy], ["파라미터", n0(d.params)], ["검증 표본", n0(d.valN)], ["정합", d.probeMaxDiff != null ? "오차 " + d.probeMaxDiff + " (" + d.probeN + "건)" : null], ["학습", ago(d.trainedAt)]],
   }),
@@ -139,6 +143,37 @@ function Horizons({ heads }: { heads: any[] }) {
   );
 }
 
+function SeqBlocks({ d }: { d: any }) {
+  const B = useMemo(() => seqBlocks(d), [d]), L = d.L || 16;
+  if (!B.length) return <Empty>어텐션 표본이 없습니다.</Empty>;
+  const nb = (k: number) => (k === 0 ? "지금" : k + "봉 전");
+  return (
+    <div className="space-y-4">
+      {B.map((b) => (
+        <div key={b.block} className="border-l-2 border-rose pl-3">
+          <div className="flex items-baseline justify-between gap-3"><h5 className="text-[13px] font-semibold">블록 {b.block + 1}</h5>
+            <span className="text-[11px] text-ink-3">평균 {b.avg.back.toFixed(1)}봉 전(고르게면 {((L - 1) / 2).toFixed(1)}) · 집중도 {Math.round(b.avg.focus * 100)}%{b.ffLive != null ? " · FFN 켜짐 " + b.ffLive + "/" + (d.ffHidden || 128) : ""}</span></div>
+          <p className="mt-1 text-[12.5px] text-ink-2">{b.avg.kind}</p>
+          <ul className="mt-2 space-y-2">
+            {[b.avg, ...b.heads].map((h) => (
+              <li key={h.h} className="grid grid-cols-[64px_minmax(0,1fr)] items-start gap-3">
+                <span className="text-[12px] text-ink-3">{h.h < 0 ? "헤드 평균" : "헤드 " + (h.h + 1)}</span>
+                <div className="min-w-0">
+                  <div className="flex h-[16px] items-end gap-px" aria-label="마지막 봉이 각 봉을 보는 비중(왼쪽=오래된 봉)">
+                    {Array.from({ length: L }, (_, u) => { const back = L - 1 - u, q = h.top.find((x) => x.back === back), w = (d.attnByBlock[b.block] && (h.h < 0 ? null : d.attnByBlock[b.block][h.h]?.[L - 1]?.[u]));
+                      const val = h.h < 0 ? (b.heads.reduce((s, x) => s + ((d.attnByBlock[b.block][x.h]?.[L - 1]?.[u]) || 0), 0) / Math.max(1, b.heads.length)) : (w || 0);
+                      return <span key={u} className="flex-1 rounded-[1px]" style={{ height: Math.max(2, Math.min(16, val * L * 8)) + "px", background: q ? "var(--bs-rose)" : "var(--bs-line)" }} />; })}
+                  </div>
+                  <p className="bs-num mt-1 text-[11px] text-ink-3">{h.top.map((q) => nb(q.back) + " " + Math.round(q.w * 100) + "%").join(" · ")} — {h.kind.split(" — ")[0]}</p>
+                </div>
+              </li>))}
+          </ul>
+        </div>))}
+      <p className="text-[11px] leading-snug text-ink-3">막대 = 마지막(지금) 봉이 각 봉에 주는 어텐션 비중, 왼쪽이 {L - 1}봉 전. 고르게 보면 1/{L}≈{Math.round(100 / L)}% 씩입니다. 집중도 = 고른 분포에서 얼마나 벗어났는가(0%=완전히 고르게).</p>
+    </div>
+  );
+}
+
 function Attn({ d }: { d: any }) {
   const [blk, setBlk] = useState(0), [head, setHead] = useState(-1);
   const ref = useRef<HTMLCanvasElement>(null);
@@ -206,7 +241,12 @@ function Overview({ ov }: { ov: any }) {
 
 export function Detail({ model, d, ov, onRefresh, busy }: { model: ModelKey; d: any; ov: any; onRefresh: () => void; busy: boolean }) {
   const meta = MODELS.find((m) => m.key === model)!;
-  const net = useMemo(() => (model === "omni" ? null : buildNet(model, d)), [model, d]);
+  const net = useMemo(() => {
+    if (model === "omni") return null;
+    const R: Record<string, string> = {};
+    for (const src of [d, ...["mind", "gbdt", "seq", "xgb"].map((k) => cached(nnPath(k)))]) ((src && src.inputFeatures) || []).forEach((f: any) => { if (f && f.name && f.role && !R[f.name]) R[f.name] = f.role; });
+    return buildNet(model, d, R);
+  }, [model, d]);
   const netView = net ? <div className="mb-2"><ModelNet sc={net} name={meta.name} /></div> : null;
   const rost = ((d && d.roster) || (ov && ov.roster) || []).find((r: any) => r.key === meta.roster);
   const s = stateOf(rost);
