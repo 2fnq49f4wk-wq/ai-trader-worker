@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.463";
+const _BUILD_VER = "V33.464";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -17934,6 +17934,32 @@ async function perfGateCheck(DB, market, signal, strategy) {
   } catch (e) { return { ok: true, mult: 1 }; }   // 원장을 못 읽으면 막지 않는다(판정 불가 ≠ 손실)
 }
 
+/* [V33.464] ★진입 손절가 = ATR 손절과 % 손절 중 '타이트한' 쪽★ — 사용자: "수익률이 점점 떨어진다".
+   원장(90일): 한국 111건 중 18건이 손절선(5%)을 넘어 잃었다(−5.4 ~ −19.6% · 합계 −845만 = 한국 전체 손실 −539만보다 크다).
+   장 시작 갭만이 아니었다 — 12:04 STOP −9.2% · 14:26 STOP −12.0% · TIME-STOP −9.0% · 장 마감 EOD-GAP −6~−8.8%.
+   원인: 여기서 두 손절가의 작은 값(= ★넓은 쪽★)을 골랐다. 주석("2×ATR or −5% 중 타이트")·청산 주석·수량 산정
+   ("executeBuy와 동일 규칙: min(N×ATR, price×stopLoss%)" — 손절 ★거리★ 의 작은 쪽)은 모두 타이트한 쪽이다.
+   그래서 수량은 5% 손절로 잡고 실제 손절은 2×ATR(변동 큰 종목 10~20%)에 걸려 ★계획한 위험의 2~4배★ 를 잃었다.
+   "최대 손절폭은 stopPct 로 고정" 줄도 부등호가 거꾸로였다. 문턱을 바꾸지 않는다 — 원래 규칙대로 되돌린다. */
+function _entryStopPrice(price, stopPct, dailyAtr, atrMult) {
+  const pctStop = price * (1 - stopPct / 100);
+  if (!(dailyAtr > 0) || !(atrMult > 0)) return pctStop;
+  return Math.max(price - dailyAtr * atrMult, pctStop);
+}
+/* [V33.464] 열려 있는 포지션의 손절가 상한 — 옛 규칙으로 넓게 잡힌 손절가(평단 −10% 등)를 전략 손절폭(평단 × (1 − stopPct))까지 올린다.
+   본전락·래칫으로 이미 더 높으면 그대로. 명시 손절폭(meta.stopOv: LLM 지시·헤지)·헤지는 건드리지 않는다. 손절가가 없으면 null(폴백 % 손절이 따로 있다). */
+/* [V33.464] 원자재·국채(스윙) 손절가 — 그 수량 산정과 같은 규칙: 손절폭 = max(기본, min(N×ATR%, 기본×1.6)). */
+function _swingStopPrice(price, stopPct, dailyAtr, atrMult) {
+  const atrPct = (dailyAtr > 0 && atrMult > 0 && price > 0) ? dailyAtr * atrMult / price * 100 : 0;
+  return price * (1 - Math.max(stopPct, Math.min(atrPct, stopPct * SWING_STOP_WIDEN)) / 100);
+}
+const SWING_STOP_WIDEN = 1.6;
+function _capStopPrice(stopPrice, avg, stopPct, strategyName, meta) {
+  if (stopPrice == null || !(avg > 0) || !(stopPct > 0)) return stopPrice;
+  if (strategyName === "hedge" || (meta && meta.stopOv != null)) return stopPrice;
+  const cap = avg * (1 - stopPct * (strategyName === "swing" ? SWING_STOP_WIDEN : 1) / 100);   // 스윙은 수량 산정 상한(기본×1.6)까지
+  return stopPrice < cap ? cap : stopPrice;
+}
 async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, cfg, cash, opts) {
   // [V9.1] 입력 검증 — 비정상 가격/수량으로 인한 유령거래·NaN 방어
   if (!(typeof price === "number" && isFinite(price) && price > 0)) {
@@ -18020,11 +18046,12 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   const atrMult = rules.atrStopMult || cfg.atrStopMult;
 
   const pctStop = price * (1 - stopPct / 100);
+  const _hasStopOv = !!(opts && typeof opts.stopPctOverride === "number");
   let stopPrice = pctStop;
   // [SCALP] 단타는 ATR 손절(보통 더 넓음)을 쓰지 않고 고정 % 손절만 사용 — 타이트한 리스크 유지.
-  if (dailyAtr && strategy !== "scalp") {
-    const atrStop = price - dailyAtr * atrMult;
-    stopPrice = Math.min(atrStop, pctStop);
+  // [V33.464] ★ATR 손절과 % 손절 중 '타이트한' 쪽★ — _entryStopPrice 주석 참조(예전엔 넓은 쪽이라 사이징보다 2~4배 잃었다).
+  if (dailyAtr && strategy !== "scalp" && !_hasStopOv) {
+    stopPrice = _entryStopPrice(price, stopPct, dailyAtr, atrMult);
   }
   // [V77] SCALP 휩쏘 대책 — 고정 1.2% 손절이 종목 변동성과 미스매치라 노이즈에 손절 연발.
   //   진입가 기준 손절폭을 일봉 ATR에 비례(scalpAtrStopMult·기본 0.9배)시키되,
@@ -18045,8 +18072,8 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
     const dynPct = Math.max(sFloor, Math.min(sCap, atrPct * sMult));
     stopPrice = price * (1 - dynPct / 100);
   } else
-  // 최대 손절폭은 stopPct로 고정
-  if (stopPrice > pctStop) stopPrice = pctStop;
+  // 최대 손절폭은 stopPct로 고정 — [V33.464] 부등호가 거꾸로였다(> 였다: 타이트한 손절을 오히려 % 로 넓혔고, 넓은 손절은 그대로 뒀다)
+  if (stopPrice < pctStop) stopPrice = pctStop;
 
   // [V12.47] 진입 시점 지수종가 스냅샷 — 청산 때 초과수익(alpha) 라벨 계산용(캐시 read만, fetch 0).
   let __mlEntryIdxClose = null;
@@ -18114,6 +18141,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
         meta: {
           strategy: strategy, feePaid: fee, feeRemaining: fee,
           atrAtEntry: dailyAtr, stopPrice: stopPrice, peakPrice: price,
+          stopOv: _hasStopOv ? opts.stopPctOverride : null,   // [V33.464] 명시 손절폭(LLM 지시·헤지) — 청산 쪽 손절폭 상한이 덮어쓰지 않는다
           signal: signal.name, signalMembers: signal.members || [signal.name],
           // Codex V33.329: retain actual entry setup for outcome audits without changing confluence votes.
           aiSetup: signal.setup || null,
@@ -18691,7 +18719,8 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   if (deRiskOpts && deRiskOpts.xmktTight) trailScale *= 0.7;
 
   // 1) 하드 손절 — 진입 시 정한 stopPrice (entry − 2×ATR or −5% 중 타이트, BE락 시 본전)
-  const stopPrice = (typeof meta.stopPrice === "number") ? meta.stopPrice : null;
+  //   [V33.464] 옛 규칙(넓은 쪽)으로 잡힌 손절가는 전략 손절폭까지 끌어올린다 — _capStopPrice 주석 참조.
+  const stopPrice = _capStopPrice((typeof meta.stopPrice === "number") ? meta.stopPrice : null, pos.avg, (r.stopLossPct || cfg.stopLoss || 5), strategyName, meta);
   if (stopPrice != null && price <= stopPrice) {
     return { sell: true, sellQty: pos.qty, reason: "STOP " + pnlRate.toFixed(2) + "%" + (meta.breakEvenLocked ? " (BE)" : "") };
   }
@@ -20289,11 +20318,8 @@ async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash)
   const atrMult = rules.atrStopMult || cfg.atrStopMult || 2.0;
   const pctStop = price * (1 - stopPct / 100);
   let stopPrice = pctStop;
-  if (dailyAtr) {
-    const atrStop = price - dailyAtr * atrMult;
-    stopPrice = Math.min(atrStop, pctStop);
-  }
-  if (stopPrice > pctStop) stopPrice = pctStop;
+  // [V33.464] 수량 산정(stopDistPct = max(기본, min(ATR 손절, 기본×1.6)))과 같은 규칙 — 예전엔 상한 없이 넓은 쪽이었다
+  if (dailyAtr) stopPrice = _swingStopPrice(price, stopPct, dailyAtr, atrMult);
 
   // [중복실행 방지] 겹치는 invocation의 중복 매수 차단(현금 이중차감)
   if (await isDuplicateRecentTrade(DB, "cm", symbol, "BUY", qty, price, 120000)) {
@@ -20762,8 +20788,7 @@ async function executeBuyAlt(DB, sleeve, symbol, qty, price, signal, dailyAtr, c
   const atrMult = rules.atrStopMult || cfg.atrStopMult || 2.0;
   const pctStop = price * (1 - stopPct / 100);
   let stopPrice = pctStop;
-  if (dailyAtr) { const atrStop = price - dailyAtr * atrMult; stopPrice = Math.min(atrStop, pctStop); }
-  if (stopPrice > pctStop) stopPrice = pctStop;
+  if (dailyAtr) stopPrice = _swingStopPrice(price, stopPct, dailyAtr, atrMult);   // [V33.464] 수량 산정과 같은 규칙(상한 기본×1.6)
   // [중복실행 방지] 겹치는 invocation의 중복 매수 차단(현금 이중차감)
   if (await isDuplicateRecentTrade(DB, mk, symbol, "BUY", qty, price, 120000)) {
     await log(DB, "WARN", symbol, "[" + sleeve.label + "] BUY 중복실행 차단(120s내 동일 매수): x" + qty + " @" + price.toFixed(2));
