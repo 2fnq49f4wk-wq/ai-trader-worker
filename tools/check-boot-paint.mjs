@@ -178,6 +178,10 @@ ok(!/setTimeout\(removeIntro, 4200\);\n/.test(H.replace(/else setTimeout\(remove
   ok(/host\.style\.touchAction = \(c\.w < c\.bw - 0\.5\) \? 'none' : 'pan-y';/.test(H) && /if \(!\(e\.ctrlKey \|\| e\.metaKey\) && !\(_c0\.bw && _c0\.w < _c0\.bw - 0\.5\)\) return;/.test(H),
      "S&P 지도: 확대했을 때만 끌기·휠을 지도가 받는다(아니면 페이지 스크롤)");
   ok(/var K = 'luxAlive2';/.test(H) && /o\.k = 'visit'/.test(H), "실기기 기록: 방문 1회 · 갑작스런 종료(localStorage · 10분)");
+  // [V33.463] 스크롤이 막힌 순간(손가락 60px+ · 위치 그대로 · 끝 아님)과 닿은 요소 · 20초+ 간격은 앱 잠듦(susp)으로 따로
+  ok(/o\.k = 'stuck'/.test(H) && /o\.tg = t\.tg/.test(H) && /o\.k = g > 20000 \? 'susp' : 'stall'/.test(H) && /Date\.now\(\) - shownAt < 1500/.test(H)
+     && /tg: sv\(e && e\.tg, 48\)/.test(W) && /od: nv\(e && e\.od\)/.test(W),
+     "실기기 기록: 스크롤 막힘(stuck · 닿은 요소) · 앱 잠듦(susp)은 멈춤과 따로 · 서버가 tg/dy/od 를 받는다");
   ok(/const _bondFill = async function/.test(bd) && /ctx\.waitUntil\(_bondFill\(\)/.test(bd) && !/await _bondFill\(/.test(bd),
      "/api/bonds: 외부 시세 보충은 뒤에서(ctx.waitUntil) — 첫 요청이 외부 시세를 기다려 16초 넘게 무응답이던 것");
 }

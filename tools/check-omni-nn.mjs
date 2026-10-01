@@ -151,16 +151,24 @@ console.log("\n⑦ 홀로그램 핵(V33.437 새 엔진) — 가중치·분기 �
   const sf = NO.omniCore(d, null);
   chk(sf.lk.length >= 5 && !sf.info.full && sf.lk.filter((k) => k <= 2).length === 5 && !sf.lk.some((k) => k === 3),
     "구조를 못 받으면 대표 연결 5줄만(분기선 없음 · full=false)", "★대체 그림이 틀렸다★");
-  // 색 하나 — 새 엔진 구간의 모든 색은 GOLD 하나에서
+  // [V33.463] 색은 새벽 팔레트(DAWN · 사용자 "살짝 핏빛 보라 · 해 뜰 때 하늘색") 한 곳에서만 — 흩어진 색 리터럴 0
   const core = src.slice(src.indexOf("═══ [V33.437]"), src.indexOf("  let active=null;"));
   const colors = core.match(/rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+|#[0-9a-fA-F]{3,6}\b/g) || [];
-  chk((core.match(/const GOLD='[\d,]+'/g) || []).length === 1 && colors.length === 0,
-    "색은 금빛 하나(GOLD) — 다른 색 리터럴 0", "★색이 여럿이다: " + colors.join(" ") + "★");
+  chk((core.match(/const DAWN=\[/g) || []).length === 1 && /const ROSE='[\d,]+',LILAC='[\d,]+',SKY='[\d,]+',PEACH='[\d,]+';/.test(core) && !/GOLD/.test(core) && colors.length === 0,
+    "색은 새벽 팔레트 한 곳(DAWN · ROSE·LILAC·SKY·PEACH) — 흩어진 색 리터럴 0 · 옛 금빛 없음", "★색이 흩어져 있다: " + colors.join(" ") + "★");
+  /* [V33.463] ★점을 그리지 않는다★ — 사용자: "노드 점들 때문에 안 예쁘다 · 선으로 이어라". 그리기에서 원(arc)은 껍질·핵 렌즈뿐이고
+     뉴런·나무·눈금 자리에 원·사각을 찍지 않는다(가짜 캔버스로 센다: arc 반지름 < 20px 인 것 · rect 0). */
+  { const arcs = [], rects = []; const nop2 = () => {}, g2 = { addColorStop: nop2 };
+    const cc = { canvas: { width: 1200, height: 400 }, createRadialGradient: () => g2, clearRect: nop2, beginPath: nop2, moveTo: nop2, lineTo: nop2, closePath: nop2,
+      arc: (x, y, r) => arcs.push(r), rect: () => rects.push(1), fillText: nop2, drawImage: nop2, setTransform: nop2, stroke: nop2, fill: nop2 };
+    NO.drawCore(cc, sc, { yaw: .4, pitch: .3, zoom: 1, panX: 0, panY: 0, selected: 5, motion: true, spin: true, glow: false, small: null }, 1200, 400, 1.3);
+    const dots = arcs.filter((r) => r < 20).length;
+    chk(dots === 0 && rects.length === 0, "점 없음 — 원은 껍질·핵 렌즈(" + arcs.length + "개 · 모두 큰 원)뿐 · 뉴런은 선이 만나는 자리로", "★점을 찍는다(작은 원 " + dots + " · 사각 " + rects.length + ")★"); }
   chk(/kind==='omni'\) return mountCore/.test(src) && !/omniScene/.test(src), "OMNI 는 새 엔진으로만(옛 구체 코드 없음)", "★옛 구체 코드가 남아 있다★");
   // 묶어 긋기 — 선이 1.8만 개여도 획 호출은 수십 번
   const calls = { stroke: 0, fill: 0 };
   const nop = () => {}, grad = { addColorStop: nop };
-  const mk = () => ({ canvas: { width: 300, height: 100 }, createRadialGradient: () => grad, fillRect: nop, clearRect: nop, beginPath: nop, moveTo: nop, lineTo: nop, arc: nop, rect: nop, closePath: nop,
+  const mk = () => ({ canvas: { width: 300, height: 100 }, globalAlpha: 1, createRadialGradient: () => grad, fillRect: nop, clearRect: nop, beginPath: nop, moveTo: nop, lineTo: nop, arc: nop, rect: nop, closePath: nop,
     fillText: nop, drawImage: nop, setTransform: nop, stroke: () => calls.stroke++, fill: () => calls.fill++, getContext: null });
   const ctx = mk(), small = { width: 300, height: 100, getContext: () => mk() };
   const r = NO.drawCore(ctx, sc, { yaw: .4, pitch: .3, zoom: 1, panX: 0, panY: 0, selected: 5, motion: true, spin: true, glow: true, small }, 1200, 400, 1.3);
@@ -196,14 +204,14 @@ console.log("\n⑦ 홀로그램 핵(V33.437 새 엔진) — 가중치·분기 �
       "화면이 학습 판 열쇠(cacheKey)와 판(expectAt)을 넘기고, 판이 다른 구조는 보관하지 않는다", "★판 대조 없이 구조를 보관한다 — 재학습 뒤 옛 구조가 남는다★");
     chk(/const OMNI_ST_STALE_MS = 7 \* 24 \* 3600000/.test(wsrc) && /age < OMNI_ST_STALE_MS/.test(wsrc),
       "구조 사본은 7일까지 먼저 주고 뒤에서 판 확인(첫 방문 9.5초 없앰)", "★구조 사본 창이 짧다 — 첫 방문이 D1 판 확인을 기다린다★");
-    chk((wm.match(/iv<250/g) || []).length === 1 && (mc.match(/iv<250/g) || []).length === 1,
-      "느림 판정에서 쉬었다 온 간격(>0.25초)은 뺀다(워커 · 대체 경로)", "★스크롤 멈춤·화면 밖 간격이 느림 판정에 섞인다★");
+    chk((wm.match(/iv<250/g) || []).length === 1 && !/gap>\(IOS\?90:55\)/.test(mc),
+      "느림 판정에서 쉬었다 온 간격(>0.25초)은 뺀다(워커) · 메인 경로는 계속 그리지 않아 느림 판정이 없다", "★스크롤 멈춤·화면 밖 간격이 느림 판정에 섞인다★");
   }
   /* [V33.438] ★맑게(아크릴)★ — 사용자: "뿌연 느낌 말고 맑으면서 반투명하게". 뿌옇던 원인 둘을 다시 못 들이게:
      화면 전체를 덮는 광채(fillRect 0,0,W,H) 금지 · 번짐은 반 해상도(w/2) · 세기 ≤ .35. 아크릴 띠·유리 껍질이 있다. */
   const dc = src.slice(src.indexOf("function drawCore("), src.indexOf("function mountCore("));
   const ga = /ctx\.globalAlpha=([\d.]+);ctx\.drawImage\(sm/.exec(dc);
-  chk(!/fillRect\(0,0,W,H\)/.test(dc) && /Math\.round\(w\/2\)/.test(src) && ga && +ga[1] <= .35 && /아크릴 띠/.test(dc) && /sc\.shells/.test(dc),
+  chk(!/fillRect\(0,0,W,H\)/.test(dc) && /Math\.round\(W\/2\)/.test(src) && /Math\.round\(S\/2\)/.test(src) && ga && +ga[1] <= .35 && /아크릴 띠/.test(dc) && /sc\.shells/.test(dc),
     "맑은 아크릴: 전면 광채 없음 · 번짐 반 해상도 · 세기 " + (ga ? ga[1] : "?") + " ≤ .35 · 아크릴 띠·유리 껍질", "★다시 뿌옇게 그린다★");
   /* [V33.439] ★사이트가 멈추지 않는다★ — 사용자: "OMNI 뇌 구조를 보면 사이트가 계속 멈춘다".
      그리기는 별도 스레드(OffscreenCanvas → Worker) · 워커 소스가 실제로 번역된다 · 대체 경로는 정지 화면으로 시작 ·
@@ -230,7 +238,7 @@ console.log("\n⑦ 홀로그램 핵(V33.437 새 엔진) — 가중치·분기 �
     const bigTrees = []; for (let t = 0; t < 993; t++) { const ns = 8 + Math.floor(rnd() * 12), row = [ns + 1, Math.round((.5 + rnd()) * 1e3)]; for (let q = 0; q < ns; q++) row.push(Math.floor(rnd() * TM.feats.length * .8)); bigTrees.push(row); }
     const big = Object.assign({}, st, { net: Object.assign({}, st.net, { sizes: [names.length, 128, 64, 5], mats: [mat(names.length, 128, .1), mat(128, 64, .12), mat(64, 5, .2)] }), trees: bigTrees });
     const expo = (scn) => { let segs = 0, e = 0; const c = mk(); c.beginPath = () => { segs = 0; }; c.lineTo = () => { segs++; };
-      c.stroke = function () { const a = +(/,([\d.]+)\)$/.exec(this.strokeStyle || "") || [0, 0])[1]; e += a * segs; };
+      c.stroke = function () { const a = typeof this.strokeStyle === "string" ? +(/,([\d.]+)\)$/.exec(this.strokeStyle) || [0, 0])[1] : 1; e += a * (this.globalAlpha == null ? 1 : this.globalAlpha) * segs; };   // [V33.463] 색은 그라데이션 · 세기는 globalAlpha
       NO.drawCore(c, scn, { yaw: .4, pitch: .3, zoom: 1, panX: 0, panY: 0, selected: -1, motion: false, spin: false, glow: false, small: null }, 1200, 400, 0); return e; };
     const scB = NO.omniCore(d, big), e0 = expo(sc), e1 = expo(scB);
     // 1200×400 화면 기준 절대 상한 2300(V33.440 실측 1953 · 하얗게 타던 V33.439 설정은 이 값을 크게 넘었다)
@@ -250,10 +258,21 @@ console.log("\n⑦ 홀로그램 핵(V33.437 새 엔진) — 가중치·분기 �
       "같은 학습 판이면 살아 있는 그림을 옮겨 붙인다(다시 만들지 않는다)", "★다시 렌더할 때마다 그림을 새로 만든다★");
     const scN = NO.omniCore(d, st, { noLines: true });
     chk(scN.n === sc.n && scN.la.length === 0 && sc.top.length > 0, "선 없는 장면도 점 번호가 같다(선택이 워커와 맞는다) · 흐르는 빛 선은 장면이 만든다", "★점 번호가 어긋난다★"); }
-  // [V33.459] 아이폰은 기능을 살린다(사용자 "기능들 다 살려놔라") — 대신 초당 20장 · 움직일 땐 밝은 선만(lod) · 스크롤·화면 밖이면 쉰다
+  /* [V33.463] ★아이폰: 돌리는 건 GPU, 메인 스레드는 쉰다★ — 실기기 기록(iOS 18.7 · main/ios/lite)에서 오래 굳음.
+     자동회전 = 대각선 정사각 캔버스를 CSS(합성기)로 · 신호 = 위 칸 빛줄기만 · 다시 그릴 때는 한 장면 OM_CHUNK 줄(나머지는 drawRest 로 이어서) ·
+     tick 안에서 3D 를 돌리지 않는다(yaw 를 바꾸지 않는다). 기능(자동회전·신호 움직임)은 아이폰에서도 켜진 채 시작. */
   chk(/let still=!wk&&!IOS;/.test(mc) && /motion:!reduced\.matches&&!still,spin:!reduced\.matches&&!still/.test(mc)
-      && /now-last>=\(IOS\?1000\/20:1000\/30\)/.test(mc) && /v\.slow=true;v\.skip0=true;/.test(mc),
-    "워커를 못 쓰면 정지 화면(자동회전·흐르는 빛 끔) · 아이폰만 가볍게 움직인다(초당 20장 · 밝은 선만)", "★대체 경로가 계속 그린다(아이폰 경량 조건 없이)★");
+      && /spinEl\.animate\(\[\{transform:'rotate\(0turn\)'\},\{transform:'rotate\(1turn\)'\}\]/.test(mc) && /S=Math\.ceil\(Math\.hypot\(w,h\)\)/.test(mc)
+      && /v\.budget=v\.lod\?0:OM_CHUNK/.test(mc) && /pend=drawRest\(ctx,sc,v,S,S,pend,OM_CHUNK\)/.test(mc) && /OM_CHUNK=6000/.test(src),
+    "아이폰: 자동회전은 CSS(GPU)로 그림째 · 다시 그리기는 한 장면 6천 줄씩 나눠서 · 기능은 켜진 채", "★아이폰 메인 스레드가 3D 회전을 계속 그린다★");
+  { const tk = mc.slice(mc.indexOf("function tick(now){"), mc.indexOf("function fxFrame(){"));
+    chk(tk.length > 0 && !/yaw/.test(tk) && /if\(!runOn\(\)\)return;/.test(tk), "메인 경로 박자(tick)는 3D 를 돌리지 않고 · 스크롤·화면 밖이면 바로 쉰다", "★메인 경로가 박자마다 3D 를 돌린다★"); }
+  { // 나눠 그리기 = 한 번에 그리기(가산 합성 · 같은 단계 · 같은 선 수)
+    const segs = (c) => { let n = 0; c.lineTo = () => { n++; }; return () => n; };
+    const cA = mk(), nA = segs(cA); NO.drawCore(cA, sc, { yaw: .4, pitch: .3, zoom: 1, panX: 0, panY: 0, selected: -1, motion: false, spin: false, glow: false, small: null }, 1200, 400, 0);
+    const cB = mk(), nB = segs(cB); let r0 = NO.drawCore(cB, sc, { yaw: .4, pitch: .3, zoom: 1, panX: 0, panY: 0, selected: -1, motion: false, spin: false, glow: false, small: null, budget: 2000 }, 1200, 400, 0).rest, steps = 0;
+    while (r0 >= 0 && steps < 40) { r0 = NO.drawRest(cB, sc, {}, 1200, 400, r0, 2000); steps++; }
+    chk(nA() === nB() && steps >= 2, "나눠 그리기(2천 줄씩 " + steps + "번 더)도 선 수가 같다(" + nB() + ")", "★나눠 그리면 선이 빠진다(" + nA() + " vs " + nB() + ")★"); }
   chk(/clearInterval\(gc\)/.test(mc) && /wk\.terminate\(\)/.test(mc), "다시 그릴 때 워커·감시 타이머를 거둔다", "★스레드·타이머가 쌓인다★");
   { const calls2 = { stroke: 0, fill: 0 }; const c2 = mk(); c2.stroke = () => calls2.stroke++;
     const full = NO.drawCore(c2, sc, { yaw: .4, pitch: .3, zoom: 1, panX: 0, panY: 0, selected: -1, motion: false, spin: false, glow: false, small: null }, 1200, 400, 0).drawn;

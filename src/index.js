@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.462";
+const _BUILD_VER = "V33.463";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -26403,8 +26403,9 @@ async function handleRequest(request, env, ctx) {
         const sv = function (x, n) { return String(x == null ? "" : x).slice(0, n); };
         const nv = function (x) { const v = Number(x); return isFinite(v) ? Math.round(v) : null; };
         const ev = (Array.isArray(j.ev) ? j.ev : []).slice(0, 20).map(function (e) {
+          // [V33.463] tg: 손가락이 닿은 요소(태그#id.클래스 · 48자) · dy: 민 거리 · od: OMNI 한 장 그리기 평균 ms
           return { ms: nv(e && e.ms), at: nv(e && e.at), pg: sv(e && e.pg, 20), md: sv(e && e.md, 16), vw: sv(e && e.vw, 16),
-                   om: sv(e && e.om, 24), sc: !!(e && e.sc), k: sv(e && e.k, 16) };
+                   om: sv(e && e.om, 32), sc: !!(e && e.sc), k: sv(e && e.k, 16), tg: sv(e && e.tg, 48), dy: nv(e && e.dy), od: nv(e && e.od) };
         });
         const rec = { ts: Date.now(), build: sv(j.build, 12), ua: sv(j.ua, 140), vp: sv(j.vp, 20), ev: ev };
         const put = (async function () {

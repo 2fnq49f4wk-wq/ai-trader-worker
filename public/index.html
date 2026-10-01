@@ -86,7 +86,7 @@ window.LUXBOOT = (function () {
         var nn = document.getElementById('page-nnviz'); o.vw = nn ? (nn.getAttribute('data-brain-view') || '') : '';
         var tb = document.querySelector('#nnvTabs .nnv-tab.active'); o.md = tb ? (tb.getAttribute('data-model') || '') : '';
         var c = document.querySelector('#omniVol canvas');
-        if (c) o.om = (c.dataset.mode || '') + (c.dataset.ios ? '/ios' : '') + (c.dataset.lite ? '/lite' : '') + (c.dataset.ready ? '/ready' : '');
+        if (c) { o.om = (c.dataset.mode || '') + (c.dataset.ios ? '/ios' : '') + (c.dataset.lite ? '/lite' : '') + (c.dataset.ready ? '/ready' : '') + (c.dataset.pend != null ? '/sq' : ''); o.od = +c.dataset.averageMs || 0; }
       } catch (e) {}
       return o;
     }
@@ -100,13 +100,31 @@ window.LUXBOOT = (function () {
             else fetch('/api/client-perf', { method: 'POST', body: body, keepalive: true, headers: { 'content-type': 'application/json' } }); } catch (e) {}
     }
     document.addEventListener('scroll', function () { lastScroll = Date.now(); }, { capture: true, passive: true });
-    document.addEventListener('visibilitychange', function () { if (document.hidden) { hiddenAt = Date.now(); send(true); } });
+    document.addEventListener('visibilitychange', function () { if (document.hidden) { hiddenAt = Date.now(); send(true); } else shownAt = Date.now(); });
     window.addEventListener('pagehide', function () { send(true); });
+    var shownAt = 0;
     setInterval(function () {
       var n = performance.now(), g = n - last - 200; last = n;
-      if (document.hidden || Date.now() - hiddenAt < 1500) return;   // 백그라운드 절전은 멈춤이 아니다
-      if (g > 400) { var o = ctx(); o.ms = Math.round(g); o.at = Date.now(); o.k = 'stall'; q.push(o); if (q.length > 40) q.shift(); send(false); }
+      if (document.hidden || Date.now() - hiddenAt < 1500 || Date.now() - shownAt < 1500) return;   // 백그라운드 절전은 멈춤이 아니다
+      /* [V33.463] 20초 넘는 간격은 '멈춤' 이 아니라 앱이 잠든 것(iOS 는 돌아올 때 타이머가 숨김 해제보다 먼저 돈다 — 실기기 106초 기록) */
+      if (g > 400) { var o = ctx(); o.ms = Math.round(g); o.at = Date.now(); o.k = g > 20000 ? 'susp' : 'stall'; q.push(o); if (q.length > 40) q.shift(); send(false); }
     }, 200);
+    /* [V33.463] ★손가락은 움직였는데 화면이 안 굴렀나★ — 사용자(아이폰): "아직도 스크롤 멈춘다". 굳음(stall)이 없는데도 멈춘다면
+       스크롤이 막힌 것이다. 위아래로 60px 넘게 밀었는데 그 화면의 스크롤 위치가 4px 도 안 바뀌었고 끝에 닿은 것도 아니면 'stuck' —
+       손가락이 처음 닿은 요소(태그#id.클래스)를 같이 적는다. 수동 감시(passive)라 스크롤을 막지 않는다. */
+    var tch = null;
+    var scroller = function () { var pg = document.querySelector('.page.active'); if (pg && pg.scrollHeight > pg.clientHeight + 2) return pg; return document.scrollingElement || document.documentElement; };
+    var desc = function (el) { try { var s2 = ''; for (var i = 0; el && el.nodeType === 1 && i < 2; i++, el = el.parentElement) { var cl = (typeof el.className === 'string' ? el.className.trim().split(/\s+/)[0] : '') || ''; s2 = (el.tagName || '').toLowerCase() + (el.id ? '#' + el.id : '') + (cl ? '.' + cl : '') + (s2 ? '>' + s2 : ''); } return s2.slice(0, 48); } catch (e) { return ''; } };
+    document.addEventListener('touchstart', function (e) { if (!e.touches || e.touches.length !== 1) { tch = null; return; } var sc = scroller(); tch = { x: e.touches[0].clientX, y: e.touches[0].clientY, sc: sc, st: sc.scrollTop, t: Date.now(), tg: desc(e.target) }; }, { passive: true, capture: true });
+    document.addEventListener('touchend', function (e) {
+      var t = tch; tch = null; var ch = e.changedTouches && e.changedTouches[0]; if (!t || !ch) return;
+      var dy = ch.clientY - t.y, dx = ch.clientX - t.x; if (Math.abs(dy) < 60 || Math.abs(dy) < 2 * Math.abs(dx)) return;
+      setTimeout(function () {   // 관성 스크롤이 시작될 틈을 준다
+        var sc = t.sc, now = sc.scrollTop, max = sc.scrollHeight - sc.clientHeight;
+        var edge = (dy > 0 && t.st <= 1) || (dy < 0 && t.st >= max - 1);
+        if (Math.abs(now - t.st) < 4 && !edge) { var o = ctx(); o.k = 'stuck'; o.ms = Date.now() - t.t; o.tg = t.tg; o.dy = Math.round(dy); o.at = Date.now(); q.push(o); if (q.length > 40) q.shift(); send(false); }
+      }, 120);
+    }, { passive: true, capture: true });
     // 탭이 죽고 다시 열렸나 — [V33.461] sessionStorage(탭마다 따로) → localStorage: 멈춘 탭을 닫고 새 탭으로 열어도 남는다 · 10분 안.
     //   직전 숨소리(2초마다)가 정상 종료(pagehide·숨김) 표시 없이 끊겼으면 'abrupt' — 그때 어느 화면·OMNI 방식·스크롤 중이었는지.
     var K = 'luxAlive2';
@@ -138,8 +156,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.462">
-<script src="/neural-observatory.js?v=33.462" defer></script>
+<meta name="lux-build" content="V33.463">
+<script src="/neural-observatory.js?v=33.463" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -20309,11 +20327,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.462">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.462">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.462">
-<link rel="stylesheet" href="/model-evidence.css?v=33.462">
-<script src="/model-evidence.js?v=33.462"></script>
-<script src="/workspace-ui.js?v=33.462"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.463">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.463">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.463">
+<link rel="stylesheet" href="/model-evidence.css?v=33.463">
+<script src="/model-evidence.js?v=33.463"></script>
+<script src="/workspace-ui.js?v=33.463"></script>
 </body>
 </html>
