@@ -58,7 +58,12 @@ async function omniTimes(p, t0) {
   const r = { canvas: null, ready: null, full: null };
   const until = Date.now() + 30000;
   while (Date.now() < until && (r.canvas == null || r.ready == null || r.full == null)) {
-    const s = await p.evaluate(() => { const v = document.getElementById("omniVol"), c = v && v.querySelector("canvas"), o = v && v.querySelector("output");
+    const s = await p.evaluate(() => {
+      // [V33.466] Brain Studio(WebGL) 가 붙었으면 그쪽을 잰다 — 캔버스 · 그려짐(크기) · '전부 한 줄씩'
+      const bs = document.querySelector("#brain-studio .bs-gl-inline");
+      if (bs) { const c = bs.querySelector("canvas"), root = document.getElementById("brain-studio");
+        return { c: !!c, ready: !!(c && c.width > 1), full: !!(root && /전부 한 줄씩/.test(root.textContent)) }; }
+      const v = document.getElementById("omniVol"), c = v && v.querySelector("canvas"), o = v && v.querySelector("output");
       return { c: !!c, ready: !!(c && (c.dataset.ready || (c.dataset.mode === "main" && c.dataset.draws))), full: !!(o && /전부 한 줄씩/.test(o.textContent)) }; }).catch(() => ({}));
     const dt = Date.now() - t0;
     if (s.c && r.canvas == null) r.canvas = dt;
@@ -113,7 +118,7 @@ async function run(tag, eng, copts, throttle) {
   await p.waitForTimeout(1500);
   await shot(p, tag + ".nnviz-scrolled");
   // 모델 보기 → OMNI
-  await p.evaluate(() => { window.__phase = "omni-open"; if (window.luxBrainView) window.luxBrainView("models"); if (window.switchNnModel) window.switchNnModel("omni"); });
+  await p.evaluate(() => { window.__phase = "omni-open"; try { localStorage.setItem("bsModel", "omni"); } catch (e) {} if (window.luxBrainView) window.luxBrainView("models"); if (window.switchNnModel) window.switchNnModel("omni"); });
   const tw = Date.now();
   const ot = await omniTimes(p, tw);
   out(tag + ".omni_times", ot);
@@ -121,21 +126,23 @@ async function run(tag, eng, copts, throttle) {
     const tab = document.querySelector('#nnvTabs .nnv-tab.active'); const pg = document.getElementById("page-nnviz");
     return { stage: st ? st.innerHTML.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 300) : null, activeTab: tab ? tab.getAttribute("data-model") : null,
              view: pg ? pg.getAttribute("data-brain-view") : null, hasSwitch: typeof window.switchNnModel, cache: (function(){ try { return !!localStorage.getItem("nnvCache_omni"); } catch (e) { return "err"; } })() }; }));
-  await p.evaluate(() => { const v = document.getElementById("omniVol"); if (v) v.scrollIntoView({ block: "center" }); window.__phase = "omni-view"; });
+  const OV = await p.evaluate(() => document.querySelector("#brain-studio .bs-gl-inline") ? "#brain-studio .bs-gl-inline" : "#omniVol");
+  out(tag + ".omni_host", OV);
+  await p.evaluate((sel) => { const v = document.querySelector(sel); if (v) v.scrollIntoView({ block: "center" }); window.__phase = "omni-view"; }, OV);
   await p.waitForTimeout(4000);
   await shot(p, tag + ".omni");
-  out(tag + ".swipe_omni", await touchSwipe(p, cdp, "#omniVol .nerve-viewport canvas"));
+  out(tag + ".swipe_omni", await touchSwipe(p, cdp, OV === "#omniVol" ? "#omniVol .nerve-viewport canvas" : OV));
   await p.evaluate(() => { window.__phase = "omni-scroll"; });
   for (let i = 0; i < 8; i++) { await p.mouse.wheel(0, i % 2 ? -350 : 350).catch(() => {}); await p.waitForTimeout(200); }
   await p.waitForTimeout(1500);
-  await p.evaluate(() => { const v = document.getElementById("omniVol"); if (v) v.scrollIntoView({ block: "center" }); });
+  await p.evaluate((sel) => { const v = document.querySelector(sel); if (v) v.scrollIntoView({ block: "center" }); }, OV);
   await p.waitForTimeout(1200);
   await shot(p, tag + ".omni-after-scroll");
   const pg = await p.evaluate(() => {
     const byPhase = {}; for (const [ph, , g] of window.__stalls) { const o = byPhase[ph] || (byPhase[ph] = { n: 0, sum: 0, max: 0 }); o.n++; o.sum += g; o.max = Math.max(o.max, g); }
     const lt = {}; for (const [ph, , d] of window.__lt) { const o = lt[ph] || (lt[ph] = { n: 0, sum: 0, max: 0 }); o.n++; o.sum += d; o.max = Math.max(o.max, d); }
-    const c = document.querySelector("#omniVol canvas");
-    return { stalls: byPhase, longtasks: lt, worst: window.__stalls.slice().sort((a, b) => b[2] - a[2]).slice(0, 8), canvas: c ? Object.assign({}, c.dataset) : null,
+    const c = document.querySelector("#omniVol canvas"), g = document.querySelector("#brain-studio canvas");
+    return { studio: !!document.querySelector("#brain-studio main"), gl: g ? g.width + "x" + g.height : null, stalls: byPhase, longtasks: lt, worst: window.__stalls.slice().sort((a, b) => b[2] - a[2]).slice(0, 8), canvas: c ? Object.assign({}, c.dataset) : null,
              build: (document.querySelector('meta[name="lux-build"]') || {}).content || null, dom: document.getElementsByTagName("*").length,
              heapMB: performance.memory ? +(performance.memory.usedJSHeapSize / 1e6).toFixed(1) : null };
   });

@@ -379,6 +379,9 @@ jobs:
       # [V33.464] 손절가 = ATR·% 중 타이트한 쪽(수량 산정과 같은 규칙) · 열린 포지션의 넓은 손절가 상한. 실행으로 확인.
       - name: Stop rule check
         run: node tools/check-stop-rule.mjs
+      # [V33.466] Brain Studio('02 모델 구조') — 번들·범위 한정 스타일·손가락 스크롤 통과·WebGL·옛 화면 폴백
+      - name: Brain Studio check
+        run: node tools/check-brain-studio.mjs
       # [V33.368] ★게이트 133종을 전부 통과하고도 배포가 3판 연속 막혔다★ —
       #   게이트가 코드만 보고 그 코드가 배포되는 길(러너 시간 예산)은 안 봤기 때문이다.
       #   예약 워크플로가 GPU 학습을 붙잡고 기다리면 월 6,600분을 태운다(한도 2,000분).

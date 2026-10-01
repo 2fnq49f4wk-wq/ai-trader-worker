@@ -12,6 +12,21 @@
 
 ## Current handoff
 
+- Status: **V33.466 — '02 모델 구조' 를 Brain Studio(React+Tailwind · WebGL)로 새로 · 두뇌 화면 머리 정리.**
+  ■ 사용자: "저급해 보인다 · 스크롤 근본 해결 · 움직일 때 렉 · 모델 구조창이 복잡 · 정보가 여기저기". 실기기 기록은 V33.462 방문 뒤 없음(새 판 기록 0).
+  ■ studio/(소스 · node_modules 제외) → public/brain-studio.js(IIFE 한 파일 · CSS 를 #brain-studio 안에만 주입 · Preflight 끔).
+    '02 모델 구조' 를 처음 열 때 workspace-ui.js 가 불러와 mount · 붙으면 #page-nnviz.bs-on 이 #modelEvidence·#nnvStruct 를 숨긴다 ·
+    못 붙으면(스크립트 실패 15초) 옛 openNnViz 그대로. 옛 렌더러 코드는 지우지 않았다(폴백·게이트).
+  ■ 한 화면: 모델 목록(폰: 한 줄 · 데스크톱: 왼쪽 묶음) → 이름·상태·이유 → 핵심 숫자 4 → 탭(구조·근거·상세). 11개 모델 모두 같은 틀.
+    데이터는 기존 /api/nn-viz?model=X · /api/omni-structure(서버 roster 가 상태의 유일한 출처).
+  ■ OMNI 3D = WebGL(studio/src/gl/omniGL.ts): 선 3.7만+뼈대+나무 몸+띠를 버퍼 하나 · 회전·원근·깊이·새벽색은 셰이더 · 장면마다 drawArrays 한 번.
+    화면 속 3D 는 손가락 기기에서 pointer-events:none(스크롤이 막힐 수 없다) · 조작은 '크게 보기' 전체 화면(한 손가락 회전 · 두 손가락 확대 · 누르면 그 뉴런 선만).
+    화면 밖·숨김이면 정지 · 화면 속은 초당 30장. WebGL 이 없으면 2D drawCore 정지 한 장.
+  ■ 사이트 CSP 가 외부 글꼴을 막는다(font-src 'self') — 구글 글꼴은 원래 운영에서 안 실렸다. 스튜디오·머리는 시스템 한글 글꼴.
+  ■ 사이트 사이드바 .rail 과 이름이 겹쳐 모델 목록이 사라졌던 것 → 스튜디오 자체 클래스는 bs- 접두(게이트).
+  ■ 로컬 확인(아이폰 흉내 · 스냅샷 API): 붙음 · 옛 화면 숨김 · 3D 위 손가락 216px → 페이지 201px.
+  ■ 다시 빌드: cd studio && pnpm install && npx vite build && cp dist/brain-studio.js ../public/ (check-brain-studio 가 번들·소스 일치 표시를 본다).
+  ■ ui-probe shapes=true: 모델 응답 사본을 ui-probe-data 가지에 · ui-probe-perf 는 스튜디오를 잰다(omni_host).
 - Status: **V33.465 — 운영 확인(run 36829744639 · V33.464): 새 디자인 양쪽 정상 캡처 · 휴대폰 OMNI·지도 위 스와이프 201/216px · 오류 0.**
   ■ CI 아이폰(WebKit · 소프트웨어 그리기): OMNI 연 직후 나눠 그리기 장면마다 0.45~1.1초 굳음 → OM_CHUNK 6천→3천. 실기기(GPU)는 devlog 의 od·stuck 으로 확인.
   ■ 안내 문구 '점을 누르면' → '선이 모인 자리를 누르면'.
