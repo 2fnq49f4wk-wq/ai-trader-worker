@@ -29,6 +29,10 @@ on:
         description: '수익률 진단 — 거래 원장을 구간·청산·진입 전략·보유 시간별로(tools/probe-returns.mjs) · 브라우저 없음'
         type: boolean
         default: false
+      shapes:
+        description: '모델 구조 응답(/api/nn-viz 모델별 · omni-structure · ai-mode)을 ui-probe-data 가지에 저장 — 화면 설계용 · 브라우저 없음'
+        type: boolean
+        default: false
 
 concurrency:
   group: ui-probe
@@ -79,6 +83,25 @@ jobs:
               for e in ev: print("DEVLOG   ", e.get("k"), e.get("ms"), "ms", "pg="+str(e.get("pg")), "vw="+str(e.get("vw")), "md="+str(e.get("md")), "om="+str(e.get("om")), "scroll" if e.get("sc") else "", "tg="+str(e.get("tg") or ""), "dy="+str(e.get("dy")), "od="+str(e.get("od")))
           PY
 
+      # [V33.466] 화면 설계용 실제 응답 사본(읽기 전용 GET) — 모델 구조 화면을 실제 데이터 모양에 맞춰 다시 짓는다
+      - name: 모델 구조 응답 저장
+        if: inputs.shapes && steps.url.outputs.url != ''
+        env:
+          URL: ${{ steps.url.outputs.url }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p data && cd data
+          for m in overview mind gbdt xgb lgb cat memo seq omni dualbull dualbear; do
+            curl -sS --max-time 40 "$URL/api/nn-viz?model=$m" -o "nn-$m.json" || true
+            echo "SHAPE nn-$m $(wc -c < nn-$m.json) bytes"
+          done
+          curl -sS --max-time 40 "$URL/api/omni-structure" -o omni-structure.json || true
+          curl -sS --max-time 40 "$URL/api/ai-mode" -o ai-mode.json || true
+          ls -la
+          git init -q && git checkout -q -b ui-probe-data
+          git add . && git -c user.name=ui-probe -c user.email=ui-probe@users.noreply.github.com commit -qm "ui-probe 응답 run ${{ github.run_id }}"
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" ui-probe-data
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -90,13 +113,13 @@ jobs:
         run: node tools/probe-returns.mjs "$URL" || true
 
       - name: 브라우저 준비
-        if: ${{ !inputs.devlog && !inputs.returns }}
+        if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes }}
         run: |
           npm i --no-save --no-audit --no-fund playwright@1
           npx playwright install --with-deps chromium webkit
 
       - name: OMNI 화면 측정
-        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns
+        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns && !inputs.shapes
         env:
           URL: ${{ steps.url.outputs.url }}
           IMG: ${{ inputs.img && '1' || '0' }}
