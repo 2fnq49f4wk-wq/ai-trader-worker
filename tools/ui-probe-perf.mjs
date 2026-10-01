@@ -36,6 +36,23 @@ function cpuReport(label, profile) {
   out(label + ".cpu_incl", fmt(incl, 20));
   out(label + ".cpu_total_ms", Math.round([...self.values()].reduce((a, x) => a + x, 0) / 1000));
 }
+// [V33.462] 손가락으로 위로 밀었을 때 페이지가 실제로 스크롤되나(크롬 CDP 터치) — "OMNI 열고 스크롤하면 멈춘다" 의 실체가 이것이었다
+async function touchSwipe(p, cdp, sel) {
+  if (!cdp) return null;
+  try {
+    const el = await p.$(sel); if (!el) return { err: "no " + sel };
+    await el.scrollIntoViewIfNeeded().catch(() => {}); await p.waitForTimeout(300);
+    const bb = await el.boundingBox(); if (!bb) return { err: "no box" };
+    const pos = () => p.evaluate(() => { const pg = document.querySelector(".page.active"); return (pg ? pg.scrollTop : 0) + (window.scrollY || 0); });
+    const before = await pos();
+    const X = Math.round(bb.x + bb.width / 2); let Y = Math.round(Math.min(bb.y + bb.height * 0.8, 780));
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: X, y: Y }] });
+    for (let i = 0; i < 12; i++) { Y -= 18; await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: X, y: Y }] }); await p.waitForTimeout(16); }
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await p.waitForTimeout(500);
+    return { moved: Math.round((await pos()) - before), swipe: 216 };
+  } catch (e) { return { err: String(e).slice(0, 120) }; }
+}
 async function omniTimes(p, t0) {
   // 캔버스 → 워커 준비 → 구조 전부(설명 문구에 '전부 한 줄씩')
   const r = { canvas: null, ready: null, full: null };
@@ -85,6 +102,7 @@ async function run(tag, eng, copts, throttle) {
   await p.waitForTimeout(2000);
   out(tag + ".net_first", net.filter((x) => x[1] < 16000).sort((a, b) => (b[2] || 0) - (a[2] || 0)).slice(0, 25));
   await shot(p, tag + ".home");
+  out(tag + ".swipe_map", await touchSwipe(p, cdp, "#fvHeatmap"));
   // 두뇌 관측(운영 보기)
   await p.evaluate(() => { window.__phase = "nnviz-open"; const n = document.querySelector('.nav-item[data-page="nnviz"]'); if (n) n.click(); });
   await p.waitForTimeout(5000);
@@ -106,6 +124,7 @@ async function run(tag, eng, copts, throttle) {
   await p.evaluate(() => { const v = document.getElementById("omniVol"); if (v) v.scrollIntoView({ block: "center" }); window.__phase = "omni-view"; });
   await p.waitForTimeout(4000);
   await shot(p, tag + ".omni");
+  out(tag + ".swipe_omni", await touchSwipe(p, cdp, "#omniVol .nerve-viewport canvas"));
   await p.evaluate(() => { window.__phase = "omni-scroll"; });
   for (let i = 0; i < 8; i++) { await p.mouse.wheel(0, i % 2 ? -350 : 350).catch(() => {}); await p.waitForTimeout(200); }
   await p.waitForTimeout(1500);
