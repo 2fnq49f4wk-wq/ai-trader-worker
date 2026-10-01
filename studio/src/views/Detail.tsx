@@ -1,8 +1,9 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import { MODELS, type ModelKey, stateOf, HZ, f1, pctv, n0, ago, toneColor } from "../models";
 import { Badge, Bars, Empty, Facts, Kpis, type KpiT, Section } from "./ui";
-import { OmniStage } from "./OmniStage";
+import { ModelNet, OmniStage } from "./OmniStage";
+import { buildNet } from "../gl/netScenes";
 
 type Built = { kpis: KpiT[]; structure: ReactNode; evidence: ReactNode; facts: [string, ReactNode][] };
 
@@ -205,6 +206,8 @@ function Overview({ ov }: { ov: any }) {
 
 export function Detail({ model, d, ov, onRefresh, busy }: { model: ModelKey; d: any; ov: any; onRefresh: () => void; busy: boolean }) {
   const meta = MODELS.find((m) => m.key === model)!;
+  const net = useMemo(() => (model === "omni" ? null : buildNet(model, d)), [model, d]);
+  const netView = net ? <div className="mb-2"><ModelNet sc={net} name={meta.name} /></div> : null;
   const rost = ((d && d.roster) || (ov && ov.roster) || []).find((r: any) => r.key === meta.roster);
   const s = stateOf(rost);
   const head = (
@@ -225,7 +228,7 @@ export function Detail({ model, d, ov, onRefresh, busy }: { model: ModelKey; d: 
       { k: "보정 오차", v: C.cal ? C.cal.ece + "%" : "—", hint: C.cal ? "보정 전 " + C.cal.eceRaw + "%" : undefined, tone: "ok" },
       { k: "입력 칸", v: String(d.inputDim ?? "—"), hint: "피처 판 v" + (d.featVer ?? "—") },
       { k: "일봉 캐시", v: n0(d.cache && d.cache.dailyN), hint: (d.cache && d.cache.dailyDays) ? d.cache.dailyDays + "일" : undefined },
-    ]} /></div><div className="mt-6"><Overview ov={d} /></div></div>);
+    ]} /></div><div className="mt-5">{netView}</div><div className="mt-6"><Overview ov={d} /></div></div>);
   }
   if (!d.trained) return <div>{head}<Empty>{d.why || "아직 학습된 모델이 없습니다."}</Empty></div>;
   const b = (BUILD[model] || trees)(d, ov);
@@ -238,7 +241,7 @@ export function Detail({ model, d, ov, onRefresh, busy }: { model: ModelKey; d: 
           {[["s", "구조"], ["e", "근거"], ["f", "상세"]].map(([v, t]) => (
             <Tabs.Trigger key={v} value={v} className="-mb-px border-b-2 border-transparent pb-2 text-[13px] text-ink-3 data-[state=active]:border-rose data-[state=active]:text-ink">{t}</Tabs.Trigger>))}
         </Tabs.List>
-        <Tabs.Content value="s" className="pt-4 outline-none">{b.structure}</Tabs.Content>
+        <Tabs.Content value="s" className="pt-4 outline-none">{netView}{b.structure}</Tabs.Content>
         <Tabs.Content value="e" className="pt-1 outline-none">{b.evidence}</Tabs.Content>
         <Tabs.Content value="f" className="pt-4 outline-none"><Facts rows={b.facts} /></Tabs.Content>
       </Tabs.Root>

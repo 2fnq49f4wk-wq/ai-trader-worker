@@ -35,6 +35,15 @@ chk(/IntersectionObserver/.test(GL) && /document\.hidden/.test(fr) && /now - las
 chk(/failIfMajorPerformanceCaveat: true/.test(GL) && /spin: opts\.spin && !soft, motion: opts\.motion && !soft/.test(GL) && /ema > \(opts\.interactive \? 90 : 75\)\) \{ v\.spin = false; v\.motion = false;/.test(GL),
   "가속 없는 기기(소프트웨어 WebGL)는 정지 화면 · 장면 간격이 느리면 자동 움직임을 스스로 멈춘다", "★가속 없는 기기에서도 계속 돌린다(CI 휴대폰 흉내: 1.7초 굳음)★");
 chk(/NO\.omniCore\(d, st && st\.ok \? st : null\)/.test(OS), "장면 데이터는 사이트의 omniCore 그대로(값을 지어내지 않는다)", "★장면을 따로 지어낸다★");
+console.log("⑥ 모든 모델의 신경망");
+const NS = readFileSync(new URL("../studio/src/gl/netScenes.ts", import.meta.url), "utf8"), DT = readFileSync(new URL("../studio/src/views/Detail.tsx", import.meta.url), "utf8");
+const bn = NS.slice(NS.indexOf("export function buildNet"));
+chk(["overview", "mind", "memo", "seq", "dualbull", "dualbear", "gbdt", "xgb", "lgb", "cat"].every((k) => bn.includes('"' + k + '"')), "OMNI 밖 10개(전체·MIND·트리 4·MEMO·SEQ·이중헤드 2)도 신경망 장면이 있다", "★신경망이 빠진 모델이 있다★");
+chk(/buildNet\(model, d\)/.test(DT) && /\{netView\}\{b\.structure\}/.test(DT) && /<ModelNet /.test(DT), "'구조' 탭 맨 위에 그 모델의 신경망", "★구조 탭에 신경망이 안 붙는다★");
+chk(!/Math\.random/.test(NS), "신경망 장면은 응답 값으로만(난수 없음)", "★난수로 그린다★");
+chk(/createOmniGL/.test(OS) && /export function ModelNet/.test(OS), "모든 모델이 같은 WebGL 엔진(장면마다 drawArrays 한 번)", "★다른 모델은 다른 그리기 경로★");
+chk(/addEventListener\("scroll", onScroll/.test(GL) && /\|\| scrolling\) return;/.test(fr), "페이지가 스크롤되는 동안 화면 속 그림은 멈춘다", "★스크롤 중에도 그린다★");
+chk(/opts\.interactive \? 2 : 1\.5/.test(GL), "화면 속 그림은 해상도 1.5배까지(전체 화면 2배)", "★화면 속 그림 해상도 상한이 없다★");
 console.log("⑤ 사이트 배선");
 const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8"), WU = readFileSync(new URL("../public/workspace-ui.js", import.meta.url), "utf8"), WL = readFileSync(new URL("../public/workspace-layout.css", import.meta.url), "utf8");
 chk(/<div id="brain-studio" class="bs-mount"><\/div>/.test(H), "index.html 에 #brain-studio 자리", "★붙일 자리가 없다★");
