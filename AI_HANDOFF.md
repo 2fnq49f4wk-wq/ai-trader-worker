@@ -12,6 +12,9 @@
 
 ## Current handoff
 
+- Status: **V33.462 운영 확인(run 36798147763): 휴대폰(크롬 터치) OMNI 그림 위 위로 216px 밀기 → 페이지 201px 스크롤 · S&P 지도도 201px.**
+  ■ 종목 상세 차트(.detail-chart)도 손가락 기기 pan-y. ui-probe-perf 에 swipe_omni / swipe_map(CDP 터치).
+  ■ 인트로 4.2초 ready(둘 다) · 오류 0. 실기기 기록은 다음 방문부터 visit/abrupt 로 들어온다.
 - Status: **V33.461 — "OMNI 열고 스크롤하면 완전히 멈춘다" 의 실체: 그림 칸이 touch-action:none 이라 손가락으로 위아래 밀면 페이지가 0px 스크롤.**
   ■ 재현(로컬 크롬 · Pixel 7 · CDP 터치 이벤트): 옛 CSS 에선 OMNI 위 위로 216px 밀기 → 스크롤 0 · 새 CSS → 255px(그림 밖 대조 251px).
     폰에선 그림 칸이 화면 폭 전부 · 높이 절반 가까이라 '사이트가 굳은 것' 처럼 보였다. 데스크톱(마우스)·CI 측정은 이걸 못 잡았다.
