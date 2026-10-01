@@ -184,7 +184,7 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
     W = w; H = h; cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); decoKey = ""; kick();
   }
   function frame(now: number) {
-    raf = 0; if (dead || !visible || document.hidden || scrolling) return;
+    raf = 0; if (scrolling) { owed = true; return; } if (dead || !visible || document.hidden) return; owed = false;
     if (!opts.interactive && last && now - last < 31 && (v.spin || v.motion) && !ptr.size) { kick(); return; }   // inline view: 30 fps is plenty (battery)
     const iv = last ? now - last : 0;
     if (iv > 0 && iv < 1000 && (v.spin || v.motion) && !ptr.size) { ema = ema ? ema * .85 + iv * .15 : iv;
@@ -209,7 +209,7 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
       lab[k].style.transform = `translate(${(q[0] + dx / l * 14 - 14).toFixed(1)}px,${(q[1] + dy / l * 14 - 7).toFixed(1)}px)`; });
     if (v.spin || v.motion) kick();
   }
-  function kick() { if (!raf && !dead && visible && !document.hidden && !scrolling) raf = requestAnimationFrame(frame); }
+  function kick() { if (scrolling) { owed = true; return; } if (!raf && !dead && visible && !document.hidden) raf = requestAnimationFrame(frame); }
 
   // ── interaction (desktop always; touch only in full-screen mode) ──
   const ptr = new Map<number, { x: number; y: number }>(); let moved = false;
@@ -235,8 +235,8 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
   }
 
   /* 페이지가 스크롤되는 동안 화면 속 그림은 멈춘다 — 그 사이 GPU·메인 스레드를 스크롤에 다 준다. 멈추면 200ms 뒤 이어서. */
-  let scrolling = false, scrollT = 0;
-  const onScroll = () => { if (opts.interactive) return; scrolling = true; clearTimeout(scrollT); scrollT = window.setTimeout(() => { scrolling = false; last = 0; kick(); }, 200); };
+  let scrolling = false, scrollT = 0, owed = false;   // owed: 스크롤 중에 미뤄진 그리기가 있다
+  const onScroll = () => { if (opts.interactive) return; scrolling = true; clearTimeout(scrollT); scrollT = window.setTimeout(() => { scrolling = false; if (owed || v.spin || v.motion) { last = 0; kick(); } }, 200); };
   document.addEventListener("scroll", onScroll, { capture: true, passive: true });
   const ro = new ResizeObserver(size); ro.observe(host);
   const io = new IntersectionObserver((en) => { visible = en[0].isIntersecting; if (visible) { last = 0; kick(); } }); io.observe(host);

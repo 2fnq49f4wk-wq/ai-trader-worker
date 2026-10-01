@@ -42,7 +42,8 @@ chk(["overview", "mind", "memo", "seq", "dualbull", "dualbear", "gbdt", "xgb", "
 chk(/buildNet\(model, d\)/.test(DT) && /\{netView\}\{b\.structure\}/.test(DT) && /<ModelNet /.test(DT), "'구조' 탭 맨 위에 그 모델의 신경망", "★구조 탭에 신경망이 안 붙는다★");
 chk(!/Math\.random/.test(NS), "신경망 장면은 응답 값으로만(난수 없음)", "★난수로 그린다★");
 chk(/createOmniGL/.test(OS) && /export function ModelNet/.test(OS), "모든 모델이 같은 WebGL 엔진(장면마다 drawArrays 한 번)", "★다른 모델은 다른 그리기 경로★");
-chk(/addEventListener\("scroll", onScroll/.test(GL) && /\|\| scrolling\) return;/.test(fr), "페이지가 스크롤되는 동안 화면 속 그림은 멈춘다", "★스크롤 중에도 그린다★");
+chk(/addEventListener\("scroll", onScroll/.test(GL) && /if \(scrolling\) \{ owed = true; return; \}/.test(fr), "페이지가 스크롤되는 동안 화면 속 그림은 멈춘다", "★스크롤 중에도 그린다★");
+chk(/if \(owed \|\| v\.spin \|\| v\.motion\)/.test(GL), "스크롤이 멈춘 뒤엔 미뤄진 그리기·움직임이 있을 때만 다시 그린다(정지 화면 기기에서 매번 다시 그리면 0.9초씩 굳는다)", "★스크롤이 멈출 때마다 무조건 다시 그린다★");
 chk(/opts\.interactive \? 2 : 1\.5/.test(GL), "화면 속 그림은 해상도 1.5배까지(전체 화면 2배)", "★화면 속 그림 해상도 상한이 없다★");
 console.log("⑤ 사이트 배선");
 const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8"), WU = readFileSync(new URL("../public/workspace-ui.js", import.meta.url), "utf8"), WL = readFileSync(new URL("../public/workspace-layout.css", import.meta.url), "utf8");
