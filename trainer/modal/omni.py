@@ -126,6 +126,24 @@ FLOW_GAIN = 0.005          # [V33.434] 수급 채택 기준 — 한국 행 홀�
 if FLOW:
     FEATS = FEATS + FLOW_FEATS
     PANEL_FEATS = PANEL_FEATS + FLOW_FEATS
+# ══ [V33.472] ★한국 종목 뉴스 — 실험 스위치(재기만 · 업로드 거부)★ ═══════════════════════════════════════════
+#   사용자 선택("뉴스 강도 입력 실험"). 가격·거래량 입력의 천장(AUC ≈ 0.51)을 넘는지 ★재 본다★ — 약속하지 않는다.
+#   워커 수집기(omniNewsCollect)가 모은 종목별 기사 [시각 · 제목 어조 · 번호] 를 일별로 묶어 ★패널★ 로 붙인다.
+#   ★그 날짜(전일 확정 일봉의 날짜)까지의 기사만★ 본다 — 장중 행은 그 전날까지의 뉴스만 안다(미래 혼입 없음).
+#   수집이 덮은 구간(from~to) 밖은 0 건이 아니라 ★모름(NaN)★ 이다. 미국 종목은 뉴스 이력이 없으므로 NaN.
+#     e_n1 · e_n7 = log(1+건수) 전일 · 7일 / e_surge = log((7일 일평균+0.1)/(60일 일평균+0.1)) 관심 급증
+#     e_tone7 · e_tone30 = (좋음−나쁨)/(좋음+나쁨+1) 7·30일 / e_gap = 마지막 기사 뒤 지난 날(최대 60)
+#     q_en7 · q_esurge · q_etone7 = 같은 날 한국 종목 안 분위
+#   OMNI_NEWS=1 회차는 같은 표본으로 '뉴스 칸 비움' 과 '채움' 을 둘 다 학습해 한국 행 홀드아웃 AUC 를 견주고
+#   (수급과 같은 채택 기준: +0.005 이상 & 3구간 중 2승) run() 이 업로드를 거부한다.
+NEWS = os.environ.get("OMNI_NEWS") == "1"
+NEWS_RAW = ["e_n1", "e_n7", "e_surge", "e_tone7", "e_tone30", "e_gap"]
+NEWS_QSRC = {"q_en7": "e_n7", "q_esurge": "e_surge", "q_etone7": "e_tone7"}
+NEWS_FEATS = NEWS_RAW + list(NEWS_QSRC)
+NEWS_GAIN = 0.005
+if NEWS:
+    FEATS = FEATS + NEWS_FEATS
+    PANEL_FEATS = PANEL_FEATS + NEWS_FEATS
     NN_ON = False               # 실험은 나무끼리 비교한다(신경망은 따로 흔들려 비교를 흐린다)
 PANEL_MIN = 20          # 이보다 적으면 랭크를 만들지 않는다(모르면 모른다)
 PANEL_SRC = {"q_r1": "d_r1", "q_r5": "d_r5", "q_r20": "d_r20", "q_rv20": "d_rv20",
@@ -554,7 +572,59 @@ def flow_feats(fl, day_key):
     return out
 
 
-def build_panel(daily_by_sym, mkt_by_sym, day_key, flows=None):
+def _ord(day_key):
+    import datetime as _dt
+    k = int(day_key)
+    return _dt.date(k // 10000, (k // 100) % 100, k % 100).toordinal()
+
+
+def news_prep(nw):
+    """워커 일별 묶음 {from,to,d,n,p,q} → 달력 날마다 누적합(창 합을 O(1) 로). 덮은 구간만."""
+    if not nw or not nw.get("d") or nw.get("from") is None or nw.get("to") is None:
+        return None
+    o0, o1 = _ord(nw["from"]), _ord(nw["to"])
+    if o1 < o0:
+        return None
+    L = o1 - o0 + 1
+    n, p, q = [0] * L, [0] * L, [0] * L
+    for d, a, b, c in zip(nw["d"], nw["n"], nw["p"], nw["q"]):
+        i = _ord(d) - o0
+        if 0 <= i < L:
+            n[i], p[i], q[i] = int(a), int(b), int(c)
+    cn, cp, cq, last = [0] * (L + 1), [0] * (L + 1), [0] * (L + 1), [-1] * L
+    for i in range(L):
+        cn[i + 1], cp[i + 1], cq[i + 1] = cn[i] + n[i], cp[i] + p[i], cq[i] + q[i]
+        last[i] = i if n[i] > 0 else (last[i - 1] if i else -1)
+    return {"o0": o0, "o1": o1, "cn": cn, "cp": cp, "cq": cq, "last": last}
+
+
+def news_feats(pr, day_key):
+    """그 날짜(포함)까지의 뉴스 칸. 덮은 구간 밖·이력 모자람은 NaN. ★미래를 안 본다★(날짜 ≤ day_key)."""
+    out = {k: NAN for k in NEWS_RAW}
+    if not pr:
+        return out
+    o = _ord(day_key)
+    if o > pr["o1"] + 3 or o < pr["o0"] + 29:      # 수집이 끝난 뒤(낡음) · 30일 이력 전 → 모름
+        return out
+    i = min(o, pr["o1"]) - pr["o0"]
+
+    def S(c, w):
+        a = max(0, i - w + 1)
+        return c[i + 1] - c[a]
+    n1, n7, n30 = S(pr["cn"], 1), S(pr["cn"], 7), S(pr["cn"], 30)
+    out["e_n1"] = math.log1p(n1)
+    out["e_n7"] = math.log1p(n7)
+    if i >= 59:
+        out["e_surge"] = math.log((n7 / 7.0 + 0.1) / (S(pr["cn"], 60) / 60.0 + 0.1))
+    p7, q7, p30, q30 = S(pr["cp"], 7), S(pr["cq"], 7), S(pr["cp"], 30), S(pr["cq"], 30)
+    out["e_tone7"] = (p7 - q7) / (p7 + q7 + 1.0)
+    out["e_tone30"] = (p30 - q30) / (p30 + q30 + 1.0)
+    li = pr["last"][i]
+    out["e_gap"] = float(min(60, i - li)) if li >= 0 else 60.0
+    return out
+
+
+def build_panel(daily_by_sym, mkt_by_sym, day_key, flows=None, news=None):
     """그 날짜(현지 날짜 키)의 패널. 반환 {sym: {패널칸: 값}}.
     ★그 날짜까지 확정된 일봉만★ 본다 — 미래를 한 칸도 안 읽는다."""
     per = {}
@@ -633,13 +703,25 @@ def build_panel(daily_by_sym, mkt_by_sym, day_key, flows=None):
                 for a, s2 in enumerate(syms):
                     out[s2][raw] = ff[s2][raw]
                     out[s2][q] = rk[a] if rk[a] is not None else NAN
+        # [V33.472] 뉴스 — 이 시장에서 뉴스 이력을 덮은 종목만. 원값 + 같은 날 분위.
+        if NEWS and news:
+            nf = {s2: news_feats(news.get(s2), day_key) for s2 in syms}
+            for raw in NEWS_RAW:
+                for s2 in syms:
+                    out[s2][raw] = nf[s2][raw]
+            for qk, src in NEWS_QSRC.items():
+                col = [nf[s2][src] for s2 in syms]
+                have = [c for c in col if c == c]
+                rk = _qrank([c if c == c else None for c in col]) if len(have) >= PANEL_MIN else [None] * len(col)
+                for a, s2 in enumerate(syms):
+                    out[s2][qk] = rk[a] if rk[a] is not None else NAN
     return out
 
 
 PANEL_MAX_DAYS = 1200      # 패널을 만드는 날 수 상한(최근부터) — 학습 시간이 종목×날로 늘어나는 걸 막는다
 
 
-def build_panels(daily_by_sym, mkt_by_sym, max_days=PANEL_MAX_DAYS, flows=None):
+def build_panels(daily_by_sym, mkt_by_sym, max_days=PANEL_MAX_DAYS, flows=None, news=None):
     """여러 날의 패널을 한 번에. 반환 {날짜키: {sym: 패널행}}.
     날짜는 ★일봉이 실제로 있는 날★ 만 — 없는 날의 패널을 지어내지 않는다."""
     keys = set()
@@ -650,7 +732,7 @@ def build_panels(daily_by_sym, mkt_by_sym, max_days=PANEL_MAX_DAYS, flows=None):
     days = sorted(keys)[-max_days:]
     out = {}
     for dk in days:
-        pr = build_panel(daily_by_sym, mkt_by_sym, dk, flows=flows)
+        pr = build_panel(daily_by_sym, mkt_by_sym, dk, flows=flows, news=news)
         if pr:
             out[dk] = pr
     return out
@@ -2186,6 +2268,29 @@ def get_flows(BASE, HDR, syms, log=print):
     return out
 
 
+def get_news(BASE, HDR, syms, log=print):
+    """[V33.472] 워커에서 한국 종목 뉴스 일별 묶음을 받는다(40종목씩). 색인을 못 읽으면(503) 실험을 멈춘다."""
+    import requests
+    r = requests.get(BASE + "/api/omni-news-index", headers=HDR, timeout=60)
+    r.raise_for_status()
+    out, errs = {}, 0
+    for a in range(0, len(syms), 40):
+        part = syms[a:a + 40]
+        rr = requests.get(BASE + "/api/omni-news", params={"s": ",".join(part)}, headers=HDR, timeout=120)
+        rr.raise_for_status()
+        j = rr.json()
+        for s2, nw in (j.get("news") or {}).items():
+            pr = news_prep(nw)
+            if pr:
+                out[s2] = pr
+        errs += len(j.get("errs") or [])
+    span = sorted(v["o1"] - v["o0"] + 1 for v in out.values())
+    deep = sum(1 for v in span if v >= 250)
+    log("   · OMNI 뉴스(실험) — 한국 %d종목 중 이력 %d · 250일 이상 %d · 덮은 기간 중앙 %s일 · 못읽음 %d" % (
+        len(syms), len(out), deep, span[len(span) // 2] if span else "—", errs))
+    return out
+
+
 def build_dataset_stream(BASE, HDR, log=print, limit=None):
     """★흘려서★ 만든다 — 5분봉을 묶음으로 받아 곧바로 행으로 바꾸고 원시 봉은 버린다.
     저장소가 커져도(종목당 5분봉 4만 개) 원시 봉 전체를 한꺼번에 메모리에 올리지 않는다."""
@@ -2217,7 +2322,8 @@ def build_dataset_stream(BASE, HDR, log=print, limit=None):
     #   일봉은 전부 받아 둔 상태이므로 여기가 유일하게 가능한 자리다(5분봉은 흘려서 버린다).
     _t1 = time.time()
     flows = get_flows(BASE, HDR, [s for s in syms if ix[s].get("m") == "kr"], log) if FLOW else None
-    panels = build_panels(daily, {s: ix[s].get("m", "us") for s in syms}, flows=flows)
+    news = get_news(BASE, HDR, [s for s in syms if ix[s].get("m") == "kr"], log) if NEWS else None
+    panels = build_panels(daily, {s: ix[s].get("m", "us") for s in syms}, flows=flows, news=news)
     log("   · OMNI 패널 %d일 (종목 %d · %.0fs) — 횡단면 랭크·시장 상대가 여기서 나온다" % (
         len(panels), len(daily), time.time() - _t1))
     parts = []
@@ -2338,11 +2444,14 @@ def make_probe(boosters, best, A, n=PROBE_N, seed=5, nn=None, alpha=None):
     return out
 
 
-def flow_compare(A, rep_with, log=print):
+def flow_compare(A, rep_with, log=print, feats=None, tag="수급", gain_min=None, align=None):
     """[V33.430] 같은 표본에서 ★수급 칸만 비우고★ 다시 학습해 나란히 적는다(기준선). 한국 행만 따로도 잰다.
     rep_with 는 수급 칸을 채운 학습의 보고서다. 두 쪽 모두 같은 절단·같은 교차검증 규칙이다."""
     import numpy as np
-    cols = [MODEL_FEATS.index(k) for k in FLOW_FEATS if k in MODEL_FEATS]
+    feats = FLOW_FEATS if feats is None else feats
+    gain_min = FLOW_GAIN if gain_min is None else gain_min
+    align = (("w_fr5", "d_r5", False), ("w_fr20", "d_r20", False)) if align is None else align
+    cols = [MODEL_FEATS.index(k) for k in feats if k in MODEL_FEATS]
     B = dict(A)
     B["X"] = A["X"].copy()
     B["X"][:, cols] = np.nan
@@ -2366,8 +2475,8 @@ def flow_compare(A, rep_with, log=print):
     e1, e0 = holdout_edge(rep_with.get("headsG") or rep_with.get("heads")), holdout_edge(rep0.get("heads"))
     k1, k0 = kr_auc(rep_with), kr_auc(rep0)
     f = lambda v: "—" if v is None else "%.4f" % v
-    log("   · OMNI 수급 실험 — 수급 칸이 찬 행 %.1f%% · 전체 홀드아웃 AUC 비움 %s → 채움 %s · ★한국 행★ 비움 %s → 채움 %s"
-        % (fill * 100, f(e0.get("auc")), f(e1.get("auc")), f(k0), f(k1)))
+    log("   · OMNI %s 실험 — %s 칸이 찬 행 %.1f%% · 전체 홀드아웃 AUC 비움 %s → 채움 %s · ★한국 행★ 비움 %s → 채움 %s"
+        % (tag, tag, fill * 100, f(e0.get("auc")), f(e1.get("auc")), f(k0), f(k1)))
     def kr_hz(rep, hz):
         return (((rep.get("headsG") or rep.get("heads") or {}).get(hz) or {}).get("byMkt") or {}).get("kr") or {}
 
@@ -2384,9 +2493,11 @@ def flow_compare(A, rep_with, log=print):
     #   하루 밀려 붙었거나 날짜가 틀리면 이 값이 0 근처로 무너진다(미래 혼입이면 비정상적으로 크다).
     X = A["X"]
     kr = A["mkt"] == 1
-    for fk, rk in (("w_fr5", "d_r5"), ("w_fr20", "d_r20")):
+    for fk, rk, absb in align:
         if fk in MODEL_FEATS and rk in MODEL_FEATS:
             a_, b_ = X[:, MODEL_FEATS.index(fk)], X[:, MODEL_FEATS.index(rk)]
+            if absb:
+                b_ = np.abs(b_)
             ok = kr & np.isfinite(a_) & np.isfinite(b_)
             c = float(np.corrcoef(a_[ok], b_[ok])[0, 1]) if ok.sum() >= 100 else None
             # [V33.434b] 순위 상관도 — 수급 비율은 꼬리가 두꺼워 피어슨이 작게 나온다(2차 실측 0.105).
@@ -2394,8 +2505,8 @@ def flow_compare(A, rep_with, log=print):
                   if ok.sum() >= 100 else None)
             out["align_" + fk] = c
             out["alignR_" + fk] = rc
-            log("   · OMNI 수급 정렬 점검 — corr(%s, %s) 한국 %d행 = %s · 순위 %s (정상이면 뚜렷한 양수)"
-                % (fk, rk, int(ok.sum()), f(c), f(rc)))
+            log("   · OMNI %s 정렬 점검 — corr(%s, %s%s) 한국 %d행 = %s · 순위 %s (정상이면 뚜렷한 양수)"
+                % (tag, fk, "|" + rk + "|" if absb else rk, "", int(ok.sum()), f(c), f(rc)))
 
     # [V33.434] ③(b) ★수급이 있는 기간만★ — 1차 실험은 수급이 최근 ⅓ 에만 있어 '칸이 비었나' 가 곧
     #   '옛날인가' 였다(결측 방향으로 시기를 배운다).
@@ -2423,13 +2534,13 @@ def flow_compare(A, rep_with, log=print):
     ew1, ew0 = holdout_edge(rw1.get("heads")), holdout_edge(rw0.get("heads"))
     kw1, kw0 = kr_auc(rw1), kr_auc(rw0)
     gain = (kw1 - kw0) if (kw1 is not None and kw0 is not None) else None
-    log("   · OMNI 수급 실험(수급 있는 한국 행만 · %s~) — %d행 · 한국 행 중 찬 비율 %.1f%% · 전체 비움 %s → 채움 %s · ★한국 행★ 비움 %s → 채움 %s"
-        % (_dt.datetime.fromtimestamp(t0, _dt.timezone.utc).strftime("%Y-%m-%d"), len(sel),
+    log("   · OMNI %s 실험(%s 있는 한국 행만 · %s~) — %d행 · 한국 행 중 찬 비율 %.1f%% · 전체 비움 %s → 채움 %s · ★한국 행★ 비움 %s → 채움 %s"
+        % (tag, tag, _dt.datetime.fromtimestamp(t0, _dt.timezone.utc).strftime("%Y-%m-%d"), len(sel),
            float(has[sel][kr[sel]].mean()) * 100 if kr[sel].any() else 0.0,
            f(ew0.get("auc")), f(ew1.get("auc")), f(kw0), f(kw1)))
     per_hz(rw1, rw0)
-    log("   · OMNI 수급 판정(수급 있는 한국 행만) — 한국 행 %s (채택 기준 +%.3f 이상 · 구간 판정은 아래)"
-        % ("—" if gain is None else "%+.4f" % gain, FLOW_GAIN))
+    log("   · OMNI %s 판정(%s 있는 한국 행만) — 한국 행 %s (채택 기준 +%.3f 이상 · 구간 판정은 아래)"
+        % (tag, tag, "—" if gain is None else "%+.4f" % gain, gain_min))
     out.update(win_t0=t0, win_rows=int(len(sel)), win_fill=wf, win_all0=ew0.get("auc"), win_all1=ew1.get("auc"),
                win_kr0=kw0, win_kr1=kw1, win_gain=gain)
     # [V33.436] 두 번째 조건(3구간 중 2구간 승) — 같은 회차에서 판정을 끝낸다. 장중만 따로도 본다(3차 실측: 이득이 장중에 몰림).
@@ -2450,11 +2561,11 @@ def flow_compare(A, rep_with, log=print):
         return (tot / n) if n else None
     ki1, ki0 = kr_intra(rw1), kr_intra(rw0)
     gi = (ki1 - ki0) if (ki1 is not None and ki0 is not None) else None
-    ok_all = gain is not None and gain >= FLOW_GAIN and fo.get("all_wins", 0) >= 2
-    ok_in = gi is not None and gi >= FLOW_GAIN and fo.get("intra_wins", 0) >= 2
-    log("   · OMNI 수급 최종 판정 — 전체 %s(홀드 %s · 구간 %d승) · 장중 %s(홀드 %s · 구간 %d승) · 기준 +%.3f & 2승"
+    ok_all = gain is not None and gain >= gain_min and fo.get("all_wins", 0) >= 2
+    ok_in = gi is not None and gi >= gain_min and fo.get("intra_wins", 0) >= 2
+    log("   · OMNI " + tag + " 최종 판정 — 전체 %s(홀드 %s · 구간 %d승) · 장중 %s(홀드 %s · 구간 %d승) · 기준 +%.3f & 2승"
         % ("통과" if ok_all else "미달", "—" if gain is None else "%+.4f" % gain, fo.get("all_wins", 0),
-           "통과" if ok_in else "미달", "—" if gi is None else "%+.4f" % gi, fo.get("intra_wins", 0), FLOW_GAIN))
+           "통과" if ok_in else "미달", "—" if gi is None else "%+.4f" % gi, fo.get("intra_wins", 0), gain_min))
     out.update(folds=fo, intra_gain=gi, adopt_all=ok_all, adopt_intra=ok_in)
     return out
 
@@ -2592,6 +2703,13 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
             % (len(trees), _its, _med, _edge.get("why")))
         rep["ok"] = False
         rep["why"] = _edge.get("why") or "나무 %d그루" % len(trees)
+        return rep
+    if NEWS:
+        rep["news"] = flow_compare(A, rep, log=log, feats=NEWS_FEATS, tag="뉴스", gain_min=NEWS_GAIN,
+                                   align=(("e_n1", "d_r1", True), ("e_n7", "d_r5", True)))
+        log("   ⏭ OMNI ★뉴스 실험 회차★ — 칸이 워커 채점에 아직 없다. 재기만 하고 올리지 않는다.")
+        rep["ok"] = False
+        rep["why"] = "OMNI_NEWS 실험 회차 — 업로드 안 함"
         return rep
     if FLOW:
         flow_compare(A, rep, log=log)

@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.471";
+const _BUILD_VER = "V33.472";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -10622,6 +10622,242 @@ async function omniFlowCollect(DB, opts) {
 function _ofPrevDay(k) {
   const t = Date.UTC(Math.floor(k / 10000), Math.floor(k / 100) % 100 - 1, k % 100) - 86400000;
   const d = new Date(t); return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
+}
+/* ═══════════════════════════════════════════════════════════════════════════
+   [V33.472] ★한국 종목 뉴스 이력 수집기★ — OMNI_NEWS 실험의 재료(사용자 선택: "뉴스 강도 입력 실험").
+   실측(V33.425~V33.436): 가격·거래량에서 나온 입력으로는 홀드아웃 AUC ≈ 0.51 이 천장이고, 수급도 한국 행을 못 올렸다.
+   남은 후보 중 뉴스는 시스템이 ★지금 모양만★ 갖고 있다(섹터 감성 한 장) — 종목별 ★과거★ 가 없어 학습에 못 쓴다.
+   ■ 무엇을 모으나: 종목별 기사 하나당 [시각(yyyymmddhhmm) · 제목 어조(+1/0/−1) · 중복 제거 번호]. 제목 원문은 안 남긴다.
+     어조는 ★고정 낱말 목록★(외부 AI 없음) — 좋은 말·나쁜 말 개수 차의 부호. 거칠지만 학습·추론이 같은 규칙을 쓴다.
+   ■ 어디서: 네이버 종목 뉴스. ★이 코드를 쓴 세션도 네이버에 닿지 못했다(샌드박스 403)★ — 수급 수집기와 같은 규율:
+     ① 모바일 JSON ② 종목 뉴스 HTML 표. 칸을 ★검사★ 해서 시각이 안 읽히면 그 행을 버리고, 쓸 만한 행이 없으면 저장하지 않는다.
+     첫 회차 로그에 어느 경로가 됐는지·첫 행 모양을 남긴다.
+   ■ 저장: R2 news/v1/<종목>.json = { a:[[분키, 어조, 번호]…] 오름차순 } · 색인 D1 omninews_index(★엄격히 읽는다★ — V33.427b).
+   ■ 백필: 쪽 번호로 과거로 내려간다(새 기사가 들어오면 쪽이 밀리지만 번호로 중복을 지운다).
+     하루 수백 건인 대형주는 깊이가 얕을 수 있다 — 학습기는 ★덮은 구간 밖을 0 이 아니라 '모름(NaN)'★ 으로 본다.
+   ※ ★재기 전에는 모델에 안 들어간다★ — 학습기 OMNI_NEWS=1 실험 회차가 먼저 잰다(업로드 거부).
+   ═══════════════════════════════════════════════════════════════════════════ */
+const OMNINEWS = {
+  prefix: "news/v1/", ver: 1,
+  targetDays: 1300,          // 학습기 패널 창(1,200일) + 여유
+  maxArticles: 40000,        // 종목당 상한(최근 것을 남긴다)
+  maxPagesTotal: 1500,       // 종목당 백필 쪽 상한 — 대형주가 수집기를 독차지하지 않게
+  pagesPerSymRun: 12,
+  perRunOff: 4, perRunIn: 1,
+  gapOffMs: 5 * 60000, gapInMs: 20 * 60000,
+  refreshH: 18,
+  jsonPage: 50
+};
+const NEWS_POS = ["상승", "급등", "강세", "호재", "수주", "흑자", "최대", "신고가", "돌파", "상향", "매수", "성장", "개선", "증가", "호실적",
+  "반등", "수혜", "계약", "승인", "특허", "상한가", "기대", "확대", "회복", "순매수", "목표가↑", "어닝서프라이즈"];
+const NEWS_NEG = ["하락", "급락", "약세", "악재", "적자", "손실", "하향", "매도", "감소", "부진", "우려", "소송", "리콜", "신저가", "하한가",
+  "횡령", "배임", "제재", "감자", "유상증자", "불확실", "쇼크", "폭락", "순매도", "철회", "취소", "어닝쇼크", "적발", "압수수색"];
+function _onKey(sym) { return OMNINEWS.prefix + String(sym || "").replace(/[^A-Za-z0-9._^-]/g, "_") + ".json"; }
+/* 제목 어조: 좋은 말 수 − 나쁜 말 수의 부호(같은 낱말은 한 번만) */
+function _onTone(title) {
+  const t = String(title || ""); if (!t) return 0;
+  let p = 0, q = 0;
+  for (const w of NEWS_POS) if (t.indexOf(w) >= 0) p++;
+  for (const w of NEWS_NEG) if (t.indexOf(w) >= 0) q++;
+  return p > q ? 1 : q > p ? -1 : 0;
+}
+/* 시각 → yyyymmddhhmm 정수|null. "202609301422" · "2026.09.30 14:22" · "2026-09-30T14:22:00" · "20260930" */
+function _onMin(v) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  let m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})?$/.exec(s) || /^(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})[ T]+(\d{1,2}):(\d{2})/.exec(s);
+  let y, mo, d, h = 0, mi = 0;
+  if (m) { y = +m[1]; mo = +m[2]; d = +m[3]; h = +m[4]; mi = +m[5]; }
+  else { m = /^(\d{4})(\d{2})(\d{2})$/.exec(s) || /^(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})\.?$/.exec(s); if (!m) return null; y = +m[1]; mo = +m[2]; d = +m[3]; }
+  if (y < 2000 || y > 2100 || mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59) return null;
+  return ((y * 100 + mo) * 100 + d) * 10000 + h * 100 + mi;
+}
+/* 같은 기사는 출처(JSON·HTML)가 달라도 같은 번호 — 언론사-기사 순 · 앞자리 0 제거 */
+function _onId(oid, aid) { const z = function (v) { return String(v).replace(/^0+/, "") || "0"; }; return _onHash(z(oid) + "-" + z(aid)); }
+function _onHash(s) { let h = 2166136261; const t = String(s); for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+/* 모바일 JSON — 모양을 추정하지 않는다: 제목·시각이 ★둘 다★ 읽히는 객체만 기사로 본다(깊이 무관하게 훑는다). */
+function _onParseJson(j) {
+  const rows = [], seen = new Set();
+  let keys = null;
+  const walk = (x, depth) => {
+    if (!x || depth > 6) return;
+    if (Array.isArray(x)) { for (const e of x) walk(e, depth + 1); return; }
+    if (typeof x !== "object") return;
+    const title = x.title || x.tit || x.headline || x.titleFull;
+    const when = x.datetime != null ? x.datetime : (x.dt != null ? x.dt : (x.wdate || x.publishDate || x.date || x.dateTime));
+    const mk = _onMin(when);
+    if (typeof title === "string" && title && mk != null) {
+      const aid = x.articleId || x.aid || x.article_id, oid = x.officeId || x.oid || x.office_id;
+      const id = (aid != null && oid != null) ? _onId(oid, aid) : _onHash(title + "|" + mk);
+      if (!seen.has(id)) { seen.add(id); rows.push({ m: mk, t: _onTone(title), id }); if (!keys) keys = Object.keys(x).slice(0, 12); }
+      return;
+    }
+    for (const k in x) walk(x[k], depth + 1);
+  };
+  walk(j, 0);
+  return { rows, keys };
+}
+/* 종목 뉴스 HTML 표 — 줄마다 기사 번호(article_id·office_id)와 날짜 칸이 ★둘 다★ 있어야 한다. */
+function _onParseHtml(txt) {
+  const rows = [], seen = new Set();
+  const chunks = String(txt || "").split(/<tr[\s>]/i);
+  for (const c of chunks) {
+    const am = /article_id=(\d+)/.exec(c), om = /office_id=(\d+)/.exec(c);
+    const dm = /class="date"[^>]*>\s*([0-9.]+\s+[0-9:]+)/.exec(c);
+    if (!am || !om || !dm) continue;
+    const mk = _onMin(dm[1]); if (mk == null) continue;
+    const tm = /class="tit"[^>]*>([\s\S]*?)<\/a>/.exec(c) || /<a [^>]*>([\s\S]*?)<\/a>/.exec(c);
+    const title = tm ? tm[1].replace(/<[^>]+>/g, "").trim() : "";
+    const id = _onId(om[1], am[1]);
+    if (seen.has(id)) continue; seen.add(id);
+    rows.push({ m: mk, t: _onTone(title), id });
+  }
+  return { rows };
+}
+async function _onFetchPage(code, page, mode) {
+  if (mode !== "html") {
+    try {
+      try { __fetchBudget.used++; } catch (e) {}
+      const r = await fetch("https://m.stock.naver.com/api/news/stock/" + code + "?pageSize=" + OMNINEWS.jsonPage + "&page=" + page,
+                            { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" } });
+      if (r.ok) {
+        let j = null; try { j = await r.json(); } catch (e) { j = null; }
+        const p = _onParseJson(j);
+        if (p.rows.length) return { rows: p.rows, src: "json", probe: { keys: p.keys, first: p.rows[0] } };
+      }
+    } catch (e) {}
+    if (mode === "json") return null;
+  }
+  try {
+    try { __fetchBudget.used++; } catch (e) {}
+    const r = await fetch("https://finance.naver.com/item/news_news.naver?code=" + code + "&page=" + page + "&sm=title_entity_id.basic&clusterId=",
+                          { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com/item/news.naver?code=" + code } });
+    if (!r.ok) return null;
+    const buf = await r.arrayBuffer();
+    let txt = ""; try { txt = new TextDecoder("euc-kr").decode(buf); } catch (e) { txt = new TextDecoder().decode(buf); }
+    const p = _onParseHtml(txt);
+    if (p.rows.length) return { rows: p.rows, src: "html", probe: { html: true, first: p.rows[0] } };
+  } catch (e) {}
+  return null;
+}
+/* 번호로 합친다(같은 기사는 한 번) · 시각 오름차순 · 상한(최근을 남긴다) */
+function _onMerge(old, add, cap) {
+  const m = new Map();
+  if (old && Array.isArray(old.a)) for (const r of old.a) if (Array.isArray(r) && r.length >= 3) m.set(r[2], r);
+  for (const r of add || []) m.set(r.id, [r.m, r.t, r.id]);
+  return Array.from(m.values()).sort(function (x, y) { return x[0] - y[0] || x[2] - y[2]; }).slice(-cap);
+}
+function _onNextDay(k) {
+  const t = Date.UTC(Math.floor(k / 10000), Math.floor(k / 100) % 100 - 1, k % 100) + 86400000;
+  const d = new Date(t); return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
+}
+/* 학습기에 주는 일별 묶음. from = ★가장 오래된 기사 다음 날★(그 날은 일부만 받았을 수 있다) · 그 앞은 '모름'.
+   기사가 없는 날은 싣지 않는다(from~to 안에서 없으면 0건). */
+function _onDaily(f) {
+  if (!f || !Array.isArray(f.a) || !f.a.length) return null;
+  const by = new Map();
+  for (const r of f.a) { const d = Math.floor(r[0] / 10000); let e = by.get(d); if (!e) { e = [0, 0, 0]; by.set(d, e); } e[0]++; if (r[1] > 0) e[1]++; else if (r[1] < 0) e[2]++; }
+  const ds = Array.from(by.keys()).sort(function (a, b) { return a - b; });
+  const from = _onNextDay(ds[0]);
+  const out = { from: from, to: ds[ds.length - 1], end: !!f.end, d: [], n: [], p: [], q: [] };
+  for (const d of ds) { if (d < from) continue; const e = by.get(d); out.d.push(d); out.n.push(e[0]); out.p.push(e[1]); out.q.push(e[2]); }
+  return out;
+}
+async function _onIndexLoad(DB) {
+  try {
+    const v = await getState(DB, "omninews_index", null, true);
+    if (v && typeof v === "object" && v.s && typeof v.s === "object") return { ok: true, index: v, fresh: false };
+    return { ok: true, index: { v: 1, s: {} }, fresh: true };
+  } catch (e) { return { ok: false, err: (e && e.message) || String(e) }; }
+}
+async function omniNewsCollect(DB, opts) {
+  const o = opts || {};
+  const R2 = _bigR2();
+  if (!R2) return "[OMNI-NEWS] R2 미바인딩 — 수집 불가";
+  const uni = (DEFAULT_KR || []).slice();
+  if (!uni.length) return "[OMNI-NEWS] 한국 유니버스 비어 있음";
+  const inHours = (typeof isTradingWindow === "function") && isTradingWindow("kr");
+  const per = Math.max(1, _num(o.perRun, inHours ? OMNINEWS.perRunIn : OMNINEWS.perRunOff));
+  const _ixr = await _onIndexLoad(DB);
+  if (!_ixr.ok) return "[OMNI-NEWS] 색인 읽기 실패(D1) — ★이번 회차는 아무것도 쓰지 않는다★: " + _ixr.err;
+  const index = _ixr.index;
+  let cur = null; try { cur = await getState(DB, "omninews_cursor", null); } catch (e) {}
+  let idx = (cur && cur.i >= 0) ? Math.floor(cur.i) % uni.length : 0;
+  const nowMs = Date.now();
+  let done = 0, pages = 0, added = 0, failed = 0, prevFail = 0, skipped = 0, srcJ = 0, srcH = 0, deep = 0;
+  let probe = null;
+  for (let k = 0; k < per; k++) {
+    const sym = uni[idx]; idx = (idx + 1) % uni.length; done++;
+    const code = sym.split(".")[0];
+    const ent = index.s[sym] || (index.s[sym] = {});
+    const fresh = ent.upd && (nowMs - ent.upd) < OMNINEWS.refreshH * 3600000;
+    const deepEnough = ent.first && ent.last && _ofDaysBetween(ent.first, ent.last) >= OMNINEWS.targetDays;
+    const capped = _num(ent.pg, 0) >= OMNINEWS.maxPagesTotal;
+    if (fresh && (deepEnough || ent.end || capped)) { skipped++; continue; }
+    /* 옛 파일은 ★엄격히★ — 못 읽었으면 이 종목은 이번에 안 쓴다(덮어쓰지 않는다). */
+    let old = null;
+    try { const g = await R2.get(_onKey(sym)); if (g) old = JSON.parse(await g.text()); }
+    catch (e) { prevFail++; failed++; continue; }
+    const before = old && Array.isArray(old.a) ? old.a.length : 0;
+    const known = new Set(); if (old && Array.isArray(old.a)) for (const r of old.a) known.add(r[2]);
+    const got = [];
+    let src = ent.src || null;
+    if (!fresh) {
+      const p1 = await _onFetchPage(code, 1, ent.jnp ? "html" : null);
+      pages++;
+      if (!p1) { failed++; ent.err = nowMs; continue; }
+      src = p1.src; if (!probe) probe = p1.probe;
+      got.push.apply(got, p1.rows);
+      for (const r of p1.rows) known.add(r.id);
+    }
+    let pg = Math.max(1, _num(src === "html" ? ent.hp : ent.jp, 1));
+    for (let q = 0; q < OMNINEWS.pagesPerSymRun && !ent.end && _num(ent.pg, 0) < OMNINEWS.maxPagesTotal; q++) {
+      const first = Math.min(old && old.a && old.a.length ? old.a[0][0] : Infinity, got.length ? Math.min.apply(null, got.map(function (r) { return r.m; })) : Infinity);
+      const last = Math.max(old && old.a && old.a.length ? old.a[old.a.length - 1][0] : 0, got.length ? Math.max.apply(null, got.map(function (r) { return r.m; })) : 0);
+      if (isFinite(first) && last && _ofDaysBetween(Math.floor(first / 10000), Math.floor(last / 10000)) >= OMNINEWS.targetDays) break;
+      const useJson = src !== "html" && !ent.jnp;
+      const pp = await _onFetchPage(code, pg + 1, useJson ? "json" : "html");
+      pages++; ent.pg = _num(ent.pg, 0) + 1;
+      if (!pp || !pp.rows.length) {
+        /* JSON 이 여러 쪽을 준 뒤 비면 그게 끝이다. 첫 과거 쪽부터 비면 JSON 이 쪽 넘기기를 안 받는 것 → HTML 로. */
+        if (useJson && pg <= 1) { ent.jnp = true; src = "html"; pg = Math.max(1, _num(ent.hp, 1)); continue; }
+        ent.end = true; break;
+      }
+      const minM = Math.min.apply(null, pp.rows.map(function (r) { return r.m; }));
+      /* 새 기사가 하나도 없는 쪽:
+         · JSON 첫 과거 쪽부터 그렇다 → 쪽 번호를 안 받는다(늘 첫 쪽) → HTML 로
+         · HTML 이 같은 쪽을 또 준다 → 끝(수급 HTML 과 같은 규칙)
+         · 그 밖엔 새 기사로 쪽이 밀린 것일 수 있다 → 넘어가되 세 쪽 연속이면 끝 */
+      const nNew = pp.rows.filter(function (r) { return !known.has(r.id); }).length;
+      if (!nNew) {
+        if (useJson && pg <= 1) { ent.jnp = true; src = "html"; pg = Math.max(1, _num(ent.hp, 1)); continue; }
+        ent.dup = _num(ent.dup, 0) + 1;
+        if (ent.dup >= 3 || (!useJson && ent.lastMin != null && minM === ent.lastMin)) { ent.end = true; break; }
+      } else ent.dup = 0;
+      pg++;
+      ent.lastMin = minM;
+      for (const r of pp.rows) known.add(r.id);
+      got.push.apply(got, pp.rows);
+      deep++;
+    }
+    if (src === "html") ent.hp = pg; else ent.jp = pg;
+    if (!got.length) { ent.upd = nowMs; continue; }
+    const a = _onMerge(old, got, OMNINEWS.maxArticles);
+    const out = { s: sym, ver: OMNINEWS.ver, upd: nowMs, src: src, end: !!ent.end, a: a };
+    try { await R2.put(_onKey(sym), JSON.stringify(out)); }
+    catch (e) { failed++; continue; }
+    if (src === "json") srcJ++; else if (src === "html") srcH++;
+    added += Math.max(0, a.length - before);
+    Object.assign(ent, { n: a.length, first: Math.floor(a[0][0] / 10000), last: Math.floor(a[a.length - 1][0] / 10000), upd: nowMs, src: src, err: null });
+  }
+  index.upd = nowMs;
+  try { await setState(DB, "omninews_index", index); } catch (e) {}
+  try { await setState(DB, "omninews_cursor", { i: idx, at: nowMs }); } catch (e) {}
+  let cov = 0, full = 0; for (const s in index.s) { const e = index.s[s]; if (e.n) cov++; if (e.end || (e.first && e.last && _ofDaysBetween(e.first, e.last) >= OMNINEWS.targetDays) || _num(e.pg, 0) >= OMNINEWS.maxPagesTotal) full++; }
+  return "[OMNI-NEWS] " + done + "종목 · 쪽 " + pages + " · 새 기사 +" + added + " · 과거로 " + deep + "쪽 · 신선해서 건너뜀 " + skipped +
+         " · 실패 " + failed + (prevFail ? "(옛파일 못읽음 " + prevFail + " — 안 덮음)" : "") +
+         " · 출처 json " + srcJ + "/html " + srcH + " · 커버 " + cov + "/" + uni.length + " · 끝/깊이 충분 " + full +
+         (probe ? " · 모양 " + JSON.stringify(probe).slice(0, 300) : "") + " · 다음 커서 " + idx;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════
@@ -27401,6 +27637,26 @@ async function handleRequest(request, env, ctx) {
       }
       return Response.json({ ok: true, flows: flows, n: Object.keys(flows).length, errs: errs }, { headers: cors });
     }
+    /* [V33.472] 한국 종목 뉴스 이력 — 학습기(OMNI_NEWS 실험)용. 색인은 엄격히(503) · 종목마다 ★일별 묶음★(from 앞은 모름). */
+    if (path === "/api/omni-news-index") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const _nx = await _onIndexLoad(env.DB);
+      if (!_nx.ok) return Response.json({ error: "뉴스 색인 읽기 실패(D1): " + _nx.err }, { status: 503, headers: cors });
+      return Response.json({ ok: true, index: _nx.index, universe: (DEFAULT_KR || []).slice(), targetDays: OMNINEWS.targetDays }, { headers: cors });
+    }
+    if (path === "/api/omni-news") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const R2 = _bigR2();
+      if (!R2) return Response.json({ error: "R2 미바인딩" }, { status: 503, headers: cors });
+      const syms = String(url.searchParams.get("s") || "").split(",").map(function (x) { return x.trim(); })
+                     .filter(Boolean).slice(0, 40);
+      const news = {}, errs = [];
+      for (const sym of syms) {
+        try { const g = await R2.get(_onKey(sym)); if (g) { const d = _onDaily(JSON.parse(await g.text())); if (d) news[sym] = d; } }
+        catch (e) { errs.push(sym); }
+      }
+      return Response.json({ ok: true, news: news, n: Object.keys(news).length, errs: errs }, { headers: cors });
+    }
     if (path === "/api/ml-export-intraday") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const R2 = _bigR2();
@@ -28325,6 +28581,8 @@ async function handleRequest(request, env, ctx) {
         ["omnibars", function (DB) { try { resetFetchBudget(200); } catch (e) {} return omniBarsCollect(DB, { perRun: 40 }); }],
         // [V33.430] 한국 종목 수급 이력(외국인·기관 순매수) — OMNI_FLOW 실험의 재료
         ["omniflow", function (DB) { try { resetFetchBudget(300); } catch (e) {} return omniFlowCollect(DB, { perRun: 30 }); }],
+        // [V33.472] 한국 종목 뉴스 이력 — OMNI_NEWS 실험의 재료
+        ["omninews", function (DB) { try { resetFetchBudget(300); } catch (e) {} return omniNewsCollect(DB, { perRun: 20 }); }],
         /* [V33.426] OMNI 섀도우 채점 — 한 표도 안 넣는다. 실시간 확률을 적어 두고 지평이 지나면 채점한다.
            이게 있어야 "홀드아웃 0.51" 이 실시간에서도 남는지 알 수 있다. */
         ["omniscore", function (DB) { return omniShadowScore(DB, { perRun: OMNI_SHADOW.perRun, budgetMs: 45000 }); }],
@@ -52103,6 +52361,17 @@ export default {
             }
           } catch (e) { try { await log(env.DB, "ERROR", null, "[OMNI-FLOW] " + ((e && e.message) || e)); } catch (e2) {} }
 
+          /* [V33.472] ★한국 종목 뉴스 이력 수집★ — 수급 수집기와 같은 모양(잠금 뒤 조금씩). I/O 뿐이다. */
+          try {
+            const _onLock = _num(await getState(env.DB, "omninews_lock", 0), 0);
+            const _onOpen = (typeof isTradingWindow === "function") && isTradingWindow("kr");
+            if (Date.now() - _onLock > (_onOpen ? OMNINEWS.gapInMs : OMNINEWS.gapOffMs)) {
+              await setState(env.DB, "omninews_lock", Date.now());
+              const _onr = await omniNewsCollect(env.DB, {});
+              await log(env.DB, "INFO", null, _onr);
+            }
+          } catch (e) { try { await log(env.DB, "ERROR", null, "[OMNI-NEWS] " + ((e && e.message) || e)); } catch (e2) {} }
+
           /* [V33.427] ★OMNI 섀도우 채점·사후채점 — 매 틱(잠금 뒤).★
              야간 파이프라인의 _stg 는 ★하루 1회★ 도장을 찍는다. 거기에만 두면 섀도우 채점이 하루에
              한 번(≈7종목, 결정시각 1개) 돌고 — 사후채점은 같은 결정시각에 동료 20종목이 있어야 하므로
@@ -52376,6 +52645,7 @@ export default {
             // [V33.418] OMNI 원시 봉 — 수동 파이프라인과 ★같은 단계★ 를 같은 이름으로(check-pipeline-graph)
             await _stg("omnibars", async function () { try { resetFetchBudget(200); } catch (e) {} return await omniBarsCollect(env.DB, { perRun: 40 }); });
             await _stg("omniflow", async function () { try { resetFetchBudget(300); } catch (e) {} return await omniFlowCollect(env.DB, { perRun: 30 }); });
+            await _stg("omninews", async function () { try { resetFetchBudget(300); } catch (e) {} return await omniNewsCollect(env.DB, { perRun: 20 }); });
             // [V33.426] OMNI 섀도우 채점·사후채점 — 수동 파이프라인과 ★같은 이름★ 으로(check-pipeline-graph)
             await _stg("omniscore", async function () { return await omniShadowScore(env.DB, { perRun: OMNI_SHADOW.perRun, budgetMs: 45000 }); });
             await _stg("omniresolve", async function () { return await omniShadowResolve(env.DB, {}); });
@@ -52553,7 +52823,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

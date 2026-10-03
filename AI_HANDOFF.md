@@ -12,6 +12,22 @@
 
 ## Current handoff
 
+- Status: **V33.472 — OMNI 뉴스 입력 실험 배관(수집기 · 학습기 스위치). ★아직 잰 것 없음 — 백필이 쌓인 뒤 실험 회차를 돌린다.★**
+  ■ 사용자: "OMNI 셰도우를 작동 가능한 성능으로" → 실측 설명 후 선택지 중 ★"뉴스 강도 입력 실험"★ 을 골랐다.
+    지금 OMNI: 홀드아웃 AUC 0.507~0.521 · 전진 49.4%(2,727건) · 발언 문턱(상위 10% 정밀도 60%)은 AUC 0.65~0.70 급 — ★문턱은 안 내린다★.
+  ■ 워커 omniNewsCollect: 네이버 종목 뉴스(① 모바일 JSON api/news/stock ② news_news.naver HTML) → R2 news/v1/<종목>.json
+    = [[yyyymmddhhmm, 어조 ±1/0, 번호]…]. 어조는 고정 낱말 목록(외부 AI 없음). 번호 = 언론사-기사(두 출처 같은 번호 · 중복 제거).
+    색인 D1 omninews_index(엄격) · 매 틱 잠금(장외 5분 4종목 · 장중 20분 1종목) · 야간 _stg · 수동 train-now omninews.
+    종목당 상한 4만 건 · 백필 1,500쪽 · 목표 1,300일. 새 기사 없는 쪽: JSON 첫 과거 쪽이면 HTML 로 · HTML 같은 쪽 반복이면 끝 · 세 쪽 연속이면 끝.
+    ★이 세션은 네이버에 못 닿았다(403)★ — 첫 회차 로그 '모양' 으로 어느 경로가 됐는지 확인할 것.
+  ■ /api/omni-news-index(503 엄격) · /api/omni-news?s= → 종목마다 일별 {from(가장 오래된 날 다음 날), to, d, n, p, q}.
+  ■ 학습기 OMNI_NEWS=1: 패널에 e_n1·e_n7·e_surge·e_tone7·e_tone30·e_gap + 한국 분위 3. ★전일 확정 일봉 날짜까지의 기사만★ · 덮은 구간 밖은 NaN.
+    flow_compare 를 일반화(feats·tag·gain·정렬 점검)해 같은 규칙으로 잰다: 한국 행 AUC +0.005 이상 & 3구간 중 2승. 정렬 점검 = corr(e_n1, |d_r1|) 양수.
+    run() 은 업로드 거부("OMNI_NEWS 실험 회차 — 업로드 안 함"). modal-deploy 입력 omni_news(+omni_now) → --news.
+  ■ check-omni-news(가짜 네이버 3모드 · 엄격 읽기 · 일별 묶음 · 배선) 신설 · deploy.yml 등록.
+  ■ ★다음★: ① 배포 후 train-now omninews 1회 → 로그 '모양'·새 기사 수 확인(파서가 실제 응답을 읽는가)
+    ② 며칠 백필(커버 ·끝/깊이 충분 수치) ③ modal-deploy omni_now+omni_news 실험 회차 → '뉴스 최종 판정' 줄. 통과해야만 워커 추론 배선을 논한다.
+- Status: **V33.471 운영 반영 대기 — (아래 V33.471 항목) 휴대폰 크게 보기 고침.**
 - Status: **V33.471 — 휴대폰 '크게 보기' 가 사이트 머리·아래 탭 막대에 가려 닫기·버튼이 안 보이던 것 고침 · 작은 그림 조작 · 노드 역할 기본 표시.**
   ■ 원인(로컬 실사이트 아이폰 흉내로 재현): 크게 보기(fixed)가 #brain-studio(z-index:1) 안에 갇혀 사이트 .shell(z-index:1) 위로 못 올라갔다 — 닫기 자리에 사이트 ☰ 버튼.
   ■ 고침: 크게 보기를 body 바로 아래 #bs-layer(z 2147483000)로 createPortal · 높이 100dvh · Tailwind important = :is(#brain-studio,#bs-layer) · index.css 같은 범위.
