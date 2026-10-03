@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.472";
+const _BUILD_VER = "V33.473";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -10790,6 +10790,8 @@ async function omniNewsCollect(DB, opts) {
     const sym = uni[idx]; idx = (idx + 1) % uni.length; done++;
     const code = sym.split(".")[0];
     const ent = index.s[sym] || (index.s[sym] = {});
+    /* [V33.473] HTML 을 안 거치고 찍힌 '끝' 은 JSON 의 끝일 뿐이다(V33.472 첫 회차 44종목) — 지우고 HTML 로 이어 간다. */
+    if (ent.end && !ent.jnp) { ent.end = false; ent.dup = 0; }
     const fresh = ent.upd && (nowMs - ent.upd) < OMNINEWS.refreshH * 3600000;
     const deepEnough = ent.first && ent.last && _ofDaysBetween(ent.first, ent.last) >= OMNINEWS.targetDays;
     const capped = _num(ent.pg, 0) >= OMNINEWS.maxPagesTotal;
@@ -10819,8 +10821,9 @@ async function omniNewsCollect(DB, opts) {
       const pp = await _onFetchPage(code, pg + 1, useJson ? "json" : "html");
       pages++; ent.pg = _num(ent.pg, 0) + 1;
       if (!pp || !pp.rows.length) {
-        /* JSON 이 여러 쪽을 준 뒤 비면 그게 끝이다. 첫 과거 쪽부터 비면 JSON 이 쪽 넘기기를 안 받는 것 → HTML 로. */
-        if (useJson && pg <= 1) { ent.jnp = true; src = "html"; pg = Math.max(1, _num(ent.hp, 1)); continue; }
+        /* [V33.473] JSON 이 비면 ★JSON 의 끝★ 일 뿐이다(운영 첫 회차: 종목마다 11쪽·약 190건에서 멈췄다 — 과거가 얕다).
+           HTML 쪽 넘기기로 이어서 내려간다. HTML 까지 비면 그때가 끝. */
+        if (useJson) { ent.jnp = true; src = "html"; pg = Math.max(1, _num(ent.hp, 1), Math.floor(known.size / 20) - 2); ent.dup = 0; continue; }
         ent.end = true; break;
       }
       const minM = Math.min.apply(null, pp.rows.map(function (r) { return r.m; }));
@@ -10830,9 +10833,9 @@ async function omniNewsCollect(DB, opts) {
          · 그 밖엔 새 기사로 쪽이 밀린 것일 수 있다 → 넘어가되 세 쪽 연속이면 끝 */
       const nNew = pp.rows.filter(function (r) { return !known.has(r.id); }).length;
       if (!nNew) {
-        if (useJson && pg <= 1) { ent.jnp = true; src = "html"; pg = Math.max(1, _num(ent.hp, 1)); continue; }
+        if (useJson && (pg <= 1 || _num(ent.dup, 0) >= 2)) { ent.jnp = true; src = "html"; pg = Math.max(1, _num(ent.hp, 1), Math.floor(known.size / 20) - 2); ent.dup = 0; continue; }
         ent.dup = _num(ent.dup, 0) + 1;
-        if (ent.dup >= 3 || (!useJson && ent.lastMin != null && minM === ent.lastMin)) { ent.end = true; break; }
+        if (!useJson && (ent.dup >= 3 || (ent.lastMin != null && minM === ent.lastMin))) { ent.end = true; break; }
       } else ent.dup = 0;
       pg++;
       ent.lastMin = minM;
@@ -10853,10 +10856,13 @@ async function omniNewsCollect(DB, opts) {
   index.upd = nowMs;
   try { await setState(DB, "omninews_index", index); } catch (e) {}
   try { await setState(DB, "omninews_cursor", { i: idx, at: nowMs }); } catch (e) {}
-  let cov = 0, full = 0; for (const s in index.s) { const e = index.s[s]; if (e.n) cov++; if (e.end || (e.first && e.last && _ofDaysBetween(e.first, e.last) >= OMNINEWS.targetDays) || _num(e.pg, 0) >= OMNINEWS.maxPagesTotal) full++; }
+  let cov = 0, full = 0; const spans = [];
+  for (const s in index.s) { const e = index.s[s]; if (e.n) { cov++; if (e.first && e.last) spans.push(_ofDaysBetween(e.first, e.last)); } if (e.end || (e.first && e.last && _ofDaysBetween(e.first, e.last) >= OMNINEWS.targetDays) || _num(e.pg, 0) >= OMNINEWS.maxPagesTotal) full++; }
+  spans.sort(function (a, b) { return a - b; });
   return "[OMNI-NEWS] " + done + "종목 · 쪽 " + pages + " · 새 기사 +" + added + " · 과거로 " + deep + "쪽 · 신선해서 건너뜀 " + skipped +
          " · 실패 " + failed + (prevFail ? "(옛파일 못읽음 " + prevFail + " — 안 덮음)" : "") +
          " · 출처 json " + srcJ + "/html " + srcH + " · 커버 " + cov + "/" + uni.length + " · 끝/깊이 충분 " + full +
+         (spans.length ? " · 덮은 기간(일) 최소 " + spans[0] + " · 중앙 " + spans[spans.length >> 1] + " · 최대 " + spans[spans.length - 1] : "") +
          (probe ? " · 모양 " + JSON.stringify(probe).slice(0, 300) : "") + " · 다음 커서 " + idx;
 }
 

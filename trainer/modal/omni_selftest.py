@@ -186,7 +186,7 @@ def fake_roundtrip(data):
     obp = omni.build_panels
     requests.get, requests.post = fget, fpost
     #   왕복 검사에서도 패널 창을 줄인다 — 재는 것은 ★배선★ 이지 패널 크기가 아니다.
-    omni.build_panels = lambda d, m, max_days=PANEL_DAYS, flows=None: obp(d, m, PANEL_DAYS, flows=flows)
+    omni.build_panels = lambda d, m, max_days=PANEL_DAYS, flows=None, news=None: obp(d, m, PANEL_DAYS, flows=flows, news=news)
     try:
         pl = omni.run("http://w", "k", {"x-train-key": "k"}, upload=True, log=lambda *a: None)
     finally:

@@ -66,7 +66,8 @@ function fakeNaver(mode, total = 600) {
       calls.json++;
       if (mode === "html-only") return { ok: false, status: 404 };
       let pg = +/page=(\d+)/.exec(u)[1]; if (mode === "json-stuck") pg = 1;
-      const rows = arts.slice(Math.min(total, (pg - 1) * 50), Math.min(total, pg * 50));
+      const jtot = mode === "json-short" ? 200 : total;                // 운영처럼 JSON 은 얕다(200건에서 빈 목록)
+      const rows = arts.slice(Math.min(jtot, (pg - 1) * 50), Math.min(jtot, pg * 50));
       return { ok: true, status: 200, json: async () => [{ items: rows.map((a) => ({ officeId: a.oid, articleId: a.aid, title: a.title, datetime: dtCompact(a) })) }] };
     }
     if (u.includes("news_news.naver")) {
@@ -90,8 +91,8 @@ console.log("\n② 수집기 — 못 읽은 색인은 ★덮지 않는다★");
   chk(/색인 읽기 실패/.test(r) && !DB._w.includes("omninews_index") && R2._puts.length === 0, "색인 못 읽음 → 아무것도 안 쓴다", "★색인을 못 읽었는데 썼다: " + r.slice(0, 80) + "★");
 }
 
-console.log("\n③ 백필 — 끝까지 · 같은 기사 한 번 · JSON 이 쪽을 안 넘기면 HTML 로 · 끝에서 멈춤");
-for (const mode of ["json", "json-stuck", "html-only"]) {
+console.log("\n③ 백필 — 끝까지 · 같은 기사 한 번 · JSON 이 쪽을 안 넘기거나 얕으면 HTML 로 · 끝에서 멈춤");
+for (const mode of ["json", "json-short", "json-stuck", "html-only"]) {
   const DB = fakeDB({}); const R2 = fakeR2({}); M._setR2ForTest(R2);
   const calls = fakeNaver(mode, 600);
   let r = "";
