@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.473";
+const _BUILD_VER = "V33.474";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -10639,11 +10639,13 @@ function _ofPrevDay(k) {
    ═══════════════════════════════════════════════════════════════════════════ */
 const OMNINEWS = {
   prefix: "news/v1/", ver: 1,
-  targetDays: 1300,          // 학습기 패널 창(1,200일) + 여유
+  /* [V33.474] 1,300일 → 500일 · 12쪽 → 30쪽 · 4 → 6종목. 운영 2회차: 덮은 기간 중앙 11일 — 하루 20건 종목이면 1,300일까지
+     한 달 넘게 걸린다. 실험은 '뉴스가 있는 한국 행만' 재므로 1.4년이면 충분하다(수급 실험과 같은 규칙). */
+  targetDays: 500,
   maxArticles: 40000,        // 종목당 상한(최근 것을 남긴다)
   maxPagesTotal: 1500,       // 종목당 백필 쪽 상한 — 대형주가 수집기를 독차지하지 않게
-  pagesPerSymRun: 12,
-  perRunOff: 4, perRunIn: 1,
+  pagesPerSymRun: 30,
+  perRunOff: 6, perRunIn: 1,
   gapOffMs: 5 * 60000, gapInMs: 20 * 60000,
   refreshH: 18,
   jsonPage: 50
@@ -10787,6 +10789,7 @@ async function omniNewsCollect(DB, opts) {
   let done = 0, pages = 0, added = 0, failed = 0, prevFail = 0, skipped = 0, srcJ = 0, srcH = 0, deep = 0;
   let probe = null;
   for (let k = 0; k < per; k++) {
+    if (fetchBudgetLeft() <= 3) break;
     const sym = uni[idx]; idx = (idx + 1) % uni.length; done++;
     const code = sym.split(".")[0];
     const ent = index.s[sym] || (index.s[sym] = {});
@@ -10814,6 +10817,8 @@ async function omniNewsCollect(DB, opts) {
     }
     let pg = Math.max(1, _num(src === "html" ? ent.hp : ent.jp, 1));
     for (let q = 0; q < OMNINEWS.pagesPerSymRun && !ent.end && _num(ent.pg, 0) < OMNINEWS.maxPagesTotal; q++) {
+      if (fetchBudgetLeft() <= 3) break;                 // 한 호출의 요청 상한을 다른 단계와 나눠 쓴다
+
       const first = Math.min(old && old.a && old.a.length ? old.a[0][0] : Infinity, got.length ? Math.min.apply(null, got.map(function (r) { return r.m; })) : Infinity);
       const last = Math.max(old && old.a && old.a.length ? old.a[old.a.length - 1][0] : 0, got.length ? Math.max.apply(null, got.map(function (r) { return r.m; })) : 0);
       if (isFinite(first) && last && _ofDaysBetween(Math.floor(first / 10000), Math.floor(last / 10000)) >= OMNINEWS.targetDays) break;
@@ -28588,7 +28593,7 @@ async function handleRequest(request, env, ctx) {
         // [V33.430] 한국 종목 수급 이력(외국인·기관 순매수) — OMNI_FLOW 실험의 재료
         ["omniflow", function (DB) { try { resetFetchBudget(300); } catch (e) {} return omniFlowCollect(DB, { perRun: 30 }); }],
         // [V33.472] 한국 종목 뉴스 이력 — OMNI_NEWS 실험의 재료
-        ["omninews", function (DB) { try { resetFetchBudget(300); } catch (e) {} return omniNewsCollect(DB, { perRun: 20 }); }],
+        ["omninews", function (DB) { try { resetFetchBudget(300); } catch (e) {} return omniNewsCollect(DB, { perRun: 9 }); }],
         /* [V33.426] OMNI 섀도우 채점 — 한 표도 안 넣는다. 실시간 확률을 적어 두고 지평이 지나면 채점한다.
            이게 있어야 "홀드아웃 0.51" 이 실시간에서도 남는지 알 수 있다. */
         ["omniscore", function (DB) { return omniShadowScore(DB, { perRun: OMNI_SHADOW.perRun, budgetMs: 45000 }); }],
@@ -52651,7 +52656,7 @@ export default {
             // [V33.418] OMNI 원시 봉 — 수동 파이프라인과 ★같은 단계★ 를 같은 이름으로(check-pipeline-graph)
             await _stg("omnibars", async function () { try { resetFetchBudget(200); } catch (e) {} return await omniBarsCollect(env.DB, { perRun: 40 }); });
             await _stg("omniflow", async function () { try { resetFetchBudget(300); } catch (e) {} return await omniFlowCollect(env.DB, { perRun: 30 }); });
-            await _stg("omninews", async function () { try { resetFetchBudget(300); } catch (e) {} return await omniNewsCollect(env.DB, { perRun: 20 }); });
+            await _stg("omninews", async function () { try { resetFetchBudget(300); } catch (e) {} return await omniNewsCollect(env.DB, { perRun: 9 }); });
             // [V33.426] OMNI 섀도우 채점·사후채점 — 수동 파이프라인과 ★같은 이름★ 으로(check-pipeline-graph)
             await _stg("omniscore", async function () { return await omniShadowScore(env.DB, { perRun: OMNI_SHADOW.perRun, budgetMs: 45000 }); });
             await _stg("omniresolve", async function () { return await omniShadowResolve(env.DB, {}); });
