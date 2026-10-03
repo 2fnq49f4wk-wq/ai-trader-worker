@@ -1,8 +1,10 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Tokens + a minimal reset that only applies inside the studio (the host site keeps its own). */
-#brain-studio {
+/* Tokens + a minimal reset that only applies inside the studio (the host site keeps its own).
+   #bs-layer = a body-level layer for the full-screen view: inside the page it sat under the site's
+   own header and tab bar (#brain-studio and the site shell are both z-index 1 stacking contexts). */
+#brain-studio, #bs-layer {
   --bs-bg: #0b0a0d; --bs-bg2: #131117; --bs-bg3: #1b1820;
   --bs-line: rgba(236, 232, 245, .08);
   --bs-ink: #eeecf2; --bs-ink2: #a9a5b3; --bs-ink3: #6f6b79;
@@ -11,16 +13,18 @@
   font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased; letter-spacing: -.005em;
 }
-#brain-studio *, #brain-studio *::before, #brain-studio *::after { box-sizing: border-box; border: 0 solid var(--bs-line); }
-#brain-studio :is(h1,h2,h3,h4,p,dl,dd,ol,ul,figure) { margin: 0; padding: 0; }
-#brain-studio ul, #brain-studio ol { list-style: none; }
-#brain-studio button { font: inherit; color: inherit; background: none; cursor: pointer; padding: 0; -webkit-tap-highlight-color: transparent; }
-#brain-studio button:focus-visible { outline: 2px solid var(--bs-rose); outline-offset: 2px; }
-#brain-studio .bs-num { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; letter-spacing: 0; }
-#brain-studio .bs-rail { scrollbar-width: none; -webkit-overflow-scrolling: touch; }
-#brain-studio .bs-rail::-webkit-scrollbar { display: none; }
-#brain-studio canvas { display: block; }
+:is(#brain-studio,#bs-layer) *, :is(#brain-studio,#bs-layer) *::before, :is(#brain-studio,#bs-layer) *::after { box-sizing: border-box; border: 0 solid var(--bs-line); }
+:is(#brain-studio,#bs-layer) :is(h1,h2,h3,h4,p,dl,dd,ol,ul,figure) { margin: 0; padding: 0; }
+:is(#brain-studio,#bs-layer) ul, :is(#brain-studio,#bs-layer) ol { list-style: none; }
+:is(#brain-studio,#bs-layer) button { font: inherit; color: inherit; background: none; cursor: pointer; padding: 0; -webkit-tap-highlight-color: transparent; }
+:is(#brain-studio,#bs-layer) button:focus-visible { outline: 2px solid var(--bs-rose); outline-offset: 2px; }
+:is(#brain-studio,#bs-layer) .bs-num { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; letter-spacing: 0; }
+:is(#brain-studio,#bs-layer) .bs-rail { scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+:is(#brain-studio,#bs-layer) .bs-rail::-webkit-scrollbar { display: none; }
+:is(#brain-studio,#bs-layer) canvas { display: block; }
 /* The inline 3D view never takes touches on phones — the page always scrolls natively. */
 @media (pointer: coarse) { #brain-studio .bs-gl-inline canvas { pointer-events: none; } }
-#brain-studio .bs-gl-full canvas { touch-action: none; }
-@media (prefers-reduced-motion: reduce) { #brain-studio * { transition: none !important; animation: none !important; } }
+/* "손가락으로 돌리기" on: the inline view takes touches (rotate · pinch · tap to pick) until switched off. */
+#brain-studio .bs-gl-inline.bs-touch canvas { pointer-events: auto; touch-action: none; }
+:is(#brain-studio,#bs-layer) .bs-gl-full canvas { touch-action: none; }
+@media (prefers-reduced-motion: reduce) { :is(#brain-studio,#bs-layer) * { transition: none !important; animation: none !important; } }

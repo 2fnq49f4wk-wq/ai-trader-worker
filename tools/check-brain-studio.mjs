@@ -17,8 +17,8 @@ chk(urls.length === 0, "외부 주소 0(같은 출처 API 만)", "★외부 주�
 for (const tag of ["bs-gl-inline", "모델마다 확률을 낸다", "uR1", "bsCache2_"]) chk(B.includes(tag), "번들이 소스와 맞다: " + tag, "★번들이 낡았다(" + tag + " 없음) — studio 에서 다시 빌드할 것★");
 console.log("② 범위 한정 스타일");
 const TW = readFileSync(new URL("../studio/tailwind.config.js", import.meta.url), "utf8"), CSS = readFileSync(new URL("../studio/src/index.css", import.meta.url), "utf8");
-chk(/important:\s*"#brain-studio"/.test(TW) && /preflight:\s*false/.test(TW), "Tailwind: important #brain-studio · Preflight 끔", "★스튜디오 스타일이 사이트 전체에 퍼진다★");
-const own = (CSS.match(/#brain-studio\s+\.([a-z][\w-]*)/g) || []).map((m) => m.replace(/.*\./, ""));
+chk(/important:\s*":is\(#brain-studio,#bs-layer\)"/.test(TW) && /preflight:\s*false/.test(TW), "Tailwind: important #brain-studio·#bs-layer(전체 화면 층) · Preflight 끔", "★스튜디오 스타일이 사이트 전체에 퍼진다★");
+const own = (CSS.match(/(?:#brain-studio|:is\(#brain-studio,#bs-layer\))\s+\.([a-z][\w-]*)/g) || []).map((m) => m.replace(/.*\./, ""));
 chk(own.length > 0 && own.every((c) => c.startsWith("bs-")), "자체 클래스는 bs- 접두(" + [...new Set(own)].join(",") + ")", "★사이트 클래스와 부딪힐 이름: " + own.filter((c) => !c.startsWith("bs-")).join(",") + "★");
 chk(!/className="[^"]*(?<![\w-])rail\b/.test(readFileSync(new URL("../studio/src/App.tsx", import.meta.url), "utf8")), "사이트의 .rail(사이드바)과 같은 이름을 쓰지 않는다", "★.rail 을 쓴다 — 사이트 사이드바 규칙에 숨는다★");
 console.log("③ 스크롤");
@@ -52,6 +52,11 @@ chk(/<NodeRoles sc=\{sc\} sel=\{sel\} onSel=\{setSel\} \/>/.test(OS) && /<NodeRo
 chk(/select\(id\) \{ if \(v\.sel === id\) return;/.test(GL) && /me\.current\?\.select\(sel\)/.test(OS), "노드를 고르면 그 연결만 밝게 — 한 번만 다시 그린다", "★선택이 그림에 안 닿는다★");
 chk(/export function seqBlocks/.test(NS) && /<SeqBlocks d=\{d\} \/>/.test(DT) && /last\.forEach\(\(w, u\)/.test(NS), "SEQ 블록·헤드가 보는 봉(마지막 봉 기준 거리·집중도)", "★SEQ 블록 설명이 없다★");
 chk(!/Math\.random/.test(NR), "역할 패널은 응답 값만", "★역할 패널이 값을 지어낸다★");
+console.log("⑧ 휴대폰 크게 보기 · 작은 그림 조작");
+chk(/createPortal\(/.test(OS) && /el\.id = "bs-layer"/.test(OS) && /z-index:2147483000/.test(OS), "크게 보기는 body 바로 아래 층(#bs-layer)에 — 사이트 머리·아래 탭 막대에 가리지 않는다", "★크게 보기가 페이지 안에 갇혀 사이트 막대에 가린다★");
+chk(/height: "100dvh"/.test(OS), "크게 보기 높이 = 실제 보이는 화면(100dvh · 아이폰 주소창)", "★100vh 로 아래 버튼이 화면 밖★");
+chk(/#brain-studio \.bs-gl-inline\.bs-touch canvas \{ pointer-events: auto; touch-action: none; \}/.test(CSS) && /손가락으로 돌리기/.test(OS), "작은 그림: '손가락으로 돌리기' 를 켤 때만 터치를 받는다(끄면 스크롤 그대로)", "★작은 그림 조작 스위치가 없다★");
+chk(/onPick=\{setSel\} apiRef=\{api\}/.test(OS) && /<NodeRoles sc=\{sc\} sel=\{sel\} onSel=\{setSel\} \/>/.test(OS), "작은 그림에서도 눌러서 노드 고르기 · 노드 역할 패널 기본으로 보임", "★작은 그림에서 노드 역할을 못 본다★");
 console.log("⑤ 사이트 배선");
 const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8"), WU = readFileSync(new URL("../public/workspace-ui.js", import.meta.url), "utf8"), WL = readFileSync(new URL("../public/workspace-layout.css", import.meta.url), "utf8");
 chk(/<div id="brain-studio" class="bs-mount"><\/div>/.test(H), "index.html 에 #brain-studio 자리", "★붙일 자리가 없다★");

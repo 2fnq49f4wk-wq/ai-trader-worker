@@ -214,8 +214,8 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
   // ── interaction (desktop always; touch only in full-screen mode) ──
   const ptr = new Map<number, { x: number; y: number }>(); let moved = false;
   const coarse = window.matchMedia && matchMedia("(pointer:coarse)").matches;
-  if (opts.interactive || !coarse) {
-    cv.style.cursor = "grab";
+  {   /* listeners always on; on phones the inline view only receives touches when "손가락으로 돌리기" is on (CSS .bs-touch) */
+    if (opts.interactive || !coarse) cv.style.cursor = "grab";
     cv.addEventListener("pointerdown", (e) => { try { cv.setPointerCapture(e.pointerId); } catch (er) { /* */ } ptr.set(e.pointerId, { x: e.clientX, y: e.clientY }); moved = false; });
     cv.addEventListener("pointermove", (e) => { const p0 = ptr.get(e.pointerId); if (!p0) return;
       const dx = e.clientX - p0.x, dy = e.clientY - p0.y, other = [...ptr.entries()].find(([k]) => k !== e.pointerId)?.[1];

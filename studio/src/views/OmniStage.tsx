@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { createOmniGL, type OmniView } from "../gl/omniGL";
 import type { NetScene } from "../gl/netScenes";
 import { getJSON, cached } from "../data";
@@ -24,26 +25,45 @@ export function ModelNet({ sc, name }: { sc: NetScene; name: string }) {
   return <NetStage sc={sc} title={name} lines={[sc.info.head, "선 " + sc.info.lines.toLocaleString("ko-KR") + "개"]} note={sc.info.note} />;
 }
 
+/* The full-screen view lives in a body-level layer: inside the page it was trapped under the site's own
+   header and bottom tab bar (both the studio mount and the site shell are z-index:1 stacking contexts). */
+function layer() {
+  let el = document.getElementById("bs-layer");
+  if (!el) { el = document.createElement("div"); el.id = "bs-layer"; el.style.cssText = "position:relative;z-index:2147483000;background:none"; document.body.append(el); }
+  return el;
+}
+
 function NetStage({ sc, title, lines, note }: { sc: any; title: string; lines: string[]; note?: string }) {
-  const [full, setFull] = useState(false), [sel, setSel] = useState(-1), [roles, setRoles] = useState(false);
+  const [full, setFull] = useState(false), [sel, setSel] = useState(-1), [touch, setTouch] = useState(false), [spin, setSpin] = useState(true);
+  const api = useRef<OmniView | null>(null);
+  const coarse = typeof window !== "undefined" && !!window.matchMedia && matchMedia("(pointer:coarse)").matches;
   useEffect(() => { setSel(-1); }, [sc]);
+  const C = ({ on, children, onClick, label }: any) => <button onClick={onClick} aria-pressed={on} aria-label={label} className={"shrink-0 rounded-sm px-2.5 py-1.5 text-[12px] " + (on ? "bg-ink text-bg" : "bg-bg-3 text-ink-2")}>{children}</button>;
   return (
     <div>
       <div className="relative overflow-hidden rounded-md border border-line" style={{ background: "radial-gradient(120% 70% at 50% 112%,rgba(196,40,84,.42),rgba(120,30,90,.14) 45%,transparent 70%),radial-gradient(90% 80% at 50% 42%,#20112f,#120a1f 55%,#09060f 100%)" }}>
-        <div className="bs-gl-inline relative aspect-square max-h-[460px] w-full sm:aspect-[16/10]">
-          {!full && <GL sc={sc} interactive={false} sel={sel} />}
+        <div className={"bs-gl-inline relative aspect-square max-h-[460px] w-full sm:aspect-[16/10]" + (touch ? " bs-touch" : "")}>
+          {!full && <GL sc={sc} interactive={false} sel={sel} onPick={setSel} apiRef={api} spin={spin} />}
         </div>
         <div className="pointer-events-none absolute left-3 right-24 top-3 text-[11px] leading-tight text-[#e6cfe0]/70">
           {lines.map((t, i) => <div key={i} className={i ? "" : "bs-num"}>{t}</div>)}
         </div>
+        {touch && <div className="pointer-events-none absolute bottom-3 left-3 right-[104px] truncate rounded-sm bg-black/50 px-2 py-1 text-[10.5px] text-[#e6cfe0]/85">돌리기 · 두 손가락 확대 · 눌러서 고르기</div>}
         <button onClick={() => setFull(true)} className="absolute bottom-3 right-3 rounded-sm bg-[#f4ecff] px-3 py-1.5 text-[12px] font-semibold text-[#1a0b24] shadow-[0_6px_20px_rgba(0,0,0,.35)]">크게 보기</button>
       </div>
+      <div className="bs-rail mt-2 flex gap-1.5 overflow-x-auto">
+        {coarse ? <C on={touch} onClick={() => setTouch(!touch)}>{touch ? "돌리기 끝(스크롤로)" : "손가락으로 돌리기"}</C> : <span className="self-center pr-1 text-[11px] text-ink-3">끌어서 돌리기 · Ctrl+휠 확대 · 눌러서 고르기</span>}
+        <C on={spin} onClick={() => { setSpin(!spin); api.current?.setSpin(!spin); }}>자동회전</C>
+        <C onClick={() => api.current?.zoomBy(1 / 1.25)} label="축소">−</C>
+        <C onClick={() => api.current?.zoomBy(1.25)} label="확대">+</C>
+        <C onClick={() => { api.current?.reset(); setSel(-1); }}>맞춤</C>
+      </div>
       {note && <p className="mt-2 text-[11px] leading-snug text-ink-3">{note}</p>}
-      <button onClick={() => setRoles(!roles)} aria-expanded={roles} className="mt-3 flex w-full items-center justify-between rounded-sm border border-line px-3 py-2 text-[12.5px] text-ink-2">
-        <span>노드 역할 보기 — 층·노드를 고르면 그림에서 그 연결만 밝게</span><span className="text-ink-3">{roles ? "접기" : "펼치기"}</span>
-      </button>
-      {roles && <div className="mt-3"><NodeRoles sc={sc} sel={sel} onSel={setSel} /></div>}
-      {full && <FullView sc={sc} title={title} sel={sel} onSel={setSel} onClose={() => setFull(false)} />}
+      <div className="mt-4">
+        <h4 className="mb-2 text-[12px] font-semibold tracking-tight text-ink-2">노드 역할 <span className="font-normal text-ink-3">— 층을 고르고 노드를 누르면 그림에서 그 연결만 밝게</span></h4>
+        <NodeRoles sc={sc} sel={sel} onSel={setSel} />
+      </div>
+      {full && createPortal(<div id="bs-full-host"><FullView sc={sc} title={title} sel={sel} onSel={setSel} onClose={() => setFull(false)} /></div>, layer())}
     </div>
   );
 }
@@ -108,7 +128,7 @@ function FullView({ sc, title, sel, onSel, onClose }: { sc: any; title: string; 
   const info = sel >= 0 ? nodeTitle(sc, sel) + (nodeRole(sc, sel) ? " — " + nodeRole(sc, sel) : "") : picked;
   const B = ({ on, children, onClick }: any) => <button onClick={onClick} className={"rounded-sm px-2.5 py-1.5 text-[12px] " + (on ? "bg-[#f4ecff] text-[#1a0b24]" : "bg-white/5 text-ink-2")}>{children}</button>;
   return (
-    <div className="fixed inset-0 z-[2147483000] flex flex-col" style={{ background: "radial-gradient(120% 60% at 50% 110%,rgba(196,40,84,.45),transparent 65%),#0b0712", overscrollBehavior: "contain", touchAction: "none" }} role="dialog" aria-label={title + " 구조"}>
+    <div className="fixed inset-0 z-[2147483000] flex flex-col" style={{ height: "100dvh", background: "radial-gradient(120% 60% at 50% 110%,rgba(196,40,84,.45),transparent 65%),#0b0712", overscrollBehavior: "contain", touchAction: "none" }} role="dialog" aria-label={title + " 구조"}>
       <div className="flex items-center justify-between gap-3 px-4 pb-2" style={{ paddingTop: "max(12px, env(safe-area-inset-top))" }}>
         <div className="min-w-0"><div className="text-[13px] font-semibold">{title}</div><div className="truncate text-[11px] text-ink-3">한 손가락 돌리기 · 두 손가락 확대</div></div>
         <button onClick={onClose} className="rounded-sm bg-white/10 px-3 py-1.5 text-[13px]">닫기</button>

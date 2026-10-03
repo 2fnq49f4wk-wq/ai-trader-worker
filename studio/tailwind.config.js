@@ -1,8 +1,8 @@
 /** @type {import('tailwindcss').Config} */
-// Scoped: every utility is prefixed by #brain-studio and Preflight is off, so the studio
-// never restyles the rest of the trading site it is mounted into.
+// Scoped: every utility is prefixed by #brain-studio (or #bs-layer — the body-level layer the full-screen
+// view is portalled into) and Preflight is off, so the studio never restyles the rest of the trading site.
 module.exports = {
-  important: "#brain-studio",
+  important: ":is(#brain-studio,#bs-layer)",
   corePlugins: { preflight: false },
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
   theme: {
