@@ -43,6 +43,11 @@ on:
         description: 'OMNI 한국 뉴스 칸 실험(재기만 · 업로드 안 함) — omni_now 와 함께'
         type: boolean
         default: false
+      # [V33.475] 급등 패턴 실험 — 동료 상위 10% 로 오를 종목을 배우고 '그걸 샀다면' 비용 뺀 순초과를 잰다(업로드 안 함)
+      omni_rally:
+        description: 'OMNI 급등 패턴 실험(재기만 · 업로드 안 함) — omni_now 와 함께'
+        type: boolean
+        default: false
       omni_ksec:
         description: 'OMNI 장중 횡단면 칸 실험(재기만 · 업로드 안 함) — omni_now 와 함께'
         type: boolean
@@ -208,7 +213,7 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           set -o pipefail
-          modal run trainer/modal/modal_train.py::omni_job --ksec ${{ inputs.omni_ksec && 1 || 0 }} --flow ${{ inputs.omni_flow && 1 || 0 }} --news ${{ inputs.omni_news && 1 || 0 }} 2>&1 | tee omni.log
+          modal run trainer/modal/modal_train.py::omni_job --ksec ${{ inputs.omni_ksec && 1 || 0 }} --flow ${{ inputs.omni_flow && 1 || 0 }} --news ${{ inputs.omni_news && 1 || 0 }} --rally ${{ inputs.omni_rally && 1 || 0 }} 2>&1 | tee omni.log
       - name: OMNI summary
         if: always()
         run: |

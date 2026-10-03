@@ -242,6 +242,27 @@ def fake_roundtrip(data):
     return fails
 
 
+def check_rally():
+    """[V33.475] 급등 패턴 실험 — 심은 신호는 통과시키고 잡음은 하나도 통과시키지 않아야 한다."""
+    import numpy as np
+    rng = np.random.default_rng(7)
+    N, F = 300 * 2 * 60, len(omni.MODEL_FEATS)
+    X = rng.normal(size=(N, F))
+    td = np.repeat(np.arange(300) * 86400.0 + 1.7e9, 120)
+    hz = np.tile(np.repeat([2, 3], 60), 300).astype(np.int64)
+    base = {"X": X, "td": td, "te": td + 86400 * np.where(hz == 3, 5, 1), "hz": hz, "mkt": np.zeros(N, dtype=np.int64),
+            "w": np.ones(N), "st": np.zeros(N, dtype=np.int64), "sym": ["S%d" % (i % 60) for i in range(N)], "yb": np.zeros(N, dtype=np.int64)}
+    q = lambda *a, **k: None
+    sig = dict(base, fr=X[:, 0] * 0.004 + rng.normal(scale=0.02, size=N))
+    sig["y"] = (sig["fr"] > np.median(sig["fr"])).astype(np.int64)
+    noise = dict(base, fr=rng.normal(scale=0.02, size=N))
+    noise["y"] = (noise["fr"] > 0).astype(np.int64)
+    a, b = omni.rally_experiment(sig, log=q), omni.rally_experiment(noise, log=q)
+    assert a.get("passed"), "급등 실험: 심은 신호를 못 찾았다 %r" % a
+    assert not b.get("passed"), "급등 실험: 잡음을 통과시켰다 %r" % b
+    print("급등 실험: 신호 통과 %s · 잡음 통과 없음" % ",".join(a["passed"]))
+
+
 def main():
     import json
     fixture = None
@@ -545,6 +566,7 @@ def main():
     if fails:
         print("❌ " + " · ".join(fails))
         sys.exit(1)
+    check_rally()
     print("✅ OMNI 자가검사 통과")
 
 

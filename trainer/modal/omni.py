@@ -137,6 +137,18 @@ if FLOW:
 #   OMNI_NEWS=1 회차는 같은 표본으로 '뉴스 칸 비움' 과 '채움' 을 둘 다 학습해 한국 행 홀드아웃 AUC 를 견주고
 #   (수급과 같은 채택 기준: +0.005 이상 & 3구간 중 2승) run() 이 업로드를 거부한다.
 NEWS = os.environ.get("OMNI_NEWS") == "1"
+# ══ [V33.475] ★급등 패턴 실험(재기만 · 업로드 거부)★ ═══════════════════════════════════════════════════
+#   사용자: "기존 시장 데이터에서 상승한 주식들의 패턴을 찾아 학습한 다음 매매".
+#   OMNI 는 이미 시장 데이터(1,005종목 원시 봉)로 배운다 — 질문이 "동료 중앙값보다 잘하나(50/50)" 였다.
+#   이 실험은 질문을 ★"동료 중 상위 10% 로 오르나"★ 로 바꾸고, 잣대도 정확도가 아니라 ★실제로 매매했을 때★ 로 본다:
+#     홀드아웃(학습에 안 쓴 마지막 35일)에서 묶음(같은 시장·지평·시각)마다 모델 상위 10% 를 샀다면
+#     ① 그중 실제 상위 10% 비율(정밀도 · 무작위 10%) ② 묶음 평균 대비 초과수익 ③ 왕복 비용을 뺀 순초과수익 ④ 날짜 블록 t.
+#   ★통과 = 순초과 > 0 · 블록 t ≥ 2 · 학습 구간 전진 3구간 중 2구간 순초과 > 0★ (지평마다). 같은 표본의 기존 라벨(중앙값) 모델과 나란히.
+#   통과해도 이 회차는 올리지 않는다 — 다음은 워커 섀도우 채점(실시간 전진)이고, 매매는 그 성적이 쌓인 뒤에 논한다.
+RALLY = os.environ.get("OMNI_RALLY") == "1"
+RALLY_TOP = 0.10
+RALLY_COST = {0: 0.0010, 1: 0.0030}     # 왕복 비용(로그수익) — 미국 0.10% · 한국 0.30%(거래세·수수료·미끄러짐)
+RALLY_T = 2.0
 NEWS_RAW = ["e_n1", "e_n7", "e_surge", "e_tone7", "e_tone30", "e_gap"]
 NEWS_QSRC = {"q_en7": "e_n7", "q_esurge": "e_surge", "q_etone7": "e_tone7"}
 NEWS_FEATS = NEWS_RAW + list(NEWS_QSRC)
@@ -2570,6 +2582,142 @@ def flow_compare(A, rep_with, log=print, feats=None, tag="수급", gain_min=None
     return out
 
 
+def rally_groups(A, min_n=XSEC_MIN, top=RALLY_TOP):
+    """(시장 · 지평 · 결정시각) 묶음 번호와 '상위 top 으로 올랐나' 라벨. 묶음이 작으면 -1(안 쓴다)."""
+    import numpy as np
+    n = len(A["fr"])
+    order = np.lexsort((A["td"], A["hz"], A["mkt"]))
+    md, hzv, tdv = A["mkt"][order], A["hz"][order], A["td"][order]
+    newg = np.empty(n, dtype=bool)
+    newg[0] = True
+    newg[1:] = (md[1:] != md[:-1]) | (hzv[1:] != hzv[:-1]) | (tdv[1:] != tdv[:-1])
+    starts = np.flatnonzero(newg)
+    ends = np.append(starts[1:], n)
+    gid = np.full(n, -1, dtype=np.int64)
+    yr = np.zeros(n, dtype=np.int64)
+    g = 0
+    for a, b in zip(starts, ends):
+        if b - a < min_n:
+            continue
+        ix = order[a:b]
+        k = max(1, int(round((b - a) * top)))
+        best = ix[np.argsort(-A["fr"][ix], kind="mergesort")[:k]]
+        yr[best] = 1
+        gid[ix] = g
+        g += 1
+    return gid, yr
+
+
+def rally_pick_eval(A, idx, p, gid, yr, top=RALLY_TOP):
+    """idx 행(p 는 idx 와 같은 순서의 예측)에서 묶음마다 p 상위 top 을 '샀다' 고 보고 지평별 성적. 반환 {hz: {...}}."""
+    import numpy as np
+    idx = np.asarray(idx)
+    pmap = np.full(len(A["fr"]), np.nan)
+    pmap[idx] = np.asarray(p, dtype=np.float64)
+    idx = idx[gid[idx] >= 0]
+    out = {}
+    if not len(idx):
+        return out
+    order = idx[np.argsort(gid[idx], kind="mergesort")]
+    g = gid[order]
+    cut = np.flatnonzero(np.append(True, g[1:] != g[:-1]))
+    ends = np.append(cut[1:], len(order))
+    per = {}
+    for a, b in zip(cut, ends):
+        ix = order[a:b]
+        if len(ix) < 10:
+            continue
+        k = max(1, int(round(len(ix) * top)))
+        pk = ix[np.argsort(-pmap[ix], kind="mergesort")[:k]]
+        h = int(A["hz"][ix[0]])
+        mk = int(A["mkt"][ix[0]])
+        ex = float(A["fr"][pk].mean() - A["fr"][ix].mean())
+        day = int(A["td"][ix[0]] // 86400)
+        d = per.setdefault(h, {"n": 0, "hit": 0, "ex": [], "net": [], "days": {}})
+        d["n"] += len(pk)
+        d["hit"] += int(yr[pk].sum())
+        d["ex"].append(ex)
+        d["net"].append(ex - RALLY_COST[mk])
+        d["days"].setdefault(day, []).append(ex - RALLY_COST[mk])
+    for h, d in per.items():
+        dm = [float(np.mean(v)) for v in d["days"].values()]
+        nd = len(dm)
+        sd = float(np.std(dm, ddof=1)) if nd > 1 else 0.0
+        t = (float(np.mean(dm)) / (sd / nd ** 0.5)) if (nd > 1 and sd > 0) else None
+        out[HORIZONS[h]] = {"picks": d["n"], "prec": d["hit"] / d["n"] if d["n"] else None,
+                            "ex": float(np.mean(d["ex"])), "net": float(np.mean(d["net"])), "t": t, "days": nd}
+    return out
+
+
+def rally_experiment(A, log=print):
+    """[V33.475] 급등 패턴 — '상위 10% 로 오를 종목' 을 배우고, 홀드아웃에서 그 상위 10% 를 샀을 때의 순초과수익을 잰다."""
+    import numpy as np
+    nt = n_threads()
+    cand = dict(GBDT_GRID[1])             # 강한 정규화 — 홀드아웃을 보고 고르지 않는다(고정)
+    cand.pop("soft", None)
+    gid, yr = rally_groups(A)
+    C, tr, ho = split_cutoff(A)
+    base = float(yr[gid >= 0].mean()) if (gid >= 0).any() else 0.0
+    log("   · OMNI 급등 실험 — 묶음 %d · 라벨(동료 상위 %d%%) 기본율 %.1f%% · 학습 %d행 · 홀드아웃 %d행"
+        % (int(gid.max()) + 1, int(RALLY_TOP * 100), base * 100, len(tr), len(ho)))
+
+    def fit_pred(train_ix, test_ix, label):
+        Atr = take(A, train_ix)
+        Atr["y"] = label[train_ix]
+        f, v = _hz_split(Atr, np.arange(len(train_ix)))
+        if len(f) < 2000 or len(v) < 500:
+            return None
+        b, _ = _gbdt_fit(Atr, f, v, cand, nt)
+        return b.predict(A["X"][test_ix], num_iteration=b.best_iteration or None)
+
+    pr = fit_pred(tr, ho, yr)
+    pm = fit_pred(tr, ho, A["y"])
+    if pr is None or pm is None:
+        log("   ⏭ OMNI 급등 실험 — 표본 부족")
+        return {"ok": False}
+    R = rally_pick_eval(A, ho, pr, gid, yr)
+    M = rally_pick_eval(A, ho, pm, gid, yr)
+    aucs = {}
+    for k, hz in enumerate(HORIZONS):
+        m = (A["hz"][ho] == k) & (gid[ho] >= 0)
+        aucs[hz] = _auc(pr[m], yr[ho][m]) if m.sum() >= 200 else None
+    # 학습 구간 안 전진 3구간(홀드아웃은 안 건드린다)
+    cuts = [float(np.quantile(A["td"][tr], q)) for q in CV_FOLDS] + [float(A["td"][tr].max()) + 1]
+    folds = {hz: [] for hz in HORIZONS}
+    for k in range(len(CV_FOLDS)):
+        a_ix = tr[A["te"][tr] < cuts[k]]
+        t_ix = tr[(A["td"][tr] >= cuts[k]) & (A["td"][tr] < cuts[k + 1])]
+        if len(a_ix) < 20000 or len(t_ix) < 2000:
+            continue
+        pf = fit_pred(a_ix, t_ix, yr)
+        if pf is None:
+            continue
+        Fk = rally_pick_eval(A, t_ix, pf, gid, yr)
+        for hz in HORIZONS:
+            if hz in Fk:
+                folds[hz].append(Fk[hz]["net"])
+    f = lambda v, d=2: "—" if v is None else ("%." + str(d) + "f") % v
+    pc = lambda v: "—" if v is None else "%+.3f%%" % (v * 100)
+    out = {"base": base, "hz": {}}
+    log("     지평 | 급등모델: 산 수 · 실제 상위10% 비율 · 초과 · 비용 뺀 순초과 · t(날짜) · AUC | 중앙값모델: 순초과 · t | 전진 3구간 순초과 · 판정")
+    for hz in HORIZONS:
+        r, mm, fo = R.get(hz), M.get(hz), folds[hz]
+        if not r:
+            continue
+        wins = sum(1 for v in fo if v > 0)
+        ok = r["net"] > 0 and (r["t"] or 0) >= RALLY_T and wins >= 2
+        out["hz"][hz] = dict(r, auc=aucs.get(hz), mNet=(mm or {}).get("net"), mT=(mm or {}).get("t"), folds=fo, ok=ok)
+        log("     %-3s | %d · %s · %s · %s · t %s · AUC %s | %s · t %s | %s · %s"
+            % (hz, r["picks"], "—" if r["prec"] is None else "%.1f%%" % (r["prec"] * 100), pc(r["ex"]), pc(r["net"]), f(r["t"]),
+               f(aucs.get(hz), 3), pc((mm or {}).get("net")), f((mm or {}).get("t")),
+               " ".join(pc(v) for v in fo) or "—", "★통과★" if ok else "미달"))
+    passed = [hz for hz, v in out["hz"].items() if v["ok"]]
+    out["passed"] = passed
+    log("   · OMNI 급등 실험 최종 판정 — 통과 지평: %s (기준: 순초과 > 0 · t ≥ %.1f · 전진 2/3 승)"
+        % (", ".join(passed) or "없음", RALLY_T))
+    return out
+
+
 def flow_folds(W, W0, pick, log=print):
     """[V33.436] 수급 채택의 두 번째 조건 — ★3구간 중 2구간 승★. 홀드아웃은 건드리지 않는다(학습 구간 안에서만).
     cv_select 와 같은 전진 구간(70/80/90% 분위)에서 채움(W)·비움(W0)을 같은 행·같은 구성으로 학습해
@@ -2635,6 +2783,12 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
     if A is None:
         log("   ⏭ OMNI 표본 0 — 수집기가 아직 봉을 못 모았다")
         return None
+    if RALLY:
+        rep = {"rally": rally_experiment(A, log=log)}
+        log("   ⏭ OMNI ★급등 패턴 실험 회차★ — 재기만 하고 올리지 않는다(다음은 워커 섀도우 채점).")
+        rep["ok"] = False
+        rep["why"] = "OMNI_RALLY 실험 회차 — 업로드 안 함"
+        return rep
     m, rep = train_model(A, log=log)
     if m is None:
         log("   ⏭ OMNI " + rep["why"])

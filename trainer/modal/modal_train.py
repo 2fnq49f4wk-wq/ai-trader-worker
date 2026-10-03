@@ -4097,7 +4097,7 @@ if _OMNI_IMAGE is not None:
     #   '성능이 안 난다' 와 구별이 안 된다).
     @app.function(image=_OMNI_IMAGE, secrets=[modal.Secret.from_name("lux-dnn")],
                   timeout=6900, cpu=8.0, memory=32768)
-    def omni_job(upload: bool = True, limit: int = 0, ksec: int = 0, flow: int = 0, news: int = 0):
+    def omni_job(upload: bool = True, limit: int = 0, ksec: int = 0, flow: int = 0, news: int = 0, rally: int = 0):
         import os
         import sys
         import time
@@ -4114,6 +4114,9 @@ if _OMNI_IMAGE is not None:
         # [V33.472] 한국 종목 뉴스 실험 회차 — 칸이 붙고 기준선과 나란히 재며, omni.run 이 업로드를 거부한다.
         if news:
             os.environ["OMNI_NEWS"] = "1"
+        # [V33.475] 급등 패턴 실험 회차 — '동료 상위 10%' 를 배우고 홀드아웃에서 비용 뺀 순초과를 잰다(업로드 거부).
+        if rally:
+            os.environ["OMNI_RALLY"] = "1"
         import omni
         BASE = os.environ["BASE_URL"].rstrip("/")
         KEY = os.environ["TRAIN_KEY"]
