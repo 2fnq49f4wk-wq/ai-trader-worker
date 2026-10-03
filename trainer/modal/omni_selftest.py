@@ -248,6 +248,7 @@ def check_rally():
     rng = np.random.default_rng(7)
     N, F = 300 * 2 * 60, len(omni.MODEL_FEATS)
     X = rng.normal(size=(N, F))
+    X[:, omni.MODEL_FEATS.index("d_rv20")] = np.abs(X[:, omni.MODEL_FEATS.index("d_rv20")]) * 0.01 + 0.01
     td = np.repeat(np.arange(300) * 86400.0 + 1.7e9, 120)
     hz = np.tile(np.repeat([2, 3], 60), 300).astype(np.int64)
     base = {"X": X, "td": td, "te": td + 86400 * np.where(hz == 3, 5, 1), "hz": hz, "mkt": np.zeros(N, dtype=np.int64),
@@ -258,8 +259,8 @@ def check_rally():
     noise = dict(base, fr=rng.normal(scale=0.02, size=N))
     noise["y"] = (noise["fr"] > 0).astype(np.int64)
     a, b = omni.rally_experiment(sig, log=q), omni.rally_experiment(noise, log=q)
-    assert a.get("passed"), "급등 실험: 심은 신호를 못 찾았다 %r" % a
-    assert not b.get("passed"), "급등 실험: 잡음을 통과시켰다 %r" % b
+    assert a.get("passed") and set(p.split(":")[0] for p in a["passed"]) == set(omni.RALLY_ARMS), "급등 실험: 심은 신호를 못 찾은 갈래가 있다 %r" % a.get("passed")
+    assert not b.get("passed"), "급등 실험: 잡음을 통과시켰다 %r" % b.get("passed")
     print("급등 실험: 신호 통과 %s · 잡음 통과 없음" % ",".join(a["passed"]))
 
 

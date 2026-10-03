@@ -149,8 +149,10 @@ console.log("\n⑥ [V33.475] 급등 패턴 실험 — 재기만(업로드 거부
   const MD = readFileSync(new URL("../.github/workflows/modal-deploy.yml", import.meta.url), "utf8"), MT = readFileSync(new URL("../trainer/modal/modal_train.py", import.meta.url), "utf8");
   chk(/RALLY = os\.environ\.get\("OMNI_RALLY"\) == "1"/.test(PY) && /OMNI_RALLY 실험 회차 — 업로드 안 함/.test(PY) && /if RALLY:\s*\n\s*rep = \{"rally": rally_experiment/.test(PY),
     "OMNI_RALLY 회차는 업로드를 거부한다", "★급등 실험이 업로드한다★");
-  chk(/RALLY_COST = \{0: 0\.0010, 1: 0\.0030\}/.test(PY) && /ex - RALLY_COST\[mk\]/.test(PY) && /RALLY_T = 2\.0/.test(PY) && /wins >= 2/.test(PY),
-    "잣대: 왕복 비용(미국 0.10% · 한국 0.30%)을 뺀 순초과 > 0 · 날짜 블록 t ≥ 2 · 전진 2/3", "★급등 실험 잣대가 느슨해졌다★");
+  chk(/RALLY_COST = \{0: 0\.0010, 1: 0\.0030\}/.test(PY) && /ex - RALLY_COST\[mk\]/.test(PY) && /RALLY_T = 2\.0/.test(PY) && /need = max\(2, int\(_m\.ceil\(0\.6 \* nf\)\)\)/.test(PY) && /nf >= 3 and wins >= need/.test(PY) && /RALLY_FOLDS = \(0\.50, 0\.60, 0\.70, 0\.80, 0\.90\)/.test(PY),
+    "잣대: 왕복 비용(미국 0.10% · 한국 0.30%)을 뺀 순초과 > 0 · 날짜 블록 t ≥ 2 · 전진 5구간의 60% 이상", "★급등 실험 잣대가 느슨해졌다★");
+  chk(/"adj": \("위험조정 상위10%"/.test(PY) && /"objective": "lambdarank"/.test(PY) && /z = A\["fr"\] \/ vol/.test(PY) && /rally_pick_eval\(A, ho, p, gid, yr\)/.test(PY),
+    "세 갈래(원값 · 위험조정 · 순위학습) — 평가는 셋 다 ★원값 수익★(실제로 버는 돈)", "★갈래가 빠졌거나 평가 잣대가 갈래마다 다르다★");
   chk(/cand = dict\(GBDT_GRID\[1\]\)/.test(PY), "구성은 고정(홀드아웃을 보고 고르지 않는다)", "★홀드아웃으로 구성을 고른다★");
   chk(/def check_rally\(\)/.test(ST) && /check_rally\(\)\n\s*print\("✅ OMNI 자가검사 통과"\)/.test(ST), "학습기 자가검사: 심은 신호 통과 · 잡음 불통과", "★급등 실험 자가검사가 없다★");
   chk(/omni_rally:/.test(MD) && /--rally \$\{\{ inputs\.omni_rally && 1 \|\| 0 \}\}/.test(MD) && /os\.environ\["OMNI_RALLY"\] = "1"/.test(MT),
