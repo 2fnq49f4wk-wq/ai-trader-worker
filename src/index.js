@@ -2619,6 +2619,16 @@ const SECTOR_GROUP_MAP = {
 /* ══ [V33.407] ★AI 가 못 설 때 규칙엔진이 신규매수를 해도 되는가 — 한 곳에서만 답한다.★
    세 경로(메인·CM·대체시장)가 각자 판단하면 언젠가 갈라진다. 이 저장소가 반복해 당한 병이다.
    반환 true = 규칙엔진 신규매수 허용. ★청산과는 무관하다★ — 청산은 어느 모드에서도 돈다. */
+/* ══ [V33.477] ★AI 가 '설 수 있는가' — 한 곳에서만 답한다(매매 사이클 · 화면 배지 · 자가진단 공통).★ ══════════
+   운영 실측(2026-10-03 수익률 진단): 원장 마지막 거래 2026-09-28 — 그 뒤 거래일 내내 매수 0 · 보유 0.
+   원인: 준비 판정이 `MIND && GBDT` 였다(V33.422 가 DNN 을 퇴역시키며 DNN 만 뺐다). GBDT 가 섀도우로 내려가자
+   위원회에 ★XGB·LGB·CatBoost 가 정식으로 투표 중인데도★ '미가동' 이 됐고, V33.407 규칙대로 신규 진입이 전부 막혔다.
+   설계 원칙은 처음부터 "위원장(MIND) + 표준 트리 위원 중 최소 하나 신뢰" 였다 — 부스터(V32.65)도 같은 트리 형식의
+   정식 위원이다(_boostersCached = 라이브 위원회가 채점에 쓰는 바로 그 목록). 실적 관문(perfGateCheck)은 그대로 —
+   지는 진입 열쇠(kr:AI:TREND 등)는 여전히 막힌다. */
+function aiCoreReady(mindOk, gbdtOk, boostersLive) {
+  return !!(mindOk && (gbdtOk || _num(boostersLive, 0) > 0));
+}
 function ruleEntryAllowed(aiReady) {
   try {
     if (aiReady) return false;          // AI 가동 중 — 규칙 진입은 애초에 폐기된다(종전 동작)
@@ -3046,7 +3056,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.476";
+const _BUILD_VER = "V33.477";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -22677,7 +22687,21 @@ async function runTradingCycle(env) {
           //   구버전(11)에서 trusted=true인 채 남아 __aiReady가 켜지지만 정작 mlDNNLoad/mlGBDTLoad는
           //   featVer 불일치로 null → AI가 '가동'된다면서 실은 MIND 단독으로 돌아 requireTrustedModel
           //   취지에 반했다. 이제 '실제 로드된 현재 featVer 모델'(__dnn/__gbdt 객체)이 있을 때만 준비완료.
-          __aiReady = !!(__mind && __gbdt);   // [V33.422] DNN 퇴역 — 준비 판정에서 뺐다
+          let __boostersLive = 0;
+          try { __boostersLive = ((await _boostersCached(DB)) || []).length; } catch (e) {}
+          __aiReady = aiCoreReady(!!__mind, !!__gbdt, __boostersLive);   // [V33.477] MIND + (GBDT 또는 라이브 부스터)
+          /* [V33.477] ★미가동은 조용히 두지 않는다★ — 로그는 1,500줄(약 5시간)만 남아 며칠 멈춰도 흔적이 지워졌다.
+             시작 시각을 상태에 남기고(자가진단이 읽는다), 다시 서면 지운다. */
+          try {
+            const _h = await getState(DB, "ai_halt", null, true);   // 엄격 — 못 읽으면 since 를 덮지 않는다(던져서 아래를 건너뛴다)
+            if (!__aiReady) {
+              const _why = !__mind ? "위원장(MIND) 없음" : "트리 위원(GBDT·XGB·LGB·CatBoost) 중 신뢰된 것 없음";
+              await setState(DB, "ai_halt", { since: _num(_h && _h.since, 0) || Date.now(), ts: Date.now(), why: _why, market: market });
+            } else if (_h && _h.since) {
+              await DB.prepare("DELETE FROM state WHERE k = ?").bind("ai_halt").run();
+              await log(DB, "INFO", null, "[AI] 다시 가동 — 미가동 " + ((Date.now() - _h.since) / 3600000).toFixed(1) + "시간 만(" + (_h.why || "") + ")");
+            }
+          } catch (e) {}
           try {
             const _sr = await getState(DB, "ai_selfreview", null);   // [V12.75] 자가치유 차단목록
             if (_sr && Array.isArray(_sr.autoDisable) && _sr.autoDisable.length) __autoDisabled = new Set(_sr.autoDisable);
@@ -25991,7 +26015,8 @@ async function handleRequest(request, env, ctx) {
                      (typeof _dMeta.featVer !== "number" || _dMeta.featVer === LUXML.featVer));
           gbdtOk = !!(_gt && _gt.trusted && _probe && _probe.gfv === LUXML.featVer && _probe.gtrees > 0);
           const _auto = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
-          aiReady = !!(_auto.enabled && mindOk && (dnnOk || gbdtOk));
+          let _bLive = 0; try { _bLive = ((await _boostersCached(env.DB)) || []).length; } catch (e) {}
+          aiReady = !!(_auto.enabled && aiCoreReady(mindOk, dnnOk || gbdtOk, _bLive));   // [V33.477] 매매 사이클과 같은 판정
           // [V33.49] ★"왜 DNN만 학습 대기냐"를 화면에서 바로 알 수 있게★
           //   종전엔 committee 가 true/false 뿐이라, 미가동 이유가 (a) 학습 자체가 안 됐는지
           //   (b) 학습은 됐는데 검증성능이 문턱 미달인지 (c) 모델 본문 저장이 깨졌는지
@@ -48903,6 +48928,15 @@ async function _luxSelfCheck(DB) {
     // [V32.55] fetch/로딩 속도 프록시 — 대표 상태 배치 read 왕복시간 측정
     let S = {}, _sLoadMs = null; try { const _t = Date.now(); S = await getStates(DB, ["ai_picks:scan", "crisis_gauge", "world_news", "tag_returns", "macro_data", "mkt_context", "committee_cal", "event_efficacy", "dnn_trust", "gbdt_trust", "ai_selfreview", "news_stats", "sector_news_sentiment", "mind_model", "modal_retrain_auto"]); _sLoadMs = Date.now() - _t; } catch (e) {}
     perf.dbReadMs = _sLoadMs;
+    /* [V33.477] AI 미가동 = 신규 매수 0 — 몇 시간째인지 자가진단 맨 앞에 올린다(2026-09-28~10-03 아무도 몰랐다). */
+    try {
+      const _h = await getState(DB, "ai_halt", null);
+      if (_h && _h.since) {
+        const _hh = (nowT - _h.since) / 3600000;
+        add(_hh >= 6 ? "error" : "warn", "매매", "AI 미가동 " + (_hh < 48 ? _hh.toFixed(1) + "시간" : (_hh / 24).toFixed(1) + "일") +
+          "째 — 신규 매수 0(청산만 돈다) · 사유: " + (_h.why || "—"));
+      }
+    } catch (e) {}
     // 모델 준비 상태
     let mind = null; try { mind = await mlMindLoad(DB); } catch (e) {}
     if (!mind) add("error", "모델", "MIND(위원장) 미로딩 — 위원회가 규칙엔진 폴백으로 동작 중일 수 있음");
@@ -52834,7 +52868,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { aiCoreReady, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

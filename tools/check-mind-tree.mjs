@@ -155,8 +155,11 @@ console.log("⑤ aiReady 판정");
   /* [V33.422] DNN 퇴역 — 조건이 (__mind && (__dnn || __gbdt)) → (__mind && __gbdt) 로 ★좁아졌다★.
      계약의 뜻은 "MIND 는 하드 요구사항이고, 실제로 로드된 모델이 하나는 있어야 한다" 이다.
      느슨해지는 방향(예: __mind 만)으로 바뀌면 여전히 막는다. */
-  chk(/__aiReady = !!\(__mind && __gbdt\)/.test(S),
-    "aiReady 가 MIND + 실제 로드된 위원(GBDT) 을 함께 요구한다",
+  /* [V33.477] 실제 로드된 트리 위원 = GBDT ★또는 라이브 부스터(XGB·LGB·Cat — _boostersCached 가 본문까지 읽은 것)★.
+     GBDT 하나만 보면 GBDT 가 섀도우일 때 부스터가 투표 중인데도 매수가 0 이 된다(2026-09-28~10-03 실측).
+     MIND 만으로 서는 것은 여전히 막는다 — 판정 자체는 check-ai-ready 가 실행해서 본다. */
+  chk(/__aiReady = aiCoreReady\(!!__mind, !!__gbdt, __boostersLive\)/.test(S) && /return !!\(mindOk && \(gbdtOk \|\| _num\(boostersLive, 0\) > 0\)\)/.test(S),
+    "aiReady 가 MIND + 실제 로드된 트리 위원(GBDT 또는 라이브 부스터)을 함께 요구한다",
     "aiReady 조건이 완화됐다 — MIND 만으로 준비완료가 되면 빈 위원회로 돈다");
 }
 
