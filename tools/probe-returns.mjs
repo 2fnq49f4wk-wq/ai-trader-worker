@@ -80,3 +80,25 @@ try {
 // [V33.459] 실적 관문의 지금 판정(막힘 · 시험 · 열림)
 try { const pgj = await get("/api/perf-gate?fresh=1"); out("perf_gate", Object.entries(pgj.keys || {}).map(([k, v]) => k + " " + v.mode + " n" + v.n + " avg" + v.mean + " pf" + v.pf + " win" + v.win)); }
 catch (e) { out("perf_gate_err", String(e)); }
+// [V33.477] ★왜 거래가 멈췄나★ — 원장 마지막 거래 이후 사이클·잠금·하트비트 · 상태 모양 · 최근 로그 요약(오류·막힘·관문)
+try {
+  const dg = await get("/api/diag");
+  const pick = {}; for (const k of Object.keys(dg || {})) { const v = dg[k]; pick[k] = (v && typeof v === "object") ? JSON.stringify(v).slice(0, 160) : v; }
+  out("diag", pick);
+} catch (e) { out("diag_err", String(e)); }
+try {
+  const st2 = await get("/api/state");
+  const shape = {}; for (const k of Object.keys(st2 || {})) { const v = st2[k]; shape[k] = Array.isArray(v) ? "arr" + v.length : (v && typeof v === "object") ? "{" + Object.keys(v).slice(0, 8).join(",") + "}" : String(v).slice(0, 60); }
+  out("state_shape", shape);
+  const pv = st2.positions || {}; out("positions_raw", { us: JSON.stringify(pv.us || null).slice(0, 200), kr: JSON.stringify(pv.kr || null).slice(0, 200) });
+} catch (e) { out("state2_err", String(e)); }
+try {
+  const lg = await get("/api/logs?limit=600");
+  const t0 = lg.length ? lg[lg.length - 1].ts || lg[lg.length - 1].created_at : null, t1 = lg.length ? lg[0].ts || lg[0].created_at : null;
+  out("logs_span", { n: lg.length, from: t0, to: t1 });
+  const key = (m) => String(m || "").replace(/\d[\d,.:%\-]*/g, "#").replace(/\s+/g, " ").slice(0, 70);
+  const cnt = new Map(); for (const r of lg) { const k = (r.level || "?") + " " + key(r.message || r.msg); cnt.set(k, (cnt.get(k) || 0) + 1); }
+  out("logs_top", [...cnt].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, v]) => v + "× " + k));
+  out("logs_err", lg.filter((r) => /ERROR|WARN/.test(r.level || "")).slice(0, 15).map((r) => (r.ts || "") + " " + String(r.message || r.msg).slice(0, 220)));
+  out("logs_trade", lg.filter((r) => /매수|BUY|관문|막힘|blocked|skip|건너|halt|정지|kill|중단/i.test(String(r.message || r.msg))).slice(0, 25).map((r) => String(r.message || r.msg).slice(0, 200)));
+} catch (e) { out("logs_err2", String(e)); }
