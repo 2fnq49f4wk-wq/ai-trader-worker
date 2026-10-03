@@ -12,6 +12,12 @@
 
 ## Current handoff
 
+- Status: **V33.478 — 미국 시세: v7 이 빈 배열(`result=0 keys=quoteResponse`)일 때 spark 배치(20종목/1회)로 메운다.**
+  - 종전: v7 이 0건이면 미국 전 종목이 종목당 1회 v8 chart 폴백 → 예산 200 으로 한 사이클에 다 못 돌아 시세가 몇 사이클씩 묵었다.
+  - 순서 v7 → spark(`range=5d&interval=1d`, 폴백과 같은 규칙: 마지막 일봉=가격, 그 앞=전일종가) → 종목당 폴백. 첫 묶음 0건이면 spark 중단.
+  - 상태 `yahoo_spark {got, calls, err, v7Dead, ts}` · 자가진단은 spark 가 2시간 안에 메웠으면 error→warn.
+  - 게이트 `check-spark-quotes.mjs` · `check-extquote-rotation` 심각도 정규식 확장.
+  - 다음: 배포 후 returns 프로브의 selfcheck 에서 "spark 배치로 메우는 중" 문구와 got 수 확인. 0건이면 spark 도 막힌 것 — 다른 수집원 필요.
 - Status: **V33.477 — ★매수가 2026-09-28 부터 0 이었다★ (AI 준비 판정이 GBDT 하나에 묶여 있었다) 고침 + OMNI 세 갈래 실측.**
   ■ 수익률 진단(ui-probe returns · run 37117071353/37117143680): 원장 1,305건 · 마지막 거래 2026-09-28 12:33Z — 그 뒤 거래일 내내 매수·매도 0 · 보유 us 0 / kr 0.
     사이클은 돈다(하트비트 정상 · Cycle start). 로그는 1,500줄(≈5시간)만 남아 평일 기록이 이미 지워졌다.

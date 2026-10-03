@@ -83,7 +83,9 @@ const bad = (m) => { fails++; console.error("  FAIL " + m); };
   /* 낡은 단정이 ★사용자에게 나가는 문장★ 으로 남아 있는지만 본다 — 주석의 인용은 기록이다.
      [V33.347] 창을 240→420 자로 넓혔다. 주장은 그대로다 — v7 응답모양(shape)을 문장에 덧붙이면서
      뒤 문구가 240자 밖으로 밀렸을 뿐이다(문구가 사라진 게 아니다). */
-  if (!/add\("error", "시세",[^\n]*못 만든다/.test(S) && /add\("error", "시세"[\s\S]{0,420}v8 분봉으로 계속 채운다/.test(S))
+  /* [V33.478] 심각도가 spark 상태에 따라 갈린다 — add(_spkOk ? "warn" : "error", "시세", …) 도 같은 문장으로 본다. */
+  const SEV = '(?:"error"|_spkOk \\? "warn" : "error")';
+  if (!new RegExp('add\\(' + SEV + ', "시세",[^\\n]*못 만든다').test(S) && new RegExp('add\\(' + SEV + ', "시세"[\\s\\S]{0,700}v8 분봉으로 계속 채운다').test(S))
     ok("자가진단이 'v8 은 시간외를 못 만든다' 는 낡은 단정을 더는 사용자에게 말하지 않는다");
   else bad("★자가진단 문장이 자기 코드보다 낡았다★ — v8 분봉 보강 경로(fetchExtendedQuoteUS)가 이미 있다");
 }

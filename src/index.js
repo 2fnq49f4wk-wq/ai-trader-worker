@@ -3056,7 +3056,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.477";
+const _BUILD_VER = "V33.478";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -7763,6 +7763,50 @@ async function fetchQuoteViaChart(symbol) {
   return Object.assign({ price: price, prevClose: prevClose || price, dayPct: dayPct }, o);
 }
 
+/* ══ [V33.478] ★v7 이 빈 배열을 줄 때의 중간 단 — spark 배치 일봉★ ══════════════════
+   실측(2026-10-03 자가진단): v7 이 `result=0 keys=quoteResponse` 로 응답만 하고 종목을 안 준다.
+   그러면 미국 전 종목이 종목당 1회 v8 chart 폴백(range=5d·1d)으로 내려가 ★50종목/1회 → 1종목/1회★,
+   예산 200 으로 한 사이클에 다 못 돌고 시세가 몇 사이클씩 묵는다 — 진입·청산 판단이 낡은 값 위에 선다.
+   v8 spark 는 ★같은 일봉(range=5d·interval=1d)을 여러 종목 한 번에★ 준다(crumb 불필요 — 히트맵 1Y/5Y 가 이미 쓰는 길).
+   폴백과 똑같이 "마지막 일봉 종가 = 가격, 그 앞 = 전일종가" 로 읽는다 — 새 해석을 만들지 않는다.
+   세션 딱지(mstate)는 batchQuotes 의 normalizeExtUS 가 우리 시계로 찍고, 시간외 값은 분봉 보강이 그대로 채운다.
+   응답은 두 모양이 있다 — {spark:{result:[{symbol,response:[{meta,indicators}]}]}} 와 압축형 {SYM:{close:[..]}}. */
+const SPARK_CHUNK = 20;
+function parseSparkQuotes(j, chunk) {
+  const out = {};
+  if (!j || typeof j !== "object") return out;
+  const put = function (sym, closesRaw, meta) {
+    if (!sym) return;
+    const cl = [];
+    for (const c of (closesRaw || [])) if (typeof c === "number" && isFinite(c) && c > 0) cl.push(c);
+    const cpc = meta && typeof meta.chartPreviousClose === "number" && meta.chartPreviousClose > 0 ? meta.chartPreviousClose : null;
+    let price = null, prev = null;
+    if (cl.length >= 2) { price = cl[cl.length - 1]; prev = cl[cl.length - 2]; }
+    else if (cl.length === 1) { price = cl[0]; prev = cpc || price; }
+    if (!(price > 0)) return;
+    out[sym] = { price: price, prevClose: prev || price, dayPct: prev ? ((price - prev) / prev) * 100 : 0 };
+  };
+  const res = j.spark && Array.isArray(j.spark.result) ? j.spark.result : null;
+  if (res) {
+    for (const it of res) {
+      const r0 = it && Array.isArray(it.response) ? it.response[0] : null;
+      const q = r0 && r0.indicators && r0.indicators.quote && r0.indicators.quote[0];
+      put(it && it.symbol, q && q.close, r0 && r0.meta);
+    }
+    return out;
+  }
+  for (const sym of (chunk || [])) {
+    const v = j[sym];
+    if (v && Array.isArray(v.close)) put(sym, v.close, v);
+  }
+  return out;
+}
+async function fetchSparkQuotes(chunk) {
+  const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/spark?symbols=" +
+    encodeURIComponent(chunk.join(",")) + "&range=5d&interval=1d");
+  return parseSparkQuotes(j, chunk);
+}
+
 async function fetchQuoteViaChartFallback(symbol) {
   // [V58] KR은 네이버 단일 조회로 폴백 (접미사 스왑 불필요)
   if (symbol.endsWith(".KS") || symbol.endsWith(".KQ")) {
@@ -8150,6 +8194,37 @@ async function fetchBatchQuotes(symbols, opts) {
         badSlice: __v7BadSlice || null
       });
     } catch (e) {}
+  }
+
+  /* --- 1.5) [V33.478] v7 이 못 채운 미국 종목은 spark 배치로 먼저 (20종목/1회) ---
+     첫 묶음이 0건이면 spark 도 막힌 것 — 더 쓰지 않고 종전 폴백으로 내려간다(예산 낭비 1회).
+     시간외 창이면 보강 몫(40)을 남겨 둔다(아래 폴백과 같은 규칙). */
+  let sparkGot = 0, sparkCalls = 0, sparkErr = null;
+  {
+    const _sx = (isExtendedHoursWindow("us")) ? 40 : 0;
+    const _sm = symbols.filter(function (s) { return !out[s] && !naverXV[s] && !(s.endsWith(".KS") || s.endsWith(".KQ")); });
+    const _ch = [];
+    for (let i = 0; i < _sm.length; i += SPARK_CHUNK) _ch.push(_sm.slice(i, i + SPARK_CHUNK));
+    if (_ch.length && fetchBudgetLeft() > _sx + 1) {
+      let first = {};
+      sparkCalls++;
+      try { first = await fetchSparkQuotes(_ch[0]); } catch (e) { sparkErr = _v7ErrTag(e); }
+      for (const k in first) { if (!out[k]) { out[k] = first[k]; sparkGot++; } }
+      if (sparkGot > 0 && _ch.length > 1) {
+        const _rest = _ch.slice(1);
+        const PAR = 6;
+        for (let i = 0; i < _rest.length; i += PAR) {
+          if (fetchBudgetLeft() <= _sx + 1) break;
+          const _grp = _rest.slice(i, i + PAR).slice(0, Math.max(1, fetchBudgetLeft() - _sx - 1));
+          sparkCalls += _grp.length;
+          const _rs = await Promise.all(_grp.map(async function (c) { try { return await fetchSparkQuotes(c); } catch (e) { return {}; } }));
+          for (const m of _rs) for (const k in m) { if (!out[k]) { out[k] = m[k]; sparkGot++; } }
+        }
+      }
+    }
+  }
+  if (opts.DB && sparkCalls > 0) {
+    try { await setState(opts.DB, "yahoo_spark", { got: sparkGot, calls: sparkCalls, err: sparkErr, v7Dead: v7Dead, ts: Date.now() }); } catch (e) {}
   }
 
   // --- 2) v7 으로 채워지지 않은 심볼만 v8 chart 로 폴백 ---
@@ -49023,12 +49098,17 @@ async function _luxSelfCheck(DB) {
            종목을 하나도 못 준★ 경우다 — 통신 실패가 아니라 응답이 빈 것이다.
            그 둘은 처방이 다르다(앞은 재시도·crumb, 뒤는 요청 형태·심볼 목록).
            오늘 이 파일에서 여러 번 고친 것과 같은 종류라 여기서도 사실에 맞춘다. */
-        if (_v7.dead) add("error", "시세",
+        /* [V33.478] spark 배치가 메우고 있으면 ★오류가 아니라 경고★ 다 — 시세는 20종목/1회로 들어온다. */
+        let _spk = null;
+        try { _spk = await getState(DB, "yahoo_spark", null); } catch (e) {}
+        const _spkOk = !!(_spk && _spk.got > 0 && ageH(_spk.ts) < 2);
+        if (_v7.dead) add(_spkOk ? "warn" : "error", "시세",
           (_v7e
             ? "야후 v7(미국 시세 1차 수집원) 호출이 실패한다" + _v7e
             : "야후 v7(미국 시세 1차 수집원)이 ★응답은 하는데 종목을 하나도 안 준다★(예외 없음 · 파싱 0건" +
               (_v7.shape ? " · 응답모양 " + String(_v7.shape).slice(0, 90) : "") + ")") +
-          " — 종목당 1회 v8 폴백으로 버티는 중(50종목/1회 → 1종목/1회). 시간외는 v8 분봉으로 계속 채운다 — 다만 예산 압박으로 회전이 느려진다" +
+          (_spkOk ? " — spark 배치로 메우는 중(20종목/1회 · 직전 " + _spk.got + "종목/" + _spk.calls + "회)." :
+          " — 종목당 1회 v8 폴백으로 버티는 중(50종목/1회 → 1종목/1회)" + (_spk ? "(spark 도 0건" + (_spk.err ? " [" + _spk.err + "]" : "") + ")" : "") + ".") + " 시간외는 v8 분봉으로 계속 채운다 — 다만 예산 압박으로 회전이 느려진다" +
           /* [V33.361] ★인증 상태를 같은 줄에 붙인다.★ v7 은 cookie+crumb 를 요구하는데,
              그 악수가 실패해도 종전엔 아무 데도 안 남아 이 자리를 의심조차 할 수 없었다.
              crumb 이 없으면 야후는 오류 없이 빈 배열을 준다 — 지금 보이는 증상 그대로다. */
@@ -52868,7 +52948,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { aiCoreReady, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
