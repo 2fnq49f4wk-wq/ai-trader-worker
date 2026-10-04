@@ -2532,6 +2532,14 @@ def flow_compare(A, rep_with, log=print, feats=None, tag="수급", gain_min=None
     #   빈 행이 그대로 남는다. ★수급이 빈 한국 행을 뺀다★(미국 행은 동료로 남긴다) — 한국 행은 전부 찼으니
     #   결측이 시기를 말할 수 없다. 같은 규칙(같은 홀드아웃 절단 · 같은 교차검증)으로 채움/비움을 다시 잰다.
     has = np.isfinite(X[:, cols]).any(axis=1)
+    # [V33.479] ★칸이 학습 쪽에 실제로 있었나★ — 2026-10-04 뉴스 회차는 채움/비움 AUC 가 ★넷째 자리까지★ 같았다
+    #   (지평·구간 전부). 합성 실험은 약한 신호에도 차이가 나므로, 그건 '나무가 이 칸을 한 번도 안 갈랐다' 는 뜻이다.
+    #   어디에 값이 있는지(학습/홀드아웃 · 지평별)를 먼저 찍는다 — 추측하지 않는다.
+    _C, _tr, _ho = split_cutoff(A)
+    _htr = has[_tr]
+    log("   · OMNI %s 칸 위치 — 학습 %d행 중 %d(한국 %d) · 홀드아웃 %d행 중 %d · 학습 지평별 %s"
+        % (tag, len(_tr), int(_htr.sum()), int((_htr & kr[_tr]).sum()), len(_ho), int(has[_ho].sum()),
+           " · ".join("%s %d" % (h, int((_htr & (A["hz"][_tr] == k)).sum())) for k, h in enumerate(HORIZONS))))
     if has.sum() < 1000:
         return out
     sel = np.flatnonzero(~kr | has)
@@ -2543,10 +2551,17 @@ def flow_compare(A, rep_with, log=print, feats=None, tag="수급", gain_min=None
     _nn = NN_ON
     NN_ON = False
     try:
-        _, rw1 = train_model(W, log=lambda *a: None)
+        m1, rw1 = train_model(W, log=lambda *a: None)
         _, rw0 = train_model(W0, log=lambda *a: None)
     finally:
         NN_ON = _nn
+    # [V33.479] 이 칸들이 갈림 이득의 몇 %를 냈나(0 이면 나무가 한 번도 안 갈랐다 — 채움=비움이 그 뜻).
+    try:
+        _g = feature_gain(m1[0]) if m1 else None
+        out["win_gainShare"] = float(sum(_g[c] for c in cols)) if _g else None
+        log("   · OMNI %s 칸 갈림 이득 비중(채움 모델) — %s" % (tag, "—" if not _g else "%.2f%%" % (100 * out["win_gainShare"])))
+    except Exception as _e:
+        log("   · OMNI %s 칸 갈림 이득 비중 — 계산 실패 %s" % (tag, _e))
     import datetime as _dt
     wf = float(has[sel][kr[sel]].mean()) if kr[sel].any() else 0.0
     ew1, ew0 = holdout_edge(rw1.get("heads")), holdout_edge(rw0.get("heads"))
@@ -2585,6 +2600,32 @@ def flow_compare(A, rep_with, log=print, feats=None, tag="수급", gain_min=None
         % ("통과" if ok_all else "미달", "—" if gain is None else "%+.4f" % gain, fo.get("all_wins", 0),
            "통과" if ok_in else "미달", "—" if gi is None else "%+.4f" % gi, fo.get("intra_wins", 0), gain_min))
     out.update(folds=fo, intra_gain=gi, adopt_all=ok_all, adopt_intra=ok_in)
+    # [V33.479] ★한국 단독★ — 위 비교는 미국 동료(칸이 빈 행 ≈ 대다수)와 같이 배운다. 신호가 약하면 빽빽한 칸의
+    #   잡음 갈림이 늘 이겨 이 칸이 아예 안 쓰일 수 있다(희석). 칸이 찬 한국 행만으로 채움/비움을 한 번 더 잰다.
+    #   참고용 — 채택 판정은 위 규칙 그대로다(나중에 이 결과로 규칙을 바꾸려면 따로 근거를 남긴다).
+    try:
+        ks = np.flatnonzero(kr & has)
+        if len(ks) >= 5000:
+            K = {k: ([A["sym"][i] for i in ks] if k == "sym" else A[k][ks]) for k in A}
+            K0 = dict(K)
+            K0["X"] = K["X"].copy()
+            K0["X"][:, cols] = np.nan
+            NN_ON = False
+            try:
+                mk1, rk1 = train_model(K, log=lambda *a: None)
+                _, rk0 = train_model(K0, log=lambda *a: None)
+            finally:
+                NN_ON = _nn
+            a1, a0 = kr_auc(rk1), kr_auc(rk0)
+            _gk = feature_gain(mk1[0]) if mk1 else None
+            gs = float(sum(_gk[c] for c in cols)) if _gk else None
+            log("   · OMNI %s 한국 단독(칸 찬 한국 행 %d) — 비움 %s → 채움 %s (%s) · 칸 갈림 이득 %s · 참고"
+                % (tag, len(ks), f(a0), f(a1), "—" if (a0 is None or a1 is None) else "%+.4f" % (a1 - a0),
+                   "—" if gs is None else "%.2f%%" % (100 * gs)))
+            per_hz(rk1, rk0)
+            out.update(kr_only0=a0, kr_only1=a1, kr_only_gainShare=gs, kr_only_rows=int(len(ks)))
+    except Exception as _e:
+        log("   · OMNI %s 한국 단독 — 실패 %s" % (tag, _e))
     return out
 
 
