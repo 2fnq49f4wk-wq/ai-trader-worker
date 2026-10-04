@@ -29,6 +29,10 @@ on:
         description: '수익률 진단 — 거래 원장을 구간·청산·진입 전략·보유 시간별로(tools/probe-returns.mjs) · 브라우저 없음'
         type: boolean
         default: false
+      naver:
+        description: '네이버 종목뉴스 깊이 측정 — 쪽마다 건수·날짜(tools/probe-naver-news.mjs) · 브라우저 없음'
+        type: boolean
+        default: false
       shapes:
         description: '모델 구조 응답(/api/nn-viz 모델별 · omni-structure · ai-mode)을 ui-probe-data 가지에 저장 — 화면 설계용 · 브라우저 없음'
         type: boolean
@@ -112,14 +116,18 @@ jobs:
           URL: ${{ steps.url.outputs.url }}
         run: node tools/probe-returns.mjs "$URL" || true
 
+      - name: 네이버 뉴스 깊이
+        if: inputs.naver
+        run: node tools/probe-naver-news.mjs || true
+
       - name: 브라우저 준비
-        if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes }}
+        if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver }}
         run: |
           npm i --no-save --no-audit --no-fund playwright@1
           npx playwright install --with-deps chromium webkit
 
       - name: OMNI 화면 측정
-        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns && !inputs.shapes
+        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver
         env:
           URL: ${{ steps.url.outputs.url }}
           IMG: ${{ inputs.img && '1' || '0' }}
