@@ -2917,12 +2917,9 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
         "—" if _edge["auc"] is None else "%.4f" % _edge["auc"], _edge["n"],
         "—" if _edge.get("need") is None else "%.4f" % _edge["need"],
         "✅ 올린다" if _edge["ok"] else "보류"))
-    if len(trees) < 2 or not _edge["ok"]:
-        log("   ⏭ OMNI 나무 %d그루 · 라운드 %s(중앙값 %.1f) · %s — ★배운 것이 없어 올리지 않는다★"
-            % (len(trees), _its, _med, _edge.get("why")))
-        rep["ok"] = False
-        rep["why"] = _edge.get("why") or "나무 %d그루" % len(trees)
-        return rep
+    # [V33.479] ★실험 회차는 기본 모델의 실력 관문보다 먼저 잰다.★ 종전엔 관문 뒤에 있어서, 기본 모델이
+    #   0.5 근처일 때(= 새 칸이 가장 궁금할 때) '배운 것이 없어 올리지 않는다' 로 먼저 돌아가 ★실험이 한 번도 안 돌았다★
+    #   (2026-10-04 뉴스 회차: 뉴스 448종목을 받고도 비교 줄이 없었다). 실험 회차는 어차피 올리지 않는다.
     if NEWS:
         rep["news"] = flow_compare(A, rep, log=log, feats=NEWS_FEATS, tag="뉴스", gain_min=NEWS_GAIN,
                                    align=(("e_n1", "d_r1", True), ("e_n7", "d_r5", True)))
@@ -2940,6 +2937,12 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
         log("   ⏭ OMNI ★장중 횡단면 실험 회차★ — 칸이 워커에 없다. 재기만 하고 올리지 않는다.")
         rep["ok"] = False
         rep["why"] = "OMNI_KSEC 실험 회차 — 업로드 안 함"
+        return rep
+    if len(trees) < 2 or not _edge["ok"]:
+        log("   ⏭ OMNI 나무 %d그루 · 라운드 %s(중앙값 %.1f) · %s — ★배운 것이 없어 올리지 않는다★"
+            % (len(trees), _its, _med, _edge.get("why")))
+        rep["ok"] = False
+        rep["why"] = _edge.get("why") or "나무 %d그루" % len(trees)
         return rep
     if pmax > 1e-9:
         log("   ⚠️ OMNI 내보낸 나무가 LightGBM 과 다른 답을 낸다(%.3g) — 업로드하지 않는다" % pmax)
