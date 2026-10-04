@@ -3056,7 +3056,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.478";
+const _BUILD_VER = "V33.479";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -10733,8 +10733,13 @@ const OMNINEWS = {
   perRunOff: 6, perRunIn: 1,
   gapOffMs: 5 * 60000, gapInMs: 20 * 60000,
   refreshH: 18,
-  jsonPage: 50
+  jsonPage: 50,
+  /* [V33.479] 새 기사는 ★JSON 최신 쪽부터 겹칠 때까지★ 받는다. JSON 은 약 10쪽(≈200건)까지만 준다(실측) — 대형주는 1~2일치. */
+  fwdPages: 10
 };
+/* [V33.479] ★네이버 종목뉴스 HTML 목록이 은퇴했다★ — 2026-10-04 실측(러너): 모든 쪽 HTTP 410. 한 번 보면 이 실행에선 다시 안 두드린다. */
+let _onHtmlGone = false;
+function _onHtmlGoneSet(v) { _onHtmlGone = !!v; }   // 검사용(한 프로세스에서 여러 경우를 돌린다)
 const NEWS_POS = ["상승", "급등", "강세", "호재", "수주", "흑자", "최대", "신고가", "돌파", "상향", "매수", "성장", "개선", "증가", "호실적",
   "반등", "수혜", "계약", "승인", "특허", "상한가", "기대", "확대", "회복", "순매수", "목표가↑", "어닝서프라이즈"];
 const NEWS_NEG = ["하락", "급락", "약세", "악재", "적자", "손실", "하향", "매도", "감소", "부진", "우려", "소송", "리콜", "신저가", "하한가",
@@ -10802,6 +10807,7 @@ function _onParseHtml(txt) {
   return { rows };
 }
 async function _onFetchPage(code, page, mode) {
+  if (mode === "html" && _onHtmlGone) return { rows: [], src: "html", gone: true };
   if (mode !== "html") {
     try {
       try { __fetchBudget.used++; } catch (e) {}
@@ -10813,12 +10819,13 @@ async function _onFetchPage(code, page, mode) {
         if (p.rows.length) return { rows: p.rows, src: "json", probe: { keys: p.keys, first: p.rows[0] } };
       }
     } catch (e) {}
-    if (mode === "json") return null;
+    if (mode === "json" || _onHtmlGone) return null;
   }
   try {
     try { __fetchBudget.used++; } catch (e) {}
     const r = await fetch("https://finance.naver.com/item/news_news.naver?code=" + code + "&page=" + page + "&sm=title_entity_id.basic&clusterId=",
                           { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com/item/news.naver?code=" + code } });
+    if (r.status === 410) { _onHtmlGone = true; return { rows: [], src: "html", gone: true }; }
     if (!r.ok) return null;
     const buf = await r.arrayBuffer();
     let txt = ""; try { txt = new TextDecoder("euc-kr").decode(buf); } catch (e) { txt = new TextDecoder().decode(buf); }
@@ -10892,14 +10899,26 @@ async function omniNewsCollect(DB, opts) {
     const known = new Set(); if (old && Array.isArray(old.a)) for (const r of old.a) known.add(r[2]);
     const got = [];
     let src = ent.src || null;
+    /* [V33.479] ★새 기사(앞쪽)는 늘 JSON 으로★ — 종전엔 HTML 로 넘어간 종목(jnp)이 첫 쪽까지 HTML 로 받았고,
+       HTML 이 410 으로 은퇴하자 새 기사 수집이 ★조용히 0★ 이 됐다(2026-10-04 '실패 9/9').
+       최신 쪽부터 ★이미 아는 기사와 겹칠 때까지★ 넘긴다 — 한 쪽만 보면 대형주는 하루치도 못 받는다. */
+    let fwdOk = false;
     if (!fresh) {
-      const p1 = await _onFetchPage(code, 1, ent.jnp ? "html" : null);
-      pages++;
-      if (!p1) { failed++; ent.err = nowMs; continue; }
-      src = p1.src; if (!probe) probe = p1.probe;
-      got.push.apply(got, p1.rows);
-      for (const r of p1.rows) known.add(r.id);
+      for (let q = 1; q <= OMNINEWS.fwdPages; q++) {
+        if (fetchBudgetLeft() <= 3) break;
+        const pj = await _onFetchPage(code, q, q === 1 ? null : "json");
+        pages++;
+        if (!pj || !pj.rows.length) break;
+        fwdOk = true; src = pj.src; if (!probe) probe = pj.probe;
+        const nNew = pj.rows.filter(function (r) { return !known.has(r.id); }).length;
+        for (const r of pj.rows) { if (!known.has(r.id)) { known.add(r.id); got.push(r); } }
+        if (pj.src !== "json" || nNew < pj.rows.length) break;   // 겹쳤다(또는 HTML 첫 쪽) — 앞쪽은 다 받았다
+      }
+      if (!fwdOk) { failed++; ent.err = nowMs; continue; }
     }
+    /* 과거 쪽(백필) — HTML 이 은퇴했으면 HTML 백필은 끝이다(JSON 은 원래 얕다). */
+    if (ent.jnp && _onHtmlGone && !ent.end) { ent.end = true; ent.endWhy = "html410"; }
+    src = ent.jnp ? "html" : (src || "json");
     let pg = Math.max(1, _num(src === "html" ? ent.hp : ent.jp, 1));
     for (let q = 0; q < OMNINEWS.pagesPerSymRun && !ent.end && _num(ent.pg, 0) < OMNINEWS.maxPagesTotal; q++) {
       if (fetchBudgetLeft() <= 3) break;                 // 한 호출의 요청 상한을 다른 단계와 나눠 쓴다
@@ -10914,7 +10933,7 @@ async function omniNewsCollect(DB, opts) {
         /* [V33.473] JSON 이 비면 ★JSON 의 끝★ 일 뿐이다(운영 첫 회차: 종목마다 11쪽·약 190건에서 멈췄다 — 과거가 얕다).
            HTML 쪽 넘기기로 이어서 내려간다. HTML 까지 비면 그때가 끝. */
         if (useJson) { ent.jnp = true; src = "html"; pg = Math.max(1, _num(ent.hp, 1), Math.floor(known.size / 20) - 2); ent.dup = 0; continue; }
-        ent.end = true; break;
+        ent.end = true; if (pp && pp.gone) ent.endWhy = "html410"; break;
       }
       const minM = Math.min.apply(null, pp.rows.map(function (r) { return r.m; }));
       /* 새 기사가 하나도 없는 쪽:
@@ -10953,6 +10972,7 @@ async function omniNewsCollect(DB, opts) {
          " · 실패 " + failed + (prevFail ? "(옛파일 못읽음 " + prevFail + " — 안 덮음)" : "") +
          " · 출처 json " + srcJ + "/html " + srcH + " · 커버 " + cov + "/" + uni.length + " · 끝/깊이 충분 " + full +
          (spans.length ? " · 덮은 기간(일) 최소 " + spans[0] + " · 중앙 " + spans[spans.length >> 1] + " · 최대 " + spans[spans.length - 1] : "") +
+         (_onHtmlGone ? " · HTML 목록 은퇴(410) — 과거 백필 불가, 새 기사만 JSON 으로" : "") +
          (probe ? " · 모양 " + JSON.stringify(probe).slice(0, 300) : "") + " · 다음 커서 " + idx;
 }
 
@@ -52948,7 +52968,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

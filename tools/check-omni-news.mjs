@@ -65,6 +65,8 @@ function fakeNaver(mode, total = 600) {
     if (u.includes("/api/news/stock/")) {
       calls.json++;
       if (mode === "html-only") return { ok: false, status: 404 };
+      if (mode === "html-gone") { const pg0 = +/page=(\d+)/.exec(u)[1]; const rows = arts.slice(Math.min(200, (pg0 - 1) * 50), Math.min(200, pg0 * 50));
+        return { ok: true, status: 200, json: async () => [{ items: rows.map((a) => ({ officeId: a.oid, articleId: a.aid, title: a.title, datetime: dtCompact(a) })) }] }; }
       let pg = +/page=(\d+)/.exec(u)[1]; if (mode === "json-stuck") pg = 1;
       const jtot = mode === "json-short" ? 200 : total;                // 운영처럼 JSON 은 얕다(200건에서 빈 목록)
       const rows = arts.slice(Math.min(jtot, (pg - 1) * 50), Math.min(jtot, pg * 50));
@@ -72,6 +74,7 @@ function fakeNaver(mode, total = 600) {
     }
     if (u.includes("news_news.naver")) {
       calls.html++;
+      if (mode === "html-gone") return { ok: false, status: 410 };
       const last = Math.ceil(total / 20), pg = Math.min(+/page=(\d+)/.exec(u)[1], last);   // 마지막 쪽을 넘기면 마지막 쪽을 또 준다
       const rows = arts.slice((pg - 1) * 20, Math.min(total, pg * 20));
       const html = rows.map((a) => "<tr><td class=\"title\"><a href=\"x?article_id=" + a.aid + "&office_id=" + a.oid + "\" class=\"tit\">" + a.title + "</a></td><td class=\"date\">" + dtDot(a) + "</td></tr>").join("");
@@ -109,6 +112,27 @@ for (const mode of ["json", "json-short", "json-stuck", "html-only"]) {
   chk(f.a.length === 600 && ids.size === 600 && asc && ent.end === true,
     mode + ": 600건 전부 · 중복 없음 · 시각 오름차순 · 끝 표시 (json " + calls.json + " · html " + calls.html + "쪽)",
     "★" + mode + ": " + f.a.length + "건(고유 " + ids.size + ") · 끝 " + ent.end + " — " + r.slice(0, 200) + "★");
+}
+
+console.log("\n③-b [V33.479] HTML 목록 은퇴(410) — 새 기사는 JSON 으로 계속 · 겹치면 멈춤 · 백필은 끝(이유 남김)");
+{
+  M._onHtmlGoneSet(false);
+  const DB = fakeDB({}); const R2 = fakeR2({}); M._setR2ForTest(R2);
+  let calls = fakeNaver("html-gone", 600);
+  await M.omniNewsCollect(DB, { perRun: 1 });
+  const sym = Object.keys(DB._get("omninews_index").s)[0];
+  /* 운영 상황을 만든다: 옛 HTML 백필로 과거 500건(arts[100..599])이 있고, 종목은 HTML 쪽(jnp)으로 넘어가 있다. */
+  const old = M._onParseHtml(arts.slice(100).map((a) => "<tr><td><a href=\"x?article_id=" + a.aid + "&office_id=" + a.oid + "\" class=\"tit\">" + a.title + "</a></td><td class=\"date\">" + dtDot(a) + "</td></tr>").join(""));
+  const R2b = fakeR2({ files: { [R2KEY(sym)]: { s: sym, a: old.rows.map((r) => [r.m, r.t, r.id]).sort((x, y) => x[0] - y[0]) } } }); M._setR2ForTest(R2b);
+  const ix = { s: { [sym]: { jnp: true, end: false, n: 500, upd: 0, hp: 30 } } }; DB._set("omninews_index", ix); DB._set("omninews_cursor", { i: 0 });
+  M._onHtmlGoneSet(false); calls = fakeNaver("html-gone", 600);
+  const r = await M.omniNewsCollect(DB, { perRun: 1 });
+  const f = R2b._get(R2KEY(sym)) || { a: [] }; const ent = DB._get("omninews_index").s[sym];
+  chk(f.a.length === 600 && new Set(f.a.map((x) => x[2])).size === 600 && calls.json === 3,
+    "jnp 종목도 새 기사 100건을 JSON 으로 받는다 · 겹치는 쪽(3쪽)에서 멈춤", "★HTML 이 죽자 새 기사가 안 들어온다: " + f.a.length + "건 · json " + calls.json + "쪽 — " + r.slice(0, 160) + "★");
+  chk(ent.end === true && ent.endWhy === "html410" && calls.html <= 1 && /HTML 목록 은퇴/.test(r),
+    "HTML 410 → 백필 끝(이유 html410) · HTML 은 한 번만 두드린다 · 요약에 은퇴 표시", "★410 처리: end " + ent.end + " · why " + ent.endWhy + " · html " + calls.html + "★");
+  M._onHtmlGoneSet(false);
 }
 
 console.log("\n④ 옛 파일을 못 읽으면 그 종목은 안 덮는다 · 일별 묶음");
