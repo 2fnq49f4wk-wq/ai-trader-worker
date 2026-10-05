@@ -30,7 +30,7 @@ on:
         type: boolean
         default: false
       naver:
-        description: '네이버 종목뉴스 깊이 측정 — 쪽마다 건수·날짜(tools/probe-naver-news.mjs) · 브라우저 없음'
+        description: '외부 수집원 점검 — 네이버 종목뉴스 깊이 · 야후 시세 경로(spark/chart/quote) · 브라우저 없음'
         type: boolean
         default: false
       shapes:
@@ -118,7 +118,9 @@ jobs:
 
       - name: 네이버 뉴스 깊이
         if: inputs.naver
-        run: node tools/probe-naver-news.mjs || true
+        run: |
+          node tools/probe-naver-news.mjs || true
+          node tools/probe-yahoo.mjs || true
 
       - name: 브라우저 준비
         if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver }}

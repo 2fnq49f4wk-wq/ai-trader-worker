@@ -103,7 +103,9 @@ try {
   out("logs_trade", lg.filter((r) => /매수|BUY|관문|막힘|blocked|skip|건너|halt|정지|kill|중단/i.test(String(r.message || r.msg))).slice(0, 25).map((r) => String(r.message || r.msg).slice(0, 200)));
 } catch (e) { out("logs_err2", String(e)); }
 // [V33.477] AI 준비(배지 = 매매 사이클과 같은 판정) · 자가진단 상위 문제
-try { const am = await get("/api/ai-mode?fresh=1"); out("ai_mode", { aiReady: am.aiReady, mode: am.mode, committee: Object.fromEntries(Object.entries(am.committee || {}).map(([k, v]) => [k, typeof v === "object" ? !!(v && v.trusted) : v])) }); }
+try { const am = await get("/api/ai-mode?fresh=1"); out("ai_mode", { aiReady: am.aiReady, mode: am.mode, committee: Object.fromEntries(Object.entries(am.committee || {}).map(([k, v]) => [k, typeof v === "object" ? !!(v && v.trusted) : v])) });
+  /* [V33.482] AI 진입 문턱 — ai_primary_gate 가 무엇에 막는지(문턱 · 하한 · 분포 · 실제 적용값) */
+  out("ai_thr", am.thr || null); out("ai_diag", am.diag || null); }
 catch (e) { out("ai_mode_err", String(e)); }
 try { const sc = await get("/api/selfcheck"); out("selfcheck", { status: sc.status, build: sc.build, top: (sc.issues || []).slice(0, 8).map((i) => i.level + " " + i.area + " " + String(i.msg).slice(0, 140)) });
   const q = (sc.issues || []).find((i) => i.area === "시세"); if (q) out("selfcheck_quote", String(q.msg).slice(0, 900)); }
