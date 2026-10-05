@@ -29,7 +29,7 @@ on:
         #   섀도우 채점을 손으로 돌려 볼 방법이 없었다.
         #   목록은 워커의 _PIPE 에서 나온다 — check-retired 가 퇴역 이름이 여기 남지 못하게 막고,
         #   check-omni-label 이 OMNI 단계가 빠지지 못하게 막는다.
-        options: [omniscore, omniresolve, omnibars, omniflow, omninews, memo, dual, mind, gbdt, l1, calibrate, all]
+        options: [omniscore, omniresolve, omnibars, omniflow, omninews, omniearn, memo, dual, mind, gbdt, l1, calibrate, all]
 
 concurrency:
   group: worker-training

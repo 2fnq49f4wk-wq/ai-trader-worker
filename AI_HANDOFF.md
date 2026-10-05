@@ -12,6 +12,12 @@
 
 ## Current handoff
 
+- Status: **V33.486 — 미국 실적 서프라이즈 이력 수집기(PEAD 재료) · /api/omni-earn.**
+  - 나스닥 실적 캘린더를 하루 1요청으로 — 최근 4평일(새 발표·수정) + 과거 커서(어제 → 2021-01-04). 미국 유니버스만.
+    R2 `earn/v1/events.json` = {종목: [[yyyymmdd, 실제EPS, 예상EPS]…]} · 색인 state omniearn_index{cur, days, oldest, newest, done}.
+    읽기 엄격(색인·파일 못 읽으면 안 씀) · 과거 커서는 실패한 날에서 멈춤(건너뛰지 않음).
+  - 매 틱(잠금 장외 5분/장중 30분 · 회차당 8일) + 야간 _PIPE/_stg(30일) + train-now `omniearn`. 약 1,200평일 → 하루 안팎.
+  - 다음: 학습기 OMNI_EARN(발표 다음 거래일부터만 · 서프라이즈% · 경과일) → flow_compare + 전진평가(같은 잣대).
 - Status: **V33.485 — 미국 배치 시세를 나스닥 watchlist 로(정규장만) · 프로브 실측 정리.**
   - 러너 실측(10/05 22:16Z): 야후는 러너에서 전부 429. 나스닥 `api/quote/watchlist?symbol=aapl|stocks&…` 는 200 —
     lastSalePrice("$333.1483") · previousClosePrice · marketStatus("After Hours"/정규장). 워커 spark 는 v7·v8 둘 다 0건/404.

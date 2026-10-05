@@ -3056,7 +3056,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.485";
+const _BUILD_VER = "V33.486";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -11065,6 +11065,103 @@ async function omniNewsCollect(DB, opts) {
          (spans.length ? " · 덮은 기간(일) 최소 " + spans[0] + " · 중앙 " + spans[spans.length >> 1] + " · 최대 " + spans[spans.length - 1] : "") +
          (_onHtmlGone ? " · HTML 목록 은퇴(410) — 과거 백필 불가, 새 기사만 JSON 으로" : "") +
          (probe ? " · 모양 " + JSON.stringify(probe).slice(0, 300) : "") + " · 다음 커서 " + idx;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════
+   [V33.486] ★미국 실적 서프라이즈 이력 — PEAD(실적 발표 후 표류) 실험의 재료★
+   왜: OMNI 전진평가(10/05) — 가격·거래량만으론 5d·20d 머리가 우연과 구별되지 않는다(t < 1.4).
+       실적 서프라이즈 뒤 몇 주 이어지는 표류는 가격 밖의 정보로 문헌상 가장 오래 살아남은 효과 중 하나다.
+   출처: 이미 쓰는 나스닥 실적 캘린더 — 러너 실측으로 ★과거 날짜★ 에도 실제·예상 EPS 를 준다(2022-11 405행 …).
+   방식: 하루 1요청. 최근 며칠(새 발표·수정) + 과거 커서(어제 → 2021-01)로 거슬러 간다. 미국 유니버스만 남긴다.
+         한 파일(종목 → [[날짜, 실제, 예상]…])로 R2 에 둔다. ★읽기 엄격★ — 못 읽으면 쓰지 않는다(덮지 않는다).
+   시각: 역사 행은 발표 시각이 대개 'time-not-supplied' 다 → 학습기는 ★발표일 다음 거래일부터★ 안다고 본다(미래 혼입 0).
+   ═══════════════════════════════════════════════════════════════════════════════════════ */
+const OMNIEARN = { key: "earn/v1/events.json", startYmd: 20210104, perRun: 8, recentDays: 4, gapOffMs: 5 * 60000, gapInMs: 30 * 60000 };
+function _oeYmd(d) { return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate(); }
+function _oeDate(ymd) { return new Date(Date.UTC(Math.floor(ymd / 10000), Math.floor(ymd / 100) % 100 - 1, ymd % 100)); }
+function _oeIso(ymd) { const d = _oeDate(ymd); return d.toISOString().slice(0, 10); }
+function _oePrevWeekday(ymd) { const d = _oeDate(ymd); do { d.setUTCDate(d.getUTCDate() - 1); } while (d.getUTCDay() === 0 || d.getUTCDay() === 6); return _oeYmd(d); }
+/* 캘린더 한 날짜 응답 → [[SYM, ymd, act, est]] (우리 유니버스 · 실제·예상 둘 다 있는 행만) */
+function _oeParse(j, ymd, want) {
+  const out = [];
+  const rows = (j && j.data && Array.isArray(j.data.rows)) ? j.data.rows : [];
+  for (const r of rows) {
+    if (!r || !r.symbol) continue;
+    const sym = String(r.symbol).toUpperCase().replace(/\./g, "-");
+    if (want && !want.has(sym)) continue;
+    const a = _epsNum(r.eps), e = _epsNum(r.epsForecast);
+    if (a == null || e == null) continue;
+    out.push([sym, ymd, a, e]);
+  }
+  return out;
+}
+/* 같은 (종목·날짜)는 한 번 — 나중 값이 이긴다(수정치). 날짜 오름차순. */
+function _oeMerge(ev, rows) {
+  const E = ev || {};
+  for (const [sym, ymd, a, e] of rows) {
+    const L = E[sym] || (E[sym] = []);
+    const k = L.findIndex(function (x) { return x[0] === ymd; });
+    if (k >= 0) L[k] = [ymd, a, e]; else L.push([ymd, a, e]);
+    L.sort(function (x, y) { return x[0] - y[0]; });
+  }
+  return E;
+}
+async function _oeFetchDay(ymd) {
+  try { __fetchBudget.used++; } catch (e) {}
+  const r = await fetch("https://api.nasdaq.com/api/calendar/earnings?date=" + _oeIso(ymd), { headers: {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+    "Accept": "application/json", "Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/" } });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return await r.json();
+}
+async function omniEarnCollect(DB, opts) {
+  const o = opts || {};
+  const R2 = _bigR2();
+  if (!R2) return "[OMNI-EARN] R2 미바인딩 — 수집 불가";
+  let idx;
+  try { idx = await getState(DB, "omniearn_index", null, true); }
+  catch (e) { return "[OMNI-EARN] 색인 읽기 실패(D1) — ★이번 회차는 아무것도 쓰지 않는다★"; }
+  idx = idx || { cur: null, done: false, days: 0, fails: 0, oldest: null, newest: null };
+  let ev = null;
+  try { const g = await R2.get(OMNIEARN.key); ev = g ? JSON.parse(await g.text()) : {}; }
+  catch (e) { return "[OMNI-EARN] 이벤트 파일 읽기 실패(R2) — ★덮지 않는다★"; }
+  const want = new Set((DEFAULT_US || []).map(function (x) { return String(x).toUpperCase(); }));
+  const today = _oeYmd(new Date());
+  const days = [];
+  let d = today;
+  for (let k = 0; k < OMNIEARN.recentDays; k++) { d = _oePrevWeekday(d); days.push(d); }
+  let cur = idx.cur || _oePrevWeekday(days[days.length - 1]);
+  const per = Math.max(1, _num(o.perRun, OMNIEARN.perRun));
+  const back = [];
+  while (!idx.done && back.length < per && cur >= OMNIEARN.startYmd) { back.push(cur); cur = _oePrevWeekday(cur); }
+  let rowsN = 0, okDays = 0, fail = 0, lastErr = null, stopBack = false;
+  for (const ymd of days.concat(back)) {
+    if (fetchBudgetLeft() <= 2) { stopBack = true; break; }
+    const isBack = back.indexOf(ymd) >= 0;
+    if (isBack && stopBack) break;
+    try {
+      const rows = _oeParse(await _oeFetchDay(ymd), ymd, want);
+      _oeMerge(ev, rows); rowsN += rows.length; okDays++;
+      if (isBack) { idx.cur = _oePrevWeekday(ymd); idx.days = _num(idx.days, 0) + 1; idx.oldest = ymd; }
+      if (!idx.newest || ymd > idx.newest) idx.newest = ymd;
+    } catch (e) {
+      fail++; lastErr = String((e && e.message) || e).slice(0, 40);
+      if (isBack) stopBack = true;   // 과거 커서는 실패한 날에서 멈춘다(건너뛰지 않는다 — 다음 회차가 같은 날부터)
+    }
+  }
+  if (!idx.done && idx.cur != null && idx.cur < OMNIEARN.startYmd) idx.done = true;
+  idx.fails = _num(idx.fails, 0) + fail;
+  if (okDays) {
+    try { await R2.put(OMNIEARN.key, JSON.stringify(ev)); }
+    catch (e) { return "[OMNI-EARN] 이벤트 파일 쓰기 실패 — 색인도 안 옮긴다"; }
+  }
+  idx.ts = Date.now();
+  try { await setState(DB, "omniearn_index", idx); } catch (e) {}
+  const syms = Object.keys(ev);
+  let nEv = 0; for (const k of syms) nEv += ev[k].length;
+  return "[OMNI-EARN] 날짜 " + okDays + "/" + (days.length + back.length) + " · 행 +" + rowsN + " · 실패 " + fail + (lastErr ? "(" + lastErr + ")" : "") +
+         " · 종목 " + syms.length + "/" + want.size + " · 이벤트 " + nEv + " · 덮은 기간 " + (idx.oldest || "—") + "~" + (idx.newest || "—") +
+         (idx.done ? " · 백필 끝" : " · 다음 과거 커서 " + idx.cur);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════
@@ -27908,6 +28005,16 @@ async function handleRequest(request, env, ctx) {
       if (!_nx.ok) return Response.json({ error: "뉴스 색인 읽기 실패(D1): " + _nx.err }, { status: 503, headers: cors });
       return Response.json({ ok: true, index: _nx.index, universe: (DEFAULT_KR || []).slice(), targetDays: OMNINEWS.targetDays }, { headers: cors });
     }
+    /* [V33.486] 학습기용 실적 이벤트 — 엄격(못 읽으면 503 · '없음' 으로 주지 않는다). */
+    if (path === "/api/omni-earn") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const R2 = _bigR2();
+      if (!R2) return Response.json({ error: "R2 미바인딩" }, { status: 503, headers: cors });
+      let ev = null, ix = null;
+      try { const g = await R2.get(OMNIEARN.key); ev = g ? JSON.parse(await g.text()) : {}; ix = await getState(env.DB, "omniearn_index", null, true); }
+      catch (e) { return Response.json({ error: "실적 이벤트 읽기 실패" }, { status: 503, headers: cors }); }
+      return Response.json({ ok: true, events: ev, n: Object.keys(ev).length, oldest: ix && ix.oldest, newest: ix && ix.newest, done: !!(ix && ix.done) }, { headers: cors });
+    }
     if (path === "/api/omni-news") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const R2 = _bigR2();
@@ -28847,6 +28954,8 @@ async function handleRequest(request, env, ctx) {
         ["omniflow", function (DB) { try { resetFetchBudget(300); } catch (e) {} return omniFlowCollect(DB, { perRun: 30 }); }],
         // [V33.472] 한국 종목 뉴스 이력 — OMNI_NEWS 실험의 재료
         ["omninews", function (DB) { try { resetFetchBudget(300); } catch (e) {} return omniNewsCollect(DB, { perRun: 9 }); }],
+        // [V33.486] 미국 실적 서프라이즈 이력 — OMNI_EARN 실험의 재료
+        ["omniearn", function (DB) { try { resetFetchBudget(100); } catch (e) {} return omniEarnCollect(DB, { perRun: 30 }); }],
         /* [V33.426] OMNI 섀도우 채점 — 한 표도 안 넣는다. 실시간 확률을 적어 두고 지평이 지나면 채점한다.
            이게 있어야 "홀드아웃 0.51" 이 실시간에서도 남는지 알 수 있다. */
         ["omniscore", function (DB) { return omniShadowScore(DB, { perRun: OMNI_SHADOW.perRun, budgetMs: 45000 }); }],
@@ -52655,6 +52764,16 @@ export default {
             }
           } catch (e) { try { await log(env.DB, "ERROR", null, "[OMNI-NEWS] " + ((e && e.message) || e)); } catch (e2) {} }
 
+          /* [V33.486] ★미국 실적 서프라이즈 이력★ — 뉴스 수집기와 같은 모양(잠금 뒤 하루치씩). I/O 뿐이다. */
+          try {
+            const _oeLock = _num(await getState(env.DB, "omniearn_lock", 0), 0);
+            const _oeOpen = (typeof isTradingWindow === "function") && isTradingWindow("us");
+            if (Date.now() - _oeLock > (_oeOpen ? OMNIEARN.gapInMs : OMNIEARN.gapOffMs)) {
+              await setState(env.DB, "omniearn_lock", Date.now());
+              await log(env.DB, "INFO", null, await omniEarnCollect(env.DB, {}));
+            }
+          } catch (e) { try { await log(env.DB, "ERROR", null, "[OMNI-EARN] " + ((e && e.message) || e)); } catch (e2) {} }
+
           /* [V33.427] ★OMNI 섀도우 채점·사후채점 — 매 틱(잠금 뒤).★
              야간 파이프라인의 _stg 는 ★하루 1회★ 도장을 찍는다. 거기에만 두면 섀도우 채점이 하루에
              한 번(≈7종목, 결정시각 1개) 돌고 — 사후채점은 같은 결정시각에 동료 20종목이 있어야 하므로
@@ -52929,6 +53048,7 @@ export default {
             await _stg("omnibars", async function () { try { resetFetchBudget(200); } catch (e) {} return await omniBarsCollect(env.DB, { perRun: 40 }); });
             await _stg("omniflow", async function () { try { resetFetchBudget(300); } catch (e) {} return await omniFlowCollect(env.DB, { perRun: 30 }); });
             await _stg("omninews", async function () { try { resetFetchBudget(300); } catch (e) {} return await omniNewsCollect(env.DB, { perRun: 9 }); });
+            await _stg("omniearn", async function () { try { resetFetchBudget(100); } catch (e) {} return await omniEarnCollect(env.DB, { perRun: 30 }); });
             // [V33.426] OMNI 섀도우 채점·사후채점 — 수동 파이프라인과 ★같은 이름★ 으로(check-pipeline-graph)
             await _stg("omniscore", async function () { return await omniShadowScore(env.DB, { perRun: OMNI_SHADOW.perRun, budgetMs: 45000 }); });
             await _stg("omniresolve", async function () { return await omniShadowResolve(env.DB, {}); });
@@ -53106,7 +53226,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
