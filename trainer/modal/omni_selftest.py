@@ -242,6 +242,32 @@ def fake_roundtrip(data):
     return fails
 
 
+def check_wf():
+    """[V33.481] 전진 평가 — 한국 5d 에만 심은 신호는 그 머리 하나만 통과, 잡음은 아무 머리도 통과 못 한다."""
+    import numpy as np
+    for tag, sig, want in (("신호", 2.5, {"kr:5d"}), ("잡음", 0.0, set())):
+        rng = np.random.default_rng(3)
+        D, G = 400, 30
+        td = np.repeat(np.arange(D) * 86400.0 + 1.75e9, 2 * 5 * G)
+        mkt = np.tile(np.repeat([0, 1], 5 * G), D)
+        hz = np.tile(np.repeat(np.arange(5), G), 2 * D)
+        N, F = len(td), len(omni.MODEL_FEATS)
+        X = rng.normal(size=(N, F))
+        fr = rng.normal(scale=0.03, size=N) + np.where((mkt == 1) & (hz == 3), sig * 0.01 * X[:, 0], 0)
+        y = np.zeros(N, dtype=np.int64)
+        key = (td // 86400).astype(np.int64) * 10 + mkt * 5 + hz
+        for k in np.unique(key):
+            ix = np.flatnonzero(key == k)
+            y[ix] = (fr[ix] > np.median(fr[ix])).astype(np.int64)
+        hd = np.array([0.02, 0.04, 1, 5, 20])
+        A = {"X": X, "y": y, "ys": y.astype(float), "w": np.ones(N), "hz": hz, "td": td, "te": td + 86400 * hd[hz], "mkt": mkt,
+             "sym": ["S%d" % (i % G) for i in range(N)], "fr": fr, "st": np.zeros(N, dtype=np.int64), "yb": y}
+        out = omni.wf_eval(A, {}, log=lambda *a: None, nfold=4, step_days=60)
+        got = {k for k, v in out.items() if v["ok"]}
+        assert got == want, "전진평가 %s: 통과 %s (기대 %s)" % (tag, sorted(got), sorted(want))
+    print("전진평가: 한국 5d 신호만 통과 · 잡음 통과 없음")
+
+
 def check_split():
     """[V33.480] 시장 분리 실험 — 시장마다 반대로 움직이는 신호(한국 +0.50 · 미국 −0.30)는 두 시장 단독이 다 통과하고(섞으면 서로 지운다), 잡음은 아무 시장도 통과 못 한다."""
     import numpy as np
@@ -596,6 +622,7 @@ def main():
         sys.exit(1)
     check_rally()
     check_split()
+    check_wf()
     print("✅ OMNI 자가검사 통과")
 
 

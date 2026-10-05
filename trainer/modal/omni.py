@@ -152,6 +152,18 @@ RALLY = os.environ.get("OMNI_RALLY") == "1"
 #   재기만 한다(업로드 거부) — 통과하면 워커가 시장별 모델을 채점하도록 따로 배선한다.
 SPLIT = os.environ.get("OMNI_SPLIT") == "1"
 SPLIT_GAIN = 0.005
+# [V33.481] ★전진 평가(walk-forward) — 머리별로 제대로 잰다.★ 2026-10-05 시장분리 회차의 부산물: 섞은 모델이
+#   장타에서 한국 5d 0.525(n 3,540) · 20d 0.576(n 444) · 미국 20d 0.540(n 1,104) — 그런데 35일 홀드아웃은 장타 라벨이
+#   거의 안 남아 표본이 수천 행뿐이고, 업로드 관문은 머리를 ★행 수로 가중평균★ 해서 무실력인 30m·60m(수십만 행)가 덮는다.
+#   → 지난 1년을 두 달씩 6구간으로 밀며(각 구간은 그 앞 데이터로만 학습 · 라벨 끝 < 구간 시작) 표본 밖 예측을 모아
+#     ★(시장 × 지평)마다★ 판정한다. 잣대는 낮추지 않는다 — 더 많은 표본으로 같은 질문을 더 엄하게:
+#       AUC − 0.5 ≥ 0.005 · ★날짜별 AUC 의 t ≥ 3★(장타는 라벨이 겹치니 t 를 √(지평 일수)로 깎는다)
+#       · 동료 대비 상위 10% 를 샀다면 비용 뺀 순초과 > 0 · 그 t(같은 보정) ≥ 2.
+#   재기만 한다(업로드 거부). 통과한 머리가 있으면 그 머리만 라이브로 올리는 배선은 따로 한다.
+WF = os.environ.get("OMNI_WF") == "1"
+WF_FOLDS = 6
+WF_STEP_DAYS = 60
+WF_HDAYS = {"30m": 1, "60m": 1, "1d": 1, "5d": 5, "20d": 20}
 RALLY_TOP = 0.10
 RALLY_COST = {0: 0.0010, 1: 0.0030}     # 왕복 비용(로그수익) — 미국 0.10% · 한국 0.30%(거래세·수수료·미끄러짐)
 RALLY_T = 2.0
@@ -2940,6 +2952,72 @@ def split_compare(A, rep_pool, log=print):
     return out
 
 
+def wf_eval(A, rep_pool, log=print, nfold=None, step_days=None):
+    """[V33.481] 전진 평가 — (시장 × 지평)별 표본 밖 판정. 반환 {"us:5d": {...}, ...}."""
+    import numpy as np
+    nfold = WF_FOLDS if nfold is None else nfold
+    step_days = WF_STEP_DAYS if step_days is None else step_days
+    f = lambda v: "—" if v is None else "%.4f" % v
+    _pk = ((rep_pool.get("cv") or {}).get("pick")) or GBDT_GRID[0]["name"]
+    pick = next((c for c in GBDT_GRID if c["name"] == _pk), GBDT_GRID[0])
+    Ab, _ = balance_horizons(A, log=lambda *a: None)
+    tmax = float(Ab["td"].max())
+    nt = n_threads()
+    I, P = [], []
+    for k in range(nfold):
+        s0 = tmax - (nfold - k) * step_days * 86400.0
+        s1 = s0 + step_days * 86400.0
+        trk = np.flatnonzero(Ab["te"] < s0)
+        ev = np.flatnonzero((Ab["td"] >= s0) & (Ab["td"] < s1))
+        fit, val = _hz_split(Ab, trk)
+        if len(fit) < 20000 or len(val) < 2000 or len(ev) < 2000:
+            log("   · OMNI 전진평가 구간 %d — 학습 %d · 검증 %d · 평가 %d행 — 건너뜀" % (k + 1, len(fit), len(val), len(ev)))
+            continue
+        b, it = _gbdt_fit(Ab, fit, val, pick, nt)
+        p = b.predict(Ab["X"][ev], num_iteration=it, raw_score=True)
+        I.append(ev)
+        P.append(p)
+        log("   · OMNI 전진평가 구간 %d/%d — 학습 %d행 → 평가 %d행 · AUC %s" % (k + 1, nfold, len(fit), len(ev), f(_auc(p, Ab["y"][ev]))))
+    out = {}
+    if not I:
+        return out
+    idx, p = np.concatenate(I), np.concatenate(P)
+    y = Ab["y"][idx]
+    day = (Ab["td"][idx] // 86400).astype(np.int64)
+    gid, yr = rally_groups(Ab)
+    for mi, mk in enumerate(["us", "kr"]):
+        mm = Ab["mkt"][idx] == mi
+        picks = rally_pick_eval(Ab, idx[mm], p[mm], gid, yr) if mm.any() else {}
+        for h, hz in enumerate(HORIZONS):
+            m = mm & (Ab["hz"][idx] == h)
+            if m.sum() < 2000:
+                continue
+            auc = _auc(p[m], y[m])
+            dl = []
+            for d in np.unique(day[m]):
+                md = m & (day == d)
+                if md.sum() >= 30:
+                    a = _auc(p[md], y[md])
+                    if a is not None:
+                        dl.append(a)
+            nd = len(dl)
+            sd = float(np.std(dl, ddof=1)) if nd > 1 else 0.0
+            adj = WF_HDAYS[hz] ** 0.5
+            tA = ((float(np.mean(dl)) - 0.5) / (sd / nd ** 0.5) / adj) if (nd > 1 and sd > 0) else None
+            pk = picks.get(hz) or {}
+            tN = (pk["t"] / adj) if pk.get("t") is not None else None
+            ok = (auc is not None and auc - 0.5 >= 0.005 and tA is not None and tA >= 3.0
+                  and pk.get("net") is not None and pk["net"] > 0 and tN is not None and tN >= 2.0)
+            out[mk + ":" + hz] = {"n": int(m.sum()), "auc": auc, "days": nd, "tAuc": tA, "net": pk.get("net"), "tNet": tN, "ok": bool(ok)}
+            log("     %s %-3s  n %7d · AUC %s · 날짜 %3d · t(AUC) %s · 상위10%% 순초과 %s · t %s → %s"
+                % (mk, hz, int(m.sum()), f(auc), nd, "—" if tA is None else "%.2f" % tA,
+                   "—" if pk.get("net") is None else "%+.4f" % pk["net"], "—" if tN is None else "%.2f" % tN,
+                   "★통과★" if ok else "미달"))
+    passed = [k for k, v in out.items() if v["ok"]]
+    log("   · OMNI 전진평가 판정 — 통과 %s" % (", ".join(passed) if passed else "없음"))
+    return out
+
+
 def revert_if_worse(rep, log=print):
     """[V33.428c] 섞은 홀드아웃이 나무 단독보다 낮으면 α 를 전부 0 으로 — 나무 단독의 머리 성적으로 올린다."""
     if rep.get("headsG") and any(rep.get("alpha") or []):
@@ -3039,6 +3117,12 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
     # [V33.479] ★실험 회차는 기본 모델의 실력 관문보다 먼저 잰다.★ 종전엔 관문 뒤에 있어서, 기본 모델이
     #   0.5 근처일 때(= 새 칸이 가장 궁금할 때) '배운 것이 없어 올리지 않는다' 로 먼저 돌아가 ★실험이 한 번도 안 돌았다★
     #   (2026-10-04 뉴스 회차: 뉴스 448종목을 받고도 비교 줄이 없었다). 실험 회차는 어차피 올리지 않는다.
+    if WF:
+        rep["wf"] = wf_eval(A, rep, log=log)
+        log("   ⏭ OMNI ★전진평가 회차★ — 머리별 승격 배선 전이다. 재기만 하고 올리지 않는다.")
+        rep["ok"] = False
+        rep["why"] = "OMNI_WF 실험 회차 — 업로드 안 함"
+        return rep
     if SPLIT:
         rep["split"] = split_compare(A, rep, log=log)
         log("   ⏭ OMNI ★시장분리 실험 회차★ — 워커가 시장별 모델을 아직 채점하지 않는다. 재기만 하고 올리지 않는다.")
