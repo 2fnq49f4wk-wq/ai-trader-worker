@@ -30,6 +30,28 @@ chk(/endsWith\("\.KS"\) \|\| s\.endsWith\("\.KQ"\)/.test(blk) && /!naverXV\[s\]/
 chk(/isExtendedHoursWindow\("us"\)\) \? 40 : 0/.test(blk), "시간외 창엔 보강 몫 40 을 남긴다", "★spark 가 시간외 보강 예산을 먹는다★");
 chk(/const SPARK_PATHS = \["v7\/finance\/spark", "v8\/finance\/spark"\]/.test(S) && /if \(Object\.keys\(got\)\.length\) \{ __sparkPath = pth; return got; \}/.test(S) && !/v8\/finance\/spark\?symbols=" \+/.test(S),
   "[V33.482] spark 경로: v7 먼저 · 0건이면 v8 · 통한 길 기억 (v8 404 실측)", "★spark 경로가 v8 하나에 박혀 있다★");
+console.log("②-b [V33.485] 나스닥 배치(정규장만)");
+{
+  const j = { data: [
+    { symbol: "AAPL", lastSalePrice: "$333.1483", previousClosePrice: 330.32, marketStatus: "Market Open" },
+    { symbol: "BRK.B", lastSalePrice: "$480.10", previousClosePrice: "$475.00", marketStatus: "Market Open" },
+    { symbol: "MSFT", lastSalePrice: "$500.00", previousClosePrice: 490, marketStatus: "After Hours" },
+    { symbol: "NVDA", lastSalePrice: "N/A", previousClosePrice: 100, marketStatus: "Market Open" },
+    { symbol: "ZZZZ", lastSalePrice: "$1", previousClosePrice: 1, marketStatus: "Market Open" } ] };
+  const q = M.parseNasdaqWatch(j, ["AAPL", "BRK-B", "MSFT", "NVDA"]);
+  chk(q.AAPL && Math.abs(q.AAPL.price - 333.1483) < 1e-9 && q.AAPL.prevClose === 330.32 && Math.abs(q.AAPL.dayPct - (333.1483 / 330.32 - 1) * 100) < 1e-9,
+    "'$333.1483' · 숫자 전일종가 → 가격·전일종가·등락률", "★나스닥 숫자 해석★ " + JSON.stringify(q.AAPL));
+  chk(q["BRK-B"] && q["BRK-B"].prevClose === 475 && M.nasdaqSym("BRK-B") === "brk.b", "BRK-B ↔ brk.b 매핑", "★종목 기호 매핑★");
+  chk(!q.MSFT, "장후(After Hours) 가격은 정규장 자리에 안 넣는다", "★시간외 체결가를 정규장 가격으로 넣는다★");
+  chk(!q.NVDA && !q.ZZZZ, "숫자 아님 · 안 물어본 종목은 비운다", "★값을 지어낸다★");
+}
+{
+  const i14 = S.indexOf("--- 1.4) [V33.485] 나스닥 배치"), i15 = S.indexOf("--- 1.5) [V33.478]");
+  const blk = S.slice(i14, i15);
+  chk(i14 > 0 && i15 > i14 && /usMarketStateNow\(\) === "REGULAR"/.test(blk) && /if \(nqGot > 0 && _nc\.length > 1\)/.test(blk) && /endsWith\("\.KS"\) \|\| s\.endsWith\("\.KQ"\)/.test(blk),
+    "v7 → 나스닥(정규장 · 첫 묶음 0건이면 멈춤 · 한국 제외) → spark → 종목당 폴백", "★나스닥 배치 배선이 틀렸다★");
+  chk(/getState\(DB, "nasdaq_batch", null\)/.test(S) && /나스닥 배치로 메우는 중/.test(S), "자가진단이 나스닥 배치 상태를 읽는다", "★자가진단이 나스닥 배치를 모른다★");
+}
 console.log("③ 자가진단");
 chk(/getState\(DB, "yahoo_spark", null\)/.test(S) && /_spkOk \? "warn" : "error"/.test(S), "spark 가 메우면 경고, 못 메우면 오류", "★자가진단이 spark 상태를 안 읽는다★");
 console.log(fails ? "\n✗ spark 배치 시세 검사 실패 " + fails : "\n✓ spark 배치 시세 검사 통과");

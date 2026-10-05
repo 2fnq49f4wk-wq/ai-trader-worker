@@ -3056,7 +3056,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.484";
+const _BUILD_VER = "V33.485";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -7779,6 +7779,45 @@ async function fetchQuoteViaChart(symbol) {
    세션 딱지(mstate)는 batchQuotes 의 normalizeExtUS 가 우리 시계로 찍고, 시간외 값은 분봉 보강이 그대로 채운다.
    응답은 두 모양이 있다 — {spark:{result:[{symbol,response:[{meta,indicators}]}]}} 와 압축형 {SYM:{close:[..]}}. */
 const SPARK_CHUNK = 20;
+/* ══ [V33.485] ★나스닥 배치 시세 — 야후 배치(v7 빈 배열 · spark 404)가 다 죽은 자리★ ══════════════════════
+   러너 실측(2026-10-05): api.nasdaq.com/api/quote/watchlist?symbol=aapl|stocks&… → HTTP 200 · 종목마다 lastSalePrice ·
+   previousClosePrice · percentageChange · marketStatus · lastTradeTimestamp. 워커는 이미 같은 호스트(실적 캘린더)를 쓴다.
+   ★정규장(우리 시계 REGULAR + 나스닥 marketStatus 가 장중)일 때만★ 가격으로 쓴다 — 장후엔 lastSalePrice 가 시간외 체결가라
+   정규장 가격 자리에 넣으면 안 된다(시간외는 기존 분봉 보강이 맡는다). 못 받은 종목은 종전 폴백으로 내려간다. */
+const NQ_CHUNK = 20;
+function _nqNum(v) {
+  if (typeof v === "number") return isFinite(v) ? v : null;
+  if (typeof v !== "string") return null;
+  const n = Number(v.replace(/[$,%+\s]/g, ""));
+  return isFinite(n) ? n : null;
+}
+function nasdaqSym(sym) { return String(sym || "").replace(/-/g, ".").toLowerCase(); }
+function parseNasdaqWatch(j, chunk) {
+  const out = {};
+  const want = {};
+  for (const s0 of (chunk || [])) want[nasdaqSym(s0).toUpperCase()] = s0;
+  const rows = (j && Array.isArray(j.data)) ? j.data : [];
+  for (const r of rows) {
+    if (!r || !r.symbol) continue;
+    const sym = want[String(r.symbol).toUpperCase()];
+    if (!sym) continue;
+    const st = String(r.marketStatus || "");
+    if (!/open/i.test(st) || /pre|after|closed/i.test(st)) continue;   // 정규장 표기일 때만
+    const price = _nqNum(r.lastSalePrice), prev = _nqNum(r.previousClosePrice);
+    if (!(price > 0) || !(prev > 0)) continue;
+    out[sym] = { price: price, prevClose: prev, dayPct: ((price - prev) / prev) * 100 };
+  }
+  return out;
+}
+async function fetchNasdaqQuotes(chunk) {
+  try { __fetchBudget.used++; } catch (e) {}
+  const q = chunk.map(function (s0) { return "symbol=" + encodeURIComponent(nasdaqSym(s0) + "|stocks"); }).join("&");
+  const r = await fetch("https://api.nasdaq.com/api/quote/watchlist?" + q, { headers: {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+    "Accept": "application/json", "Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/" } });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return parseNasdaqWatch(await r.json(), chunk);
+}
 function parseSparkQuotes(j, chunk) {
   const out = {};
   if (!j || typeof j !== "object") return out;
@@ -8218,6 +8257,34 @@ async function fetchBatchQuotes(symbols, opts) {
         badSlice: __v7BadSlice || null
       });
     } catch (e) {}
+  }
+
+  /* --- 1.4) [V33.485] 나스닥 배치(정규장만) — 첫 묶음 0건이면 멈춘다 --- */
+  let nqGot = 0, nqCalls = 0, nqErr = null;
+  if (usMarketStateNow() === "REGULAR") {
+    const _nx = 1;
+    const _nm = symbols.filter(function (s) { return !out[s] && !naverXV[s] && !(s.endsWith(".KS") || s.endsWith(".KQ")) && s.indexOf("=") < 0 && s.indexOf("^") < 0; });
+    const _nc = [];
+    for (let i = 0; i < _nm.length; i += NQ_CHUNK) _nc.push(_nm.slice(i, i + NQ_CHUNK));
+    if (_nc.length && fetchBudgetLeft() > _nx + 1) {
+      let first = {};
+      nqCalls++;
+      try { first = await fetchNasdaqQuotes(_nc[0]); } catch (e) { nqErr = _v7ErrTag(e); }
+      for (const k in first) { if (!out[k]) { out[k] = first[k]; nqGot++; } }
+      if (nqGot > 0 && _nc.length > 1) {
+        const _rest = _nc.slice(1), PAR = 6;
+        for (let i = 0; i < _rest.length; i += PAR) {
+          if (fetchBudgetLeft() <= _nx + 1) break;
+          const _grp = _rest.slice(i, i + PAR).slice(0, Math.max(1, fetchBudgetLeft() - _nx - 1));
+          nqCalls += _grp.length;
+          const _rs = await Promise.all(_grp.map(async function (c) { try { return await fetchNasdaqQuotes(c); } catch (e) { return {}; } }));
+          for (const m of _rs) for (const k in m) { if (!out[k]) { out[k] = m[k]; nqGot++; } }
+        }
+      }
+    }
+    if (opts.DB && nqCalls > 0) {
+      try { await setState(opts.DB, "nasdaq_batch", { got: nqGot, calls: nqCalls, err: nqErr, ts: Date.now() }); } catch (e) {}
+    }
   }
 
   /* --- 1.5) [V33.478] v7 이 못 채운 미국 종목은 spark 배치로 먼저 (20종목/1회) ---
@@ -49188,13 +49255,17 @@ async function _luxSelfCheck(DB) {
         /* [V33.478] spark 배치가 메우고 있으면 ★오류가 아니라 경고★ 다 — 시세는 20종목/1회로 들어온다. */
         let _spk = null;
         try { _spk = await getState(DB, "yahoo_spark", null); } catch (e) {}
-        const _spkOk = !!(_spk && _spk.got > 0 && ageH(_spk.ts) < 2);
+        let _nqb = null;
+        try { _nqb = await getState(DB, "nasdaq_batch", null); } catch (e) {}
+        const _nqOk = !!(_nqb && _nqb.got > 0 && ageH(_nqb.ts) < 2);   // [V33.485] 나스닥 배치가 메우는 중
+        const _spkOk = !!(_spk && _spk.got > 0 && ageH(_spk.ts) < 2) || _nqOk;
         if (_v7.dead) add(_spkOk ? "warn" : "error", "시세",
           (_v7e
             ? "야후 v7(미국 시세 1차 수집원) 호출이 실패한다" + _v7e
             : "야후 v7(미국 시세 1차 수집원)이 ★응답은 하는데 종목을 하나도 안 준다★(예외 없음 · 파싱 0건" +
               (_v7.shape ? " · 응답모양 " + String(_v7.shape).slice(0, 90) : "") + ")") +
-          (_spkOk ? " — spark 배치로 메우는 중(20종목/1회 · 직전 " + _spk.got + "종목/" + _spk.calls + "회" + (_spk.path ? " · " + _spk.path : "") + ")." :
+          (_nqOk ? " — 나스닥 배치로 메우는 중(정규장 · 20종목/1회 · 직전 " + _nqb.got + "종목/" + _nqb.calls + "회)." :
+           _spkOk ? " — spark 배치로 메우는 중(20종목/1회 · 직전 " + _spk.got + "종목/" + _spk.calls + "회" + (_spk.path ? " · " + _spk.path : "") + ")." :
           " — 종목당 1회 v8 폴백으로 버티는 중(50종목/1회 → 1종목/1회)" + (_spk ? "(spark 도 0건" + (_spk.err ? " [" + _spk.err + "]" : "") + ")" : "") + ".") + " 시간외는 v8 분봉으로 계속 채운다 — 다만 예산 압박으로 회전이 느려진다" +
           /* [V33.361] ★인증 상태를 같은 줄에 붙인다.★ v7 은 cookie+crumb 를 요구하는데,
              그 악수가 실패해도 종전엔 아무 데도 안 남아 이 자리를 의심조차 할 수 없었다.
@@ -53035,7 +53106,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
