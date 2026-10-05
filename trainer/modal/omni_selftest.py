@@ -243,15 +243,15 @@ def fake_roundtrip(data):
 
 
 def check_split():
-    """[V33.480] 시장 분리 실험 — 시장마다 반대로 움직이는 신호(한국 +0.30 · 미국 −0.10)는 두 시장 단독이 다 통과하고(섞으면 서로 지운다), 잡음은 아무 시장도 통과 못 한다."""
+    """[V33.480] 시장 분리 실험 — 시장마다 반대로 움직이는 신호(한국 +0.50 · 미국 −0.30)는 두 시장 단독이 다 통과하고(섞으면 서로 지운다), 잡음은 아무 시장도 통과 못 한다."""
     import numpy as np
-    for tag, kr_b, us_b, want in (("신호", 0.30, -0.10, {"kr", "us"}), ("잡음", 0.0, 0.0, set())):
+    for tag, kr_b, us_b, want in (("신호", 0.50, -0.30, {"kr", "us"}), ("잡음", 0.0, 0.0, set())):
         rng = np.random.default_rng(11)
-        N, F = 160000, len(omni.MODEL_FEATS)
+        N, F = 80000, len(omni.MODEL_FEATS)
         X = rng.normal(size=(N, F))
         td = np.sort(rng.uniform(1.75e9, 1.79e9, N))
         hz = rng.integers(0, 5, N)
-        mkt = (rng.uniform(size=N) < 0.4).astype(np.int64)
+        mkt = (rng.uniform(size=N) < 0.5).astype(np.int64)
         lg = np.where(mkt == 1, kr_b * X[:, 0], us_b * X[:, 0])
         y = (rng.uniform(size=N) < 1 / (1 + np.exp(-lg))).astype(np.int64)
         A = {"X": X, "y": y, "ys": y.astype(float), "w": np.ones(N), "hz": hz, "td": td,

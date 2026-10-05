@@ -91,7 +91,7 @@ jobs:
   # ── ① 배포 — ★동시성 그룹에 넣지 않는다.★ 학습이 돌든 말든 항상 올라가야 한다 ──
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20   # [V33.480] 자가검사에 시장분리(≈2분) 추가 — 종전 6.5분 + α 가 10분에 걸렸다
     name: modal deploy
     outputs:
       ok: ${{ steps.sec.outputs.ok }}
