@@ -3056,7 +3056,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.482";
+const _BUILD_VER = "V33.483";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -22610,7 +22610,7 @@ async function runTradingCycle(env) {
       let __techK = null, __finalCal = null;   // [V33.94] 실측 기술계수 · 최종보정 온도(사이클 1회)
       let __blendK = null;                    // [V33.96] 결정블렌드 실측 계수
       let __dualBull = null, __dualBear = null, __dualShift = null;   // [V33.89] 강세/약세 이중 헤드 (+V33.93 실측 사분면 로짓)
-      let __pDistCache = null, __pDistNew = [];   // [V33.80] 후보 p 분포(백분위 문턱용)
+      let __pDistCache = null, __pDistNew = [], __pDistReadOk = false;   // [V33.80] 후보 p 분포(백분위 문턱용) · [V33.482] 읽기 성공 여부
 
       // [V33.82] 단타 레버리지 게이트 입력 — 사이클당 1회만 만든다.
       let __scalpEdge = null, __ddPctNow = 0;
@@ -22652,7 +22652,9 @@ async function runTradingCycle(env) {
           // [V33.109] 소셜 계수(측정 전엔 0) — 사이클 1회 로드.
           try { __socialK = await getState(DB, "social_k", null); } catch (e2) {}
           try { if (DUALHEAD.enabled) { __dualBull = await getState(DB, "dual_bull_model", null); __dualBear = await getState(DB, "dual_bear_model", null); __dualShift = await getState(DB, "dual_quad_shift", null); } } catch (e2) {}
-          try { __pDistCache = await getState(DB, "ai_pdist:" + market, null); } catch (e2) {}
+          /* [V33.482] ★엄격히 읽는다★ — 느슨한 읽기는 D1 오류를 '없음(null)' 으로 돌려주고, 사이클 끝의 병합이 그걸 빈 배열로 알고
+             새 몇십 건으로 ★2,000건을 덮어썼다★(실측 2026-10-05: ai_pdist:us 25건 · 9/14 엔 2,000건). 못 읽었으면 표시만 하고 쓰지 않는다. */
+          try { __pDistCache = await getState(DB, "ai_pdist:" + market, null, true); __pDistReadOk = true; } catch (e2) { __pDistReadOk = false; __pDistCache = null; }
           // ↑ [V33.99] ★배포를 17커밋 동안 막고 있던 중괄호 누락★
           //   V33.82 가 이 자리에 블록을 끼워 넣으면서 위의 `try {` + `if (FLOWML.enabled) {`
           //   짝을 닫지 않았고, 아래에 같은 헤더를 새로 열었다(중복). 파일 전체 중괄호가 2개 모자란다.
@@ -24876,7 +24878,7 @@ async function runTradingCycle(env) {
           // [V33.80] 후보 p 분포 갱신 — 최근 2,000건만 유지(백분위 문턱 기준).
           //   D1 write 는 시장당 사이클 1회뿐이라 부하가 없다.
           try {
-            if (__pDistNew.length) {
+            if (__pDistNew.length && __pDistReadOk) {   // [V33.482] 못 읽은 사이클은 덮어쓰지 않는다
               const _old = (__pDistCache && Array.isArray(__pDistCache.v)) ? __pDistCache.v : [];
               const _merged = _old.concat(__pDistNew);
               const _keep = _merged.length > 2000 ? _merged.slice(_merged.length - 2000) : _merged;

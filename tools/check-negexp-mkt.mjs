@@ -22,5 +22,8 @@ chk(M.negExpBlocked(st, "kr", "AI_PRIMARY") === true && M.negExpBlocked(st, "us"
 chk(M.negExpBlocked(st, "us", "HA_REV") === false && M.negExpBlocked({}, "us", "AI_PRIMARY") === false, "표본 30 미달·통계 없음 → 막지 않는다", "★표본 없이 막는다★");
 chk(/negExpBlocked\(signalStatsMkt, market, signal\.name\)/.test(S) && !/const _ss = signalStats && signalStats\[signal\.name\];/.test(S), "진입 루프가 시장별 판정을 쓴다 · 섞인 판정 제거", "★진입 루프가 아직 섞인 통계를 본다★");
 chk(/setState\(DB, "signal_stats_mkt", sigStatsByMarket\(/.test(S) && /getState\(DB, "signal_stats_mkt", \{\}\)/.test(S), "autoTune 이 시장별 통계를 쓰고 사이클이 읽는다", "★시장별 통계 배선이 없다★");
+console.log("③ [V33.482] 진입 문턱 표본(ai_pdist) — 못 읽으면 덮지 않는다");
+chk(/getState\(DB, "ai_pdist:" \+ market, null, true\); __pDistReadOk = true;/.test(S) && /if \(__pDistNew\.length && __pDistReadOk\)/.test(S) && /let __pDistCache = null, __pDistNew = \[\], __pDistReadOk = false;/.test(S),
+  "엄격 읽기 · 실패한 사이클은 쓰지 않음 · 플래그는 쓰는 자리와 같은 범위", "★느슨한 읽기 → 2,000건을 몇십 건으로 덮어쓴다(10/05 ai_pdist:us 25건)★");
 console.log(fails ? "\n✗ 시장별 신호 게이트 검사 실패 " + fails : "\n✓ 시장별 신호 게이트 검사 통과");
 process.exit(fails ? 1 : 0);
