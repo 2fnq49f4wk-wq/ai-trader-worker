@@ -55,5 +55,16 @@ const tn = readFileSync(new URL("../.github/workflows/train-now.yml", import.met
 chk(/options: \[[^\]]*\bomniearn\b/.test(tn), "수동 실행 목록에 omniearn", "★손으로 돌릴 방법이 없다★");
 const ep = S.slice(S.indexOf('path === "/api/omni-earn"'), S.indexOf('path === "/api/omni-news"'));
 chk(/_trainAuthed\(\)/.test(ep) && /status: 503/.test(ep) && /getState\(env\.DB, "omniearn_index", null, true\)/.test(ep), "학습기 엔드포인트: 인증 · 엄격(503)", "★엔드포인트가 못 읽음을 없음으로 준다★");
+console.log("⑤ 학습기");
+{
+  const R = (p) => readFileSync(new URL("../" + p, import.meta.url), "utf8");
+  const PY = R("trainer/modal/omni.py"), MT = R("trainer/modal/modal_train.py"), MD = R(".github/workflows/modal-deploy.yml"), ST = R("trainer/modal/omni_selftest.py");
+  const RUN = PY.slice(PY.indexOf("def run(BASE"));
+  const iE = RUN.indexOf("    if EARN:\n"), iG = RUN.indexOf('    if len(trees) < 2 or not _edge["ok"]:');
+  chk(/EARN = os\.environ\.get\("OMNI_EARN"\) == "1"/.test(PY) && /if ev\[0\] < o:/.test(PY) && /def get_earn\(/.test(PY), "스위치 · 발표 '이전' 만(당일 미혼입) · 워커에서 받기", "★실적 칸이 없거나 당일 발표를 본다★");
+  chk(iE > 0 && iE < iG && /OMNI_EARN 실험 회차 — 업로드 안 함/.test(RUN.slice(iE, iG)), "실력 관문 앞 · 업로드 거부", "★실적 실험 배선이 틀렸다★");
+  chk(/earn: int = 0/.test(MT) && /os\.environ\["OMNI_EARN"\] = "1"/.test(MT) && /omni_earn:/.test(MD) && /--earn \$\{\{ inputs\.omni_earn && 1 \|\| 0 \}\}/.test(MD) && /def check_earn\(\)/.test(ST) && /\n    check_earn\(\)\n/.test(ST),
+    "Modal 입력 · 자가검사(당일 미혼입)", "★실적 실험 입력 또는 자가검사가 없다★");
+}
 console.log(fails ? "\n✗ 실적 이력 수집기 검사 실패 " + fails : "\n✓ 실적 이력 수집기 검사 통과");
 process.exit(fails ? 1 : 0);

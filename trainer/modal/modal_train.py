@@ -4097,7 +4097,7 @@ if _OMNI_IMAGE is not None:
     #   '성능이 안 난다' 와 구별이 안 된다).
     @app.function(image=_OMNI_IMAGE, secrets=[modal.Secret.from_name("lux-dnn")],
                   timeout=6900, cpu=8.0, memory=32768)
-    def omni_job(upload: bool = True, limit: int = 0, ksec: int = 0, flow: int = 0, news: int = 0, rally: int = 0, split: int = 0, wf: int = 0):
+    def omni_job(upload: bool = True, limit: int = 0, ksec: int = 0, flow: int = 0, news: int = 0, rally: int = 0, split: int = 0, wf: int = 0, earn: int = 0):
         import os
         import sys
         import time
@@ -4123,6 +4123,9 @@ if _OMNI_IMAGE is not None:
         # [V33.481] 전진 평가 회차 — 지난 1년을 두 달씩 밀며 (시장 × 지평)별 표본 밖 판정(업로드 거부).
         if wf:
             os.environ["OMNI_WF"] = "1"
+        # [V33.486] 실적 서프라이즈(PEAD) 실험 회차 — 미국 실적 칸을 붙여 비교·전진평가(업로드 거부).
+        if earn:
+            os.environ["OMNI_EARN"] = "1"
         import omni
         BASE = os.environ["BASE_URL"].rstrip("/")
         KEY = os.environ["TRAIN_KEY"]

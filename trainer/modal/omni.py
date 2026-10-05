@@ -177,10 +177,24 @@ NEWS_RAW = ["e_n1", "e_n7", "e_surge", "e_tone7", "e_tone30", "e_gap"]
 NEWS_QSRC = {"q_en7": "e_n7", "q_esurge": "e_surge", "q_etone7": "e_tone7"}
 NEWS_FEATS = NEWS_RAW + list(NEWS_QSRC)
 NEWS_GAIN = 0.005
+# [V33.486] ★실적 서프라이즈(PEAD) 실험★ — 미국 종목. 워커가 나스닥 실적 캘린더 과거를 모은다(/api/omni-earn).
+#   칸: x_esp(직전 발표 서프라이즈 · ±200% 로 자름) · x_edays(발표 후 경과 일수 log) · x_ebeat(최근 4번 중 예상 상회 횟수/4)
+#   + 같은 날 분위 q_esp. ★발표일 '다음 날' 부터만 안다★(역사 행은 발표 시각이 없다 — 미래 혼입 0).
+#   100일 넘게 지난 발표는 모름(NaN). 재기만 한다(업로드 거부).
+EARN = os.environ.get("OMNI_EARN") == "1"
+EARN_RAW = ["x_esp", "x_edays", "x_ebeat"]
+EARN_QSRC = {"q_esp": "x_esp"}
+EARN_FEATS = EARN_RAW + list(EARN_QSRC)
+EARN_GAIN = 0.005
+EARN_MAXAGE = 100   # 분기 간격(≈91일)보다 넉넉히 — 90 이면 다음 발표 직전에 칸이 비었다
 if NEWS:
     FEATS = FEATS + NEWS_FEATS
     PANEL_FEATS = PANEL_FEATS + NEWS_FEATS
     NN_ON = False               # 실험은 나무끼리 비교한다(신경망은 따로 흔들려 비교를 흐린다)
+if EARN:
+    FEATS = FEATS + EARN_FEATS
+    PANEL_FEATS = PANEL_FEATS + EARN_FEATS
+    NN_ON = False
 PANEL_MIN = 20          # 이보다 적으면 랭크를 만들지 않는다(모르면 모른다)
 PANEL_SRC = {"q_r1": "d_r1", "q_r5": "d_r5", "q_r20": "d_r20", "q_rv20": "d_rv20",
              "q_rsi": "d_rsi14", "q_volr": "d_volr", "q_hi252": "d_hi252", "q_ill": "a_ill20"}
@@ -660,7 +674,42 @@ def news_feats(pr, day_key):
     return out
 
 
-def build_panel(daily_by_sym, mkt_by_sym, day_key, flows=None, news=None):
+def earn_prep(evs):
+    """워커 이벤트 [[yyyymmdd, 실제, 예상]…] → (발표 서수일 오름차순, 서프라이즈, 상회여부)."""
+    out = []
+    for e in (evs or []):
+        try:
+            ymd, a, est = int(e[0]), float(e[1]), float(e[2])
+        except Exception:
+            continue
+        sp = (a - est) / max(abs(est), 0.05)
+        out.append((_ord(ymd), max(-2.0, min(2.0, sp)), 1.0 if a > est else 0.0))
+    out.sort()
+    return out or None
+
+
+def earn_feats(pr, day_key):
+    """그 날짜 ★이전★ 발표만(발표일 당일은 모른다고 본다). 90일 넘은 발표는 NaN."""
+    out = {k: NAN for k in EARN_RAW}
+    if not pr:
+        return out
+    o = _ord(day_key)
+    k = -1
+    for i, ev in enumerate(pr):
+        if ev[0] < o:
+            k = i
+        else:
+            break
+    if k < 0 or o - pr[k][0] > EARN_MAXAGE:
+        return out
+    out["x_esp"] = pr[k][1]
+    out["x_edays"] = math.log1p(o - pr[k][0])
+    last4 = pr[max(0, k - 3):k + 1]
+    out["x_ebeat"] = sum(b for _, _, b in last4) / float(len(last4))
+    return out
+
+
+def build_panel(daily_by_sym, mkt_by_sym, day_key, flows=None, news=None, earn=None):
     """그 날짜(현지 날짜 키)의 패널. 반환 {sym: {패널칸: 값}}.
     ★그 날짜까지 확정된 일봉만★ 본다 — 미래를 한 칸도 안 읽는다."""
     per = {}
@@ -751,13 +800,25 @@ def build_panel(daily_by_sym, mkt_by_sym, day_key, flows=None, news=None):
                 rk = _qrank([c if c == c else None for c in col]) if len(have) >= PANEL_MIN else [None] * len(col)
                 for a, s2 in enumerate(syms):
                     out[s2][qk] = rk[a] if rk[a] is not None else NAN
+        # [V33.486] 실적 — 이벤트가 있는 종목만. 원값 + 같은 날 분위(서프라이즈).
+        if EARN and earn:
+            ef = {s2: earn_feats(earn.get(s2), day_key) for s2 in syms}
+            for raw in EARN_RAW:
+                for s2 in syms:
+                    out[s2][raw] = ef[s2][raw]
+            for qk, src in EARN_QSRC.items():
+                col = [ef[s2][src] for s2 in syms]
+                have = [c for c in col if c == c]
+                rk = _qrank([c if c == c else None for c in col]) if len(have) >= PANEL_MIN else [None] * len(col)
+                for a, s2 in enumerate(syms):
+                    out[s2][qk] = rk[a] if rk[a] is not None else NAN
     return out
 
 
 PANEL_MAX_DAYS = 1200      # 패널을 만드는 날 수 상한(최근부터) — 학습 시간이 종목×날로 늘어나는 걸 막는다
 
 
-def build_panels(daily_by_sym, mkt_by_sym, max_days=PANEL_MAX_DAYS, flows=None, news=None):
+def build_panels(daily_by_sym, mkt_by_sym, max_days=PANEL_MAX_DAYS, flows=None, news=None, earn=None):
     """여러 날의 패널을 한 번에. 반환 {날짜키: {sym: 패널행}}.
     날짜는 ★일봉이 실제로 있는 날★ 만 — 없는 날의 패널을 지어내지 않는다."""
     keys = set()
@@ -768,7 +829,7 @@ def build_panels(daily_by_sym, mkt_by_sym, max_days=PANEL_MAX_DAYS, flows=None, 
     days = sorted(keys)[-max_days:]
     out = {}
     for dk in days:
-        pr = build_panel(daily_by_sym, mkt_by_sym, dk, flows=flows, news=news)
+        pr = build_panel(daily_by_sym, mkt_by_sym, dk, flows=flows, news=news, earn=earn)
         if pr:
             out[dk] = pr
     return out
@@ -2304,6 +2365,24 @@ def get_flows(BASE, HDR, syms, log=print):
     return out
 
 
+def get_earn(BASE, HDR, syms, log=print):
+    """[V33.486] 워커에서 미국 실적 이벤트를 받는다. 못 읽으면(503) 실험을 멈춘다(예외)."""
+    import requests
+    r = requests.get(BASE + "/api/omni-earn", headers=HDR, timeout=120)
+    r.raise_for_status()
+    j = r.json()
+    ev = j.get("events") or {}
+    out = {}
+    for s2 in syms:
+        pr = earn_prep(ev.get(s2))
+        if pr:
+            out[s2] = pr
+    nev = sorted(len(v) for v in out.values())
+    log("   · OMNI 실적(실험) — 미국 %d종목 중 이벤트 %d종목 · 종목당 중앙 %s건 · 덮은 기간 %s~%s%s" % (
+        len(syms), len(out), nev[len(nev) // 2] if nev else "—", j.get("oldest"), j.get("newest"), " · 백필 끝" if j.get("done") else " · 백필 진행 중"))
+    return out
+
+
 def get_news(BASE, HDR, syms, log=print):
     """[V33.472] 워커에서 한국 종목 뉴스 일별 묶음을 받는다(40종목씩). 색인을 못 읽으면(503) 실험을 멈춘다."""
     import requests
@@ -2359,7 +2438,11 @@ def build_dataset_stream(BASE, HDR, log=print, limit=None):
     _t1 = time.time()
     flows = get_flows(BASE, HDR, [s for s in syms if ix[s].get("m") == "kr"], log) if FLOW else None
     news = get_news(BASE, HDR, [s for s in syms if ix[s].get("m") == "kr"], log) if NEWS else None
-    panels = build_panels(daily, {s: ix[s].get("m", "us") for s in syms}, flows=flows, news=news)
+    earn = get_earn(BASE, HDR, [s for s in syms if ix[s].get("m", "us") == "us"], log) if EARN else None
+    if earn:
+        panels = build_panels(daily, {s: ix[s].get("m", "us") for s in syms}, flows=flows, news=news, earn=earn)
+    else:
+        panels = build_panels(daily, {s: ix[s].get("m", "us") for s in syms}, flows=flows, news=news)
     log("   · OMNI 패널 %d일 (종목 %d · %.0fs) — 횡단면 랭크·시장 상대가 여기서 나온다" % (
         len(panels), len(daily), time.time() - _t1))
     parts = []
@@ -3128,6 +3211,31 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
         log("   ⏭ OMNI ★시장분리 실험 회차★ — 워커가 시장별 모델을 아직 채점하지 않는다. 재기만 하고 올리지 않는다.")
         rep["ok"] = False
         rep["why"] = "OMNI_SPLIT 실험 회차 — 업로드 안 함"
+        return rep
+    if EARN:
+        # 미국 행에만 값이 있다 — flow_compare 의 '한국 단독' 은 의미가 없지만 전체·창 비교와 칸 위치·갈림 이득은 그대로 쓴다.
+        rep["earn"] = flow_compare(A, rep, log=log, feats=EARN_FEATS, tag="실적", gain_min=EARN_GAIN, align=(("x_esp", "d_r5", False),))
+        # 머리별 판정은 전진평가로 — 채움(지금 A)과 비움(실적 칸 NaN)을 같은 잣대로.
+        import numpy as _np
+        _cols = [MODEL_FEATS.index(k) for k in EARN_FEATS if k in MODEL_FEATS]
+        A0 = dict(A)
+        A0["X"] = A["X"].copy()
+        A0["X"][:, _cols] = _np.nan
+        log("   · OMNI 실적 전진평가 — 채움")
+        w1 = wf_eval(A, rep, log=log)
+        log("   · OMNI 실적 전진평가 — 비움(기준선)")
+        w0 = wf_eval(A0, rep, log=log)
+        for k in sorted(set(w1) | set(w0)):
+            a, b = w0.get(k) or {}, w1.get(k) or {}
+            if k.startswith("us:"):
+                log("     %s  AUC 비움 %s → 채움 %s · 순초과 비움 %s → 채움 %s · 채움 판정 %s" % (
+                    k, "—" if a.get("auc") is None else "%.4f" % a["auc"], "—" if b.get("auc") is None else "%.4f" % b["auc"],
+                    "—" if a.get("net") is None else "%+.4f" % a["net"], "—" if b.get("net") is None else "%+.4f" % b["net"],
+                    "★통과★" if b.get("ok") else "미달"))
+        rep["earnWf"] = {"with": w1, "without": w0}
+        log("   ⏭ OMNI ★실적 실험 회차★ — 칸이 워커 채점에 아직 없다. 재기만 하고 올리지 않는다.")
+        rep["ok"] = False
+        rep["why"] = "OMNI_EARN 실험 회차 — 업로드 안 함"
         return rep
     if NEWS:
         rep["news"] = flow_compare(A, rep, log=log, feats=NEWS_FEATS, tag="뉴스", gain_min=NEWS_GAIN,

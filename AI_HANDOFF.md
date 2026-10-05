@@ -17,7 +17,10 @@
     R2 `earn/v1/events.json` = {종목: [[yyyymmdd, 실제EPS, 예상EPS]…]} · 색인 state omniearn_index{cur, days, oldest, newest, done}.
     읽기 엄격(색인·파일 못 읽으면 안 씀) · 과거 커서는 실패한 날에서 멈춤(건너뛰지 않음).
   - 매 틱(잠금 장외 5분/장중 30분 · 회차당 8일) + 야간 _PIPE/_stg(30일) + train-now `omniearn`. 약 1,200평일 → 하루 안팎.
-  - 다음: 학습기 OMNI_EARN(발표 다음 거래일부터만 · 서프라이즈% · 경과일) → flow_compare + 전진평가(같은 잣대).
+  - 학습기 OMNI_EARN(modal-deploy `omni_earn`): x_esp(±200% 자름) · x_edays(log) · x_ebeat(최근 4번 상회 비율) · q_esp(같은 날 분위).
+    ★결정일 이전 발표만★(당일 발표는 모름 — 역사 행에 시각 없음) · 100일 넘은 발표는 NaN(분기 ≈91일 — 90 이면 발표 직전에 비었다).
+    판정: flow_compare(전체·창·칸 위치·갈림 이득) + 전진평가 채움/비움(미국 머리별, 같은 잣대). 재기만.
+  - 백필이 끝난 뒤(omniearn_index.done) 실험을 돌린다 — 끝나기 전엔 과거 쪽이 비어 학습 행 대부분이 NaN 이다(뉴스 실험의 교훈).
 - Status: **V33.485 — 미국 배치 시세를 나스닥 watchlist 로(정규장만) · 프로브 실측 정리.**
   - 러너 실측(10/05 22:16Z): 야후는 러너에서 전부 429. 나스닥 `api/quote/watchlist?symbol=aapl|stocks&…` 는 200 —
     lastSalePrice("$333.1483") · previousClosePrice · marketStatus("After Hours"/정규장). 워커 spark 는 v7·v8 둘 다 0건/404.

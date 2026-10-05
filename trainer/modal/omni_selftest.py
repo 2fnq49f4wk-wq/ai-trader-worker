@@ -186,7 +186,7 @@ def fake_roundtrip(data):
     obp = omni.build_panels
     requests.get, requests.post = fget, fpost
     #   왕복 검사에서도 패널 창을 줄인다 — 재는 것은 ★배선★ 이지 패널 크기가 아니다.
-    omni.build_panels = lambda d, m, max_days=PANEL_DAYS, flows=None, news=None: obp(d, m, PANEL_DAYS, flows=flows, news=news)
+    omni.build_panels = lambda d, m, max_days=PANEL_DAYS, flows=None, news=None, earn=None: obp(d, m, PANEL_DAYS, flows=flows, news=news, earn=earn)
     try:
         pl = omni.run("http://w", "k", {"x-train-key": "k"}, upload=True, log=lambda *a: None)
     finally:
@@ -240,6 +240,16 @@ def fake_roundtrip(data):
     print("왕복: 5분봉 조회 %d · 일봉 조회 %d · 나무 %d · probe %d · 본문 %.1f MB" % (
         calls["5m"], calls["1d"], len(body["trees"]), len(body["probe"]), len(sent["body"]) / 1e6))
     return fails
+
+
+def check_earn():
+    """[V33.486] 실적 칸 — 발표 당일은 모른다(직전 발표만) · 다음 날부터 새 발표 · 100일 넘으면 모름."""
+    pr = omni.earn_prep([[20250730, 1.5, 1.0], [20251030, 0.9, 1.0], [20250430, 1.2, 1.0], [20250130, 1.1, 1.0]])
+    a, b, c = omni.earn_feats(pr, 20251030), omni.earn_feats(pr, 20251031), omni.earn_feats(pr, 20260301)
+    assert abs(a["x_esp"] - 0.5) < 1e-9, "실적 칸: 발표 당일에 그 날 발표를 봤다(미래 혼입) %s" % a
+    assert abs(b["x_esp"] + 0.1) < 1e-9 and b["x_ebeat"] == 0.75, "실적 칸: 다음 날 값이 틀렸다 %s" % b
+    assert c["x_esp"] != c["x_esp"], "실적 칸: 오래된 발표를 썼다 %s" % c
+    print("실적 칸: 당일 미혼입 · 다음 날부터 · 100일 넘으면 모름")
 
 
 def check_wf():
@@ -623,6 +633,7 @@ def main():
     check_rally()
     check_split()
     check_wf()
+    check_earn()
     print("✅ OMNI 자가검사 통과")
 
 

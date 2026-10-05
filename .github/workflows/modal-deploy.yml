@@ -58,6 +58,11 @@ on:
         description: 'OMNI 전진 평가(1년 · 6구간 · 머리별 판정 · 재기만) — omni_now 와 함께'
         type: boolean
         default: false
+      # [V33.486] 실적 서프라이즈(PEAD) 실험 — 미국 실적 칸 채움/비움 비교 + 전진평가(재기만)
+      omni_earn:
+        description: 'OMNI 실적 서프라이즈 실험(미국 · 비교 + 전진평가 · 재기만) — omni_now 와 함께'
+        type: boolean
+        default: false
       omni_ksec:
         description: 'OMNI 장중 횡단면 칸 실험(재기만 · 업로드 안 함) — omni_now 와 함께'
         type: boolean
@@ -223,7 +228,7 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           set -o pipefail
-          modal run trainer/modal/modal_train.py::omni_job --ksec ${{ inputs.omni_ksec && 1 || 0 }} --flow ${{ inputs.omni_flow && 1 || 0 }} --news ${{ inputs.omni_news && 1 || 0 }} --rally ${{ inputs.omni_rally && 1 || 0 }} --split ${{ inputs.omni_split && 1 || 0 }} --wf ${{ inputs.omni_wf && 1 || 0 }} 2>&1 | tee omni.log
+          modal run trainer/modal/modal_train.py::omni_job --ksec ${{ inputs.omni_ksec && 1 || 0 }} --flow ${{ inputs.omni_flow && 1 || 0 }} --news ${{ inputs.omni_news && 1 || 0 }} --rally ${{ inputs.omni_rally && 1 || 0 }} --split ${{ inputs.omni_split && 1 || 0 }} --wf ${{ inputs.omni_wf && 1 || 0 }} --earn ${{ inputs.omni_earn && 1 || 0 }} 2>&1 | tee omni.log
       - name: OMNI summary
         if: always()
         run: |
