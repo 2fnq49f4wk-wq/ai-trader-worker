@@ -3056,7 +3056,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.479";
+const _BUILD_VER = "V33.480";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -19902,6 +19902,42 @@ async function refreshShard(env, market, shard) {
   return refreshPriceShard(env, market, shard);
 }
 
+/* ══ [V33.480] ★시장별 신호 통계 — 한 시장의 손실이 다른 시장의 진입을 끄지 않게.★ ══════════════════
+   실측(2026-10-05 월): AI 가 '가동' 인데도 미국 진입이 BLOCK NEGEXP_SIG[AI_PRIMARY] 로 막혔다. 그 게이트가 읽는 signal_stats 는
+   ★시장 무관(V8.2)★ — 최근 매도 80건을 미국·한국·원자재·국채 섞어 셌다. 한국 AI_PRIMARY(원장 PF 0.48 · −539만)가 평균을
+   음수로 끌어내리자 ★미국 AI 추세(실적 관문 PF 1.34 · 열림)★ 까지 꺼졌다. 시장별 실적 관문(V33.459)은 이미 시장마다 따로 막는다.
+   → 이 게이트는 ★그 시장의★ 그 신호 통계만 본다. 표본(30건) 미달이면 막지 않는다 — 시장별 실적 관문이 따로 지킨다.
+   pnl_pct(%) 만 쓰므로 원·달러가 섞이지 않는다. 문턱(30건 · 기대값<0 · 평균<0)은 그대로다. */
+function sigStatsByMarket(rows, perMkt) {
+  const seen = {}, out = {};
+  for (const t of (rows || [])) {
+    const mk = t && t.market; if (!mk) continue;
+    seen[mk] = (seen[mk] || 0) + 1; if (seen[mk] > perMkt) continue;
+    const m = String(t.reason || "").match(/#entry=([A-Z_][A-Z0-9_,]*)/); if (!m) continue;
+    const mem = m[1].split(",").filter(function (x) { return x; }); const sh = mem.length ? 1 / mem.length : 1;
+    const p = _num(t.pnl_pct, 0);
+    for (const sg of mem) {
+      const k = mk + ":" + sg;
+      const e = out[k] || (out[k] = { count: 0, wins: 0, totalPnl: 0, winSum: 0, lossSum: 0 });
+      e.count++; e.totalPnl += p * sh;
+      if (p > 0) { e.wins++; e.winSum += p; } else e.lossSum += p;
+    }
+  }
+  for (const k in out) {
+    const e = out[k], nl = e.count - e.wins;
+    e.winRate = e.wins / e.count; e.avgPnl = e.totalPnl / e.count;
+    e.avgWin = e.wins ? e.winSum / e.wins : 0; e.avgLoss = nl ? e.lossSum / nl : 0;
+    e.expectancy = e.winRate * e.avgWin + (1 - e.winRate) * e.avgLoss;
+  }
+  return out;
+}
+/* 진입 게이트 판정(순수 함수) — 그 시장 · 그 신호 통계만. */
+function negExpBlocked(statsMkt, market, sigName) {
+  const ss = statsMkt && statsMkt[market + ":" + sigName];
+  if (!ss || _num(ss.count, 0) < 30) return false;
+  return typeof ss.expectancy === "number" && ss.expectancy < 0 && typeof ss.avgPnl === "number" && ss.avgPnl < 0;
+}
+
 // === [개선] AutoTune — 신호별 승률 추적 + Confluence 토글 ===
 async function autoTune(DB, cfg, regimes) {
   if (!cfg.autoTune) return cfg;
@@ -20003,6 +20039,12 @@ async function autoTune(DB, cfg, regimes) {
     for (const k in signalStats) delete signalStats[k].R;
     await setState(DB, "signal_stats", signalStats);
     await setState(DB, "signal_stats_strat", signalStatsByStrat);
+    /* [V33.480] 시장별 — 시장마다 최근 statsWindow 건(섞어 세지 않는다). */
+    try {
+      const _rm = await DB.prepare("SELECT market, pnl_pct, reason FROM trades WHERE side = ? ORDER BY ts DESC LIMIT ?")
+        .bind("SELL", statsWindow * 8).all();
+      await setState(DB, "signal_stats_mkt", sigStatsByMarket(_rm.results || [], statsWindow));
+    } catch (e) {}
 
     // [V33.44] ★시장×전략 성과 롤업★ — 실거래 811건에서 가장 큰 단일 누수는 '신호'가 아니라
     //   '시장×전략' 조합이었다:
@@ -21459,6 +21501,7 @@ async function runTradingCycle(env) {
 
     cfg = await autoTune(DB, cfg, regimes);
     const signalStats = await getState(DB, "signal_stats", {});
+    const signalStatsMkt = await getState(DB, "signal_stats_mkt", {});   // [V33.480] NEGEXP_SIG 는 시장별
     // [V33.44] 시장×전략 성과 롤업(2시간 캐시) — 구조적으로 지는 조합의 신규 진입을 막는다.
     let __mktStratStats = null;
     try { const _mss = await getState(DB, "mkt_strat_stats", null); __mktStratStats = (_mss && _mss.m) ? _mss.m : null; } catch (e) {}
@@ -23918,14 +23961,10 @@ async function runTradingCycle(env) {
             //     기대값·합계손익이 모두 음수일 때만 차단하므로 우연한 연패로는 꺼지지 않는다.
             //   ※ llmInstr 유무와 무관하게 항상 동작해야 하므로 지시문 블록 '밖'에 둔다.
             try {
-              const _ss = signalStats && signalStats[signal.name];
-              if (_ss && (_ss.count || 0) >= 30) {
-                const _exp = (typeof _ss.expectancy === "number") ? _ss.expectancy : null;
-                const _avg = (typeof _ss.avgPnl === "number") ? _ss.avgPnl : null;
-                if (_exp != null && _exp < 0 && _avg != null && _avg < 0) {
-                  incBlock("NEGEXP_SIG[" + signal.name + "]");
-                  continue;
-                }
+              /* [V33.480] ★그 시장의★ 신호 통계만 — 섞어 세면 한국 손실이 미국 진입을 껐다(2026-10-05). */
+              if (negExpBlocked(signalStatsMkt, market, signal.name)) {
+                incBlock("NEGEXP_SIG[" + signal.name + "]");
+                continue;
               }
             } catch (e) {}
 
@@ -52968,7 +53007,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

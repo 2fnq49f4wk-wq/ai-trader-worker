@@ -146,6 +146,12 @@ NEWS = os.environ.get("OMNI_NEWS") == "1"
 #   ★통과 = 순초과 > 0 · 블록 t ≥ 2 · 학습 구간 전진 3구간 중 2구간 순초과 > 0★ (지평마다). 같은 표본의 기존 라벨(중앙값) 모델과 나란히.
 #   통과해도 이 회차는 올리지 않는다 — 다음은 워커 섀도우 채점(실시간 전진)이고, 매매는 그 성적이 쌓인 뒤에 논한다.
 RALLY = os.environ.get("OMNI_RALLY") == "1"
+# [V33.480] ★시장 분리 실험★ — 2026-10-04 뉴스 진단의 부산물: ★같은 한국 홀드아웃 124,309행★ 에서
+#   미국과 같이 배운 모델은 한국 AUC 0.4878, 한국 행만 배운 모델은(뉴스 없이) 0.5160 — 섞어 배우는 것이 한국을 망친다.
+#   시장마다 따로 학습해 ① 같은 실력 관문(holdout_edge)을 넘는지 ② 섞은 모델보다 같은 행에서 나은지(+0.005 · 전진 3구간 중 2승)를 잰다.
+#   재기만 한다(업로드 거부) — 통과하면 워커가 시장별 모델을 채점하도록 따로 배선한다.
+SPLIT = os.environ.get("OMNI_SPLIT") == "1"
+SPLIT_GAIN = 0.005
 RALLY_TOP = 0.10
 RALLY_COST = {0: 0.0010, 1: 0.0030}     # 왕복 비용(로그수익) — 미국 0.10% · 한국 0.30%(거래세·수수료·미끄러짐)
 RALLY_T = 2.0
@@ -2862,6 +2868,78 @@ def flow_folds(W, W0, pick, log=print):
     return out
 
 
+def split_compare(A, rep_pool, log=print):
+    """[V33.480] 시장별 단독 모델 vs 섞은 모델 — 같은 행에서. 반환 {us: {...}, kr: {...}}."""
+    import numpy as np
+    global NN_ON
+    f = lambda v: "—" if v is None else "%.4f" % v
+    _pk = ((rep_pool.get("cv") or {}).get("pick")) or GBDT_GRID[0]["name"]
+    pick = next((c for c in GBDT_GRID if c["name"] == _pk), GBDT_GRID[0])
+    out = {}
+
+    def mkt_auc(rep, mk, hzs=None):
+        tot = n = 0.0
+        for hz, h in (rep.get("headsG") or rep.get("heads") or {}).items():
+            if hzs and hz not in hzs:
+                continue
+            k = ((h or {}).get("byMkt") or {}).get(mk) or {}
+            if k.get("auc") is not None and k.get("n", 0) >= 50:
+                tot += k["auc"] * k["n"]
+                n += k["n"]
+        return (tot / n) if n else None
+    for mi, mk in enumerate(["us", "kr"]):
+        ix = np.flatnonzero(A["mkt"] == mi)
+        if len(ix) < 20000:
+            log("   · OMNI 시장분리 %s — %d행 · 잴 게 없다" % (mk, len(ix)))
+            continue
+        Am = {k: ([A["sym"][i] for i in ix] if k == "sym" else A[k][ix]) for k in A}
+        _nn = NN_ON
+        NN_ON = False
+        try:
+            _, rm = train_model(Am, log=lambda *a: None)
+        finally:
+            NN_ON = _nn
+        if not rm.get("heads"):
+            log("   · OMNI 시장분리 %s — 학습 실패: %s" % (mk, rm.get("why")))
+            continue
+        e = holdout_edge(rm["heads"])
+        p0 = mkt_auc(rep_pool, mk)
+        log("   · OMNI 시장분리 %s — %d행 · 단독 홀드아웃 AUC %s(관문 %s · 필요 초과분 %s) · 같은 시장 행에서 섞은 모델 %s → 차 %s"
+            % (mk, len(ix), f(e.get("auc")), "✅ 통과" if e.get("ok") else "미달", f(e.get("need")), f(p0),
+               "—" if (p0 is None or e.get("auc") is None) else "%+.4f" % (e["auc"] - p0)))
+        for hz in HORIZONS:
+            h = (rm["heads"].get(hz) or {})
+            log("     %s %s  섞음 %s · 단독 %s · n %s" % (hz, mk, f(mkt_auc(rep_pool, mk, [hz])), f(h.get("auc")), h.get("n", "—")))
+        # 전진 3구간 — 섞은 모델(전 시장으로 학습)과 단독 모델을 같은 평가 행(이 시장)에서
+        Ab, _ = balance_horizons(A, log=lambda *a: None)
+        C, tr, _ho = split_cutoff(Ab)
+        tdt = Ab["td"][tr]
+        cuts = [float(np.quantile(tdt, q)) for q in CV_FOLDS] + [float("inf")]
+        isM = Ab["mkt"] == mi
+        nt = n_threads()
+        pr = []
+        for k in range(len(CV_FOLDS)):
+            trk = tr[Ab["te"][tr] < cuts[k]]
+            ev = tr[(Ab["td"][tr] >= cuts[k]) & (Ab["td"][tr] < cuts[k + 1]) & isM[tr]]
+            fitP, valP = _hz_split(Ab, trk)
+            fitS, valS = _hz_split(Ab, trk[isM[trk]])
+            if len(fitS) < 5000 or len(valS) < 500 or len(ev) < 2000:
+                continue
+            bP, iP = _gbdt_fit(Ab, fitP, valP, pick, nt)
+            bS, iS = _gbdt_fit(Ab, fitS, valS, pick, nt)
+            y = Ab["y"][ev]
+            pr.append((_auc(bP.predict(Ab["X"][ev], num_iteration=iP, raw_score=True), y),
+                       _auc(bS.predict(Ab["X"][ev], num_iteration=iS, raw_score=True), y)))
+        wins = sum(1 for a, b in pr if a is not None and b is not None and b > a)
+        gain = (e["auc"] - p0) if (p0 is not None and e.get("auc") is not None) else None
+        adopt = bool(e.get("ok")) and gain is not None and gain >= SPLIT_GAIN and wins >= 2
+        log("   · OMNI 시장분리 %s 전진 구간 — %s · 단독 승 %d/%d → %s"
+            % (mk, " · ".join("섞음 %s → 단독 %s" % (f(a), f(b)) for a, b in pr), wins, len(pr),
+               "★통과(관문 + 섞음 대비 +%.3f 이상 + 2승)★" % SPLIT_GAIN if adopt else "미달"))
+        out[mk] = {"rows": int(len(ix)), "edge": e, "pooled": p0, "gain": gain, "folds": pr, "wins": wins, "adopt": adopt}
+    return out
+
+
 def revert_if_worse(rep, log=print):
     """[V33.428c] 섞은 홀드아웃이 나무 단독보다 낮으면 α 를 전부 0 으로 — 나무 단독의 머리 성적으로 올린다."""
     if rep.get("headsG") and any(rep.get("alpha") or []):
@@ -2961,6 +3039,12 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
     # [V33.479] ★실험 회차는 기본 모델의 실력 관문보다 먼저 잰다.★ 종전엔 관문 뒤에 있어서, 기본 모델이
     #   0.5 근처일 때(= 새 칸이 가장 궁금할 때) '배운 것이 없어 올리지 않는다' 로 먼저 돌아가 ★실험이 한 번도 안 돌았다★
     #   (2026-10-04 뉴스 회차: 뉴스 448종목을 받고도 비교 줄이 없었다). 실험 회차는 어차피 올리지 않는다.
+    if SPLIT:
+        rep["split"] = split_compare(A, rep, log=log)
+        log("   ⏭ OMNI ★시장분리 실험 회차★ — 워커가 시장별 모델을 아직 채점하지 않는다. 재기만 하고 올리지 않는다.")
+        rep["ok"] = False
+        rep["why"] = "OMNI_SPLIT 실험 회차 — 업로드 안 함"
+        return rep
     if NEWS:
         rep["news"] = flow_compare(A, rep, log=log, feats=NEWS_FEATS, tag="뉴스", gain_min=NEWS_GAIN,
                                    align=(("e_n1", "d_r1", True), ("e_n7", "d_r5", True)))

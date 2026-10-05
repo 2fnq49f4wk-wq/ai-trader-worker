@@ -242,6 +242,33 @@ def fake_roundtrip(data):
     return fails
 
 
+def check_split():
+    """[V33.480] 시장 분리 실험 — 시장마다 반대로 움직이는 신호(한국 +0.30 · 미국 −0.10)는 두 시장 단독이 다 통과하고(섞으면 서로 지운다), 잡음은 아무 시장도 통과 못 한다."""
+    import numpy as np
+    for tag, kr_b, us_b, want in (("신호", 0.30, -0.10, {"kr", "us"}), ("잡음", 0.0, 0.0, set())):
+        rng = np.random.default_rng(11)
+        N, F = 160000, len(omni.MODEL_FEATS)
+        X = rng.normal(size=(N, F))
+        td = np.sort(rng.uniform(1.75e9, 1.79e9, N))
+        hz = rng.integers(0, 5, N)
+        mkt = (rng.uniform(size=N) < 0.4).astype(np.int64)
+        lg = np.where(mkt == 1, kr_b * X[:, 0], us_b * X[:, 0])
+        y = (rng.uniform(size=N) < 1 / (1 + np.exp(-lg))).astype(np.int64)
+        A = {"X": X, "y": y, "ys": y.astype(float), "w": np.ones(N), "hz": hz, "td": td,
+             "te": td + 86400 * np.array([0.02, 0.04, 1, 5, 20])[hz], "mkt": mkt, "sym": ["S%d" % (i % 200) for i in range(N)],
+             "fr": rng.normal(size=N), "st": np.zeros(N, dtype=np.int64)}
+        _nn = omni.NN_ON
+        omni.NN_ON = False
+        try:
+            _, rep = omni.train_model(A, log=lambda *a: None)
+            out = omni.split_compare(A, rep, log=lambda *a: None)
+        finally:
+            omni.NN_ON = _nn
+        got = {k for k, v in out.items() if v.get("adopt")}
+        assert got == want, "시장분리 %s: 통과 %s (기대 %s) — %s" % (tag, sorted(got), sorted(want), {k: (v.get("gain"), v.get("wins")) for k, v in out.items()})
+    print("시장분리 실험: 반대 신호 두 시장 통과 · 잡음 통과 없음")
+
+
 def check_rally():
     """[V33.475] 급등 패턴 실험 — 심은 신호는 통과시키고 잡음은 하나도 통과시키지 않아야 한다."""
     import numpy as np
@@ -568,6 +595,7 @@ def main():
         print("❌ " + " · ".join(fails))
         sys.exit(1)
     check_rally()
+    check_split()
     print("✅ OMNI 자가검사 통과")
 
 

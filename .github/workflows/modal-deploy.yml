@@ -48,6 +48,11 @@ on:
         description: 'OMNI 급등 패턴 실험(재기만 · 업로드 안 함) — omni_now 와 함께'
         type: boolean
         default: false
+      # [V33.480] 시장 분리 실험 — 미국·한국을 따로 학습해 같은 행에서 섞은 모델과 견준다(재기만 · 업로드 안 함)
+      omni_split:
+        description: 'OMNI 시장 분리 실험(미국·한국 단독 학습 vs 섞음 · 재기만) — omni_now 와 함께'
+        type: boolean
+        default: false
       omni_ksec:
         description: 'OMNI 장중 횡단면 칸 실험(재기만 · 업로드 안 함) — omni_now 와 함께'
         type: boolean
@@ -213,7 +218,7 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           set -o pipefail
-          modal run trainer/modal/modal_train.py::omni_job --ksec ${{ inputs.omni_ksec && 1 || 0 }} --flow ${{ inputs.omni_flow && 1 || 0 }} --news ${{ inputs.omni_news && 1 || 0 }} --rally ${{ inputs.omni_rally && 1 || 0 }} 2>&1 | tee omni.log
+          modal run trainer/modal/modal_train.py::omni_job --ksec ${{ inputs.omni_ksec && 1 || 0 }} --flow ${{ inputs.omni_flow && 1 || 0 }} --news ${{ inputs.omni_news && 1 || 0 }} --rally ${{ inputs.omni_rally && 1 || 0 }} --split ${{ inputs.omni_split && 1 || 0 }} 2>&1 | tee omni.log
       - name: OMNI summary
         if: always()
         run: |

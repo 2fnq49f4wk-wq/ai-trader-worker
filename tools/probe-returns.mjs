@@ -105,5 +105,6 @@ try {
 // [V33.477] AI 준비(배지 = 매매 사이클과 같은 판정) · 자가진단 상위 문제
 try { const am = await get("/api/ai-mode?fresh=1"); out("ai_mode", { aiReady: am.aiReady, mode: am.mode, committee: Object.fromEntries(Object.entries(am.committee || {}).map(([k, v]) => [k, typeof v === "object" ? !!(v && v.trusted) : v])) }); }
 catch (e) { out("ai_mode_err", String(e)); }
-try { const sc = await get("/api/selfcheck"); out("selfcheck", { status: sc.status, build: sc.build, top: (sc.issues || []).slice(0, 8).map((i) => i.level + " " + i.area + " " + String(i.msg).slice(0, 140)) }); }
+try { const sc = await get("/api/selfcheck"); out("selfcheck", { status: sc.status, build: sc.build, top: (sc.issues || []).slice(0, 8).map((i) => i.level + " " + i.area + " " + String(i.msg).slice(0, 140)) });
+  const q = (sc.issues || []).find((i) => i.area === "시세"); if (q) out("selfcheck_quote", String(q.msg).slice(0, 900)); }
 catch (e) { out("selfcheck_err", String(e)); }

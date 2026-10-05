@@ -12,6 +12,15 @@
 
 ## Current handoff
 
+- Status: **V33.480 — 미국 AI 진입이 한국 손실 때문에 꺼져 있던 것(신호 게이트 시장별화) + OMNI 시장 분리 실험.**
+  - 실측(2026-10-05 월 12:33Z): aiReady=true 인데 10월 매수 0 · 보유 0. 미국은 `BLOCK NEGEXP_SIG[AI_PRIMARY]` — 그 게이트가 읽는
+    signal_stats 가 ★시장 무관(V8.2)★ 이라 한국 AI_PRIMARY(PF 0.48)가 미국 AI 추세(실적 관문 PF 1.34 · 열림)까지 껐다.
+    → `sigStatsByMarket`(시장마다 최근 80건) · `negExpBlocked(market)` · 상태 signal_stats_mkt · 문턱(30건·기대값<0·평균<0) 그대로.
+    한국은 시장별 실적 관문(kr:AI:TREND 7일 차단 → 반 크기 시험)이 계속 지킨다. 게이트 check-negexp-mkt.
+  - OMNI 시장 분리(OMNI_SPLIT · modal-deploy `omni_split`): 10/04 진단에서 ★같은 한국 홀드아웃 124,309행★ 기준 섞은 모델 0.4878 vs
+    한국 단독 0.5160(+0.028). 시장마다 단독 학습 → 같은 실력 관문 + 섞음 대비 +0.005 + 전진 3구간 2승이면 '통과'. 재기만(업로드 거부).
+    통과 시 다음 일: 워커가 시장별 OMNI 모델을 받아 채점하게 배선(지금은 모델 하나). 자가검사 check_split · 게이트 check-omni-split.
+  - 프로브: returns 가 자가진단 '시세' 줄 전문(selfcheck_quote)을 찍는다 — spark 상태 확인용.
 - Status: **V33.479 — 네이버 종목뉴스 HTML 목록 은퇴(HTTP 410) · 새 기사 수집이 조용히 0 이던 것 고침.**
   - 실측(2026-10-04, `ui-probe naver=true` · tools/probe-naver-news.mjs): HTML `news_news.naver` 는 모든 쪽 410. 모바일 JSON 은 약 10쪽(≈200건)까지만 — 대형주는 1~2일치.
     → ★과거 백필은 더 못 깊어진다★(덮은 기간 중앙 103일 · 최대 364일 · 커버 449/450 이 최종). '중앙 ≥ 250일' 문턱은 도달 불가.

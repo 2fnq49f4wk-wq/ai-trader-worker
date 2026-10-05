@@ -182,7 +182,7 @@ console.log("\n⑥ [V33.475] 급등 패턴 실험 — 재기만(업로드 거부
   chk(/"adj": \("위험조정 상위10%"/.test(PY) && /"objective": "lambdarank"/.test(PY) && /z = A\["fr"\] \/ vol/.test(PY) && /rally_pick_eval\(A, ho, p, gid, yr\)/.test(PY),
     "세 갈래(원값 · 위험조정 · 순위학습) — 평가는 셋 다 ★원값 수익★(실제로 버는 돈)", "★갈래가 빠졌거나 평가 잣대가 갈래마다 다르다★");
   chk(/cand = dict\(GBDT_GRID\[1\]\)/.test(PY), "구성은 고정(홀드아웃을 보고 고르지 않는다)", "★홀드아웃으로 구성을 고른다★");
-  chk(/def check_rally\(\)/.test(ST) && /check_rally\(\)\n\s*print\("✅ OMNI 자가검사 통과"\)/.test(ST), "학습기 자가검사: 심은 신호 통과 · 잡음 불통과", "★급등 실험 자가검사가 없다★");
+  chk(/def check_rally\(\)/.test(ST) && /\n\s*check_rally\(\)\n(\s*check_[a-z_]+\(\)\n)*\s*print\("✅ OMNI 자가검사 통과"\)/.test(ST), "학습기 자가검사: 심은 신호 통과 · 잡음 불통과", "★급등 실험 자가검사가 없다★");
   chk(/omni_rally:/.test(MD) && /--rally \$\{\{ inputs\.omni_rally && 1 \|\| 0 \}\}/.test(MD) && /os\.environ\["OMNI_RALLY"\] = "1"/.test(MT),
     "Modal 실험 회차 입력(omni_rally → --rally → OMNI_RALLY)", "★급등 실험을 돌릴 방법이 없다★");
 }
