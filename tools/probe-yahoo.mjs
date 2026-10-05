@@ -20,3 +20,21 @@ for (const [tag, u] of urls) {
       (j ? "" : " · 본문 " + txt.slice(0, 120).replace(/\s+/g, " ")));
   } catch (e) { console.log("YH " + tag + " — 실패 " + String(e.message || e).slice(0, 80)); }
 }
+/* [V33.485] 나스닥 — ① 실적 캘린더가 ★과거 날짜★ 에도 실제·예상 EPS 를 주는가(PEAD 이력 백필 가능성) ② 배치 시세(watchlist) */
+const NUA = { "User-Agent": UA["User-Agent"], "Accept": "application/json", "Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/" };
+for (const d of ["2026-09-30", "2025-10-30", "2024-10-30", "2023-11-02", "2022-11-03"]) {
+  try {
+    const r = await fetch("https://api.nasdaq.com/api/calendar/earnings?date=" + d, { headers: NUA });
+    const j = await r.json().catch(() => null);
+    const rows = (j && j.data && j.data.rows) || [];
+    const withAct = rows.filter((x) => x && x.eps != null && x.eps !== "" && x.epsForecast != null && x.epsForecast !== "");
+    console.log("NQ 실적 " + d + " — HTTP " + r.status + " · 행 " + rows.length + " · 실제+예상 둘 다 " + withAct.length +
+      (rows[0] ? " · 키 " + Object.keys(rows[0]).join(",") + " · 예 " + JSON.stringify(withAct[0] || rows[0]).slice(0, 220) : ""));
+  } catch (e) { console.log("NQ 실적 " + d + " — 실패 " + String(e.message || e).slice(0, 80)); }
+}
+try {
+  const q = ["aapl", "msft", "nvda", "brk.b"].map((s) => "symbol=" + encodeURIComponent(s + "|stocks")).join("&");
+  const r = await fetch("https://api.nasdaq.com/api/quote/watchlist?" + q, { headers: NUA });
+  const t = await r.text();
+  console.log("NQ 배치시세 — HTTP " + r.status + " · " + t.length + "자 · " + t.slice(0, 400).replace(/\s+/g, " "));
+} catch (e) { console.log("NQ 배치시세 — 실패 " + String(e.message || e).slice(0, 80)); }
