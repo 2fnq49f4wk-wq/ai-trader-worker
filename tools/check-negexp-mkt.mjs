@@ -25,5 +25,8 @@ chk(/setState\(DB, "signal_stats_mkt", sigStatsByMarket\(/.test(S) && /getState\
 console.log("③ [V33.482] 진입 문턱 표본(ai_pdist) — 못 읽으면 덮지 않는다");
 chk(/getState\(DB, "ai_pdist:" \+ market, null, true\); __pDistReadOk = true;/.test(S) && /if \(__pDistNew\.length && __pDistReadOk\)/.test(S) && /let __pDistCache = null, __pDistNew = \[\], __pDistReadOk = false;/.test(S),
   "엄격 읽기 · 실패한 사이클은 쓰지 않음 · 플래그는 쓰는 자리와 같은 범위", "★느슨한 읽기 → 2,000건을 몇십 건으로 덮어쓴다(10/05 ai_pdist:us 25건)★");
+console.log("④ [V33.484] AI 단타 자체진입 — 한국 끔(비용 0.30% · 전진평가 총우위 ≈0) · 거부권 유지 · 미국 유지");
+chk(/entryByMarket: \{ us: true, kr: false \}/.test(S) && /!\(_scp\.entryByMarket && _scp\.entryByMarket\[market\] === false\)/.test(S) && /vetoWhenTrusted: true/.test(S),
+  "한국 자체진입만 끈다(규칙 단타 거부권은 그대로)", "★시장별 단타 자체진입 스위치가 없거나 거부권까지 껐다★");
 console.log(fails ? "\n✗ 시장별 신호 게이트 검사 실패 " + fails : "\n✓ 시장별 신호 게이트 검사 통과");
 process.exit(fails ? 1 : 0);

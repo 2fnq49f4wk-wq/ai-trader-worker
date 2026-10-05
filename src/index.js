@@ -3056,7 +3056,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.483";
+const _BUILD_VER = "V33.484";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -3461,6 +3461,13 @@ const AI_PARAMS = {
     //   AI 가 아니라고 하는 단타를 규칙엔진이 그냥 치던 구조를 끊는다.
     vetoWhenTrusted: true,
     vetoBelow: 0.45,        // 이 확률 미만이면 규칙엔진 단타 신호를 기각
+    /* [V33.484] ★시장별 AI 단타 자체진입 — 한국은 끈다(거부권은 그대로)★. 근거는 비용이다:
+       · 한국 왕복 비용 ≈ 0.30%(거래세 포함) — 미국 0.10% 의 세 배.
+       · OMNI 전진평가(2026-10-05 · 1년 6구간 표본 밖): 한국 30m·60m 상위 10% 후보의 ★총★ 초과 ≈ 0 →
+         비용 뺀 순초과 −0.31%/건, t −32·−23 (56~63k 행). 짧은 지평에선 동료를 이길 총 우위 자체가 없다.
+       · 원장: 한국 AI-SCALP 6건 평균 −0.61% · 승률 16.7% · PF 0.02(실적 관문 표본 하한 15 미만이라 아직 열려 있음).
+       미국은 그대로 켜 둔다(실적 관문이 미국 단타 원장 PF 0.41 로 이미 막고 있다). 되돌리려면 kr 를 true 로. */
+    entryByMarket: { us: true, kr: false },
     // 모델이 신뢰되면 AI 가 스스로 단타 후보를 만든다(규칙신호 없이) — enabled=true 일 때만.
     aiEntry: true,
     baseWeight: 0.5,        // AI 단타 진입 사이즈 가중(규칙신호 대비 보수)
@@ -23488,7 +23495,8 @@ async function runTradingCycle(env) {
                         __scalpDiag.ai_veto = (__scalpDiag.ai_veto || 0) + 1;
                         _scalpSig = null;   // AI 거부 → 규칙 단타 진입 취소
                       }
-                    } else if (_entryAllowed && _scp.aiEntry !== false && aiScalpUsed < (_scp.maxPerCycle || 8)) {
+                    } else if (_entryAllowed && _scp.aiEntry !== false && aiScalpUsed < (_scp.maxPerCycle || 8)
+                               && !(_scp.entryByMarket && _scp.entryByMarket[market] === false)) {   // [V33.484] 시장별 자체진입
                       const _sd2 = await mlScalpDecide(DB, _sfNow, null);   // enabled=true 일 때만 non-null
                       if (_sd2 && _sd2.pass) {
                         aiScalpUsed++;
