@@ -28,6 +28,8 @@ const blk = S.slice(iS, iF);
 chk(/if \(sparkGot > 0 && _ch\.length > 1\)/.test(blk), "첫 묶음 0건이면 나머지 묶음을 안 부른다(예산 낭비 1회)", "★spark 가 막혀도 계속 부른다★");
 chk(/endsWith\("\.KS"\) \|\| s\.endsWith\("\.KQ"\)/.test(blk) && /!naverXV\[s\]/.test(blk), "한국 종목은 보내지 않는다(네이버가 1차)", "★한국 종목이 spark 로 샌다★");
 chk(/isExtendedHoursWindow\("us"\)\) \? 40 : 0/.test(blk), "시간외 창엔 보강 몫 40 을 남긴다", "★spark 가 시간외 보강 예산을 먹는다★");
+chk(/const SPARK_PATHS = \["v7\/finance\/spark", "v8\/finance\/spark"\]/.test(S) && /if \(Object\.keys\(got\)\.length\) \{ __sparkPath = pth; return got; \}/.test(S) && !/v8\/finance\/spark\?symbols=" \+/.test(S),
+  "[V33.482] spark 경로: v7 먼저 · 0건이면 v8 · 통한 길 기억 (v8 404 실측)", "★spark 경로가 v8 하나에 박혀 있다★");
 console.log("③ 자가진단");
 chk(/getState\(DB, "yahoo_spark", null\)/.test(S) && /_spkOk \? "warn" : "error"/.test(S), "spark 가 메우면 경고, 못 메우면 오류", "★자가진단이 spark 상태를 안 읽는다★");
 console.log(fails ? "\n✗ spark 배치 시세 검사 실패 " + fails : "\n✓ spark 배치 시세 검사 통과");

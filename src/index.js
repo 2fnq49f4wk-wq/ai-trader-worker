@@ -3056,7 +3056,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.481";
+const _BUILD_VER = "V33.482";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -7801,10 +7801,27 @@ function parseSparkQuotes(j, chunk) {
   }
   return out;
 }
+/* [V33.482] ★spark 경로를 고정하지 않는다★ — 운영 실측(2026-10-05): v8/finance/spark 가 HTTP 404. 같은 배치 일봉을
+   v7/finance/spark 도 준다(응답 모양은 위 두 가지 중 하나 — 파서가 둘 다 읽는다). 앞의 것부터 묻고, 0건·실패면 다음 것.
+   통한 경로를 이 isolate 에 기억해 다음 묶음부터 그 길로 간다(매번 404 를 한 번씩 버리지 않게). */
+const SPARK_PATHS = ["v7/finance/spark", "v8/finance/spark"];
+let __sparkPath = null;
 async function fetchSparkQuotes(chunk) {
-  const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/spark?symbols=" +
-    encodeURIComponent(chunk.join(",")) + "&range=5d&interval=1d");
-  return parseSparkQuotes(j, chunk);
+  const tryPath = async function (pth) {
+    const j = await yahooFetch("https://query1.finance.yahoo.com/" + pth + "?symbols=" +
+      encodeURIComponent(chunk.join(",")) + "&range=5d&interval=1d");
+    return parseSparkQuotes(j, chunk);
+  };
+  if (__sparkPath) return await tryPath(__sparkPath);
+  let lastErr = null;
+  for (const pth of SPARK_PATHS) {
+    try {
+      const got = await tryPath(pth);
+      if (Object.keys(got).length) { __sparkPath = pth; return got; }
+    } catch (e) { lastErr = e; }
+  }
+  if (lastErr) throw lastErr;
+  return {};
 }
 
 async function fetchQuoteViaChartFallback(symbol) {
@@ -8224,7 +8241,7 @@ async function fetchBatchQuotes(symbols, opts) {
     }
   }
   if (opts.DB && sparkCalls > 0) {
-    try { await setState(opts.DB, "yahoo_spark", { got: sparkGot, calls: sparkCalls, err: sparkErr, v7Dead: v7Dead, ts: Date.now() }); } catch (e) {}
+    try { await setState(opts.DB, "yahoo_spark", { got: sparkGot, calls: sparkCalls, err: sparkErr, path: __sparkPath, v7Dead: v7Dead, ts: Date.now() }); } catch (e) {}
   }
 
   // --- 2) v7 으로 채워지지 않은 심볼만 v8 chart 로 폴백 ---
@@ -29690,7 +29707,8 @@ async function handleRequest(request, env, ctx) {
             for (let i = 0; i < allSparkSyms.length; i += 40) {
               const chunk = allSparkSyms.slice(i, i + 40);
               try {
-                const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/spark?symbols=" +
+                /* [V33.482] v8 spark 404 — 통한 경로(없으면 v7 부터)로 묻는다. */
+                const j = await yahooFetch("https://query1.finance.yahoo.com/" + (__sparkPath || SPARK_PATHS[0]) + "?symbols=" +
                   encodeURIComponent(chunk.join(",")) + "&range=5y&interval=1mo");
                 // 응답 포맷 방어적 파싱 — {spark:{result:[{symbol,response:[{indicators..}]}]}} 또는 {SYM:{close:[..]}}
                 const results = (j && j.spark && Array.isArray(j.spark.result)) ? j.spark.result : null;
@@ -49166,7 +49184,7 @@ async function _luxSelfCheck(DB) {
             ? "야후 v7(미국 시세 1차 수집원) 호출이 실패한다" + _v7e
             : "야후 v7(미국 시세 1차 수집원)이 ★응답은 하는데 종목을 하나도 안 준다★(예외 없음 · 파싱 0건" +
               (_v7.shape ? " · 응답모양 " + String(_v7.shape).slice(0, 90) : "") + ")") +
-          (_spkOk ? " — spark 배치로 메우는 중(20종목/1회 · 직전 " + _spk.got + "종목/" + _spk.calls + "회)." :
+          (_spkOk ? " — spark 배치로 메우는 중(20종목/1회 · 직전 " + _spk.got + "종목/" + _spk.calls + "회" + (_spk.path ? " · " + _spk.path : "") + ")." :
           " — 종목당 1회 v8 폴백으로 버티는 중(50종목/1회 → 1종목/1회)" + (_spk ? "(spark 도 0건" + (_spk.err ? " [" + _spk.err + "]" : "") + ")" : "") + ".") + " 시간외는 v8 분봉으로 계속 채운다 — 다만 예산 압박으로 회전이 느려진다" +
           /* [V33.361] ★인증 상태를 같은 줄에 붙인다.★ v7 은 cookie+crumb 를 요구하는데,
              그 악수가 실패해도 종전엔 아무 데도 안 남아 이 자리를 의심조차 할 수 없었다.
