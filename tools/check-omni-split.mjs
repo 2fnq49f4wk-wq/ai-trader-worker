@@ -1,7 +1,10 @@
 /* [V33.480] OMNI 시장 분리 실험 배선 — 재기만(업로드 거부) · 실력 관문 앞에서 돈다 · Modal/워크플로 입력 · 자가검사 포함. */
 import { readFileSync } from "node:fs";
-const R = (p) => readFileSync(new URL("../" + p, import.meta.url), "utf8");
-const PY = R("trainer/modal/omni.py"), MT = R("trainer/modal/modal_train.py"), MD = R(".github/workflows/modal-deploy.yml"), ST = R("trainer/modal/omni_selftest.py");
+/* 경로는 ★글자 그대로★ — 앵커 메타검사(check-gate-anchors)가 이 형태로만 읽는 파일을 찾는다(동적 경로면 조용히 건너뛴다). */
+const PY = readFileSync(new URL("../trainer/modal/omni.py", import.meta.url), "utf8");
+const MT = readFileSync(new URL("../trainer/modal/modal_train.py", import.meta.url), "utf8");
+const MD = readFileSync(new URL("../.github/workflows/modal-deploy.yml", import.meta.url), "utf8");
+const ST = readFileSync(new URL("../trainer/modal/omni_selftest.py", import.meta.url), "utf8");
 let fails = 0;
 const chk = (c, ok, bad) => { if (c) console.log("  ok   " + ok); else { console.log("  FAIL " + bad); fails++; } };
 const RUN = PY.slice(PY.indexOf("def run(BASE"));
