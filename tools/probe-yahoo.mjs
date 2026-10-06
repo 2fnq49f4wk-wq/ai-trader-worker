@@ -51,3 +51,25 @@ for (const sym of ["AAPL", "MSFT", "BRK.B"]) {
     } catch (e) { console.log("NQA " + sym + " " + ep + " 실패 " + String(e.message || e).slice(0, 80)); }
   }
 }
+
+/* [V33.502] 나스닥 시간외 의미 확인 — watchlist 의 lastSalePrice·netChange·previousClosePrice 가 시간외에 무엇을 뜻하나.
+   같은 종목의 /api/quote/<sym>/info (primaryData=시간외 · secondaryData=정규장 마감) 와 나란히 찍어 대조한다. */
+{
+  const syms = ["aapl", "msft", "nvda", "tsla", "pltr", "brk.b"];
+  try {
+    const q = syms.map((s) => "symbol=" + encodeURIComponent(s + "|stocks")).join("&");
+    const r = await fetch("https://api.nasdaq.com/api/quote/watchlist?" + q, { headers: NUA });
+    const j = await r.json();
+    for (const x of (j && j.data) || []) {
+      console.log("NQX watch " + x.symbol + " " + JSON.stringify({ last: x.lastSalePrice, chg: x.netChange, pct: x.percentageChange, prev: x.previousClosePrice,
+        open: x.openingPrice, st: x.marketStatus, t: x.lastTradeTimestampDateTime }));
+    }
+  } catch (e) { console.log("NQX watch 실패 " + String(e.message || e).slice(0, 80)); }
+  for (const s of syms.slice(0, 4)) {
+    try {
+      const r = await fetch("https://api.nasdaq.com/api/quote/" + s.toUpperCase() + "/info?assetclass=stocks", { headers: NUA });
+      const j = await r.json(); const d = j && j.data;
+      console.log("NQX info " + s + " " + JSON.stringify(d ? { st: d.marketStatus, p: d.primaryData, s: d.secondaryData, k: d.keyStats && d.keyStats.previousclose } : j).slice(0, 900));
+    } catch (e) { console.log("NQX info " + s + " 실패 " + String(e.message || e).slice(0, 80)); }
+  }
+}
