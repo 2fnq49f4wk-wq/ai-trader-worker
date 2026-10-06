@@ -27,7 +27,9 @@ export function splitHtml(html) {
     if (Buffer.byteLength(body, "utf8") < SPLIT_MIN) continue;
     const hash = createHash("sha256").update(body).digest("hex").slice(0, 16);
     const name = "_b/" + hash + (isJs ? ".js" : ".css");
-    const tag = isJs ? '<script src="/' + name + '"></script>' : '<link rel="stylesheet" href="/' + name + '">';
+    // 못 받으면(404·네트워크) 한 번만 통짜 원본(/full.html)으로 옮긴다 — 코드 없는 반쪽 화면을 남기지 않는다
+    const tag = isJs ? '<script src="/' + name + '" onerror="__luxSplitFail()"></script>'
+                     : '<link rel="stylesheet" href="/' + name + '" onerror="__luxSplitFail()">';
     out += html.slice(last, m.index) + tag;
     last = m.index + m[0].length;
     parts.push({ name, tag, isJs, body, orig: m[0], file: isJs ? body : '@charset "UTF-8";\n' + body });
@@ -35,6 +37,10 @@ export function splitHtml(html) {
   out += html.slice(last);
   return { html: out, parts };
 }
+/* [V33.500] 분할 파일 실패 피난 — <head> 바로 뒤(어떤 분할 태그보다 앞)에 둔다. 세션당 한 번만 옮긴다(되돌이 방지). */
+export const FALLBACK_JS = "<script>window.__luxSplitFail=function(){try{if(sessionStorage.getItem('luxFull'))return;sessionStorage.setItem('luxFull','1')}catch(e){}" +
+  "location.replace('/full.html'+location.search+location.hash)}</script>";
+export function withFallback(html) { return html.replace(/<head>/i, (h) => h + "\n" + FALLBACK_JS); }
 export function joinBack(html, parts) {
   let s = html;
   for (const p of parts) {
@@ -64,6 +70,8 @@ if (isMain) {
   mkdirSync(bdir, { recursive: true });
   for (const p of r.parts) writeFileSync(join(outDir, p.name), p.file);
   const stamp = "<!-- [build-split] " + r.parts.length + " parts · " + new Date().toISOString() + " -->\n";
-  writeFileSync(join(outDir, "index.html"), r.html.replace(/^<!DOCTYPE html>\n?/i, (d) => d + stamp));
+  writeFileSync(join(outDir, "index.html"), withFallback(r.html).replace(/^<!DOCTYPE html>\n?/i, (d) => d + stamp));
+  writeFileSync(join(outDir, "full.html"), html);   // 통짜 원본 — 분할 파일을 못 받을 때의 피난처
+  console.log("✓ 피난처 full.html(통짜 원본) 기록");
   console.log("✓ " + bdir + " 에 " + r.parts.length + "개 · index.html 갱신");
 }

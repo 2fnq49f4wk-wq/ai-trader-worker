@@ -6,7 +6,7 @@
    ④ 상태 선출발: 머리에서 /api/state 를 보내고 첫 api('/api/state') 가 재사용(실패 시 다시 받음)
    ⑤ 서비스워커: 내비게이션 미리받기 · /_b/ 캐시 우선 · 판 갱신 */
 import { readFileSync } from "node:fs";
-import { splitHtml, joinBack, SPLIT_MIN } from "./build-split.mjs";
+import { splitHtml, joinBack, SPLIT_MIN, withFallback, FALLBACK_JS } from "./build-split.mjs";
 const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 const SW = readFileSync(new URL("../public/sw.js", import.meta.url), "utf8");
 const HD = readFileSync(new URL("../public/_headers", import.meta.url), "utf8");
@@ -29,6 +29,13 @@ chk(/<script>[\s\S]{0,4000}luxIntroDay[\s\S]*?<\/script>/.test(r.html) && /windo
 chk(r.parts.every((p) => /^_b\/[0-9a-f]{16}\.(js|css)$/.test(p.name)) && r.parts.filter((p) => !p.isJs).every((p) => p.file.startsWith('@charset "UTF-8";')),
   "이름은 내용 해시 16자 · CSS 는 @charset UTF-8", "이름/문자셋 형식");
 
+{
+  const fh = withFallback(r.html);
+  const iFb = fh.indexOf("window.__luxSplitFail"), iFirstPart = fh.indexOf('onerror="__luxSplitFail()"');
+  chk(r.parts.every((p) => p.tag.includes('onerror="__luxSplitFail()"')) && iFb > 0 && iFb < iFirstPart && /location\.replace\('\/full\.html'/.test(FALLBACK_JS) && /sessionStorage\.getItem\('luxFull'\)/.test(FALLBACK_JS),
+    "분할 파일을 못 받으면 세션당 한 번 통짜 원본(/full.html)으로 피난 — 피난 함수가 모든 분할 태그보다 앞", "피난 배선 없음/순서");
+}
+
 console.log("② 불변 캐시 · 배포 배선");
 chk(/^\/_b\/\*\s*\n\s+Cache-Control: public, max-age=31536000, immutable/m.test(HD), "_headers: /_b/* 1년 immutable", "_headers 규칙 없음");
 const iSplit = DY.indexOf("node tools/build-split.mjs public/index.html public"), iDeploy = DY.indexOf("run: wrangler deploy"), iLastGate = DY.lastIndexOf("node tools/check-");
@@ -37,6 +44,7 @@ chk(iSplit > 0 && iSplit > iLastGate && iSplit < iDeploy, "분할은 모든 게�
 const iSmoke = DY.indexOf("분할 빌드 연기 시험(실패하면 원본 재배포)");
 chk(iSmoke > iDeploy && /git checkout -- public\/index\.html && rm -rf public\/_b && wrangler deploy/.test(DY.slice(iSmoke)) && /cmp -s \/tmp\/smoke\.bin "public\$f"/.test(DY.slice(iSmoke)),
   "배포 뒤 연기 시험 — /_b/ 파일이 200·내용 일치가 아니면 원본으로 즉시 재배포", "연기 시험/되돌림 없음");
+chk(/for t in 1 2 3 4 5 6 7 8; do/.test(DY.slice(iSmoke)) && /\/full\.html/.test(DY.slice(iSmoke)), "엣지 전파 지연은 파일마다 ~70초 다시 묻는다 · 피난처 /full.html 도 확인", "재시도/피난처 확인 없음");
 
 console.log("③ 인트로 하루 한 번");
 const head = H.slice(0, H.indexOf("</head>"));

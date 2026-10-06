@@ -1176,12 +1176,19 @@ jobs:
           ok=1
           echo "$H" | grep -q '\[build-split\]' || { echo "운영 HTML 에 분할 표시가 없다"; ok=0; }
           [ "$N" -ge 5 ] || { echo "분할 파일 참조가 $N 개뿐"; ok=0; }
+          # [V33.500] 엣지 전파가 늦는 파일이 있다(V33.499: 배포 9초 뒤 CSS 2개 404 → 원본 재배포). 파일마다 최대 ~70초 다시 묻는다.
           for f in $FILES; do
-            code=$(curl -sS --max-time 30 -o /tmp/smoke.bin -w '%{http_code}' "$U$f")
-            echo "$f → HTTP $code · $(wc -c < /tmp/smoke.bin)B"
-            [ "$code" = "200" ] || ok=0
-            cmp -s /tmp/smoke.bin "public$f" || { echo "  내용 불일치 $f"; ok=0; }
+            good=0
+            for t in 1 2 3 4 5 6 7 8; do
+              code=$(curl -sS --max-time 30 -o /tmp/smoke.bin -w '%{http_code}' "$U$f?_t=$t$RANDOM")
+              if [ "$code" = "200" ] && cmp -s /tmp/smoke.bin "public$f"; then good=1; break; fi
+              echo "  $f 시도 $t → HTTP $code — 10초 뒤 다시"; sleep 10
+            done
+            echo "$f → $([ $good = 1 ] && echo OK || echo FAIL) · $(wc -c < /tmp/smoke.bin)B"
+            [ "$good" = "1" ] || ok=0
           done
+          code=$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' -L "$U/full.html"); echo "피난처 /full.html → HTTP $code"
+          [ "$code" = "200" ] || ok=0
           FIRST=$(echo "$FILES" | head -1)
           [ -n "$FIRST" ] && curl -sSI "$U$FIRST" | grep -i '^cache-control' || echo "(cache-control 헤더 없음 — 캐시는 서비스워커가 맡는다)"
           if [ "$ok" != "1" ]; then
