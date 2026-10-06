@@ -129,7 +129,7 @@ const DEFAULT_US = [
   "CME","ACN","PWR","PH","NOW",
   "SO","EQIX","ADBE","HWM","TT",
   "MDT","DUK","SNPS","CDNS","WMB",
-  "MAR","CEG","HCA","BK","CMI",
+  "MAR","CEG","HCA","BNY","CMI",   // [V33.495] BK→BNY 티커 변경(나스닥: BK "Symbol not exists" · BNY NYSE) — 시세 75일 정지로 발견
   "MCK","FTNT","GD","WM","ADP",
   "CMCSA","ICE","FDX","FCX","MNST",
   "KKR","CSX","PNC","ELV","SLB",
@@ -156,7 +156,7 @@ const DEFAULT_US = [
   "HPE","GRMN","FITB","CMG","VTR",
   "IDXX","ON","STT","MSCI","ODFL",
   "AMP","XYZ","YUM","KR","AIG",
-  "ARES","KDP","SATS","ED","CCI",
+  "ARES","KDP","ECHO","ED","CCI",   // [V33.495] SATS→ECHO 티커 변경(EchoStar · NASDAQ-GS) — 시세 40일 정지로 발견
   "BDX","PYPL","ADM","DHI","EME",
   "LYV","HSY","IBKR","CBOE","PEG",
   "CBRE","HIG","TKO","IRM","HUM",
@@ -548,7 +548,7 @@ const NAME_MAP = {
   "MAR":"Marriott",
   "CEG":"Constellation Energy",
   "HCA":"HCA Healthcare",
-  "BK":"BNY Mellon",
+  "BNY":"BNY Mellon",
   "CMI":"Cummins",
   "MCK":"McKesson",
   "FTNT":"Fortinet",
@@ -681,7 +681,7 @@ const NAME_MAP = {
   "AIG":"AIG",
   "ARES":"Ares Management",
   "KDP":"Keurig Dr Pepper",
-  "SATS":"EchoStar",
+  "ECHO":"EchoStar",
   "ED":"Consolidated Edison",
   "CCI":"Crown Castle",
   "BDX":"Becton Dickinson",
@@ -1550,7 +1550,7 @@ const MCAP_RANK = {
   "MAR":121,
   "CEG":122,
   "HCA":123,
-  "BK":124,
+  "BNY":124,
   "CMI":125,
   "MCK":126,
   "FTNT":127,
@@ -1683,7 +1683,7 @@ const MCAP_RANK = {
   "AIG":255,
   "ARES":256,
   "KDP":257,
-  "SATS":258,
+  "ECHO":258,
   "ED":259,
   "CCI":260,
   "BDX":261,
@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.494";
+const _BUILD_VER = "V33.495";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".

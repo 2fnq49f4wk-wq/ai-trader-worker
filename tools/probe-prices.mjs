@@ -34,6 +34,11 @@ out("market", { open: state.marketStatus, window: state.tradingWindow, utc: new 
 
 // ② 관심종목 자체 점검
 const W = state.watchlist;
+// 보유 포지션이 관심종목 밖(티커 변경·상장폐지로 빠짐)이거나 시세가 하루 넘게 묵었으면 평가액이 틀린다
+{ const wm = new Map(W.map((q) => [q.symbol, q])), bad = [];
+  for (const mk of ["us", "kr"]) for (const p of ((state.positions || {})[mk] || [])) { const q = wm.get(p.symbol);
+    if (!q || !(q.price > 0) || !q.ts || now - q.ts > 86400000) bad.push({ mk, s: p.symbol, strat: p.strategy, qty: p.qty, inWatch: !!q, ageH: q && q.ts ? Math.round((now - q.ts) / 3600000) : null }); }
+  out("positions_stale", { n: bad.length, rows: bad.slice(0, 20) }); }
 for (const mk of ["us", "kr"]) {
   const A = W.filter((q) => q.market === mk);
   const ages = A.filter((q) => q.ts).map((q) => (now - q.ts) / 60000);
