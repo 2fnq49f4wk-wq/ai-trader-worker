@@ -20,6 +20,10 @@
     kr-halt 15s · shard_meta 300s · commodities 20s · bonds 30s · ta-screener 60s · tech-summary 120s · fundamentals/analyst 600s ·
     chart 일봉 300s / 분봉 10s. force/run/refresh/nocache 는 우회. 꺼내기는 남용 한도·viewerGate ★뒤★, 담기는 응답 복제 후 waitUntil.
     응답 헤더 X-Micro-Cache: hit · X-Micro-Age. 게이트 check-micro-cache.
+  - ★배포 후 측정(10/06 10:36Z, run 37450792857)★ 재방문: news·fx·econ·earnings·insider·shard_meta·ta-screener 19~27ms(전: 2.3~8.8초) ·
+    2초 넘는 API 11 → 0. 첫 방문(빈 캐시)은 여전히 D1 줄서기 ~4초(인트로 뒤) · 종목상세 차트 첫 조회 1.5초(이후 5분 캐시).
+    시세: 미국 557종 6분 이내(장전) · 나스닥 50/50(BAC 0.42% = 나스닥이 종가를 사후 정정) · 한국 446종 1.4분 · 최대 괴리 0.70% · 보유 포지션 시세 이상 0.
+  - 예약 점검: 10/06 14:25Z(미국 정규장) · 10/07 01:20Z(한국 정규장) prices 탐침 재실행.
   - 시세 자체는 그대로(/api/state 는 자체 L1/R2 캐시 + V33.494 시세 보정).
 - Status: **V33.495 — 미국 티커 변경 2건 반영: BK→BNY · SATS→ECHO.**
   - 4차 탐침(10/06 10:08Z, run 37447731461): 나스닥 종목정보 BK·SATS = "Symbol not exists" · BNY = The Bank of New York Mellon(NYSE $144.00) ·
