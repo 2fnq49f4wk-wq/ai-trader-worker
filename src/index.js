@@ -3056,7 +3056,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.488";
+const _BUILD_VER = "V33.489";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -49288,6 +49288,16 @@ async function _luxSelfCheck(DB) {
     const dt = S["dnn_trust"], gt = S["gbdt_trust"];
     if (!(dt && dt.trusted)) add("warn", "모델", "DNN 미신뢰/대기(검증 정확도 축적 또는 featVer 재구축 대기)");
     if (!(gt && gt.trusted)) add("warn", "모델", "GBDT 미신뢰/대기");
+    /* [V33.488] ★OMNI 섀도우 채점이 멈췄는지★ — 패널이 상한(5일)보다 낡으면 채점이 조용히 멎는다(10/06 까지 11일 그랬다).
+       그동안 실시간 전진검증이 한 건도 안 쌓인다 — 승격으로 가는 유일한 실시간 증거라 소리 내게 한다. */
+    try {
+      const _om = await getState(DB, OMNI_MODEL.metaKey, null);
+      if (_om && _om.panelDay) {
+        const _pa = _omPanelAgeDays(_num(_om.panelDay, 0));
+        if (_pa > OMNI_MODEL.panelMaxDays) add("warn", "OMNI", "섀도우 채점 멈춤 — 패널 " + _om.panelDay + " 가 " + _pa + "일 낡았다(상한 " + OMNI_MODEL.panelMaxDays + ") · 학습기 업로드가 끊겼다(섀도우 전용 업로드 확인)");
+        else if (_om.shadowOnly) add("info", "OMNI", "섀도우 전용(실력 관문 미달 — 발언 0) · 전진검증 채점 중(패널 " + _om.panelDay + ")");
+      }
+    } catch (e) {}
     const cal = S["committee_cal"];
     if (cal && cal.featVer != null && typeof LUXML !== "undefined" && cal.featVer !== LUXML.featVer) add("warn", "보정", "committee_cal featVer 불일치(" + cal.featVer + "≠" + LUXML.featVer + ") — 확률 보정 무시 중");
     // 파이프라인 신선도

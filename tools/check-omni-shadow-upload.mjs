@@ -16,5 +16,6 @@ chk(/def check_shadow_upload\(data\)/.test(ST) && /fails \+= check_shadow_upload
 console.log("② 워커");
 chk(/const _shadowOnly = body\.shadowOnly === true;/.test(S) && /_h\.ok = false; _h\.tau = null;/.test(S), "shadowOnly 업로드는 워커가 한 번 더 발언 0 으로 묶는다", "★워커가 학습기를 그대로 믿는다★");
 chk(M.omniHeadsOk({ "5d": { ok: false, tau: null }, "20d": { ok: true, tau: 0.6 }, "1d": { ok: true, tau: null } }).join() === "20d", "omniHeadsOk: ok===true 이고 tau 가 숫자인 머리만", "★발언 0 머리를 센다★");
+chk(/섀도우 채점 멈춤 — 패널 /.test(S) && /_omPanelAgeDays\(_num\(_om\.panelDay, 0\)\)/.test(S), "자가진단: 패널이 낡아 섀도우 채점이 멈추면 경고", "★섀도우 채점 멈춤이 다시 조용해진다★");
 console.log(fails ? "\n✗ 섀도우 전용 업로드 검사 실패 " + fails : "\n✓ 섀도우 전용 업로드 검사 통과");
 process.exit(fails ? 1 : 0);
