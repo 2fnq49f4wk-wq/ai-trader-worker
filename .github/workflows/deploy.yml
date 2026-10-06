@@ -1154,3 +1154,39 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # [V33.498] ★분할 빌드 연기 시험★ — 운영 HTML 이 부르는 /_b/ 파일이 전부 200 이고 내용이 같은가.
+      #   하나라도 아니면 화면이 코드 없이 뜬다 → ★원본(인라인) index.html 로 즉시 재배포★ 하고 실패로 표시한다.
+      - name: 분할 빌드 연기 시험(실패하면 원본 재배포)
+        if: github.event_name == 'push'
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set +e
+          U="${WORKER_URL%/}"; [ -z "$U" ] && U="https://ai-trader-app.blauenacht08.workers.dev"
+          H=""
+          for i in 1 2 3 4 5 6 7 8; do
+            H=$(curl -sS --max-time 20 -H 'cache-control: no-cache' "$U/?_smoke=$i$RANDOM")
+            echo "$H" | grep -q '\[build-split\]' && break
+            sleep 8
+          done
+          FILES=$(echo "$H" | grep -oE '/_b/[0-9a-f]{16}\.(js|css)' | sort -u)
+          N=$(echo "$FILES" | grep -c . )
+          ok=1
+          echo "$H" | grep -q '\[build-split\]' || { echo "운영 HTML 에 분할 표시가 없다"; ok=0; }
+          [ "$N" -ge 5 ] || { echo "분할 파일 참조가 $N 개뿐"; ok=0; }
+          for f in $FILES; do
+            code=$(curl -sS --max-time 30 -o /tmp/smoke.bin -w '%{http_code}' "$U$f")
+            echo "$f → HTTP $code · $(wc -c < /tmp/smoke.bin)B"
+            [ "$code" = "200" ] || ok=0
+            cmp -s /tmp/smoke.bin "public$f" || { echo "  내용 불일치 $f"; ok=0; }
+          done
+          FIRST=$(echo "$FILES" | head -1)
+          [ -n "$FIRST" ] && curl -sSI "$U$FIRST" | grep -i '^cache-control' || echo "(cache-control 헤더 없음 — 캐시는 서비스워커가 맡는다)"
+          if [ "$ok" != "1" ]; then
+            echo "::error::분할 파일이 운영에서 열리지 않는다 — 원본(인라인) index.html 로 즉시 재배포한다"
+            git checkout -- public/index.html && rm -rf public/_b && wrangler deploy && echo "원본 재배포 완료"
+            exit 1
+          fi
+          echo "✅ 분할 파일 $N 개 전부 200 · 내용 일치"

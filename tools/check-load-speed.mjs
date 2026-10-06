@@ -34,6 +34,10 @@ chk(/^\/_b\/\*\s*\n\s+Cache-Control: public, max-age=31536000, immutable/m.test(
 const iSplit = DY.indexOf("node tools/build-split.mjs public/index.html public"), iDeploy = DY.indexOf("run: wrangler deploy"), iLastGate = DY.lastIndexOf("node tools/check-");
 chk(iSplit > 0 && iSplit > iLastGate && iSplit < iDeploy, "분할은 모든 게이트 뒤 · 배포 직전", "분할 위치 " + [iLastGate, iSplit, iDeploy].join(","));
 
+const iSmoke = DY.indexOf("분할 빌드 연기 시험(실패하면 원본 재배포)");
+chk(iSmoke > iDeploy && /git checkout -- public\/index\.html && rm -rf public\/_b && wrangler deploy/.test(DY.slice(iSmoke)) && /cmp -s \/tmp\/smoke\.bin "public\$f"/.test(DY.slice(iSmoke)),
+  "배포 뒤 연기 시험 — /_b/ 파일이 200·내용 일치가 아니면 원본으로 즉시 재배포", "연기 시험/되돌림 없음");
+
 console.log("③ 인트로 하루 한 번");
 const head = H.slice(0, H.indexOf("</head>"));
 chk(/html\.lux-nointro #lux-intro-overlay\{display:none!important\}/.test(head) && /localStorage\.getItem\('luxIntroDay'\) === day/.test(head) && /intro=1/.test(head),
