@@ -38,3 +38,16 @@ try {
   const t = await r.text();
   console.log("NQ 배치시세 — HTTP " + r.status + " · " + t.length + "자 · " + t.slice(0, 400).replace(/\s+/g, " "));
 } catch (e) { console.log("NQ 배치시세 — 실패 " + String(e.message || e).slice(0, 80)); }
+
+/* [V33.501] 나스닥 애널리스트 — 야후 v7(컨센서스 수집원)이 죽어 anlrevk 단계가 며칠째 대기. 대체 경로의 응답 모양을 본다. */
+for (const sym of ["AAPL", "MSFT", "BRK.B"]) {
+  for (const ep of ["targetprice", "ratings"]) {
+    try {
+      const r = await fetch("https://api.nasdaq.com/api/analyst/" + sym + "/" + ep, { headers: NUA });
+      const t = await r.text(); let j = null; try { j = JSON.parse(t); } catch (e) {}
+      const d = j && j.data;
+      console.log("NQA " + sym + " " + ep + " HTTP " + r.status + " · keys " + (d ? Object.keys(d).join(",") : "(없음)") + " · " +
+        (d ? JSON.stringify(d).slice(0, 700) : t.slice(0, 200).replace(/\s+/g, " ")));
+    } catch (e) { console.log("NQA " + sym + " " + ep + " 실패 " + String(e.message || e).slice(0, 80)); }
+  }
+}
