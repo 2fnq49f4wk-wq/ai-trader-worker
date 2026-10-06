@@ -25,9 +25,11 @@ for (const visit of ["first", "repeat", "third"]) {
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
   await cdp.send("Network.enable");
   await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 150, downloadThroughput: 9e6 / 8, uploadThroughput: 1.5e6 / 8 });
-  let bytes = 0; const big = [];
-  cdp.on("Network.loadingFinished", (e) => { bytes += e.encodedDataLength || 0; });
+  let bytes = 0; const big = [], reqs = new Map();
+  cdp.on("Network.requestWillBeSent", (e) => { reqs.set(e.requestId, { u: e.request.url.replace(BASE, "").slice(0, 44), t0: e.timestamp }); });
+  cdp.on("Network.loadingFinished", (e) => { bytes += e.encodedDataLength || 0; const r = reqs.get(e.requestId); if (r) { r.t1 = e.timestamp; r.kb = Math.round((e.encodedDataLength || 0) / 1024); } });
   cdp.on("Network.responseReceived", (e) => { const u = e.response.url; if (/\.(js|css)(\?|$)|\/$|\.html/.test(u) && u.startsWith(BASE)) big.push({ u: u.replace(BASE, "").slice(0, 50), st: e.response.status, fromCache: !!(e.response.fromDiskCache || e.response.fromServiceWorker || e.response.fromPrefetchCache) }); });
+  await p.addInitScript(() => { window.__lt = { n: 0, sum: 0, max: 0, over200: 0 }; try { new PerformanceObserver((l) => { for (const e of l.getEntries()) { const t = window.__lt; t.n++; t.sum += e.duration; t.max = Math.max(t.max, e.duration); if (e.duration > 200) t.over200++; } }).observe({ type: "longtask", buffered: true }); } catch (e) {} });
   if (visit === "first") await p.addInitScript(() => { try { if (!sessionStorage.getItem("__c")) { localStorage.clear(); sessionStorage.setItem("__c", "1"); } } catch (e) {} });
   const t0 = Date.now();
   await p.goto(BASE + "/", { waitUntil: "commit", timeout: 90000 });
@@ -46,6 +48,11 @@ for (const visit of ["first", "repeat", "third"]) {
   const nav = await p.evaluate(() => { const n = performance.getEntriesByType("navigation")[0]; return n ? { docEnd: Math.round(n.responseEnd), domInteractive: Math.round(n.domInteractive), dcl: Math.round(n.domContentLoadedEventEnd), docKB: Math.round((n.encodedBodySize || 0) / 1024) } : null; });
   out(visit, Object.assign({}, nav, hit, { totalKB: Math.round(bytes / 1024) }));
   out(visit + "_assets", big.slice(0, 12));
+  // 요청 타임라인(페이지 열기 기준 출발·도착 ms · 압축 후 KB) — 정보가 늦게 뜨는 원인을 가른다
+  const navT = [...reqs.values()].reduce((a, r) => Math.min(a, r.t0), Infinity);
+  out(visit + "_reqs", [...reqs.values()].filter((r) => /^\/(api\/|_b\/|$)|\.js|\.css/.test(r.u)).map((r) => ({ u: r.u, s: Math.round((r.t0 - navT) * 1000), e: r.t1 ? Math.round((r.t1 - navT) * 1000) : null, kb: r.kb }))
+    .sort((a, b2) => (b2.e || 1e9) - (a.e || 1e9)).slice(0, 18));
+  out(visit + "_longtasks", await p.evaluate(() => { const t = window.__lt || {}; return { n: t.n, sumMs: Math.round(t.sum || 0), maxMs: Math.round(t.max || 0), over200: t.over200 }; }));
   await p.waitForTimeout(visit === "first" ? 6000 : 1500);   // 첫 방문 뒤 서비스워커가 자리 잡을 시간
   await p.close();
 }
