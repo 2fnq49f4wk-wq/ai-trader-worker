@@ -29,6 +29,10 @@ on:
         description: '수익률 진단 — 거래 원장을 구간·청산·진입 전략·보유 시간별로(tools/probe-returns.mjs) · 브라우저 없음'
         type: boolean
         default: false
+      exits:
+        description: '청산 반사실 — 청산 사유별로 판 뒤 5·10·20일 수익(시장 대비 초과)(tools/probe-exits.mjs) · 브라우저 없음'
+        type: boolean
+        default: false
       naver:
         description: '외부 수집원 점검 — 네이버 종목뉴스 깊이 · 야후 시세 경로(spark/chart/quote) · 브라우저 없음'
         type: boolean
@@ -116,6 +120,13 @@ jobs:
           URL: ${{ steps.url.outputs.url }}
         run: node tools/probe-returns.mjs "$URL" || true
 
+      - name: 청산 반사실
+        if: inputs.exits && steps.url.outputs.url != ''
+        env:
+          URL: ${{ steps.url.outputs.url }}
+          TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
+        run: node tools/probe-exits.mjs "$URL" || true
+
       - name: 네이버 뉴스 깊이
         if: inputs.naver
         run: |
@@ -123,13 +134,13 @@ jobs:
           node tools/probe-yahoo.mjs || true
 
       - name: 브라우저 준비
-        if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver }}
+        if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits }}
         run: |
           npm i --no-save --no-audit --no-fund playwright@1
           npx playwright install --with-deps chromium webkit
 
       - name: OMNI 화면 측정
-        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver
+        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits
         env:
           URL: ${{ steps.url.outputs.url }}
           IMG: ${{ inputs.img && '1' || '0' }}
