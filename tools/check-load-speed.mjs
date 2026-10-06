@@ -51,7 +51,14 @@ chk(/window\.__earlyState = fetch\('\/api\/state'/.test(head), "머리 스크립
 chk(/if \(path === '\/api\/state' && window\.__earlyState && !opts\.method\) \{\s*var _es = window\.__earlyState; window\.__earlyState = null;/.test(H),
   "첫 api('/api/state') 가 한 번만 재사용 · 실패하면 다시 받는다", "재사용 배선 없음");
 
-console.log("⑤ 서비스워커");
+console.log("⑤ 저장된 화면 사본으로 즉시 그리기(V33.499)");
+{
+  const iPre = H.indexOf("if (!document.querySelector('.page.active')) {"), iFirst = H.indexOf("    refreshAll();\n", iPre), iShow = H.indexOf("showPage(_lp);");
+  chk(iPre > 0 && iFirst > iPre && iFirst - iPre < 900 && iShow > iFirst,
+    "첫 refreshAll 전에 시작 페이지를 활성 표시 — 사본(bootBundle)이 대시보드 칸을 바로 그린다(로컬: 상태 8초 지연에도 0.2초)", "시작 페이지 선표시 없음/순서 " + [iPre, iFirst, iShow].join(","));
+}
+
+console.log("⑥ 서비스워커");
 chk(/navigationPreload\.enable\(\)/.test(SW) && /e\.preloadResponse/.test(SW), "내비게이션 미리받기(문서가 워커 기동과 동시에 출발)", "미리받기 없음");
 chk(/url\.pathname\.startsWith\('\/_b\/'\)/.test(SW) && /const BUILD = 'b-immutable'/.test(SW) && /k !== BUILD/.test(SW), "/_b/ 캐시 우선 · 판이 바뀌어도 그 캐시는 지우지 않는다", "/_b/ 처리 없음");
 chk(/const VER = 'lux-v33\.(49[89]|5\d\d)'/.test(SW), "서비스워커 판 갱신", "VER 그대로");
