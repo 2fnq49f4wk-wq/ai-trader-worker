@@ -94,3 +94,20 @@ for (const s of ["aapl", "msft", "nvda", "tsla"]) {
     } catch (e) { console.log("NQX naver " + s + sfx + " 실패 " + String(e.message || e).slice(0, 80)); }
   }
 }
+
+/* [V33.504] 종목상세 데이터 확장 — 미국 나스닥 summary(시가총액·PER·배당·52주·업종) · 한국 네이버 integration(totalInfos) 응답 모양 */
+for (const s of ["AAPL", "BRK.B", "SPY"]) {
+  try {
+    const r = await fetch("https://api.nasdaq.com/api/quote/" + s + "/summary?assetclass=" + (s === "SPY" ? "etf" : "stocks"), { headers: NUA });
+    const j = await r.json(); const d = j && j.data;
+    console.log("NQS " + s + " HTTP " + r.status + " · " + JSON.stringify(d ? { keys: Object.keys(d), sum: d.summaryData } : j).slice(0, 1600));
+  } catch (e) { console.log("NQS " + s + " 실패 " + String(e.message || e).slice(0, 80)); }
+}
+for (const c of ["005930", "247540"]) {
+  try {
+    const r = await fetch("https://m.stock.naver.com/api/stock/" + c + "/integration", { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" } });
+    const j = await r.json();
+    console.log("NVI " + c + " HTTP " + r.status + " · keys " + Object.keys(j || {}).join(",") + " · totalInfos " + JSON.stringify((j && j.totalInfos) || null).slice(0, 1400) +
+      " · industry " + JSON.stringify(j && (j.industryCode || j.industryName || null)) + " · consensus " + JSON.stringify((j && j.consensusInfo) || null).slice(0, 300));
+  } catch (e) { console.log("NVI " + c + " 실패 " + String(e.message || e).slice(0, 80)); }
+}
