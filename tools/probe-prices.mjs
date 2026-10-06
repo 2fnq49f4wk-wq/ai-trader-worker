@@ -171,3 +171,15 @@ for (const q of US.filter((q) => q.ts && now - q.ts > 86400000).slice(0, 6)) {
       lookup: j2 && Array.isArray(j2.data) ? j2.data.slice(0, 5).map((x) => x.symbol + ":" + String(x.name || "").slice(0, 40) + ":" + (x.asset || "")) : null });
   } catch (e) { out("us_stale", { s: q.symbol, err: String(e.message || e).slice(0, 80) }); }
 }
+
+// 진단: 티커 변경 후보 확인(인자: PX_CAND="BNY,ECHO") — 나스닥 종목정보(회사명 · 마지막 체결)
+for (const c of String(process.env.PX_CAND || "BNY,ECHO,BK,SATS").split(",").filter(Boolean)) {
+  try {
+    const r = await fetch("https://api.nasdaq.com/api/quote/" + encodeURIComponent(c) + "/info?assetclass=stocks", { headers: NUA });
+    const j = await r.json().catch(() => null); const d = j && j.data, pd = d && d.primaryData;
+    const r2 = await fetch("https://api.nasdaq.com/api/autocomplete/slookup/10?search=" + encodeURIComponent(c), { headers: NUA });
+    const j2 = await r2.json().catch(() => null);
+    out("cand", { c, company: d && d.companyName, exch: d && d.exchange, last: pd && pd.lastSalePrice, at: pd && pd.lastTradeTimestamp, rCode: j && j.status && j.status.rCode,
+      lookup: j2 && Array.isArray(j2.data) ? j2.data.filter((x) => /STOCKS/i.test(x.asset || "")).slice(0, 4).map((x) => x.symbol + ":" + String(x.name || "").slice(0, 50)) : null });
+  } catch (e) { out("cand", { c, err: String(e.message || e).slice(0, 80) }); }
+}
