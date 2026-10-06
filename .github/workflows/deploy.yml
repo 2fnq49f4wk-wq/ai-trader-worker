@@ -731,6 +731,9 @@ jobs:
       # [V33.478] v7 이 빈 배열일 때 미국 시세를 spark 배치(20종목/1회)로 — 종목당 폴백(1종목/1회)보다 앞.
       - name: spark 배치 시세 검사 (두 응답 모양 · v7→spark→폴백 순서 · 자가진단)
         run: node tools/check-spark-quotes.mjs
+      # [V33.493] /api/state 시세 — 가격 칸 정밀도 · 묵은 R2 사본에 D1 시세 끼우기(배포 직후 9분 묵은 시세 방지)
+      - name: 상태 시세 정확도 검사
+        run: node tools/check-state-quotes.mjs
       # [V33.480] 신호 음수기대 게이트는 시장별 — 한국 손실이 섞인 통계로 미국 AI 진입(PF 1.34)이 꺼졌다.
       - name: 시장별 신호 게이트 검사
         run: node tools/check-negexp-mkt.mjs

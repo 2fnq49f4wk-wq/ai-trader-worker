@@ -250,7 +250,7 @@ const DEFAULT_KR = [
   "011790.KS","018880.KS","310210.KQ","103590.KS","001040.KS",
   "004170.KS","022100.KS","178320.KQ","088350.KS","450080.KS",
   "214370.KQ","175330.KS","023530.KS","002380.KS","403870.KQ",
-  "108490.KQ","095340.KQ","051900.KS","111770.KS","012510.KS",
+  "108490.KQ","095340.KQ","051900.KS","111770.KS",
   "004800.KS","489790.KS","011780.KS","251270.KS","011170.KS",
   "005850.KS","036460.KS","067310.KQ","064760.KQ","014680.KS",
   "214150.KQ","035250.KS","357780.KQ","017800.KS","001450.KS",
@@ -299,7 +299,7 @@ const DEFAULT_KR = [
   // [V12.65 추가] 한국주식 유니버스 확장(네이버 기준 코드·시장접미사 .KS/.KQ 검증) — 게임/엔터/바이오/반도체소부장/증권·보험/조선·항공/소비재 대형·중형주
   "095660.KQ","078340.KQ","079160.KS","034120.KS","036420.KQ",
   "091700.KQ","058610.KQ","032500.KQ","322000.KS",
-  "002710.KS","005420.KS","057050.KS","018250.KS","393890.KQ",
+  "002710.KS","005420.KS","018250.KS","393890.KQ",
   "278280.KQ","006840.KS","093370.KS","020000.KS","267980.KQ",
   "000140.KS","192400.KQ","284740.KS","017810.KS","136480.KS",
   "003380.KQ","051500.KQ","003960.KS","002350.KS","005720.KS",
@@ -325,11 +325,11 @@ const DEFAULT_KR = [
        잡도록★ 유니버스 건강검진을 함께 넣었다(아래 UNIVHEALTH). 죽은 티커는 시세가
        계속 비므로, 사람의 기억이 아니라 데이터가 말하게 하는 편이 오래 간다. */
   "031430.KS","105630.KS","005610.KS","003920.KS","027410.KS",
-  "031440.KS","084690.KS","122900.KS","002320.KS","002020.KS",
+  "084690.KS","122900.KS","002320.KS","002020.KS",
   "003070.KS","069260.KS","002240.KS","007810.KS","025540.KS",
   "015750.KS","006650.KS","004430.KS","007690.KS","344820.KS",
   "014830.KS","161000.KS","004690.KS","001630.KS","005250.KS",
-  "085620.KS","001200.KS","210980.KS","042670.KS","097230.KS",
+  "085620.KS","001200.KS","210980.KS","097230.KS",
   "456040.KS","108670.KS","005960.KS","016380.KS","003620.KS",
   "013890.KS","181710.KS","214320.KS","267850.KS","010780.KS",
   "336370.KS","194480.KQ","417200.KQ","348210.KQ","200130.KQ",
@@ -976,7 +976,6 @@ const NAME_MAP = {
   "322000.KS":"HD현대에너지솔루션",
   "002710.KS":"TCC스틸",
   "005420.KS":"코스모화학",
-  "057050.KS":"현대홈쇼핑",
   "018250.KS":"애경산업",
   "393890.KQ":"더블유씨피",
   "278280.KQ":"천보",
@@ -1179,7 +1178,6 @@ const NAME_MAP = {
   "095340.KQ":"ISC",
   "051900.KS":"LG생활건강",
   "111770.KS":"영원무역",
-  "012510.KS":"더존비즈온",
   "004800.KS":"효성",
   "489790.KS":"한화비전",
   "011780.KS":"금호석유화학",
@@ -1370,7 +1368,6 @@ const NAME_MAP = {
   "005610.KS": "SPC삼립",
   "003920.KS": "남양유업",
   "027410.KS": "BGF",
-  "031440.KS": "신세계푸드",
   "084690.KS": "대상홀딩스",
   "122900.KS": "아이마켓코리아",
   "002320.KS": "한진",
@@ -1393,7 +1390,6 @@ const NAME_MAP = {
   "085620.KS": "미래에셋생명",
   "001200.KS": "유진투자증권",
   "210980.KS": "SK디앤디",
-  "042670.KS": "HD현대인프라코어",
   "097230.KS": "HJ중공업",
   "456040.KS": "OCI",
   "108670.KS": "LX하우시스",
@@ -1975,7 +1971,6 @@ const MCAP_RANK = {
   "322000.KS":334,
   "002710.KS":335,
   "005420.KS":336,
-  "057050.KS":337,
   "018250.KS":338,
   "393890.KQ":339,
   "278280.KQ":340,
@@ -2178,7 +2173,6 @@ const MCAP_RANK = {
   "095340.KQ":137,
   "051900.KS":138,
   "111770.KS":139,
-  "012510.KS":140,
   "004800.KS":141,
   "489790.KS":142,
   "011780.KS":143,
@@ -2369,7 +2363,6 @@ const MCAP_RANK = {
   "005610.KS": 405,
   "003920.KS": 406,
   "027410.KS": 407,
-  "031440.KS": 408,
   "084690.KS": 409,
   "122900.KS": 410,
   "002320.KS": 411,
@@ -2392,7 +2385,6 @@ const MCAP_RANK = {
   "085620.KS": 428,
   "001200.KS": 429,
   "210980.KS": 430,
-  "042670.KS": 431,
   "097230.KS": 432,
   "456040.KS": 433,
   "108670.KS": 434,
@@ -2569,7 +2561,6 @@ const SECTOR_GROUP_MAP = {
   "005610.KS": "CONSUMER",
   "003920.KS": "CONSUMER",
   "027410.KS": "CONSUMER",
-  "031440.KS": "CONSUMER",
   "084690.KS": "CONSUMER",
   "122900.KS": "INDUSTRIAL",
   "002320.KS": "INDUSTRIAL",
@@ -2592,7 +2583,6 @@ const SECTOR_GROUP_MAP = {
   "085620.KS": "FINANCE",
   "001200.KS": "FINANCE",
   "210980.KS": "INDUSTRIAL",
-  "042670.KS": "INDUSTRIAL",
   "097230.KS": "INDUSTRIAL",
   "456040.KS": "RESOURCES",
   "108670.KS": "INDUSTRIAL",
@@ -3056,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.493";
+const _BUILD_VER = "V33.494";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8034,6 +8024,38 @@ function applyDisplayOverMarket(q) {
   return q;
 }
 
+
+/* [V33.493] /api/state 직렬화 — 소수는 유효숫자 6자리로 줄이되(용량 ~30%↓) ★가격 칸은 소수 4자리까지 그대로★.
+   종전엔 가격도 6자리라 27,477.31 → 27,477.3 · 12,345.67 → 12,345.7 처럼 끝자리가 잘렸다(지수·고가 종목). */
+const _STATE_PRICE_KEYS = { price: 1, prevClose: 1, pre: 1, post: 1, regPrice: 1, dispPrice: 1, avg: 1 };
+function _stateNumTrim(k, v) {
+  if (typeof v !== "number" || !isFinite(v) || Number.isInteger(v)) return v;
+  return _STATE_PRICE_KEYS[k] ? Math.round(v * 1e4) / 1e4 : +v.toPrecision(6);
+}
+/* [V33.493] 묵은 상태 사본에 ★시세만★ 새로 끼운다 — 관심종목·지수·거래 창. 실패하면 null(사본 그대로 나간다). */
+async function _patchStateQuotes(DB, body) {
+  const st = JSON.parse(body);
+  if (!st || !Array.isArray(st.watchlist) || !st.watchlist.length) return null;
+  const qrows = await DB.prepare("SELECT k, v FROM state WHERE k >= 'quote:' AND k < 'quote;'").all();
+  const m = {};
+  for (const r of (qrows.results || [])) { try { m[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {} }
+  let n = 0;
+  st.watchlist = st.watchlist.map(function (w) {
+    const q = m[w.symbol];
+    if (!q || !w) return w;
+    n++;
+    return applyDisplayOverMarket(Object.assign({ symbol: w.symbol, name: w.name, rank: w.rank, isEtf: w.isEtf, market: w.market,
+      shares: w.shares, mcap: w.mcap }, q));
+  });
+  if (Array.isArray(st.indices) && st.indices.length) {
+    const ix = await getStates(DB, st.indices.map(function (x) { return "index:" + x.symbol; }));
+    st.indices = st.indices.map(function (x) { const v = ix["index:" + x.symbol]; return v ? Object.assign({ symbol: x.symbol }, v) : x; });
+  }
+  // 장 상태(marketStatus)는 휴장 판정이 캐시 미스면 LLM 까지 갈 수 있어 이 빠른 길에서 다시 재지 않는다(사본 값 · 다음 폴링이 새 값)
+  try { st.tradingWindow = { us: isTradingWindow("us"), kr: isTradingWindow("kr") }; } catch (e) {}
+  st.quotesAt = Date.now(); st.quotesPatched = n;
+  return JSON.stringify(st, _stateNumTrim);
+}
 
 async function fetchBatchQuotes(symbols, opts) {
   opts = opts || {};
@@ -29695,9 +29717,7 @@ async function handleRequest(request, env, ctx) {
      // 페이로드는 한 번만 직렬화해 문자열로 캐시(요청마다 1.2MB 재직렬화 방지).
      //   float를 유효숫자 6자리로 절사(51.28742146792077 → 51.2874) — 표시용으론 충분,
      //   정수(타임스탬프·주식수)는 건드리지 않는다. 페이로드 ~30% 감량.
-     const __numTrim = function (k, v) {
-       return (typeof v === "number" && isFinite(v) && !Number.isInteger(v)) ? +v.toPrecision(6) : v;
-     };
+     const __numTrim = _stateNumTrim;
      const __mkCache = function (pl) { return { ts: Date.now(), data: pl, str: JSON.stringify(pl, __numTrim) }; };
      const __jh = Object.assign({ "content-type": "application/json" }, cors);
      // [V12.129b] 아이솔레이트 메모리(L1)만으론 부족 — 요청이 아이솔레이트 여러 개에 분산돼
@@ -29766,6 +29786,10 @@ async function handleRequest(request, env, ctx) {
          if (__g && __rAt && __rage >= 0 && __rage < R2_USABLE_MS) {
            let __body = await __g.text();
            globalThis.__stateCache = { ts: __rAt, data: null, str: __body };
+           /* [V33.493] ★사본이 1분보다 묵었으면 시세만 새로 끼운다★ — 운영 탐침(10/06 09:56Z): 배포 직후 새 아이솔레이트가
+              8.5분 묵은 R2 사본을 줬고, 한국 시간외 시세 나이가 1.5분 → 9분으로 뛰어 네이버와 최대 1.85% 어긋났다.
+              시세는 D1 한 번(quote: 범위 조회)이면 된다 — 무거운 나머지(현금·포지션 계산)는 뒤에서 새로 짓는 그대로 둔다. */
+           if (__rage > 60000) { try { const __pb = await _patchStateQuotes(env.DB, __body); if (__pb) __body = __pb; } catch (e) {} }
            // 오래된 사본은 그렇다고 말한다(다음 폴링은 뒤에서 새로 지은 값) — 본문 앞에 두 칸만 붙인다(다시 직렬화하지 않는다)
            if (__rage > USABLE_MS && __body.charAt(0) === "{") __body = '{"stale":true,"staleAgeMs":' + __rage + "," + __body.slice(1);
            const __bp = __refresh();
@@ -49000,7 +49024,7 @@ const _TAG_TICKERS = {
   export_kr: "005930.KS,000660.KS,005380.KS,000270.KS,005490.KS,042660.KS,009540.KS,010140.KS,012330.KS,373220.KS",
   china_exp: "BABA,PDD,JD,NIO,MPWR,WYNN,LVS,QCOM,AAPL,TSLA",
   consumer_d:"AMZN,TSLA,HD,NKE,SBUX,MCD,DIS,LOW,TGT,LULU,RCL,005380.KS,090430.KS",
-  industrial:"CAT,GE,HON,DE,MMM,EMR,UNP,ETN,PH,ITW,267260.KS,009150.KS,042670.KS",
+  industrial:"CAT,GE,HON,DE,MMM,EMR,UNP,ETN,PH,ITW,267260.KS,009150.KS",
   bond_prox: "TLT,IEF,LQD,148070.KS",
   // [V32.49] 확장 테마 태그 — 더 다양한 이슈 대응
   ev_battery:  "TSLA,RIVN,LCID,GM,F,373220.KS,006400.KS,051910.KS,247540.KQ,066970.KQ,096770.KS",
@@ -53243,7 +53267,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _stateNumTrim, _patchStateQuotes, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

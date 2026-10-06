@@ -86,7 +86,10 @@ console.log("\n②-b 섹터 그룹 — 네 번째 표를 빠뜨리지 않았는�
   const _b = _a >= 0 ? S.indexOf("];", _a) : -1;
   const added = (_a >= 0 && _b > _a)
     ? [...S.slice(_a, _b).matchAll(/"([0-9A-Z]{6})\.(KS|KQ)"/g)].map(m => m[1] + "." + m[2]) : [];
-  chk(added.length === 50, "V33.261 확장분 " + added.length + "종을 찾았다",
+  /* [V33.493] 확장분 중 상장폐지·합병으로 빠진 종목 — 운영 탐침(네이버 polling 무응답 · m.stock 409 · 시세 14~75일 정지)으로 확인 후 제거 */
+  const REMOVED_DELISTED = ["031440.KS", "042670.KS"];
+  chk(added.length === 50 - REMOVED_DELISTED.length && !REMOVED_DELISTED.some(c => added.includes(c)),
+    "V33.261 확장분 " + added.length + "종을 찾았다(상장폐지 제거 " + REMOVED_DELISTED.length + "종 반영)",
     "확장분 추출이 " + added.length + "종 — 블록 구조가 바뀌었다(아래 검사가 공허하게 통과한다)");
   if (added.length === 0) { console.log("  FAIL 확장분이 비어 아래 업종 검사를 수행할 수 없다"); fails++; }
   const noSec = added.filter(c => !smap[c]);
