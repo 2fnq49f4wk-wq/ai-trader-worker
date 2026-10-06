@@ -73,3 +73,24 @@ for (const sym of ["AAPL", "MSFT", "BRK.B"]) {
     } catch (e) { console.log("NQX info " + s + " 실패 " + String(e.message || e).slice(0, 80)); }
   }
 }
+
+/* [V33.502] 독립 대조 — 나스닥 previousClosePrice 와 (last − netChange) 중 어느 쪽이 진짜 전일·당일 종가인가.
+   stooq 일봉 CSV(최근 4일 종가) · 네이버 해외주식 basic(종가·전일대비) 를 나란히 찍는다. */
+for (const s of ["aapl", "msft", "nvda", "tsla"]) {
+  try {
+    const r = await fetch("https://stooq.com/q/d/l/?s=" + s + ".us&i=d", { headers: { "User-Agent": "Mozilla/5.0" } });
+    const t = await r.text();
+    const lines = t.trim().split(/\r?\n/).slice(-4).map((l) => l.split(",").slice(0, 5).join(" "));
+    console.log("NQX stooq " + s + " HTTP " + r.status + " · " + lines.join(" | "));
+  } catch (e) { console.log("NQX stooq " + s + " 실패 " + String(e.message || e).slice(0, 80)); }
+  for (const sfx of [".O", ""]) {
+    try {
+      const r = await fetch("https://api.stock.naver.com/stock/" + s.toUpperCase() + sfx + "/basic", { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" } });
+      if (r.status !== 200) { console.log("NQX naver " + s + sfx + " HTTP " + r.status); continue; }
+      const j = await r.json();
+      console.log("NQX naver " + s + sfx + " " + JSON.stringify({ close: j.closePrice, chg: j.compareToPreviousClosePrice, pct: j.fluctuationsRatio, st: j.marketStatus, t: j.localTradedAt,
+        over: j.overMarketPriceInfo ? { p: j.overMarketPriceInfo.overPrice, s: j.overMarketPriceInfo.tradingSessionType, t: j.overMarketPriceInfo.localTradedAt } : null }));
+      break;
+    } catch (e) { console.log("NQX naver " + s + sfx + " 실패 " + String(e.message || e).slice(0, 80)); }
+  }
+}
