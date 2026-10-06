@@ -45,6 +45,10 @@ on:
         description: '시세 정확도·신선도 — /api/state 관심종목을 야후(미국)·네이버(한국) 와 1:1 대조(tools/probe-prices.mjs) · 브라우저 없음'
         type: boolean
         default: false
+      intro:
+        description: '인트로 — 웹킷(아이패드·맥 사파리)·크로뮴으로 저장소 index.html 인트로를 시각별 캡처 → ui-probe-shots 가지(tools/ui-probe-intro.mjs)'
+        type: boolean
+        default: false
       shapes:
         description: '모델 구조 응답(/api/nn-viz 모델별 · omni-structure · ai-mode)을 ui-probe-data 가지에 저장 — 화면 설계용 · 브라우저 없음'
         type: boolean
@@ -150,6 +154,12 @@ jobs:
           node tools/probe-prices.mjs "$URL" || true
           npm i --no-save --no-audit --no-fund playwright@1 >/dev/null 2>&1 && npx playwright install --with-deps chromium >/dev/null 2>&1 && node tools/ui-probe-prices.mjs "$URL" || true
 
+      - name: 인트로 웹킷 캡처
+        if: inputs.intro
+        run: |
+          npm i --no-save --no-audit --no-fund playwright@1 >/dev/null 2>&1 && npx playwright install --with-deps webkit chromium >/dev/null 2>&1
+          mkdir -p shots && node tools/ui-probe-intro.mjs shots || true
+
       - name: 네이버 뉴스 깊이
         if: inputs.naver
         run: |
@@ -157,13 +167,13 @@ jobs:
           node tools/probe-yahoo.mjs || true
 
       - name: 브라우저 준비
-        if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed }}
+        if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed && !inputs.intro }}
         run: |
           npm i --no-save --no-audit --no-fund playwright@1
           npx playwright install --with-deps chromium webkit
 
       - name: OMNI 화면 측정
-        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed
+        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed && !inputs.intro
         env:
           URL: ${{ steps.url.outputs.url }}
           IMG: ${{ inputs.img && '1' || '0' }}
@@ -174,7 +184,7 @@ jobs:
           elif [ "${{ inputs.tabs }}" = "true" ]; then node tools/ui-probe-tabs.mjs "$URL" | tee probe.log; else node tools/ui-probe-omni.mjs "$URL" | tee probe.log; fi
 
       - name: 캡처 올리기(ui-probe-shots 가지)
-        if: always() && inputs.perf && inputs.img
+        if: always() && ((inputs.perf && inputs.img) || inputs.intro)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
