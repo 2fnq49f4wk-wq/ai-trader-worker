@@ -38,10 +38,13 @@ for (const mk of ["us", "kr"]) {
   const A = W.filter((q) => q.market === mk);
   const ages = A.filter((q) => q.ts).map((q) => (now - q.ts) / 60000);
   const pend = A.filter((q) => !(q.price > 0));
-  const incoh = A.filter((q) => q.price > 0 && q.prevClose > 0 && typeof q.dayPct === "number" && Math.abs(((q.price - q.prevClose) / q.prevClose * 100) - q.dayPct) > 0.05);
+  // 시간외(PRE/POST)엔 price/dayPct 가 시간외 값으로 덮인다(applyDisplayOverMarket) — 정규장 값(regPrice/regPct)으로 정합을 본다
+  const rp = (q) => (q.regPrice > 0 ? q.regPrice : q.price), rd = (q) => (typeof q.regPct === "number" ? q.regPct : q.dayPct);
+  const incoh = A.filter((q) => rp(q) > 0 && q.prevClose > 0 && typeof rd(q) === "number" && Math.abs(((rp(q) - q.prevClose) / q.prevClose * 100) - rd(q)) > 0.05);
+  out("mstate_" + mk, A.reduce((m, q) => { const k = q.mstate || "none"; m[k] = (m[k] || 0) + 1; return m; }, {}));
   out("self_" + mk, { n: A.length, pending: pend.length, pendingEx: pend.slice(0, 8).map((q) => q.symbol), noTs: A.filter((q) => q.price > 0 && !q.ts).length,
     ageMin: { p50: qs(ages, 0.5), p90: qs(ages, 0.9), max: qs(ages, 1) }, olderThan10m: ages.filter((a) => a > 10).length, olderThan60m: ages.filter((a) => a > 60).length,
-    dayPctIncoherent: incoh.length, incohEx: incoh.slice(0, 5).map((q) => ({ s: q.symbol, p: q.price, pc: q.prevClose, d: q.dayPct })) });
+    dayPctIncoherent: incoh.length, incohEx: incoh.slice(0, 5).map((q) => ({ s: q.symbol, p: rp(q), pc: q.prevClose, d: rd(q), ms: q.mstate })) });
   // 가장 오래된 10개
   out("oldest_" + mk, A.filter((q) => q.ts).sort((a, b) => a.ts - b.ts).slice(0, 10).map((q) => ({ s: q.symbol, ageMin: Math.round((now - q.ts) / 60000), p: q.price })));
 }
@@ -59,17 +62,52 @@ const report = (tag, rows) => {   // rows: {s, ours, ref, ourAgeMin, refTime, ou
   if (pcw.length) out(tag + "_prevclose_mismatch", pcw);
 };
 
-// 미국 — 야후 v8 chart
+// 미국 — ① 야후 v8 chart(러너가 막히면 HTTP 코드만 남는다) ② 나스닥 종목정보 ③ stooq CSV(배치)
 const US = W.filter((q) => q.market === "us");
-const usRows = await pool(US, 10, async (q) => {
-  const r = await fetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(q.symbol) + "?range=1d&interval=1d", { headers: UA });
-  if (!r.ok) return { s: q.symbol, ours: q.price, ref: null, http: r.status };
+const regOf = (q) => (q.regPrice > 0 ? q.regPrice : q.price);
+const yhttp = {};
+const usRows = await pool(US, 6, async (q) => {
+  const r = await fetch("https://query2.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(q.symbol) + "?range=1d&interval=1d", { headers: Object.assign({ "Referer": "https://finance.yahoo.com/" }, UA) });
+  yhttp[r.status] = (yhttp[r.status] || 0) + 1;
+  if (!r.ok) return { s: q.symbol, ours: regOf(q), ref: null, http: r.status };
   const j = await r.json(); const m = j && j.chart && j.chart.result && j.chart.result[0] && j.chart.result[0].meta;
   if (!m) return { s: q.symbol, ours: q.price, ref: null };
-  return { s: q.symbol, ours: q.price, ref: m.regularMarketPrice, ourAgeMin: q.ts ? Math.round((now - q.ts) / 60000) : null,
+  return { s: q.symbol, ours: regOf(q), ref: m.regularMarketPrice, ourAgeMin: q.ts ? Math.round((now - q.ts) / 60000) : null,
     refTime: m.regularMarketTime ? new Date(m.regularMarketTime * 1000).toISOString().slice(5, 16) : null, oursPc: q.prevClose, refPc: m.chartPreviousClose || m.previousClose };
 });
+out("yahoo_http", yhttp);
 report("cmp_us_yahoo", usRows);
+
+// 나스닥 — 표본(시총 상위 40 + 가장 오래된 10). 정규장 종가/현재가 = primaryData(장중) · 시간외엔 secondaryData 가 정규장 종가
+const NUA = { "User-Agent": UA["User-Agent"], "Accept": "application/json", "Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/" };
+const nnum = (x) => x == null ? null : Number(String(x).replace(/[$,%+\s]/g, ""));
+const usSample = US.slice().sort((a, b) => (a.rank || 99999) - (b.rank || 99999)).slice(0, 40)
+  .concat(US.filter((q) => q.ts).sort((a, b) => a.ts - b.ts).slice(0, 10));
+const ndRows = await pool(usSample, 4, async (q) => {
+  const r = await fetch("https://api.nasdaq.com/api/quote/" + encodeURIComponent(q.symbol.replace("-", ".")) + "/info?assetclass=stocks", { headers: NUA });
+  if (!r.ok) return { s: q.symbol, ours: regOf(q), ref: null, http: r.status };
+  const j = await r.json(); const d = j && j.data; if (!d) return { s: q.symbol, ours: regOf(q), ref: null, status: j && j.status };
+  const pd = d.primaryData || {}, sd = d.secondaryData || null;
+  const isExt = sd && /after|pre/i.test(String(pd.lastTradeTimestamp || "") + " " + String(d.marketStatus || ""));
+  const ref = isExt && sd ? nnum(sd.lastSalePrice) : nnum(pd.lastSalePrice);
+  return { s: q.symbol, ours: regOf(q), ref, ourAgeMin: q.ts ? Math.round((now - q.ts) / 60000) : null,
+    refTime: String((isExt && sd ? sd.lastTradeTimestamp : pd.lastTradeTimestamp) || "").slice(0, 40), mkt: d.marketStatus || null, ext: !!isExt };
+});
+report("cmp_us_nasdaq", ndRows);
+
+// stooq — 정규장 마지막 체결(시간외 없음). 50개씩 배치
+const stq = {};
+for (let i = 0; i < US.length; i += 50) {
+  const ss = US.slice(i, i + 50).map((q) => q.symbol.toLowerCase().replace("-", ".") + ".us");
+  try {
+    const r = await fetch("https://stooq.com/q/l/?s=" + ss.join("+") + "&f=sd2t2c&h&e=csv", { headers: { "User-Agent": UA["User-Agent"] } });
+    const t = await r.text();
+    if (i === 0) out("stooq_http", { http: r.status, head: t.slice(0, 120).replace(/\s+/g, " ") });
+    for (const line of t.split(/\r?\n/).slice(1)) { const c = line.split(","); if (c.length >= 4 && c[3] && c[3] !== "N/D") stq[c[0].toUpperCase()] = { c: Number(c[3]), d: c[1], t: c[2] }; }
+  } catch (e) {}
+}
+report("cmp_us_stooq", US.map((q) => { const k = q.symbol.toUpperCase().replace("-", ".") + ".US", x = stq[k];
+  return { s: q.symbol, ours: regOf(q), ref: x ? x.c : null, refTime: x ? x.d + " " + x.t : null, ourAgeMin: q.ts ? Math.round((now - q.ts) / 60000) : null }; }));
 
 // 한국 — 네이버 polling(전 종목 배치)
 const KR = W.filter((q) => q.market === "kr");
@@ -84,6 +122,16 @@ for (let i = 0; i < KR.length; i += 60) {
 }
 report("cmp_kr_naverPolling", KR.map((q) => { const d = nv[q.symbol.split(".")[0]];
   return { s: q.symbol, ours: q.price, ref: d ? Number(d.nv) : null, oursPc: q.prevClose, refPc: d ? Number(d.sv) : null, ourAgeMin: q.ts ? Math.round((now - q.ts) / 60000) : null, ms: d ? d.ms : null }; }));
+
+// 한국 — 네이버 polling 이 아무것도 안 준 종목: 상장폐지·거래정지·코드 변경 확인(m.stock 기본정보 원문 일부)
+for (const q of KR.filter((q) => !nv[q.symbol.split(".")[0]])) {
+  try {
+    const r = await fetch("https://m.stock.naver.com/api/stock/" + q.symbol.split(".")[0] + "/basic", { headers: { "User-Agent": UA["User-Agent"], "Referer": "https://m.stock.naver.com/" } });
+    const t = await r.text(); let j = null; try { j = JSON.parse(t); } catch (e) {}
+    out("kr_noref", { s: q.symbol, name: q.name, ourPrice: q.price, ourAgeDays: q.ts ? +((now - q.ts) / 86400000).toFixed(1) : null, http: r.status,
+      basic: j ? { name: j.stockName, close: j.closePrice, status: j.marketStatus, end: j.stockEndType, stop: j.tradeStopType, at: j.localTradedAt } : t.slice(0, 160) });
+  } catch (e) { out("kr_noref", { s: q.symbol, err: String(e.message || e).slice(0, 80) }); }
+}
 
 // 한국 — m.stock 기본정보(다른 엔드포인트) 표본: 시총 상위 + 무작위 섞어 60개
 const krSample = KR.slice().sort((a, b) => (a.rank || 99999) - (b.rank || 99999)).slice(0, 30).concat(KR.filter((_, i) => i % Math.max(1, Math.floor(KR.length / 30)) === 0).slice(0, 30));

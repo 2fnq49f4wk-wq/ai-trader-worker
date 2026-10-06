@@ -157,8 +157,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.492">
-<script src="/neural-observatory.js?v=33.492" defer></script>
+<meta name="lux-build" content="V33.493">
+<script src="/neural-observatory.js?v=33.493" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -337,126 +337,80 @@ html[data-theme="light"] #page-nnviz .nnv-tab.active .lux-ico{--lux-star-b:#0b4f
 }
 @keyframes spacexSubIn{0%{opacity:0;transform:scale(1.05);}100%{opacity:1;transform:scale(1);}}
 
-/* ══ [V33.492] 인트로 — '영상 재생' 처럼 고정 길이(≈4.3s) · ★MOONLAKE 색★(문라이트 실버 · 아이스 블루 · 라벤더) ══
-   흐름: 성운이 번지고 별빛 입자 ~1,000개가 소용돌이치며 중심으로 빨려듦(0–1.45s)
-       → 섬광 · 충격파 고리 2겹 · 가로 렌즈 플레어 · 파편 입자 폭발(1.4s)
-       → 크롬 별 로고가 회전하며 등장, 빛살이 천천히 돌고 끝에 반짝임 · 금속 결 위로 빛 한 번
-       → LUX-ENGINE 글자가 한 자씩 떠오르고 은빛 글린트 · 아이스 블루 헤어라인 · 서명 → 줌-스루 페이드.
-   ★합성 전용 속성(opacity·transform)만★ 움직인다 — 입자는 레이어 몇 장의 box-shadow(합성 단위는 레이어)라
-   개수가 많아도 프레임마다 다시 그리지 않는다. 엔진 준비를 기다리지 않는다(화면은 캐시 스냅샷으로 먼저 그려진다). */
-/* 오버레이 바탕은 ★단색★ — 그라데이션을 바탕에 두면 아래에서 대시보드가 그려질 때마다 같이 다시 래스터된다(측정: 프레임 절반 손실).
-   은은한 빛은 성운 한 장(.lxi-neb, 자기 레이어)이 맡는다 — 큰 레이어 수가 곧 비용이라 성운 2덩이·비네트를 한 장으로 합쳤다. */
+/* ══ [V33.493] 인트로 — 모던 · 절제된 화려함(고정 4.3s · MOONLAKE 문라이트 실버 · 아이스 블루 · 라벤더) ══════════
+   사용자: "마지막에 반짝거리는 거 빼고, 모던함·화려함·미니멀 사이 중점으로 — 지금은 너무 화려하다".
+   흐름(하나의 큰 동작만): 성운이 은은하게 번지고 별빛 입자가 부드럽게 중심으로 모임(0–1.3s)
+       → 부드러운 섬광 한 번 + 얇은 고리 한 겹(1.25s) → 크롬 별이 조용히 자리 잡음
+       → LUX-ENGINE 글자가 한 자씩 떠오름 · 가는 헤어라인 · 서명 → 정지(끝에는 아무것도 반짝이지 않는다) → 페이드.
+   ★합성 전용 속성(opacity·transform)만★ · 바탕은 단색(아래 대시보드가 그려져도 다시 래스터되지 않게) ·
+   입자 레이어는 최대 배율 1(반경을 좌표에 미리 곱함). 엔진 준비를 기다리지 않는다. */
 #lux-intro-overlay.lxi{background:#000;will-change:opacity;contain:strict;}
 #lux-intro-overlay.lxi::before{display:none;}
 .lxi i{font-style:normal;}
-/* 배경: 성운(아이스 블루 + 라벤더 두 덩이) + 먼 별 — 전부 한 장, 천천히 다가오며 돈다(비행감) */
-.lxi-neb{position:absolute;left:50%;top:41%;width:1100px;height:640px;margin:-320px 0 0 -550px;pointer-events:none;opacity:0;will-change:opacity,transform;
-  background:radial-gradient(ellipse 42% 46% at 40% 50%,rgba(170,196,232,.19) 0%,rgba(120,150,210,.06) 55%,transparent 100%),
-             radial-gradient(ellipse 38% 42% at 63% 54%,rgba(196,181,232,.15) 0%,rgba(150,120,210,.05) 55%,transparent 100%);
+/* 배경: 성운 한 장(아이스 블루 + 라벤더) + 먼 별 — 천천히 다가온다 */
+.lxi-neb{position:absolute;left:50%;top:41%;width:1000px;height:600px;margin:-300px 0 0 -500px;pointer-events:none;opacity:0;will-change:opacity,transform;
+  background:radial-gradient(ellipse 42% 46% at 42% 50%,rgba(170,196,232,.13) 0%,rgba(120,150,210,.04) 55%,transparent 100%),
+             radial-gradient(ellipse 36% 40% at 61% 54%,rgba(196,181,232,.10) 0%,rgba(150,120,210,.03) 55%,transparent 100%);
   animation:lxiNeb 4.3s cubic-bezier(.3,.6,.2,1) 0s forwards;}
-@keyframes lxiNeb{0%{opacity:0;transform:scale(.9) rotate(-3deg);}35%{opacity:1;}100%{opacity:.9;transform:scale(1.08) rotate(2deg);}}
-/* 먼 별은 성운 레이어 안에 같이 그린다(따로 움직이지 않음) — 화면 전체 크기 레이어를 하나 덜 쓴다 */
+@keyframes lxiNeb{0%{opacity:0;transform:scale(.92);}40%{opacity:1;}100%{opacity:.9;transform:scale(1.05);}}
 .lxi-field{position:absolute;left:50%;top:50%;width:1px;height:1px;}
 .lxi-field i{position:absolute;left:0;top:0;width:1px;height:1px;border-radius:50%;}
 .lxi-stage{position:relative;width:min(92vw,720px);height:440px;display:flex;flex-direction:column;align-items:center;justify-content:center;will-change:transform;}
-/* 별 자리(기준점) — 모든 빛 효과가 이 중심에서 퍼진다 */
-.lxi-starwrap{position:relative;width:clamp(112px,11vw,148px);height:clamp(112px,11vw,148px);margin-bottom:30px;}
+.lxi-starwrap{position:relative;width:clamp(104px,10vw,136px);height:clamp(104px,10vw,136px);margin-bottom:34px;}
 .lxi-c{position:absolute;left:50%;top:50%;pointer-events:none;}
-/* 빨려드는 별빛 — 레이어 4장, 각자 다른 회전으로 소용돌이 */
-/* 반경은 점 좌표에 미리 곱해 둔다 — 애니메이션 최대 배율이 1 이라 레이어를 확대 래스터하지 않는다(측정: 큰 비용) */
-.lxi-dust i{position:absolute;left:50%;top:50%;width:3px;height:3px;margin:-1.5px 0 0 -1.5px;border-radius:50%;opacity:0;will-change:transform,opacity;}
-.lxi-d1{animation:lxiD1 1.5s cubic-bezier(.55,.05,.75,.4) 0s forwards;}
-.lxi-d2{animation:lxiD2 1.45s cubic-bezier(.55,.05,.75,.4) .05s forwards;}
-.lxi-d3{animation:lxiD3 1.4s cubic-bezier(.55,.05,.75,.4) .1s forwards;}
-.lxi-d4{animation:lxiD4 1.5s cubic-bezier(.55,.05,.75,.4) 0s forwards;}
-@keyframes lxiD1{0%{opacity:0;transform:scale(1) rotate(-70deg);}22%{opacity:.95;}88%{opacity:.9;}100%{opacity:0;transform:scale(.012) rotate(25deg);}}
-@keyframes lxiD2{0%{opacity:0;transform:scale(1) rotate(-55deg);}25%{opacity:.85;}88%{opacity:.85;}100%{opacity:0;transform:scale(.018) rotate(30deg);}}
-@keyframes lxiD3{0%{opacity:0;transform:scale(1) rotate(-90deg);}20%{opacity:1;}88%{opacity:.9;}100%{opacity:0;transform:scale(.016) rotate(20deg);}}
-@keyframes lxiD4{0%{opacity:0;transform:scale(1) rotate(-40deg);}30%{opacity:.6;}90%{opacity:.6;}100%{opacity:0;transform:scale(.017) rotate(35deg);}}
-/* 폭발 파편 — 중심에서 바깥으로 */
-.lxi-burst i{position:absolute;left:50%;top:50%;width:2px;height:2px;margin:-1px 0 0 -1px;border-radius:50%;opacity:0;transform:scale(.02);will-change:transform,opacity;}
-.lxi-b1{animation:lxiB1 1.7s cubic-bezier(.12,.8,.25,1) 1.4s forwards;}
-.lxi-b2{animation:lxiB2 2.1s cubic-bezier(.12,.8,.25,1) 1.42s forwards;}
-@keyframes lxiB1{0%{opacity:1;transform:scale(.024) rotate(0);}60%{opacity:.7;}100%{opacity:0;transform:scale(1) rotate(14deg);}}
-@keyframes lxiB2{0%{opacity:1;transform:scale(.018) rotate(0);}55%{opacity:.6;}100%{opacity:0;transform:scale(1) rotate(-10deg);}}
-/* 빛살 — 반복 원뿔 그라데이션을 가장자리로 흐리게, 회전만 */
-.lxi-rays{width:640px;height:640px;margin:-320px 0 0 -320px;border-radius:50%;opacity:0;
-  background:repeating-conic-gradient(from 0deg,rgba(214,226,245,.13) 0deg 1.4deg,transparent 1.4deg 11deg,rgba(196,181,232,.08) 11deg 12deg,transparent 12deg 22.5deg);
-  -webkit-mask-image:radial-gradient(circle,#000 0%,rgba(0,0,0,.55) 22%,transparent 62%);mask-image:radial-gradient(circle,#000 0%,rgba(0,0,0,.55) 22%,transparent 62%);
-  will-change:opacity,transform;animation:lxiRays 2.9s linear 1.4s forwards;}
-@keyframes lxiRays{0%{opacity:0;transform:rotate(0) scale(.6);}20%{opacity:1;transform:rotate(8deg) scale(1);}100%{opacity:.7;transform:rotate(38deg) scale(1.06);}}
-.lxi-halo{width:300px;height:300px;margin:-150px 0 0 -150px;border-radius:50%;
-  background:radial-gradient(circle,rgba(214,226,245,.30) 0%,rgba(170,196,232,.12) 28%,rgba(196,181,232,.05) 48%,transparent 68%);
-  opacity:0;transform:scale(.4);will-change:opacity,transform;animation:lxiHalo 2.9s ease-out 1.4s forwards;}
-@keyframes lxiHalo{0%{opacity:0;transform:scale(.4);}18%{opacity:1;transform:scale(1.1);}55%{opacity:.7;transform:scale(.96);}100%{opacity:.85;transform:scale(1);}}
-/* 섬광 · 충격파 */
-.lxi-flash{width:220px;height:220px;margin:-110px 0 0 -110px;border-radius:50%;
-  background:radial-gradient(circle,#fff 0%,rgba(230,238,255,.85) 14%,rgba(170,196,232,.35) 36%,transparent 66%);
-  opacity:0;transform:scale(.15);will-change:opacity,transform;animation:lxiFlash .95s cubic-bezier(.2,.8,.3,1) 1.36s forwards;}
-@keyframes lxiFlash{0%{opacity:0;transform:scale(.15);}22%{opacity:1;transform:scale(1);}100%{opacity:0;transform:scale(1.9);}}
-.lxi-ring{width:150px;height:150px;margin:-75px 0 0 -75px;border-radius:50%;opacity:0;transform:scale(.25);will-change:opacity,transform;}
-.lxi-r1{border:1.5px solid rgba(225,234,250,.85);box-shadow:0 0 22px rgba(170,196,232,.45),inset 0 0 18px rgba(170,196,232,.3);
-  animation:lxiRing 1.4s cubic-bezier(.1,.7,.25,1) 1.4s forwards;}
-.lxi-r2{border:1px solid rgba(196,181,232,.7);box-shadow:0 0 16px rgba(196,181,232,.35);
-  animation:lxiRing2 1.8s cubic-bezier(.1,.7,.25,1) 1.55s forwards;}
-@keyframes lxiRing{0%{opacity:0;transform:scale(.25);}8%{opacity:1;}100%{opacity:0;transform:scale(4.6);}}
-@keyframes lxiRing2{0%{opacity:0;transform:scale(.25);}10%{opacity:.9;}100%{opacity:0;transform:scale(6.4);}}
-/* 가로 렌즈 플레어(아나모픽) — 얇은 심 + 넓은 번짐 */
-.lxi-flare{width:760px;height:2px;margin:-1px 0 0 -380px;opacity:0;transform:scaleX(0);will-change:opacity,transform;
-  background:linear-gradient(90deg,transparent 0%,rgba(170,196,232,.35) 22%,rgba(225,234,250,.95) 46%,#fff 50%,rgba(225,234,250,.95) 54%,rgba(196,181,232,.35) 78%,transparent 100%);
-  animation:lxiFlare 1.5s cubic-bezier(.16,1,.3,1) 1.4s forwards;}
-.lxi-flare2{width:520px;height:26px;margin:-13px 0 0 -260px;border-radius:50%;opacity:0;transform:scaleX(0);will-change:opacity,transform;
-  background:radial-gradient(ellipse at center,rgba(214,226,245,.38) 0%,rgba(170,196,232,.12) 45%,transparent 72%);
-  animation:lxiFlare 1.7s cubic-bezier(.16,1,.3,1) 1.42s forwards;}
-@keyframes lxiFlare{0%{opacity:0;transform:scaleX(0);}18%{opacity:1;transform:scaleX(1);}60%{opacity:.55;}100%{opacity:0;transform:scaleX(1.25);}}
-/* 크롬 별 */
-.lxi-starbody{position:absolute;inset:0;opacity:0;transform:scale(.3) rotate(-120deg);will-change:opacity,transform;
-  animation:lxiStar 1.3s cubic-bezier(.16,1,.3,1) 1.38s forwards;}
-@keyframes lxiStar{0%{opacity:0;transform:scale(.3) rotate(-120deg);}30%{opacity:1;}100%{opacity:1;transform:scale(1) rotate(0);}}
-.lxi-bigstar{position:relative;width:100%;height:100%;display:block;filter:drop-shadow(0 0 14px rgba(214,226,245,.45)) drop-shadow(0 0 34px rgba(170,196,232,.22));}
-.lxi-shine{transform:translateX(0);animation:lxiShine 1.1s ease-in-out 2.45s forwards;}
-@keyframes lxiShine{to{transform:translateX(160px);}}
-/* 끝 반짝임 — 4갈래 작은 별빛 */
-.lxi-spk{width:26px;height:26px;margin:-13px 0 0 -13px;opacity:0;transform:scale(0) rotate(0);will-change:opacity,transform;
-  background:linear-gradient(90deg,transparent 0%,rgba(255,255,255,.95) 50%,transparent 100%) center/100% 1.5px no-repeat,
-             linear-gradient(180deg,transparent 0%,rgba(255,255,255,.95) 50%,transparent 100%) center/1.5px 100% no-repeat,
-             radial-gradient(circle,rgba(230,238,255,.9) 0%,transparent 22%);}
-.lxi-s1{left:50%;top:2%;animation:lxiSpk .9s ease-out 2.35s forwards;}
-.lxi-s2{left:98%;top:50%;animation:lxiSpk .9s ease-out 2.6s forwards;}
-.lxi-s3{left:26.7%;top:73.3%;animation:lxiSpk .8s ease-out 2.85s forwards;}
-.lxi-s4{left:73.3%;top:26.7%;animation:lxiSpk .8s ease-out 3.05s forwards;}
-@keyframes lxiSpk{0%{opacity:0;transform:scale(0) rotate(0);}40%{opacity:1;transform:scale(1.15) rotate(45deg);}100%{opacity:0;transform:scale(.2) rotate(90deg);}}
-/* 글자 — 한 자씩 떠오름(합성만) + 은빛 글린트 */
+/* 모이는 별빛 — 레이어 3장, 회전은 작게(소용돌이가 아니라 '모임') */
+.lxi-dust i{position:absolute;left:50%;top:50%;width:2px;height:2px;margin:-1px 0 0 -1px;border-radius:50%;opacity:0;will-change:transform,opacity;}
+.lxi-d1{animation:lxiD1 1.35s cubic-bezier(.6,.05,.7,.35) 0s forwards;}
+.lxi-d2{animation:lxiD2 1.3s cubic-bezier(.6,.05,.7,.35) .05s forwards;}
+.lxi-d3{animation:lxiD3 1.35s cubic-bezier(.6,.05,.7,.35) .02s forwards;}
+@keyframes lxiD1{0%{opacity:0;transform:scale(1) rotate(-18deg);}25%{opacity:.85;}88%{opacity:.8;}100%{opacity:0;transform:scale(.015) rotate(6deg);}}
+@keyframes lxiD2{0%{opacity:0;transform:scale(1) rotate(-12deg);}28%{opacity:.7;}88%{opacity:.7;}100%{opacity:0;transform:scale(.02) rotate(8deg);}}
+@keyframes lxiD3{0%{opacity:0;transform:scale(1) rotate(-24deg);}22%{opacity:.55;}90%{opacity:.5;}100%{opacity:0;transform:scale(.018) rotate(4deg);}}
+/* 후광 · 섬광 · 고리 · 가는 수평선 — 각각 한 번씩만 */
+.lxi-halo{width:280px;height:280px;margin:-140px 0 0 -140px;border-radius:50%;
+  background:radial-gradient(circle,rgba(214,226,245,.20) 0%,rgba(170,196,232,.08) 30%,rgba(196,181,232,.03) 50%,transparent 68%);
+  opacity:0;transform:scale(.5);will-change:opacity,transform;animation:lxiHalo 2.4s ease-out 1.25s forwards;}
+@keyframes lxiHalo{0%{opacity:0;transform:scale(.5);}30%{opacity:1;transform:scale(1.04);}100%{opacity:.8;transform:scale(1);}}
+.lxi-flash{width:200px;height:200px;margin:-100px 0 0 -100px;border-radius:50%;
+  background:radial-gradient(circle,rgba(255,255,255,.9) 0%,rgba(230,238,255,.55) 16%,rgba(170,196,232,.18) 38%,transparent 66%);
+  opacity:0;transform:scale(.2);will-change:opacity,transform;animation:lxiFlash .9s cubic-bezier(.2,.8,.3,1) 1.22s forwards;}
+@keyframes lxiFlash{0%{opacity:0;transform:scale(.2);}25%{opacity:.85;transform:scale(1);}100%{opacity:0;transform:scale(1.6);}}
+.lxi-ring{width:150px;height:150px;margin:-75px 0 0 -75px;border-radius:50%;opacity:0;transform:scale(.3);will-change:opacity,transform;
+  border:1px solid rgba(214,226,245,.6);animation:lxiRing 1.5s cubic-bezier(.1,.7,.25,1) 1.25s forwards;}
+@keyframes lxiRing{0%{opacity:0;transform:scale(.3);}10%{opacity:.8;}100%{opacity:0;transform:scale(3.6);}}
+.lxi-flare{width:520px;height:1px;margin:-.5px 0 0 -260px;opacity:0;transform:scaleX(0);will-change:opacity,transform;
+  background:linear-gradient(90deg,transparent 0%,rgba(170,196,232,.3) 25%,rgba(240,245,255,.85) 50%,rgba(196,181,232,.3) 75%,transparent 100%);
+  animation:lxiFlare 1.3s cubic-bezier(.16,1,.3,1) 1.25s forwards;}
+@keyframes lxiFlare{0%{opacity:0;transform:scaleX(0);}22%{opacity:.9;transform:scaleX(1);}100%{opacity:0;transform:scaleX(1.15);}}
+/* 크롬 별 — 조용히 자리 잡는다(작은 회전 · 오버슈트 없음) */
+.lxi-starbody{position:absolute;inset:0;opacity:0;transform:scale(.6) rotate(-30deg);will-change:opacity,transform;
+  animation:lxiStar 1.25s cubic-bezier(.22,1,.36,1) 1.25s forwards;}
+@keyframes lxiStar{0%{opacity:0;transform:scale(.6) rotate(-30deg);}35%{opacity:1;}100%{opacity:1;transform:scale(1) rotate(0);}}
+.lxi-bigstar{position:relative;width:100%;height:100%;display:block;filter:drop-shadow(0 0 16px rgba(214,226,245,.32));}
+/* 글자 — 한 자씩 떠오름(합성만) */
 .lxi-word{position:relative;font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;font-weight:300;
-  font-size:clamp(28px,6.6vw,52px);letter-spacing:.2em;text-indent:.2em;line-height:1.1;white-space:nowrap;}
+  font-size:clamp(26px,6vw,46px);letter-spacing:.24em;text-indent:.24em;line-height:1.1;white-space:nowrap;}
 .lxi-word-txt{display:block;}
-/* 글린트도 같은 한 자씩 구조 — 줄 바꿈·자간 계산이 글자 층과 똑같아야 빛이 글자 위에 정확히 겹친다 */
 .lxi-word i{display:inline-block;
-  background:linear-gradient(180deg,#ffffff 0%,#e6ebf5 30%,#8e98ab 58%,#d4dbe8 82%,#f4f7fc 100%);
+  background:linear-gradient(180deg,#ffffff 0%,#e6ebf5 38%,#a7b0c2 70%,#e6ebf5 100%);
   -webkit-background-clip:text;background-clip:text;color:transparent;}
-.lxi-word-glint i{background:linear-gradient(180deg,#fff,#dfe8fa);-webkit-background-clip:text;background-clip:text;}
-.lxi-word-txt i{opacity:0;transform:translate3d(0,18px,0) scale(.94);will-change:opacity,transform;
-  animation:lxiChar .95s cubic-bezier(.16,1,.3,1) forwards;animation-delay:calc(1.72s + var(--i) * .055s);}
+.lxi-word-txt i{opacity:0;transform:translate3d(0,12px,0);will-change:opacity,transform;
+  animation:lxiChar .9s cubic-bezier(.22,1,.36,1) forwards;animation-delay:calc(1.6s + var(--i) * .045s);}
 @keyframes lxiChar{to{opacity:1;transform:none;}}
-.lxi-word-glint{position:absolute;inset:0;display:block;opacity:0;
-  -webkit-mask-image:linear-gradient(100deg,transparent 40%,#000 50%,transparent 60%);mask-image:linear-gradient(100deg,transparent 40%,#000 50%,transparent 60%);
-  -webkit-mask-size:300% 100%;mask-size:300% 100%;-webkit-mask-position:100% 0;mask-position:100% 0;
-  animation:lxiGlint 1.05s ease-in-out 2.75s forwards;}
-@keyframes lxiGlint{0%{opacity:0;-webkit-mask-position:100% 0;mask-position:100% 0;}15%{opacity:1;}85%{opacity:1;}100%{opacity:0;-webkit-mask-position:0 0;mask-position:0 0;}}
-.lxi-line{width:min(64vw,360px);height:1px;margin-top:18px;opacity:0;transform:scaleX(0);will-change:opacity,transform;
-  background:linear-gradient(90deg,transparent,rgba(170,196,232,.75) 30%,#f4f7fc 50%,rgba(196,181,232,.75) 70%,transparent);
-  animation:lxiLine 1.1s cubic-bezier(.16,1,.3,1) 2.3s forwards;}
+.lxi-line{width:min(56vw,300px);height:1px;margin-top:18px;opacity:0;transform:scaleX(0);will-change:opacity,transform;
+  background:linear-gradient(90deg,transparent,rgba(170,196,232,.55) 30%,rgba(240,245,255,.9) 50%,rgba(196,181,232,.55) 70%,transparent);
+  animation:lxiLine 1s cubic-bezier(.22,1,.36,1) 2.15s forwards;}
 @keyframes lxiLine{to{opacity:1;transform:scaleX(1);}}
 .lxi-sub{margin-top:14px;font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;font-size:11px;font-weight:300;color:#8b93a6;
-  letter-spacing:.32em;text-indent:.32em;text-transform:uppercase;opacity:0;transform:translateY(6px);
-  animation:lxiBrand .9s cubic-bezier(.16,1,.3,1) 2.55s forwards;}
+  letter-spacing:.32em;text-indent:.32em;text-transform:uppercase;opacity:0;transform:translateY(5px);
+  animation:lxiBrand .9s cubic-bezier(.22,1,.36,1) 2.4s forwards;}
 .lxi-sub .blackletter{color:#d4dcec;}
 @keyframes lxiBrand{to{opacity:1;transform:none;}}
-/* 퇴장 — 앞으로 스치듯 줌-스루 + 페이드 */
+/* 퇴장 — 살짝 다가오며 페이드 */
 #lux-intro-overlay.lxi.lxi-out{opacity:0;transition:opacity .5s ease;}
-#lux-intro-overlay.lxi.lxi-out .lxi-stage{transform:scale(1.07);transition:transform .5s cubic-bezier(.4,0,.6,1);}
+#lux-intro-overlay.lxi.lxi-out .lxi-stage{transform:scale(1.035);transition:transform .5s cubic-bezier(.4,0,.6,1);}
 @media (prefers-reduced-motion:reduce){
-  .lxi-dust,.lxi-burst,.lxi-field,.lxi-flash,.lxi-ring,.lxi-flare,.lxi-flare2,.lxi-spk,.lxi-rays,.lxi-word-glint,.lxi-shine{display:none;}
+  .lxi-dust,.lxi-field,.lxi-flash,.lxi-ring,.lxi-flare{display:none;}
   .lxi-word-txt i,.lxi-starbody,.lxi-sub,.lxi-halo,.lxi-neb,.lxi-line{animation-duration:.01ms!important;animation-delay:0s!important;}
   #lux-intro-overlay.lxi.lxi-out .lxi-stage{transform:none;}
 }
@@ -3790,29 +3744,23 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   <div class="lxi-neb" aria-hidden="true"><div class="lxi-field" id="lxiField"><i></i></div></div>
   <div class="lxi-stage">
     <div class="lxi-starwrap" aria-hidden="true">
-      <div class="lxi-c lxi-rays"></div>
       <div class="lxi-c lxi-halo"></div>
-      <div class="lxi-c lxi-dust" id="lxiDust"><i class="lxi-d1"></i><i class="lxi-d2"></i><i class="lxi-d3"></i><i class="lxi-d4"></i></div>
-      <div class="lxi-c lxi-ring lxi-r1"></div><div class="lxi-c lxi-ring lxi-r2"></div>
+      <div class="lxi-c lxi-dust" id="lxiDust"><i class="lxi-d1"></i><i class="lxi-d2"></i><i class="lxi-d3"></i></div>
+      <div class="lxi-c lxi-ring"></div>
       <div class="lxi-c lxi-flash"></div>
       <div class="lxi-starbody">
       <svg class="lxi-bigstar" viewBox="0 0 100 100">
         <defs>
-          <linearGradient id="lxiTi" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset=".38" stop-color="#dfe5f0"/><stop offset=".56" stop-color="#7a859b"/><stop offset=".72" stop-color="#c9d3e6"/><stop offset="1" stop-color="#f2f5fb"/></linearGradient>
-          <linearGradient id="lxiTiF" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#aab4c8"/><stop offset=".5" stop-color="#5a6479"/><stop offset="1" stop-color="#2a3142"/></linearGradient>
-          <linearGradient id="lxiSh" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#f4f8ff" stop-opacity=".95"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
-          <clipPath id="lxiClip"><path d="M50 2 L53.44 41.68 L73.33 26.67 L58.32 46.56 L98 50 L58.32 53.44 L73.33 73.33 L53.44 58.32 L50 98 L46.56 58.32 L26.67 73.33 L41.68 53.44 L2 50 L41.68 46.56 L26.67 26.67 L46.56 41.68 Z"/></clipPath>
+          <linearGradient id="lxiTi" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset=".4" stop-color="#e2e8f2"/><stop offset=".58" stop-color="#8590a6"/><stop offset=".75" stop-color="#cdd5e6"/><stop offset="1" stop-color="#f2f5fb"/></linearGradient>
+          <linearGradient id="lxiTiF" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b0b9cc"/><stop offset=".5" stop-color="#626c82"/><stop offset="1" stop-color="#2e3546"/></linearGradient>
         </defs>
         <path d="M50 2 L53.44 41.68 L73.33 26.67 L58.32 46.56 L98 50 L58.32 53.44 L73.33 73.33 L53.44 58.32 L50 98 L46.56 58.32 L26.67 73.33 L41.68 53.44 L2 50 L41.68 46.56 L26.67 26.67 L46.56 41.68 Z" fill="url(#lxiTi)"/>
-        <path d="M50 50 L50 2 L53.44 41.68 Z M50 50 L73.33 26.67 L58.32 46.56 Z M50 50 L98 50 L58.32 53.44 Z M50 50 L73.33 73.33 L53.44 58.32 Z M50 50 L50 98 L46.56 58.32 Z M50 50 L26.67 73.33 L41.68 53.44 Z M50 50 L2 50 L41.68 46.56 Z M50 50 L26.67 26.67 L46.56 41.68 Z" fill="url(#lxiTiF)" opacity=".8"/>
-        <g clip-path="url(#lxiClip)"><rect class="lxi-shine" x="-40" y="-10" width="30" height="120" fill="url(#lxiSh)"/></g>
+        <path d="M50 50 L50 2 L53.44 41.68 Z M50 50 L73.33 26.67 L58.32 46.56 Z M50 50 L98 50 L58.32 53.44 Z M50 50 L73.33 73.33 L53.44 58.32 Z M50 50 L50 98 L46.56 58.32 Z M50 50 L26.67 73.33 L41.68 53.44 Z M50 50 L2 50 L41.68 46.56 Z M50 50 L26.67 26.67 L46.56 41.68 Z" fill="url(#lxiTiF)" opacity=".75"/>
       </svg>
       </div>
-      <div class="lxi-c lxi-flare2"></div><div class="lxi-c lxi-flare"></div>
-      <div class="lxi-c lxi-burst" id="lxiBurst"><i class="lxi-b1"></i><i class="lxi-b2"></i></div>
-      <i class="lxi-c lxi-spk lxi-s1"></i><i class="lxi-c lxi-spk lxi-s2"></i><i class="lxi-c lxi-spk lxi-s3"></i><i class="lxi-c lxi-spk lxi-s4"></i>
+      <div class="lxi-c lxi-flare"></div>
     </div>
-    <div class="lxi-word" aria-label="LUX-ENGINE"><span class="lxi-word-txt" aria-hidden="true"><i style="--i:0">L</i><i style="--i:1">U</i><i style="--i:2">X</i><i style="--i:3">-</i><i style="--i:4">E</i><i style="--i:5">N</i><i style="--i:6">G</i><i style="--i:7">I</i><i style="--i:8">N</i><i style="--i:9">E</i></span><span class="lxi-word-glint" aria-hidden="true"><i>L</i><i>U</i><i>X</i><i>-</i><i>E</i><i>N</i><i>G</i><i>I</i><i>N</i><i>E</i></span></div>
+    <div class="lxi-word" aria-label="LUX-ENGINE"><span class="lxi-word-txt" aria-hidden="true"><i style="--i:0">L</i><i style="--i:1">U</i><i style="--i:2">X</i><i style="--i:3">-</i><i style="--i:4">E</i><i style="--i:5">N</i><i style="--i:6">G</i><i style="--i:7">I</i><i style="--i:8">N</i><i style="--i:9">E</i></span></div>
     <div class="lxi-line" aria-hidden="true"></div>
     <div class="lxi-sub">Powered by <span class="blackletter">Blauenacht</span></div>
     <div class="intro-boot" id="luxBootProgress" hidden></div>
@@ -13211,30 +13159,24 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       if (dz && !(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches)) {
         var _sd = 20261006, rnd = function(){ _sd = (_sd * 1103515245 + 12345) % 2147483648; return _sd / 2147483648; };   // 장식용 고정 씨앗
         var VW = window.innerWidth, VH = window.innerHeight, mob = VW < 600;
-        // MOONLAKE 팔레트 — 문라이트 화이트 · 실버블루 · 아이스 블루 · 라벤더 (가끔 샴페인 한 알)
+        // MOONLAKE 팔레트 — 문라이트 화이트 · 실버블루 · 아이스 블루 · 라벤더
         var tones = ['#ffffff', '#e6ebf5', '#aac4e8', '#c4b5e8', '#dfe8fa', '#aab3c5'];
-        var tone = function(k){ return rnd() < 0.04 ? '#e8d5a3' : tones[k % tones.length]; };
+        var tone = function(k){ return tones[k % tones.length]; };
         var paint = function(el, n, place){
           if (!el) return;
           var sh = [];
           for (var k = 0; k < n; k++) { var q = place(k); sh.push(q[0].toFixed(1) + 'px ' + q[1].toFixed(1) + 'px 0 ' + q[2] + 'px ' + tone(k)); }
           el.style.boxShadow = sh.join(',');
         };
-        // ① 빨려드는 별빛 — 나선 팔 3개 위에 흩뿌림(소용돌이로 보이게)
-        var W = Math.min(360, VW * 0.48), per = mob ? 210 : 290, dl = dz.querySelectorAll('i'), DS = [2.6, 2.2, 1.9, 3.0];   // 레이어별 시작 반경 배율
+        // ① 모이는 별빛 — 고르게 흩뿌린 점이 중심으로(레이어 3장)
+        var W = Math.min(360, VW * 0.48), per = mob ? 170 : 230, dl = dz.querySelectorAll('i'), DS = [2.2, 1.8, 2.6];   // 레이어별 시작 반경 배율
         for (var L = 0; L < dl.length; L++) paint(dl[L], per, function(k){
-          var t = Math.pow(rnd(), 0.55), arm = (k % 3) * 2.0944, a = arm + t * 4.2 + (rnd() - 0.5) * 0.9, r = (t * W + 6) * DS[L];
-          return [Math.cos(a) * r, Math.sin(a) * r * 0.66, rnd() < 0.1 ? 1 : 0];
+          var t = Math.pow(rnd(), 0.55), a = rnd() * 6.2832, r = (t * W + 6) * DS[L];   // 고르게 흩뿌림(나선 팔 없음 — 절제)
+          return [Math.cos(a) * r, Math.sin(a) * r * 0.66, rnd() < 0.06 ? 1 : 0];
         });
-        // ② 폭발 파편 — 중심 근처에 모아 두면 scale 로 바깥까지 퍼진다
-        var bl = document.querySelectorAll('#lxiBurst i'), BS = [2.1, 2.8];
-        for (var B = 0; B < bl.length; B++) paint(bl[B], mob ? 130 : 180, function(){
-          var a = rnd() * 6.2832, r = (18 + Math.pow(rnd(), 0.7) * 120) * BS[B];
-          return [Math.cos(a) * r, Math.sin(a) * r * 0.8, rnd() < 0.15 ? 1 : 0];
-        });
-        // ③ 먼 별 — 화면 전체
+        // ② 먼 별 — 화면 전체(성운 레이어 안)
         var fl = document.querySelectorAll('#lxiField i');
-        for (var F = 0; F < fl.length; F++) paint(fl[F], mob ? 200 : 320, function(){
+        for (var F = 0; F < fl.length; F++) paint(fl[F], mob ? 140 : 220, function(){
           return [(rnd() - 0.5) * VW * 1.25, (rnd() - 0.5) * VH * 1.25 + VH * 0.09, rnd() < 0.08 ? 1 : 0];   // 성운 중심(41%)에서 화면 중앙 보정
         });
       }
@@ -20535,11 +20477,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.492">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.492">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.492">
-<link rel="stylesheet" href="/model-evidence.css?v=33.492">
-<script src="/model-evidence.js?v=33.492"></script>
-<script src="/workspace-ui.js?v=33.492"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.493">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.493">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.493">
+<link rel="stylesheet" href="/model-evidence.css?v=33.493">
+<script src="/model-evidence.js?v=33.493"></script>
+<script src="/workspace-ui.js?v=33.493"></script>
 </body>
 </html>
