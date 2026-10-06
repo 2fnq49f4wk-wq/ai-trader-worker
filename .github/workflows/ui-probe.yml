@@ -130,7 +130,9 @@ jobs:
         if: inputs.returns && steps.url.outputs.url != ''
         env:
           URL: ${{ steps.url.outputs.url }}
-        run: node tools/probe-returns.mjs "$URL" || true
+        run: |
+          node tools/probe-returns.mjs "$URL" || true
+          node tools/probe-models.mjs "$URL" || true
 
       - name: 청산 반사실
         if: inputs.exits && steps.url.outputs.url != ''
