@@ -37,6 +37,10 @@ on:
         description: '외부 수집원 점검 — 네이버 종목뉴스 깊이 · 야후 시세 경로(spark/chart/quote) · 브라우저 없음'
         type: boolean
         default: false
+      speed:
+        description: '폰 속도 — 중급 폰(CPU 4배)·빠른 4G 로 첫 방문/재방문/세 번째 방문에서 정보가 보이기까지 ms(tools/ui-probe-speed.mjs)'
+        type: boolean
+        default: false
       prices:
         description: '시세 정확도·신선도 — /api/state 관심종목을 야후(미국)·네이버(한국) 와 1:1 대조(tools/probe-prices.mjs) · 브라우저 없음'
         type: boolean
@@ -131,6 +135,13 @@ jobs:
           TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
         run: node tools/probe-exits.mjs "$URL" || true
 
+      - name: 폰 속도
+        if: inputs.speed && steps.url.outputs.url != ''
+        env:
+          URL: ${{ steps.url.outputs.url }}
+        run: |
+          npm i --no-save --no-audit --no-fund playwright@1 >/dev/null 2>&1 && npx playwright install --with-deps chromium >/dev/null 2>&1 && node tools/ui-probe-speed.mjs "$URL" || true
+
       - name: 시세 대조
         if: inputs.prices && steps.url.outputs.url != ''
         env:
@@ -146,13 +157,13 @@ jobs:
           node tools/probe-yahoo.mjs || true
 
       - name: 브라우저 준비
-        if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices }}
+        if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed }}
         run: |
           npm i --no-save --no-audit --no-fund playwright@1
           npx playwright install --with-deps chromium webkit
 
       - name: OMNI 화면 측정
-        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices
+        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed
         env:
           URL: ${{ steps.url.outputs.url }}
           IMG: ${{ inputs.img && '1' || '0' }}
