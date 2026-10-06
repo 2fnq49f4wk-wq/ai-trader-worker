@@ -1,0 +1,111 @@
+/* [V33.493] ★화면 시세가 맞는가 · 얼마나 빨리 오는가★ — 운영 /api/state 의 관심종목 시세를 독립 출처와 1:1 대조한다(읽기 전용 GET).
+ * 사용자: "주식 가격 로딩 더 정확하고 빨리 뜨게 · 실시간 가격 맞는지 전부 확인해". 샌드박스는 운영 주소에 못 닿아 CI 에서 돈다(ui-probe prices=true).
+ * ① 응답: /api/state 3회 — 지연 · 캐시 층(X-Cache) · 사본 나이 · stale 표시
+ * ② 관심종목: 시장별 가격 없음(pending) · 시세 나이(q.ts) 분포 · 등락률 자기정합(dayPct ≟ (price-prevClose)/prevClose)
+ * ③ 대조: 미국 = 야후 v8 chart(종목당) · 한국 = 네이버 polling(배치, 워커와 같은 원천 → 전달 지연을 본다) + m.stock 기본정보(표본, 다른 엔드포인트)
+ *    괴리 = |우리 − 기준| / 기준. 정규장이면 우리 나이·기준 시각을 함께 적어 '늦음' 과 '틀림' 을 가른다.
+ * 사용법: node tools/probe-prices.mjs <url> */
+const BASE = (process.argv[2] || "").replace(/\/$/, "");
+if (!BASE) { console.error("usage: node tools/probe-prices.mjs <url>"); process.exit(2); }
+const out = (k, v) => console.log("PX " + k + " " + (typeof v === "string" ? v : JSON.stringify(v)));
+const UA = { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15", "Accept": "application/json,text/plain,*/*" };
+const pct = (a, b) => (a > 0 && b > 0) ? Math.abs(a - b) / b * 100 : null;
+const qs = (xs, p) => { const s = xs.filter((x) => x != null && isFinite(x)).sort((a, b) => a - b); return s.length ? +s[Math.min(s.length - 1, Math.floor(s.length * p))].toFixed(3) : null; };
+const pool = async (items, n, fn) => { const res = new Array(items.length); let i = 0;
+  await Promise.all(Array.from({ length: n }, async () => { while (i < items.length) { const k = i++; try { res[k] = await fn(items[k]); } catch (e) { res[k] = null; } } })); return res; };
+
+// ① 응답 속도 · 캐시
+let state = null;
+for (let k = 0; k < 3; k++) {
+  const t0 = Date.now();
+  try {
+    const r = await fetch(BASE + "/api/state", { headers: { "cache-control": "no-cache" } });
+    const txt = await r.text(), ms = Date.now() - t0;
+    let j = null; try { j = JSON.parse(txt); } catch (e) {}
+    out("state_fetch", { try: k + 1, http: r.status, ms, kb: Math.round(txt.length / 1024), xcache: r.headers.get("x-cache"), xage: r.headers.get("x-state-age"),
+      stale: j ? !!j.stale : null, builtAgoS: j && j.serverTime ? Math.round((Date.now() - j.serverTime) / 1000) : null });
+    if (j && Array.isArray(j.watchlist)) state = j;
+  } catch (e) { out("state_fetch", { try: k + 1, err: String(e.message || e).slice(0, 120) }); }
+  await new Promise((s) => setTimeout(s, 1500));
+}
+if (!state) { out("abort", "state 없음"); process.exit(0); }
+const now = Date.now();
+out("market", { open: state.marketStatus, window: state.tradingWindow, utc: new Date(now).toISOString() });
+
+// ② 관심종목 자체 점검
+const W = state.watchlist;
+for (const mk of ["us", "kr"]) {
+  const A = W.filter((q) => q.market === mk);
+  const ages = A.filter((q) => q.ts).map((q) => (now - q.ts) / 60000);
+  const pend = A.filter((q) => !(q.price > 0));
+  const incoh = A.filter((q) => q.price > 0 && q.prevClose > 0 && typeof q.dayPct === "number" && Math.abs(((q.price - q.prevClose) / q.prevClose * 100) - q.dayPct) > 0.05);
+  out("self_" + mk, { n: A.length, pending: pend.length, pendingEx: pend.slice(0, 8).map((q) => q.symbol), noTs: A.filter((q) => q.price > 0 && !q.ts).length,
+    ageMin: { p50: qs(ages, 0.5), p90: qs(ages, 0.9), max: qs(ages, 1) }, olderThan10m: ages.filter((a) => a > 10).length, olderThan60m: ages.filter((a) => a > 60).length,
+    dayPctIncoherent: incoh.length, incohEx: incoh.slice(0, 5).map((q) => ({ s: q.symbol, p: q.price, pc: q.prevClose, d: q.dayPct })) });
+  // 가장 오래된 10개
+  out("oldest_" + mk, A.filter((q) => q.ts).sort((a, b) => a.ts - b.ts).slice(0, 10).map((q) => ({ s: q.symbol, ageMin: Math.round((now - q.ts) / 60000), p: q.price })));
+}
+
+// ③ 독립 대조
+const report = (tag, rows) => {   // rows: {s, ours, ref, ourAgeMin, refTime, oursPc, refPc}
+  const ok = rows.filter((r) => r && r.ref > 0 && r.ours > 0);
+  const dev = ok.map((r) => pct(r.ours, r.ref));
+  const pcDev = ok.filter((r) => r.oursPc > 0 && r.refPc > 0).map((r) => pct(r.oursPc, r.refPc));
+  out(tag, { compared: ok.length, missingRef: rows.filter((r) => r && !(r.ref > 0)).length, devPct: { p50: qs(dev, 0.5), p90: qs(dev, 0.9), p99: qs(dev, 0.99), max: qs(dev, 1) },
+    over0_1: dev.filter((d) => d > 0.1).length, over0_5: dev.filter((d) => d > 0.5).length, over2: dev.filter((d) => d > 2).length,
+    prevCloseOver0_1: pcDev.filter((d) => d > 0.1).length, prevCloseCompared: pcDev.length });
+  out(tag + "_worst", ok.map((r) => Object.assign({ dev: +pct(r.ours, r.ref).toFixed(3) }, r)).sort((a, b) => b.dev - a.dev).slice(0, 15));
+  const pcw = ok.filter((r) => r.oursPc > 0 && r.refPc > 0 && pct(r.oursPc, r.refPc) > 0.1).slice(0, 10);
+  if (pcw.length) out(tag + "_prevclose_mismatch", pcw);
+};
+
+// 미국 — 야후 v8 chart
+const US = W.filter((q) => q.market === "us");
+const usRows = await pool(US, 10, async (q) => {
+  const r = await fetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(q.symbol) + "?range=1d&interval=1d", { headers: UA });
+  if (!r.ok) return { s: q.symbol, ours: q.price, ref: null, http: r.status };
+  const j = await r.json(); const m = j && j.chart && j.chart.result && j.chart.result[0] && j.chart.result[0].meta;
+  if (!m) return { s: q.symbol, ours: q.price, ref: null };
+  return { s: q.symbol, ours: q.price, ref: m.regularMarketPrice, ourAgeMin: q.ts ? Math.round((now - q.ts) / 60000) : null,
+    refTime: m.regularMarketTime ? new Date(m.regularMarketTime * 1000).toISOString().slice(5, 16) : null, oursPc: q.prevClose, refPc: m.chartPreviousClose || m.previousClose };
+});
+report("cmp_us_yahoo", usRows);
+
+// 한국 — 네이버 polling(전 종목 배치)
+const KR = W.filter((q) => q.market === "kr");
+const nv = {};
+for (let i = 0; i < KR.length; i += 60) {
+  const codes = KR.slice(i, i + 60).map((q) => q.symbol.split(".")[0]);
+  try {
+    const r = await fetch("https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:" + codes.join(","), { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" } });
+    const j = await r.json();
+    for (const d of (j && j.result && j.result.areas && j.result.areas[0] && j.result.areas[0].datas) || []) nv[d.cd] = d;
+  } catch (e) {}
+}
+report("cmp_kr_naverPolling", KR.map((q) => { const d = nv[q.symbol.split(".")[0]];
+  return { s: q.symbol, ours: q.price, ref: d ? Number(d.nv) : null, oursPc: q.prevClose, refPc: d ? Number(d.sv) : null, ourAgeMin: q.ts ? Math.round((now - q.ts) / 60000) : null, ms: d ? d.ms : null }; }));
+
+// 한국 — m.stock 기본정보(다른 엔드포인트) 표본: 시총 상위 + 무작위 섞어 60개
+const krSample = KR.slice().sort((a, b) => (a.rank || 99999) - (b.rank || 99999)).slice(0, 30).concat(KR.filter((_, i) => i % Math.max(1, Math.floor(KR.length / 30)) === 0).slice(0, 30));
+const seen = new Set(), krS = krSample.filter((q) => !seen.has(q.symbol) && seen.add(q.symbol));
+const num = (x) => x == null ? null : Number(String(x).replace(/,/g, ""));
+const krRows = await pool(krS, 6, async (q) => {
+  const code = q.symbol.split(".")[0];
+  const r = await fetch("https://m.stock.naver.com/api/stock/" + code + "/basic", { headers: { "User-Agent": UA["User-Agent"], "Referer": "https://m.stock.naver.com/" } });
+  if (!r.ok) return { s: q.symbol, ours: q.price, ref: null, http: r.status };
+  const j = await r.json();
+  const ref = num(j.closePrice), chg = num(j.compareToPreviousClosePrice);
+  const sign = (j.compareToPreviousPrice && /FALL|LOWER|하락/i.test(String(j.compareToPreviousPrice.name || j.compareToPreviousPrice.code || ""))) ? -1 : 1;
+  return { s: q.symbol, name: q.name, ours: q.price, ref, oursPc: q.prevClose, refPc: (ref != null && chg != null) ? ref - sign * Math.abs(chg) : null,
+    ourAgeMin: q.ts ? Math.round((now - q.ts) / 60000) : null, refTime: j.localTradedAt || null, status: j.marketStatus || null };
+});
+report("cmp_kr_mstock", krRows);
+
+// 지수
+const IDX = { "^GSPC": "^GSPC", "^IXIC": "^IXIC", "^DJI": "^DJI", "^KS11": "^KS11", "^KQ11": "^KQ11" };
+const idxRows = await pool((state.indices || []).filter((x) => IDX[x.symbol]), 4, async (x) => {
+  const r = await fetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(x.symbol) + "?range=1d&interval=1d", { headers: UA });
+  const j = r.ok ? await r.json() : null; const m = j && j.chart && j.chart.result && j.chart.result[0] && j.chart.result[0].meta;
+  return { s: x.symbol, ours: x.price, ref: m ? m.regularMarketPrice : null, ourAgeMin: x.ts ? Math.round((now - x.ts) / 60000) : null };
+});
+report("cmp_indices_yahoo", idxRows);

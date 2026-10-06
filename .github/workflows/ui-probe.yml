@@ -37,6 +37,10 @@ on:
         description: '외부 수집원 점검 — 네이버 종목뉴스 깊이 · 야후 시세 경로(spark/chart/quote) · 브라우저 없음'
         type: boolean
         default: false
+      prices:
+        description: '시세 정확도·신선도 — /api/state 관심종목을 야후(미국)·네이버(한국) 와 1:1 대조(tools/probe-prices.mjs) · 브라우저 없음'
+        type: boolean
+        default: false
       shapes:
         description: '모델 구조 응답(/api/nn-viz 모델별 · omni-structure · ai-mode)을 ui-probe-data 가지에 저장 — 화면 설계용 · 브라우저 없음'
         type: boolean
@@ -127,6 +131,12 @@ jobs:
           TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
         run: node tools/probe-exits.mjs "$URL" || true
 
+      - name: 시세 대조
+        if: inputs.prices && steps.url.outputs.url != ''
+        env:
+          URL: ${{ steps.url.outputs.url }}
+        run: node tools/probe-prices.mjs "$URL" || true
+
       - name: 네이버 뉴스 깊이
         if: inputs.naver
         run: |
@@ -134,13 +144,13 @@ jobs:
           node tools/probe-yahoo.mjs || true
 
       - name: 브라우저 준비
-        if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits }}
+        if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices }}
         run: |
           npm i --no-save --no-audit --no-fund playwright@1
           npx playwright install --with-deps chromium webkit
 
       - name: OMNI 화면 측정
-        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits
+        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices
         env:
           URL: ${{ steps.url.outputs.url }}
           IMG: ${{ inputs.img && '1' || '0' }}
