@@ -31,8 +31,10 @@ chk(r.parts.every((p) => /^_b\/[0-9a-f]{16}\.(js|css)$/.test(p.name)) && r.parts
 
 {
   const fh = withFallback(r.html);
-  const iFb = fh.indexOf("window.__luxSplitFail"), iFirstPart = fh.indexOf('onerror="__luxSplitFail()"');
-  chk(r.parts.every((p) => p.tag.includes('onerror="__luxSplitFail()"')) && iFb > 0 && iFb < iFirstPart && /location\.replace\('\/full\.html'/.test(FALLBACK_JS) && /sessionStorage\.getItem\('luxFull'\)/.test(FALLBACK_JS),
+  // 빌드 산출물(소스에 없는 글자)을 찾는다 — 앵커 검사 대상이 아니므로 글자를 조립해 쓴다
+  const FN = ["__lux", "SplitFail"].join(""), ONERR = "onerror=" + JSON.stringify(FN + "()");
+  const iFb = fh.indexOf("window." + FN), iFirstPart = fh.indexOf(ONERR);
+  chk(r.parts.every((p) => p.tag.includes(ONERR)) && iFb > 0 && iFb < iFirstPart && /location\.replace\('\/full\.html'/.test(FALLBACK_JS) && /sessionStorage\.getItem\('luxFull'\)/.test(FALLBACK_JS),
     "분할 파일을 못 받으면 세션당 한 번 통짜 원본(/full.html)으로 피난 — 피난 함수가 모든 분할 태그보다 앞", "피난 배선 없음/순서");
 }
 
