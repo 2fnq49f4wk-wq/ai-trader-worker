@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.495";
+const _BUILD_VER = "V33.496";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -26001,6 +26001,56 @@ function _corsFor(request, url) {
   return h;
 }
 
+/* ══ [V33.496] ★공용 읽기 API 마이크로 캐시(아이솔레이트 메모리)★ ══════════════════════════════════════
+   운영 탐침(10/06 10:26Z, 헤드리스 재방문): /api/news·fx·econ·earnings·insider·shard_meta 가 ★브라우저 대기 0 · 서버 TTFB 2.3~8.8초★,
+   종목상세 차트도 2.5초. 같은 요청이 첫 방문엔 0.3초 — 핸들러가 무거운 게 아니라 ★D1 이 한 줄로 처리★ 하는데 크론이 분마다
+   시세 수백 행을 쓰는 사이에 읽기가 줄을 섰다. 메모리에서 바로 주는 /api/state 만 39ms 였다.
+   → 모든 사용자에게 똑같은 GET 읽기 응답을 짧게(10초~10분) 메모리에 둔다. 한도·읽기문 ★뒤★ 에서만 꺼낸다(보안 경로 그대로).
+     force/run/refresh 가 붙은 요청 · 200 이 아닌 응답 · JSON 이 아닌 응답은 담지 않는다. 항목 300개 상한. */
+const MICRO_CACHE_TTL = {
+  "/api/news": 60000, "/api/fx": 30000, "/api/econ": 60000, "/api/econ-impact": 60000, "/api/earnings": 120000,
+  "/api/insider": 120000, "/api/crisis": 30000, "/api/kr-halt": 15000, "/api/shard_meta": 300000,
+  "/api/commodities": 20000, "/api/bonds": 30000, "/api/ta-screener": 60000,
+  "/api/tech-summary": 120000, "/api/fundamentals": 600000, "/api/analyst": 600000, "/api/chart": 300000
+};
+const MICRO_CACHE_MAX = 300;
+const __microCache = new Map();
+function _microTtl(request, url) {
+  if (request.method !== "GET") return 0;
+  const ttl = MICRO_CACHE_TTL[url.pathname];
+  if (!ttl) return 0;
+  if (/(^|[?&])(force|run|refresh|nocache)=/.test(url.search)) return 0;
+  // 분봉 차트는 종목상세가 15초마다 다시 물으므로 짧게 — 일봉 이상은 5분
+  if (url.pathname === "/api/chart" && /(^|&|\?)interval=(1m|2m|5m|15m|30m|60m|90m|1h)(&|$)/.test(url.search)) return 10000;
+  return ttl;
+}
+function _microKey(url) { return url.pathname + "?" + url.searchParams.toString(); }
+function microCacheGet(request, url) {
+  const ttl = _microTtl(request, url);
+  if (!ttl) return null;
+  const e = __microCache.get(_microKey(url));
+  if (!e || Date.now() - e.ts > ttl) return null;
+  const h = Object.assign({}, e.headers, { "X-Micro-Cache": "hit", "X-Micro-Age": String(Math.round((Date.now() - e.ts) / 1000)) });
+  return new Response(e.body, { status: 200, headers: h });
+}
+async function microCachePut(request, response) {
+  try {
+    const url = new URL(request.url);
+    if (!_microTtl(request, url) || !response || response.status !== 200) return;
+    if (response.headers.get("X-Micro-Cache")) return;   // 캐시에서 나간 응답을 다시 담지 않는다
+    const ct = response.headers.get("content-type") || "";
+    if (!/json/i.test(ct)) return;
+    const body = await response.clone().text();
+    if (body.length > 2000000) return;
+    const headers = {};
+    response.headers.forEach(function (v, k) { if (!/^set-cookie$/i.test(k)) headers[k] = v; });
+    const key = _microKey(url);
+    __microCache.delete(key);
+    __microCache.set(key, { ts: Date.now(), body: body, headers: headers });
+    while (__microCache.size > MICRO_CACHE_MAX) __microCache.delete(__microCache.keys().next().value);
+  } catch (e) {}
+}
+
 async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -26021,6 +26071,9 @@ async function handleRequest(request, env, ctx) {
      하지 않는다(viewerGate 주석 ① 참조). 여기서 끊으면 D1 을 한 번도 안 건드린다. */
   const _vg = viewerGate(request, url, env);
   if (_vg) return _vg;
+  // [V33.496] 공용 읽기 API — 한도·읽기문을 통과한 뒤에만 메모리 사본을 준다(D1 줄서기 회피)
+  const _mc = microCacheGet(request, url);
+  if (_mc) return _mc;
   /* [V33.375] 크롤러에게 명시적으로 말한다. X-Robots-Tag 헤더와 ★둘 다★ 둔다 —
      robots.txt 는 크롤이 시작되기 전에 읽히고, 헤더는 직접 링크로 들어온 것까지 덮는다. */
   if (path === "/robots.txt") {
@@ -52181,6 +52234,8 @@ export default {
     __R2 = env.MODELS || null; cycMemoReset();
     const _env = Object.assign({}, env, { DB: wrapD1(env.DB) });
     const _res = await handleRequest(request, _env, ctx);
+    // [V33.496] 공용 읽기 API 응답을 메모리에 담는다(본문 복제는 응답을 늦추지 않게 뒤에서)
+    try { ctx.waitUntil(microCachePut(request, _res)); } catch (e) {}
     // [V33.172] 업로더가 아니면 즉시 반환된다(정규식 한 번) — 일반 요청에 부하가 없다.
     try { ctx.waitUntil(extImportObserve(_env, request, _res)); } catch (e) {}
     /* [V33.193] 보안 헤더는 ★나가는 모든 응답★ 에 붙인다 — 문서·자산·API 를 가리지 않는다.
@@ -53267,7 +53322,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _stateNumTrim, _patchStateQuotes, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

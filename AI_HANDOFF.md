@@ -12,6 +12,15 @@
 
 ## Current handoff
 
+- Status: **V33.496 — 공용 읽기 API 마이크로 캐시(아이솔레이트 메모리 10초~10분).**
+  - 6차 탐침(10/06 10:26Z, run 37449724882 · 대기/서버 분리): 재방문 시 /api/news 8.8초 · crisis 8.5 · fx/econ/earnings/insider/shard_meta 2.3초 ·
+    종목상세 차트 2.5초 — ★브라우저 대기 0, 전부 서버 TTFB★. 첫 방문엔 같은 요청이 0.3초 · 메모리에서 주는 /api/state 는 39ms.
+    핸들러는 가볍다(/api/news = 상태 2건 읽기) → D1 이 한 줄로 처리하는데 크론 시세 쓰기 사이에 읽기가 줄을 선 것.
+  - 처방: `MICRO_CACHE_TTL` 목록의 GET 응답(200 JSON)을 메모리에 짧게 — news 60s · fx 30s · econ 60s · earnings/insider 120s · crisis 30s ·
+    kr-halt 15s · shard_meta 300s · commodities 20s · bonds 30s · ta-screener 60s · tech-summary 120s · fundamentals/analyst 600s ·
+    chart 일봉 300s / 분봉 10s. force/run/refresh/nocache 는 우회. 꺼내기는 남용 한도·viewerGate ★뒤★, 담기는 응답 복제 후 waitUntil.
+    응답 헤더 X-Micro-Cache: hit · X-Micro-Age. 게이트 check-micro-cache.
+  - 시세 자체는 그대로(/api/state 는 자체 L1/R2 캐시 + V33.494 시세 보정).
 - Status: **V33.495 — 미국 티커 변경 2건 반영: BK→BNY · SATS→ECHO.**
   - 4차 탐침(10/06 10:08Z, run 37447731461): 나스닥 종목정보 BK·SATS = "Symbol not exists" · BNY = The Bank of New York Mellon(NYSE $144.00) ·
     ECHO = EchoStar(NASDAQ-GS $99.47). 우리 시세는 BK 75일 · SATS 40일 정지(137.16 · 103.915) 상태였다.

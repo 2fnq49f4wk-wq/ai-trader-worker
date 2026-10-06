@@ -1,0 +1,50 @@
+/* [V33.496] ★공용 읽기 API 마이크로 캐시★ — 재방문 때 /api/news 등이 D1 줄서기로 2~9초 걸리던 것(운영 탐침 10/06).
+   ① 무엇을 담나: 허용 목록의 GET 만 · force/run/refresh/nocache 우회 · 분봉 차트는 10초 · 일봉 차트 5분
+   ② 담고 꺼내기: 200 JSON 만 · 오류·HTML 은 안 담음 · TTL 지나면 안 줌 · 캐시에서 나간 응답은 다시 안 담음 · 상한
+   ③ 배선: 꺼내기는 남용 한도·읽기문(viewerGate) ★뒤★ · 담기는 응답 내보내기 전에 복제(본문 소비 전) */
+import { readFileSync } from "node:fs";
+const S = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+const M = await import("../src/index.js");
+let fails = 0;
+const chk = (c, ok, bad) => { if (c) console.log("  ok   " + ok); else { console.log("  FAIL " + bad); fails++; } };
+const R = (u, m) => new Request("https://x.dev" + u, { method: m || "GET" });
+const T = (u, m) => M._microTtl(R(u, m), new URL("https://x.dev" + u));
+
+console.log("① 무엇을 담나");
+chk(T("/api/news") === 60000 && T("/api/shard_meta") === 300000, "허용 목록 GET 은 TTL 이 있다", "TTL " + T("/api/news"));
+chk(T("/api/state") === 0 && T("/api/trades?limit=50") === 0 && T("/api/positions") === 0, "상태·거래·포지션은 담지 않는다(자체 캐시 · 사용자 행동에 즉시 반응)", "담으면 안 되는 경로");
+chk(T("/api/news", "POST") === 0, "POST 는 담지 않는다", "POST");
+chk(T("/api/news?force=1") === 0 && T("/api/fx?run=1") === 0 && T("/api/chart?symbol=A&refresh=1") === 0, "force/run/refresh 는 우회", "우회 실패");
+chk(T("/api/chart?symbol=AAPL&interval=1m&range=1d") === 10000 && T("/api/chart?symbol=AAPL&interval=1d&range=1y") === 300000,
+  "분봉 차트 10초 · 일봉 5분", "차트 TTL " + T("/api/chart?symbol=AAPL&interval=1m&range=1d"));
+
+console.log("② 담고 꺼내기");
+const u1 = "/api/econ?x=" + Date.now();
+const r1 = R(u1);
+await M.microCachePut(r1, new Response(JSON.stringify({ a: 1 }), { status: 200, headers: { "content-type": "application/json" } }));
+const hit = M.microCacheGet(r1, new URL(r1.url));
+chk(hit && hit.headers.get("X-Micro-Cache") === "hit" && (await hit.json()).a === 1, "200 JSON 은 담고 다음 요청에 꺼낸다", "적중 실패");
+const u2 = "/api/econ?y=" + Date.now();
+await M.microCachePut(R(u2), new Response("err", { status: 500, headers: { "content-type": "application/json" } }));
+await M.microCachePut(R(u2 + "&h"), new Response("<html>", { status: 200, headers: { "content-type": "text/html" } }));
+chk(!M.microCacheGet(R(u2), new URL("https://x.dev" + u2)) && !M.microCacheGet(R(u2 + "&h"), new URL("https://x.dev" + u2 + "&h")), "오류·HTML 은 담지 않는다", "잘못 담음");
+const u3 = "/api/kr-halt?z=" + Date.now();
+await M.microCachePut(R(u3), new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
+const realNow = Date.now; Date.now = () => realNow() + 16000;
+const stale = M.microCacheGet(R(u3), new URL("https://x.dev" + u3));
+Date.now = realNow;
+chk(!stale, "TTL(kr-halt 15초) 지나면 꺼내지 않는다", "묵은 사본을 줬다");
+chk(M.MICRO_CACHE_TTL["/api/chart"] > 0 && /MICRO_CACHE_MAX = 300/.test(S) && /__microCache\.size > MICRO_CACHE_MAX/.test(S), "항목 상한 300", "상한 없음");
+chk(/if \(response\.headers\.get\("X-Micro-Cache"\)\) return;/.test(S), "캐시에서 나간 응답은 다시 담지 않는다", "재적재");
+
+console.log("③ 배선");
+const hr = S.indexOf("async function handleRequest(request, env, ctx) {");
+const body = S.slice(hr, hr + 6000);
+const iRl = body.indexOf("const _rl = rateLimit("), iVg = body.indexOf("const _vg = viewerGate("), iMc = body.indexOf("const _mc = microCacheGet(request, url);");
+chk(iRl > 0 && iVg > iRl && iMc > iVg, "꺼내기는 남용 한도·읽기문 뒤(보안 경로 그대로)", "순서 " + [iRl, iVg, iMc].join(","));
+const fe = S.indexOf("async fetch(request, env, ctx) {");
+const fb = S.slice(fe, fe + 1500);
+const iPut = fb.indexOf("microCachePut(request, _res)"), iSec = fb.indexOf("return withSecurityHeaders(_res);");
+chk(iPut > 0 && iSec > iPut, "담기(복제)는 응답을 내보내기 전에 시작한다", "담기 위치 " + [iPut, iSec].join(","));
+if (fails) { console.log("\n✗ 마이크로 캐시 계약 " + fails + "건 실패"); process.exit(1); }
+console.log("\n✓ 마이크로 캐시 계약 통과");
