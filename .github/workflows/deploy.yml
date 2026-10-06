@@ -737,6 +737,9 @@ jobs:
       # [V33.496] 공용 읽기 API 마이크로 캐시 — 재방문 시 D1 줄서기(2~9초) 회피 · 보안 경로 뒤에서만 꺼낸다
       - name: 마이크로 캐시 검사
         run: node tools/check-micro-cache.mjs
+      # [V33.498] 폰 로딩 속도 — 분할 빌드 왕복 · 불변 캐시 규칙 · 인트로 하루 한 번 · 상태 선출발 · 서비스워커 미리받기
+      - name: 로딩 속도 계약 검사
+        run: node tools/check-load-speed.mjs
       # [V33.480] 신호 음수기대 게이트는 시장별 — 한국 손실이 섞인 통계로 미국 AI 진입(PF 1.34)이 꺼졌다.
       - name: 시장별 신호 게이트 검사
         run: node tools/check-negexp-mkt.mjs
@@ -1139,6 +1142,12 @@ jobs:
             echo "R2 를 켜려면 CLOUDFLARE_API_TOKEN 에 **Workers R2 Storage: Edit** 권한을 주고," >> "$GITHUB_STEP_SUMMARY"
             echo "Cloudflare 대시보드에서 R2 를 활성화한 뒤 다시 push 하면 자동으로 붙는다." >> "$GITHUB_STEP_SUMMARY"
           fi
+      # [V33.498] ★분할 빌드★ — 모든 게이트가 원본 index.html 로 통과한 ★뒤★, 배포 직전 작업 사본에만.
+      #   인라인 대형 JS·CSS(1.2MB)를 /_b/<내용해시> 로 떼어 1년 불변 캐시(public/_headers) — 재방문은 작은 HTML 만 받는다.
+      #   되돌려 붙여 원본과 바이트 단위로 같지 않으면 실패한다(그때는 배포하지 않는다 — 지금 판이 산다).
+      - name: 분할 빌드(인라인 대형 JS/CSS → /_b/ 불변 파일)
+        if: github.event_name == 'push'
+        run: node tools/build-split.mjs public/index.html public && ls -la public/_b
       - name: Deploy
         if: github.event_name == 'push'   # [V33.307] PR 에서는 배포하지 않는다(검사만)
         run: wrangler deploy

@@ -62,7 +62,9 @@ chk(/const isDoc = req\.mode === 'navigate'/.test(sw) && /const isApi = url\.pat
   "문서와 API 를 따로 판별한다", "문서/API 판별이 없다");
 // 네트워크 우선: try{ fetch } → catch{ caches } 순서여야 한다. 반대면 옛 화면이 고착된다.
 const docBranch = sw.slice(sw.indexOf("if (isDoc || isApi)"), sw.indexOf("// 그 외 정적 자산"));
-chk(/const res = await fetch\(req\);/.test(docBranch) && docBranch.indexOf("await fetch(req)") < docBranch.indexOf("caches.match(req)"),
+// [V33.498] 내비게이션 미리받기(preloadResponse)도 네트워크다 — 그 응답이나 fetch 가 캐시보다 먼저면 네트워크 우선이다.
+chk(/const res = (pre \|\| )?await fetch\(req\);/.test(docBranch) && docBranch.indexOf("await fetch(req)") < docBranch.indexOf("caches.match(req)") &&
+    (docBranch.indexOf("e.preloadResponse") < 0 || docBranch.indexOf("e.preloadResponse") < docBranch.indexOf("caches.match(req)")),
   "HTML·API 는 ★네트워크 우선★ — 캐시는 오프라인일 때만 꺼낸다",
   "HTML·API 가 캐시 우선이다 — 앱이 옛 판을 영원히 띄우고 사용자는 지울 방법이 없다");
 chk(/self\.skipWaiting\(\)/.test(sw) && /clients\.claim\(\)/.test(sw),
