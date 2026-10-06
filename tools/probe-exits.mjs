@@ -48,3 +48,14 @@ for (const [k, g] of Object.entries(groups).sort((a, b) => b[1].n - a[1].n)) {
   const parts = H.map((h) => { const a = st(g.f[h]), x = st(g.x[h]); return h + "일 원 " + f2(a.m) + " · 초과 " + f2(x.m) + "(t " + (x.t == null ? "—" : x.t.toFixed(1)) + ", n" + x.n + ")"; });
   console.log("EXIT " + k + " n" + g.n + " 실현 " + f2(p.m) + "% | " + parts.join(" | "));
 }
+/* 기준 지수 일봉 건강검진 — 한국 초과값이 비정상(t 32)이라 069500 일봉 자체를 본다. 큰 하루 변동·날짜 간격·마지막 날짜. */
+for (const s of ["SPY", "069500.KS", "102110.KS", "005930.KS"]) {
+  const b = bars[s] || (await get("/api/omni-bars?res=1d&s=" + encodeURIComponent(s), true).then((j) => (j.bars || {})[s]).catch(() => null));
+  if (!b || !b.c) { console.log("BENCH " + s + " 일봉 없음"); continue; }
+  const T = tms(b), C = b.c;
+  const big = [];
+  for (let i = 1; i < C.length; i++) { const r = C[i] / C[i - 1] - 1; if (Math.abs(r) > 0.12) big.push(new Date(T[i]).toISOString().slice(0, 10) + " " + (r * 100).toFixed(1) + "% (" + C[i - 1] + "→" + C[i] + ")"); }
+  let gaps = 0; for (let i = 1; i < T.length; i++) if (T[i] - T[i - 1] > 6 * 86400000) gaps++;
+  console.log("BENCH " + s + " 봉 " + C.length + " · " + new Date(T[0]).toISOString().slice(0, 10) + "~" + new Date(T[T.length - 1]).toISOString().slice(0, 10) +
+    " · 6일+ 간격 " + gaps + " · |하루| > 12% " + big.length + (big.length ? " 예 " + big.slice(0, 6).join(" ; ") : ""));
+}
