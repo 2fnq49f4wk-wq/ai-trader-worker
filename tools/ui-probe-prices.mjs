@@ -15,14 +15,17 @@ const probes = {
   heatmap: () => { const e = document.getElementById("fvHeatmap"); return !!(e && e.querySelector("svg rect, svg path")); },
   introGone: () => !document.getElementById("lux-intro-overlay")
 };
+let T0 = 0;
 for (const visit of ["first", "repeat"]) {
   const p = await ctx.newPage();
   const api = [];
   p.on("requestfinished", async (rq) => { const u = rq.url(); if (!/\/api\//.test(u)) return;
     const t = rq.timing(); let sz = null; try { const r = await rq.response(); sz = r ? (await r.body()).length : null; } catch (e) {}
-    api.push({ path: u.replace(BASE, "").slice(0, 60), ms: Math.round(t.responseEnd), kb: sz != null ? Math.round(sz / 1024) : null }); });
+    // 대기(브라우저 줄서기·연결) = requestStart · 서버(TTFB) = responseStart − requestStart · 받기 = responseEnd − responseStart · at = 페이지 열기 기준 출발 시각
+    api.push({ path: u.replace(BASE, "").slice(0, 60), ms: Math.round(t.responseEnd), wait: Math.round(t.requestStart), ttfb: Math.round(t.responseStart - t.requestStart),
+      at: Math.round(t.startTime - T0), kb: sz != null ? Math.round(sz / 1024) : null }); });
   if (visit === "first") await p.addInitScript(() => { try { if (!sessionStorage.getItem("__cleared")) { localStorage.clear(); sessionStorage.setItem("__cleared", "1"); } } catch (e) {} });
-  const t0 = Date.now();
+  const t0 = Date.now(); T0 = t0;
   await p.goto(BASE + "/", { waitUntil: "commit", timeout: 60000 });
   const hit = {};
   while (Date.now() - t0 < 25000 && Object.keys(hit).length < Object.keys(probes).length) {
@@ -52,6 +55,7 @@ for (const visit of ["first", "repeat"]) {
   }
   api.sort((a, b2) => b2.ms - a.ms);
   out("api_" + visit, api.slice(0, 14));
+  out("api_count_" + visit, { n: api.length, over2s: api.filter((a) => a.ms > 2000).length, waitOver1s: api.filter((a) => a.wait > 1000).length, ttfbOver1s: api.filter((a) => a.ttfb > 1000).length });
   await p.close();
 }
 await b.close();

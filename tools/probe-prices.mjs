@@ -23,7 +23,8 @@ for (let k = 0; k < 3; k++) {
     const txt = await r.text(), ms = Date.now() - t0;
     let j = null; try { j = JSON.parse(txt); } catch (e) {}
     out("state_fetch", { try: k + 1, http: r.status, ms, kb: Math.round(txt.length / 1024), xcache: r.headers.get("x-cache"), xage: r.headers.get("x-state-age"),
-      stale: j ? !!j.stale : null, builtAgoS: j && j.serverTime ? Math.round((Date.now() - j.serverTime) / 1000) : null });
+      stale: j ? !!j.stale : null, builtAgoS: j && j.serverTime ? Math.round((Date.now() - j.serverTime) / 1000) : null,
+      quotesAgoS: j && j.quotesAt ? Math.round((Date.now() - j.quotesAt) / 1000) : null, quotesPatched: j ? j.quotesPatched || null : null });
     if (j && Array.isArray(j.watchlist)) state = j;
   } catch (e) { out("state_fetch", { try: k + 1, err: String(e.message || e).slice(0, 120) }); }
   await new Promise((s) => setTimeout(s, 1500));
