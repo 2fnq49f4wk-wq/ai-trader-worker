@@ -184,8 +184,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.501">
-<script src="/neural-observatory.js?v=33.501" defer></script>
+<meta name="lux-build" content="V33.502">
+<script src="/neural-observatory.js?v=33.502" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -2819,6 +2819,15 @@ html[data-theme="light"] .db-sort-btn.active{color:#fff;}
 .detail-change{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px;}
 .detail-change.pos{color:var(--pos);}
 .detail-change.neg{color:var(--neg);}
+/* [V33.502] 프리마켓·애프터마켓 이름표 — 두 세션을 색으로도 구분한다 */
+.wl-ext-tag{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.02em;padding:0 5px;border-radius:4px;line-height:15px;vertical-align:1px;}
+.wl-ext-tag.pre{color:#7cc4ff;background:rgba(124,196,255,.12);}
+.wl-ext-tag.post{color:#c9a5ff;background:rgba(201,165,255,.13);}
+html[data-theme="light"] .wl-ext-tag.pre{color:#1565c0;background:rgba(21,101,192,.09);}
+html[data-theme="light"] .wl-ext-tag.post{color:#6a1b9a;background:rgba(106,27,154,.09);}
+.wl-ext .wl-ext-tag{font-size:8.5px;padding:0 4px;line-height:13px;}
+.detail-ext{font-size:12.5px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:3px;color:var(--dim);}
+.detail-ext .pos{color:var(--pos);} .detail-ext .neg{color:var(--neg);}
 .detail-ohlc{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;width:100%;margin-top:4px;
   padding-top:10px;border-top:1px solid var(--bd2);}
 .detail-ohlc .oh{font-size:11px;color:var(--t3);font-family:'IBM Plex Mono',monospace;}
@@ -4532,6 +4541,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
             <div class="detail-px">
               <div class="detail-price" id="detailPrice">—</div>
               <div class="detail-change" id="detailChange">—</div>
+              <div class="detail-ext" id="detailExt" style="display:none"></div>
             </div>
             <div class="detail-ohlc" id="detailOhlc"></div>
           </div>
@@ -5627,6 +5637,13 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
      언젠가 갈라진다 — 이 저장소가 반복해 겪은 그 일이다. 이 파일의 기존 방식(window.LUXR,
      window.llmRefresh …)대로 한 곳에서 내보낸다. */
   window.extAgeTxt = extAgeTxt;
+  /* [V33.502] 시간외 이름표 — 미국은 ★프리마켓 · 애프터마켓★, 한국은 장전·장후 시간외(넥스트레이드 포함).
+     사용자: "에프터랑 프리마켓 둘 다 구분해서 적게". 한 곳에서 정해 카드·상세가 같은 말을 쓴다. */
+  function extSessLabel(market, kind) {
+    if (market === 'us') return kind === 'pre' ? '프리마켓' : '애프터마켓';
+    return kind === 'pre' ? '장전 시간외' : '장후 시간외';
+  }
+  window.extSessLabel = extSessLabel;
 
   function fmtCompact(n) {
     if (typeof n !== 'number' || !isFinite(n)) return '-';  // [버그수정] Infinity도 차단
@@ -9834,6 +9851,20 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         chEl.className = 'detail-change ' + (regPct >= 0 ? 'pos' : 'neg');
       } else { chEl.textContent = '—'; chEl.className = 'detail-change'; }
     }
+    /* [V33.502] 머리글에 ★지금 세션의 시간외 체결가★ 를 이름표와 함께 — 정규장 가격과 섞이지 않게 따로 한 줄 */
+    var exEl = $('detailExt');
+    if (exEl) {
+      var _xk = null, _xp = null, _xc = null;
+      if (q.mstate === 'PRE' && q.pre > 0) { _xk = 'pre'; _xp = q.pre; _xc = (typeof q.prePct === 'number') ? q.prePct : null; }
+      else if ((q.mstate === 'POST' || q.mstate === 'POSTPOST' || q.mstate === 'CLOSED') && q.post > 0) { _xk = 'post'; _xp = q.post; _xc = (typeof q.postPct === 'number') ? q.postPct : null; }
+      if (_xk) {
+        var _xa = extAgeTxt(q.extTs);
+        exEl.innerHTML = '<span class="wl-ext-tag ' + _xk + '">' + extSessLabel(st.market, _xk) + '</span> ' + fmtNum(_xp) +
+          (_xc != null ? ' <span class="' + (_xc >= 0 ? 'pos' : 'neg') + '">' + (_xc >= 0 ? '+' : '') + fmtNum(_xc, 2) + '%</span>' : '') +
+          (_xa ? ' <span class="wl-ext-age">' + escapeHtml(_xa) + '</span>' : '');
+        exEl.style.display = '';
+      } else { exEl.innerHTML = ''; exEl.style.display = 'none'; }
+    }
     var rows = [];
     function add(l, v, cls) { rows.push('<div class="detail-dcell"><span class="l">' + l + '</span><span class="v' + (cls ? ' ' + cls : '') + '">' + v + '</span></div>'); }
     function pct(v) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'; }
@@ -9845,11 +9876,13 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     add('당일등락(장중)', pct(regPct), pc(regPct));
     if (q.pre > 0) {
       var _ppr = (typeof q.prePct === 'number') ? q.prePct : (q.prevClose > 0 ? (q.pre - q.prevClose) / q.prevClose * 100 : 0);
-      add('장전(시간외)', num(q.pre) + '  ' + (_ppr >= 0 ? '+' : '') + _ppr.toFixed(2) + '%', pc(_ppr));
+      var _apr = (q.mstate === 'PRE') ? extAgeTxt(q.extTs) : '';
+      add(extSessLabel(st.market, 'pre'), num(q.pre) + '  ' + (_ppr >= 0 ? '+' : '') + _ppr.toFixed(2) + '%' + (_apr ? ' · ' + _apr : ''), pc(_ppr));
     }
     if (q.post > 0) {
       var _ppo = (typeof q.postPct === 'number') ? q.postPct : (regPx > 0 ? (q.post - regPx) / regPx * 100 : 0);
-      add('장후(시간외)', num(q.post) + '  ' + (_ppo >= 0 ? '+' : '') + _ppo.toFixed(2) + '%', pc(_ppo));
+      var _apo = (q.mstate === 'POST' || q.mstate === 'POSTPOST' || q.mstate === 'CLOSED') ? extAgeTxt(q.extTs) : '';
+      add(extSessLabel(st.market, 'post'), num(q.post) + '  ' + (_ppo >= 0 ? '+' : '') + _ppo.toFixed(2) + '%' + (_apo ? ' · ' + _apo : ''), pc(_ppo));
     }
     add('RSI(14)', q.rsi != null ? q.rsi.toFixed(1) : '—');
     add('이동평균(장기)', num(q.ma));
@@ -10116,8 +10149,8 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     // [V33.351 · A-7] 시간외 값에 나이를 붙인다 — 신선하면 안 붙는다(extAgeTxt 주석 참조).
     var _age = extAgeTxt(q.extTs);
     var _ageTag = _age ? ' <span class="wl-ext-age">'+escapeHtml(_age)+'</span>' : '';
-    if (q.mstate === 'PRE' && q.pre > 0) { var _p=q.prePct||(q.prevClose>0?(q.pre-q.prevClose)/q.prevClose*100:0); extLine='<div class="wl-ext">장전 '+fmtNum(q.pre)+' <span class="'+((_p>=0)?'pos':'neg')+'">'+((_p>=0)?'+':'')+fmtNum(_p,2)+'%</span>'+_ageTag+'</div>'; }
-    else if ((q.mstate==='POST'||q.mstate==='POSTPOST'||q.mstate==='CLOSED') && q.post > 0) { var _p=(typeof q.postPct==='number')?q.postPct:(mainPx>0?(q.post-mainPx)/mainPx*100:0); extLine='<div class="wl-ext">장후 '+fmtNum(q.post)+' <span class="'+((_p>=0)?'pos':'neg')+'">'+((_p>=0)?'+':'')+fmtNum(_p,2)+'%</span>'+_ageTag+'</div>'; }
+    if (q.mstate === 'PRE' && q.pre > 0) { var _p=q.prePct||(q.prevClose>0?(q.pre-q.prevClose)/q.prevClose*100:0); extLine='<div class="wl-ext"><span class="wl-ext-tag pre">'+extSessLabel(market,'pre')+'</span> '+fmtNum(q.pre)+' <span class="'+((_p>=0)?'pos':'neg')+'">'+((_p>=0)?'+':'')+fmtNum(_p,2)+'%</span>'+_ageTag+'</div>'; }
+    else if ((q.mstate==='POST'||q.mstate==='POSTPOST'||q.mstate==='CLOSED') && q.post > 0) { var _p=(typeof q.postPct==='number')?q.postPct:(mainPx>0?(q.post-mainPx)/mainPx*100:0); extLine='<div class="wl-ext"><span class="wl-ext-tag post">'+extSessLabel(market,'post')+'</span> '+fmtNum(q.post)+' <span class="'+((_p>=0)?'pos':'neg')+'">'+((_p>=0)?'+':'')+fmtNum(_p,2)+'%</span>'+_ageTag+'</div>'; }
     return '<div class="wl-card'+(held?' held':'')+'" data-symbol="'+escapeHtml(q.symbol)+'" data-market="'+market+'">'+
       '<span class="wl-fav '+(isFav?'active':'')+'" data-symbol="'+escapeHtml(q.symbol)+'" data-market="'+market+'">'+(isFav?'\u2605':'\u2606')+'</span>'+
       // [V10.5] 종목명을 위, 티커를 아래로 — 이름 없으면 티커가 이름 자리 차지
@@ -20525,11 +20558,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.501">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.501">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.501">
-<link rel="stylesheet" href="/model-evidence.css?v=33.501">
-<script src="/model-evidence.js?v=33.501"></script>
-<script src="/workspace-ui.js?v=33.501"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.502">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.502">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.502">
+<link rel="stylesheet" href="/model-evidence.css?v=33.502">
+<script src="/model-evidence.js?v=33.502"></script>
+<script src="/workspace-ui.js?v=33.502"></script>
 </body>
 </html>

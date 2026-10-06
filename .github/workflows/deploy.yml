@@ -338,6 +338,12 @@ jobs:
       #   419분째 대기인데 상류(v7 사망)를 아무도 지목하지 않았다.
       - name: Audit drift and stalled stage diagnosis check
         run: node tools/check-audit-drift.mjs
+      # [V33.502] 야후 v7 사망으로 애널리스트 컨센서스 0종목 → 나스닥 애널리스트 API(커서 · 출처 교체는 개정 아님)
+      - name: Analyst consensus via Nasdaq check
+        run: node tools/check-analyst-nq.mjs
+      # [V33.502] 미국 프리·애프터 = 나스닥 실시간 체결가(기준가 last−netChange) · 프리마켓/애프터마켓 이름표
+      - name: US extended hours via Nasdaq check
+        run: node tools/check-us-ext-nasdaq.mjs
       # [V33.362] StockTwits 가 429 를 주는데도 30종목을 끝까지 두드려 12성공/18실패였다.
       #   실패 18회가 전부 fetch 예산을 태웠다(A-5 의 굶주림과 같은 뿌리). 429/403 이면 회차를 접고 쉰다.
       - name: Social source rate-limit backoff check

@@ -74,8 +74,12 @@ const fn = src.slice(src.indexOf("async function getYahooAuth(DB) {"),
 
 // ── ④ 두 v7 경로가 ★같은 방식★ 으로 crumb 을 붙이는가 ────────────────────────
 {
+  /* [V33.502] 애널리스트 컨센서스가 나스닥으로 옮겨 v7 URL 을 만드는 곳은 이제 시세 한 곳이다 —
+     남은 곳은 같은 방식으로 붙이고, 애널리스트 수집은 v7 을 다시 쓰지 않는다. */
   const n = (src.match(/if \(auth && auth\.crumb\) url \+= "&crumb="/g) || []).length;
-  ok(n >= 2, `v7 URL 을 만드는 곳 ${n}군데가 같은 방식으로 crumb 을 붙인다(한쪽만 붙이면 한쪽만 죽는다)`);
+  ok(n >= 1, `v7 URL 을 만드는 곳 ${n}군데가 같은 방식으로 crumb 을 붙인다(한쪽만 붙이면 한쪽만 죽는다)`);
+  const an = src.slice(src.indexOf("async function updateAnalystConsensus"), src.indexOf("async function updateAnalystConsensus") + 6000);
+  ok(!/finance\/quote\?/.test(an) && /fetchNqAnalyst/.test(an), "애널리스트 수집은 나스닥 경로(죽은 v7 로 되돌아가지 않는다)");
 }
 
 console.log(fail ? "\n야후 인증 계약 위반 " + fail + "건 — 배포 차단" : "\n  ok   야후 인증 계약 통과");

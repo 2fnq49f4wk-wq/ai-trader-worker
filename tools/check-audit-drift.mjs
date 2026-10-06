@@ -66,8 +66,9 @@ const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
   const i = src.indexOf("[ANLREVK] 개정 원장 없음");
   const blk = src.slice(i - 900, i + 300);
   ok(/analyst_consensus/.test(blk), "대기 사유가 컨센서스 상태를 읽는다");
-  ok(/yahoo_v7/.test(blk), "대기 사유가 v7 상태를 읽는다");
-  ok(/A-6/.test(blk), "v7 이 죽어 있으면 ★결함 번호(A-6)까지 지목한다★");
+  // [V33.502] 수집원이 나스닥으로 바뀌었다 — 출처와 한 바퀴 진행(커서)을 적는다
+  ok(/_ac\.src/.test(blk), "대기 사유가 컨센서스 출처를 적는다");
+  ok(/커서/.test(blk), "나스닥 수집이 한 바퀴 어디쯤인지 적는다");
   ok(/시간 전/.test(blk), "컨센서스가 몇 시간 전 것인지 적는다");
   /* 같은 함정 — _why 를 만들어 놓고 return 에서 빼면 종전 문장 그대로다. */
   ok(/개정 원장 없음 — 대기" \+ _why;/.test(blk),
@@ -76,11 +77,12 @@ const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
 
 // ── ③ 죽은 상류가 조용히 캐시로 위장하지 않는가 ──────────────────────────────
 {
-  const i = src.indexOf("if (okCount === 0) {");
-  ok(i > 0, "컨센서스 수집 0종목 분기를 찾았다");
+  // [V33.502] 나스닥 수집 — 이번 차례가 전부 실패면(차단·장애) 말하고 캐시를 지킨다
+  const i = src.indexOf("if (tried > 0 && okCount === 0 && empty === 0) {");
+  ok(i > 0, "컨센서스 수집 전부 실패 분기를 찾았다");
   const blk = src.slice(i, i + 1600);
-  ok(/log\(DB, "WARN"/.test(blk), "0종목이면 WARN 을 남긴다(종전엔 조용히 return 이었다)");
-  ok(/야후 v7 사망\(A-6\)/.test(blk), "v7 이 죽어 있으면 그 이름을 적는다");
+  ok(/log\(DB, "WARN"/.test(blk), "전부 실패면 WARN 을 남긴다(종전엔 조용히 return 이었다)");
+  ok(/나스닥 애널리스트 조회/.test(blk), "어느 수집원이 실패했는지 적는다");
   ok(/anlrevk/.test(blk), "★이게 멈추면 어느 하류가 멈추는지까지 적는다★");
   ok(/return cached;/.test(blk), "그래도 캐시는 그대로 돌려준다(없는 값을 지어내지 않는다)");
   ok(!/if \(okCount === 0\) return cached;  \/\/ 전부 실패/.test(src), "옛 침묵 한 줄이 사라졌다");

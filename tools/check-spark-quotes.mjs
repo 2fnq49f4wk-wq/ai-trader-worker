@@ -37,8 +37,11 @@ console.log("②-b [V33.485] 나스닥 배치(정규장만)");
     { symbol: "BRK.B", lastSalePrice: "$480.10", previousClosePrice: "$475.00", marketStatus: "Market Open" },
     { symbol: "MSFT", lastSalePrice: "$500.00", previousClosePrice: 490, marketStatus: "After Hours" },
     { symbol: "NVDA", lastSalePrice: "N/A", previousClosePrice: 100, marketStatus: "Market Open" },
+    { symbol: "TSLA", lastSalePrice: "$380.68", netChange: "+1.95", previousClosePrice: 370.59, marketStatus: "Market Open" },
     { symbol: "ZZZZ", lastSalePrice: "$1", previousClosePrice: 1, marketStatus: "Market Open" } ] };
-  const q = M.parseNasdaqWatch(j, ["AAPL", "BRK-B", "MSFT", "NVDA"]);
+  const q = M.parseNasdaqWatch(j, ["AAPL", "BRK-B", "MSFT", "NVDA", "TSLA"]);
+  chk(q.TSLA && Math.abs(q.TSLA.prevClose - 378.73) < 1e-9 && Math.abs(q.TSLA.dayPct - 1.95 / 378.73 * 100) < 1e-9,
+    "[V33.502] 전일종가 = last − netChange (watchlist previousClosePrice 370.59 는 어긋난다 — 네이버 해외 실측 378.73)", "★어긋난 previousClosePrice 로 등락률★ " + JSON.stringify(q.TSLA));
   chk(q.AAPL && Math.abs(q.AAPL.price - 333.1483) < 1e-9 && q.AAPL.prevClose === 330.32 && Math.abs(q.AAPL.dayPct - (333.1483 / 330.32 - 1) * 100) < 1e-9,
     "'$333.1483' · 숫자 전일종가 → 가격·전일종가·등락률", "★나스닥 숫자 해석★ " + JSON.stringify(q.AAPL));
   chk(q["BRK-B"] && q["BRK-B"].prevClose === 475 && M.nasdaqSym("BRK-B") === "brk.b", "BRK-B ↔ brk.b 매핑", "★종목 기호 매핑★");

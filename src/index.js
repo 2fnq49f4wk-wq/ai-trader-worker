@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.501";
+const _BUILD_VER = "V33.502";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -7809,8 +7809,13 @@ function parseNasdaqWatch(j, chunk) {
     if (!sym) continue;
     const st = String(r.marketStatus || "");
     if (!/open/i.test(st) || /pre|after|closed/i.test(st)) continue;   // 정규장 표기일 때만
-    const price = _nqNum(r.lastSalePrice), prev = _nqNum(r.previousClosePrice);
+    /* [V33.502] ★전일종가 = last − netChange★ — 러너 실측(10/06): watchlist 의 previousClosePrice 가 어긋난다
+       (AAPL 333.69 · MSFT 517.53 ↔ 네이버 해외·나스닥 info 의 실제 전일종가 332.89 · 525.18). 그 값으로 등락률을 내면
+       MSFT 가 +0.78% 대신 +2.3% 로 찍힌다. netChange 가 없을 때만 previousClosePrice 로 내려간다. */
+    const price = _nqNum(r.lastSalePrice), chg = _nqNum(r.netChange);
+    let prev = (price > 0 && chg != null && (price - chg) > 0) ? +(price - chg).toFixed(4) : _nqNum(r.previousClosePrice);
     if (!(price > 0) || !(prev > 0)) continue;
+    if (Math.abs(price / prev - 1) > 0.6) continue;   // 말이 안 되는 기준가(파싱 사고)는 버린다
     out[sym] = { price: price, prevClose: prev, dayPct: ((price - prev) / prev) * 100 };
   }
   return out;
@@ -7823,6 +7828,95 @@ async function fetchNasdaqQuotes(chunk) {
     "Accept": "application/json", "Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/" } });
   if (!r.ok) throw new Error("HTTP " + r.status);
   return parseNasdaqWatch(await r.json(), chunk);
+}
+/* ══ [V33.502] ★미국 프리·애프터 실시간 — 나스닥 배치를 시간외에도 쓴다★ ═══════════════════════════════
+   사용자: "미장은 애프터마켓이랑 프리마켓 가격 정확하게 불러오고 … 둘 다 구분해서". 종전 시간외 값은 야후 5분봉을
+   종목당 1회씩(사이클당 수십 종목 회전) 받아 ★17~26분 묵은 값★ 이 흔했다(운영 탐침). 나스닥 watchlist 는
+   시간외에도 ★20종목/1회 · 실시간 체결가★ 를 준다. 러너 실측(2026-10-06 19:24 ET, After Hours):
+     · lastSalePrice = 시간외 최신 체결가(info primaryData 와 같다 · isRealTime true)
+     · netChange    = ★정규장 종가 대비★ — last − netChange 가 info secondaryData("Closed at … 4:00 PM") 와
+                      AAPL·MSFT·NVDA·TSLA 넷 다 1센트까지 같았다(333.63 · 529.30 · 239.24 · 380.68)
+     · previousClosePrice 는 그 어느 것과도 안 맞았다(AAPL 333.69 · MSFT 517.53) — ★기준가로 쓰지 않는다★
+   그래서 기준가 = last − netChange (프리: 직전 정규장 종가 · 애프터: 오늘 정규장 종가 — 야후 표기와 같은 규칙).
+   ★체결 시각이 지금 세션 창 안일 때만★ 쓴다 — 장전 이른 시각에 어제 장후 값이 "프리" 로 둔갑하지 않게.
+   상태 표기가 우리 시계와 다르면(경계 1분 등) 버린다. */
+function _nqTradeMs(r, now) {
+  const m = String((r && r.lastTradeTimestamp) || "").match(/([A-Z][a-z]{2}) (\d{1,2}), (\d{4}) (\d{1,2}):(\d{2}) (AM|PM)/);
+  if (!m) return 0;
+  const mon = "JanFebMarAprMayJunJulAugSepOctNovDec".indexOf(m[1]);
+  if (mon < 0 || mon % 3) return 0;
+  let h = (+m[4]) % 12; if (m[6] === "PM") h += 12;
+  const off = getUSEtOffset(now || new Date());   // 시(-4 · -5)
+  return Date.UTC(+m[3], mon / 3, +m[2], h, +m[5]) - off * 3600000;
+}
+function parseNasdaqExt(j, chunk, sess, nowMs) {
+  const out = {};
+  if (sess !== "PRE" && sess !== "POST") return out;
+  const want = {};
+  for (const s0 of (chunk || [])) want[nasdaqSym(s0).toUpperCase()] = s0;
+  const now = new Date(nowMs || Date.now());
+  const tNow = getUSEt(now), today = marketLocalDate(tNow);
+  const w = marketWindows("us", now);
+  const win = w && (sess === "PRE" ? w.pre : w.post);
+  const rows = (j && Array.isArray(j.data)) ? j.data : [];
+  for (const r of rows) {
+    if (!r || !r.symbol) continue;
+    const sym = want[String(r.symbol).toUpperCase()];
+    if (!sym) continue;
+    const st = String(r.marketStatus || "");
+    if (sess === "PRE" ? !/pre/i.test(st) : !/after/i.test(st)) continue;
+    const last = _nqNum(r.lastSalePrice), chg = _nqNum(r.netChange);
+    if (!(last > 0) || chg == null) continue;
+    const base = last - chg;
+    if (!(base > 0) || Math.abs(chg / base) > 0.5) continue;   // 말이 안 되는 기준가(파싱 사고)는 버린다
+    const ts = _nqTradeMs(r, now);
+    if (!(ts > 0) || ts > now.getTime() + 120000) continue;
+    const tt = getUSEt(new Date(ts));
+    if (marketLocalDate(tt) !== today || !win || !_inWin(tt.totalMin, win, tt.day)) continue;   // 지난 세션 체결
+    out[sym] = { last: last, base: base, pct: (chg / base) * 100, ts: ts, sess: sess };
+  }
+  return out;
+}
+async function fetchNasdaqExt(chunk, sess) {
+  try { __fetchBudget.used++; } catch (e) {}
+  const q = chunk.map(function (s0) { return "symbol=" + encodeURIComponent(nasdaqSym(s0) + "|stocks"); }).join("&");
+  const r = await fetch("https://api.nasdaq.com/api/quote/watchlist?" + q, { headers: {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+    "Accept": "application/json", "Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/" },
+    signal: AbortSignal.timeout(5000) });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return parseNasdaqExt(await r.json(), chunk, sess, Date.now());
+}
+/* 시간외 값을 정규장 칸과 합친다. q = 이번 사이클 시세(없으면 D1 에 저장된 시세 sq). 정규장 칸은 지어내지 않는다:
+   · 프리 — 정규장 칸은 직전 세션 값 그대로(D1) · pre = 체결가 · prePct = 기준가(직전 종가) 대비
+   · 애프터 — 저장 시세가 ★오늘 정규장 중★ 찍힌 것이면 prevClose 가 오늘 기준이라 price 를 오늘 종가(기준가)로 맞춘다 */
+function mergeNasdaqExt(q, sq, x, nowMs) {
+  if (!x) return q || null;
+  let o = q || null;
+  if (!o && sq && _num(sq.price, 0) > 0 && _num(sq.prevClose, 0) > 0) {
+    o = { price: sq.price, prevClose: sq.prevClose, dayPct: _num(sq.dayPct, ((sq.price - sq.prevClose) / sq.prevClose) * 100) };
+    if (x.sess === "POST" && _num(sq.ts, 0) > 0) {
+      const ts0 = getUSEt(new Date(sq.ts)), tn = getUSEt(new Date(nowMs || Date.now()));
+      const ss0 = marketSessionNow("us", new Date(sq.ts));   // 창은 marketWindows 한 곳에서(A-2)
+      if (marketLocalDate(ts0) === marketLocalDate(tn) && (ss0 === "REGULAR" || ss0 === "POST")) {
+        o.price = +x.base.toFixed(4);
+        o.dayPct = ((o.price - o.prevClose) / o.prevClose) * 100;
+      }
+    }
+  }
+  if (!o) return null;
+  if (x.sess === "PRE") { o.mstate = "PRE"; o.pre = x.last; o.prePct = x.pct; }
+  else { o.mstate = "POST"; o.post = x.last; o.postPct = x.pct; }
+  /* ★체결 시각은 "값이 마지막으로 바뀐 때" 로 잡는다★ — 나스닥 lastTradeTimestamp 가 진짜 체결 시각인지
+     조회 시각인지 확인되지 않았다(실측 6종목이 같은 분). 시간외 거래는 extTs 신선도(7분)로 문을 여닫으므로,
+     같은 세션에 같은 값이 계속 오면 처음 본 시각을 지킨다 — 얇은 종목의 몇 시간 전 체결이 "방금" 으로 둔갑하지 않는다. */
+  let ets = x.ts;
+  if (sq && sq.mstate === x.sess && _num(sq.extTs, 0) > 0) {
+    const pv = x.sess === "PRE" ? _num(sq.pre, 0) : _num(sq.post, 0);
+    if (pv > 0 && Math.abs(pv - x.last) < 1e-9) ets = Math.min(ets, _num(sq.extTs, 0));
+  }
+  o.extTs = ets; o.extSrc = "nq";
+  return o;
 }
 function parseSparkQuotes(j, chunk) {
   const out = {};
@@ -8322,6 +8416,56 @@ async function fetchBatchQuotes(symbols, opts) {
     }
     if (opts.DB && nqCalls > 0) {
       try { await setState(opts.DB, "nasdaq_batch", { got: nqGot, calls: nqCalls, err: nqErr, ts: Date.now() }); } catch (e) {}
+    }
+  }
+
+  /* --- 1.45) [V33.502] 나스닥 배치(시간외) — 프리·애프터 실시간 체결가. 정규장 칸은 이번 값 또는 D1 저장값 ---
+     시간외 창에 이걸로 채운 종목은 아래 v8 폴백·분봉 보강(종목당 1회)을 안 탄다 — 예산이 남고 값은 1분 신선하다. */
+  let nqxGot = 0, nqxCalls = 0, nqxErr = null;
+  {
+    const _ses = usMarketStateNow();
+    if ((_ses === "PRE" || _ses === "POST") && opts.nqExt !== false) {
+      const _xm = symbols.filter(function (s) { return !(s.endsWith(".KS") || s.endsWith(".KQ")) && s.indexOf("=") < 0 && s.indexOf("^") < 0 && !(out[s] && (out[s].pre > 0 || out[s].post > 0)); });
+      const _xc = [];
+      for (let i = 0; i < _xm.length; i += NQ_CHUNK) _xc.push(_xm.slice(i, i + NQ_CHUNK));
+      const ext = {};
+      if (_xc.length && fetchBudgetLeft() > 12) {
+        nqxCalls++;
+        let first = {}, firstOk = false;
+        try { first = await fetchNasdaqExt(_xc[0], _ses); firstOk = true; } catch (e) { nqxErr = _v7ErrTag(e); }
+        Object.assign(ext, first);
+        if (firstOk && _xc.length > 1) {
+          const _rest = _xc.slice(1), PAR = 6;
+          for (let i = 0; i < _rest.length; i += PAR) {
+            if (fetchBudgetLeft() <= 12) break;
+            const _grp = _rest.slice(i, i + PAR).slice(0, Math.max(1, fetchBudgetLeft() - 12));
+            nqxCalls += _grp.length;
+            const _rs = await Promise.all(_grp.map(async function (c) { try { return await fetchNasdaqExt(c, _ses); } catch (e) { nqxErr = _v7ErrTag(e); return {}; } }));
+            for (const m of _rs) Object.assign(ext, m);
+          }
+        }
+      }
+      // 이번 사이클 시세가 없는 종목은 D1 저장 시세에서 정규장 칸을 가져온다(한 번에 IN 조회)
+      const _need = Object.keys(ext);   // 정규장 칸이 없는 종목 + 체결 시각 이어받기(값이 그대로면 처음 본 시각)
+      const _sq = {};
+      if (_need.length && opts.DB) {
+        for (let i = 0; i < _need.length; i += 100) {
+          try {
+            const _ck = _need.slice(i, i + 100);
+            const _st = opts.DB.prepare("SELECT k, v FROM state WHERE k IN (" + _ck.map(function () { return "?"; }).join(",") + ")");
+            const _rw = await _st.bind.apply(_st, _ck.map(function (s) { return "quote:" + s; })).all();
+            for (const r of ((_rw && _rw.results) || [])) { try { _sq[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {} }
+          } catch (e) {}
+        }
+      }
+      const _nowX = Date.now();
+      for (const s in ext) {
+        const m = mergeNasdaqExt(out[s] || null, _sq[s] || null, ext[s], _nowX);
+        if (m) { out[s] = m; nqxGot++; }
+      }
+      if (opts.DB && nqxCalls > 0) {
+        try { await setState(opts.DB, "nasdaq_ext", { sess: _ses, got: nqxGot, quoted: Object.keys(ext).length, calls: nqxCalls, err: nqxErr, ts: _nowX }); } catch (e) {}
+      }
     }
   }
 
@@ -9231,13 +9375,14 @@ async function analystRevFitNightly(DB) {
          그 수집은 야후 v7 전용이고, v7 이 죽으면(A-6) 여기까지 조용히 멈춘다. */
       let _why = "";
       try {
+        /* [V33.502] 수집원이 나스닥으로 바뀌었다 — 출처·커서(한 바퀴 진행)를 적는다.
+           원장은 ★같은 출처의 두 번째 관측★ 부터 사건이 생긴다(첫 바퀴는 기준값만 심는다). */
         const _ac = await getState(DB, "analyst_consensus", null);
-        const _v7 = await getState(DB, "yahoo_v7", null);
         const _n = _ac ? Object.keys(_ac.bySym || {}).length : 0;
         const _ageH = (_ac && _ac.ts) ? ((Date.now() - _num(_ac.ts, 0)) / 3600000).toFixed(1) : null;
         _why = " — 이 원장은 애널리스트 컨센서스가 ★갱신될 때만★ 생긴다: " +
-               (!_ac ? "컨센서스 자체가 없다" : "컨센서스 " + _n + "종목(" + _ageH + "시간 전)") +
-               (_v7 && _v7.dead ? " · ★야후 v7 사망(A-6) — 그 수집은 v7 전용이라 여기까지 멈춘다★" : "");
+               (!_ac ? "컨센서스 자체가 없다" : "컨센서스 " + _n + "종목(" + (_ac.src || "yahoo") + " · 한 바퀴 " + (_ageH != null ? _ageH + "시간 전" : "미완") +
+                 (_ac.src === "nq" ? " · 커서 " + _num(_ac.cur, 0) + "/" + _num(_ac.total, 0) : "") + ")");
       } catch (e) {}
       return "\u27F3 " + "[ANLREVK] 개정 원장 없음 — 대기" + _why;
     }
@@ -9302,82 +9447,114 @@ async function analystRevFitNightly(DB) {
   } catch (e) { return "[ANLREVK] fail: " + (e && e.message); }
 }
 
+/* ══ [V33.502] ★애널리스트 컨센서스 — 나스닥 애널리스트 API 로 바꾼다(야후 v7 사망)★ ═══════════════
+   러너 실측(2026-10-06): api.nasdaq.com/api/analyst/<SYM>/targetprice → HTTP 200 ·
+   consensusOverview {priceTarget, lowPriceTarget, highPriceTarget, buy, hold, sell}. 종목당 1회라
+   ★한 사이클에 몇 종목씩(perTick) 커서로 돈다★ — 사이클 지연을 늘리지 않게(V12.125 교훈) 예산·시간 모두 작게.
+   한 바퀴가 끝나면 ts 를 찍고 refreshHours 동안 쉰다. 모양은 종전 그대로({upsidePct, rating, nOpinions, tgt, px}) —
+   소비처(사이징 ANALYST 인자 · 개정 원장 · 목표가 답변)는 손대지 않는다.
+   등급은 야후 척도(1=Strong Buy … 5=Sell)로 맞춘다: 나스닥은 매수·중립·매도 셋뿐이라 매수 1.5 · 중립 3 · 매도 4.5 의 가중평균.
+   ★출처가 바뀐 첫 관측은 개정으로 치지 않는다★ — 야후 평균 목표가와 나스닥 목표가는 집계가 달라,
+   그 차이를 "증권사가 목표가를 올렸다" 로 읽으면 가짜 사건이 원장에 쌓인다(src 가 같은 직전값끼리만 비교). */
+function nqAnalystRating(buy, hold, sell) {
+  const b = _num(buy, 0), h = _num(hold, 0), s = _num(sell, 0), n = b + h + s;
+  if (!(n > 0)) return null;
+  return +((1.5 * b + 3 * h + 4.5 * s) / n).toFixed(3);
+}
+function parseNqAnalyst(j, px) {
+  const d = j && j.data, co = d && d.consensusOverview;
+  if (!co) return null;
+  const b = _num(co.buy, 0), h = _num(co.hold, 0), s = _num(co.sell, 0), n = b + h + s;
+  const tgt = _num(co.priceTarget, 0);
+  if (n < 3) return null;   // 3인 미만은 노이즈(종전 규칙 그대로)
+  const o = { nOpinions: n, rating: nqAnalystRating(b, h, s), buy: b, hold: h, sell: s, src: "nq" };
+  if (tgt > 0) o.tgt = +tgt.toFixed(4);
+  const lo = _num(co.lowPriceTarget, 0), hi = _num(co.highPriceTarget, 0);
+  if (lo > 0) o.lo = +lo.toFixed(4);
+  if (hi > 0) o.hi = +hi.toFixed(4);
+  if (px > 0) { o.px = +px.toFixed(4); if (tgt > 0) o.upsidePct = ((tgt - px) / px) * 100; }
+  return o;
+}
+async function fetchNqAnalyst(sym) {
+  try { __fetchBudget.used++; } catch (e) {}
+  const r = await fetch("https://api.nasdaq.com/api/analyst/" + encodeURIComponent(nasdaqSym(sym).toUpperCase()) + "/targetprice", {
+    headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+      "Accept": "application/json", "Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/" },
+    signal: AbortSignal.timeout(4000) });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return await r.json();
+}
 async function updateAnalystConsensus(DB, cfg, force) {
-  const ac = Object.assign({ enabled: true, refreshHours: 6, minBudgetReserve: 10, chunk: 40 }, (cfg && cfg.analyst) || {});
+  const ac = Object.assign({ enabled: true, refreshHours: 12, minBudgetReserve: 30, perTick: 12, par: 6 }, (cfg && cfg.analyst) || {});
   if (ac.enabled === false) return null;
   let cached = null;
   try { cached = await getState(DB, "analyst_consensus", null); } catch (e) {}
-  if (!force && cached && cached.ts && (Date.now() - cached.ts) < (ac.refreshHours * 3600000)) return cached;
-  if (fetchBudgetLeft() < (ac.minBudgetReserve || 10)) return cached;
-  const syms = (cfg && cfg.usTickers) || DEFAULT_US;
-  if (!syms || !syms.length) return cached;
-  const auth = await getYahooAuth(DB);
-  const FIELDS = "symbol,regularMarketPrice,targetMeanPrice,targetHighPrice,targetLowPrice,averageAnalystRating,numberOfAnalystOpinions";
-  const bySym = (cached && cached.bySym) ? Object.assign({}, cached.bySym) : {};
-  let okCount = 0;
-  for (let i = 0; i < syms.length; i += (ac.chunk || 40)) {
-    if (fetchBudgetLeft() <= (ac.minBudgetReserve || 10)) break;
-    const slice = syms.slice(i, i + (ac.chunk || 40));
-    let url = "https://query1.finance.yahoo.com/v7/finance/quote?fields=" + encodeURIComponent(FIELDS) +
-              "&symbols=" + slice.map(function (s) { return encodeURIComponent(s); }).join(",");
-    if (auth && auth.crumb) url += "&crumb=" + encodeURIComponent(auth.crumb);
-    try {
-      __fetchBudget.used++;
-      const r = await fetch(url, { headers: auth && auth.cookie ? { "Cookie": auth.cookie } : {} });
-      if (!r.ok) continue;
-      const j = await r.json();
-      const rows = (j && j.quoteResponse && j.quoteResponse.result) || [];
-      rows.forEach(function (row) {
-        if (!row || !row.symbol) return;
-        const px = row.regularMarketPrice, tgt = row.targetMeanPrice;
-        // averageAnalystRating 형태: "2.1 - Buy" → 앞 숫자만
-        let rating = null;
-        if (typeof row.averageAnalystRating === "string") { const m = parseFloat(row.averageAnalystRating); if (isFinite(m)) rating = m; }
-        else if (typeof row.averageAnalystRating === "number") rating = row.averageAnalystRating;
-        const o = {};
-        if (typeof px === "number" && px > 0 && typeof tgt === "number" && tgt > 0) o.upsidePct = ((tgt - px) / px) * 100;
-        if (rating != null) o.rating = rating;
-        if (typeof row.numberOfAnalystOpinions === "number") o.nOpinions = row.numberOfAnalystOpinions;
-        // [V33.151] ★목표가 절대값을 남긴다 — 개정 방향은 upsidePct 로는 못 잰다★
-        //   upsidePct = (목표가−주가)/주가 라서 ★주가가 움직이기만 해도 변한다★.
-        //   "증권사가 목표가를 올렸나" 를 보려면 목표가 그 자체를 비교해야 한다.
-        if (typeof tgt === "number" && tgt > 0) o.tgt = +tgt.toFixed(4);
-        if (typeof px === "number" && px > 0) o.px = +px.toFixed(4);
-        // 신뢰도 낮은(애널리스트 3인 미만) 항목은 제외 — 노이즈 차단
-        if ((o.upsidePct != null || o.rating != null) && (o.nOpinions == null || o.nOpinions >= 3)) { bySym[row.symbol] = o; okCount++; }
-      });
-    } catch (e) {}
+  const now = Date.now();
+  const nq = !!(cached && cached.src === "nq");
+  let cur = nq ? Math.max(0, Math.floor(_num(cached.cur, 0))) : 0;
+  // 한 바퀴를 끝냈고(커서 0) 아직 신선하면 쉰다
+  if (!force && nq && cur === 0 && cached.ts && (now - cached.ts) < (ac.refreshHours * 3600000)) return cached;
+  if (fetchBudgetLeft() < (ac.minBudgetReserve || 30) + (ac.par || 6)) return cached;
+  const syms = ((cfg && cfg.usTickers) || DEFAULT_US).filter(function (s) { return s && s.indexOf("^") < 0 && s.indexOf("=") < 0; });
+  if (!syms.length) return cached;
+  if (cur >= syms.length) cur = 0;
+  const take = syms.slice(cur, cur + Math.max(1, Math.min(ac.perTick || 12, fetchBudgetLeft() - (ac.minBudgetReserve || 30))));
+  // 상승여력의 분모 = 지금 시세(D1 quote) — 정규장 값(regPrice 가 아니라 price 는 시간외 표시값일 수 있어 regPrice 우선)
+  const pxMap = {};
+  try {
+    const ph = take.map(function () { return "?"; }).join(",");
+    const st = DB.prepare("SELECT k, v FROM state WHERE k IN (" + ph + ")");
+    const rw = await st.bind.apply(st, take.map(function (s) { return "quote:" + s; })).all();
+    for (const r of ((rw && rw.results) || [])) {
+      try { const q = JSON.parse(r.v); pxMap[r.k.slice(6)] = _num(q.regPrice, 0) > 0 ? q.regPrice : _num(q.price, 0); } catch (e) {}
+    }
+  } catch (e) {}
+  const got = {};
+  let okCount = 0, errs = 0, empty = 0, lastErr = null;
+  const PAR = Math.max(1, ac.par || 6);
+  for (let i = 0; i < take.length; i += PAR) {
+    if (fetchBudgetLeft() <= (ac.minBudgetReserve || 30)) break;
+    const grp = take.slice(i, i + PAR);
+    const rs = await Promise.all(grp.map(async function (sym) {
+      try { return { sym: sym, o: parseNqAnalyst(await fetchNqAnalyst(sym), _num(pxMap[sym], 0)) }; }
+      catch (e) { return { sym: sym, err: _v7ErrTag(e) }; }
+    }));
+    for (const r of rs) {
+      if (r.err) { errs++; lastErr = r.err; continue; }
+      if (r.o) { r.o.at = now; got[r.sym] = r.o; okCount++; } else empty++;
+    }
   }
-  /* ══ [V33.361] ★죽은 상류가 조용히 캐시로 위장하고 있었다★ ═══════════════════
-     이 한 줄이 야간 파이프라인 한 단계를 며칠째 멈춰 세운 사슬의 시작이다:
-       ① 이 수집은 ★야후 v7★ 을 쓴다(위 v7Url). v7 은 지금 죽어 있다(결함 A-6 —
-          자가진단 ERROR "응답은 하는데 종목을 하나도 안 준다")
-       ② 그래서 okCount 가 0 이 되고 ★여기서 조용히 되돌아간다★ —
-          아래 [ANALYST] 로그에도, 아무 데도 안 남는다
-       ③ analystRevTrack 이 안 불려 `analyst_rev` 원장이 ★영영 안 생긴다★
-       ④ 야간 단계 anlrevk 가 "개정 원장 없음 — 대기" 로 매일 멈춘다
-       ⑤ 자가진단이 "완주 도장을 찍었는데 안 끝난 단계가 있다" 를 매일 경고한다
-     다섯 줄 어디에도 ★v7★ 이라는 말이 없어서, 화면만 보면 원인을 찾을 수 없었다.
-     → 캐시를 돌려주는 것 자체는 옳다(없는 값을 지어내지 않는다). 다만 ★말은 한다.★ */
-  if (okCount === 0) {
+  const tried = okCount + errs + empty;
+  // 전부 실패(차단·장애) — 커서를 밀지 않고 캐시를 지킨다(없는 값을 지어내지 않는다). 말은 남긴다(10분 스로틀).
+  if (tried > 0 && okCount === 0 && empty === 0) {
     try {
-      const _v7 = await getState(DB, "yahoo_v7", null);
-      const _ageH = (cached && cached.ts) ? ((Date.now() - _num(cached.ts, 0)) / 3600000) : null;
-      await log(DB, "WARN", null,
-        "[ANALYST] 컨센서스 수집 0종목 — 목표가·투자의견이 갱신되지 않는다" +
-        (_ageH != null ? "(직전 갱신 " + _ageH.toFixed(1) + "시간 전 캐시로 버티는 중)" : "(캐시도 없다)") +
-        (_v7 && _v7.dead ? " · ★원인: 야후 v7 사망(A-6) — 이 수집은 v7 전용이다★"
-                         : " · v7 상태는 정상으로 기록돼 있다 — 필드 거부·크럼 만료 쪽을 볼 것") +
-        " · 이것이 멈추면 야간 anlrevk 단계가 '개정 원장 없음' 으로 계속 대기한다");
+      const _wk = "analyst_nq_warn", _pw = await getState(DB, _wk, 0);
+      if (now - _num(_pw, 0) > 600000) {
+        await setState(DB, _wk, now);
+        await log(DB, "WARN", null, "[ANALYST] 나스닥 애널리스트 조회 " + errs + "건 전부 실패(" + lastErr + ") — 목표가·투자의견 갱신 멈춤(캐시 유지) · 이것이 멈추면 야간 anlrevk 단계가 '개정 원장 없음' 으로 계속 대기한다");
+      }
     } catch (e) {}
-    return cached;  // 전부 실패 → 기존 캐시 보존(없는 값을 지어내지 않는다)
+    return cached;
   }
-  const result = { bySym: bySym, ts: Date.now(), n: okCount };
+  const prevBy = (cached && cached.bySym) || {};
+  const bySym = Object.assign({}, prevBy);
+  // 이번 차례에 나스닥이 "기록 없음"(ETF 등)이라 답한 종목의 옛 야후 값은 내린다 — 며칠 묵은 다른 출처 값이 거래 인자로 남지 않게
+  for (const s of take) { if (!got[s] && bySym[s] && bySym[s].src !== "nq" && tried > 0) delete bySym[s]; }
+  for (const s in got) bySym[s] = got[s];
+  cur += tried;
+  const roundDone = cur >= syms.length;
+  const nNq = Object.keys(bySym).filter(function (s) { return bySym[s] && bySym[s].src === "nq"; }).length;
+  const result = { bySym: bySym, src: "nq", cur: roundDone ? 0 : cur, n: nNq, total: syms.length,
+    ts: roundDone ? now : _num(nq ? cached.ts : 0, 0), tickTs: now };
   try { await setState(DB, "analyst_consensus", result); } catch (e) {}
-  // [V33.151] 목표가 개정(상향/하향) 원장 갱신 — 이 갱신분과 직전분을 비교해 사건으로 남긴다.
+  // 개정 원장 — ★같은 출처(nq)의 직전값끼리만★ 비교한다(출처 교체 첫 관측은 기준값만 심는다)
+  const prevNq = {};
+  for (const s in got) { if (prevBy[s] && prevBy[s].src === "nq") prevNq[s] = prevBy[s]; }
   let _revNote = "";
-  try { _revNote = await analystRevTrack(DB, cached && cached.bySym, bySym); } catch (e) {}
-  try { await log(DB, "INFO", null, "[ANALYST] 컨센서스 " + okCount + "종목 갱신(목표가·투자의견)" + _revNote); } catch (e) {}
+  try { _revNote = await analystRevTrack(DB, prevNq, got); } catch (e) {}
+  if (roundDone) {
+    try { await log(DB, "INFO", null, "[ANALYST] 나스닥 컨센서스 한 바퀴 완료 — " + nNq + "/" + syms.length + "종목(목표가·투자의견)" + _revNote); } catch (e) {}
+  }
   return result;
 }
 
@@ -49531,6 +49708,12 @@ async function _luxSelfCheck(DB) {
         let _nqb = null;
         try { _nqb = await getState(DB, "nasdaq_batch", null); } catch (e) {}
         const _nqOk = !!(_nqb && _nqb.got > 0 && ageH(_nqb.ts) < 2);   // [V33.485] 나스닥 배치가 메우는 중
+        // [V33.502] 시간외는 나스닥 배치(1분 · 실시간 체결가)가 맡는다 — 마지막 기록을 같은 줄에 붙인다
+        let _nqx = null;
+        try { _nqx = await getState(DB, "nasdaq_ext", null); } catch (e) {}
+        const _nqxTxt = (_nqx && _nqx.ts && ageH(_nqx.ts) < 24)
+          ? " 시간외는 나스닥 배치가 채운다(직전 " + (_nqx.sess === "PRE" ? "프리마켓" : "애프터마켓") + " " + _num(_nqx.got, 0) + "종목/" + _num(_nqx.calls, 0) + "회" + (_nqx.err ? " [" + String(_nqx.err).slice(0, 30) + "]" : "") + ")."
+          : " 시간외는 나스닥 배치 → 없으면 v8 분봉으로 채운다 — 분봉은 예산 압박으로 회전이 느려진다";
         const _spkOk = !!(_spk && _spk.got > 0 && ageH(_spk.ts) < 2) || _nqOk;
         if (_v7.dead) add(_spkOk ? "warn" : "error", "시세",
           (_v7e
@@ -49539,7 +49722,7 @@ async function _luxSelfCheck(DB) {
               (_v7.shape ? " · 응답모양 " + String(_v7.shape).slice(0, 90) : "") + ")") +
           (_nqOk ? " — 나스닥 배치로 메우는 중(정규장 · 20종목/1회 · 직전 " + _nqb.got + "종목/" + _nqb.calls + "회)." :
            _spkOk ? " — spark 배치로 메우는 중(20종목/1회 · 직전 " + _spk.got + "종목/" + _spk.calls + "회" + (_spk.path ? " · " + _spk.path : "") + ")." :
-          " — 종목당 1회 v8 폴백으로 버티는 중(50종목/1회 → 1종목/1회)" + (_spk ? "(spark 도 0건" + (_spk.err ? " [" + _spk.err + "]" : "") + ")" : "") + ".") + " 시간외는 v8 분봉으로 계속 채운다 — 다만 예산 압박으로 회전이 느려진다" +
+          " — 종목당 1회 v8 폴백으로 버티는 중(50종목/1회 → 1종목/1회)" + (_spk ? "(spark 도 0건" + (_spk.err ? " [" + _spk.err + "]" : "") + ")" : "") + ".") + _nqxTxt +
           /* [V33.361] ★인증 상태를 같은 줄에 붙인다.★ v7 은 cookie+crumb 를 요구하는데,
              그 악수가 실패해도 종전엔 아무 데도 안 남아 이 자리를 의심조차 할 수 없었다.
              crumb 이 없으면 야후는 오류 없이 빈 배열을 준다 — 지금 보이는 증상 그대로다. */
@@ -53392,7 +53575,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
