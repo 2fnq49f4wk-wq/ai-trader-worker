@@ -12,6 +12,13 @@
 
 ## Current handoff
 
+- Status: **V33.497 — 한국 장후 마감 꼬리 10분(가격만) · 미국 정규장 시세 실측 통과.**
+  - 미국 정규장 탐침(10/06 14:24Z, run 37478542423): 557종 시세 나이 1.4~1.7분 · 나스닥 실시간 대조 50종 중앙 괴리 0.07% · p90 0.23% · 최대 0.45%
+    (1.5분 지연만큼의 움직임) · ECHO 100.19 vs 나스닥 100.20 · 보유 포지션 0(미·한 모두 비어 있음).
+  - ★한국 결함★ 마지막 갱신 19:56 KST 인데 넥스트레이드는 20:00 까지 체결 → 마지막 체결이 빠져 네이버 종가와 최대 1.55%(넥센 6,330 vs 6,430) · 10종목 0.5%+.
+    → MARKET_HOURS.kr.postTail = 10 · isExtCloseTail · 사이클의 krExtHours 에만 배선(시세 대상만 · 거래·세션 판정 불변). 게이트 check-state-quotes ④.
+  - 화요일 예약 점검(같은 회차): buys_per_period 2026-10 아직 0(장 연 지 55분 · NOBUY us no_signal 528 · ai_primary_gate 19 · fund_health 9) ·
+    ai_thr us 적용 0.45(pct 경로) · 진단 quotes 1004/1004 5분 이내. OMNI_EARN 백필 덮은 기간 20210104~ → modal-deploy omni_now+omni_earn 실행(10/06 14:3xZ).
 - Status: **V33.496 — 공용 읽기 API 마이크로 캐시(아이솔레이트 메모리 10초~10분).**
   - 6차 탐침(10/06 10:26Z, run 37449724882 · 대기/서버 분리): 재방문 시 /api/news 8.8초 · crisis 8.5 · fx/econ/earnings/insider/shard_meta 2.3초 ·
     종목상세 차트 2.5초 — ★브라우저 대기 0, 전부 서버 TTFB★. 첫 방문엔 같은 요청이 0.3초 · 메모리에서 주는 /api/state 는 39ms.

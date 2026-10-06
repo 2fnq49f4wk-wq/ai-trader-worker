@@ -44,5 +44,15 @@ const at = S.indexOf('const __R2s = (typeof _bigR2 === "function")');
 const seg = S.slice(at, at + 6000);
 chk(/if \(__rage > 60000\) \{ try \{ const __pb = await _patchStateQuotes\(env\.DB, __body\)/.test(seg), "R2 사본이 1분보다 묵었을 때만 시세를 끼운다", "R2 경로 보정 배선 없음");
 chk(/const __numTrim = _stateNumTrim;/.test(S) && !/toPrecision\(6\) : v;\n     \};/.test(S), "상태 직렬화는 한 함수(_stateNumTrim)", "옛 6자리 일괄 절사가 남아 있다");
+console.log("④ 한국 장후 마감 꼬리(V33.497)");
+const atT = (iso) => new Date(iso);
+chk(M.isExtCloseTail("kr", atT("2026-10-06T11:05:00Z")) === true, "화요일 20:05 KST — 가격만 더 받는다(넥스트레이드 20:00 마지막 체결)", "20:05 꼬리 아님");
+chk(M.isExtCloseTail("kr", atT("2026-10-06T11:11:00Z")) === false && M.isExtCloseTail("kr", atT("2026-10-06T10:59:00Z")) === false,
+  "20:11 은 끝 · 19:59 는 장후 창 자체(꼬리 아님)", "꼬리 범위");
+chk(M.isExtendedHoursWindow("kr", atT("2026-10-06T10:59:00Z")) === true && M.isExtendedHoursWindow("kr", atT("2026-10-06T11:05:00Z")) === false,
+  "세션 판정(장후 창)은 그대로 20:00 에 닫힌다 — 거래 판정 불변", "장후 창이 바뀌었다");
+chk(M.isExtCloseTail("kr", atT("2026-10-10T11:05:00Z")) === false, "토요일엔 없다", "주말 꼬리");
+chk(M.isExtCloseTail("us", atT("2026-10-07T00:05:00Z")) === false, "미국은 postTail 이 없다(종전 그대로)", "미국 꼬리");
+chk(/const krExtHours = isExtendedHoursWindow\("kr"\) \|\| isExtCloseTail\("kr"\);/.test(S), "사이클의 한국 시세 대상에 꼬리 배선", "배선 없음");
 if (fails) { console.log("\n✗ 상태 시세 계약 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 상태 시세 계약 통과");

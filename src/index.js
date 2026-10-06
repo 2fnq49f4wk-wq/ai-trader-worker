@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.496";
+const _BUILD_VER = "V33.497";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -5439,8 +5439,11 @@ async function _indexFreshOpen(DB, market, today) {
    ※ preTrade/postTrade 가 없으면 pre/post 를 그대로 쓴다(한국은 갈라 둘 이유가 없다). */
 const MARKET_HOURS = {
   us: { pre: [240, 570], preTrade: [420, 570], regular: [570, 960], post: [960, 1200], quoteTail: 10 },
-  kr: { pre: [480, 540], regular: [540, 930], post: [930, 1200], quoteTail: 0 }
+  kr: { pre: [480, 540], regular: [540, 930], post: [930, 1200], quoteTail: 0, postTail: 10 }
 };
+/* [V33.497] postTail = 장후(시간외) 창이 닫힌 뒤 ★가격만★ 더 받는 분. 운영 탐침(10/06 14:24Z): 한국 마지막 갱신이 19:56 KST 였고
+   넥스트레이드는 20:00 까지 체결한다 — 그 사이 마지막 체결이 빠져 화면 값이 네이버 종가와 최대 1.55% 달랐다(넥센 6,330 vs 6,430).
+   거래는 하지 않는다(거래창·세션 판정은 그대로) — 정규장 quoteTail 과 같은 생각이다. */
 
 /* ══ [V33.417] ★미국 23시간 장★ — 2026-12-06 부터 (사용자 지시) ═══════════════════════
    ■ 무엇이 바뀌고 무엇이 안 바뀌는가 — 이 구분이 이 변경의 전부다
@@ -5529,8 +5532,8 @@ function marketWindows(market, now) {
   const pick = function (k) { return (sp && sp[k]) || base[k]; };
   const out = sp
     ? { pre: pick("pre"), regular: pick("regular"), post: pick("post"),
-        quoteTail: base.quoteTail, special: sp.why || "특례" }
-    : { pre: base.pre, regular: base.regular, post: base.post, quoteTail: base.quoteTail, special: null };
+        quoteTail: base.quoteTail, postTail: base.postTail || 0, special: sp.why || "특례" }
+    : { pre: base.pre, regular: base.regular, post: base.post, quoteTail: base.quoteTail, postTail: base.postTail || 0, special: null };
   // 거래 창 — 따로 지정이 없으면 관측 창과 같다. 특례일에는 관측 창이 곧 거래 창이다
   //   (반장 13:00 장후·수능일 지연개장은 '얇아서 미루는' 구간이 아니라 그날의 정상 창이다).
   out.preTrade = (sp && (sp.preTrade || sp.pre)) || base.preTrade || out.pre;
@@ -5636,6 +5639,19 @@ function isQuoteRefreshWindow(market, now) {
 // [프리/애프터마켓] 시간외 시세 갱신 창 — 정규장 밖이지만 가격(시간외)만 실시간 갱신(거래는 안 함).
 //   US: 프리 07:00(420)~09:30(570) ET, 애프터 16:00(960)~20:00(1200) ET.
 //   KR: 장전 시간외/NXT 08:00(480)~09:00(540), 장후 시간외/단일가/NXT 15:30(930)~20:00(1200) KST.
+/* [V33.497] 장후 창이 닫힌 직후 postTail 분 — 마지막 시간외 체결을 받으려고 ★가격만★ 더 갱신한다(특례일엔 그날 장후 끝 기준). */
+function isExtCloseTail(market, now) {
+  const w = marketWindows(market, now);
+  const t = marketLocalTime(market, now);
+  if (!w || !t) return false;
+  const tail = _num(w.postTail, 0);
+  if (!(tail > 0)) return false;
+  for (const p of _winParts(w.post)) {
+    const ds = p.days || [1, 2, 3, 4, 5];
+    if (ds.indexOf(t.day) >= 0 && t.totalMin >= p.b && t.totalMin < p.b + tail) return true;
+  }
+  return false;
+}
 function isExtendedHoursWindow(market, now) {
   // [V33.351] 창은 marketWindows 한 곳에서 — 반장·수능일엔 이 창도 같이 움직인다.
   const s = marketSessionNow(market, now);
@@ -21641,7 +21657,8 @@ async function runTradingCycle(env) {
     const krMarketHours = isQuoteRefreshWindow("kr");
     // [프리/애프터마켓] 정규장 밖이지만 시간외 시세를 실시간 갱신할 시장
     const usExtHours = isExtendedHoursWindow("us");
-    const krExtHours = isExtendedHoursWindow("kr");
+    // [V33.497] 장후 마감 직후 10분도 가격만 — 넥스트레이드 20:00 마지막 체결까지 받는다(거래 없음 · krOpen 은 시세 대상만 정한다)
+    const krExtHours = isExtendedHoursWindow("kr") || isExtCloseTail("kr");
 
     // 거래도 가격갱신(정규장+시간외)도 둘 다 할 게 없으면 스킵
     if (!usCanTrade && !krCanTrade && !usMarketHours && !krMarketHours && !usExtHours && !krExtHours) {
@@ -53322,7 +53339,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
