@@ -148,7 +148,10 @@ for (const [re, label] of [
   [/document\.fonts\.ready\.then/, "글꼴"],
 ]) ok(re.test(H), `부팅 준비에 ${label} 이(가) 들어 있다`);
 ok(/window\.__luxBootTracked/.test(H), "첫 회차만 센다(이후 폴링은 인트로와 무관하다)");
-ok(/LUXBOOT\.whenReady\(removeIntro\)/.test(H), "인트로가 ★준비 완료★ 를 기다린다");
+/* [V33.490] 사용자 요청으로 인트로는 ★영상처럼 고정 길이★ — 준비를 기다리지 않는다. 대신 캐시 스냅샷이 먼저 그려지고(아래 bootBundle),
+   TOP MOVERS 는 상태가 오는 즉시 그려진다(거래내역을 안 기다린다). 인트로가 다시 무한정 늘어나지 않게 길이를 묶는다. */
+ok(/setTimeout\(removeIntro, 4300\)/.test(H) && !/LUXBOOT\.whenReady\(removeIntro\)/.test(H), "인트로는 고정 길이(4.3초)로 재생된다 — 준비를 기다리지 않는다");
+ok(/_stateP\.then\(function\(st\)\{[\s\S]{0,400}renderFvDeck\(st\)/.test(H), "TOP MOVERS 는 상태가 오는 즉시 그린다(거래내역 대기 없음)");
 ok(!/setTimeout\(removeIntro, 4200\);\n/.test(H.replace(/else setTimeout\(removeIntro, 4200\);[^\n]*/, "")),
    "★고정 4.2초 제거★ 는 사라졌다(추적기가 없을 때의 후퇴 경로만 남는다)");
 

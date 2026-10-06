@@ -16,7 +16,7 @@
        ⑶ neural-observatory.js 에 defer — 이 파일의 NeuralObservatory 는 boot() 이후에만 쓴다.
      ※ .lux-booting 은 인트로가 사라질 때 벗긴다. 그래서 라이트 테마의 오버스크롤 영역이
        어두워지는 부작용이 없다(인트로 동안에만 적용된다). -->
-<style>html.lux-booting{background:#090c12}html.lux-booting body{background:#090c12}</style>
+<style>html.lux-booting{background:#000}html.lux-booting body{background:#000}</style>
 <script>
 /* ══ [V33.367] ★부팅 준비 추적기 — 인트로가 도는 동안 전부 올린다★ ═══════════════
    종전: 인트로를 ★고정 4.2초★ 뒤에 무조건 걷었다. 준비가 끝났는지는 보지 않았다.
@@ -157,8 +157,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.489">
-<script src="/neural-observatory.js?v=33.489" defer></script>
+<meta name="lux-build" content="V33.490">
+<script src="/neural-observatory.js?v=33.490" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -326,6 +326,58 @@ body{
   100%{opacity:1;filter:blur(0px);transform:scale(1);}
 }
 @keyframes spacexSubIn{0%{opacity:0;transform:scale(1.05);}100%{opacity:1;transform:scale(1);}}
+
+/* ══ [V33.490] 인트로 — '영상 재생' 처럼 고정 길이(≈4.3s) · 티타늄 톤 ══════════════════════
+   흐름: 먼지가 모여 글자 → 금속 결 위로 빛이 한 번 지나감 → 얇은 티타늄 띠에 빛줄기 → 별 로고 · 서명 → 페이드.
+   ★합성 전용 속성(opacity·transform)만★ 움직인다 — 레이아웃·페인트 없이 GPU 에서 돈다(렉 없음).
+   엔진 준비를 기다리지 않는다(준비는 뒤에서 계속 — 화면은 캐시 스냅샷으로 먼저 그려진다). */
+#lux-intro-overlay.lxi{background:#000;}
+#lux-intro-overlay.lxi::before{display:none;}
+.lxi-stage{position:relative;width:min(92vw,720px);height:260px;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+.lxi-dust{position:absolute;inset:0;pointer-events:none;}
+.lxi-dust i{position:absolute;left:50%;top:42%;width:2px;height:2px;border-radius:50%;background:#d8d3c8;
+  opacity:0;transform:translate3d(var(--x),var(--y),0);will-change:transform,opacity;
+  animation:lxiDust 1.6s cubic-bezier(.2,.7,.2,1) var(--d) forwards;}
+@keyframes lxiDust{0%{opacity:0;transform:translate3d(var(--x),var(--y),0) scale(1.6);}
+  25%{opacity:.85;}70%{opacity:.55;}100%{opacity:0;transform:translate3d(var(--tx),0,0) scale(.6);}}
+.lxi-word{position:relative;font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;font-weight:300;
+  font-size:clamp(30px,7.2vw,58px);letter-spacing:.18em;text-indent:.18em;line-height:1;}
+.lxi-word-txt,.lxi-word-glint{display:block;
+  background:linear-gradient(180deg,#f4efe6 0%,#b9b1a3 38%,#6f685d 62%,#cfc8bb 100%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;}
+.lxi-word-txt{opacity:0;filter:blur(10px);transform:scale(1.04);will-change:opacity,transform,filter;
+  animation:lxiWord 1.6s cubic-bezier(.16,1,.3,1) .5s forwards;}
+@keyframes lxiWord{0%{opacity:0;filter:blur(10px);transform:scale(1.04);}55%{opacity:1;filter:blur(0);}100%{opacity:1;filter:blur(0);transform:scale(1);}}
+/* 글자 위를 지나는 빛 — 같은 글자를 밝은 결로 한 겹 더, 좁은 창(mask 고정)을 translate 로 민다 */
+.lxi-word-glint{position:absolute;inset:0;background:linear-gradient(180deg,#fff,#efe7d6);
+  -webkit-background-clip:text;background-clip:text;opacity:0;
+  -webkit-mask-image:linear-gradient(100deg,transparent 40%,#000 50%,transparent 60%);mask-image:linear-gradient(100deg,transparent 40%,#000 50%,transparent 60%);
+  -webkit-mask-size:300% 100%;mask-size:300% 100%;-webkit-mask-position:100% 0;mask-position:100% 0;
+  animation:lxiGlint 1.1s ease-in-out 1.55s forwards;}
+@keyframes lxiGlint{0%{opacity:0;-webkit-mask-position:100% 0;mask-position:100% 0;}15%{opacity:1;}85%{opacity:1;}100%{opacity:0;-webkit-mask-position:0 0;mask-position:0 0;}}
+.lxi-edge{position:relative;margin-top:26px;width:min(78vw,520px);height:10px;border-radius:6px;overflow:hidden;
+  background:linear-gradient(180deg,#3a352e 0%,#8a8174 45%,#2a2620 55%,#5b544a 100%);
+  box-shadow:0 1px 0 rgba(255,255,255,.08) inset,0 6px 24px rgba(0,0,0,.6);
+  opacity:0;transform:scaleX(.2);will-change:opacity,transform;animation:lxiEdge 1s cubic-bezier(.16,1,.3,1) 1.8s forwards;}
+@keyframes lxiEdge{0%{opacity:0;transform:scaleX(.2);}100%{opacity:1;transform:scaleX(1);}}
+.lxi-edge-light{position:absolute;top:0;bottom:0;left:0;width:35%;
+  background:linear-gradient(90deg,transparent,rgba(255,248,232,.85),transparent);
+  transform:translateX(-120%);will-change:transform;animation:lxiSweep 1.3s cubic-bezier(.45,0,.2,1) 2.1s forwards;}
+@keyframes lxiSweep{to{transform:translateX(320%);}}
+.lxi-edge-btn{position:absolute;top:2px;bottom:2px;left:58%;width:16%;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.12);}
+.lxi-edge-btn2{left:78%;width:7%;}
+.lxi-brand{display:flex;align-items:center;gap:12px;margin-top:24px;opacity:0;transform:translateY(6px);
+  will-change:opacity,transform;animation:lxiBrand .9s cubic-bezier(.16,1,.3,1) 2.6s forwards;}
+@keyframes lxiBrand{to{opacity:1;transform:none;}}
+.lxi-star{width:26px;height:26px;fill:#efe8da;filter:drop-shadow(0 0 10px rgba(255,240,215,.35));}
+.lxi-star .lux-star-base{fill:#efe8da;}.lxi-star .lux-star-facet{fill:#9c9486;}
+.lxi-sub{font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;font-size:11px;font-weight:300;color:#8d877c;letter-spacing:.32em;text-transform:uppercase;}
+#lux-intro-overlay.lxi.lxi-out{opacity:0;transition:opacity .5s ease;}
+@media (prefers-reduced-motion:reduce){
+  .lxi-dust{display:none;}
+  .lxi-word-txt,.lxi-edge,.lxi-brand{animation-duration:.01ms!important;animation-delay:0s!important;}
+  .lxi-word-glint,.lxi-edge-light{display:none;}
+}
 
 /* ── 셸 레이아웃 ── */
 .shell{display:flex;height:100vh;height:100dvh;overflow:hidden;}
@@ -3652,15 +3704,16 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 <script>window.LUX_ICO='<svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg>';</script>
 
 <!-- ══ 인트로 (유지) ══ -->
-<div id="lux-intro-overlay">
-  <div class="intro-center-box">
-    <div class="intro-star-logo"><svg class="lux-star-svg" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path class="lux-star-base" d="M50 2 L53.44 41.68 L73.33 26.67 L58.32 46.56 L98 50 L58.32 53.44 L73.33 73.33 L53.44 58.32 L50 98 L46.56 58.32 L26.67 73.33 L41.68 53.44 L2 50 L41.68 46.56 L26.67 26.67 L46.56 41.68 Z"/><path class="lux-star-facet" d="M50 50 L50 2 L53.44 41.68 Z M50 50 L73.33 26.67 L58.32 46.56 Z M50 50 L98 50 L58.32 53.44 Z M50 50 L73.33 73.33 L53.44 58.32 Z M50 50 L50 98 L46.56 58.32 Z M50 50 L26.67 73.33 L41.68 53.44 Z M50 50 L2 50 L41.68 46.56 Z M50 50 L26.67 26.67 L46.56 41.68 Z"/></svg></div>
-    <div class="intro-text-box">
-      <div class="intro-title">LUX-ENGINE</div>
-      <div class="intro-subtitle">Powered by <span class="blackletter">Blauenacht</span></div>
-      <!-- [V33.367] 인트로가 도는 동안 무엇이 준비되는지 보인다 — 멈춘 것과 구분된다. -->
-      <div class="intro-boot" id="luxBootProgress">시스템 준비 중</div>
+<div id="lux-intro-overlay" class="lxi">
+  <div class="lxi-stage">
+    <div class="lxi-dust" id="lxiDust" aria-hidden="true"></div>
+    <div class="lxi-word" aria-label="LUX-ENGINE"><span class="lxi-word-txt">LUX-ENGINE</span><span class="lxi-word-glint" aria-hidden="true">LUX-ENGINE</span></div>
+    <div class="lxi-edge" aria-hidden="true"><i class="lxi-edge-light"></i><b class="lxi-edge-btn"></b><b class="lxi-edge-btn lxi-edge-btn2"></b></div>
+    <div class="lxi-brand">
+      <svg class="lux-star-svg lxi-star" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg>
+      <div class="lxi-sub">Powered by <span class="blackletter">Blauenacht</span></div>
     </div>
+    <div class="intro-boot" id="luxBootProgress" hidden></div>
   </div>
 </div>
 
@@ -11611,7 +11664,20 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       window.__bootPainted = 1;
       try { var _bc = localStorage.getItem('bootBundle'); if (_bc) { var _bb = JSON.parse(_bc); if (_bb && _bb.state) _apply([_bb.state, _bb.trades || [], []]); } } catch(e){}
     }
-    var _p0 = Promise.all([api('/api/state'), api('/api/trades?limit=50'),
+    /* [V33.490] ★TOP MOVERS 는 시세만 있으면 그린다★ — 종전엔 상태·최근거래·(첫 회차) 전체거래 3,000건이
+       ★다 와야★ _apply 가 돌아, 무거운 거래 내역을 기다리는 동안 TOP MOVERS·시총맵이 비어 있었다.
+       상태가 오는 즉시 대시보드 덱만 먼저 그린다(나머지는 종전대로 다 모인 뒤). */
+    var _stateP = api('/api/state');
+    _stateP.then(function(st){
+      try {
+        if (!st || !isPage('dashboard')) return;
+        var q0 = st.watchlist || [];
+        if (q0.length) { lastQuotes = {}; q0.forEach(function(q){ lastQuotes[q.symbol] = q; }); window.__lastQuotesArr = q0; }
+        renderFvDeck(st);
+        if (!window.__fvHeatLastTs) { window.__fvHeatLastTs = Date.now(); renderFvHeatmap(); }
+      } catch(e){}
+    })['catch'](function(){});
+    var _p0 = Promise.all([_stateP, api('/api/trades?limit=50'),
                  _needAll ? api('/api/trades?limit=3000') : Promise.resolve(window.__allTradesCache || [])])
       .then(function(r){
         _apply(r);
@@ -13036,8 +13102,23 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       setTimeout(function(){ if (overlay && overlay.parentNode) overlay.remove(); }, 1200);
     }
     window.__luxRemoveIntro = removeIntro;
-    if (window.LUXBOOT) LUXBOOT.whenReady(removeIntro);
-    else setTimeout(removeIntro, 4200);          // 추적기가 없으면 종전 동작 그대로
+    /* [V33.490] ★영상처럼 고정 길이★ — 준비 완료를 기다리지 않는다(사용자 요청). 화면은 캐시 스냅샷으로 이미 그려져 있고
+       데이터는 뒤에서 이어 온다. 먼지 입자는 여기서 한 번만 배치한다(이후 움직임은 전부 CSS 합성). */
+    try {
+      var dz = document.getElementById('lxiDust');
+      if (dz && !(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches)) {
+        var n = (window.innerWidth < 600) ? 44 : 72, h = '', _sd = 20261006;
+        var rnd = function(){ _sd = (_sd * 1103515245 + 12345) % 2147483648; return _sd / 2147483648; };   // 장식용 고정 씨앗(매번 같은 모양)
+        for (var k = 0; k < n; k++) {
+          var tx = (rnd() * 2 - 1) * Math.min(260, window.innerWidth * 0.36);
+          h += '<i style="--x:' + (tx * (1.6 + rnd())).toFixed(0) + 'px;--y:' + ((rnd() * 2 - 1) * 120).toFixed(0) +
+               'px;--tx:' + tx.toFixed(0) + 'px;--d:' + (rnd() * 0.6).toFixed(2) + 's"></i>';
+        }
+        dz.innerHTML = h;
+      }
+    } catch(e){}
+    setTimeout(function(){ var o = document.getElementById('lux-intro-overlay'); if (o) o.classList.add('lxi-out'); }, 3800);
+    setTimeout(removeIntro, 4300);
     // 사용자가 화면을 탭/클릭하면 즉시 스킵
     var ov = document.getElementById('lux-intro-overlay');
     if (ov) { ov.addEventListener('click', removeIntro); ov.addEventListener('touchstart', removeIntro); }
@@ -20332,11 +20413,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.489">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.489">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.489">
-<link rel="stylesheet" href="/model-evidence.css?v=33.489">
-<script src="/model-evidence.js?v=33.489"></script>
-<script src="/workspace-ui.js?v=33.489"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.490">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.490">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.490">
+<link rel="stylesheet" href="/model-evidence.css?v=33.490">
+<script src="/model-evidence.js?v=33.490"></script>
+<script src="/workspace-ui.js?v=33.490"></script>
 </body>
 </html>
