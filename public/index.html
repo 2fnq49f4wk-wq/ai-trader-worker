@@ -157,8 +157,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.490">
-<script src="/neural-observatory.js?v=33.490" defer></script>
+<meta name="lux-build" content="V33.491">
+<script src="/neural-observatory.js?v=33.491" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -333,50 +333,51 @@ body{
    엔진 준비를 기다리지 않는다(준비는 뒤에서 계속 — 화면은 캐시 스냅샷으로 먼저 그려진다). */
 #lux-intro-overlay.lxi{background:#000;}
 #lux-intro-overlay.lxi::before{display:none;}
-.lxi-stage{position:relative;width:min(92vw,720px);height:260px;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+.lxi-stage{position:relative;width:min(92vw,720px);height:420px;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+/* 먼지 — 레이어 4장(각각 원소 1개 + box-shadow 점 수백 개). 레이어 단위로만 transform/opacity → 입자 1,000개도 합성 4장 */
 .lxi-dust{position:absolute;inset:0;pointer-events:none;}
-.lxi-dust i{position:absolute;left:50%;top:42%;width:2px;height:2px;border-radius:50%;background:#d8d3c8;
-  opacity:0;transform:translate3d(var(--x),var(--y),0);will-change:transform,opacity;
-  animation:lxiDust 1.6s cubic-bezier(.2,.7,.2,1) var(--d) forwards;}
-@keyframes lxiDust{0%{opacity:0;transform:translate3d(var(--x),var(--y),0) scale(1.6);}
-  25%{opacity:.85;}70%{opacity:.55;}100%{opacity:0;transform:translate3d(var(--tx),0,0) scale(.6);}}
+.lxi-dust i{position:absolute;left:50%;top:38%;width:2px;height:2px;border-radius:50%;opacity:0;will-change:transform,opacity;}
+.lxi-d1{animation:lxiD1 2.2s cubic-bezier(.2,.7,.2,1) 0s forwards;}
+.lxi-d2{animation:lxiD2 2.4s cubic-bezier(.2,.7,.2,1) .1s forwards;}
+.lxi-d3{animation:lxiD3 2.0s cubic-bezier(.2,.7,.2,1) .2s forwards;}
+.lxi-d4{animation:lxiD4 2.6s cubic-bezier(.2,.7,.2,1) .05s forwards;}
+@keyframes lxiD1{0%{opacity:0;transform:scale(2.4) rotate(-14deg);}20%{opacity:.9;}75%{opacity:.6;}100%{opacity:0;transform:scale(.18) rotate(8deg);}}
+@keyframes lxiD2{0%{opacity:0;transform:scale(2.0) rotate(18deg);}25%{opacity:.8;}80%{opacity:.5;}100%{opacity:0;transform:scale(.22) rotate(-6deg);}}
+@keyframes lxiD3{0%{opacity:0;transform:scale(1.7) rotate(-30deg);}20%{opacity:1;}70%{opacity:.7;}100%{opacity:0;transform:scale(.12) rotate(12deg);}}
+@keyframes lxiD4{0%{opacity:0;transform:translate3d(-30px,10px,0) scale(2.8);}30%{opacity:.55;}100%{opacity:0;transform:translate3d(0,0,0) scale(.3);}}
+.lxi-starwrap{position:relative;width:118px;height:118px;margin-bottom:26px;opacity:0;transform:scale(.7);filter:blur(10px);
+  will-change:opacity,transform,filter;animation:lxiStar 1.5s cubic-bezier(.16,1,.3,1) .9s forwards;}
+@keyframes lxiStar{0%{opacity:0;transform:scale(.7) rotate(-22deg);filter:blur(10px);}60%{opacity:1;filter:blur(0);}100%{opacity:1;transform:scale(1) rotate(0);filter:blur(0);}}
+.lxi-bigstar{position:relative;width:100%;height:100%;display:block;filter:drop-shadow(0 0 18px rgba(255,236,205,.28));}
+.lxi-shine{transform:translateX(0);animation:lxiShine 1.2s ease-in-out 2.2s forwards;}
+@keyframes lxiShine{to{transform:translateX(160px);}}
+.lxi-halo{position:absolute;left:50%;top:50%;width:260px;height:260px;margin:-130px 0 0 -130px;border-radius:50%;
+  background:radial-gradient(circle,rgba(255,238,210,.16) 0%,rgba(255,238,210,.05) 35%,transparent 65%);
+  opacity:0;transform:scale(.6);animation:lxiHalo 2s ease-out 1.2s forwards;}
+@keyframes lxiHalo{0%{opacity:0;transform:scale(.6);}50%{opacity:1;}100%{opacity:.6;transform:scale(1);}}
 .lxi-word{position:relative;font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;font-weight:300;
-  font-size:clamp(30px,7.2vw,58px);letter-spacing:.18em;text-indent:.18em;line-height:1;}
+  font-size:clamp(28px,6.6vw,52px);letter-spacing:.18em;text-indent:.18em;line-height:1;}
 .lxi-word-txt,.lxi-word-glint{display:block;
   background:linear-gradient(180deg,#f4efe6 0%,#b9b1a3 38%,#6f685d 62%,#cfc8bb 100%);
   -webkit-background-clip:text;background-clip:text;color:transparent;}
 .lxi-word-txt{opacity:0;filter:blur(10px);transform:scale(1.04);will-change:opacity,transform,filter;
-  animation:lxiWord 1.6s cubic-bezier(.16,1,.3,1) .5s forwards;}
+  animation:lxiWord 1.5s cubic-bezier(.16,1,.3,1) 1.5s forwards;}
 @keyframes lxiWord{0%{opacity:0;filter:blur(10px);transform:scale(1.04);}55%{opacity:1;filter:blur(0);}100%{opacity:1;filter:blur(0);transform:scale(1);}}
-/* 글자 위를 지나는 빛 — 같은 글자를 밝은 결로 한 겹 더, 좁은 창(mask 고정)을 translate 로 민다 */
 .lxi-word-glint{position:absolute;inset:0;background:linear-gradient(180deg,#fff,#efe7d6);
   -webkit-background-clip:text;background-clip:text;opacity:0;
   -webkit-mask-image:linear-gradient(100deg,transparent 40%,#000 50%,transparent 60%);mask-image:linear-gradient(100deg,transparent 40%,#000 50%,transparent 60%);
   -webkit-mask-size:300% 100%;mask-size:300% 100%;-webkit-mask-position:100% 0;mask-position:100% 0;
-  animation:lxiGlint 1.1s ease-in-out 1.55s forwards;}
+  animation:lxiGlint 1.1s ease-in-out 2.5s forwards;}
 @keyframes lxiGlint{0%{opacity:0;-webkit-mask-position:100% 0;mask-position:100% 0;}15%{opacity:1;}85%{opacity:1;}100%{opacity:0;-webkit-mask-position:0 0;mask-position:0 0;}}
-.lxi-edge{position:relative;margin-top:26px;width:min(78vw,520px);height:10px;border-radius:6px;overflow:hidden;
-  background:linear-gradient(180deg,#3a352e 0%,#8a8174 45%,#2a2620 55%,#5b544a 100%);
-  box-shadow:0 1px 0 rgba(255,255,255,.08) inset,0 6px 24px rgba(0,0,0,.6);
-  opacity:0;transform:scaleX(.2);will-change:opacity,transform;animation:lxiEdge 1s cubic-bezier(.16,1,.3,1) 1.8s forwards;}
-@keyframes lxiEdge{0%{opacity:0;transform:scaleX(.2);}100%{opacity:1;transform:scaleX(1);}}
-.lxi-edge-light{position:absolute;top:0;bottom:0;left:0;width:35%;
-  background:linear-gradient(90deg,transparent,rgba(255,248,232,.85),transparent);
-  transform:translateX(-120%);will-change:transform;animation:lxiSweep 1.3s cubic-bezier(.45,0,.2,1) 2.1s forwards;}
-@keyframes lxiSweep{to{transform:translateX(320%);}}
-.lxi-edge-btn{position:absolute;top:2px;bottom:2px;left:58%;width:16%;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.12);}
-.lxi-edge-btn2{left:78%;width:7%;}
-.lxi-brand{display:flex;align-items:center;gap:12px;margin-top:24px;opacity:0;transform:translateY(6px);
-  will-change:opacity,transform;animation:lxiBrand .9s cubic-bezier(.16,1,.3,1) 2.6s forwards;}
+.lxi-sub{margin-top:16px;font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;font-size:11px;font-weight:300;color:#8d877c;
+  letter-spacing:.32em;text-indent:.32em;text-transform:uppercase;opacity:0;transform:translateY(6px);
+  animation:lxiBrand .9s cubic-bezier(.16,1,.3,1) 2.4s forwards;}
 @keyframes lxiBrand{to{opacity:1;transform:none;}}
-.lxi-star{width:26px;height:26px;fill:#efe8da;filter:drop-shadow(0 0 10px rgba(255,240,215,.35));}
-.lxi-star .lux-star-base{fill:#efe8da;}.lxi-star .lux-star-facet{fill:#9c9486;}
-.lxi-sub{font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;font-size:11px;font-weight:300;color:#8d877c;letter-spacing:.32em;text-transform:uppercase;}
 #lux-intro-overlay.lxi.lxi-out{opacity:0;transition:opacity .5s ease;}
 @media (prefers-reduced-motion:reduce){
   .lxi-dust{display:none;}
-  .lxi-word-txt,.lxi-edge,.lxi-brand{animation-duration:.01ms!important;animation-delay:0s!important;}
-  .lxi-word-glint,.lxi-edge-light{display:none;}
+  .lxi-word-txt,.lxi-starwrap,.lxi-sub,.lxi-halo{animation-duration:.01ms!important;animation-delay:0s!important;}
+  .lxi-word-glint,.lxi-shine{display:none;}
 }
 
 /* ── 셸 레이아웃 ── */
@@ -3706,13 +3707,23 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 <!-- ══ 인트로 (유지) ══ -->
 <div id="lux-intro-overlay" class="lxi">
   <div class="lxi-stage">
-    <div class="lxi-dust" id="lxiDust" aria-hidden="true"></div>
-    <div class="lxi-word" aria-label="LUX-ENGINE"><span class="lxi-word-txt">LUX-ENGINE</span><span class="lxi-word-glint" aria-hidden="true">LUX-ENGINE</span></div>
-    <div class="lxi-edge" aria-hidden="true"><i class="lxi-edge-light"></i><b class="lxi-edge-btn"></b><b class="lxi-edge-btn lxi-edge-btn2"></b></div>
-    <div class="lxi-brand">
-      <svg class="lux-star-svg lxi-star" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg>
-      <div class="lxi-sub">Powered by <span class="blackletter">Blauenacht</span></div>
+    <div class="lxi-dust" id="lxiDust" aria-hidden="true"><i class="lxi-d1"></i><i class="lxi-d2"></i><i class="lxi-d3"></i><i class="lxi-d4"></i></div>
+    <div class="lxi-starwrap" aria-hidden="true">
+      <div class="lxi-halo"></div>
+      <svg class="lxi-bigstar" viewBox="0 0 100 100">
+        <defs>
+          <linearGradient id="lxiTi" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f6f1e7"/><stop offset=".45" stop-color="#b8b0a2"/><stop offset=".6" stop-color="#6e675c"/><stop offset="1" stop-color="#d9d2c4"/></linearGradient>
+          <linearGradient id="lxiTiF" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8f877a"/><stop offset="1" stop-color="#3f3a33"/></linearGradient>
+          <linearGradient id="lxiSh" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff8ea" stop-opacity=".95"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+          <clipPath id="lxiClip"><path d="M50 2 L53.44 41.68 L73.33 26.67 L58.32 46.56 L98 50 L58.32 53.44 L73.33 73.33 L53.44 58.32 L50 98 L46.56 58.32 L26.67 73.33 L41.68 53.44 L2 50 L41.68 46.56 L26.67 26.67 L46.56 41.68 Z"/></clipPath>
+        </defs>
+        <path d="M50 2 L53.44 41.68 L73.33 26.67 L58.32 46.56 L98 50 L58.32 53.44 L73.33 73.33 L53.44 58.32 L50 98 L46.56 58.32 L26.67 73.33 L41.68 53.44 L2 50 L41.68 46.56 L26.67 26.67 L46.56 41.68 Z" fill="url(#lxiTi)"/>
+        <path d="M50 50 L50 2 L53.44 41.68 Z M50 50 L73.33 26.67 L58.32 46.56 Z M50 50 L98 50 L58.32 53.44 Z M50 50 L73.33 73.33 L53.44 58.32 Z M50 50 L50 98 L46.56 58.32 Z M50 50 L26.67 73.33 L41.68 53.44 Z M50 50 L2 50 L41.68 46.56 Z M50 50 L26.67 26.67 L46.56 41.68 Z" fill="url(#lxiTiF)" opacity=".85"/>
+        <g clip-path="url(#lxiClip)"><rect class="lxi-shine" x="-40" y="-10" width="30" height="120" fill="url(#lxiSh)"/></g>
+      </svg>
     </div>
+    <div class="lxi-word" aria-label="LUX-ENGINE"><span class="lxi-word-txt">LUX-ENGINE</span><span class="lxi-word-glint" aria-hidden="true">LUX-ENGINE</span></div>
+    <div class="lxi-sub">Powered by <span class="blackletter">Blauenacht</span></div>
     <div class="intro-boot" id="luxBootProgress" hidden></div>
   </div>
 </div>
@@ -13107,14 +13118,18 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     try {
       var dz = document.getElementById('lxiDust');
       if (dz && !(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches)) {
-        var n = (window.innerWidth < 600) ? 44 : 72, h = '', _sd = 20261006;
-        var rnd = function(){ _sd = (_sd * 1103515245 + 12345) % 2147483648; return _sd / 2147483648; };   // 장식용 고정 씨앗(매번 같은 모양)
-        for (var k = 0; k < n; k++) {
-          var tx = (rnd() * 2 - 1) * Math.min(260, window.innerWidth * 0.36);
-          h += '<i style="--x:' + (tx * (1.6 + rnd())).toFixed(0) + 'px;--y:' + ((rnd() * 2 - 1) * 120).toFixed(0) +
-               'px;--tx:' + tx.toFixed(0) + 'px;--d:' + (rnd() * 0.6).toFixed(2) + 's"></i>';
+        var _sd = 20261006, rnd = function(){ _sd = (_sd * 1103515245 + 12345) % 2147483648; return _sd / 2147483648; };   // 장식용 고정 씨앗
+        var W = Math.min(340, window.innerWidth * 0.46), per = (window.innerWidth < 600) ? 200 : 280;
+        var layers = dz.querySelectorAll('i'), tones = ['#e9e3d7', '#c9c1b2', '#a39b8d', '#f7f2e8'];
+        for (var L = 0; L < layers.length; L++) {
+          var sh = [];
+          for (var k = 0; k < per; k++) {
+            var r = Math.pow(rnd(), 0.6) * W, a = rnd() * 6.2832;
+            var sz = rnd() < 0.12 ? 1 : 0;   // 일부는 조금 큰 알갱이
+            sh.push((Math.cos(a) * r).toFixed(1) + 'px ' + (Math.sin(a) * r * 0.62).toFixed(1) + 'px 0 ' + sz + 'px ' + tones[(k + L) % 4]);
+          }
+          layers[L].style.boxShadow = sh.join(',');
         }
-        dz.innerHTML = h;
       }
     } catch(e){}
     setTimeout(function(){ var o = document.getElementById('lux-intro-overlay'); if (o) o.classList.add('lxi-out'); }, 3800);
@@ -20413,11 +20428,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.490">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.490">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.490">
-<link rel="stylesheet" href="/model-evidence.css?v=33.490">
-<script src="/model-evidence.js?v=33.490"></script>
-<script src="/workspace-ui.js?v=33.490"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.491">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.491">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.491">
+<link rel="stylesheet" href="/model-evidence.css?v=33.491">
+<script src="/model-evidence.js?v=33.491"></script>
+<script src="/workspace-ui.js?v=33.491"></script>
 </body>
 </html>
