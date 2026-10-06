@@ -163,7 +163,7 @@ console.log("\n⑤ 배선 — 매 틱 · 야간 단계 · 수동 실행 · 학�
     "학습기: OMNI_NEWS 실험 스위치 · 업로드 거부", "★학습기 뉴스 실험이 없거나 업로드한다★");
   /* [V33.479] 실험은 기본 모델 실력 관문 ★앞★ 에서 — 뒤에 있으면 기본 모델이 0.5 근처일 때 실험이 한 번도 안 돈다(2026-10-04). */
   const RUN = PY.slice(PY.indexOf("def run(BASE"));
-  const iN = RUN.indexOf("    if NEWS:\n"), iF = RUN.indexOf("    if FLOW:\n"), iG = RUN.indexOf('    if len(trees) < 2 or not _edge["ok"]:');
+  const iN = RUN.indexOf("    if NEWS:\n"), iF = RUN.indexOf("    if FLOW:\n"), iG = RUN.indexOf('    _shadow_only = not _edge["ok"]');
   chk(iN > 0 && iF > 0 && iG > 0 && iN < iG && iF < iG, "학습기: 뉴스·수급 실험은 실력 관문 앞에서 잰다(기본 모델이 무실력이어도 돈다)", "★실험이 실력 관문 뒤에 있다 — 기본 모델이 0.5 면 실험이 안 돈다★");
   const MD = readFileSync(new URL("../.github/workflows/modal-deploy.yml", import.meta.url), "utf8"), MT = readFileSync(new URL("../trainer/modal/modal_train.py", import.meta.url), "utf8");
   chk(/omni_news:/.test(MD) && /--news \$\{\{ inputs\.omni_news && 1 \|\| 0 \}\}/.test(MD) && /os\.environ\["OMNI_NEWS"\] = "1"/.test(MT),

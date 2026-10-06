@@ -8,7 +8,7 @@ const ST = readFileSync(new URL("../trainer/modal/omni_selftest.py", import.meta
 let fails = 0;
 const chk = (c, ok, bad) => { if (c) console.log("  ok   " + ok); else { console.log("  FAIL " + bad); fails++; } };
 const RUN = PY.slice(PY.indexOf("def run(BASE"));
-const iS = RUN.indexOf("    if SPLIT:\n"), iG = RUN.indexOf('    if len(trees) < 2 or not _edge["ok"]:');
+const iS = RUN.indexOf("    if SPLIT:\n"), iG = RUN.indexOf('    _shadow_only = not _edge["ok"]');
 chk(/SPLIT = os\.environ\.get\("OMNI_SPLIT"\) == "1"/.test(PY) && /def split_compare\(A, rep_pool/.test(PY), "스위치 · split_compare", "★시장 분리 실험이 없다★");
 chk(iS > 0 && iG > 0 && iS < iG, "실력 관문 앞에서 잰다(섞은 모델이 무실력이어도 돈다)", "★관문 뒤에 있다★");
 chk(/OMNI_SPLIT 실험 회차 — 업로드 안 함/.test(RUN.slice(iS, iG)) && /rep\["ok"\] = False/.test(RUN.slice(iS, iG)), "업로드 거부", "★실험 회차가 업로드할 수 있다★");

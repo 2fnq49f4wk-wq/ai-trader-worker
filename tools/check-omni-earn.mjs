@@ -63,7 +63,7 @@ console.log("⑤ 학습기");
   const MD = readFileSync(new URL("../.github/workflows/modal-deploy.yml", import.meta.url), "utf8");
   const ST = readFileSync(new URL("../trainer/modal/omni_selftest.py", import.meta.url), "utf8");
   const RUN = PY.slice(PY.indexOf("def run(BASE"));
-  const iE = RUN.indexOf("    if EARN:\n"), iG = RUN.indexOf('    if len(trees) < 2 or not _edge["ok"]:');
+  const iE = RUN.indexOf("    if EARN:\n"), iG = RUN.indexOf('    _shadow_only = not _edge["ok"]');
   chk(/EARN = os\.environ\.get\("OMNI_EARN"\) == "1"/.test(PY) && /if ev\[0\] < o:/.test(PY) && /def get_earn\(/.test(PY), "스위치 · 발표 '이전' 만(당일 미혼입) · 워커에서 받기", "★실적 칸이 없거나 당일 발표를 본다★");
   chk(iE > 0 && iE < iG && /OMNI_EARN 실험 회차 — 업로드 안 함/.test(RUN.slice(iE, iG)), "실력 관문 앞 · 업로드 거부", "★실적 실험 배선이 틀렸다★");
   chk(/earn: int = 0/.test(MT) && /os\.environ\["OMNI_EARN"\] = "1"/.test(MT) && /omni_earn:/.test(MD) && /--earn \$\{\{ inputs\.omni_earn && 1 \|\| 0 \}\}/.test(MD) && /def check_earn\(\)/.test(ST) && /\n    check_earn\(\)\n/.test(ST),

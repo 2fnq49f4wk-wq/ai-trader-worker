@@ -3255,12 +3255,30 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
         rep["ok"] = False
         rep["why"] = "OMNI_KSEC 실험 회차 — 업로드 안 함"
         return rep
-    if len(trees) < 2 or not _edge["ok"]:
+    if len(trees) < 2:
         log("   ⏭ OMNI 나무 %d그루 · 라운드 %s(중앙값 %.1f) · %s — ★배운 것이 없어 올리지 않는다★"
             % (len(trees), _its, _med, _edge.get("why")))
         rep["ok"] = False
         rep["why"] = _edge.get("why") or "나무 %d그루" % len(trees)
         return rep
+    # ══ [V33.488] ★실력 관문 미달이어도 '섀도우 전용' 으로는 올린다 — 섀도우 전진검증이 죽어 있었다★ ══
+    #   워커 섀도우 채점은 ★올라온 모델의 패널이 5일 안★ 일 때만 돈다. 관문이 엄해진 뒤 모든 회차가 미달로 끝나
+    #   아무것도 안 올라갔고 → 패널이 낡아 → "[OMNI-SHADOW] 패널이 N일 낡았다 — 채점하지 않는다". 즉 섀도우는
+    #   ★실시간 증거를 한 건도 못 쌓는★ 상태였다(승격으로 가는 유일한 길이 막혀 있었다).
+    #   → 미달이면 모든 머리를 발언 0(ok=False · tau=None)으로 고정해 올린다. 워커는 ok===true 이고 tau 가 숫자인 머리만
+    #     위원회에 넣으므로(omniHeadsOk) ★라이브 매매에는 아무 영향이 없다★. 패널은 신선해지고 전진검증이 다시 쌓인다.
+    _shadow_only = not _edge["ok"]
+    if _shadow_only:
+        for _hz in list((rep.get("heads") or {}).keys()):
+            h = rep["heads"][_hz] or {}
+            h["ok"] = False
+            h["tau"] = None
+            h["why"] = "실력 관문 미달(섀도우 전용 업로드) — " + str(h.get("why") or "")
+            rep["heads"][_hz] = h
+        log("   ⏭ OMNI 실력 관문 미달 — %s · ★섀도우 전용으로 올린다(모든 머리 발언 0 · 패널 신선화 · 전진검증 계속)★" % _edge.get("why"))
+        rep["ok"] = False
+        rep["why"] = "섀도우 전용 — " + str(_edge.get("why") or "")
+        rep["shadowOnly"] = True
     if pmax > 1e-9:
         log("   ⚠️ OMNI 내보낸 나무가 LightGBM 과 다른 답을 낸다(%.3g) — 업로드하지 않는다" % pmax)
         return rep
@@ -3279,6 +3297,8 @@ def run(BASE, KEY, HDR, upload=True, log=print, A=None, limit=None):
                "iters": rep.get("iters"), "valGain": rep.get("valGain"),
                "hzFitShare": rep.get("hzFitShare"), "hzValShare": rep.get("hzValShare"),
                "edge": rep.get("edge"),
+               # [V33.488] 실력 관문 미달 업로드 — 머리는 전부 발언 0, 섀도우 채점(전진검증)용
+               "shadowOnly": bool(rep.get("shadowOnly")),
                # [V33.429] 나무 구성 · 전진 교차검증 표(구간별 AUC) — 화면이 "왜 이 구성인가" 를 그대로 보여 준다
                "gbdt": rep.get("gbdt"), "cv": rep.get("cv"),
                # [V33.428] 신경망 — 가중치 · α · 구조 관측용 세기 · 나무/신경망/섞음 성적 비교

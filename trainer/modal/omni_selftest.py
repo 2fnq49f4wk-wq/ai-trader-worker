@@ -149,6 +149,33 @@ def _panels(data):
                              {s: d["m"] for s, d in data.items()}, max_days=PANEL_DAYS)
 
 
+_LAST_BODY = None
+
+
+def check_shadow_upload(data):
+    """[V33.488] 실력 관문 미달이어도 ★섀도우 전용으로 올라가는가★ — 그리고 그때 모든 머리가 발언 0 인가
+    (워커 omniHeadsOk 는 ok===true 이고 tau 가 숫자인 머리만 위원회에 넣는다)."""
+    oe = omni.holdout_edge
+    omni.holdout_edge = lambda heads: {"auc": 0.5, "n": 99999, "se": 0.001, "need": 0.005, "ok": False, "why": "자가검사: 관문 미달 강제"}
+    try:
+        fails = fake_roundtrip(data)
+    finally:
+        omni.holdout_edge = oe
+    b = _LAST_BODY or {}
+    if not b:
+        return fails + ["섀도우 전용: 관문 미달이면 업로드가 일어나지 않는다(섀도우 채점이 다시 굶는다)"]
+    if not b.get("shadowOnly"):
+        fails.append("섀도우 전용 표시(shadowOnly)가 없다")
+    bad = [hz for hz, h in (b.get("heads") or {}).items() if (h or {}).get("ok") or isinstance((h or {}).get("tau"), (int, float))]
+    if bad:
+        fails.append("섀도우 전용인데 발언할 수 있는 머리가 있다: %s" % bad)
+    if not b.get("panel"):
+        fails.append("섀도우 전용 업로드에 패널이 없다(채점이 못 돈다)")
+    if not fails:
+        print("섀도우 전용 업로드: 관문 미달이어도 올라간다 · 머리 전부 발언 0 · 패널 동봉")
+    return fails
+
+
 def fake_roundtrip(data):
     """requests 를 가짜 워커로 바꿔 run() 을 끝까지 돌린다. 워커 응답 모양(index.s[sym].m/5m/1d.n ·
     bars{sym:{t,o,h,l,c,v}})은 src/index.js 의 /api/omni-bars-index · /api/omni-bars 그대로다."""
@@ -195,6 +222,8 @@ def fake_roundtrip(data):
     if not sent.get("body"):
         return ["가짜 워커 왕복: 업로드가 일어나지 않았다"]
     body = json.loads(sent["body"])          # allow_nan=False 로 만든 본문 — JS 가 읽을 수 있어야 한다
+    global _LAST_BODY
+    _LAST_BODY = body
     if "NaN" in sent["body"]:
         fails.append("업로드 본문에 NaN 리터럴")
     if not sent["url"].endswith("/api/omni-import"):
@@ -627,6 +656,7 @@ def main():
             print("신경망 고정물 저장:", nfx, "행", len(_rows))
     # ③ 워커 왕복 흉내 — 색인 → 묶음 조회 → 흘려 만들기 → 학습 → 업로드 본문(가짜 서버)
     fails += fake_roundtrip(data)
+    fails += check_shadow_upload(data)
     if fails:
         print("❌ " + " · ".join(fails))
         sys.exit(1)
