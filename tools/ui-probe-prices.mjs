@@ -36,10 +36,10 @@ for (const visit of ["first", "repeat"]) {
   if (visit === "repeat") {
     try {
       await p.waitForTimeout(600);
-      const row = await p.$("#fvGainers tr");
-      const sym = row ? await row.evaluate((r) => r.textContent.trim().split(/\s+/)[0]) : null;
+      const row = await p.$("#fvGainers [data-sym]");   // 상세는 더블탭/더블클릭으로 열린다(bindDblTapDetail)
+      const sym = row ? await row.getAttribute("data-sym") : null;
       const t1 = Date.now();
-      if (row) await row.click();
+      if (row) await row.dblclick();
       const dh = {};
       while (Date.now() - t1 < 15000 && Object.keys(dh).length < 2) {
         const st = await p.evaluate(() => ({ price: (document.getElementById("detailPrice") || {}).textContent || "", ohlc: !!(document.getElementById("detailOhlc") || {}).innerHTML }));
