@@ -184,8 +184,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.502">
-<script src="/neural-observatory.js?v=33.502" defer></script>
+<meta name="lux-build" content="V33.503">
+<script src="/neural-observatory.js?v=33.503" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -378,12 +378,16 @@ html[data-theme="light"] #page-nnviz .nnv-tab.active .lux-ico{--lux-star-b:#0b4f
 .lxi-neb{position:absolute;left:50%;top:41%;width:1000px;height:600px;margin:-300px 0 0 -500px;pointer-events:none;opacity:0;will-change:opacity,transform;
   background:radial-gradient(ellipse 42% 46% at 42% 50%,rgba(170,196,232,.13) 0%,rgba(120,150,210,.04) 55%,transparent 100%),
              radial-gradient(ellipse 36% 40% at 61% 54%,rgba(196,181,232,.10) 0%,rgba(150,120,210,.03) 55%,transparent 100%);
-  animation:lxiNeb 4.3s cubic-bezier(.3,.6,.2,1) 0s forwards;}
+  animation:lxiNeb 3.5s cubic-bezier(.3,.6,.2,1) 0s forwards;}
 @keyframes lxiNeb{0%{opacity:0;transform:scale(.92);}40%{opacity:1;}100%{opacity:.9;transform:scale(1.05);}}
+/* [V33.503] 먼 별은 확대되는 성운 층 밖, 자기 층에서 페이드만 — 큰 화면·DPR2 에서 거대 텍스처를 다시 그리지 않게 */
+.lxi-sky{position:absolute;inset:0;pointer-events:none;opacity:0;animation:lxiSky 1.8s ease-out .1s forwards;}
+@keyframes lxiSky{to{opacity:1;}}
 .lxi-field{position:absolute;left:50%;top:50%;width:1px;height:1px;}
 .lxi-field i{position:absolute;left:0;top:0;width:1px;height:1px;border-radius:50%;}
-.lxi-stage{position:relative;width:min(92vw,720px);height:440px;display:flex;flex-direction:column;align-items:center;justify-content:center;will-change:transform;}
-.lxi-starwrap{position:relative;width:clamp(104px,10vw,136px);height:clamp(104px,10vw,136px);margin-bottom:34px;}
+.lxi-stage{position:relative;width:min(92vw,960px);height:clamp(440px,52vh,620px);display:flex;flex-direction:column;align-items:center;justify-content:center;will-change:transform;}
+/* [V33.503] 큰 화면(데스크톱·아이패드 가로·QHD)에서 표장이 화면에 비해 너무 작았다 — 짧은 변(vh)에 비례해 상한까지 키운다 */
+.lxi-starwrap{position:relative;width:clamp(104px,min(13vw,13vh),176px);height:clamp(104px,min(13vw,13vh),176px);margin-bottom:clamp(30px,3.6vh,44px);}
 .lxi-c{position:absolute;left:50%;top:50%;pointer-events:none;}
 /* 모이는 별빛 — 레이어 3장, 회전은 작게(소용돌이가 아니라 '모임') */
 .lxi-dust i{position:absolute;left:50%;top:50%;width:2px;height:2px;margin:-1px 0 0 -1px;border-radius:50%;opacity:0;will-change:transform,opacity;}
@@ -416,7 +420,7 @@ html[data-theme="light"] #page-nnviz .nnv-tab.active .lux-ico{--lux-star-b:#0b4f
 .lxi-bigstar{position:relative;width:100%;height:100%;display:block;filter:drop-shadow(0 0 16px rgba(214,226,245,.32));}
 /* 글자 — 한 자씩 떠오름(합성만) */
 .lxi-word{position:relative;font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;font-weight:300;
-  font-size:clamp(26px,6vw,46px);letter-spacing:.24em;text-indent:.24em;line-height:1.1;white-space:nowrap;}
+  font-size:clamp(26px,min(5vw,5.6vh),64px);letter-spacing:.24em;text-indent:.24em;line-height:1.1;white-space:nowrap;}
 .lxi-word-txt{display:block;}
 .lxi-word i{display:inline-block;
   background:linear-gradient(180deg,#ffffff 0%,#e6ebf5 38%,#a7b0c2 70%,#e6ebf5 100%);
@@ -424,20 +428,23 @@ html[data-theme="light"] #page-nnviz .nnv-tab.active .lux-ico{--lux-star-b:#0b4f
 .lxi-word-txt i{opacity:0;transform:translate3d(0,12px,0);will-change:opacity,transform;
   animation:lxiChar .9s cubic-bezier(.22,1,.36,1) forwards;animation-delay:calc(1.6s + var(--i) * .045s);}
 @keyframes lxiChar{to{opacity:1;transform:none;}}
-.lxi-line{width:min(56vw,300px);height:1px;margin-top:18px;opacity:0;transform:scaleX(0);will-change:opacity,transform;
+.lxi-line{width:min(56vw,max(300px,28vh));height:1px;margin-top:18px;opacity:0;transform:scaleX(0);will-change:opacity,transform;
   background:linear-gradient(90deg,transparent,rgba(170,196,232,.55) 30%,rgba(240,245,255,.9) 50%,rgba(196,181,232,.55) 70%,transparent);
   animation:lxiLine 1s cubic-bezier(.22,1,.36,1) 2.15s forwards;}
 @keyframes lxiLine{to{opacity:1;transform:scaleX(1);}}
-.lxi-sub{margin-top:14px;font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;font-size:11px;font-weight:300;color:#8b93a6;
+.lxi-sub{margin-top:14px;font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;font-size:clamp(11px,1.15vh,14px);font-weight:300;color:#8b93a6;
   letter-spacing:.32em;text-indent:.32em;text-transform:uppercase;opacity:0;transform:translateY(5px);
   animation:lxiBrand .9s cubic-bezier(.22,1,.36,1) 2.4s forwards;}
 .lxi-sub .blackletter{color:#d4dcec;}
 @keyframes lxiBrand{to{opacity:1;transform:none;}}
 /* 퇴장 — 살짝 다가오며 페이드 */
+#lux-intro-overlay.lxi.lxi-flat .lxi-dust,#lux-intro-overlay.lxi.lxi-flat .lxi-ring,#lux-intro-overlay.lxi.lxi-flat .lxi-flash,#lux-intro-overlay.lxi.lxi-flat .lxi-flare{display:none;}
+#lux-intro-overlay.lxi.lxi-flat *{will-change:auto;}
 #lux-intro-overlay.lxi.lxi-out{opacity:0;transition:opacity .5s ease;}
+html.lux-introfx *{-webkit-backdrop-filter:none!important;backdrop-filter:none!important;}
 #lux-intro-overlay.lxi.lxi-out .lxi-stage{transform:scale(1.035);transition:transform .5s cubic-bezier(.4,0,.6,1);}
 @media (prefers-reduced-motion:reduce){
-  .lxi-dust,.lxi-field,.lxi-flash,.lxi-ring,.lxi-flare{display:none;}
+  .lxi-dust,.lxi-sky,.lxi-flash,.lxi-ring,.lxi-flare{display:none;}
   .lxi-word-txt i,.lxi-starbody,.lxi-sub,.lxi-halo,.lxi-neb,.lxi-line{animation-duration:.01ms!important;animation-delay:0s!important;}
   #lux-intro-overlay.lxi.lxi-out .lxi-stage{transform:none;}
 }
@@ -3777,7 +3784,8 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 
 <!-- ══ 인트로 (유지) ══ -->
 <div id="lux-intro-overlay" class="lxi">
-  <div class="lxi-neb" aria-hidden="true"><div class="lxi-field" id="lxiField"><i></i></div></div>
+  <div class="lxi-neb" aria-hidden="true"></div>
+  <div class="lxi-sky" aria-hidden="true"><div class="lxi-field" id="lxiField"><i></i></div></div>
   <div class="lxi-stage">
     <div class="lxi-starwrap" aria-hidden="true">
       <div class="lxi-c lxi-halo"></div>
@@ -3802,6 +3810,45 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     <div class="intro-boot" id="luxBootProgress" hidden></div>
   </div>
 </div>
+<script>
+/* [V33.503] ★인트로 입자는 첫 프레임 전에 칠한다★ — 사용자: "컴퓨터·아이패드에서 정상 작동 안 하고 이상하게 보인다".
+   실측(크로뮴 실시간 · 분할 빌드): 입자 그림자를 메인 스크립트(수백 KB) 끝에서 칠해 ★애니메이션 시작 250~600ms 뒤★ 에야 별빛이
+   나타났다(모이는 도중 '툭' 생김). 그리고 큰 화면일수록 입자 층이 커져(반경 ~950px · 먼 별은 확대되는 성운 층 안) DPR2 에서
+   거대한 합성 텍스처가 됐다 — 데스크톱·아이패드만 50ms 넘는 프레임이 10~13개(폰은 p95 16.8ms).
+   → 여기(오버레이 바로 뒤 · 큰 스크립트보다 앞)서 칠하고, 반경은 화면 폭이 아니라 ★설계 크기(최대 250px 기준)★ 에 묶고,
+     먼 별은 확대 애니메이션이 없는 자기 층(.lxi-sky)에 화면 크기만큼만 깐다. 오늘 이미 본 날(lux-nointro)·동작 줄이기면 칠하지 않는다. */
+(function(){
+  try {
+    var _skipIntro = document.documentElement.classList.contains('lux-nointro');
+    /* 인트로가 떠 있는 동안만 아래 화면의 backdrop-filter(유리 흐림)를 끈다 — 실측: 퇴장 페이드 동안 오버레이가 반투명해지면
+       대시보드의 흐림 패널 수십 장을 매 프레임 다시 계산해 데스크톱·아이패드에서 50ms+ 프레임 8~10개(끄면 0~1 · 폰은 원래 0).
+       오버레이를 걷는 순간(removeIntro) 되돌린다 — 그때는 움직이는 것이 없다. */
+    if (!_skipIntro) document.documentElement.classList.add('lux-introfx');
+    var dz = _skipIntro ? null : document.getElementById('lxiDust');
+    if (!dz || (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches)) return;
+    var _sd = 20261006, rnd = function(){ _sd = (_sd * 1103515245 + 12345) % 2147483648; return _sd / 2147483648; };   // 장식용 고정 씨앗
+    var VW = window.innerWidth, VH = window.innerHeight, mob = VW < 600;
+    var tones = ['#ffffff', '#e6ebf5', '#aac4e8', '#c4b5e8', '#dfe8fa', '#aab3c5'];   // MOONLAKE — 문라이트 화이트 · 실버블루 · 아이스 블루 · 라벤더
+    var paint = function(el, n, place){
+      if (!el) return;
+      var sh = [];
+      for (var k = 0; k < n; k++) { var q = place(k); sh.push(q[0].toFixed(1) + 'px ' + q[1].toFixed(1) + 'px 0 ' + q[2] + 'px ' + tones[k % tones.length]); }
+      el.style.boxShadow = sh.join(',');
+    };
+    // ① 모이는 별빛 — 반경은 설계 크기에 묶는다(큰 화면에서 층이 커지지 않게) · 레이어 3장
+    var W = Math.min(250, VW * 0.48), per = mob ? 170 : 190, dl = dz.querySelectorAll('i'), DS = [2.2, 1.8, 2.6];
+    for (var L = 0; L < dl.length; L++) paint(dl[L], per, function(){
+      var t = Math.pow(rnd(), 0.55), a = rnd() * 6.2832, r = (t * W + 6) * DS[L];
+      return [Math.cos(a) * r, Math.sin(a) * r * 0.66, rnd() < 0.06 ? 1 : 0];
+    });
+    // ② 먼 별 — 화면 안에만(확대 애니메이션 없는 층 · 텍스처 = 화면 크기)
+    var fl = document.querySelectorAll('#lxiField i');
+    for (var F = 0; F < fl.length; F++) paint(fl[F], mob ? 140 : Math.min(260, Math.round(VW * VH / 9000)), function(){
+      return [(rnd() - 0.5) * (VW - 4), (rnd() - 0.5) * (VH - 4), rnd() < 0.08 ? 1 : 0];
+    });
+  } catch(e){}
+})();
+</script>
 
 <!-- ══ 셸 ══ -->
 <div class="shell">
@@ -13227,48 +13274,26 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       if (!overlay) return;
       overlay.style.opacity = '0';
       overlay.style.pointerEvents = 'none';
-      setTimeout(function(){ if (overlay && overlay.parentNode) overlay.remove(); }, 1200);
+      setTimeout(function(){ if (overlay && overlay.parentNode) overlay.remove(); try { document.documentElement.classList.remove('lux-introfx'); } catch(e){} }, 1200);
     }
     window.__luxRemoveIntro = removeIntro;
     // [V33.498] 오늘 이미 본 인트로 — 오버레이는 첫 페인트부터 숨어 있다(head 스크립트). 입자도 안 깔고 바로 걷는다.
     var _skipIntro = document.documentElement.classList.contains('lux-nointro');
     if (_skipIntro) { removed = true; try { var _ov0 = document.getElementById('lux-intro-overlay'); if (_ov0 && _ov0.parentNode) _ov0.remove(); } catch(e){} }
     /* [V33.490] ★영상처럼 고정 길이★ — 준비 완료를 기다리지 않는다(사용자 요청). 화면은 캐시 스냅샷으로 이미 그려져 있고
-       데이터는 뒤에서 이어 온다. 먼지 입자는 여기서 한 번만 배치한다(이후 움직임은 전부 CSS 합성). */
-    try {
-      var dz = _skipIntro ? null : document.getElementById('lxiDust');
-      if (dz && !(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches)) {
-        var _sd = 20261006, rnd = function(){ _sd = (_sd * 1103515245 + 12345) % 2147483648; return _sd / 2147483648; };   // 장식용 고정 씨앗
-        var VW = window.innerWidth, VH = window.innerHeight, mob = VW < 600;
-        // MOONLAKE 팔레트 — 문라이트 화이트 · 실버블루 · 아이스 블루 · 라벤더
-        var tones = ['#ffffff', '#e6ebf5', '#aac4e8', '#c4b5e8', '#dfe8fa', '#aab3c5'];
-        var tone = function(k){ return tones[k % tones.length]; };
-        var paint = function(el, n, place){
-          if (!el) return;
-          var sh = [];
-          for (var k = 0; k < n; k++) { var q = place(k); sh.push(q[0].toFixed(1) + 'px ' + q[1].toFixed(1) + 'px 0 ' + q[2] + 'px ' + tone(k)); }
-          el.style.boxShadow = sh.join(',');
-        };
-        // ① 모이는 별빛 — 고르게 흩뿌린 점이 중심으로(레이어 3장)
-        var W = Math.min(360, VW * 0.48), per = mob ? 170 : 230, dl = dz.querySelectorAll('i'), DS = [2.2, 1.8, 2.6];   // 레이어별 시작 반경 배율
-        for (var L = 0; L < dl.length; L++) paint(dl[L], per, function(k){
-          var t = Math.pow(rnd(), 0.55), a = rnd() * 6.2832, r = (t * W + 6) * DS[L];   // 고르게 흩뿌림(나선 팔 없음 — 절제)
-          return [Math.cos(a) * r, Math.sin(a) * r * 0.66, rnd() < 0.06 ? 1 : 0];
-        });
-        // ② 먼 별 — 화면 전체(성운 레이어 안)
-        var fl = document.querySelectorAll('#lxiField i');
-        for (var F = 0; F < fl.length; F++) paint(fl[F], mob ? 140 : 220, function(){
-          return [(rnd() - 0.5) * VW * 1.25, (rnd() - 0.5) * VH * 1.25 + VH * 0.09, rnd() < 0.08 ? 1 : 0];   // 성운 중심(41%)에서 화면 중앙 보정
-        });
-      }
-    } catch(e){}
+       데이터는 뒤에서 이어 온다. [V33.503] 입자 배치는 오버레이 바로 뒤의 작은 인라인 스크립트로 옮겼다(첫 프레임 전에 칠한다). */
+    /* [V33.503] ★퇴장 직전에 층을 납작하게★ — 오버레이 전체가 한 덩어리로 페이드되므로, 그 안에 GPU 층이 많을수록(다 쓴 입자 3장 ·
+       고리 · 섬광 · 수평선 · 글자 10장 · 아직 움직이던 성운) 프레임마다 화면 크기 렌더 표면에 전부 다시 합성한다.
+       데스크톱·아이패드(DPR2)에서 퇴장 페이드가 끊긴 이유다(실측 4.5~5.4초 50ms+ 프레임 8~10개 · 폰 0).
+       모든 움직임이 끝난 3.7초에 다 쓴 효과는 숨기고 will-change 를 풀어 한두 장으로 접는다(보이는 화면은 같다). */
+    setTimeout(function(){ var o = document.getElementById('lux-intro-overlay'); if (o) o.classList.add('lxi-flat'); }, 3700);
     setTimeout(function(){ var o = document.getElementById('lux-intro-overlay'); if (o) o.classList.add('lxi-out'); }, 3800);
     setTimeout(removeIntro, 4300);
     // 사용자가 화면을 탭/클릭하면 즉시 스킵
     var ov = document.getElementById('lux-intro-overlay');
     if (ov) { ov.addEventListener('click', removeIntro); ov.addEventListener('touchstart', removeIntro); }
     // 최후 안전장치 — LUXBOOT 상한(12초)보다 뒤에 둔다.
-    setTimeout(function(){ removeIntro(); var o=document.getElementById('lux-intro-overlay'); if(o&&o.parentNode) o.remove(); }, 15000);
+    setTimeout(function(){ removeIntro(); var o=document.getElementById('lux-intro-overlay'); if(o&&o.parentNode) o.remove(); try { document.documentElement.classList.remove('lux-introfx'); } catch(e){} }, 15000);
   })();
 
   // ════ [V60.1 FIX] 페이지 전환 + VISION 모듈을 메인 IIFE 안으로 병합 ════
@@ -13505,7 +13530,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
    종전 8초는 LUXBOOT 상한(12초)보다 앞이라, 준비를 기다리는 중에 인트로만 사라졌다.
    상한 뒤로 미루고, 배경 고정도 같이 푼다(안 풀면 라이트 테마에서 어두운 띠가 남는다). */
 setTimeout(function(){
-  try { document.documentElement.classList.remove('lux-booting'); } catch(e){}
+  try { document.documentElement.classList.remove('lux-booting'); document.documentElement.classList.remove('lux-introfx'); } catch(e){}
   if (window.__luxRemoveIntro) { try { window.__luxRemoveIntro(); return; } catch(e){} }
   var o=document.getElementById('lux-intro-overlay'); if(o&&o.parentNode) o.remove();
 }, 15000);
@@ -20558,11 +20583,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.502">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.502">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.502">
-<link rel="stylesheet" href="/model-evidence.css?v=33.502">
-<script src="/model-evidence.js?v=33.502"></script>
-<script src="/workspace-ui.js?v=33.502"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.503">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.503">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.503">
+<link rel="stylesheet" href="/model-evidence.css?v=33.503">
+<script src="/model-evidence.js?v=33.503"></script>
+<script src="/workspace-ui.js?v=33.503"></script>
 </body>
 </html>
