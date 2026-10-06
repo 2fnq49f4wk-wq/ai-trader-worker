@@ -101,6 +101,8 @@ try {
   out("logs_top", [...cnt].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, v]) => v + "× " + k));
   out("logs_err", lg.filter((r) => /ERROR|WARN/.test(r.level || "")).slice(0, 15).map((r) => (r.ts || "") + " " + String(r.message || r.msg).slice(0, 220)));
   out("logs_trade", lg.filter((r) => /매수|BUY|관문|막힘|blocked|skip|건너|halt|정지|kill|중단/i.test(String(r.message || r.msg))).slice(0, 25).map((r) => String(r.message || r.msg).slice(0, 200)));
+  /* [V33.488] OMNI 섀도우 채점·사후채점 — 섀도우 전용 업로드 뒤 채점이 다시 도는지 */
+  out("logs_omni", lg.filter((r) => /OMNI-(SHADOW|FWD)/.test(String(r.message || r.msg))).slice(0, 6).map((r) => String(r.message || r.msg).slice(0, 260)));
 } catch (e) { out("logs_err2", String(e)); }
 // [V33.477] AI 준비(배지 = 매매 사이클과 같은 판정) · 자가진단 상위 문제
 try { const am = await get("/api/ai-mode?fresh=1"); out("ai_mode", { aiReady: am.aiReady, mode: am.mode, committee: Object.fromEntries(Object.entries(am.committee || {}).map(([k, v]) => [k, typeof v === "object" ? !!(v && v.trusted) : v])) });
