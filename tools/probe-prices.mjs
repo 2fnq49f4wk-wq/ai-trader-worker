@@ -157,3 +157,17 @@ const idxRows = await pool((state.indices || []).filter((x) => IDX[x.symbol]), 4
   return { s: x.symbol, ours: x.price, ref: m ? m.regularMarketPrice : null, ourAgeMin: x.ts ? Math.round((now - x.ts) / 60000) : null };
 });
 report("cmp_indices_yahoo", idxRows);
+
+// 진단: 낡은 미국 종목(가장 오래된 순) — 나스닥 원문 상태 · 이름 검색(티커 변경 여부)
+for (const q of US.filter((q) => q.ts && now - q.ts > 86400000).slice(0, 6)) {
+  try {
+    const r = await fetch("https://api.nasdaq.com/api/quote/" + encodeURIComponent(q.symbol.replace("-", ".")) + "/info?assetclass=stocks", { headers: NUA });
+    const j = await r.json().catch(() => null);
+    const pd = j && j.data && j.data.primaryData;
+    const r2 = await fetch("https://api.nasdaq.com/api/autocomplete/slookup/10?search=" + encodeURIComponent(q.name || q.symbol), { headers: NUA });
+    const j2 = await r2.json().catch(() => null);
+    out("us_stale", { s: q.symbol, name: q.name, ourPrice: q.price, ageDays: +((now - q.ts) / 86400000).toFixed(1), http: r.status,
+      nasdaq: j ? { rCode: j.status && j.status.rCode, msg: j.status && j.status.bCodeMessage, company: j.data && j.data.companyName, last: pd && pd.lastSalePrice, at: pd && pd.lastTradeTimestamp } : null,
+      lookup: j2 && Array.isArray(j2.data) ? j2.data.slice(0, 5).map((x) => x.symbol + ":" + String(x.name || "").slice(0, 40) + ":" + (x.asset || "")) : null });
+  } catch (e) { out("us_stale", { s: q.symbol, err: String(e.message || e).slice(0, 80) }); }
+}
