@@ -151,5 +151,45 @@ console.log("⑦ 수익 미리 재기(V33.508)");
   chk(lab >= 28 && /미리잰수익 30/.test(r5), "미리 잰 수익만으로 묶음 채점(" + lab + "행 · 꼬리 읽기 0)", "미리잰 " + r5);
   M._setR2ForTest(null);
 }
+console.log("⑧ 채점한 묶음의 남은 행은 닫는다(V33.509 · 운영 '묶음 3 · 0행 · 봉없음 511 · 예산소진' 재현)");
+{
+  const NOW = Math.floor(Date.now() / 1000), base = M.OMNI_CONSTS.base;
+  const tOld = Math.floor((NOW - 2 * 86400) / base) * base, tNew = Math.floor((NOW - 3600) / base) * base;
+  const rows = []; let id = 1;
+  // 늦은 묶음: 40행 중 5행만 봉이 있다(시장별 20 미만 → 라벨 0) · 새 묶음: 25행 전부 봉
+  for (let k = 0; k < 40; k++) rows.push({ id: id++, symbol: (k < 5 ? "HAS" : "NOB") + k, market: "us", tdec: tOld, hz: "30m", p: 0.6, ver: M.OMNI_VER, label: null });
+  for (let k = 0; k < 25; k++) rows.push({ id: id++, symbol: "NEW" + k, market: "us", tdec: tNew, hz: "30m", p: k % 2 ? 0.7 : 0.3, ver: M.OMNI_VER, label: null });
+  const store = new Map(); let reads = 0;
+  const DB = { prepare: (sql) => { let a = []; const st = { sql, bind: (...x) => { a = x; st.args = x; return st; },
+    first: async () => /SELECT v FROM state WHERE k = \?/.test(sql) && store.has(a[0]) ? { v: store.get(a[0]) } : null,
+    all: async () => {
+      if (/GROUP BY tdec, hz/.test(sql)) {
+        const m = new Map();
+        for (const r of rows) if (r.label === null) { const k = r.tdec + "|" + r.hz; m.set(k, (m.get(k) || 0) + 1); }
+        return { results: [...m].map(([k, n]) => ({ tdec: +k.split("|")[0], hz: k.split("|")[1], n })).filter((x) => x.n >= a[a.length - 2]).sort((x, y) => x.tdec - y.tdec) };
+      }
+      if (/FROM omni_shadow WHERE tdec=\?/.test(sql)) return { results: rows.filter((r) => r.tdec === a[0] && r.hz === a[1] && r.label === null) };
+      return { results: [] }; },
+    run: async () => { if (/INSERT INTO state/.test(sql)) store.set(a[0], a[1]); return { meta: { changes: 0 } }; } }; return st; },
+    batch: async (sts) => { for (const st of sts) {
+      if (/SET label=-1/.test(st.sql)) { const r = rows.find((x) => x.id === st.args[1]); if (r) r.label = -1; continue; }
+      const [lab, fr, , rid] = st.args; const r = rows.find((x) => x.id === rid); if (r) { r.label = lab; r.fr = fr; } } return []; } };
+  M._setR2ForTest({ get: async (key) => {
+    reads++;
+    const m = /(HAS|NEW)(\d+)/.exec(key); if (!m) return null;
+    const td = m[1] === "HAS" ? tOld : tNew, k = +m[2], t = [], c = [];
+    for (let i = -10; i <= 10; i++) { t.push(td - base + i * base); c.push(100 * (1 + (i > 0 ? (k - 12) * 0.001 * i : 0))); }
+    const body = JSON.stringify({ "5m": { t, c } });
+    return { text: async () => body }; } });
+  const r1 = await M.omniShadowResolve(DB, { groups: 1 });
+  const left = rows.filter((r) => r.tdec === tOld && r.label === null).length;
+  chk(left === 0 && /남은닫음 40/.test(r1), "늦은 묶음이 시장별 20 미만이라 라벨 0 이어도 남은 행은 전부 닫힌다(다시 안 뽑힌다)", "1회차 " + r1 + " · NULL 남음 " + left);
+  reads = 0;
+  const r2 = await M.omniShadowResolve(DB, { groups: 1 });
+  const lab = rows.filter((r) => r.tdec === tNew && (r.label === 0 || r.label === 1)).length;
+  const newLeft = rows.filter((r) => r.tdec === tNew && r.label === null).length;
+  chk(lab >= 20 && newLeft === 0 && reads <= 25, "★2회차: 뒤의 새 묶음이 채점된다(" + lab + "행) · 동점 행도 닫혀 NULL 0★", "2회차 " + r2 + " · 남음 " + newLeft + " · 꼬리읽기 " + reads);
+  M._setR2ForTest(null);
+}
 if (fails) { console.log("\n✗ OMNI 섀도우 정렬 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ OMNI 섀도우 정렬 통과");

@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.509";
+const _BUILD_VER = "V33.510";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -11753,7 +11753,7 @@ async function omniShadowResolve(DB, opts) {
   const groups = (gs && gs.results) || [];
   /* 종목별 봉은 한 번만 읽는다 — 한 종목이 여러 지평·여러 묶음에 걸쳐 있다. */
   const cache = new Map();
-  let didG = 0, didR = 0, tie = 0, notReady = 0, noBar = 0, partial = 0, ranOut = false, preFr = 0;
+  let didG = 0, didR = 0, tie = 0, notReady = 0, noBar = 0, partial = 0, ranOut = false, preFr = 0, leftClosed = 0;
   const t0 = Date.now(), budgetMs = Math.max(3000, _num(o.budgetMs, OMNI_SHADOW.resolveBudgetMs));
   const upd = [];
   const inc = {};
@@ -11814,6 +11814,7 @@ async function omniShadowResolve(DB, opts) {
       continue;
     }
     /* 시장별로 중앙값을 낸다 — 학습기의 묶음이 (시장 · 지평 · 결정시각)이다. */
+    const _labeled = new Set();
     for (const mk of ["us", "kr"]) {
       const mine = frs.filter(function (z) { return z.m === mk; });
       if (mine.length < OMNI_SHADOW.xsecMin) continue;
@@ -11823,7 +11824,19 @@ async function omniShadowResolve(DB, opts) {
         const lab = z.fr > med ? 1 : 0;
         upd.push({ st: DB.prepare("UPDATE omni_shadow SET label=?, fr=?, res_ts=? WHERE id=?").bind(lab, z.fr, nowS, z.id),
                    hz: hz, hit: (z.p >= 0.5 ? 1 : 0) === lab });
+        _labeled.add(z.id);
       }
+    }
+    /* [V33.509] ★채점한 묶음의 남은 행(봉 없음 · 그 시장 표본 < xsecMin · 중앙값 동점)은 '못 잼(-1)' 으로 닫는다★
+       운영(10/07 05:16Z): "[OMNI-FWD] 묶음 3 채점 · 0행 · 봉없음 511 · (예산소진)" — 늦은 묶음에 봉이 몇 개만 있어
+       시장별 20 미만이면 라벨이 하나도 안 달리고 행이 NULL 로 남았다. 그 묶음이 ★매 틱 맨 앞★ 에 다시 뽑혀
+       511개 꼬리를 또 읽다 예산을 다 써, 뒤의 30m·60m 묶음이 며칠째 채점되지 못했다(139/136 정지).
+       또 남은 행이 나중에 봉을 받아 ★자기들끼리의 중앙값★ 으로 채점되면 묶음 전체 중앙값이 아니라 틀린 라벨이다.
+       묶음의 중앙값은 한 번만 정한다 — 성적에는 안 들어간다(label IN (0,1) 만 센다). */
+    for (const r of rows) {
+      if (_labeled.has(r.id)) continue;
+      upd.push({ st: DB.prepare("UPDATE omni_shadow SET label=-1, res_ts=? WHERE id=?").bind(nowS, r.id), hz: hz, closeOnly: true });
+      leftClosed++;
     }
     didG++;
   }
@@ -11858,7 +11871,7 @@ async function omniShadowResolve(DB, opts) {
     return a && a.n ? h + " " + (a.acc * 100).toFixed(1) + "%(" + a.n + ")" : null;
   }).filter(Boolean).join(" · ");
   return "[OMNI-FWD] 묶음 " + didG + " 채점 · " + didR + "행" + (wrFail ? "(쓰기실패 " + wrFail + ")" : "") + " · 동점버림 " + tie + " · 봉없음 " + noBar +
-         " · 덜참보류 " + partial + (waited ? " · 봉대기 " + waited : "") + (preFr ? " · 미리잰수익 " + preFr : "") + " · 미도래 " + notReady + " · 못잼닫음 " + expired + (ranOut ? " · (예산소진)" : "") + (per ? " · 누적 " + per : "");
+         " · 덜참보류 " + partial + (waited ? " · 봉대기 " + waited : "") + (preFr ? " · 미리잰수익 " + preFr : "") + " · 미도래 " + notReady + " · 못잼닫음 " + expired + (leftClosed ? " · 남은닫음 " + leftClosed : "") + (ranOut ? " · (예산소진)" : "") + (per ? " · 누적 " + per : "");
 }
 
 /* 지평별 라벨 창 — 학습기 H_BARS/H_DAYS 와 같은 길이. sec 은 "이만큼 지나야 잰다" 는 하한이다. */
