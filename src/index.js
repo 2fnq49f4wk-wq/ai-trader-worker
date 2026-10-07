@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.507";
+const _BUILD_VER = "V33.508";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -10747,7 +10747,7 @@ async function omniBarsCollect(DB, opts) {
   const index = _ixr.index;
   const ixBefore = Object.keys(index.s).length;
   const nowMs = Date.now();
-  let done = 0, fetched = 0, skipped = 0, failed = 0, added = 0, tails = 0, adopted = 0, prevFail = 0;
+  let done = 0, fetched = 0, skipped = 0, failed = 0, added = 0, tails = 0, adopted = 0, prevFail = 0, frSet = 0;
   /* [V33.507] ★채점을 기다리는 종목부터★ — OMNI 전진채점(30분·60분·1일)은 결정 ★뒤★ 5분봉이 꼬리에 들어와야 잰다.
      커서는 유니버스를 차례로 돌아 장외 한 바퀴 ≈4시간 · 장중엔 시간당 16종목이라, 결정(10:30·13:30 ET · 10:00·13:00 KST)
      직후의 봉이 그날 안에 거의 안 들어왔다(운영 10/07 04시: 30m 139 · 60m 136 정지 · 1d·5d 만 증가).
@@ -10763,7 +10763,7 @@ async function omniBarsCollect(DB, opts) {
         "GROUP BY symbol ORDER BY need DESC LIMIT 300").bind(OMNI_VER, nowS - 300).all();
       const inUni = new Set(uni);
       // 장외: 회차 몫의 3/4 까지 · 장중: 회차 몫(4)은 커서에 두고 채점 대기만 최대 8종목 더(5분봉 1회씩 — 가볍다)
-      const cap = inHours ? 8 : Math.max(1, Math.floor(per * 3 / 4));
+      const cap = inHours ? 8 : 24;   // [V33.508] 장외는 커서 몫과 별도로 최대 24(채점 대기 5분봉 1회씩)
       for (const r of ((rs && rs.results) || [])) {
         if (prio.length >= cap) break;
         const sym = String(r.symbol || ""); if (!inUni.has(sym)) continue;
@@ -10775,7 +10775,7 @@ async function omniBarsCollect(DB, opts) {
   }
   const prioSet = new Set(prio);
   const seq = prio.slice();
-  for (let k = inHours ? 0 : seq.length; k < per; k++) { let s0 = uni[idx]; idx = (idx + 1) % uni.length; if (prioSet.has(s0)) { s0 = uni[idx]; idx = (idx + 1) % uni.length; } seq.push(s0); }
+  for (let k = 0; k < (inHours ? per : Math.max(4, per - seq.length)); k++) { let s0 = uni[idx]; idx = (idx + 1) % uni.length; if (prioSet.has(s0)) { s0 = uni[idx]; idx = (idx + 1) % uni.length; } seq.push(s0); }
   for (const sym of seq) {
     done++;
     const ent = index.s[sym] || (index.s[sym] = { m: /\.(KS|KQ)$/.test(sym) ? "kr" : "us" });
@@ -10810,13 +10810,27 @@ async function omniBarsCollect(DB, opts) {
     }
     /* [V33.427] ★꼬리 파일★ — 섀도우 채점은 이것만 읽는다(수 MB 전체 파일을 안 읽는다). */
     if (tparts["5m"] || tparts["1d"]) { if (await _obTailPut(R2, sym, tparts, ent.m, nowMs)) tails++; }
+    /* [V33.508] ★채점 대기 종목이면 방금 받은 5분봉으로 그 결정들의 수익을 바로 잰다★ — 사후채점이 꼬리를 다시 안 읽게.
+       라벨은 여전히 묶음(같은 시장·지평·결정시각)의 중앙값으로 사후채점이 단다(상대 라벨 규약 그대로). */
+    if (tparts["5m"] && prioSet.has(sym)) {
+      try {
+        const pr = await DB.prepare("SELECT id, tdec, hz FROM omni_shadow WHERE symbol=? AND label IS NULL AND fr IS NULL AND ver=? AND hz IN ('30m','60m','1d')")
+          .bind(sym, OMNI_VER).all();
+        const ups = [];
+        for (const r of ((pr && pr.results) || [])) {
+          const v = _omFwdPick(tparts["5m"], String(r.hz), _num(r.tdec, 0));
+          if (typeof v === "number" && isFinite(v)) ups.push(DB.prepare("UPDATE omni_shadow SET fr=? WHERE id=? AND label IS NULL").bind(v, r.id));
+        }
+        if (ups.length) { await DB.batch(ups); frSet += ups.length; }
+      } catch (e) {}
+    }
   }
   index.upd = nowMs;
   try { await setState(DB, "omnibars_index", index); } catch (e) {}
   try { await setState(DB, "omnibars_cursor", { i: idx, at: nowMs }); } catch (e) {}
   const nSym = Object.keys(index.s).length;
   let n5 = 0, n1 = 0; for (const s in index.s) { if (index.s[s]["5m"] && index.s[s]["5m"].n) n5++; if (index.s[s]["1d"] && index.s[s]["1d"].n) n1++; }
-  return "[OMNI-BARS] " + done + "종목" + (prio.length ? "(채점대기 우선 " + prio.length + ")" : "") + " · 받음 " + fetched + " · 꼬리 " + tails + " · 신선해서 건너뜀 " + skipped + " · 실패 " + failed +
+  return "[OMNI-BARS] " + done + "종목" + (prio.length ? "(채점대기 우선 " + prio.length + (frSet ? " · 수익 미리 " + frSet : "") + ")" : "") + " · 받음 " + fetched + " · 꼬리 " + tails + " · 신선해서 건너뜀 " + skipped + " · 실패 " + failed +
          (prevFail ? "(옛파일 못읽음 " + prevFail + " — 안 덮음)" : "") +
          (adopted ? " · 색인에 없던 파일 되살림 " + adopted : "") + " · 색인 " + ixBefore + "→" + Object.keys(index.s).length +
          " · 새 봉 +" + added + " · 커버 5분봉 " + n5 + "/" + uni.length + " · 일봉 " + n1 + "/" + uni.length +
@@ -11737,7 +11751,7 @@ async function omniShadowResolve(DB, opts) {
   const groups = (gs && gs.results) || [];
   /* 종목별 봉은 한 번만 읽는다 — 한 종목이 여러 지평·여러 묶음에 걸쳐 있다. */
   const cache = new Map();
-  let didG = 0, didR = 0, tie = 0, notReady = 0, noBar = 0, partial = 0, ranOut = false;
+  let didG = 0, didR = 0, tie = 0, notReady = 0, noBar = 0, partial = 0, ranOut = false, preFr = 0;
   const t0 = Date.now(), budgetMs = Math.max(3000, _num(o.budgetMs, OMNI_SHADOW.resolveBudgetMs));
   const upd = [];
   const inc = {};
@@ -11754,7 +11768,7 @@ async function omniShadowResolve(DB, opts) {
     tried++;
     let rs = null;
     try {
-      rs = await DB.prepare("SELECT id, symbol, market, p FROM omni_shadow WHERE tdec=? AND hz=? AND label IS NULL AND ver=? LIMIT ?")
+      rs = await DB.prepare("SELECT id, symbol, market, p, fr FROM omni_shadow WHERE tdec=? AND hz=? AND label IS NULL AND ver=? LIMIT ?")
         .bind(tdec, hz, OMNI_VER, OMNI_SHADOW.maxRows).all();
     } catch (e) { continue; }
     const rows = (rs && rs.results) || [];
@@ -11762,8 +11776,16 @@ async function omniShadowResolve(DB, opts) {
     /* [V33.501] 봉은 ★병렬로★ 읽는다(묶음이 수백 종목이 됐다) · 시간 예산을 넘기면 다음 틱으로 */
     const frs = [];
     let gNoBar = 0;
-    for (let a = 0; a < rows.length; a += 16) {
-      const part = rows.slice(a, a + 16);
+    /* [V33.508] 수집기가 새 꼬리를 받으며 미리 잰 수익(fr)이 있으면 그걸 쓴다 — 묶음 하나가 유니버스 전체(≈1000종목)라
+       꼬리 1000개를 다시 읽느라 시간 예산(20초)에 묶음 2개도 못 끝냈다(운영: "묶음 2 · 봉없음 940 · 예산소진"). */
+    const need = [];
+    for (const r of rows) {
+      if (r.fr != null && isFinite(Number(r.fr))) { frs.push({ id: r.id, m: String(r.market || "us"), fr: Number(r.fr), p: _num(r.p, 0.5) }); preFr++; }
+      else need.push(r);
+    }
+    for (let a = 0; a < need.length; a += 16) {
+      if (Date.now() - t0 > budgetMs) { ranOut = true; break; }
+      const part = need.slice(a, a + 16);
       const got = await Promise.all(part.map(function (r) {
         return _omFwdRet(R2, String(r.symbol), hz, tdec, cache).catch(function () { return null; });
       }));
@@ -11834,7 +11856,7 @@ async function omniShadowResolve(DB, opts) {
     return a && a.n ? h + " " + (a.acc * 100).toFixed(1) + "%(" + a.n + ")" : null;
   }).filter(Boolean).join(" · ");
   return "[OMNI-FWD] 묶음 " + didG + " 채점 · " + didR + "행" + (wrFail ? "(쓰기실패 " + wrFail + ")" : "") + " · 동점버림 " + tie + " · 봉없음 " + noBar +
-         " · 덜참보류 " + partial + (waited ? " · 봉대기 " + waited : "") + " · 미도래 " + notReady + " · 못잼닫음 " + expired + (ranOut ? " · (예산소진)" : "") + (per ? " · 누적 " + per : "");
+         " · 덜참보류 " + partial + (waited ? " · 봉대기 " + waited : "") + (preFr ? " · 미리잰수익 " + preFr : "") + " · 미도래 " + notReady + " · 못잼닫음 " + expired + (ranOut ? " · (예산소진)" : "") + (per ? " · 누적 " + per : "");
 }
 
 /* 지평별 라벨 창 — 학습기 H_BARS/H_DAYS 와 같은 길이. sec 은 "이만큼 지나야 잰다" 는 하한이다. */
@@ -11845,28 +11867,32 @@ const OMNI_FWD_SPAN = {
 
 /* 결정시각 이후 지평 끝까지의 로그수익. 학습기와 ★같은 봉★ 을 쓴다(장중=5분봉 · 장타=일봉).
    꼬리부터 보고, 꼬리에 그 결정봉이 없으면(오래된 결정) 전체 파일로 내려간다. */
+/* [V33.508] 봉 묶음에서 결정시각 이후 지평 끝까지의 로그수익 — 수집기(새로 받은 꼬리)와 사후채점이 ★같은 함수★ 를 쓴다.
+   반환: 숫자 · null(봉은 있는데 아직 지평이 안 찼다/세션 넘김) · undefined(결정봉 자체가 없다) */
+function _omFwdPick(b, hz, tdec) {
+  const sp = OMNI_FWD_SPAN[hz];
+  if (!sp || !b || !Array.isArray(b.t)) return null;
+  if (sp.bars) {
+    const i = b.t.indexOf(tdec - OMNI_CONSTS.base);          // 학습기: tdec = t[i] + base
+    if (i < 0 || i + sp.bars >= b.t.length) return i < 0 ? undefined : null;
+    /* 30·60분은 ★같은 세션 안★ 에서 끝나야 한다 — 학습기 MAX_SPAN_SEC 과 같은 자다. */
+    const maxSpan = (hz === "30m") ? (6 * OMNI_CONSTS.base + 60)
+                  : (hz === "60m") ? (12 * OMNI_CONSTS.base + 60) : (5 * 86400);
+    if (b.t[i + sp.bars] - b.t[i] > maxSpan) return null;
+    return _omLr(b.c[i + sp.bars], b.c[i]);
+  }
+  const j = b.t.indexOf(tdec - 86400);                         // 학습기: tdec = t[j] + 86400
+  if (j < 0 || j + sp.days >= b.t.length) return j < 0 ? undefined : null;
+  const maxSpan = (hz === "5d") ? (10 * 86400) : (35 * 86400);
+  if (b.t[j + sp.days] - b.t[j] > maxSpan) return null;
+  return _omLr(b.c[j + sp.days], b.c[j]);
+}
 async function _omFwdRet(R2, sym, hz, tdec, cache) {
   const sp = OMNI_FWD_SPAN[hz];
   if (!sp) return null;
   const res = sp.bars ? "5m" : "1d";
   const key = sym + "|" + res;
-  const pick = function (b) {
-    if (!b || !Array.isArray(b.t)) return null;
-    if (sp.bars) {
-      const i = b.t.indexOf(tdec - OMNI_CONSTS.base);          // 학습기: tdec = t[i] + base
-      if (i < 0 || i + sp.bars >= b.t.length) return i < 0 ? undefined : null;
-      /* 30·60분은 ★같은 세션 안★ 에서 끝나야 한다 — 학습기 MAX_SPAN_SEC 과 같은 자다. */
-      const maxSpan = (hz === "30m") ? (6 * OMNI_CONSTS.base + 60)
-                    : (hz === "60m") ? (12 * OMNI_CONSTS.base + 60) : (5 * 86400);
-      if (b.t[i + sp.bars] - b.t[i] > maxSpan) return null;
-      return _omLr(b.c[i + sp.bars], b.c[i]);
-    }
-    const j = b.t.indexOf(tdec - 86400);                         // 학습기: tdec = t[j] + 86400
-    if (j < 0 || j + sp.days >= b.t.length) return j < 0 ? undefined : null;
-    const maxSpan = (hz === "5d") ? (10 * 86400) : (35 * 86400);
-    if (b.t[j + sp.days] - b.t[j] > maxSpan) return null;
-    return _omLr(b.c[j + sp.days], b.c[j]);
-  };
+  const pick = function (b) { return _omFwdPick(b, hz, tdec); };
   const c0 = cache && cache.get(key);
   if (c0 !== undefined) { const v = pick(c0); return v === undefined ? null : v; }
   const tl = await _obTailLoad(R2, sym);
@@ -53817,7 +53843,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

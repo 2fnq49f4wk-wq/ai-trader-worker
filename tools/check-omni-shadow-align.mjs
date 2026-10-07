@@ -84,7 +84,7 @@ console.log("⑤ 막힘 재현(옛 봉없는 묶음 + 새 묶음 · 한 번에 1
         for (const r of rows) if (r.label === null && r.ver === ver && cuts[r.hz] != null && r.tdec <= cuts[r.hz]) { const k = r.tdec + "|" + r.hz; m.set(k, (m.get(k) || 0) + 1); }
         return { results: [...m].map(([k, n]) => ({ tdec: +k.split("|")[0], hz: k.split("|")[1], n })).filter((x) => x.n >= a[a.length - 2]).sort((x, y) => x.tdec - y.tdec).slice(0, a[a.length - 1]) };
       }
-      if (/SELECT id, symbol, market, p FROM omni_shadow WHERE tdec=\?/.test(sql)) return { results: rows.filter((r) => r.tdec === a[0] && r.hz === a[1] && r.label === null) };
+      if (/SELECT id, symbol, market, p(, fr)? FROM omni_shadow WHERE tdec=\?/.test(sql)) return { results: rows.filter((r) => r.tdec === a[0] && r.hz === a[1] && r.label === null) };
       return { results: [] }; },
     run: async () => { if (/INSERT INTO state/.test(sql)) store.set(a[0], a[1]); return { meta: { changes: 0 } }; } }; return st; },
     batch: async (sts) => { for (const st of sts) {
@@ -119,10 +119,37 @@ console.log("⑥ 수집기 — 채점 대기 종목 먼저(V33.507)");
   const col = seg("async function omniBarsCollect", "\n/* ═══");
   chk(/WHERE label IS NULL AND ver=\? AND hz IN \('30m','60m','1d'\)/.test(col) && /ORDER BY need DESC/.test(col), "라벨 안 달린 30m·60m·1d 결정의 종목을 최근 것부터 고른다", "우선 목록 질의");
   chk(/_num\(m5\.upd, 0\) >= \(_num\(r\.need, 0\) \+ 300\) \* 1000/.test(col), "지평이 끝난 뒤로 5분봉을 받은 적이 없는 종목만", "필요 조건");
-  chk(/const cap = inHours \? 8 : Math\.max\(1, Math\.floor\(per \* 3 \/ 4\)\)/.test(col) && /for \(let k = inHours \? 0 : seq\.length; k < per; k\+\+\)/.test(col),
-    "장외: 몫의 3/4 까지 · 장중: 커서 몫은 그대로 + 채점 대기 최대 8 — 커서 회전은 계속된다", "상한");
+  chk(/const cap = inHours \? 8 : 24;/.test(col) && /for \(let k = 0; k < \(inHours \? per : Math\.max\(4, per - seq\.length\)\); k\+\+\)/.test(col),
+    "[V33.508] 장중 +8 · 장외 최대 24 — 커서 회전은 최소 4종목씩 계속된다", "상한");
   chk(/const force = res === "5m" && prioSet\.has\(sym\);/.test(col) && /if \(!force && curVer && meta\.upd/.test(col), "우선 종목은 5분봉만 refreshH 를 건너뛴다(1일봉은 종전)", "강제 수집");
   chk(/nowMs - _num\(m5\.err, 0\) < 1800000/.test(col), "30분 안에 실패한 종목은 쉰다(같은 실패를 매 회차 두드리지 않게)", "실패 쉼");
+}
+console.log("⑦ 수익 미리 재기(V33.508)");
+{
+  const b = { t: [], c: [] }; const base = M.OMNI_CONSTS.base, t0 = 1790000000 - (1790000000 % base);
+  for (let i = 0; i < 20; i++) { b.t.push(t0 + i * base); b.c.push(100 + i); }
+  const td = t0 + 2 * base + base;   // 결정봉 i=2 → tdec = t[2] + base
+  const v30 = M._omFwdPick(b, "30m", td), v60 = M._omFwdPick(b, "60m", td);
+  chk(Math.abs(v30 - Math.log(108 / 102)) < 1e-12 && Math.abs(v60 - Math.log(114 / 102)) < 1e-12, "같은 함수가 30분(6봉)·60분(12봉) 수익을 낸다", "pick " + v30 + " " + v60);
+  chk(M._omFwdPick(b, "60m", t0 + 15 * base) === null && M._omFwdPick(b, "30m", t0 - 999 * base) === undefined, "지평이 덜 찼으면 null · 결정봉이 없으면 undefined", "경계");
+  const col = seg("async function omniBarsCollect", "\n/* ═══");
+  chk(/if \(tparts\["5m"\] && prioSet\.has\(sym\)\)/.test(col) && /_omFwdPick\(tparts\["5m"\], String\(r\.hz\), _num\(r\.tdec, 0\)\)/.test(col) && /UPDATE omni_shadow SET fr=\? WHERE id=\? AND label IS NULL/.test(col),
+    "수집기: 채점 대기 종목을 받으면 그 결정들의 수익을 바로 적는다(라벨은 안 단다)", "수집기 배선");
+  chk(/SELECT id, symbol, market, p, fr FROM omni_shadow/.test(res) && /if \(r\.fr != null && isFinite\(Number\(r\.fr\)\)\)/.test(res), "사후채점: 미리 잰 수익은 꼬리를 다시 안 읽는다", "사후채점 배선");
+  // 행동: 미리 잰 수익만으로 묶음이 채점된다(R2 없음)
+  const NOW = Math.floor(Date.now() / 1000), tN = Math.floor((NOW - 7200) / base) * base;
+  const rows2 = []; for (let k = 0; k < 30; k++) rows2.push({ id: 1000 + k, symbol: "Z" + k, market: "us", tdec: tN, hz: "30m", p: k % 2 ? 0.7 : 0.3, ver: M.OMNI_VER, label: null, fr: (k - 15) * 0.001 });
+  const st2 = new Map();
+  const DB2 = { prepare: (sql) => { let a = []; const st = { sql, bind: (...x) => { a = x; st.args = x; return st; },
+    first: async () => /SELECT v FROM state WHERE k = \?/.test(sql) && st2.has(a[0]) ? { v: st2.get(a[0]) } : null,
+    all: async () => /GROUP BY tdec, hz/.test(sql) ? { results: [{ tdec: tN, hz: "30m", n: 30 }] } : /FROM omni_shadow WHERE tdec=\?/.test(sql) ? { results: rows2.filter((r) => r.label === null) } : { results: [] },
+    run: async () => { if (/INSERT INTO state/.test(sql)) st2.set(a[0], a[1]); return { meta: { changes: 0 } }; } }; return st; },
+    batch: async (sts) => { for (const st of sts) { const [lab, fr, , rid] = st.args; const r = rows2.find((x) => x.id === rid); if (r && !/label=-1/.test(st.sql)) { r.label = lab; r.fr = fr; } } return []; } };
+  M._setR2ForTest({ get: async () => { throw new Error("R2 를 읽으면 안 된다"); } });
+  const r5 = await M.omniShadowResolve(DB2, { groups: 3 });
+  const lab = rows2.filter((r) => r.label === 0 || r.label === 1).length;
+  chk(lab >= 28 && /미리잰수익 30/.test(r5), "미리 잰 수익만으로 묶음 채점(" + lab + "행 · 꼬리 읽기 0)", "미리잰 " + r5);
+  M._setR2ForTest(null);
 }
 if (fails) { console.log("\n✗ OMNI 섀도우 정렬 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ OMNI 섀도우 정렬 통과");

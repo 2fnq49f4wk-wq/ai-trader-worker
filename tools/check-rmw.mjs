@@ -210,7 +210,7 @@ console.log("\n⑤ OMNI 전진 성적 — 못 읽으면 라벨도 달지 않는�
   const mkDB = (extra) => fakeDB(Object.assign({
     state: { omni_fwd: { ver: M.OMNI_VER, since: 1, byHz: { "5d": { n: 500, hits: 260, acc: 0.52 } }, n: 500, hits: 260 } },
     all: (sql) => /GROUP BY tdec, hz/.test(sql) ? [{ tdec, hz: "5d", n: N }]
-                : /SELECT id, symbol, market, p FROM omni_shadow/.test(sql) ? rows : [],
+                : /SELECT id, symbol, market, p(, fr)? FROM omni_shadow/.test(sql) ? rows : [],
   }, extra));
   const A = mkDB({ failRead: ["omni_fwd"] });
   const ra = await M.omniShadowResolve(A, {});
