@@ -175,8 +175,12 @@ const TR = readFileSync(join(root, "trainer/modal/omni.py"), "utf8");
 chk(/"\/api\/omni-import"/.test(TR) && /allow_nan=False/.test(TR), "트레이너가 NaN 없는 JSON 으로 /api/omni-import 에 올린다");
 chk(/"probe": probe/.test(TR) && /if pmax > 1e-9:/.test(TR), "트레이너가 probe 를 싣고, 자기 채점과 LightGBM 이 다르면 올리지 않는다");
 const MT = readFileSync(join(root, "trainer/modal/modal_train.py"), "utf8");
-const sp = /try:\s*\n\s*omni_job\.spawn\(\)/.test(MT);
+const sp = /try:\s*\n\s*_oj\.spawn\(\)/.test(MT);
 chk(sp, "train_job 이 OMNI 를 ★try 안에서★ 띄운다 — 실패해도 기존 학습은 계속된다");
+// [V33.513] 컨테이너엔 omni.py 가 없어 omni_job 이 None 이다 — 정기 회차가 OMNI 를 조용히 건너뛰었다(패널 노후 → 섀도우 채점 멈춤)
+chk(/if _oj is None:[\s\S]{0,200}modal\.Function\.from_name\("lux-dnn-trainer", "omni_job"\)/.test(MT) && /app = modal\.App\("lux-dnn-trainer"\)/.test(MT),
+  "[V33.513] 컨테이너에서 omni_job 이 None 이면 배포된 함수를 이름으로 찾아 띄운다(앱 이름 일치)");
+chk(/OMNI 를 띄우지 못했다/.test(MT), "[V33.513] 끝내 못 띄우면 조용히 넘어가지 않고 로그를 남긴다");
 chk(/def _omni_image\(\):[\s\S]*?except Exception/.test(MT), "OMNI 이미지 준비 실패가 기존 학습기 배포를 막지 않는다");
 chk(!/gpu=/.test((MT.split("def omni_job")[0].split("@app.function(image=_OMNI_IMAGE").pop()) || ""), "OMNI 는 GPU 를 쓰지 않는다");
 

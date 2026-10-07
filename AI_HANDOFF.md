@@ -12,6 +12,15 @@
 
 ## Current handoff
 
+- Status: **V33.513 (학습기) — 정기 학습 회차가 OMNI 를 한 번도 못 띄우고 있었다.**
+  - 12:00Z 확인: OMNI 전진채점 정상 — 30m 1,264→1,671(49.1%) · 60m 1,210→1,596(51.9%) · 1d 3,767→4,084(48.5%) · 예산소진·남은닫음 이상 없음.
+    그런데 패널 20261005(2일 전) · 모델 trainedAt 10/06 02:24Z = 사람이 돌린 omni_now 회차(37401190922). 그 뒤 12시간 정기 회차 3번이 하나도 안 올렸다.
+  - 원인: `omni_job` 은 omni.py 가 modal_train.py 옆에 있을 때만 정의된다. 배포 러너엔 있지만 train_job 컨테이너엔 modal_train.py 만 실려
+    `omni_job is None` → `target == "all"` 회차의 spawn 을 ★조용히★ 건너뛰었다(10:43Z 회차 로그에 '띄웠다'·'실패' 둘 다 없음).
+    → 패널이 5일을 넘으면 워커 섀도우 채점이 멎는다 — 10/06 까지 11일 멈춤의 실제 원인(V33.488 섀도우 전용 업로드는 맞는 처방이었지만 정기 회차가 안 돌았다).
+  - 고침: 컨테이너에서 None 이면 `modal.Function.from_name("lux-dnn-trainer", "omni_job")` 으로 배포된 함수를 띄운다 · 끝내 못 띄우면 경고 로그.
+    게이트 check-omni-model(폴백 배선·앱 이름 일치·경고).
+  - 다음: 다음 정기 회차(00:10Z) 로그에 "OMNI 복합모델 학습을 별도 CPU 컨테이너로 띄웠다(배포된 함수 이름으로 찾음)" · 그 뒤 omni 메타 trainedAt·panelDay 갱신 확인.
 - Status: **V33.512 — 한국 장후(넥스트레이드) 시세가 '정규장' 으로 찍히던 결함 · 미국 프리 관측 2분 주기 · 한국 시간외는 청산만.**
   - 운영(10/07 08:41Z = 17:41 KST · probe-prices): mstate_kr {REGULAR 418 · POST 28}, 시세 나이 0.6분(계속 갱신).
     probe-kr-nxt(17:44 KST): 네이버 폴링 005930 {ms:"OPEN", nv 270,000 = nxtOverMarketPriceInfo AFTER_MARKET overPrice 270,000} ·

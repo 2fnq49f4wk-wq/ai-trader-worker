@@ -238,12 +238,27 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     _T0 = time.time()
     _DEADLINE = _T0 + JOB_TIMEOUT_S - JOB_MARGIN_S
     # [V33.420] OMNI 는 따로(CPU 컨테이너) 돈다 — 이 회차의 예산·GPU 를 쓰지 않는다.
-    if target == "all" and omni_job is not None and not dry:
-        try:
-            omni_job.spawn()
-            print("   · OMNI 복합모델 학습을 별도 CPU 컨테이너로 띄웠다")
-        except Exception as e:  # noqa: BLE001 — 기존 학습을 막지 않는다
-            print("   ⚠️ OMNI 띄우기 실패(기존 학습은 계속):", e)
+    # [V33.513] ★정기 회차가 OMNI 를 한 번도 못 띄우고 있었다★ — omni_job 은 omni.py 가 modal_train.py ★옆에 있을 때만★ 정의된다.
+    #   배포하는 쪽(러너)엔 있지만 train_job 컨테이너엔 modal_train.py 하나만 실려 omni_job 이 None → 조용히 건너뛰었다
+    #   (로그에 '띄웠다' 도 '실패' 도 없다 — 10/07 10:43Z 회차 실측). OMNI 업로드는 사람이 omni_now 로 돌린 회차뿐이었고,
+    #   패널이 5일을 넘기면 워커 섀도우 채점이 멎는다(10/06 까지 11일 멈춤의 실제 원인).
+    #   → 컨테이너에서 None 이면 ★배포된 함수를 이름으로 찾아★ 띄운다. 그래도 없으면 소리 내 남긴다.
+    if target == "all" and not dry:
+        _oj = omni_job
+        if _oj is None:
+            try:
+                _oj = modal.Function.from_name("lux-dnn-trainer", "omni_job")
+            except Exception as e:  # noqa: BLE001 — 기존 학습을 막지 않는다
+                print("   ⚠️ OMNI 함수 조회 실패(기존 학습은 계속):", e)
+                _oj = None
+        if _oj is not None:
+            try:
+                _oj.spawn()
+                print("   · OMNI 복합모델 학습을 별도 CPU 컨테이너로 띄웠다" + ("" if omni_job is not None else "(배포된 함수 이름으로 찾음)"))
+            except Exception as e:  # noqa: BLE001 — 기존 학습을 막지 않는다
+                print("   ⚠️ OMNI 띄우기 실패(기존 학습은 계속):", e)
+        else:
+            print("   ⚠️ OMNI 를 띄우지 못했다 — omni_job 이 없다(이미지에 omni.py 없음 · 배포 함수 조회 실패). 패널이 낡으면 섀도우 채점이 멎는다")
 
     def _left():
         return _DEADLINE - time.time()
