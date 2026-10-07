@@ -22,7 +22,14 @@
   - MEMO 가설·실험: 원형 승률이 군집에 모인 날들의 시장 방향(10일 절대 라벨)을 외운다 → 같은 날·시장 평균 대비 상대 라벨(xsec).
     Modal _train_and_upload_memo: label "auto" — 학습창 안 내부 검증(마지막 40일·엠바고)으로 abs/xsec 를 t 로 고르고 학습창 전체로 재적합 →
     홀드아웃(종전 그대로 절대 라벨 블록IC)으로만 심사 · 승격은 워커 게이트(종전 그대로). 합성 데이터로 경로 검증.
-    ★효과는 아직 미측정★ — 배포 후 train-now target=memo 로 돌려 MEMO[label] 줄과 홀드아웃 t 를 확인할 것.
+    ★실측(modal run 37550956908 · 표본 1,096,238):★ 내부 검증(40일) abs IC 0.0527 t 2.37 · xsec IC 0.0089 t 0.38 → abs 선택.
+    홀드아웃(60일) abs 블록IC −0.0127 t −0.56 → 여전히 reject(가중 0). ★가설(시장 방향 암기) 기각★ — 상대 라벨이 더 나쁘다.
+    abs 가 내부창(+)과 홀드아웃(−)에서 부호가 갈린다 = 국소 구조가 시기마다 바뀐다(비정상성). 원형 기억 방식 자체의 한계로 본다.
+    MEMO 는 게이트가 막아 거래를 해치지 않는다. 다음 후보(근거 필요): 이웃 수·K 를 내부 검증으로 고르기, 또는 퇴역 검토.
+  - 게이트 감사(gate_audit): ai_primary_gate 고확률 차단 n812 평균 −0.69% 승률 40% → 게이트가 옳다(풀지 않는다).
+    원장(port_stats): 미국 n300 승률 53% 기대 +0.64%/건 SQN 2.8 · 한국 n238 승률 41.6% 기대 +0.007% PF 0.69 — 지는 조합은 성과게이트가 이미 막음.
+  - 운영 확인: /api/stock-profile AAPL·005930.KS·SPY 정상(통계·기업 개요). 네이버 description 은 비어 온다(about null — 사소).
+  - 남은 확인: 08:40Z 미국 프리마켓 나스닥 시간외 실측(send_later trig_01CiXiyiwGxmPLwoRFkofvBG) · OMNI 섀도우 settle 후 전진 채점.
   - 게이트: check-stock-profile · check-memo-xsec(고르기에 ho_idx 금지) 신규.
 - Status: **V33.503 — 인트로 데스크톱·아이패드 결함 고침(실측 기반).**
   - 재현: 멈춘 프레임(웹킷 아이패드·맥·크로뮴 FHD/QHD — ui-probe intro=true → ui-probe-shots 가지)은 배치가 정상. 결함은 ★실시간 재생★ 에 있었다
