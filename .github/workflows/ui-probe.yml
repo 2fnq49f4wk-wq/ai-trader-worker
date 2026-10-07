@@ -168,6 +168,7 @@ jobs:
         run: |
           node tools/probe-naver-news.mjs || true
           node tools/probe-yahoo.mjs || true
+          node tools/probe-kr-daily.mjs "${{ vars.WORKER_URL }}" || true
 
       - name: 브라우저 준비
         if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed && !inputs.intro }}
