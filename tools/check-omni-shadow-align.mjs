@@ -191,5 +191,27 @@ console.log("⑧ 채점한 묶음의 남은 행은 닫는다(V33.509 · 운영 '
   chk(lab >= 20 && newLeft === 0 && reads <= 25, "★2회차: 뒤의 새 묶음이 채점된다(" + lab + "행) · 동점 행도 닫혀 NULL 0★", "2회차 " + r2 + " · 남음 " + newLeft + " · 꼬리읽기 " + reads);
   M._setR2ForTest(null);
 }
+console.log("⑨ 봉 색인으로 읽기 줄이기(V33.511 · 운영 '봉없음 751 · 예산소진')");
+{
+  chk(/_obIndexLoad\(DB\)/.test(res) && /_num\(_me\.last, 0\) < _endT\) \{ gNoBar\+\+; ixSkip\+\+; continue; \}/.test(res), "사후채점이 색인의 마지막 봉으로 '아직 없음' 을 판정", "배선");
+  const NOW = Math.floor(Date.now() / 1000), base = M.OMNI_CONSTS.base;
+  const tN = Math.floor((NOW - 3600) / base) * base;
+  const rows = []; for (let k = 0; k < 25; k++) rows.push({ id: 1 + k, symbol: "S" + k, market: "us", tdec: tN, hz: "30m", p: 0.6, ver: M.OMNI_VER, label: null });
+  // S0~S9: 색인 마지막 봉이 결정 전(읽어도 없다) · S10~S19: 색인 신선 · S20~S24: 색인에 없음(읽는다)
+  const ix = { v: 1, s: {} };
+  for (let k = 0; k < 20; k++) ix.s["S" + k] = { m: "us", "5m": { n: 100, first: tN - 50 * base, last: k < 10 ? tN - 2 * base : tN + 20 * base, upd: Date.now() } };
+  const store = new Map([["omnibars_index", JSON.stringify(ix)]]); let reads = 0;
+  const DB = { prepare: (sql) => { let a = []; const st = { sql, bind: (...x) => { a = x; st.args = x; return st; },
+    first: async () => /SELECT v FROM state WHERE k = \?/.test(sql) && store.has(a[0]) ? { v: store.get(a[0]) } : null,
+    all: async () => /GROUP BY tdec, hz/.test(sql) ? { results: [{ tdec: tN, hz: "30m", n: rows.filter((r) => r.label === null).length }].filter((g) => g.n >= 20) }
+      : /FROM omni_shadow WHERE tdec=\?/.test(sql) ? { results: rows.filter((r) => r.label === null) } : { results: [] },
+    run: async () => { if (/INSERT INTO state/.test(sql)) store.set(a[0], a[1]); return { meta: { changes: 0 } }; } }; return st; },
+    batch: async () => [] };
+  M._setR2ForTest({ get: async () => { reads++; return null; } });
+  const r = await M.omniShadowResolve(DB, { groups: 1 });
+  // 색인에서 건너뛴 10행은 읽기 0 · 나머지 15행은 꼬리+전체 = 최대 2회씩
+  chk(/색인건너뜀 10/.test(r) && reads > 0 && reads <= 30, "색인상 봉이 없는 10행은 R2 를 안 읽는다 · 색인 신선·색인 없음 15행은 읽는다", r + " · 읽기 " + reads);
+  M._setR2ForTest(null);
+}
 if (fails) { console.log("\n✗ OMNI 섀도우 정렬 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ OMNI 섀도우 정렬 통과");

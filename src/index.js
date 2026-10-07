@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.510";
+const _BUILD_VER = "V33.511";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -11759,6 +11759,13 @@ async function omniShadowResolve(DB, opts) {
   const inc = {};
   const maxG = Math.max(1, _num(o.groups, OMNI_SHADOW.batchGroups));
   let tried = 0;
+  /* [V33.511] ★봉 색인으로 '아직 봉이 없을 수밖에 없는' 행은 R2 를 안 읽는다★ — 운영(V33.510 뒤 05:30Z):
+     "묶음 2 · 28행 · 봉없음 751 · (예산소진)". 봉 없는 행마다 꼬리 + 전체 파일 두 번을 읽어 20초 예산을 다 썼다.
+     색인(omnibars_index)의 그 종목·해상도 마지막 봉(last)이 지평 끝 봉 시각보다 이르면 지금 읽어도 값이 없다(같은 판정, 읽기 0).
+     색인에 없는 종목·색인 못 읽음 → 종전대로 읽는다(색인을 믿을 때만 줄인다). */
+  let obIx = null;
+  try { const _ir = await _obIndexLoad(DB); if (_ir && _ir.ok && !_ir.fresh && _ir.index && _ir.index.s) obIx = _ir.index.s; } catch (e) {}
+  let ixSkip = 0;
   for (const g of groups) {
     const hz = String(g.hz), tdec = _num(g.tdec, 0);
     const span = OMNI_FWD_SPAN[hz];
@@ -11781,9 +11788,13 @@ async function omniShadowResolve(DB, opts) {
     /* [V33.508] 수집기가 새 꼬리를 받으며 미리 잰 수익(fr)이 있으면 그걸 쓴다 — 묶음 하나가 유니버스 전체(≈1000종목)라
        꼬리 1000개를 다시 읽느라 시간 예산(20초)에 묶음 2개도 못 끝냈다(운영: "묶음 2 · 봉없음 940 · 예산소진"). */
     const need = [];
+    const _ixRes = span.bars ? "5m" : "1d";
+    const _endT = span.bars ? (tdec - OMNI_CONSTS.base + span.bars * OMNI_CONSTS.base) : (tdec - 86400 + span.days * 86400);
     for (const r of rows) {
-      if (r.fr != null && isFinite(Number(r.fr))) { frs.push({ id: r.id, m: String(r.market || "us"), fr: Number(r.fr), p: _num(r.p, 0.5) }); preFr++; }
-      else need.push(r);
+      if (r.fr != null && isFinite(Number(r.fr))) { frs.push({ id: r.id, m: String(r.market || "us"), fr: Number(r.fr), p: _num(r.p, 0.5) }); preFr++; continue; }
+      const _me = obIx && obIx[String(r.symbol)] && obIx[String(r.symbol)][_ixRes];
+      if (_me && _num(_me.last, 0) > 0 && _num(_me.last, 0) < _endT) { gNoBar++; ixSkip++; continue; }
+      need.push(r);
     }
     for (let a = 0; a < need.length; a += 16) {
       if (Date.now() - t0 > budgetMs) { ranOut = true; break; }
@@ -11871,7 +11882,7 @@ async function omniShadowResolve(DB, opts) {
     return a && a.n ? h + " " + (a.acc * 100).toFixed(1) + "%(" + a.n + ")" : null;
   }).filter(Boolean).join(" · ");
   return "[OMNI-FWD] 묶음 " + didG + " 채점 · " + didR + "행" + (wrFail ? "(쓰기실패 " + wrFail + ")" : "") + " · 동점버림 " + tie + " · 봉없음 " + noBar +
-         " · 덜참보류 " + partial + (waited ? " · 봉대기 " + waited : "") + (preFr ? " · 미리잰수익 " + preFr : "") + " · 미도래 " + notReady + " · 못잼닫음 " + expired + (leftClosed ? " · 남은닫음 " + leftClosed : "") + (ranOut ? " · (예산소진)" : "") + (per ? " · 누적 " + per : "");
+         " · 덜참보류 " + partial + (waited ? " · 봉대기 " + waited : "") + (preFr ? " · 미리잰수익 " + preFr : "") + (ixSkip ? " · 색인건너뜀 " + ixSkip : "") + " · 미도래 " + notReady + " · 못잼닫음 " + expired + (leftClosed ? " · 남은닫음 " + leftClosed : "") + (ranOut ? " · (예산소진)" : "") + (per ? " · 누적 " + per : "");
 }
 
 /* 지평별 라벨 창 — 학습기 H_BARS/H_DAYS 와 같은 길이. sec 은 "이만큼 지나야 잰다" 는 하한이다. */
