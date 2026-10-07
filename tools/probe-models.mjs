@@ -27,3 +27,12 @@ try {
   out("gate_audit", JSON.stringify(find(alt, "gate", 0)).slice(0, 2500));
   out("port_stats", JSON.stringify(find(alt, "port", 0)).slice(0, 2500));
 } catch (e) { out("aimode_err", String(e.message || e)); }
+/* [V33.504] 운영 확인 — 종목상세 확장 응답 · 애널리스트(나스닥) 수집 로그 */
+for (const s of ["AAPL", "005930.KS", "SPY"]) {
+  try { const j = await get("/api/stock-profile?symbol=" + encodeURIComponent(s)); out("profile", s + " " + JSON.stringify(j).slice(0, 1200)); }
+  catch (e) { out("profile_err", s + " " + String(e.message || e)); }
+}
+try {
+  const logs = await get("/api/logs?limit=3000");
+  for (const l of logs.filter((x) => /\[ANALYST\]|\[ANLREVK\]/.test(x.message || "")).slice(0, 8)) out("analyst", new Date(l.ts).toISOString().slice(5, 16) + " " + String(l.message).slice(0, 300));
+} catch (e) {}
