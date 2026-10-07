@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.506";
+const _BUILD_VER = "V33.507";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -10748,14 +10748,43 @@ async function omniBarsCollect(DB, opts) {
   const ixBefore = Object.keys(index.s).length;
   const nowMs = Date.now();
   let done = 0, fetched = 0, skipped = 0, failed = 0, added = 0, tails = 0, adopted = 0, prevFail = 0;
-  for (let k = 0; k < per; k++) {
-    const sym = uni[idx]; idx = (idx + 1) % uni.length; done++;
+  /* [V33.507] ★채점을 기다리는 종목부터★ — OMNI 전진채점(30분·60분·1일)은 결정 ★뒤★ 5분봉이 꼬리에 들어와야 잰다.
+     커서는 유니버스를 차례로 돌아 장외 한 바퀴 ≈4시간 · 장중엔 시간당 16종목이라, 결정(10:30·13:30 ET · 10:00·13:00 KST)
+     직후의 봉이 그날 안에 거의 안 들어왔다(운영 10/07 04시: 30m 139 · 60m 136 정지 · 1d·5d 만 증가).
+     → 라벨 안 달린 결정 중 지평이 끝났는데 그 뒤로 5분봉을 받은 적이 없는 종목을 이번 회차 몫의 앞(최대 3/4)에 둔다.
+       그 종목은 5분봉 refreshH 를 건너뛰고 받는다(1일봉은 종전 규칙). 30분 안에 실패한 종목은 이번엔 건너뛴다. */
+  const prio = [];
+  if (o.prio !== false) {
+    try {
+      const nowS = Math.floor(nowMs / 1000);
+      const rs = await DB.prepare(
+        "SELECT symbol, MAX(tdec + CASE hz WHEN '30m' THEN 1800 WHEN '60m' THEN 3600 ELSE 23400 END) need FROM omni_shadow " +
+        "WHERE label IS NULL AND ver=? AND hz IN ('30m','60m','1d') AND tdec + CASE hz WHEN '30m' THEN 1800 WHEN '60m' THEN 3600 ELSE 23400 END < ? " +
+        "GROUP BY symbol ORDER BY need DESC LIMIT 300").bind(OMNI_VER, nowS - 300).all();
+      const inUni = new Set(uni);
+      // 장외: 회차 몫의 3/4 까지 · 장중: 회차 몫(4)은 커서에 두고 채점 대기만 최대 8종목 더(5분봉 1회씩 — 가볍다)
+      const cap = inHours ? 8 : Math.max(1, Math.floor(per * 3 / 4));
+      for (const r of ((rs && rs.results) || [])) {
+        if (prio.length >= cap) break;
+        const sym = String(r.symbol || ""); if (!inUni.has(sym)) continue;
+        const m5 = index.s[sym] && index.s[sym]["5m"];
+        if (m5 && m5.err && nowMs - _num(m5.err, 0) < 1800000 && !(m5.upd > m5.err)) continue;   // 방금 실패 — 이번엔 쉰다
+        if (!(m5 && _num(m5.upd, 0) >= (_num(r.need, 0) + 300) * 1000)) prio.push(sym);
+      }
+    } catch (e) {}
+  }
+  const prioSet = new Set(prio);
+  const seq = prio.slice();
+  for (let k = inHours ? 0 : seq.length; k < per; k++) { let s0 = uni[idx]; idx = (idx + 1) % uni.length; if (prioSet.has(s0)) { s0 = uni[idx]; idx = (idx + 1) % uni.length; } seq.push(s0); }
+  for (const sym of seq) {
+    done++;
     const ent = index.s[sym] || (index.s[sym] = { m: /\.(KS|KQ)$/.test(sym) ? "kr" : "us" });
     const tparts = {};                            // [V33.427] 이번에 새로 쓴 해상도 → 꼬리 파일
     for (const res of ["5m", "1d"]) {
       const meta = ent[res];
       const curVer = !!(meta && meta.v === OMNIBARS.ver[res]);
-      if (curVer && meta.upd && (nowMs - meta.upd) < OMNIBARS.refreshH[res] * 3600000) { skipped++; continue; }
+      const force = res === "5m" && prioSet.has(sym);   // [V33.507] 채점 대기 — 신선해도 다시 받는다
+      if (!force && curVer && meta.upd && (nowMs - meta.upd) < OMNIBARS.refreshH[res] * 3600000) { skipped++; continue; }
       let fresh = null;
       try { fresh = await _obFetch(sym, res); } catch (e) { fresh = null; }
       if (!fresh || !fresh.t.length) { failed++; ent[res] = Object.assign({}, meta || {}, { err: nowMs }); continue; }
@@ -10787,7 +10816,7 @@ async function omniBarsCollect(DB, opts) {
   try { await setState(DB, "omnibars_cursor", { i: idx, at: nowMs }); } catch (e) {}
   const nSym = Object.keys(index.s).length;
   let n5 = 0, n1 = 0; for (const s in index.s) { if (index.s[s]["5m"] && index.s[s]["5m"].n) n5++; if (index.s[s]["1d"] && index.s[s]["1d"].n) n1++; }
-  return "[OMNI-BARS] " + done + "종목 · 받음 " + fetched + " · 꼬리 " + tails + " · 신선해서 건너뜀 " + skipped + " · 실패 " + failed +
+  return "[OMNI-BARS] " + done + "종목" + (prio.length ? "(채점대기 우선 " + prio.length + ")" : "") + " · 받음 " + fetched + " · 꼬리 " + tails + " · 신선해서 건너뜀 " + skipped + " · 실패 " + failed +
          (prevFail ? "(옛파일 못읽음 " + prevFail + " — 안 덮음)" : "") +
          (adopted ? " · 색인에 없던 파일 되살림 " + adopted : "") + " · 색인 " + ixBefore + "→" + Object.keys(index.s).length +
          " · 새 봉 +" + added + " · 커버 5분봉 " + n5 + "/" + uni.length + " · 일봉 " + n1 + "/" + uni.length +

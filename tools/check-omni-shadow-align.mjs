@@ -114,5 +114,15 @@ console.log("⑤ 막힘 재현(옛 봉없는 묶음 + 새 묶음 · 한 번에 1
   chk(/덜참보류 1/.test(r3) && w3["30m|" + tMid] > NOW && /봉대기 1/.test(r4), "봉이 덜 온 최근 묶음은 보류 + backoff → 다음 틱엔 건너뛴다", "backoff " + r3 + " / " + r4);
   M._setR2ForTest(null);
 }
+console.log("⑥ 수집기 — 채점 대기 종목 먼저(V33.507)");
+{
+  const col = seg("async function omniBarsCollect", "\n/* ═══");
+  chk(/WHERE label IS NULL AND ver=\? AND hz IN \('30m','60m','1d'\)/.test(col) && /ORDER BY need DESC/.test(col), "라벨 안 달린 30m·60m·1d 결정의 종목을 최근 것부터 고른다", "우선 목록 질의");
+  chk(/_num\(m5\.upd, 0\) >= \(_num\(r\.need, 0\) \+ 300\) \* 1000/.test(col), "지평이 끝난 뒤로 5분봉을 받은 적이 없는 종목만", "필요 조건");
+  chk(/const cap = inHours \? 8 : Math\.max\(1, Math\.floor\(per \* 3 \/ 4\)\)/.test(col) && /for \(let k = inHours \? 0 : seq\.length; k < per; k\+\+\)/.test(col),
+    "장외: 몫의 3/4 까지 · 장중: 커서 몫은 그대로 + 채점 대기 최대 8 — 커서 회전은 계속된다", "상한");
+  chk(/const force = res === "5m" && prioSet\.has\(sym\);/.test(col) && /if \(!force && curVer && meta\.upd/.test(col), "우선 종목은 5분봉만 refreshH 를 건너뛴다(1일봉은 종전)", "강제 수집");
+  chk(/nowMs - _num\(m5\.err, 0\) < 1800000/.test(col), "30분 안에 실패한 종목은 쉰다(같은 실패를 매 회차 두드리지 않게)", "실패 쉼");
+}
 if (fails) { console.log("\n✗ OMNI 섀도우 정렬 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ OMNI 섀도우 정렬 통과");
