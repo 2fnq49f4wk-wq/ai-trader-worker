@@ -3103,6 +3103,19 @@ def _label_ablation(X, PNL, TS, SYM, MKT, featver, D, UNIQ=None, featnames=None,
         for (name, Yc, use, why, Xc, Wc) in cands:
             if Xc is None and Wc is None and name[:1] in ("B", "C", "D"):
                 _fair.append((name, Yc, use))
+        # [V33.514] ★최근 창만 학습★ — 운영 로그: "[최근성] 학습표본의 100% 가 바닥에 붙어 있다 → recency 는 상수".
+        #   2,259일(6년)을 똑같이 배우는데 보정구간 손실은 9~15그루에서 바로 오른다(GBDT·MIND·부스터 전부) — 국면 차이의 전형.
+        #   학습 행만 최근 N일로 줄이고 채점은 같은 전체 검증행이다(창을 줄이면 표본이 준다 — 그래도 이기는지 본다).
+        try:
+            _t0v = float(TSs[_va].min())
+            for _days in (365, 730):
+                _m = TSs >= (_t0v - (_days + 20) * 86400000.0)
+                _fair.append((f"A 최근 {_days}일만 학습", _Ysign, _m))
+            _dn = [c for c in cands if c[0].startswith("D ")]
+            if _dn:
+                _fair.append(("D + 최근 730일", _dn[0][1], _dn[0][2] & (TSs >= (_t0v - 750 * 86400000.0))))
+        except Exception as e:
+            print("   [라벨실험·공정비교] 최근 창 후보 생략:", e)
         for name, Yc, use in _fair:
             try:
                 tr = np.array([i for i in tri if use[i]], dtype=np.int64)
