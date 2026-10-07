@@ -57,9 +57,62 @@ const seg = (a, b) => { const i = S.indexOf(a); return i < 0 ? "" : S.slice(i, S
 const res = seg("async function omniShadowResolve", "\nconst OMNI_FWD_SPAN");
 const sc = seg("async function omniShadowScore", "\nasync function omniShadowResolve");
 chk(/const decs = _omShadowDecisions\(b5, mkt, Math\.floor\(modelAt \/ 1000\)\)/.test(sc) && /for \(const i of decs\)/.test(sc), "채점이 고정 결정 시각을 쓴다(모델 학습 뒤만)", "채점 배선 없음");
-chk(/nowS - sp\.sec - OMNI_SHADOW\.settleSec/.test(res) && /\(hz=\? AND tdec<=\?\)/.test(res), "지평 + settleSec 이 지난 묶음만 고른다", "settle 없음");
-chk(/frs\.length \/ rows\.length < OMNI_SHADOW\.coverMin && !_late/.test(res) && /partial\+\+/.test(res), "봉이 덜 온 묶음은 라벨 보류(유예 절반 넘으면 있는 만큼)", "부분 라벨");
+// [V33.505] 고정 20h 대기 → 지평 + 15분 · 봉이 덜 온 묶음은 그 묶음만 쉰다(backoff) · 20h 지나면 있는 만큼
+chk(/nowS - sp\.sec - OMNI_SHADOW\.minSettleSec/.test(res) && /\(hz=\? AND tdec<=\?\)/.test(res), "지평 + minSettleSec(15분) 이 지나면 묶음을 본다", "minSettle 없음");
+chk(/frs\.length \/ rows\.length < OMNI_SHADOW\.coverMin && !_late/.test(res) && /waitMap\[wkey\] = nowS \+ OMNI_SHADOW\.backoffSec/.test(res) && /const _late = tdec < nowS - span\.sec - OMNI_SHADOW\.settleSec;/.test(res),
+  "봉이 덜 온 묶음은 라벨 보류 + 그 묶음만 backoff · settle 지나면 있는 만큼", "부분 라벨/backoff");
 chk(/Promise\.all\(part\.map/.test(res) && /resolveBudgetMs/.test(res), "봉은 병렬로 · 시간 예산", "직렬/예산 없음");
-chk(M.OMNI_SHADOW.settleSec >= 18 * 3600 && M.OMNI_SHADOW.settleSec < M.OMNI_SHADOW.graceSec, "settle(" + M.OMNI_SHADOW.settleSec / 3600 + "h) ≥ 꼬리 회전 18h · < 유예", "settle 범위");
+chk(M.OMNI_SHADOW.minSettleSec <= 30 * 60 && M.OMNI_SHADOW.settleSec < M.OMNI_SHADOW.graceSec && M.OMNI_SHADOW.backoffSec <= 2 * 3600 && M.OMNI_SHADOW.scanGroups > M.OMNI_SHADOW.batchGroups,
+  "최소 대기 ≤30분 · 최대 대기(settle) < 유예 · backoff ≤2h · 훑는 묶음 > 처리 묶음", "대기 상수");
+chk(M.OMNIBARS.refreshH["5m"] <= 6, "5분봉 재수집 ≤ 6h(장 마감 뒤 그날 봉이 채점에 들어온다)", "5분봉 refreshH " + M.OMNIBARS.refreshH["5m"]);
+console.log("⑤ 막힘 재현(옛 봉없는 묶음 + 새 묶음 · 한 번에 1묶음)");
+{
+  const NOW = Math.floor(Date.now() / 1000);
+  const base = M.OMNI_CONSTS.base;
+  const tNew = Math.floor((NOW - 3600) / base) * base;               // 1시간 전 결정(30m 지평 + 15분 지남)
+  const tOld = Math.floor((NOW - 2 * 86400) / base) * base;          // 이틀 전(정렬 전 · 봉 없음)
+  const rows = []; let id = 1;
+  for (let k = 0; k < 25; k++) rows.push({ id: id++, symbol: "OLD" + k, market: "us", tdec: tOld, hz: "30m", p: 0.6, ver: M.OMNI_VER, label: null });
+  for (let k = 0; k < 25; k++) rows.push({ id: id++, symbol: "NEW" + k, market: "us", tdec: tNew, hz: "30m", p: k % 2 ? 0.7 : 0.3, ver: M.OMNI_VER, label: null });
+  const store = new Map();
+  const DB = { prepare: (sql) => { let a = []; const st = { sql, bind: (...x) => { a = x; st.args = x; return st; },
+    first: async () => /SELECT v FROM state WHERE k = \?/.test(sql) && store.has(a[0]) ? { v: store.get(a[0]) } : null,
+    all: async () => {
+      if (/GROUP BY tdec, hz/.test(sql)) {
+        const ver = a[0], cuts = {}; for (let i = 1; i + 1 < a.length - 2; i += 2) cuts[a[i]] = a[i + 1];
+        const m = new Map();
+        for (const r of rows) if (r.label === null && r.ver === ver && cuts[r.hz] != null && r.tdec <= cuts[r.hz]) { const k = r.tdec + "|" + r.hz; m.set(k, (m.get(k) || 0) + 1); }
+        return { results: [...m].map(([k, n]) => ({ tdec: +k.split("|")[0], hz: k.split("|")[1], n })).filter((x) => x.n >= a[a.length - 2]).sort((x, y) => x.tdec - y.tdec).slice(0, a[a.length - 1]) };
+      }
+      if (/SELECT id, symbol, market, p FROM omni_shadow WHERE tdec=\?/.test(sql)) return { results: rows.filter((r) => r.tdec === a[0] && r.hz === a[1] && r.label === null) };
+      return { results: [] }; },
+    run: async () => { if (/INSERT INTO state/.test(sql)) store.set(a[0], a[1]); return { meta: { changes: 0 } }; } }; return st; },
+    batch: async (sts) => { for (const st of sts) {
+      if (/SET label=-1/.test(st.sql)) { const r = rows.find((x) => x.id === st.args[1]); if (r) r.label = -1; continue; }
+      const [lab, fr, , rid] = st.args; const r = rows.find((x) => x.id === rid); if (r) { r.label = lab; r.fr = fr; } } return []; } };
+  const R2 = { get: async (key) => {
+    const m = /NEW(\d+)/.exec(key); if (!m) return null;
+    const k = +m[1], t = [], c = [];
+    for (let i = -10; i <= 10; i++) { t.push(tNew - base + i * base); c.push(100 * (1 + (i > 0 ? (k - 12) * 0.001 * i : 0))); }
+    const body = JSON.stringify({ "5m": { t, c } });
+    return { text: async () => body }; } };
+  M._setR2ForTest(R2);
+  const r1 = await M.omniShadowResolve(DB, { groups: 1 });
+  const w1 = JSON.parse(store.get("omni_fwd_wait") || "{}");
+  const oldClosed = rows.filter((r) => r.symbol.startsWith("OLD") && r.label === -1).length;
+  chk(/못잼닫음 25/.test(r1) && oldClosed === 25 && !/채점 · 25행/.test(r1), "1회차: 늦었는데 봉이 하나도 없는 옛 묶음은 '못 잼(-1)' 으로 닫는다(성적엔 안 셈)", "1회차 " + r1);
+  void w1;
+  const r2 = await M.omniShadowResolve(DB, { groups: 1 });
+  const lab = rows.filter((r) => r.symbol.startsWith("NEW") && (r.label === 0 || r.label === 1)).length;
+  chk(lab >= 20 && /채점 · \d+행/.test(r2), "★2회차: 새 묶음을 채점한다(" + lab + "행)★ — 종전엔 같은 옛 묶음이 매번 자리를 먹었다", "2회차 " + r2 + " · 라벨 " + lab);
+  // backoff: 지평 막 지난 묶음에 봉이 덜 왔으면 그 묶음만 쉬고 다음 틱엔 건너뛴다
+  const tMid = tNew - 3 * base;
+  for (let k = 0; k < 25; k++) rows.push({ id: id++, symbol: "MID" + k, market: "us", tdec: tMid, hz: "30m", p: 0.6, ver: M.OMNI_VER, label: null });
+  const r3 = await M.omniShadowResolve(DB, { groups: 1 });
+  const w3 = JSON.parse(store.get("omni_fwd_wait") || "{}");
+  const r4 = await M.omniShadowResolve(DB, { groups: 1 });
+  chk(/덜참보류 1/.test(r3) && w3["30m|" + tMid] > NOW && /봉대기 1/.test(r4), "봉이 덜 온 최근 묶음은 보류 + backoff → 다음 틱엔 건너뛴다", "backoff " + r3 + " / " + r4);
+  M._setR2ForTest(null);
+}
 if (fails) { console.log("\n✗ OMNI 섀도우 정렬 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ OMNI 섀도우 정렬 통과");

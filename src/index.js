@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.504";
+const _BUILD_VER = "V33.505";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -10498,7 +10498,9 @@ const OMNIBARS = {
   prefix: "bars/v1/",
   baseSec: 300,                                    // 기준봉 5분 — 바꾸면 학습기도 같이 바꾼다
   cap: { "5m": 40000, "1d": 6000 },                // 파일당 보존 상한(최근 것부터) — 5분봉 ≈2년 · 일봉 ≈24년
-  refreshH: { "5m": 18, "1d": 18 },                // 이만큼 지났으면 다시 받는다
+  /* [V33.505] 5분봉 18h → 6h — OMNI 전진검증(30·60분·1일 지평)은 결정 ★이후★ 봉이 와야 잰다. 18h 면 장중에 받은 종목은
+     다음날까지 다시 안 받아 채점이 하루 밀렸다. 장외 커서 한 바퀴(16종목/4분 ≈ 4시간)가 장 마감 뒤 그날 봉을 채운다. */
+  refreshH: { "5m": 6, "1d": 18 },                 // 이만큼 지났으면 다시 받는다
   usRange: { "5m": "60d" },                        // 야후 range(5분봉)
   /* [V33.421] ★일봉은 range=max 로 받지 않는다.★ 첫 실데이터 학습(Actions 35802459439)에서 104종목의
      일봉 행이 사실상 0 이었다 — 5일·20일 머리 "홀드아웃 부족", 1일 머리는 σ 가 부풀어 거의 전부
@@ -11417,6 +11419,11 @@ const OMNI_SHADOW = {
   /* [V33.501] 사후채점은 지평 + settleSec 이 지난 묶음만(꼬리 회전 ≈18시간 — 미래 봉이 들어올 시간) ·
      묶음 행의 coverMin 이상에 봉이 있어야 라벨을 단다 · 한 번에 resolveBudgetMs 까지만. */
   settleSec: 20 * 3600, coverMin: 0.6, resolveBudgetMs: 20000,
+  /* [V33.505] ★고정 대기 20h 를 없앤다★ — 사용자: "OMNI 섀도우 최대한 빨리". 운영 로그(10/07 00시): 매 틱 같은 옛 묶음 3개
+     (V33.501 이전 · 결정봉이 꼬리에 없음 · 봉없음 583)만 뽑히고, 정렬된 새 묶음은 전부 20h 대기 중이라 0행.
+     → 지평 + minSettleSec(15분) 이 지나면 바로 묶음을 본다. 봉이 coverMin 미만이면 그 묶음만 backoffSec 동안 쉬게 하고
+       (omni_fwd_wait) 다음 묶음으로 넘어간다 — 봉 없는 옛 묶음이 앞자리를 막지 않는다. 최대 대기는 settleSec(이후엔 있는 만큼). */
+  minSettleSec: 15 * 60, backoffSec: 3600, scanGroups: 80,
   /* 꼬리 파일 — 채점에 필요한 만큼만(게이트가 "꼬리로 낸 피처 = 전체로 낸 피처" 를 확인한다). */
   tail5: 480, tailD: 330
 };
@@ -11682,12 +11689,16 @@ async function omniShadowResolve(DB, opts) {
   /* [V33.501] ★봉이 들어왔을 때만 묶음을 연다★ — 꼬리는 ≈18시간 회전으로 새로 받는다. 지평이 막 끝난 묶음을 매 틱
      뽑으면 미래 봉이 아직 없어 전부 '봉없음' 이고, 오래된 순으로 뽑으니 ★같은 묶음이 매번 맨 앞★ 이었다
      (운영: 묶음 3 · 0행 · 봉없음 607). 지평 + settleSec 이 지난 묶음만 고른다. */
-  const _hzCut = OMNI_HORIZONS.map(function (h) { const sp = OMNI_FWD_SPAN[h]; return sp ? nowS - sp.sec - OMNI_SHADOW.settleSec : 0; });
+  const _hzCut = OMNI_HORIZONS.map(function (h) { const sp = OMNI_FWD_SPAN[h]; return sp ? nowS - sp.sec - OMNI_SHADOW.minSettleSec : 0; });
+  /* [V33.505] 봉이 덜 온 묶음의 쉬는 시각(키 "지평|결정시각" → 다시 볼 때) — 못 읽어도 빈 표로 시작(쉬지 않을 뿐 해는 없다) */
+  let waitMap = {}, waitOk = true;   // 엄격히 읽는다 — 못 읽었으면 이번엔 되쓰지 않는다(빈 표로 덮지 않게)
+  try { waitMap = (await getState(DB, "omni_fwd_wait", null, true)) || {}; } catch (e) { waitMap = {}; waitOk = false; }
+  let waited = 0, waitDirty = false;
   let gs = null;
   try {
     const _args = [OMNI_VER];
     OMNI_HORIZONS.forEach(function (h, k) { _args.push(h, _hzCut[k]); });
-    _args.push(OMNI_SHADOW.xsecMin, Math.max(1, _num(o.groups, OMNI_SHADOW.batchGroups)));
+    _args.push(OMNI_SHADOW.xsecMin, Math.max(1, _num(o.scan, OMNI_SHADOW.scanGroups)));
     const _st = DB.prepare(
       "SELECT tdec, hz, COUNT(*) n FROM omni_shadow WHERE label IS NULL AND ver=? AND (" +
       OMNI_HORIZONS.map(function () { return "(hz=? AND tdec<=?)"; }).join(" OR ") + ") " +
@@ -11701,11 +11712,17 @@ async function omniShadowResolve(DB, opts) {
   const t0 = Date.now(), budgetMs = Math.max(3000, _num(o.budgetMs, OMNI_SHADOW.resolveBudgetMs));
   const upd = [];
   const inc = {};
+  const maxG = Math.max(1, _num(o.groups, OMNI_SHADOW.batchGroups));
+  let tried = 0;
   for (const g of groups) {
     const hz = String(g.hz), tdec = _num(g.tdec, 0);
     const span = OMNI_FWD_SPAN[hz];
     if (!span) continue;
     if (tdec + span.sec > nowS) { notReady++; continue; }      // 아직 안 끝났다
+    const wkey = hz + "|" + tdec;
+    if (_num(waitMap[wkey], 0) > nowS) { waited++; continue; }  // [V33.505] 봉 기다리는 묶음 — 이번엔 건너뛴다
+    if (tried >= maxG) break;
+    tried++;
     let rs = null;
     try {
       rs = await DB.prepare("SELECT id, symbol, market, p FROM omni_shadow WHERE tdec=? AND hz=? AND label IS NULL AND ver=? LIMIT ?")
@@ -11730,8 +11747,19 @@ async function omniShadowResolve(DB, opts) {
     noBar += gNoBar;
     /* 아직 대부분의 봉이 안 왔으면 이 묶음은 ★라벨을 달지 않고★ 넘긴다 — 일부만으로 낸 중앙값은 묶음 전체의 중앙값이 아니다.
        단, 유예의 절반을 넘긴 묶음은 있는 만큼으로 잰다(끝내 안 올 종목 몇 개가 묶음 전체를 못 재게 하지 않는다). */
-    const _late = tdec < nowS - span.sec - OMNI_SHADOW.graceSec / 2;
-    if (rows.length && frs.length / rows.length < OMNI_SHADOW.coverMin && !_late) { partial++; continue; }
+    /* [V33.505] 늦음 = 지평 + settleSec(20h) — 그때까지 봉이 덜 왔으면 있는 만큼으로 잰다(끝내 안 올 종목 몇 개가 묶음을 못 막게) */
+    const _late = tdec < nowS - span.sec - OMNI_SHADOW.settleSec;
+    if (rows.length && frs.length / rows.length < OMNI_SHADOW.coverMin && !_late) {
+      partial++; waitMap[wkey] = nowS + OMNI_SHADOW.backoffSec; waitDirty = true; continue;
+    }
+    if (waitMap[wkey]) { delete waitMap[wkey]; waitDirty = true; }
+    /* [V33.505] ★늦었는데 봉이 하나도 없는 묶음은 바로 '못 잼(-1)' 으로 닫는다★ — 운영: 이런 옛 묶음(정렬 전 결정 · 결정봉이 파일에 없음)이
+       매 틱 '묶음 1 채점 · 0행 · 봉없음 583' 으로 자리를 먹고 유예(4일)까지 남았다. 성적에는 안 들어간다(label IN (0,1) 만 센다). */
+    if (_late && rows.length && frs.length === 0) {
+      for (const r of rows) upd.push({ st: DB.prepare("UPDATE omni_shadow SET label=-1, res_ts=? WHERE id=?").bind(nowS, r.id), hz: hz, closeOnly: true });
+      expired += rows.length;
+      continue;
+    }
     /* 시장별로 중앙값을 낸다 — 학습기의 묶음이 (시장 · 지평 · 결정시각)이다. */
     for (const mk of ["us", "kr"]) {
       const mine = frs.filter(function (z) { return z.m === mk; });
@@ -11754,6 +11782,7 @@ async function omniShadowResolve(DB, opts) {
     try { await DB.batch(chunk.map(function (u) { return u.st; })); }
     catch (e) { wrFail += chunk.length; continue; }
     for (const u of chunk) {
+      if (u.closeOnly) continue;                 // 못 잼 닫기 — 성적에 안 센다
       const c = inc[u.hz] || (inc[u.hz] = { n: 0, hits: 0 });
       c.n++; if (u.hit) c.hits++;
       didR++;
@@ -11767,13 +11796,16 @@ async function omniShadowResolve(DB, opts) {
   }
   fwd.acc = fwd.n ? fwd.hits / fwd.n : null;
   fwd.at = Date.now(); fwd.expired = _num(fwd.expired, 0) + expired;
+  /* [V33.505] 쉬는 표 정리 — 유예가 지난 키는 버린다(그 행은 이미 '못 잼' 으로 닫혔다) */
+  for (const k in waitMap) { const td = Number(String(k).split("|")[1]) || 0; if (td < nowS - 5 * 86400 - OMNI_SHADOW.graceSec) { delete waitMap[k]; waitDirty = true; } }
+  if (waitDirty && waitOk) { try { await setState(DB, "omni_fwd_wait", waitMap); } catch (e) {} }
   try { await setState(DB, "omni_fwd", fwd); } catch (e) {}
   const per = OMNI_HORIZONS.map(function (h) {
     const a = fwd.byHz[h];
     return a && a.n ? h + " " + (a.acc * 100).toFixed(1) + "%(" + a.n + ")" : null;
   }).filter(Boolean).join(" · ");
   return "[OMNI-FWD] 묶음 " + didG + " 채점 · " + didR + "행" + (wrFail ? "(쓰기실패 " + wrFail + ")" : "") + " · 동점버림 " + tie + " · 봉없음 " + noBar +
-         " · 덜참보류 " + partial + " · 미도래 " + notReady + " · 못잼닫음 " + expired + (ranOut ? " · (예산소진)" : "") + (per ? " · 누적 " + per : "");
+         " · 덜참보류 " + partial + (waited ? " · 봉대기 " + waited : "") + " · 미도래 " + notReady + " · 못잼닫음 " + expired + (ranOut ? " · (예산소진)" : "") + (per ? " · 누적 " + per : "");
 }
 
 /* 지평별 라벨 창 — 학습기 H_BARS/H_DAYS 와 같은 길이. sec 은 "이만큼 지나야 잰다" 는 하한이다. */

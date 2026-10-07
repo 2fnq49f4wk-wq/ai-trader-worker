@@ -133,6 +133,7 @@ jobs:
         run: |
           node tools/probe-returns.mjs "$URL" || true
           node tools/probe-models.mjs "$URL" || true
+          node tools/probe-kr-us.mjs "$URL" || true
 
       - name: 청산 반사실
         if: inputs.exits && steps.url.outputs.url != ''
