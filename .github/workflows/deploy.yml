@@ -1207,7 +1207,14 @@ jobs:
             echo "$f → $([ $good = 1 ] && echo OK || echo FAIL) · $(wc -c < /tmp/smoke.bin)B"
             [ "$good" = "1" ] || ok=0
           done
-          code=$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' -L "$U/full.html"); echo "피난처 /full.html → HTTP $code"
+          # [V33.508] 피난처도 엣지 전파를 기다린다 — V33.508 배포: 분할 파일은 재시도 끝에 모두 200 인데 /full.html 만 첫 시도 404 로 원본 재배포됐다.
+          code=000
+          for t in 1 2 3 4 5 6 7 8; do
+            code=$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' -L "$U/full.html?_t=$t$RANDOM")
+            [ "$code" = "200" ] && break
+            echo "  /full.html 시도 $t → HTTP $code — 10초 뒤 다시"; sleep 10
+          done
+          echo "피난처 /full.html → HTTP $code"
           [ "$code" = "200" ] || ok=0
           FIRST=$(echo "$FILES" | head -1)
           [ -n "$FIRST" ] && curl -sSI "$U$FIRST" | grep -i '^cache-control' || echo "(cache-control 헤더 없음 — 캐시는 서비스워커가 맡는다)"
