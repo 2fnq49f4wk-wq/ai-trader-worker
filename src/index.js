@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.503";
+const _BUILD_VER = "V33.504";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -26248,6 +26248,148 @@ function _corsFor(request, url) {
   return h;
 }
 
+/* ══ [V33.504] ★종목상세 — 시세 통계(일봉 캐시에서 계산 · 외부 조회 0)★ ════════════════════════════════
+   사용자: "종목상세에서 더 많은 주식에 대한 데이터 볼 수 있게". 이미 가진 일봉(daily:SYM)만으로 낼 수 있는 것을 먼저 낸다:
+   52주 고저·현재 위치 · 고점 대비 · 연초 대비 · 20일 연율 변동성 · 1년 최대낙폭 · 거래량(20·60일 평균 · 오늘/평균) ·
+   시장지수 대비 베타(1년 · 지수 일봉이 캐시에 있을 때만). 값을 만들 수 없으면 null — 지어내지 않는다. */
+function stockStatsFromDaily(d, price, idx) {
+  if (!d || !Array.isArray(d.closes)) return null;
+  const C = d.closes, H = Array.isArray(d.highs) ? d.highs : C, L = Array.isArray(d.lows) ? d.lows : C;
+  const V = Array.isArray(d.volumes) ? d.volumes : null, DY = (Array.isArray(d.days) && d.days.length === C.length) ? d.days : null;
+  const n = C.length;
+  if (n < 20) return null;
+  const px = (typeof price === "number" && price > 0) ? price : _num(C[n - 1], 0);
+  if (!(px > 0)) return null;
+  const w = Math.min(n, 252), a = n - w;
+  let hi = -Infinity, lo = Infinity, hiI = -1, loI = -1;
+  for (let i = a; i < n; i++) {
+    const h = _num(H[i], 0) || _num(C[i], 0), l = _num(L[i], 0) || _num(C[i], 0);
+    if (h > 0 && h > hi) { hi = h; hiI = i; }
+    if (l > 0 && l < lo) { lo = l; loI = i; }
+  }
+  const o = { bars: w, px: +px.toFixed(4) };
+  if (isFinite(hi) && isFinite(lo) && hi > lo) {
+    o.hi52 = +hi.toFixed(4); o.lo52 = +lo.toFixed(4);
+    o.pos52 = +(((Math.min(Math.max(px, lo), hi) - lo) / (hi - lo)) * 100).toFixed(1);
+    o.fromHi52 = +(((px - hi) / hi) * 100).toFixed(2);
+    o.fromLo52 = +(((px - lo) / lo) * 100).toFixed(2);
+    if (DY) { o.hi52Day = DY[hiI]; o.lo52Day = DY[loI]; }
+  }
+  // 20일 연율 변동성(로그수익 표준편차 × √252)
+  const lr = [];
+  for (let i = Math.max(1, n - 20); i < n; i++) { const p0 = _num(C[i - 1], 0), p1 = _num(C[i], 0); if (p0 > 0 && p1 > 0) lr.push(Math.log(p1 / p0)); }
+  if (lr.length >= 15) {
+    const m = lr.reduce((x, y) => x + y, 0) / lr.length;
+    const sd = Math.sqrt(lr.reduce((x, y) => x + (y - m) * (y - m), 0) / (lr.length - 1));
+    o.vol20 = +(sd * Math.sqrt(252) * 100).toFixed(1);
+  }
+  // 1년 최대낙폭(종가 기준)
+  let pk = 0, mdd = 0;
+  for (let i = a; i < n; i++) { const c = _num(C[i], 0); if (!(c > 0)) continue; if (c > pk) pk = c; else if (pk > 0) mdd = Math.min(mdd, (c - pk) / pk); }
+  o.mdd1y = +(mdd * 100).toFixed(1);
+  // 연초 대비 — 봉 날짜(에폭 이후 일수)가 있을 때만(올해 첫 봉의 직전 종가)
+  if (DY) {
+    const y0 = Math.floor(Date.UTC(new Date().getUTCFullYear(), 0, 1) / 86400000);
+    let k = -1;
+    for (let i = n - 1; i >= 0; i--) { if (_num(DY[i], 0) < y0) { k = i; break; } }
+    if (k >= 0 && _num(C[k], 0) > 0) o.ytd = +(((px - C[k]) / C[k]) * 100).toFixed(2);
+  }
+  if (V) {
+    const avg = (from) => { let s = 0, c = 0; for (let i = Math.max(0, from); i < n; i++) { const v = _num(V[i], 0); if (v > 0) { s += v; c++; } } return c ? s / c : null; };
+    const a20 = avg(n - 20), a60 = avg(n - 60), last = _num(V[n - 1], 0);
+    if (a20) o.avgVol20 = Math.round(a20);
+    if (a60) o.avgVol60 = Math.round(a60);
+    if (a20 && last > 0) o.volRatio = +(last / a20).toFixed(2);
+    if (a20) o.turnover20 = Math.round(a20 * px);   // 평균 거래대금(근사: 20일 평균 거래량 × 현재가)
+  }
+  // 베타(1년) — 지수 일봉과 같은 날짜끼리 맞춘다(날짜가 없으면 계산하지 않는다)
+  if (idx && Array.isArray(idx.closes) && DY && Array.isArray(idx.days) && idx.days.length === idx.closes.length) {
+    const im = new Map();
+    for (let i = 1; i < idx.closes.length; i++) { const p0 = _num(idx.closes[i - 1], 0), p1 = _num(idx.closes[i], 0); if (p0 > 0 && p1 > 0) im.set(idx.days[i], p1 / p0 - 1); }
+    const xs = [], ys = [];
+    for (let i = Math.max(1, a); i < n; i++) {
+      const r = im.get(DY[i]); const p0 = _num(C[i - 1], 0), p1 = _num(C[i], 0);
+      if (r != null && p0 > 0 && p1 > 0) { xs.push(r); ys.push(p1 / p0 - 1); }
+    }
+    if (xs.length >= 120) {
+      const mx = xs.reduce((x, y) => x + y, 0) / xs.length, my = ys.reduce((x, y) => x + y, 0) / ys.length;
+      let cv = 0, vx = 0, vy = 0;
+      for (let i = 0; i < xs.length; i++) { cv += (xs[i] - mx) * (ys[i] - my); vx += (xs[i] - mx) * (xs[i] - mx); vy += (ys[i] - my) * (ys[i] - my); }
+      if (vx > 0) { o.beta = +(cv / vx).toFixed(2); o.betaN = xs.length; if (vy > 0) o.corr = +(cv / Math.sqrt(vx * vy)).toFixed(2); }
+    }
+  }
+  return o;
+}
+
+/* [V33.504] 기업 개요 — 미국 나스닥 summary · 한국 네이버 종목분석(integration). 러너 실측(10/06) 응답 모양 그대로 읽는다.
+   6시간 캐시(profile:SYM) · 실패해도 통계는 나간다(기업 개요만 빈다) · 'N/A' 는 버린다. */
+const PROFILE_TTL_MS = 6 * 3600000;
+const NQ_SUMMARY_MAP = [
+  ["Exchange", "거래소"], ["Sector", "섹터"], ["Industry", "업종"], ["OneYrTarget", "1년 목표가(나스닥)"],
+  ["AnnualizedDividend", "연 배당금"], ["Yield", "배당수익률"], ["ExDividendDate", "배당락일"], ["DividendPaymentDate", "배당 지급일"],
+  ["ExpenseRatio", "운용보수"], ["AUM", "운용자산(천 달러)"], ["WeightedAlpha", "가중 알파"]
+];
+const NV_TOTAL_MAP = [
+  ["per", "PER"], ["cnsPer", "추정 PER"], ["eps", "EPS"], ["cnsEps", "추정 EPS"], ["pbr", "PBR"], ["bps", "BPS"],
+  ["dividendYieldRatio", "배당수익률"], ["dividend", "주당배당금"], ["foreignRate", "외국인 소진율"], ["accumulatedTradingValue", "거래대금(오늘)"]
+];
+function parseNqSummary(j) {
+  const d = j && j.data, sd = d && d.summaryData;
+  if (!sd || typeof sd !== "object") return null;
+  const facts = [];
+  for (const [k, l] of NQ_SUMMARY_MAP) {
+    const v = sd[k] && sd[k].value;
+    if (v == null) continue;
+    const t = String(v).trim();
+    if (!t || /^n\/?a$/i.test(t)) continue;
+    facts.push({ k: k, l: l, v: t });
+  }
+  return facts.length ? { facts: facts, src: "나스닥 요약" } : null;
+}
+function parseNvIntegration(j) {
+  if (!j || !Array.isArray(j.totalInfos)) return null;
+  const by = {};
+  for (const x of j.totalInfos) if (x && x.code) by[x.code] = x;
+  const facts = [];
+  for (const [k, l] of NV_TOTAL_MAP) {
+    const x = by[k]; if (!x || x.value == null) continue;
+    const t = String(x.value).trim();
+    if (!t || t === "-" || /^n\/?a$/i.test(t)) continue;
+    facts.push({ k: k, l: l, v: t + (x.valueDesc ? " (" + String(x.valueDesc).replace(/\.$/, "") + ")" : "") });
+  }
+  const about = typeof j.description === "string" ? j.description.replace(/\s+/g, " ").trim().slice(0, 320) : null;
+  return (facts.length || about) ? { facts: facts, about: about || null, src: "네이버 종목분석" } : null;
+}
+async function stockProfileExt(DB, sym) {
+  const key = "profile:" + sym;
+  let c = null;
+  try { c = await getState(DB, key, null); } catch (e) {}
+  if (c && c.ts && (Date.now() - c.ts) < PROFILE_TTL_MS) return c;
+  const isKr = /\.(KS|KQ)$/.test(sym);
+  let got = null;
+  try {
+    if (isKr) {
+      const r = await fetch("https://m.stock.naver.com/api/stock/" + sym.split(".")[0] + "/integration",
+        { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" }, signal: AbortSignal.timeout(5000) });
+      if (r.ok) got = parseNvIntegration(await r.json());
+    } else if (!/[=^]/.test(sym)) {
+      const H = { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        "Accept": "application/json", "Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/" };
+      const ns = nasdaqSym(sym).toUpperCase();
+      for (const ac of (ETF_SYMBOLS.has(sym) ? ["etf", "stocks"] : ["stocks", "etf"])) {
+        const r = await fetch("https://api.nasdaq.com/api/quote/" + encodeURIComponent(ns) + "/summary?assetclass=" + ac, { headers: H, signal: AbortSignal.timeout(5000) });
+        if (!r.ok) continue;
+        got = parseNqSummary(await r.json());
+        if (got) break;
+      }
+    }
+  } catch (e) {}
+  if (!got) return c || null;   // 실패 — 묵은 캐시라도 있으면 그것(없는 값을 지어내지 않는다)
+  got.ts = Date.now();
+  try { await setState(DB, key, got); } catch (e) {}
+  return got;
+}
+
 /* ══ [V33.496] ★공용 읽기 API 마이크로 캐시(아이솔레이트 메모리)★ ══════════════════════════════════════
    운영 탐침(10/06 10:26Z, 헤드리스 재방문): /api/news·fx·econ·earnings·insider·shard_meta 가 ★브라우저 대기 0 · 서버 TTFB 2.3~8.8초★,
    종목상세 차트도 2.5초. 같은 요청이 첫 방문엔 0.3초 — 핸들러가 무거운 게 아니라 ★D1 이 한 줄로 처리★ 하는데 크론이 분마다
@@ -26258,7 +26400,7 @@ const MICRO_CACHE_TTL = {
   "/api/news": 60000, "/api/fx": 30000, "/api/econ": 60000, "/api/econ-impact": 60000, "/api/earnings": 120000,
   "/api/insider": 120000, "/api/crisis": 30000, "/api/kr-halt": 15000, "/api/shard_meta": 300000,
   "/api/commodities": 20000, "/api/bonds": 30000, "/api/ta-screener": 60000,
-  "/api/tech-summary": 120000, "/api/fundamentals": 600000, "/api/analyst": 600000, "/api/chart": 300000
+  "/api/tech-summary": 120000, "/api/fundamentals": 600000, "/api/stock-profile": 300000, "/api/analyst": 600000, "/api/chart": 300000
 };
 const MICRO_CACHE_MAX = 300;
 const __microCache = new Map();
@@ -29480,6 +29622,26 @@ async function handleRequest(request, env, ctx) {
     // ═══════════ /외부 학습 오프로드 ═══════════
 
     // ── [FUND] 재무제표 + 내장AI 재무평가(F-Score·Z-Score) — 서버 7일 캐시 ──
+    // ── [V33.504] 종목상세 — 시세 통계(일봉 캐시) + 기업 개요(나스닥 summary · 네이버 종목분석) ──
+    if (path === "/api/stock-profile") {
+      const sym = (url.searchParams.get("symbol") || "").trim();
+      if (!sym || sym.length > 16 || !/^[A-Za-z0-9.^=\-]+$/.test(sym)) {
+        return Response.json({ ok: false, why: "bad symbol" }, { status: 400, headers: cors });
+      }
+      const market = /\.(KS|KQ)$/.test(sym) ? "kr" : "us";
+      const px = Number(url.searchParams.get("price")) || null;
+      const bench = market === "kr" ? "069500.KS" : "SPY";   // 베타 기준(코스피200 · S&P500 ETF — 유니버스 일봉 캐시)
+      let d = null, ix = null;
+      try { const g = await getStates(env.DB, ["daily:" + sym, "daily:" + bench]); d = g["daily:" + sym] || null; ix = sym === bench ? null : (g["daily:" + bench] || null); } catch (e) {}
+      const stats = stockStatsFromDaily(d, px, ix);
+      let ext = null;
+      try { ext = await stockProfileExt(env.DB, sym); } catch (e) {}
+      if (!stats && !ext) return Response.json({ ok: false, why: "이 종목의 일봉·기업 자료가 아직 없다" }, { headers: cors });
+      return Response.json({ ok: true, symbol: sym, market: market, stats: stats || {}, bench: bench,
+        facts: (ext && ext.facts) || [], about: (ext && ext.about) || null,
+        src: "일봉 캐시" + (ext && ext.src ? " · " + ext.src : ""), ts: (ext && ext.ts) || (d && d.ts) || null }, { headers: cors });
+    }
+
     if (path === "/api/fundamentals") {
       const sym = (url.searchParams.get("symbol") || "").trim();
       if (!sym || sym.length > 16 || !/^[A-Za-z0-9.^=\-]+$/.test(sym)) {
@@ -53575,7 +53737,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

@@ -12,6 +12,18 @@
 
 ## Current handoff
 
+- Status: **V33.504 — 종목상세 '시세 통계 · 기업 개요' · MEMO 상대 라벨 실험(Modal) · 모델 진단 탐침.**
+  - 종목상세(#20): /api/stock-profile — ① 일봉 캐시로 계산(외부 0): 52주 고저·위치 막대 · 고점/저점 대비 · 연초 대비 · 20일 연율 변동성 ·
+    1년 최대낙폭 · 20/60일 평균 거래량 · 오늘/평균 · 평균 거래대금 · 베타·상관(1년, 코스피200 ETF/SPY 일봉과 날짜 맞춤).
+    ② 기업 개요(6h 캐시 profile:SYM): 미국 나스닥 summary(거래소·섹터·업종·1년 목표가·배당·배당락·ETF 보수·AUM) ·
+    한국 네이버 integration(PER·추정PER·EPS·PBR·BPS·배당·외국인 소진율·거래대금 + 회사 소개). 응답 모양은 러너 실측(probe-yahoo NQS/NVI).
+  - 모델 진단(probe-models · ui-probe returns=true): MIND accLB 57.3 · GBDT 57.6 · 이중헤드 약세 IC 0.38 t 5.18 · SEQ 잠정 ×0.15 ·
+    ★MEMO 홀드아웃 블록IC −0.0127 t −0.56 → reject(가중 0)★ — 거래를 해치진 않지만 아무것도 보태지 않는다.
+  - MEMO 가설·실험: 원형 승률이 군집에 모인 날들의 시장 방향(10일 절대 라벨)을 외운다 → 같은 날·시장 평균 대비 상대 라벨(xsec).
+    Modal _train_and_upload_memo: label "auto" — 학습창 안 내부 검증(마지막 40일·엠바고)으로 abs/xsec 를 t 로 고르고 학습창 전체로 재적합 →
+    홀드아웃(종전 그대로 절대 라벨 블록IC)으로만 심사 · 승격은 워커 게이트(종전 그대로). 합성 데이터로 경로 검증.
+    ★효과는 아직 미측정★ — 배포 후 train-now target=memo 로 돌려 MEMO[label] 줄과 홀드아웃 t 를 확인할 것.
+  - 게이트: check-stock-profile · check-memo-xsec(고르기에 ho_idx 금지) 신규.
 - Status: **V33.503 — 인트로 데스크톱·아이패드 결함 고침(실측 기반).**
   - 재현: 멈춘 프레임(웹킷 아이패드·맥·크로뮴 FHD/QHD — ui-probe intro=true → ui-probe-shots 가지)은 배치가 정상. 결함은 ★실시간 재생★ 에 있었다
     (scratchpad rt2: 분할 빌드 · 실시간 rAF · longtask).

@@ -3309,6 +3309,10 @@ MEMO_CFG = {
     "trainMax": 160000,
     "holdDays": 60,        # 워커 MEMOML.holdDays 와 같은 값 — 게이트가 이 둘을 대조한다
     "holdCap": 30000,      # 홀드아웃 채점은 싸다(거리 계산 1회) — 워커보다 넉넉히 본다
+    # [V33.504] 라벨 변형 — "abs"(종전: 10일 뒤 올랐나) · "xsec"(같은 날·같은 시장 평균 대비) · "auto"(내부 검증으로 고른다)
+    "label": "auto",
+    "innerDays": 40,       # 내부 검증 창(학습창의 마지막 40일 · 엠바고 뒤) — ★홀드아웃은 고르는 데 쓰지 않는다★
+    "xsecMin": 20,         # 같은 날·시장 표본이 이보다 적으면 그 행은 상대 라벨을 못 만든다(학습에서 뺀다)
 }
 
 
@@ -3331,7 +3335,9 @@ def _memo_fit(X, Y, PNL, MKT, cfg=None):
 
     # 관련도 가중(V33.273/274) — 잡음바닥 relNoiseZ/√ntr 을 뺀 |점이연 상관|.
     ybar = float(Ytr.mean())
-    ysd = float(np.sqrt(max(ybar * (1.0 - ybar), 0.0)))
+    # [V33.504] 상대 라벨(연속값)이면 베르누이 공식이 아니라 실제 표준편차 — 0/1 라벨에선 두 식이 같다
+    _bin = bool(np.all((Ytr == 0.0) | (Ytr == 1.0)))
+    ysd = float(np.sqrt(max(ybar * (1.0 - ybar), 0.0))) if _bin else float(Ytr.std())
     mx = Z.mean(axis=0)
     sdx = np.sqrt(np.maximum((Z * Z).mean(axis=0) - mx * mx, 0.0))
     cov = ((Z * (Ytr - ybar)[:, None]).mean(axis=0))
@@ -3392,7 +3398,7 @@ def _memo_fit(X, Y, PNL, MKT, cfg=None):
             protos.append({
                 "c": [float(round(v, 3)) for v in C[k]],      # 워커: +v.toFixed(3)
                 "n": nk, "m": int(m),
-                "p": float(round(bm + (wr - bm) * sh, 4)),
+                "p": float(round(min(0.999, max(0.001, bm + (wr - bm) * sh)), 4)),
                 "pnl": float(round(float(Ptr[sel].mean()), 3)),
             })
             kept += 1
@@ -3406,6 +3412,24 @@ def _memo_fit(X, Y, PNL, MKT, cfg=None):
         "base": float(round(base, 4)), "books": bookinfo,
         "n": int(ntr),
     }, None
+
+
+def _memo_xsec_labels(Y, TS, MKi, min_n=20):
+    """[V33.504] ★같은 날·같은 시장 평균 대비 상대 라벨★ — MEMO 가 동전던지기였던 가설:
+       원형(군집)의 승률이 '그 군집에 모인 날들의 시장 방향' 을 외운다(10일 라벨은 시장 전체가 같이 움직인다).
+       상대 라벨은 그 시장 몫을 빼고 "같은 날 다른 종목보다 나았나" 만 남긴다(OMNI 의 xsec 와 같은 생각).
+       값 = Y − (그날·그시장 평균) + 전체 평균  → 평균은 기저율 그대로, 군집 p 는 기저율 ± 상대 우위.
+       표본이 min_n 미만인 날은 NaN(학습에서 뺀다)."""
+    import numpy as np
+    Y = np.asarray(Y, dtype=np.float64)
+    d = np.floor(np.asarray(TS, dtype=np.float64) / 86400000.0).astype(np.int64)
+    m = np.asarray(MKi, dtype=np.int64) if MKi is not None else np.zeros(Y.size, dtype=np.int64)
+    key = d * 8 + m
+    _u, inv, cnt = np.unique(key, return_inverse=True, return_counts=True)
+    mu = np.bincount(inv, weights=Y) / cnt
+    out = Y - mu[inv] + float(Y.mean())
+    out[cnt[inv] < int(min_n)] = np.nan
+    return out
 
 
 def _memo_chunk_dist(Zb, C):
@@ -3551,8 +3575,39 @@ def _train_and_upload_memo(BASE, KEY, HDR, X, Y, TS, PNL, featver, D, featnames=
         _map = {"us": 0, "kr": 1, "cm": 2}
         MKi = np.asarray([_map.get(str(v), 3) for v in MK_all], dtype=np.int64)
 
-    model, why = _memo_fit(Xa[tr_idx], Ya[tr_idx], Pa[tr_idx],
-                           MKi[tr_idx] if MKi is not None else None, c)
+    # ── [V33.504] 라벨 변형 고르기 — ★학습창 안의 내부 검증★ 으로만 고른다(홀드아웃은 끝까지 손대지 않는다) ──
+    #   운영 실측(10/06): MEMO 홀드아웃 블록IC −0.0127 · t −0.56 → reject(가중 0). 종전 라벨(abs) 그대로면 계속 0 이다.
+    #   abs 와 xsec 를 학습창 앞부분에 각각 적합 → 학습창 마지막 innerDays(엠바고 뒤)에서 같은 자(_ic_block_fields)로 잰다 →
+    #   t 가 큰 쪽을 골라 ★학습창 전체로 다시 적합★ → 그 모델만 홀드아웃으로 심사(워커 게이트가 승격을 정한다).
+    Yx_all = _memo_xsec_labels(Ya, Ta, MKi, int(c.get("xsecMin", 20)))
+    lab = str(c.get("label", "auto"))
+    inner = {}
+    if lab == "auto":
+        in_from = float(Ta[tr_idx].max()) - float(c.get("innerDays", 40)) * day
+        fit_i = tr_idx[Ta[tr_idx] < in_from - emb_ms]
+        val_i = tr_idx[Ta[tr_idx] >= in_from]
+        if fit_i.size >= c["minTrain"] and val_i.size >= c["minHold"]:
+            for v in ("abs", "xsec"):
+                Yf = Ya[fit_i] if v == "abs" else Yx_all[fit_i]
+                okf = ~np.isnan(Yf)
+                mv, _w = _memo_fit(Xa[fit_i][okf], Yf[okf], Pa[fit_i][okf],
+                                   MKi[fit_i][okf] if MKi is not None else None, c)
+                if mv is None:
+                    continue
+                mv["mktIdx"] = list(mcols) if mcols else None
+                pv = _memo_score_all(mv, Xa[val_i], MKi[val_i] if MKi is not None else None, int(c["neighbors"]))
+                okv = ~np.isnan(pv)
+                mkv = (MK_all[val_i][okv] if MK_all is not None else None)
+                f = _ic_block_fields(pv[okv].tolist(), Ya[val_i][okv].tolist(), 5, mkv,
+                                     ts=Ta[val_i][okv], horizon_ms=_HORIZON_MS)
+                inner[v] = {"ic": f.get("valICBlock"), "t": f.get("valICt"), "n": int(okv.sum())}
+        lab = "xsec" if (inner.get("xsec") and inner.get("abs") and
+                         float(inner["xsec"].get("t") or -9) > float(inner["abs"].get("t") or -9)) else "abs"
+        print("MEMO 라벨 고르기(내부 검증 %d일) — abs %s · xsec %s → %s" % (int(c.get("innerDays", 40)), inner.get("abs"), inner.get("xsec"), lab))
+    Ytr_fit = Ya[tr_idx] if lab != "xsec" else Yx_all[tr_idx]
+    okt = ~np.isnan(Ytr_fit)
+    model, why = _memo_fit(Xa[tr_idx][okt], Ytr_fit[okt], Pa[tr_idx][okt],
+                           MKi[tr_idx][okt] if MKi is not None else None, c)
     if model is None:
         print("MEMO 학습 불가 —", why)
         return None
@@ -3589,6 +3644,8 @@ def _train_and_upload_memo(BASE, KEY, HDR, X, Y, TS, PNL, featver, D, featnames=
         model.update(_uniq_fields(_uw))
     except Exception as _e:
         print("MEMO 고유도 계산 생략:", _e)
+    model["label"] = lab
+    model["labelInner"] = inner or None
     model["valICspanD"] = span_d
     model["valICeff"] = eff
     model["valIC"] = icf.get("valICBlock")
@@ -3602,8 +3659,8 @@ def _train_and_upload_memo(BASE, KEY, HDR, X, Y, TS, PNL, featver, D, featnames=
                       for i in _pi]
     model["probe"] = [q for q in model["probe"] if q["p"] is not None]
 
-    print("MEMO 원형 %d개 · 학습 %d행 · 홀드아웃 %d행/%d일(관측 %d개) · valAcc %.1f%% · 블록IC %s t %s · probe %d건"
-          % (len(model["protos"]), int(tr_idx.size), int(ph.size), span_d, eff, acc * 100,
+    print("MEMO[%s] 원형 %d개 · 학습 %d행 · 홀드아웃 %d행/%d일(관측 %d개) · valAcc %.1f%% · 블록IC %s t %s · probe %d건"
+          % (lab, len(model["protos"]), int(tr_idx.size), int(ph.size), span_d, eff, acc * 100,
              icf.get("valICBlock"), icf.get("valICt"), len(model["probe"])))
     try:
         r = requests.post(BASE + "/api/memo-import", params={"key": KEY, "activate": "1"},

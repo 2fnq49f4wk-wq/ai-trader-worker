@@ -184,8 +184,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.503">
-<script src="/neural-observatory.js?v=33.503" defer></script>
+<meta name="lux-build" content="V33.504">
+<script src="/neural-observatory.js?v=33.504" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -2903,6 +2903,14 @@ html[data-theme="light"] .detail-tf-btn.active{color:#fff;}
 .detail-side .detail-sec:first-child{margin-top:0;}
 /* 수신 데이터 2열 컴팩트 그리드 */
 .detail-data{display:grid;grid-template-columns:1fr 1fr;gap:1px 14px;}
+/* [V33.504] 시세 통계 · 기업 개요 */
+.detail-prof .prof-52{margin:2px 0 10px;}
+.prof-52h{display:flex;justify-content:space-between;font-size:10px;color:var(--t3);font-weight:600;margin-bottom:5px;}
+.prof-52h b{color:var(--t1);font-weight:700;}
+.prof-52bar{position:relative;height:4px;border-radius:2px;background:linear-gradient(90deg,var(--neg),rgba(150,160,180,.35) 50%,var(--pos));opacity:.85;}
+.prof-52bar i{position:absolute;top:50%;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:var(--t1);box-shadow:0 0 0 2px var(--bg);}
+.prof-52lh{display:flex;justify-content:space-between;font-size:10px;color:var(--t2);margin-top:4px;font-variant-numeric:tabular-nums;}
+.prof-about{font-size:11px;line-height:1.55;color:var(--t2);margin-top:8px;}
 .detail-dcell{display:flex;align-items:baseline;justify-content:space-between;gap:6px;
   padding:4px 0;border-bottom:1px solid var(--bd2);min-width:0;}
 .detail-dcell .l{font-size:9.5px;color:var(--t3);font-weight:600;white-space:nowrap;}
@@ -4637,6 +4645,8 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
               <!-- [V33.162] 증권사 목표가 — ★발표된 자료★ 를 이 종목 자리에서 보여준다.
                    종전엔 대시보드에 전 종목을 모아 놓아, 정작 한 종목을 보는 화면에서는
                    그 종목의 목표가를 볼 수 없었다. -->
+              <div class="detail-sec">시세 통계 · 기업 개요</div>
+              <div class="detail-prof" id="detailProfile"><div class="empty">로딩…</div></div>
               <div class="detail-sec">증권사 목표가 · 투자의견</div>
               <div class="detail-anl" id="detailAnalyst"><div class="empty">로딩…</div></div>
               <div class="detail-sec">기술적 패턴</div>
@@ -9325,6 +9335,60 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       .then(function(){ delete ANLD.inflight[sym]; });
   }
 
+  /* ══ [V33.504] 종목상세 — 시세 통계 · 기업 개요 ══════════════════════════════════════════════════
+     사용자: "종목상세에서 더 많은 주식에 대한 데이터 볼 수 있게". 서버 /api/stock-profile 이 일봉 캐시로 통계를 계산하고
+     (외부 조회 0) 기업 개요는 나스닥 summary(미국) · 네이버 종목분석(한국)에서 6시간 캐시로 붙인다. 없는 칸은 '—'. */
+  var PROF = { cache: {}, inflight: {} };
+  function renderDetailProfile(d) {
+    var el = $('detailProfile'); if (!el) return;
+    if (!d || d.ok === false) { el.innerHTML = '<div class="empty">' + escapeHtml((d && d.why) || '자료 없음') + '</div>'; return; }
+    var st = d.stats || {}, h = '';
+    var pc = function (v) { return (typeof v === 'number') ? (v >= 0 ? 'pos' : 'neg') : ''; };
+    var pct = function (v, k) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(k == null ? 2 : k) + '%') : '—'; };
+    var num = function (v) { return (typeof v === 'number') ? fmtNum(v) : '—'; };
+    if (typeof st.hi52 === 'number' && typeof st.lo52 === 'number') {
+      var pos = Math.max(0, Math.min(100, st.pos52 || 0));
+      h += '<div class="prof-52"><div class="prof-52h"><span>52주 범위</span><b>' + pos.toFixed(0) + '% 위치</b></div>' +
+        '<div class="prof-52bar"><i style="left:' + pos.toFixed(1) + '%"></i></div>' +
+        '<div class="prof-52lh"><span>' + num(st.lo52) + '</span><span>' + num(st.hi52) + '</span></div></div>';
+    }
+    var cells = [];
+    var add = function (l, v, cls) { cells.push('<div class="detail-dcell"><span class="l">' + l + '</span><span class="v' + (cls ? ' ' + cls : '') + '">' + v + '</span></div>'); };
+    add('52주 고점 대비', pct(st.fromHi52), pc(st.fromHi52));
+    add('52주 저점 대비', pct(st.fromLo52), pc(st.fromLo52));
+    add('연초 대비', pct(st.ytd), pc(st.ytd));
+    add('변동성(20일·연율)', (typeof st.vol20 === 'number') ? st.vol20.toFixed(1) + '%' : '—');
+    add('1년 최대낙폭', (typeof st.mdd1y === 'number') ? st.mdd1y.toFixed(1) + '%' : '—', (typeof st.mdd1y === 'number' && st.mdd1y < 0) ? 'neg' : '');
+    add('베타(1년·지수 대비)', (typeof st.beta === 'number') ? st.beta.toFixed(2) + (typeof st.corr === 'number' ? ' · 상관 ' + st.corr.toFixed(2) : '') : '—');
+    add('평균 거래량(20일)', (typeof st.avgVol20 === 'number') ? fvFmtVol(st.avgVol20) : '—');
+    add('오늘 거래량 / 평균', (typeof st.volRatio === 'number') ? '×' + st.volRatio.toFixed(2) : '—', (typeof st.volRatio === 'number' && st.volRatio >= 2) ? 'pos' : '');
+    add('평균 거래대금(20일)', (typeof st.turnover20 === 'number') ? fmtMcapVal(st.turnover20, d.market) : '—');
+    var facts = Array.isArray(d.facts) ? d.facts : [];
+    for (var i = 0; i < facts.length; i++) {
+      var f = facts[i]; if (!f || f.v == null || f.v === '') continue;
+      add(escapeHtml(String(f.l)), escapeHtml(String(f.v)), f.cls === 'pos' || f.cls === 'neg' ? f.cls : '');
+    }
+    h += '<div class="detail-data">' + cells.join('') + '</div>';
+    if (d.about) h += '<div class="prof-about">' + escapeHtml(String(d.about)) + '</div>';
+    h += '<div class="anl-src">' + escapeHtml(d.src || '일봉 캐시') + (d.ts ? ' · ' + fmtAgo(d.ts) : '') + '</div>';
+    el.innerHTML = h;
+  }
+  function loadDetailProfile() {
+    var sym = detailState.symbol; if (!sym) return;
+    var el = $('detailProfile'); if (!el) return;
+    var c = PROF.cache[sym];
+    if (c && (Date.now() - c.at) < 300000) { renderDetailProfile(c.d); return; }
+    el.innerHTML = '<div class="empty">불러오는 중…</div>';
+    if (PROF.inflight[sym]) return;
+    PROF.inflight[sym] = 1;
+    var q = lastQuotes && lastQuotes[sym], px = q ? ((typeof q.regPrice === 'number' && q.regPrice > 0) ? q.regPrice : q.price) : null;
+    fetch('/api/stock-profile?symbol=' + encodeURIComponent(sym) + (px > 0 ? '&price=' + px : ''))
+      .then(function (r) { return r.json(); })
+      .then(function (d) { PROF.cache[sym] = { d: d, at: Date.now() }; if (detailState.symbol === sym) renderDetailProfile(d); })
+      ['catch'](function (e) { if (detailState.symbol === sym) renderDetailProfile({ ok: false, why: '조회 실패 — ' + ((e && e.message) || e) }); })
+      .then(function () { delete PROF.inflight[sym]; });
+  }
+
   // 실적 발표일
   function renderDetailEarn() {
     var el = $('detailEarn'); if (!el) return;
@@ -9821,6 +9885,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       loadDetailCrowd();   // [V15] 투자심리(투표+AI 의견) — 2분 클라 캐시
       loadDetailFund();    // [V15] 재무제표+평가 — 세션 캐시·서버 7일 캐시
       loadDetailAnalyst(); // [V33.162] 증권사 목표가 — 발표된 자료(서버 12시간 캐시)
+      loadDetailProfile(); // [V33.504] 시세 통계(52주·변동성·낙폭·베타·거래) + 기업 개요(업종·PER·배당 등)
     }
     loadDetailTfSum();   // [V19] 시기별 기술요약(지금/1주/1달/1년) — 지수도 차트 기반이라 동작
     loadDetailChart(detailState.interval || '1d');
@@ -20583,11 +20648,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.503">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.503">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.503">
-<link rel="stylesheet" href="/model-evidence.css?v=33.503">
-<script src="/model-evidence.js?v=33.503"></script>
-<script src="/workspace-ui.js?v=33.503"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.504">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.504">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.504">
+<link rel="stylesheet" href="/model-evidence.css?v=33.504">
+<script src="/model-evidence.js?v=33.504"></script>
+<script src="/workspace-ui.js?v=33.504"></script>
 </body>
 </html>
