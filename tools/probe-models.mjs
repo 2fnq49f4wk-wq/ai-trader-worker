@@ -19,3 +19,11 @@ try {
     for (const l of pick(re, n)) out(tag, l);
   }
 } catch (e) { out("logs_err", String(e.message || e)); }
+/* [V33.504] 게이트 감사(고확률 차단의 실제 결과) · 원장 성과 — /api/ai-mode 의 alt 묶음 */
+try {
+  const am = await get("/api/ai-mode");
+  const alt = am.alt || am.altModels || am;
+  const find = (o, k, depth) => { if (!o || typeof o !== "object" || depth > 3) return null; if (o[k] !== undefined) return o[k]; for (const v of Object.values(o)) { const r = find(v, k, depth + 1); if (r !== null && r !== undefined) return r; } return null; };
+  out("gate_audit", JSON.stringify(find(alt, "gate", 0)).slice(0, 2500));
+  out("port_stats", JSON.stringify(find(alt, "port", 0)).slice(0, 2500));
+} catch (e) { out("aimode_err", String(e.message || e)); }
