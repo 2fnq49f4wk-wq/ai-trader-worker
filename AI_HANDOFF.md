@@ -21,6 +21,12 @@
   - 고침: 컨테이너에서 None 이면 `modal.Function.from_name("lux-dnn-trainer", "omni_job")` 으로 배포된 함수를 띄운다 · 끝내 못 띄우면 경고 로그.
     게이트 check-omni-model(폴백 배선·앱 이름 일치·경고).
   - 다음: 다음 정기 회차(00:10Z) 로그에 "OMNI 복합모델 학습을 별도 CPU 컨테이너로 띄웠다(배포된 함수 이름으로 찾음)" · 그 뒤 omni 메타 trainedAt·panelDay 갱신 확인.
+  - 수동 omni_now(37620079960 · 12:20Z): ✅ 업로드 200 — 패널 20261007(1,008종목) · 나무 1250 · mode shadow · headsOk [] (발언 0 유지).
+    홀드아웃 가중 AUC 0.4987(30m .503 · 60m .503 · 1d .492 · 5d .492 · 20d .461) — 실력 관문 미달 그대로, 승격 없음.
+- Status: **10/07 14:06Z 미국 정규장 시세 확인(#11 완료).**
+  - mstate_us REGULAR 558/558 · 나이 0.37분 · 나스닥 대조 50종목 p50 0.031% · p90 0.086% · 최대 0.154%(INTC) — 기준(p90 < 0.3%) 안.
+  - 한국(CLOSED 23:06 KST): 우리 = KRX 정규장 종가 고정(V33.512) · 네이버 nv = 20:00 넥스트레이드 포함 통합 마지막가라 대조 p90 1.0%(최대 008930 +10%)는 ★정의 차이★다.
+    probe-prices 의 한국 대조는 정규장 중에만 기준으로 쓸 것.
 - Status: **V33.512 — 한국 장후(넥스트레이드) 시세가 '정규장' 으로 찍히던 결함 · 미국 프리 관측 2분 주기 · 한국 시간외는 청산만.**
   - 운영(10/07 08:41Z = 17:41 KST · probe-prices): mstate_kr {REGULAR 418 · POST 28}, 시세 나이 0.6분(계속 갱신).
     probe-kr-nxt(17:44 KST): 네이버 폴링 005930 {ms:"OPEN", nv 270,000 = nxtOverMarketPriceInfo AFTER_MARKET overPrice 270,000} ·
