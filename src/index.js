@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.505";
+const _BUILD_VER = "V33.506";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -18705,10 +18705,21 @@ async function extBuyGuard(DB, market, qty, price, signal, cfg, opts, now) {
      · n ≥ 15 이고 평균 수익률 < 0 이고 PF < 0.8 → 새 진입을 ★막는다★(7일)
      · 7일 뒤 → 반 크기로 다시 해 본다(시험). 시험 동안의 청산만 센다 — 8건 넘게 쌓였는데 여전히 지면 다시 막고, 이기면 풀어 준다.
    문턱을 낮추거나 모델을 바꾸는 것이 아니라, 실제로 돈을 잃고 있는 진입을 멈추는 것이다. 막힌 목록은 /api/perf-gate 로 본다. */
-const PERF_GATE = { windowDays: 45, maxN: 40, minN: 15, blockPf: 0.8, coolDays: 7, probationMult: 0.5, probationMinN: 8 };
+/* [V33.506] ★실적 관문이 지는 전략을 잊고 있었다★ — 사용자: "한국·미국 승률·수익률 차이 원인 찾아 수정".
+   원장(포지션 단위, probe-kr-us 10/07): 한국 단타 <1h 85건 승률 21% · −294만 원 — 한국 손실의 절반이 단타다(미국 단타도 47건 승률 2%).
+   그런데 관문은 두 군데서 이걸 못 봤다:
+     ① 옛 형식 진입 사유 "[SCALP] SC_VWAP" · "[TREND] TR_PULLBACK"(주체 칸 없음)은 _pgTag 가 null → ★한 건도 안 셌다★
+     ② 창 45일 — 지는 전략이 잠잠해지면 기록이 창 밖으로 빠져 키가 사라지고 ★시험(반 크기) 없이 다시 열렸다★
+        (지금 한국 단타가 다시 스캔 중인 이유).
+   → 옛 형식은 규칙엔진(RULE) 으로 센다 · 창을 180일로 — 최근 maxN(40)건만 판단에 쓰므로 '오래된 성적' 이 아니라
+     '마지막 40건' 이다. 막힌 전략은 종전대로 7일 뒤 반 크기 시험(8건)으로만 다시 연다. 문턱(blockPf·minN)은 그대로. */
+const PERF_GATE = { windowDays: 180, maxN: 40, minN: 15, blockPf: 0.8, coolDays: 7, probationMult: 0.5, probationMinN: 8 };
 function _pgTag(reason) {
-  const m = String(reason || "").match(/^\[([A-Z-]+)\]\[([A-Z-]+)\]/);
-  return m ? (m[1] + ":" + m[2]) : null;
+  const s = String(reason || "");
+  const m = s.match(/^\[([A-Z-]+)\]\[([A-Z-]+)\]/);
+  if (m) return m[1] + ":" + m[2];
+  const l = s.match(/^\[(TREND|SCALP|SNAP)\]\s/);           // [V33.506] 옛 형식 — 주체 칸이 없던 규칙엔진 진입
+  return l ? ("RULE:" + l[1]) : null;
 }
 function _pgStats(list) {
   const n = list.length; if (!n) return { n: 0, mean: null, pf: null, win: null };
@@ -18818,6 +18829,14 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   // [V33.459] 실적 관문 — 이 시장에서 이 진입 주체·전략이 원장상 지고 있으면 막거나(7일) 반 크기로 시험한다
   const _pg = (typeof perfGateCheck === "function") ? await perfGateCheck(DB, market, signal, strategy) : { ok: true, mult: 1 };
   if (!_pg.ok) { await log(DB, "INFO", symbol, "BUY 실적 관문 차단 [" + _pg.key + "] " + (_pg.why || "")); return cash; }
+  /* [V33.506] ★레버리지·인버스 ETF 에 AI·단타 진입 금지★ — 원장(한국): 레버리지/인버스 9건 PF 0.47 · −210만 원(한국 손실의 39%) —
+     252670(인버스2X) AI 진입 하나가 −19.6% · −287만. 위원회는 개별주 피처로 학습했고, 손절(5%)·수량 산정은 1배 변동을 가정한다
+     (2배 상품의 밤사이 갭이 손절을 뛰어넘는다). 스냅은 이미 제외 · 규칙 추세는 ADX 로 축소 중 · 꼬리위험 헤지(hedge)는 그대로. */
+  if (strategy !== "hedge" && ((typeof LEVERAGED_ETF !== "undefined" && LEVERAGED_ETF.has(symbol)) || (typeof INVERSE_ETF !== "undefined" && INVERSE_ETF.has(symbol)))
+      && (strategy === "scalp" || (signal && (signal.isAiPrimary || signal.isAiScalp))) && !(cfg && cfg.levEtfAiEntries === true)) {
+    await log(DB, "INFO", symbol, "BUY 레버리지·인버스 ETF — AI·단타 진입 제외(" + strategy + ")");
+    return cash;
+  }
   if (_pg.mult < 1) { qty = Math.floor(qty * _pg.mult); if (qty <= 0) return cash; }
 
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
@@ -53769,7 +53788,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

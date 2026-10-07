@@ -71,3 +71,15 @@ for (const mk of ["us", "kr"]) {
   // ⑤ 큰 손실 상위
   out(mk + ".worst10", A.slice().sort((a, b) => a.pnl - b.pnl).slice(0, 10).map((x) => x.sym + " " + (x.pctW != null ? x.pctW.toFixed(2) : "?") + "% Σ" + Math.round(x.pnl) + " cost" + Math.round(x.cost) + " buys" + x.nb + " " + x.entry + " → " + x.exit + " hold" + x.holdH.toFixed(0) + "h"));
 }
+/* [V33.506] 10월 들어 매수 0건 — 어디서 막히나(미국·한국 심사 줄 · 보류/차단 사유) */
+try {
+  const lg = await get("/api/logs?limit=20000");
+  const pick = (re, n) => lg.filter((l) => re.test(String(l.message || ""))).slice(0, n).map((l) => new Date(l.ts).toISOString().slice(5, 16) + " " + String(l.message).slice(0, 600));
+  out("audit_us", pick(/^\[심사완료\] US/, 8));
+  out("audit_kr", pick(/^\[심사완료\] KR/, 5));
+  out("nobuy_us", pick(/^NOBUY\[us\]/, 6));
+  out("block_us", pick(/^BLOCK\[us\]/, 6));
+  out("nobuy_kr", pick(/^NOBUY\[kr\]/, 3));
+  out("buy_blocks", pick(/BUY (실적 관문 차단|시간외 차단|레버리지)/, 10));
+  out("logs_span", { n: lg.length, from: lg.length ? new Date(lg[lg.length - 1].ts).toISOString() : null });
+} catch (e) { out("logs_err", String(e.message || e)); }
