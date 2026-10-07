@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.511";
+const _BUILD_VER = "V33.512";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -3763,7 +3763,10 @@ const DEFAULT_CFG = {
   extTrade: {
     enabled: true,
     us: { pre: true, post: true },      // 미국 프리 07:00~09:30 · 애프터 16:00~20:00 ET
-    kr: { pre: true, post: true },      // 한국 장전 08:00~09:00 · 장후 15:30~20:00 KST
+    /* [V33.512] 한국은 시간외 ★청산만★(entries:false) — 네이버가 장후에도 ms "OPEN" 을 주면서 post 가 비어
+       한국 시간외 진입은 사실상 꺼져 있었다(전부 '체결없음'). 시세를 고치면 진입이 ★근거 없이★ 다시 켜진다.
+       한국 성과가 약하고(실적 관문 차단 중) 넥스트레이드 호가는 더 얇다 — 측정 전엔 열지 않는다. 손절·익절(청산)은 연다. */
+    kr: { pre: true, post: true, entries: false },   // 한국 장전 08:00~09:00 · 장후 15:30~20:00 KST
     entries: true,                      // false = 청산만(신규 진입 금지)
     /* [V33.332] fastWatch 안의 '그날 픽' 진입은 ★기본으로 끈다.★
        V33.332 부터 메인 사이클이 시간외에도 유니버스 전체를 평가·진입한다 — 훨씬 넓고,
@@ -8050,7 +8053,6 @@ async function fetchExtendedQuoteUS(symbol) {
 function applyKrOverMarket(o, d) {
   if (!o || !d) return o;
   const num = function(s){ if (typeof s === "number") return s; if (typeof s !== "string") return NaN; return Number(s.replace(/,/g, "")); };
-  if (d.ms === "OPEN") { o.mstate = "REGULAR"; return o; }
   // [PRE/POST FIX] 세션 판정을 네이버 tradingSessionType(불안정·직전세션 잔상)에 의존하지 않고
   //   KST 시각으로 확정한다. 08:00~09:00=장전(PRE), 15:30~20:00=장후(POST).
   // [V33.351] 창은 marketWindows 한 곳에서 — 수능일이면 이 창도 1시간 밀린다.
@@ -8058,6 +8060,17 @@ function applyKrOverMarket(o, d) {
   const _sessKR = marketSessionNow("kr", new Date());
   const inPre  = _sessKR === "PRE";
   const inPost = _sessKR === "POST";
+  /* [V33.512] ★ms "OPEN" 은 정규장이라는 뜻이 아니다★ — 운영 실측(10/07 17:44 KST · probe-kr-nxt):
+     장후인데 네이버 폴링이 ms "OPEN" · nv = 넥스트레이드 애프터마켓 체결가(삼성 nv 270,000 = nxt overPrice 270,000),
+     넥스트레이드 미상장 종목(BGF)도 KRX 시간외 단일가 체결로 nv 가 움직인다(ms OPEN · nxt 정보 null).
+     종전엔 ms OPEN 이면 무조건 REGULAR 로 돌려보내 ① 장후 체결가가 '정규장 가격' 으로 찍히고(418/446 종목 REGULAR)
+     ② 오늘 종가가 시간외 체결로 덮이고 ③ post·extTs 가 안 채워져 장후 거래 판정이 전부 '체결없음' 이었다.
+     이제 정규장 판정은 ★시계가 정규장일 때만★. 정규장 밖의 ms OPEN 은 '시간외 체결이 살아 있다' 로 읽는다. */
+  if (d.ms === "OPEN" && _sessKR === "REGULAR") { o.mstate = "REGULAR"; return o; }
+  // 15:30~15:40 은 장 마감 직후 · 넥스트레이드 재개 전 — nv 는 오늘 종가다(정규장 값으로 그대로 둔다)
+  const _closeGap = inPost && kst.totalMin < 940;
+  if (!_closeGap) o.regFreeze = true;   // 정규장 밖(마감 직후 10분 제외): nv 는 정규장 가격이 아니다 — 병합에서 저장된 종가를 지킨다
+  if (d.ms === "OPEN" && (inPre || (inPost && !_closeGap))) o.extLive = true;   // 시간외 체결이 살아 있다
   /* [V33.350 · A-10 해결] 여기서 값을 안 넣고 나가는 것 자체는 맞다 — 없는 체결을 지어내지 않는다.
      문제는 기록부가 한국에 대해 아무것도 지우지 않아, 안 넣은 자리에 ★지난 세션 값★ 이
      COALESCE 로 남던 것이었다. 이제 extKeepMaskKR 이 세션 밖 값을 지운다(16908 부근). */
@@ -8074,7 +8087,17 @@ function applyKrOverMarket(o, d) {
       .sort(function(a,b){return (Date.parse(b.localTradedAt) || 0) - (Date.parse(a.localTradedAt) || 0);})[0] || null;
   }
   const info = pick();
-  if (!info) { o.mstate = (inPre ? "PRE" : inPost ? "POST" : "CLOSED"); return o; }
+  if (!info) {
+    o.mstate = (inPre ? "PRE" : inPost ? "POST" : "CLOSED");
+    /* [V33.512] 넥스트레이드 정보가 없는데 시간외 체결이 살아 있다(KRX 시간외 단일가) — nv 를 시간외 값으로 ★보여만★ 준다.
+       체결 시각을 모르므로 extTs 는 0(거래 가격으로 안 쓴다 · Codex V33.346 원칙 그대로). */
+    if (o.extLive && o.price > 0) {
+      const _xp = o.price, _xpct = (o.prevClose > 0) ? ((_xp - o.prevClose) / o.prevClose) * 100 : 0;
+      if (inPre) { o.pre = _xp; o.prePct = _xpct; } else { o.post = _xp; o.postPct = _xpct; }
+      o.extTs = 0;
+    }
+    return o;
+  }
   const op = num(info.overPrice);
   if (!(op > 0)) { o.mstate = (inPre ? "PRE" : inPost ? "POST" : "CLOSED"); return o; }
   // 등락률 — fluctuationsRatio(전일종가 대비, 네이버 표시값)를 부호와 함께 채택, 없으면 전일종가 대비 계산.
@@ -8601,6 +8624,29 @@ async function fetchBatchQuotes(symbols, opts) {
 
   // --- 3) [V58] KR 네이버 머지 — 네이버가 단독 primary (야후 KR 조회 완전 제거)
   //   naverXV에 있는 KR 종목을 out에 병합. shares/mcap은 mcap_shares DB 값 보존용.
+  /* [V33.512] ★정규장 밖(regFreeze)에는 정규장 가격을 저장된 값(오늘 종가)으로 지킨다★ —
+     네이버 nv 는 장후(15:40~20:00)·장전(08:00~)엔 시간외 체결가, 20:00 뒤엔 넥스트레이드 포함 통합 마지막가다.
+     시간외 체결은 post/pre 에 따로 들어 있다. 미국(regPrice = 정규장 종가)과 같은 규약.
+     저장된 quote 가 없으면(신규 종목) 어쩔 수 없이 nv 를 쓴다 — 없는 종가를 지어내지 않는다. */
+  const _xl = Object.keys(naverXV).filter(function (s) { return naverXV[s] && naverXV[s].regFreeze; });
+  if (_xl.length && opts && opts.DB) {
+    try {
+      for (let _i = 0; _i < _xl.length; _i += 100) {
+        const _ck = _xl.slice(_i, _i + 100);
+        const _st = opts.DB.prepare("SELECT k, v FROM state WHERE k IN (" + _ck.map(function () { return "?"; }).join(",") + ")");
+        const _rw = await _st.bind.apply(_st, _ck.map(function (s) { return "quote:" + s; })).all();
+        for (const r of ((_rw && _rw.results) || [])) {
+          let pq = null; try { pq = JSON.parse(r.v); } catch (e) {}
+          const nq = naverXV[String(r.k).slice(6)];
+          if (!nq || !pq || !(_num(pq.price, 0) > 0)) continue;
+          nq.price = pq.price;
+          if (_num(pq.prevClose, 0) > 0) nq.prevClose = pq.prevClose;
+          nq.dayPct = (nq.prevClose > 0) ? ((nq.price - nq.prevClose) / nq.prevClose) * 100 : _num(pq.dayPct, 0);
+          nq.regKept = 1;
+        }
+      }
+    } catch (e) {}
+  }
   for (const sym of Object.keys(naverXV)) {
     const nq = naverXV[sym];
     const yq = out[sym];  // v7이 혹시 받아온 경우 — shares/mcap만 활용
@@ -18750,6 +18796,9 @@ async function extBuyGuard(DB, market, qty, price, signal, cfg, opts, now) {
   const et = cfg.extTrade || DEFAULT_CFG.extTrade;
   if (!et || et.enabled === false || et.entries === false || extTradeSession(market, cfg, new Date(now)) !== session)
     return { ok: false, why: "entries_disabled" };
+  /* [V33.512] 시장별 청산만 — 한국은 ★명시적으로 entries:true 일 때만★ 시간외 진입(저장된 cfg 가 extTrade 를 통째로 덮어 기본값이 빠져도 닫힌 쪽으로) */
+  const _mkx = et[market] || {};
+  if (market === "kr" ? _mkx.entries !== true : _mkx.entries === false) return { ok: false, why: "entries_disabled" };
   const px = extTradePrice(opts && opts.quote, session, cfg);
   if (px == null || Math.abs(px - price) > Math.max(1e-8, price * 1e-8)) return { ok: false, why: "quote_unverified" };
   const p = signal && signal.mlMindP;
@@ -22269,7 +22318,10 @@ async function runTradingCycle(env) {
         const _tw = marketWindows(market, null);
         const _lt = marketLocalTime(market, null);
         const _inTradeWin = !!(_tw && _lt && (_inWin(_lt.totalMin, _tw.preTrade, _lt.day) || _inWin(_lt.totalMin, _tw.postTrade, _lt.day)));
-        if (_m % (_inTradeWin ? 2 : 6) !== 0) continue;
+        /* [V33.512] 관측 전용 구간도 2분 — 사용자 요청("프리·애프터 실시간"). 운영(10/07 08:41Z 프리마켓): 미국 557종목 시세 나이 4.6분.
+           V33.502 로 미국 시간외가 나스닥 배치(종목 수십 개당 1콜)가 되어 6분으로 아끼던 예산 이유가 사라졌다. */
+        void _inTradeWin;
+        if (_m % 2 !== 0) continue;
       }
       const positions = await getPositions(DB, market);  // key: "SYM::strategy"
       const feeRate = market === "us" ? mcfg.feeUS : mcfg.feeKR;
@@ -53877,7 +53929,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { applyKrOverMarket, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
