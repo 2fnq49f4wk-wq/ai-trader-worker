@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.512";
+const _BUILD_VER = "V33.514";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -18855,7 +18855,28 @@ function _pgStats(list) {
   const n = list.length; if (!n) return { n: 0, mean: null, pf: null, win: null };
   let s = 0, gp = 0, gl = 0, w = 0;
   for (const x of list) { s += x; if (x > 0) { gp += x; w++; } else gl += -x; }
-  return { n: n, mean: +(s / n).toFixed(3), pf: gl > 0 ? +(gp / gl).toFixed(3) : (gp > 0 ? 99 : null), win: +(w / n * 100).toFixed(1) };
+  return { n: n, mean: +(s / n).toFixed(3), pf: gl > 0 ? +(gp / gl).toFixed(3) : (gp > 0 ? 99 : null), win: +(w / n * 100).toFixed(1),
+           gp: +gp.toFixed(4), gl: +gl.toFixed(4) };
+}
+/* [V33.514] ★같은 전략의 다른 시장 증거를 합친다 — 막는 쪽으로만★
+   운영(10/07 23:15Z): us:AI-SCALP:SCALP blocked(n22 · 평균 −0.171% · PF 0.41) 인데 kr:AI-SCALP:SCALP 는
+   n6(평균 −0.606% · PF 0.017 · 승률 16.7%)이라 표본 문턱(15) 아래로 ★열려 있었다★ — 같은 단타 모델·같은 청산 규칙이다.
+   그 시장 표본이 문턱 미만이고 ★그 시장 자체도 음수(n≥3)★ 일 때만, 같은 주체:전략의 전 시장 합산이 문턱을 넘고 나쁘면 막는다.
+   그 시장이 양수면 다른 시장 증거로 막지 않는다 · 합산이 좋아도 이미 막힌 키를 풀지 않는다(완화 경로 없음). */
+function _pgPooled(keys, market, tag) {
+  const own = keys[market + ":" + tag];
+  if (!own || own.mode !== "open" || !(own.n >= 3) || own.n >= PERF_GATE.minN || !(own.mean < 0)) return null;
+  let n = 0, sum = 0, gp = 0, gl = 0;
+  for (const k in keys) {
+    if (k.slice(k.indexOf(":") + 1) !== tag) continue;
+    const e = keys[k];
+    if (!(e && e.n > 0) || e.mean == null) continue;
+    n += e.n; sum += e.mean * e.n; gp += _num(e.gp, 0); gl += _num(e.gl, 0);
+  }
+  if (n < PERF_GATE.minN) return null;
+  const mean = sum / n, pf = gl > 0 ? gp / gl : (gp > 0 ? 99 : null);
+  if (!(mean < 0 && pf != null && pf < PERF_GATE.blockPf)) return null;
+  return { n: n, mean: +mean.toFixed(3), pf: +pf.toFixed(3) };
 }
 async function perfGateLoad(DB, force) {
   const g = globalThis;
@@ -18897,7 +18918,7 @@ async function perfGateLoad(DB, force) {
     }
     if (k0.mode !== mode) { k0.mode = mode; changed = true; }
     st.keys[key] = k0;
-    out[key] = { mode: mode, since: k0.since || null, n: s2.n, mean: s2.mean, pf: s2.pf, win: s2.win };
+    out[key] = { mode: mode, since: k0.since || null, n: s2.n, mean: s2.mean, pf: s2.pf, win: s2.win, gp: s2.gp, gl: s2.gl };
   }
   if (changed && _rwPg) { st.at = now; try { await setState(DB, "perf_gate", st); } catch (e) {} }
   g.__perfGate = { at: now, keys: out };
@@ -18909,7 +18930,12 @@ async function perfGateCheck(DB, market, signal, strategy) {
     const tag = ((signal && signal.isAiScalp) ? "AI-SCALP" : (signal && signal.isAiPrimary) ? "AI" : "RULE") + ":" + String(strategy || "").toUpperCase();
     const pg = await perfGateLoad(DB, false);
     const e = pg.keys[market + ":" + tag];
-    if (!e || e.mode === "open") return { ok: true, mult: 1, key: market + ":" + tag };
+    if (!e || e.mode === "open") {
+      const pl = _pgPooled(pg.keys, market, tag);   // [V33.514] 표본 미달 · 자기도 음수 → 전 시장 합산으로 판정(막는 쪽만)
+      if (pl) return { ok: false, mult: 0, key: market + ":" + tag, pooled: true,
+        why: "이 시장 " + (e ? e.n : 0) + "건 평균 " + (e ? e.mean : "—") + "% · 같은 전략 전 시장 " + pl.n + "건 평균 " + pl.mean + "% · PF " + pl.pf };
+      return { ok: true, mult: 1, key: market + ":" + tag };
+    }
     if (e.mode === "blocked") return { ok: false, mult: 0, key: market + ":" + tag, why: "최근 " + e.n + "건 평균 " + e.mean + "% · PF " + e.pf };
     return { ok: true, mult: PERF_GATE.probationMult, key: market + ":" + tag, why: "시험 중(반 크기)" };
   } catch (e) { return { ok: true, mult: 1 }; }   // 원장을 못 읽으면 막지 않는다(판정 불가 ≠ 손실)
@@ -27795,7 +27821,9 @@ async function handleRequest(request, env, ctx) {
         _row("gbdt", "GBDT (부스팅 트리)", { kind: "tree",
           trained: !!(gT && gT.gbdtAcc != null), valAcc: gT ? _num(gT.gbdtAcc, null) : null,
           accLB: gT ? _num(gT.gbdtAccLB, null) : null, floor: _num(GBDT.trustFloor, 0.505),
-          voting: !!(gT && gT.trusted), why: (gT && gT.trusted) ? "신뢰 통과" : ((gT && gT.reason) || "미학습") }),
+          voting: !!(gT && gT.trusted), why: (gT && gT.trusted) ? "신뢰 통과" : ((gT && gT.reason) ||
+            /* [V33.514] 학습은 됐는데 문턱 미달인 걸 '미학습' 으로 적고 있었다(명부는 같은 순간 '정확도 하한 문턱 미달') — 같은 사실을 같은 말로 */
+            ((gT && gT.gbdtAcc != null) ? ("학습됨 — 정확도 하한 " + (_num(gT.gbdtAccLB, 0) * 100).toFixed(1) + "% 가 문턱 " + (_num(GBDT.trustFloor, 0.505) * 100).toFixed(1) + "% 미달(IC 경로도 미통과)") : "미학습")) }),
         _row("boost", "BOOST (XGB·LGB·CatBoost 합의)", { kind: "tree",
           trained: !!(boosters && boosters.length), n: boosters ? boosters.length : 0,
           voting: !!(boosters && boosters.length),
@@ -53929,7 +53957,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { applyKrOverMarket, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

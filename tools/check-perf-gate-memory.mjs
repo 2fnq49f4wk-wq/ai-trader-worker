@@ -39,5 +39,26 @@ const eb = S.slice(S.indexOf("async function executeBuy("), S.indexOf("async fun
 chk(/strategy !== "hedge" && \(\(typeof LEVERAGED_ETF !== "undefined" && LEVERAGED_ETF\.has\(symbol\)\) \|\| \(typeof INVERSE_ETF !== "undefined" && INVERSE_ETF\.has\(symbol\)\)\)/.test(eb)
   && /strategy === "scalp" \|\| \(signal && \(signal\.isAiPrimary \|\| signal\.isAiScalp\)\)/.test(eb), "executeBuy: 레버리지·인버스 → AI·단타 거절(헤지 제외)", "배선");
 chk(eb.indexOf("레버리지·인버스 ETF — AI·단타 진입 제외") > eb.indexOf("BUY 실적 관문 차단"), "실적 관문 바로 뒤(수량 계산 전)", "위치");
+console.log("④ 같은 전략 전 시장 합산(V33.514 · 막는 쪽만)");
+{
+  const R = await import("../src/index.js");
+  // 운영 10/07: us AI-SCALP n22 blocked · kr AI-SCALP n6 평균 −0.606 PF 0.017 → kr 도 막혀야 한다
+  const keys = {
+    "us:AI-SCALP:SCALP": { mode: "blocked", n: 22, mean: -0.171, pf: 0.412, gp: 2.6, gl: 6.3 },
+    "kr:AI-SCALP:SCALP": { mode: "open", n: 6, mean: -0.606, pf: 0.017, gp: 0.06, gl: 3.7 },
+    "us:AI:TREND": { mode: "open", n: 40, mean: 0.408, pf: 1.404, gp: 56, gl: 40 },
+    "kr:AI:TREND": { mode: "blocked", n: 40, mean: -1.156, pf: 0.479, gp: 42, gl: 88 },
+    "kr:RULE:SNAP": { mode: "open", n: 4, mean: 0.5, pf: 2, gp: 4, gl: 2 },
+    "us:RULE:SNAP": { mode: "blocked", n: 30, mean: -0.4, pf: 0.5, gp: 6, gl: 12 }
+  };
+  const p1 = R._pgPooled(keys, "kr", "AI-SCALP:SCALP");
+  chk(p1 && p1.n === 28 && p1.mean < 0 && p1.pf < 0.8, "한국 AI 단타(n6·음수) → 미국과 합산 n28 · 음수 · PF<0.8 → 막는다", JSON.stringify(p1));
+  chk(R._pgPooled(keys, "kr", "RULE:SNAP") === null, "이 시장 자체가 양수면 다른 시장이 나빠도 막지 않는다", "양수 시장 막힘");
+  chk(R._pgPooled(keys, "us", "AI:TREND") === null, "표본 문턱을 넘은 키는 자기 증거로만(합산 안 씀)", "자기 증거");
+  const k2 = Object.assign({}, keys, { "kr:AI-SCALP:SCALP": Object.assign({}, keys["kr:AI-SCALP:SCALP"], { n: 2 }) });
+  chk(R._pgPooled(k2, "kr", "AI-SCALP:SCALP") === null, "이 시장 표본 3건 미만이면 합산하지 않는다", "n2");
+  const src = S.slice(S.indexOf("async function perfGateCheck("), S.indexOf("async function perfGateCheck(") + 1400);
+  chk(/const pl = _pgPooled\(pg\.keys, market, tag\);/.test(src) && /pooled: true/.test(src), "perfGateCheck 가 열림 판정 전에 합산을 본다", "배선");
+}
 if (fails) { console.log("\n✗ 실적 관문 기억 계약 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 실적 관문 기억 계약 통과");

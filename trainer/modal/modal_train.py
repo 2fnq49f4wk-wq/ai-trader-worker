@@ -3089,6 +3089,43 @@ def _label_ablation(X, PNL, TS, SYM, MKT, featver, D, UNIQ=None, featnames=None,
     print("      ★읽는 법★ 정확도 한 숫자로 비교하지 말 것 — 데드밴드 후보는 모집단이 다르다.")
     print("      비교할 것은 ★다수클래스 대비 초과(%p)★ 이고, 적용률이 낮으면 그만큼 기회가 준다.")
     print("      운영에 반영할지는 이 표를 보고 ★사람이★ 정한다(문턱을 낮추는 것과 다른 일이다).")
+    # ══ [V33.514] ★공정 비교 — 학습만 후보 라벨로, 채점은 모두 ★같은 전체 검증행★ 에서 운영 라벨·실제 pnl 로★ ══
+    #   위 표는 후보마다 검증 모집단이 다르다(데드밴드는 애매한 행을 검증에서도 뺀다) — 쉬운 문제를 푼 숫자일 수 있다.
+    #   운영 신뢰 관문은 sign 라벨·전체 검증행으로 잰다. 후보 라벨로 ★학습한★ 모델이 그 같은 자에서 이기는지,
+    #   그리고 돈이 되는 쪽(상위 20% 예측의 평균 pnl − 하위 20%)이 커지는지를 본다. 이 표가 운영 반영의 근거다.
+    try:
+        _va = np.asarray(vai, dtype=np.int64)
+        _yA = _Ysign[_va]; _pA = Ps[_va]
+        _majA = float(max(_yA.mean(), 1 - _yA.mean()))
+        print("   ── [라벨실험·공정비교] 학습=후보 라벨 · 채점=전체 검증행(sign 라벨 · 실제 pnl) ──")
+        print(f"      {'학습 라벨':26s} {'valAcc':>8s} {'초과':>8s} {'IC(pnl)':>9s} {'블록t':>7s} {'상위20%−하위20% pnl':>20s}")
+        _fair = [("A 운영(sign)", _Ysign, _all)]
+        for (name, Yc, use, why, Xc, Wc) in cands:
+            if Xc is None and Wc is None and name[:1] in ("B", "C", "D"):
+                _fair.append((name, Yc, use))
+        for name, Yc, use in _fair:
+            try:
+                tr = np.array([i for i in tri if use[i]], dtype=np.int64)
+                if tr.size < 5000:
+                    print(f"      {name:26s} 표본 부족(학습 {tr.size}) — 생략"); continue
+                ds = lgb.Dataset(Xs[tr], label=Yc[tr], weight=UWs[tr], free_raw_data=False)
+                bst = lgb.train({"objective": "binary", "learning_rate": 0.05, "num_leaves": 31,
+                                 "min_data_in_leaf": 200, "feature_fraction": 0.8,
+                                 "bagging_fraction": 0.8, "bagging_freq": 1,
+                                 "verbose": -1, "seed": 7}, ds, num_boost_round=200)
+                pv = bst.predict(Xs[_va])
+                acc = float(((pv >= 0.5) == (_yA > 0.5)).mean())
+                icp, _r = _calc_ic(pv, _pA)
+                _bm, _bir, _bt, _bk = _calc_ic_blocks(pv, _pA)
+                q80, q20 = np.quantile(pv, 0.8), np.quantile(pv, 0.2)
+                spread = float(_pA[pv >= q80].mean() - _pA[pv <= q20].mean())
+                print(f"      {name:26s} {acc*100:7.1f}% {(acc-_majA)*100:+7.2f}%p {icp:9.4f} "
+                      f"{('—' if _bt is None else '%.2f' % _bt):>7s} {spread:+19.3f}%")
+            except Exception as e:
+                print(f"      {name:26s} 실패(무시): {e}")
+        print("      ★읽는 법★ 모두 같은 행·같은 자다. 운영 반영 후보 = 초과·IC(pnl)·블록t·스프레드가 A 보다 ★모두★ 높은 줄.")
+    except Exception as e:
+        print("   [라벨실험·공정비교] 실패(무시):", e)
 
 
 def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None, UNIQ=None):
