@@ -36,3 +36,6 @@ try {
   const logs = await get("/api/logs?limit=3000");
   for (const l of logs.filter((x) => /\[ANALYST\]|\[ANLREVK\]/.test(x.message || "")).slice(0, 8)) out("analyst", new Date(l.ts).toISOString().slice(5, 16) + " " + String(l.message).slice(0, 300));
 } catch (e) {}
+/* [V33.509] 나스닥 애널리스트 수집기 상태 — 커서·한 바퀴 시각·마지막 차례 성적(ok/err/empty) */
+try { const j = await get("/api/analyst-rev"); out("analyst_state", JSON.stringify(j.consensus || null)); }
+catch (e) { out("analyst_state_err", String(e.message || e)); }

@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.508";
+const _BUILD_VER = "V33.509";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -9545,7 +9545,9 @@ async function updateAnalystConsensus(DB, cfg, force) {
   const roundDone = cur >= syms.length;
   const nNq = Object.keys(bySym).filter(function (s) { return bySym[s] && bySym[s].src === "nq"; }).length;
   const result = { bySym: bySym, src: "nq", cur: roundDone ? 0 : cur, n: nNq, total: syms.length,
-    ts: roundDone ? now : _num(nq ? cached.ts : 0, 0), tickTs: now };
+    ts: roundDone ? now : _num(nq ? cached.ts : 0, 0), tickTs: now,
+    // [V33.509] 마지막 차례의 성적 — 운영에서 "돌고는 있나·무엇이 비나" 를 /api/analyst-rev 로 바로 본다
+    last: { ok: okCount, err: errs, empty: empty, e: lastErr } };
   try { await setState(DB, "analyst_consensus", result); } catch (e) {}
   // 개정 원장 — ★같은 출처(nq)의 직전값끼리만★ 비교한다(출처 교체 첫 관측은 기준값만 심는다)
   const prevNq = {};
@@ -31465,7 +31467,15 @@ async function handleRequest(request, env, ctx) {
         items: out.slice(0, 60), total: out.length,
         ts: led ? _num(led.ts, null) : null, windowDays: ANALYSTREV.windowDays,
         deadbandPct: ANALYSTREV.deadbandPct,
-        k: k ? { kEff: _num(k.kEff, 0), k: _num(k.k, null), t: _num(k.t, null), n: _num(k.n, 0), minN: _num(k.minN, 300) } : null
+        k: k ? { kEff: _num(k.kEff, 0), k: _num(k.k, null), t: _num(k.t, null), n: _num(k.n, 0), minN: _num(k.minN, 300) } : null,
+        // [V33.509] 수집기 자체의 상태(bySym 은 빼고) — 커서·한 바퀴 시각·마지막 차례 성적
+        consensus: await (async function () {
+          try { const ac = await getState(env.DB, "analyst_consensus", null); if (!ac) return null;
+            return { src: ac.src || "v7", cur: _num(ac.cur, 0), n: _num(ac.n, 0), total: _num(ac.total, 0),
+              ts: _num(ac.ts, null), tickTs: _num(ac.tickTs, null), last: ac.last || null,
+              nSym: ac.bySym ? Object.keys(ac.bySym).length : 0 };
+          } catch (e) { return null; }
+        })()
       }, { headers: cors });
     }
 

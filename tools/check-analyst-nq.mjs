@@ -52,6 +52,7 @@ chk(!led0 || !led0.bySym.AAA || !(led0.bySym.AAA.ev || []).length, "★야후 90
 calls = []; M.resetFetchBudget(100);
 r = await M.updateAnalystConsensus(DB, cfg);
 chk(calls.join(",") === "CCC,ETF1" && r.cur === 0 && r.ts > 0 && !r.bySym.ETF1, "두 번째 차례에 한 바퀴 끝 → ts · 지수(^) 건너뜀 · 기록 없는 ETF 의 옛 야후 값은 내린다", "2차 " + calls + " " + JSON.stringify({ cur: r.cur, ts: r.ts, etf: r.bySym.ETF1 }));
+chk(r.last && r.last.ok + r.last.empty + r.last.err === 2, "[V33.509] 마지막 차례 성적(ok/empty/err)을 상태에 남긴다", "last " + JSON.stringify(r && r.last));
 calls = []; M.resetFetchBudget(100);
 r = await M.updateAnalystConsensus(DB, cfg);
 chk(calls.length === 0, "한 바퀴를 끝냈고 신선하면 쉰다(조회 0)", "쉬지 않는다 " + calls);
