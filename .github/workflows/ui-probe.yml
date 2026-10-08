@@ -57,6 +57,10 @@ on:
         description: 'Cloudflare 실측 CPU — 이번 달 합계 + 최근 48시간 시간대별(tools/usage-sync.mjs --dry --hours) · 워커에 쓰지 않는다'
         type: boolean
         default: false
+      bench:
+        description: '운영 상태로 크론 CPU 프로파일 — D1 을 읽기만 해 로컬 벤치(모델·설정·보유 그대로 · 네트워크 모의 · 쓰기는 로컬만)로 돌려 함수별 CPU(tools/prod-state-dump.mjs + cron-cpu-bench.mjs --prod)'
+        type: boolean
+        default: false
       tail:
         description: '크론 단계별 실제 CPU — wrangler tail 로 호출마다 Cloudflare CPU 시간 + CRONPROF 단계 → 단계별·작업량별 CPU 회귀(tools/cron-tail.mjs · 25분) · 워커에 쓰지 않는다'
         type: boolean
@@ -167,6 +171,16 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: node tools/usage-sync.mjs --dry --hours || true
+
+      - name: 운영 상태 벤치 CPU 프로파일
+        if: inputs.bench
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          node tools/prod-state-dump.mjs "$RUNNER_TEMP/ps" || exit 0
+          node tools/cron-cpu-bench.mjs --prod "$RUNNER_TEMP/ps" --cycles 8 --prof-from 2 --no-pipeline 2>&1 | grep -E "^BENCH|^DUMP" | cut -c1-400 || true
+          rm -rf "$RUNNER_TEMP/ps"
 
       - name: 크론 단계별 실제 CPU(tail)
         if: inputs.tail

@@ -4,6 +4,8 @@
  *   그래서 실제 워커 코드를 Node 에서 돌리고 V8 CPU 프로파일로 '어느 함수가 CPU 를 먹나' 를 본다.
  * 구성: D1 = node:sqlite 어댑터 · R2 = 메모리 · 네트워크 = 모의(네이버 실시간 시세는 합성값, 나머지 404)
  *   · 일봉 = 종목마다 합성 320봉(운영과 같은 길이·스키마) · 시각 = 지정한 UTC 로 고정 이동.
+ * [V33.538] --prod <dir>: tools/prod-state-dump.mjs 가 ★읽기만★ 해서 뜬 운영 state·보유·거래로 돈다(모델·설정 그대로) — 시각은 지금,
+ *   R2 대형 모델은 CLOUDFLARE_API_TOKEN 이 있으면 Cloudflare API 로 읽는다(읽기 전용). 쓰기는 전부 로컬(sqlite·메모리)에만.
  * 사용법: node --cpu-prof --cpu-prof-dir=<dir> tools/cron-cpu-bench.mjs [--at 2026-10-08T02:00:00Z] [--cycles 3]
  *   출력: 사이클마다 걸린 시간 + 마지막에 자기시간(self) 상위 함수. 프로파일 파일은 --cpu-prof-dir 에. */
 import { DatabaseSync } from "node:sqlite";
@@ -11,7 +13,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { Session } from "node:inspector/promises";
 
 const arg = (k, d) => { const i = process.argv.indexOf("--" + k); return i > 0 ? process.argv[i + 1] : d; };
-const AT = Date.parse(arg("at", "2026-10-08T02:00:00Z"));
+const PROD = arg("prod", "");
+const AT = Date.parse(arg("at", PROD ? new Date().toISOString() : "2026-10-08T02:00:00Z"));
 const CYCLES = +arg("cycles", 3);
 const PROF_FROM = +arg("prof-from", -1);   // 이 사이클부터 V8 CPU 프로파일(준비 사이클 제외)
 const PROF_OUT = arg("prof-out", "");
@@ -31,6 +34,15 @@ sql.exec("CREATE TABLE state (k TEXT PRIMARY KEY, v TEXT, updated_ts INTEGER);" 
   "CREATE TABLE logs (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, level TEXT, symbol TEXT, message TEXT);" +
   "CREATE TABLE positions (symbol TEXT NOT NULL, strategy TEXT NOT NULL DEFAULT 'swing', market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT, PRIMARY KEY(symbol, strategy, market));" +
   "CREATE TABLE trades (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, side TEXT, qty REAL, price REAL, pnl REAL, pnl_pct REAL, reason TEXT);");
+if (PROD) {   // 운영 상태 적재 — 운영 표에 로컬보다 많은 칸이 있으면 칸을 더한다
+  const addCols = (t, row) => { const have = new Set(sql.prepare("PRAGMA table_info(" + t + ")").all().map((c) => c.name));
+    for (const k of Object.keys(row)) if (!have.has(k)) sql.exec("ALTER TABLE " + t + " ADD COLUMN " + k); };
+  const load = (t, rows) => { if (!rows.length) return; for (const r of rows.slice(0, 50)) addCols(t, r);
+    sql.exec("BEGIN"); for (const r of rows) { const ks = Object.keys(r); sql.prepare("INSERT OR REPLACE INTO " + t + " (" + ks.join(",") + ") VALUES (" + ks.map(() => "?").join(",") + ")").run(...ks.map((k) => r[k])); } sql.exec("COMMIT"); };
+  load("state", readFileSync(PROD + "/state.jsonl", "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)));
+  load("positions", JSON.parse(readFileSync(PROD + "/positions.json", "utf8")));
+  load("trades", JSON.parse(readFileSync(PROD + "/trades.json", "utf8")));
+}
 const stCache = new Map();
 const prep = (q) => { let s = stCache.get(q); if (!s) { s = sql.prepare(q); stCache.set(q, s); } return s; };
 const conv = (a) => a.map((v) => v === undefined ? null : (typeof v === "boolean" ? (v ? 1 : 0) : v));
@@ -58,9 +70,17 @@ const obj = (k, v) => ({ key: k, size: v.length, uploaded: new RealDate(), httpM
   arrayBuffer: async () => v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength),
   get body() { return new Response(v).body; } });
 const toBuf = async (v) => typeof v === "string" ? Buffer.from(v) : (v instanceof ArrayBuffer ? Buffer.from(v) : (ArrayBuffer.isView(v) ? Buffer.from(v.buffer, v.byteOffset, v.byteLength) : Buffer.from(await new Response(v).arrayBuffer())));
+const realFetch = globalThis.fetch;
+const r2Remote = async (k) => {   // [V33.538] 운영 R2 읽기 전용(필요한 키만 · 한 번만)
+  if (!PROD || r2.has(k) || r2Miss.has(k) || !process.env.CLOUDFLARE_API_TOKEN) return;
+  try { const r = await realFetch("https://api.cloudflare.com/client/v4/accounts/" + process.env.CLOUDFLARE_ACCOUNT_ID + "/r2/buckets/ai-trader-models/objects/" + encodeURIComponent(k),
+      { headers: { Authorization: "Bearer " + process.env.CLOUDFLARE_API_TOKEN } });
+    if (r.ok) { r2.set(k, Buffer.from(await r.arrayBuffer())); r2Got++; } else r2Miss.add(k); } catch (e) { r2Miss.add(k); }
+};
+const r2Miss = new Set(); let r2Got = 0;
 const MODELS = {
-  get: async (k) => r2.has(k) ? obj(k, r2.get(k)) : null,
-  head: async (k) => r2.has(k) ? obj(k, r2.get(k)) : null,
+  get: async (k) => { await r2Remote(k); return r2.has(k) ? obj(k, r2.get(k)) : null; },
+  head: async (k) => { await r2Remote(k); return r2.has(k) ? obj(k, r2.get(k)) : null; },
   put: async (k, v) => { r2.set(k, await toBuf(v)); return obj(k, r2.get(k)); },
   delete: async (k) => { for (const x of [].concat(k)) r2.delete(x); },
   list: async (o) => { const p = (o && o.prefix) || ""; const ks = [...r2.keys()].filter((k) => k.startsWith(p)).sort().slice(0, (o && o.limit) || 1000);
@@ -90,6 +110,11 @@ globalThis.fetch = async (u, init) => {
   const url = String(u && u.url ? u.url : u); netCalls++;
   const host = (/^https?:\/\/([^/]+)/.exec(url) || [])[1] || url.slice(0, 30); netByHost[host] = (netByHost[host] || 0) + 1;
   const pat = url.replace(/\?.*$/, "").replace(/[0-9]{6}(\.K[SQ])?|[A-Z][A-Z0-9.\-^=%]{0,9}(?=$|\/)/g, "*"); netByPat[pat] = (netByPat[pat] || 0) + 1;
+  if (/finance\/spark\?/.test(url)) {   // [V33.538] 미국 배치 시세(spark) — 마지막 일봉 종가 주변 합성
+    const syms = decodeURIComponent((/symbols=([^&]+)/.exec(url) || [])[1] || "").split(",").filter(Boolean);
+    const o = {}; for (const sy of syms) { const last = LAST[sy] || 100; o[sy] = { close: [last, +(last * (1 + 0.01 * gauss())).toFixed(2)], chartPreviousClose: last }; }
+    return Response.json(o);
+  }
   if (url.includes("polling.finance.naver.com/api/realtime")) {
     if (process.env.BENCH_STACK && !/SERVICE_ITEM:[^&]*,/.test(url)) { const st = (new Error().stack.split("\n").slice(2, 6).map((l) => l.trim().replace(/\(.*src\/index\.js:/, "(:")).join(" < ")); stackCount[st] = (stackCount[st] || 0) + 1; }
     const codes = (/SERVICE_ITEM:([^&]+)/.exec(url) || [])[1].split(",");
@@ -109,12 +134,15 @@ const pend = [];
 const ctx = { waitUntil: (p) => pend.push(Promise.resolve(p).catch(() => {})), passThroughOnException: () => {} };
 await worker.fetch(new Request("https://bench.local/api/health"), env, ctx).catch(() => {});
 await Promise.all(pend.splice(0));
-try {
+if (PROD) {   // 운영 일봉의 마지막 종가를 합성 시세의 기준으로
+  for (const r of sql.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all()) { try { const d = JSON.parse(r.v); if (d && d.closes && d.closes.length) LAST[r.k.slice(6)] = d.closes[d.closes.length - 1]; } catch (e) {} }
+} else try {
   const ins = sql.prepare("INSERT OR REPLACE INTO state (k, v, updated_ts) VALUES (?, ?, 0)");
   sql.exec("BEGIN"); for (const s of US) ins.run("daily:" + s, JSON.stringify(synthDaily(s, false)));
   for (const s of KR) ins.run("daily:" + s, JSON.stringify(synthDaily(s, true))); sql.exec("COMMIT");
 } catch (e) { console.error("seed fail (state 표 컬럼 확인):", e.message); process.exit(1); }
 const dailyBytes = sql.prepare("SELECT SUM(LENGTH(v)) n FROM state WHERE k >= 'daily:' AND k < 'daily;'").get().n;
+if (PROD) console.log("BENCH prod state " + sql.prepare("SELECT COUNT(*) n, SUM(LENGTH(v)) b FROM state").get().n + "행 · 보유 " + sql.prepare("SELECT COUNT(*) n FROM positions").get().n);
 console.log("BENCH seed us=" + US.length + " kr=" + KR.length + " dailyJSON=" + (dailyBytes / 1e6).toFixed(1) + "MB at=" + new RealDate(AT).toISOString());
 
 let insp = null;
@@ -128,6 +156,7 @@ for (let c = 0; c < CYCLES; c++) {
   const cu = process.cpuUsage(cu0);
   if (c === CYCLES - 1) console.log("BENCH pat " + JSON.stringify(Object.entries(netByPat).sort((a, b) => b[1] - a[1]).slice(0, 25)));
   netByPat = {};
+  if (PROD && c === 0) console.log("BENCH r2 운영에서 읽음 " + r2Got + " · 없음 " + r2Miss.size + " " + JSON.stringify([...r2Miss].slice(0, 10)));
   console.log("BENCH cycle " + c + " wall=" + Math.round(performance.now() - t0) + "ms cpu=" + Math.round((cu.user + cu.system) / 1000) + "ms d1=" + d1Calls + " net=" + netCalls + " " + JSON.stringify(netByHost));
 }
 try { const u = JSON.parse(sql.prepare("SELECT v FROM state WHERE k LIKE 'usage:%' ORDER BY k DESC LIMIT 1").get().v); const dd = Object.keys(u.days || {}).sort().pop(); const pb = (u.days[dd] || {}).pb || {};
