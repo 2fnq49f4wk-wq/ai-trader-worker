@@ -637,8 +637,10 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         print(f"   라벨: 워커 저장값({_lm}) 사용 — 양성비율 {Y.mean():.3f}")
     PNL = np.array([s.get("pnl", 0.0) for s in samples], dtype=np.float64)
     # [V33.516] 학습 띠 제외 마스크 — 워커 설정이 유일한 출처(cfg.trainDropAmbig). 끄면 None(종전).
-    global _TRAIN_KEEP
+    global _TRAIN_KEEP, _ABL_WALKFWD
     _TRAIN_KEEP = _ambig_keep_mask(X, PNL, featnames) if bool((cfg or {}).get("trainDropAmbig")) else None
+    # [V33.522] 다구간 전진평가는 무겁다(창 4 × 후보 5) — ★사람이 target=ablate 로 건 회차에서만★ 돈다(정기 회차 예산을 안 먹는다).
+    _ABL_WALKFWD = (target == "ablate")
     print("   [학습 띠 제외] " + ("켬 — 부스터·GBDT·MIND 의 학습행에서 |pnl/ATR| < 0.25×중앙 을 뺀다 (제외 %d/%d)" % (int((~_TRAIN_KEEP).sum()), len(_TRAIN_KEEP))
                                 if _TRAIN_KEEP is not None else "끔(워커 설정) — 종전 그대로"))
     # [V33.76] 시장 라벨 — 워커가 이제 표본마다 m("us"/"kr"/"cm")을 내려준다.
@@ -1986,6 +1988,7 @@ def _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ=None, 
 #   검증·보정 행은 그대로라 신뢰 관문이 재는 자(sign · 전체 검증행)는 바뀌지 않는다 — 관문을 낮추는 일이 아니다.
 #   워커 설정(cfg.trainDropAmbig)이 유일한 출처다(끄면 종전과 같다).
 _TRAIN_KEEP = None
+_ABL_WALKFWD = False   # [V33.522] target=ablate 회차에서만 참 — _walk_forward_boost 를 부른다
 
 
 def _ambig_keep_mask(X, PNL, featnames, mult=0.25):
@@ -3247,6 +3250,130 @@ def _label_ablation(X, PNL, TS, SYM, MKT, featver, D, UNIQ=None, featnames=None,
         print("      ★읽는 법★ 모두 같은 행·같은 자다. 운영 반영 후보 = 초과·IC(pnl)·블록t·스프레드·★시장중립 블록IC(관문의 자)★ 가 A 보다 ★모두★ 높은 줄.")
     except Exception as e:
         print("   [라벨실험·공정비교] 실패(무시):", e)
+    if _ABL_WALKFWD:
+        try:
+            _MKs = (np.asarray(MKT)[order] if MKT is not None and len(MKT) == N else None)
+            _walk_forward_boost(Xs, Ps, TSs, UWs, _MKs, _absmed)
+        except Exception as e:
+            print("   [전진평가] 실패(무시):", e)
+
+
+def _walk_forward_boost(Xs, Ps, TSs, UWs, MKs, absmed, K=4, span=0.20, lgb_mod=None):
+    """[V33.522] ★다구간 전진평가 — 한 구간·한 조건의 승리는 옮겨지지 않았다(V33.516→518 되돌림)★.
+
+    10/08 실험대: 운영 부스터의 방향 예측력(IC(pnl))은 ★최근 10%(보정구간)를 학습에서 빼는 것★ 이 깎았고(.0877→.0219),
+    시장중립 블록 t(신뢰 관문의 자)는 오히려 운영식이 높았다(2.41 vs 1.56). 단일 검증구간이라 어느 쪽도 확정할 수 없다.
+    → 마지막 span(20%) 을 K 개 연속 창으로 나눠, ★각 창 직전까지만★ 학습(엠바고·지평만큼 비움)하고 그 창으로 채점한다.
+    입력은 시간순 정렬된 배열(Xs·Ps·TSs·UWs·MKs). 아무것도 업로드하지 않는다.
+    후보(모두 같은 LightGBM 하이퍼파라미터 · sign 라벨):
+      P  운영식      : 학습 꼬리 10% = 보정구간, 보정 logloss 조기중단(인내 90) · 보정은 학습에서 뺌
+      R  보정포함재적합: P 가 고른 판 수 ×1.1 로 ★학습+보정 전체★ 에 다시 적합
+      F  고정200전체  : 200판 · 학습+보정 전체
+      RB R + 데드밴드 : R 과 같은 판 수 · 학습행 |pnl| ≥ 0.25×중앙
+      RL R + 최근730일: R 과 같은 판 수 · 학습행을 창 시작 전 730일로
+    ★미리 정한 반영 규칙★(결과를 보고 바꾸지 않는다):
+      후보 X 를 운영에 올릴 후보로 적는 것은 — 창 평균 시장중립 블록IC 가 P 보다 높고, 그 승리가 ★K 창 중 3창 이상★ 이며,
+      창 평균 IC(pnl)·상위−하위20% 스프레드도 P 이상이고, ★자기 시장중립 블록 t(창 평균) ≥ 1.65(신뢰 관문과 같은 값)·초과정확도 > 0★
+      일 때뿐이다. 하나라도 못 미치면 '운영 그대로'. (상대 승리만으로는 실력 0 에서도 3/4 승이 우연히 나왔다 — 귀무 시험.)
+    """
+    import numpy as np
+    try:
+        lgb = lgb_mod or __import__("lightgbm")
+    except Exception as e:
+        print("   [전진평가] lightgbm 없음 — 생략:", e); return None
+    n = len(Ps)
+    if n < 20000:
+        print(f"   [전진평가] 표본 부족 {n} — 생략"); return None
+    Ys = (np.asarray(Ps) > 0).astype(np.float64)
+    gap = max(float(_EMBARGO_MS or 0), float(_HORIZON_MS or 0))
+    hp = {"objective": "binary", "learning_rate": 0.05, "num_leaves": 31, "min_data_in_leaf": 200,
+          "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 1, "verbose": -1, "seed": 7}
+    names = ["P 운영식(보정제외·조기중단)", "R 보정포함 재적합", "F 고정200 전체", "RB R+데드밴드0.25", "RL R+최근730일"]
+    res = {k: [] for k in names}
+    w0 = int(n * (1.0 - span))
+    edges = [w0 + int((n - w0) * k / K) for k in range(K + 1)]
+    print(f"   ── [전진평가] 마지막 {span:.0%} 를 {K}창으로 · 창마다 그 직전까지만 학습(간격 {gap/86400000:.0f}일) ──")
+    print(f"      {'창':4s} {'후보':26s} {'판':>5s} {'학습행':>9s} {'초과':>8s} {'IC(pnl)':>9s} {'스프레드':>9s} {'시장중립IC·t':>16s}")
+
+    def _score(pv, va):
+        y, p = Ys[va], Ps[va]
+        maj = float(max(y.mean(), 1 - y.mean()))
+        acc = float(((pv >= 0.5) == (y > 0.5)).mean())
+        icp, _ = _calc_ic(pv, p)
+        q80, q20 = np.quantile(pv, 0.8), np.quantile(pv, 0.2)
+        spread = float(p[pv >= q80].mean() - p[pv <= q20].mean())
+        mm, _mir, mt, _mk = _calc_ic_blocks(pv, y, mkt=(MKs[va] if MKs is not None else None))
+        return {"ex": acc - maj, "ic": float(icp or 0.0), "sp": spread,
+                "mn": (None if mm is None else float(mm)), "mt": (None if mt is None else float(mt))}
+
+    for k in range(K):
+        a, b = edges[k], edges[k + 1]
+        if b - a < 2000:
+            print(f"      창{k+1} 검증행 부족 {b-a} — 생략"); continue
+        va = np.arange(a, b)
+        t_start = float(TSs[a])
+        tr_all = np.nonzero(TSs[:a] < t_start - gap)[0]
+        if tr_all.size < 20000:
+            print(f"      창{k+1} 학습행 부족 {tr_all.size} — 생략"); continue
+        ncal = max(2000, int(tr_all.size * 0.10))
+        tr_p, cal = tr_all[:-ncal], tr_all[-ncal:]
+        # 운영식: 보정 logloss 조기중단
+        try:
+            dtr = lgb.Dataset(Xs[tr_p], label=Ys[tr_p], weight=UWs[tr_p], free_raw_data=False)
+            dca = lgb.Dataset(Xs[cal], label=Ys[cal], weight=UWs[cal], reference=dtr, free_raw_data=False)
+            hpp = dict(hp); hpp["metric"] = "binary_logloss"
+            bP = lgb.train(hpp, dtr, num_boost_round=1000, valid_sets=[dca], callbacks=[lgb.early_stopping(90, verbose=False)])
+            itP = max(1, int(bP.best_iteration or 1))
+        except Exception as e:
+            print(f"      창{k+1} 운영식 실패(창 생략): {e}"); continue
+        itR = max(20, int(round(itP * 1.1)))
+        rows = [(names[0], bP, itP, tr_p)]
+        for nm, rnd, trx in ((names[1], itR, tr_all), (names[2], 200, tr_all),
+                             (names[3], itR, tr_all[np.abs(Ps[tr_all]) >= 0.25 * absmed]),
+                             (names[4], itR, tr_all[TSs[tr_all] >= t_start - 730 * 86400000.0])):
+            if trx.size < 5000:
+                rows.append((nm, None, rnd, trx)); continue
+            try:
+                bst = lgb.train(hp, lgb.Dataset(Xs[trx], label=Ys[trx], weight=UWs[trx], free_raw_data=False), num_boost_round=rnd)
+                rows.append((nm, bst, rnd, trx))
+            except Exception as e:
+                print(f"      창{k+1} {nm} 실패: {e}"); rows.append((nm, None, rnd, trx))
+        for nm, bst, rnd, trx in rows:
+            if bst is None:
+                print(f"      창{k+1} {nm:26s} 생략(학습행 {trx.size})"); continue
+            pv = bst.predict(Xs[va], num_iteration=(itP if nm == names[0] else None))
+            sc = _score(pv, va); sc["rounds"] = rnd; sc["ntr"] = int(trx.size); sc["w"] = k
+            res[nm].append(sc)
+            print(f"      창{k+1} {nm:26s} {rnd:5d} {trx.size:9d} {sc['ex']*100:+7.2f}%p {sc['ic']:9.4f} {sc['sp']:+8.3f}% "
+                  f"{('—' if sc['mn'] is None else '%.4f·%.2f' % (sc['mn'], sc['mt'] or 0.0)):>16s}")
+    # 요약 + 미리 정한 규칙
+    def _mean(v):
+        v = [x for x in v if x is not None]
+        return (sum(v) / len(v)) if v else None
+    base = {sc["w"]: sc for sc in res[names[0]]}
+    print("   ── [전진평가] 창 평균 · P 대비 시장중립IC 승리 창 수 ──")
+    verdict = {}
+    for nm in names:
+        L = res[nm]
+        if not L:
+            print(f"      {nm:26s} 결과 없음"); continue
+        mex, mic, msp, mmn = _mean([x["ex"] for x in L]), _mean([x["ic"] for x in L]), _mean([x["sp"] for x in L]), _mean([x["mn"] for x in L])
+        mmt = _mean([x["mt"] for x in L])
+        wins = sum(1 for x in L if x["w"] in base and x["mn"] is not None and base[x["w"]]["mn"] is not None and x["mn"] > base[x["w"]]["mn"])
+        pm = _mean([b["mn"] for b in base.values()]) if base else None
+        pi = _mean([b["ic"] for b in base.values()]) if base else None
+        ps = _mean([b["sp"] for b in base.values()]) if base else None
+        # 상대 승리만으론 부족하다 — 실력 0 인 합성 표본에서도 '3/4 승' 이 우연히 나왔다(게이트 check-walk-forward 의 귀무 시험).
+        # ★절대 바닥★ 도 같이: 자기 자신의 시장중립 블록 t(창 평균)가 신뢰 관문과 같은 1.65 이상 · 초과정확도 평균 > 0.
+        ok = (nm != names[0] and pm is not None and mmn is not None and mmn > pm and wins >= 3
+              and mic is not None and pi is not None and mic >= pi and msp is not None and ps is not None and msp >= ps
+              and mmt is not None and mmt >= 1.65 and mex is not None and mex > 0)
+        verdict[nm] = {"ex": mex, "ic": mic, "sp": msp, "mn": mmn, "mt": mmt, "wins": wins, "n": len(L), "adopt": bool(ok)}
+        print(f"      {nm:26s} 창{len(L)} 초과 {(mex or 0)*100:+.2f}%p · IC {(mic or 0):.4f} · 스프레드 {(msp or 0):+.3f}% · "
+              f"시장중립IC {('—' if mmn is None else '%.4f' % mmn)}·t {('—' if mmt is None else '%.2f' % mmt)} · 승 {wins}/{len(L)}" + ("  ← ★규칙 충족 — 운영 반영 후보★" if ok else ""))
+    if not any(v.get("adopt") for v in verdict.values()):
+        print("      결론(미리 정한 규칙): 규칙을 모두 채운 후보 없음 → 운영 그대로.")
+    return verdict
 
 
 def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None, UNIQ=None):

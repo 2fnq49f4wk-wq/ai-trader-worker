@@ -12,6 +12,13 @@
 
 ## Current handoff
 
+- V33.522 (10/08): ★다구간 전진평가(부스터 학습 방식)★ — `_walk_forward_boost` (trainer), target=ablate 회차에서만(`_ABL_WALKFWD`).
+  - 마지막 20% 를 4창 · 창마다 그 직전까지만 학습(엠바고/지평 간격). 후보 P 운영식 · R 보정포함 재적합(P 판수×1.1) · F 고정200 · RB R+데드밴드0.25 · RL R+최근730일.
+  - ★미리 정한 규칙★: 시장중립IC 창평균 > P · 3/4창 승 · IC(pnl)·스프레드 ≥ P · ★절대 바닥★ 자기 시장중립 t(창평균) ≥ 1.65 · 초과 > 0.
+    (절대 바닥 없이 상대 승리만 보면 실력 0 합성 표본에서도 RB·RL 이 3/4 승으로 '채택' 됐다 — 귀무 시험이 잡았다.)
+  - 게이트 check-walk-forward(합성: 국면 전환 → RL 채택 · 실력 0 → 채택 없음). deploy.yml numpy 설치에 lightgbm 추가.
+  - 다음: modal-deploy run_now target=ablate 로 실데이터 결과 → 규칙 충족 후보가 있으면 부스터 학습에 반영(없으면 운영 그대로).
+
 - V33.521 (10/08): ★속도·트래픽 측정 장치★ — 추측으로 고치지 않고 먼저 잰다.
   - 응답 헤더 `x-lux-c`: swrJson 전 경로(l1·l1s·l2·r2·build·join) + /api/state(l1·l1s·l2·r2·build).
   - `tools/probe-api-speed.mjs <url> [동시수]`: 대시보드 조회 25종 연속 3회 TTFB·크기·층 + 동시 24회 몰아치기(중앙·최대·실패). ui-probe `speed` 입력이 먼저 돌린다(API 줄).
