@@ -146,6 +146,25 @@ def run_lab(daily, mkt_by_sym, day_key_of, log=print):
         test_days = [d for d in range(D) if fold_of_day[d] >= 0 and d + 2 < D]
         if len(test_days) < 60:
             continue
+        # [V33.535] ★OMNI 발언 관문과 같은 잣대★ — 날마다 점수 상위 q 가 같은 날 동료 중앙값을 이긴 비율(표본 밖).
+        #   OMNI 는 '상위 ≥10% 의 정밀도(하한) ≥ 60%' 여야 신뢰된다. 가장 강한 공개 표준 구성(Qlib LightGBM + 동물원 피처)이
+        #   우리 데이터에서 이 잣대로 몇이 나오는지가 곧 '도달 가능한 천장' 이다. t 는 날짜 단위(같은 날 종목끼리 묶음).
+        for q in (0.01, 0.05, 0.10):
+            per_day = []
+            for d in test_days:
+                a, b = scores[d], y[d]
+                ok = np.isfinite(a) & np.isfinite(b)
+                if ok.sum() < 20:
+                    continue
+                aa, bb = a[ok], b[ok]
+                k = max(1, int(round(len(aa) * q)))
+                top = np.argsort(-aa)[:k]
+                per_day.append(float(np.mean(bb[top] > 0.5)))
+            pdv = np.array(per_day)
+            if len(pdv) > 30:
+                mu, se = float(pdv.mean()), float(pdv.std(ddof=1) / np.sqrt(len(pdv)))
+                log("      [발언잣대] %s 상위 %2d%% → 중앙값 이긴 비율 %.1f%% (날짜 %d · t %.1f · 95%%하한 %.1f%%) · OMNI 관문 60%%" %
+                    (mk, int(q * 100), mu * 100, len(pdv), (mu - 0.5) / se if se > 0 else float("nan"), (mu - 1.96 * se) * 100))
         idx = pd.to_datetime([str(k) for k in C.index])
         ret_df = pd.DataFrame(r1, index=idx, columns=C.columns).shift(1)   # 그날 종가까지 실현된 1일 수익(비중 계산용 · 미래 안 봄)
         bench = np.nanmean(np.where(np.isfinite(r1[np.array(test_days) + 1]), r1[np.array(test_days) + 1], np.nan), axis=1)
