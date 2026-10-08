@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.514";
+const _BUILD_VER = "V33.515";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -20320,6 +20320,175 @@ async function runPool(items, limit, worker) {
 }
 
 // --- 가격 전용 샤드: 가격/등락률만 갱신, 지표는 기존 quote에서 보존 ---
+/* ══ [V33.515] ★/api/state 페이로드 — 요청 경로와 크론이 같은 함수를 쓴다★ ══════════════════════════════
+   운영 탐침(10/08 00:21Z · 한국 개장 21분): /api/state 가 R2 사본 2,722초(45분) 묵은 것 — marketStatus.kr=false(개장 전 빌드) ·
+   10/07 08:41Z 6,668초 · 14:06Z 7,498초. 시세만 새로 끼우고(_patchStateQuotes) 포지션·장 상태·학습칩은 수 시간 묵었다.
+   새로 짓기는 요청이 올 때 ctx.waitUntil 로만 했는데, D1 이 바쁜 시간(개장 직후 다른 API 5~6초)엔 10~18초 빌드가
+   응답 뒤 대기 한도 안에 못 끝나 ★한 번도 R2 에 안 써졌다★. 크론(시간 여유가 있다)이 2분마다, 사본이 2분보다 묵었을 때만 지어 둔다. */
+async function buildStatePayload(env) {
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      // [섹터그룹·신호타입] 현재 가중치 계산(cfg에 주입) + 통계 — UI 표시용
+      await applySectorGroupWeights(env.DB, cfg);
+      await applySignalTypeWeights(env.DB, cfg);
+      // [V12.128] 흩어져 있던 단건 getState들을 단일 IN 쿼리 1회로 접는다(D1 왕복 10여 회 → 1회).
+      const __S = await getStates(env.DB, [
+        "sector_group_stats", "signal_type_stats", "deposits", "outflows",
+        "twr:us", "twr:kr", "last_tick", "last_heartbeat", "mcap_shares",
+        "signal_stats", "budget_split_applied", "llm_daily:us", "llm_daily:kr",
+        "mkt_context", "sector_news_sentiment",
+        // [V33.172] 외부(Modal) 학습이 ★커밋을 통과해 실제로 들어왔는지★ — 상단 상태칩용.
+        EXTIMP_KEY, "modal_retrain_auto", "mind_model", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"
+      ]);
+      const sectorGroupStats = __S["sector_group_stats"] || {};
+      const sectorGroups = { stats: sectorGroupStats, weights: (cfg.sectorGroups && cfg.sectorGroups.weights) || {} };
+      const signalTypeStats = __S["signal_type_stats"] || {};
+      const signalTypes = { stats: signalTypeStats, weights: (cfg.signalTypeWeights && cfg.signalTypeWeights.weights) || {} };
+      const deposits = __S["deposits"] || sleeveZeros();
+      const outflows = __S["outflows"] || { us: 0, kr: 0 };
+      // [회계 재설계] TWR 상태 — 프론트가 실시간 평가액으로 마지막 구간을 마감해 수익률% 산출
+      const twr = { us: __S["twr:us"] || null, kr: __S["twr:kr"] || null };
+      // 서로 독립적인 무거운 조회는 병렬로(직렬 누적이 25초 지연의 주범이었다).
+      const [cash, positionsUSRaw, positionsKRRaw] = await Promise.all([
+        computeAllCash(env.DB, cfg),
+        getPositions(env.DB, "us"),
+        getPositions(env.DB, "kr")
+      ]);
+
+      // [V8] 포지션 응답 가공:
+      // - list: 각 (symbol, strategy) 포지션을 row로 (프론트 테이블용)
+      // - bySymbol: 종목 단위로 묶음 (집계용)
+      function buildPositionViews(rawMap) {
+        const list = [];
+        const bySymbol = {};
+        for (const key in rawMap) {
+          const p = rawMap[key];
+          const row = {
+            symbol: p.symbol,
+            strategy: p.strategy,
+            qty: p.qty,
+            avg: p.avg,
+            opened_ts: p.opened_ts,
+            meta: p.meta || {},
+            entrySignal: (p.meta && p.meta.signal) || null,
+            stopPrice: (p.meta && p.meta.stopPrice) || null,
+            peakPrice: (p.meta && p.meta.peakPrice) || null
+          };
+          list.push(row);
+          if (!bySymbol[p.symbol]) bySymbol[p.symbol] = { symbol: p.symbol, totalQty: 0, strategies: [] };
+          bySymbol[p.symbol].totalQty += p.qty;
+          bySymbol[p.symbol].strategies.push(row);
+        }
+        return { list: list, bySymbol: bySymbol };
+      }
+      const posUS = buildPositionViews(positionsUSRaw);
+      const posKR = buildPositionViews(positionsKRRaw);
+
+      const lastTick = __S["last_tick"] || null;
+      const lastHeartbeat = __S["last_heartbeat"] || null;
+
+      const allSymbols = cfg.usTickers.concat(cfg.krTickers);
+      const quotes = [];
+      // [V10 HOTFIX] 종목 수백 개를 getState로 하나씩 읽으면 응답 지연→503/타임아웃 발생.
+      //   quote: 전체를 단일 쿼리로 로드 후 메모리에서 매핑한다.
+      const quoteRowMap = {};
+      try {
+        const qrows = await env.DB.prepare("SELECT k, v FROM state WHERE k >= 'quote:' AND k < 'quote;'").all();
+        for (const r of (qrows.results || [])) {
+          try { quoteRowMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
+        }
+      } catch (e) {}
+      // [V81] 발행주식수/시총 맵 — 프론트가 가격×주식수로 실시간 시총 박스 계산
+      const mcapShares = __S["mcap_shares"] || {};
+      for (const sym of allSymbols) {
+        const q = quoteRowMap[sym];
+        const ms = mcapShares[sym] || null;
+        const base = {
+          symbol: sym,
+          name: NAME_MAP[sym] || sym,
+          rank: MCAP_RANK[sym] || 99999,
+          isEtf: ETF_SYMBOLS.has(sym),
+          market: (sym.endsWith(".KS") || sym.endsWith(".KQ")) ? "kr" : "us",
+          shares: ms && ms.sh ? ms.sh : null,   // [V81] 발행주식수(가격×주식수=실시간 시총)
+          mcap: ms && ms.mc ? ms.mc : null      // [V81] Yahoo 시총(폴백)
+        };
+        // [V11 FIX] quote 가 아직 없는 종목도 노출(가격 대기 상태). 기존엔 quote 있는
+        //   종목만 push 해서 v7 차단 + 라운드로빈 미도달 종목이 watchlist 에서 통째로
+        //   누락(미국 26개 / 한국 28개만 보이던 증상)됐다.
+        if (q) {
+          quotes.push(applyDisplayOverMarket(Object.assign(base, q)));
+        } else {
+          quotes.push(Object.assign(base, { price: null, prevClose: null, dayPct: null, pending: true }));
+        }
+      }
+      // [V12.128] 지수도 종목당 1쿼리씩 순차로 읽던 것을 단일 IN 쿼리로 — D1 왕복 N→1.
+      const __idxSyms = US_INDICES.concat(KR_INDICES);
+      const __IDX = await getStates(env.DB, __idxSyms.map(function (s) { return "index:" + s; }));
+      const indices = [];
+      for (const sym of __idxSyms) {
+        const idx = __IDX["index:" + sym] || null;
+        if (idx) indices.push(Object.assign({ symbol: sym }, idx));
+      }
+      const signalStats = __S["signal_stats"] || {};
+
+      const __statePayload = {
+        cash: cash,
+        deposits: deposits,
+        outflows: outflows,
+        twr: twr,
+        sectorGroups: sectorGroups,
+        signalTypes: signalTypes,
+        budgetSplitApplied: __S["budget_split_applied"] || null,  // [V63] 레짐 적응형 예산 적용 현황
+        positions: {
+          us: posUS.list,          // [V8] array of (symbol, strategy) rows
+          kr: posKR.list,
+          usBySymbol: posUS.bySymbol,
+          krBySymbol: posKR.bySymbol
+        },
+        lastTick: lastTick, lastHeartbeat: lastHeartbeat, serverTime: Date.now(), cfg: cfg,
+        extTrain: _extTrainSummary(__S),   // [V33.172] 상단 학습 상태칩
+
+        marketStatus: {
+          us: isMarketOpen("us") && (await isMarketTradingDay(env.DB, "us", env)) !== false,
+          kr: isMarketOpen("kr") && (await isMarketTradingDay(env.DB, "kr", env)) !== false
+        },
+        tradingWindow: { us: isTradingWindow("us"), kr: isTradingWindow("kr") },
+        llmDaily: { us: __S["llm_daily:us"] || null, kr: __S["llm_daily:kr"] || null },
+        marketContext: __S["mkt_context"] || null,
+        sectorNews: __S["sector_news_sentiment"] || null,
+        watchlist: quotes,
+        indices: indices,
+        signalStats: signalStats,
+        strategies: STRATEGIES,   // [V8]
+        // [강제 락 & 사용량] UI 표시용
+        forceLock: !!cfg.forceLock,
+        usageState: await (async () => {
+          try {
+            const us = await getUsageState(env.DB);
+            const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg.usageLimits || {}));
+            const rr = (us.data.requests || 0) / Math.max(1, lim.monthlyRequests);
+            const cr = (us.data.cpuMs || 0) / Math.max(1, lim.monthlyCpuMs);
+            return { data: us.data, limits: { monthlyRequests: lim.monthlyRequests, monthlyCpuMs: lim.monthlyCpuMs }, reqPct: (rr*100).toFixed(1), cpuPct: (cr*100).toFixed(1), worstPct: (Math.max(rr,cr)*100).toFixed(1), shutdownAt: lim.shutdownAt, warnAt: lim.warnAt };
+          } catch(e) { return null; }
+        })()
+      };
+      return __statePayload;
+}
+const STATE_R2_KEY = "cache/state/state.json";
+async function stateR2Refresh(env, maxAgeMs) {
+  const R2 = (typeof _bigR2 === "function") ? _bigR2() : null;
+  if (!R2) return "[STATE-R2] R2 미바인딩";
+  let age = Infinity;
+  try { const h = await R2.head(STATE_R2_KEY); const at = h && h.customMetadata ? +(h.customMetadata.at || 0) : 0; if (at > 0) age = Date.now() - at; } catch (e) {}
+  if (age < (maxAgeMs || 120000)) return null;
+  const t0 = Date.now();
+  const pl = await buildStatePayload(env);
+  const str = JSON.stringify(pl, _stateNumTrim);
+  const at = Date.now();
+  await R2.put(STATE_R2_KEY, str, { httpMetadata: { contentType: "application/json" }, customMetadata: { at: String(at) } });
+  globalThis.__stateCache = { ts: at, data: pl, str: str };
+  return { ms: at - t0, kb: Math.round(str.length / 1024), prevAgeS: isFinite(age) ? Math.round(age / 1000) : null };
+}
+
 async function refreshPriceShard(env, market, shard) {
   const DB = env.DB;
   const t0 = Date.now();
@@ -30239,154 +30408,8 @@ async function handleRequest(request, env, ctx) {
      //   (D1 바쁠 때 10~18s)를 사용자가 그대로 기다렸다(TOP MOVERS·지수·indicators 전부 늦게 뜸).
      //   이제 캐시가 오래됐어도 "일단 즉시 반환"하고 갱신은 ctx.waitUntil 백그라운드로 돌린다.
      //   사용자는 풀 빌드를 기다리지 않는다(활성 사용 중 항상 ~0.2s). 갱신 중복은 플래그로 방지.
-     const __buildState = async () => {
-      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
-      // [섹터그룹·신호타입] 현재 가중치 계산(cfg에 주입) + 통계 — UI 표시용
-      await applySectorGroupWeights(env.DB, cfg);
-      await applySignalTypeWeights(env.DB, cfg);
-      // [V12.128] 흩어져 있던 단건 getState들을 단일 IN 쿼리 1회로 접는다(D1 왕복 10여 회 → 1회).
-      const __S = await getStates(env.DB, [
-        "sector_group_stats", "signal_type_stats", "deposits", "outflows",
-        "twr:us", "twr:kr", "last_tick", "last_heartbeat", "mcap_shares",
-        "signal_stats", "budget_split_applied", "llm_daily:us", "llm_daily:kr",
-        "mkt_context", "sector_news_sentiment",
-        // [V33.172] 외부(Modal) 학습이 ★커밋을 통과해 실제로 들어왔는지★ — 상단 상태칩용.
-        EXTIMP_KEY, "modal_retrain_auto", "mind_model", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"
-      ]);
-      const sectorGroupStats = __S["sector_group_stats"] || {};
-      const sectorGroups = { stats: sectorGroupStats, weights: (cfg.sectorGroups && cfg.sectorGroups.weights) || {} };
-      const signalTypeStats = __S["signal_type_stats"] || {};
-      const signalTypes = { stats: signalTypeStats, weights: (cfg.signalTypeWeights && cfg.signalTypeWeights.weights) || {} };
-      const deposits = __S["deposits"] || sleeveZeros();
-      const outflows = __S["outflows"] || { us: 0, kr: 0 };
-      // [회계 재설계] TWR 상태 — 프론트가 실시간 평가액으로 마지막 구간을 마감해 수익률% 산출
-      const twr = { us: __S["twr:us"] || null, kr: __S["twr:kr"] || null };
-      // 서로 독립적인 무거운 조회는 병렬로(직렬 누적이 25초 지연의 주범이었다).
-      const [cash, positionsUSRaw, positionsKRRaw] = await Promise.all([
-        computeAllCash(env.DB, cfg),
-        getPositions(env.DB, "us"),
-        getPositions(env.DB, "kr")
-      ]);
-
-      // [V8] 포지션 응답 가공:
-      // - list: 각 (symbol, strategy) 포지션을 row로 (프론트 테이블용)
-      // - bySymbol: 종목 단위로 묶음 (집계용)
-      function buildPositionViews(rawMap) {
-        const list = [];
-        const bySymbol = {};
-        for (const key in rawMap) {
-          const p = rawMap[key];
-          const row = {
-            symbol: p.symbol,
-            strategy: p.strategy,
-            qty: p.qty,
-            avg: p.avg,
-            opened_ts: p.opened_ts,
-            meta: p.meta || {},
-            entrySignal: (p.meta && p.meta.signal) || null,
-            stopPrice: (p.meta && p.meta.stopPrice) || null,
-            peakPrice: (p.meta && p.meta.peakPrice) || null
-          };
-          list.push(row);
-          if (!bySymbol[p.symbol]) bySymbol[p.symbol] = { symbol: p.symbol, totalQty: 0, strategies: [] };
-          bySymbol[p.symbol].totalQty += p.qty;
-          bySymbol[p.symbol].strategies.push(row);
-        }
-        return { list: list, bySymbol: bySymbol };
-      }
-      const posUS = buildPositionViews(positionsUSRaw);
-      const posKR = buildPositionViews(positionsKRRaw);
-
-      const lastTick = __S["last_tick"] || null;
-      const lastHeartbeat = __S["last_heartbeat"] || null;
-
-      const allSymbols = cfg.usTickers.concat(cfg.krTickers);
-      const quotes = [];
-      // [V10 HOTFIX] 종목 수백 개를 getState로 하나씩 읽으면 응답 지연→503/타임아웃 발생.
-      //   quote: 전체를 단일 쿼리로 로드 후 메모리에서 매핑한다.
-      const quoteRowMap = {};
-      try {
-        const qrows = await env.DB.prepare("SELECT k, v FROM state WHERE k >= 'quote:' AND k < 'quote;'").all();
-        for (const r of (qrows.results || [])) {
-          try { quoteRowMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
-        }
-      } catch (e) {}
-      // [V81] 발행주식수/시총 맵 — 프론트가 가격×주식수로 실시간 시총 박스 계산
-      const mcapShares = __S["mcap_shares"] || {};
-      for (const sym of allSymbols) {
-        const q = quoteRowMap[sym];
-        const ms = mcapShares[sym] || null;
-        const base = {
-          symbol: sym,
-          name: NAME_MAP[sym] || sym,
-          rank: MCAP_RANK[sym] || 99999,
-          isEtf: ETF_SYMBOLS.has(sym),
-          market: (sym.endsWith(".KS") || sym.endsWith(".KQ")) ? "kr" : "us",
-          shares: ms && ms.sh ? ms.sh : null,   // [V81] 발행주식수(가격×주식수=실시간 시총)
-          mcap: ms && ms.mc ? ms.mc : null      // [V81] Yahoo 시총(폴백)
-        };
-        // [V11 FIX] quote 가 아직 없는 종목도 노출(가격 대기 상태). 기존엔 quote 있는
-        //   종목만 push 해서 v7 차단 + 라운드로빈 미도달 종목이 watchlist 에서 통째로
-        //   누락(미국 26개 / 한국 28개만 보이던 증상)됐다.
-        if (q) {
-          quotes.push(applyDisplayOverMarket(Object.assign(base, q)));
-        } else {
-          quotes.push(Object.assign(base, { price: null, prevClose: null, dayPct: null, pending: true }));
-        }
-      }
-      // [V12.128] 지수도 종목당 1쿼리씩 순차로 읽던 것을 단일 IN 쿼리로 — D1 왕복 N→1.
-      const __idxSyms = US_INDICES.concat(KR_INDICES);
-      const __IDX = await getStates(env.DB, __idxSyms.map(function (s) { return "index:" + s; }));
-      const indices = [];
-      for (const sym of __idxSyms) {
-        const idx = __IDX["index:" + sym] || null;
-        if (idx) indices.push(Object.assign({ symbol: sym }, idx));
-      }
-      const signalStats = __S["signal_stats"] || {};
-
-      const __statePayload = {
-        cash: cash,
-        deposits: deposits,
-        outflows: outflows,
-        twr: twr,
-        sectorGroups: sectorGroups,
-        signalTypes: signalTypes,
-        budgetSplitApplied: __S["budget_split_applied"] || null,  // [V63] 레짐 적응형 예산 적용 현황
-        positions: {
-          us: posUS.list,          // [V8] array of (symbol, strategy) rows
-          kr: posKR.list,
-          usBySymbol: posUS.bySymbol,
-          krBySymbol: posKR.bySymbol
-        },
-        lastTick: lastTick, lastHeartbeat: lastHeartbeat, serverTime: Date.now(), cfg: cfg,
-        extTrain: _extTrainSummary(__S),   // [V33.172] 상단 학습 상태칩
-
-        marketStatus: {
-          us: isMarketOpen("us") && (await isMarketTradingDay(env.DB, "us", env)) !== false,
-          kr: isMarketOpen("kr") && (await isMarketTradingDay(env.DB, "kr", env)) !== false
-        },
-        tradingWindow: { us: isTradingWindow("us"), kr: isTradingWindow("kr") },
-        llmDaily: { us: __S["llm_daily:us"] || null, kr: __S["llm_daily:kr"] || null },
-        marketContext: __S["mkt_context"] || null,
-        sectorNews: __S["sector_news_sentiment"] || null,
-        watchlist: quotes,
-        indices: indices,
-        signalStats: signalStats,
-        strategies: STRATEGIES,   // [V8]
-        // [강제 락 & 사용량] UI 표시용
-        forceLock: !!cfg.forceLock,
-        usageState: await (async () => {
-          try {
-            const us = await getUsageState(env.DB);
-            const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg.usageLimits || {}));
-            const rr = (us.data.requests || 0) / Math.max(1, lim.monthlyRequests);
-            const cr = (us.data.cpuMs || 0) / Math.max(1, lim.monthlyCpuMs);
-            return { data: us.data, limits: { monthlyRequests: lim.monthlyRequests, monthlyCpuMs: lim.monthlyCpuMs }, reqPct: (rr*100).toFixed(1), cpuPct: (cr*100).toFixed(1), worstPct: (Math.max(rr,cr)*100).toFixed(1), shutdownAt: lim.shutdownAt, warnAt: lim.warnAt };
-          } catch(e) { return null; }
-        })()
-      };
-      return __statePayload;
-     };  // ── __buildState 끝 ──
+     /* [V33.515] 본문은 최상위 buildStatePayload(env) 로 옮겼다 — 크론이 같은 함수로 R2 사본을 미리 짓는다(아래 주석). */
+     const __buildState = function () { return buildStatePayload(env); };
 
      // 페이로드는 한 번만 직렬화해 문자열로 캐시(요청마다 1.2MB 재직렬화 방지).
      //   float를 유효숫자 6자리로 절사(51.28742146792077 → 51.2874) — 표시용으론 충분,
@@ -30402,7 +30425,7 @@ async function handleRequest(request, env, ctx) {
         그래서 새 아이솔레이트의 첫 요청은 늘 풀 빌드(D1 10~18초)를 기다렸고, 화면은 인트로 '시스템 준비 6/9' 에서
         12초 상한까지 멈춰 있었다(운영 점검 run 36701961217: /api/state 15초 넘게 무응답). R2 사본(10분 안)을 먼저 주고 뒤에서 새로 짓는다.
         쓰기는 아이솔레이트마다 1분에 한 번까지(R2 쓰기 비용). */
-     const __R2s = (typeof _bigR2 === "function") ? _bigR2() : null, __r2Key = "cache/state/state.json", R2_USABLE_MS = 6 * 3600000;   // [V33.453] 10분 → 6시간: 방문이 뜸하면 사본이 늘 만료돼 첫 방문이 15초+ 를 기다렸다(운영 점검). 2.5분 넘은 사본은 stale 표시
+     const __R2s = (typeof _bigR2 === "function") ? _bigR2() : null, __r2Key = STATE_R2_KEY, R2_USABLE_MS = 6 * 3600000;   // [V33.453] 10분 → 6시간: 방문이 뜸하면 사본이 늘 만료돼 첫 방문이 15초+ 를 기다렸다(운영 점검). 2.5분 넘은 사본은 stale 표시
      const __r2Put = function (c) {
        if (!__R2s || (globalThis.__stateR2At && Date.now() - globalThis.__stateR2At < 60000)) return null;
        globalThis.__stateR2At = Date.now();
@@ -30468,6 +30491,12 @@ async function handleRequest(request, env, ctx) {
            if (__rage > USABLE_MS && __body.charAt(0) === "{") __body = '{"stale":true,"staleAgeMs":' + __rage + "," + __body.slice(1);
            const __bp = __refresh();
            if (__bp && ctx && ctx.waitUntil) ctx.waitUntil(__bp);
+           /* [V33.515] 화면이 열려 있다는 표시 — 크론이 이걸 보고 사본을 미리 짓는다(아이솔레이트당 1분에 한 번만 쓴다) */
+           if (!globalThis.__stateReqMarkAt || Date.now() - globalThis.__stateReqMarkAt > 60000) {
+             globalThis.__stateReqMarkAt = Date.now();
+             const __mk = setState(env.DB, "state_last_req", Date.now()).catch(function () {});
+             if (ctx && ctx.waitUntil) ctx.waitUntil(__mk);
+           }
            return new Response(__body, { headers: Object.assign({ "X-Cache": "r2", "X-State-Age": String(Math.round(__rage / 1000)) }, __jh) });
          }
        } catch (e) {}
@@ -53203,6 +53232,25 @@ export default {
       try { await runTradingCycle(env); }
       catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] trading cycle fail: " + e.message); } catch (e2) {} }
 
+      // 1.05) [V33.515] /api/state R2 사본을 크론이 미리 짓는다 — 최근 15분 안에 화면이 열려 있을 때만 · 2분마다 · 사본이 2분보다 묵었을 때만
+      try {
+        if (new Date().getUTCMinutes() % 2 === 0) {
+          const _lr = _num(await getState(env.DB, "state_last_req", 0), 0);
+          if (Date.now() - _lr < 15 * 60000) {
+            const _sr = await stateR2Refresh(env, 120000);
+            if (_sr && _sr.ms > 25000) {
+              const _w = _num(await getState(env.DB, "state_r2_warn", 0), 0);
+              if (Date.now() - _w > 1800000) { await setState(env.DB, "state_r2_warn", Date.now());
+                await log(env.DB, "WARN", null, "[STATE-R2] 상태 사본 빌드 " + Math.round(_sr.ms / 1000) + "초(" + _sr.kb + "KB) — D1 부하 확인"); }
+            }
+          }
+        }
+      } catch (e) {
+        try { const _w = _num(await getState(env.DB, "state_r2_warn", 0), 0);
+          if (Date.now() - _w > 1800000) { await setState(env.DB, "state_r2_warn", Date.now());
+            await log(env.DB, "WARN", null, "[STATE-R2] 상태 사본 사전 빌드 실패: " + ((e && e.message) || e)); } } catch (e2) {}
+      }
+
       // 1.5) [V12.8] 신규 편입 종목 즉시 백필 + [V12.9] 오염 quote 전량 재기록 마이그레이션.
       //   - 백필: quote가 아예 없는 종목은 장 시간과 무관하게 사이클당 60개씩 채움.
       //   - 재기록: 과거 v8 롤오버 버그로 오염된 미국 quote 전체(560개)를 수정된 fetch로
@@ -53957,7 +54005,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

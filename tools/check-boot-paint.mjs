@@ -158,7 +158,7 @@ ok(!/setTimeout\(removeIntro, 4200\);\n/.test(H.replace(/else setTimeout\(remove
 // [V33.451] 인트로가 기다리는 서버 응답이 콜드 아이솔레이트에서 풀 빌드를 기다리지 않게(workers.dev 는 caches.default 가 저장 안 함)
 {
   const W = readFileSync("src/index.js", "utf8");
-  ok(/__r2Key = "cache\/state\/state\.json"/.test(W) && /── L2b: R2 사본/.test(W) && /__r2Put\(__c\)/.test(W) && /R2_USABLE_MS = 6 \* 3600000/.test(W) && /\{"stale":true,"staleAgeMs":/.test(W),
+  ok((/__r2Key = "cache\/state\/state\.json"/.test(W) || (/__r2Key = STATE_R2_KEY/.test(W) && /const STATE_R2_KEY = "cache\/state\/state\.json"/.test(W))) && /── L2b: R2 사본/.test(W) && /__r2Put\(__c\)/.test(W) && /R2_USABLE_MS = 6 \* 3600000/.test(W) && /\{"stale":true,"staleAgeMs":/.test(W),
      "/api/state: R2 사본(6시간 안 · 오래되면 stale 표시)을 먼저 주고 뒤에서 새로 — 뜸한 방문도 D1 풀 빌드(15초+)를 기다리지 않는다");
   ok(/swrJson\("bonds", 30000, 6 \* 3600000/.test(W) && /swrJson\("diag", 20000, 6 \* 3600000/.test(W),
      "/api/bonds · /api/diag: SWR(사본 먼저 · 뒤에서 새로) — 인트로가 4.5초·2.8초를 기다리지 않는다");
