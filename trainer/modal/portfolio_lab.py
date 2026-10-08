@@ -25,6 +25,11 @@ import numpy as np
 H = 5                     # 라벨 지평(일) — 결정 다음날 종가 → H일 뒤 종가
 COST = {"us": {"buy": 0.0005, "sell": 0.0005}, "kr": {"buy": 0.00015 + 0.001, "sell": 0.00015 + 0.001 + 0.002}}   # 수수료+슬리피지(+한국 매도세)
 CONFIGS = [(K, d, w) for K in (10, 20) for d in (2,) for w in ("equal", "invvol", "riskparity")]
+# [V33.532] ★2차 — 미리 등록한 추가 시험★: 1차 실데이터(10/08)에서 미국은 초과 +17~28%/년 · DSR 0.99 였지만 낙폭 47~63% vs 기준 37% 로
+#   낙폭 기준에서 떨어졌다. 표준 처방 = 변동성 목표(포트폴리오 60일 실현변동성을 기준의 그것에 맞춰 노출을 줄인다 · 현금은 0%).
+#   추가 4구성(+vt) — DSR 의 시험 수는 ★1차 6 + 2차 4 = 10★ 으로 센다(보고 고른 만큼 문턱을 올린다).
+CONFIGS += [(K, 2, w + "+vt") for K in (10, 20) for w in ("equal", "invvol")]
+N_TRIALS_TOTAL = len(CONFIGS)
 FOLDS = 5          # 확장 전진이라 첫 구간은 학습이 짧아 보통 빠진다 → 시험 구간 ≈4
 
 
@@ -153,6 +158,8 @@ def run_lab(daily, mkt_by_sym, day_key_of, log=print):
                 row = np.zeros(S); row[list(held)] = 1.0
                 pos_rows.append(row)
             pos = pd.DataFrame(np.array(pos_rows), index=idx[test_days], columns=C.columns)
+            vt = wmode.endswith("+vt")
+            wmode = wmode.replace("+vt", "")
             if wmode == "invvol":
                 W = ev.optimize(ret_df.loc[:idx[test_days[-1]]], pos, pos.index, lookback=60)
             elif wmode == "riskparity":
@@ -161,16 +168,21 @@ def run_lab(daily, mkt_by_sym, day_key_of, log=print):
                 W = pos
             W = W.fillna(0.0).values
             W = W / np.maximum(W.sum(axis=1, keepdims=True), 1e-12)
-            net, turn = [], []
+            net, turn, gross_hist, bench_hist = [], [], [], []
             for i, d in enumerate(test_days):
                 w = W[i]
+                if vt:   # 변동성 목표: 직전 60일 (전략 총수익 · 기준) 실현변동성 비 — 그날까지 본 것만
+                    if len(gross_hist) >= 40:
+                        sp = float(np.std(gross_hist[-60:])); sb = float(np.std(bench_hist[-60:]))
+                        w = w * min(1.0, sb / sp) if sp > 1e-9 else w
                 rr = r1[d + 1]                         # 결정 d(종가) → 다음날 종가에 체결 → 그 다음날까지 보유: 보수적으로 d+1 → d+2
                 gross = float(np.nansum(w * np.where(np.isfinite(rr), rr, 0.0)))
                 dw = w - w_prev
                 cost = float(np.sum(np.clip(dw, 0, None)) * COST[mk]["buy"] + np.sum(np.clip(-dw, 0, None)) * COST[mk]["sell"])
                 net.append(gross - cost); turn.append(float(np.sum(np.abs(dw))) / 2)
-                # 다음날 비중은 가격 변동만큼 흘러간다
-                g = w * (1 + np.where(np.isfinite(rr), rr, 0.0)); w_prev = g / max(g.sum(), 1e-12)
+                gross_hist.append(float(np.nansum(W[i] * np.where(np.isfinite(rr), rr, 0.0)))); bench_hist.append(float(np.nan_to_num(bench[i])))
+                # 다음날 비중은 가격 변동만큼 흘러간다(현금 비중은 그대로)
+                g = w * (1 + np.where(np.isfinite(rr), rr, 0.0)); w_prev = g / max(g.sum(), 1e-12) * min(1.0, float(w.sum()))
             net = np.array(net); ex = net - np.nan_to_num(bench)
             folds = [fold_of_day[d] for d in test_days]
             per = []
@@ -179,7 +191,9 @@ def run_lab(daily, mkt_by_sym, day_key_of, log=print):
                 per.append(float(ex[msk].mean() * 252))
             sr = float(mt.sharpe_ratio(ex)) * math.sqrt(252) if len(ex) > 2 else 0.0
             eq, eqb = np.cumprod(1 + net), np.cumprod(1 + np.nan_to_num(bench))
-            results.append({"K": K, "nd": nd, "w": wmode, "annNet": float(net.mean() * 252), "annBench": float(np.nanmean(bench) * 252),
+            bz = np.nan_to_num(bench)
+            beta = float(np.cov(net, bz)[0, 1] / max(np.var(bz), 1e-12)) if len(net) > 10 else float("nan")
+            results.append({"beta": beta, "K": K, "nd": nd, "w": wmode + ("+vt" if vt else ""), "annNet": float(net.mean() * 252), "annBench": float(np.nanmean(bench) * 252),
                             "annEx": float(ex.mean() * 252), "srEx": sr, "srDaily": float(mt.sharpe_ratio(ex)), "foldEx": per,
                             "turn": float(np.mean(turn)), "mdd": _maxdd(eq), "mddB": _maxdd(eqb), "n": len(ex), "ex": ex})
         srs = [r["srDaily"] for r in results]
@@ -190,15 +204,15 @@ def run_lab(daily, mkt_by_sym, day_key_of, log=print):
         for r in results:
             from scipy.stats import skew, kurtosis
             ex = r["ex"]
-            dsr = mt.deflated_sharpe_ratio(r["srDaily"], n_trials=len(results), n_observations=len(ex), trial_sharpe_std=max(sd_tr, 1e-6),
+            dsr = mt.deflated_sharpe_ratio(r["srDaily"], n_trials=N_TRIALS_TOTAL, n_observations=len(ex), trial_sharpe_std=max(sd_tr, 1e-6),
                                            skew=float(skew(ex)), kurtosis=float(kurtosis(ex, fisher=False)))
             p_dsr = float(dsr.deflated_sharpe_ratio)   # Vibe multipletesting — 시험한 구성 수만큼 기대 최대 샤프를 빼고 남는 확률
             r["dsr"] = p_dsr
             nf = len(r["foldEx"])
             r["pass"] = bool(nf >= 3 and sum(1 for x in r["foldEx"] if x > 0) >= max(3, math.ceil(0.75 * nf)) and p_dsr >= 0.95 and r["mdd"] <= r["mddB"] + 0.05)
-            log("      K%-3d drop%d %-11s %+7.1f%% %+7.1f%% %+7.1f%% %6.2f %6.1f%% %6.1f%% %6.1f%%  %s  DSR %.2f%s" % (
+            log("      K%-3d drop%d %-14s %+7.1f%% %+7.1f%% %+7.1f%% %6.2f %6.1f%% %6.1f%% %6.1f%%  %s  DSR %.2f%s" % (
                 r["K"], r["nd"], r["w"], r["annNet"] * 100, r["annBench"] * 100, r["annEx"] * 100, r["srEx"], r["turn"] * 100,
-                r["mdd"] * 100, r["mddB"] * 100, " ".join("%+.0f%%" % (x * 100) for x in r["foldEx"]), p_dsr, "  ★통과" if r["pass"] else ""))
+                r["mdd"] * 100, r["mddB"] * 100, " ".join("%+.0f%%" % (x * 100) for x in r["foldEx"]), p_dsr, "  ★통과" if r["pass"] else "") + "  β %.2f" % r["beta"])
             if r["pass"] and (best is None or r["srEx"] > best["srEx"]):
                 best = r
         try:
