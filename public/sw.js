@@ -10,7 +10,7 @@
  *     · 새 워커는 즉시 인수한다(skipWaiting + clients.claim) — 판이 두 개 도는 시간을 없앤다.
  *   결과: 앱으로 설치해도 온라인이면 언제나 최신 판을 본다. 오프라인이면 마지막 화면이라도 뜬다.
  */
-const VER = 'lux-v33.533';
+const VER = 'lux-v33.534';
 const SHELL = 'shell-' + VER;
 const RUNTIME = 'rt-' + VER;
 /* [V33.498] 배포 분할 빌드(tools/build-split.mjs)의 /_b/<내용해시>.js|css — 이름이 곧 내용이라 ★영원히 같다★.

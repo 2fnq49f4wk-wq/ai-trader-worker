@@ -57,6 +57,9 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split("/").pop()
           const st = days[dd].stp || {}, tot = Object.values(st).reduce((a, b) => a + b, 0) || 1;
           out("steps", dd + "일 합계 " + Math.round(tot / 1000) + "s · " + Object.entries(st).sort((a, b) => b[1] - a[1]).slice(0, 18)
             .map(([k, v]) => k + " " + Math.round(v / 1000) + "s(" + Math.round(v / tot * 100) + "%)").join(" · "));
+          const pb = days[dd].pb || {}, pt = Object.values(pb).reduce((a, b) => a + b, 0) || 1;   // [V33.534] 파싱 바이트(kB)
+          if (Object.keys(pb).length) out("parse", dd + "일 합계 " + Math.round(pt / 1024) + "MB · " + Object.entries(pb).sort((a, b) => b[1] - a[1]).slice(0, 20)
+            .map(([k, v]) => k + " " + (v / 1024).toFixed(1) + "MB(" + Math.round(v / pt * 100) + "%)").join(" · "));
         }
       } catch (e) { out("steps_fail", String(e)); }
       // [V33.534] 매매 단계 안쪽 — 엔진이 이미 남기는 시간 줄(prefetch · EVAL · EVAL-COST · TIME-CAP)을 최근 것부터

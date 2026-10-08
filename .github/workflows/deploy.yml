@@ -784,6 +784,9 @@ jobs:
       # [V33.530] 추격 매수 차단 — 원장 감사 근거(미국 1일 +2% · 한국 5일 +6.5% 이후 매수가 시장 대비 손해)
       - name: 추격 매수 차단 검사
         run: node tools/check-anti-chase.mjs
+      # [V33.534] 크론 CPU 절감 — 판단 불변(스토캐스틱 비트 동일 · 네이버 배치 종목 단건 재조회 제거 · 못 받은 종목은 폴백 유지)
+      - name: 크론 CPU 절감 검사
+        run: node tools/check-cron-cpu.mjs
       # [V33.531] 포트폴리오 실험실 — Qlib TopK-Dropout + Vibe 부품(퍼지 전진·DSR·최적화기) · 귀무 0 · 양성 대조 통과
       - name: 포트폴리오 실험실 검사
         run: node tools/check-portfolio-lab.mjs

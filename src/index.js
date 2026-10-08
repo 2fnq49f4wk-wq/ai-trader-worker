@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.533";
+const _BUILD_VER = "V33.534";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -7370,8 +7370,19 @@ function getStochSlow(highs, lows, closes, n, kSmooth, dSmooth) {
   const L = (Array.isArray(lows) && lows.length === closes.length) ? lows : closes;
   const need = n + kSmooth + dSmooth;
   if (closes.length < need) return null;
-  const fastK = [];
-  for (let i = n - 1; i < closes.length; i++) {
+  /* [V33.534] ★같은 값, 다른 비용.★ 쓰는 것은 마지막 Slow %K (dSmooth+1)개뿐이다 → 그에 필요한 Fast %K 꼬리만 계산한다.
+     종전엔 봉마다 전 구간 Fast %K 를 만들고, Slow %K 는 getMA(fastK.slice(0, i + 1)) 로 봉마다 배열 앞부분을 통째로 복사했다
+     (320봉 → 종목당 ~5만 칸 · 매분 수백 종목) — 로컬 CPU 프로파일(tools/cron-cpu-bench)에서 매분 크론의 1위였다.
+     각 값은 종전과 ★같은 순서로★ 더하고 나눈다 → 비트 단위 동일(check-cron-cpu 가 옛 구현과 400회 대조).
+     길이 검사(null 반환 조건)도 전 구간 길이 F·S 로 종전과 똑같이 한다. */
+  const F = closes.length - n + 1;                  // 전 구간 Fast %K 개수
+  if (F < kSmooth + dSmooth) return null;
+  const S = F - kSmooth + 1;                        // 전 구간 Slow %K 개수
+  if (S < dSmooth + 1) return null;
+  const m0 = S - 1 - dSmooth;                       // 필요한 첫 Slow %K 칸(= 그 창의 첫 Fast %K 칸)
+  const fastK = new Array(F - m0);                  // fastK[x] = 전 구간 Fast %K[m0 + x]
+  for (let x = 0; x < fastK.length; x++) {
+    const i = m0 + x + n - 1;
     let hi = -Infinity, lo = Infinity;
     for (let j = i - n + 1; j <= i; j++) {
       const h = _num(H[j], closes[j]), l = _num(L[j], closes[j]);
@@ -7379,12 +7390,14 @@ function getStochSlow(highs, lows, closes, n, kSmooth, dSmooth) {
       if (l < lo) lo = l;
     }
     // 최고=최저(거래정지·상하한 고정)면 중립 50 — 0으로 나누지 않는다.
-    fastK.push((hi > lo) ? ((closes[i] - lo) / (hi - lo)) * 100 : 50);
+    fastK[x] = (hi > lo) ? ((closes[i] - lo) / (hi - lo)) * 100 : 50;
   }
-  if (fastK.length < kSmooth + dSmooth) return null;
-  const slowK = [];
-  for (let i = kSmooth - 1; i < fastK.length; i++) slowK.push(getMA(fastK.slice(0, i + 1), kSmooth));
-  if (slowK.length < dSmooth + 1) return null;
+  const slowK = [];                                 // 마지막 dSmooth+1 개(전 구간 Slow %K[m0..S-1])
+  for (let x = 0; x <= dSmooth; x++) {
+    let sk = 0;
+    for (let j = x; j < x + kSmooth; j++) sk += fastK[j];
+    slowK.push(sk / kSmooth);
+  }
   const k = slowK[slowK.length - 1], kPrev = slowK[slowK.length - 2];
   const d = getMA(slowK, dSmooth);
   const dPrev = getMA(slowK.slice(0, slowK.length - 1), dSmooth);
@@ -7485,7 +7498,7 @@ function _usageCpu(u) {
 async function getUsageActual(DB, mk) {
   try { const a = await getState(DB, "usage_actual:" + mk, null); return (a && typeof a === "object") ? a : null; } catch (e) { return null; }
 }
-async function recordUsage(DB, deltaReq, deltaCpuMs, deltaSubreqs, steps) {
+async function recordUsage(DB, deltaReq, deltaCpuMs, deltaSubreqs, steps, parseBytes) {
   try {
     const u = await getUsageState(DB);
     u.data.requests = (u.data.requests || 0) + (deltaReq || 0);
@@ -7504,6 +7517,13 @@ async function recordUsage(DB, deltaReq, deltaCpuMs, deltaSubreqs, steps) {
     if (steps && typeof steps === "object") {
       const st = day.stp || (day.stp = {});
       for (const k of Object.keys(steps)) { const v = Math.round(steps[k] || 0); if (v > 0) st[k] = (st[k] || 0) + v; }
+    }
+    // [V33.534] 파싱 바이트(kB) 일 합계 — 상위 30개 키만 남긴다(레코드 크기 상한)
+    if (parseBytes && typeof parseBytes === "object") {
+      const pb = day.pb || (day.pb = {});
+      for (const k of Object.keys(parseBytes)) { const v = (parseBytes[k] || 0) / 1024; if (v > 0) pb[k] = Math.round(((pb[k] || 0) + v) * 10) / 10; }
+      const ks = Object.keys(pb);
+      if (ks.length > 30) { ks.sort(function (a, b) { return pb[b] - pb[a]; }); for (const k of ks.slice(30)) delete pb[k]; }
     }
     await setState(DB, "usage:" + u.mk, u.data);
     return u.data;
@@ -7555,16 +7575,22 @@ async function isUsageShutdown(DB, cfg) {
 }
 // 매 invocation 끝(또는 끝부분)에서 호출 — 누적 추적.
 //   cpuMs는 (전체경과 − sleep) × cpuCalibration 으로 추정(I/O 대기를 CPU로 과대계상하지 않게).
-async function tickUsage(DB, startedAt, calibration, extraSubreqs, steps) {
+async function tickUsage(DB, startedAt, calibration, extraSubreqs, steps, parseBytes) {
   const wallActive = Math.max(1, (Date.now() - (startedAt || Date.now())) - __sleepAccumMs);
   const calib = (typeof calibration === "number" && calibration > 0) ? calibration : 0.10;
-  return recordUsage(DB, 1, Math.round(wallActive * calib), extraSubreqs || 0, steps);
+  return recordUsage(DB, 1, Math.round(wallActive * calib), extraSubreqs || 0, steps, parseBytes);
 }
 /* ══ [V33.527] ★크론 단계별 시간(CPU 대리값)★ ═════════════════════════════════════════════════════════
    Cloudflare 실측(10/08): 이번 달 CPU 32.2% · 8일째 — 이 속도면 ~10/20 에 설정 한도 85% 도달(엔진 자동 셧다운).
    실측 CPU 는 '크론 활성 벽시계 × 0.01' 과 거의 같았다(9.67M vs 9.50M) — 그래서 단계별 활성 벽시계가 곧 CPU 의 몫이다.
    Workers 는 안에서 CPU 를 잴 수 없다 → 단계 경계마다 시각을 찍고(sleep 은 뺀다) 하루 단위로 usage 레코드에 합친다(추가 D1 쓰기 0).
    어느 단계가 CPU 를 먹는지 ★추측 없이★ 고르고, 성능(매매 판단)에 영향 없는 것부터 줄인다. invocation 마다 지역 객체라 겹쳐 돌아도 안 섞인다. */
+/* [V33.534] ★파싱 바이트 계측★ — 워커 안의 Date.now 는 계산 중 멈춰 단계 프로파일은 CPU 를 못 본다.
+   JSON.parse 비용은 바이트에 비례하니, 크론 1회 동안 state 키(접두어별)마다 파싱한 바이트를 센다 → usage.days[dd].pb (kB).
+   크론 밖(요청 처리)에서는 __pb 가 null 이라 아무것도 안 한다. */
+let __pb = null;
+function _pbKey(k) { k = String(k); const i = k.indexOf(":"); return i > 0 ? k.slice(0, i) + ":*" : k; }
+function _pbAdd(k, n) { if (__pb && n > 0) { const g = _pbKey(k); __pb[g] = (__pb[g] || 0) + n; } }
 function _cronProf() {
   const p = { acc: {}, name: "pre", t: Date.now(), sl: __sleepAccumMs };
   p.mark = function (name) {
@@ -8596,7 +8622,13 @@ async function fetchBatchQuotes(symbols, opts) {
   //   subrequest 한도를 넘지 않게 한 사이클당 maxFallback 개만 라운드로빈으로 처리한다.
   //   이전 사이클에서 저장된 quote 는 호출부(prevQuoteMap 병합 + ON CONFLICT UPDATE)에서
   //   보존되므로, 여러 사이클에 걸쳐 전 종목이 한 바퀴 채워진다.
-  let missing = symbols.filter(function(s){ return !out[s]; });
+  /* [V33.534] ★네이버 배치가 이미 값을 준 한국 종목은 폴백 대상이 아니다.★
+     naverXV 는 맨 아래(3)에서야 out 에 병합된다. 그래서 여기서 !out[s] 만 보면 한국 전 종목이 '빠졌다'로 잡혀,
+     매 사이클 예산(priceBudget = 남은 예산 70%)만큼 네이버를 ★한 종목씩 다시★ 불렀다 — 그리고 그 값은
+     (3)의 병합이 naverXV 로 통째로 덮어써 버려졌다(발행주식수·시총도 안 실림). 로컬 실측(tools/cron-cpu-bench):
+     사이클당 네이버 단건 ~450회. 그 예산은 단타 분봉·일봉 갱신이 못 쓰고 있었다(운영 로그: 부가조회 예산 소진).
+     네이버가 못 준 한국 종목은 그대로 폴백한다 — 값 손실 없음. */
+  let missing = symbols.filter(function(s){ return !out[s] && !naverXV[s]; });
   const maxFallback = (typeof opts.maxFallback === "number" && opts.maxFallback > 0)
     ? opts.maxFallback : missing.length;
   if (missing.length > maxFallback) {
@@ -13192,6 +13224,7 @@ async function getState(DB, k, def, strict = false) {
   try {
     const row = await DB.prepare("SELECT v FROM state WHERE k = ?").bind(k).first();
     if (!row) return def;
+    if (__pb && row.v) _pbAdd(k, row.v.length);
     try { return JSON.parse(row.v); } catch (e) { if (strict) throw e; return def; }
   } catch (e) { if (strict) throw e; return def; }
 }
@@ -13206,6 +13239,7 @@ async function getStates(DB, keys) {
     const stmt = DB.prepare("SELECT k, v FROM state WHERE k IN (" + ph + ")");
     const rows = await stmt.bind.apply(stmt, keys).all();
     for (const r of ((rows && rows.results) || [])) {
+      if (__pb && r.v) _pbAdd(r.k, r.v.length);
       try { out[r.k] = JSON.parse(r.v); } catch (e) {}
     }
   } catch (e) {}
@@ -13281,6 +13315,7 @@ async function getBigState(DB, key, def) {
   // [Codex V33.314] Storage failures belong to the I/O layer, not JSON parsing.
   const str = await getBigStateRaw(DB, key);
   if (str == null) return def;
+  _pbAdd(key + "(big)", str.length);
   try {
     const parsed = JSON.parse(str); _bigLoadMark(key, true, "ok"); return parsed;
   } catch (e) { _bigLoadMark(key, false, "json_parse", e); return def; }
@@ -23172,6 +23207,7 @@ async function runTradingCycle(env) {
             const drows = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
             allDaily = {};
             for (const r of (drows.results || [])) {
+              if (__pb && r.v) _pbAdd("dailyBulk", r.v.length);
               try { allDaily[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
             }
             globalThis.__allDailyCache = { ts: Date.now(), map: allDaily };
@@ -53181,6 +53217,7 @@ export default {
     cycMemoReset();      // [V33.170] 사이클 상수 캐시 초기화 — warm isolate 의 옛 값을 물려받지 않는다
     let __usageCalib = USAGE_LIMITS_DEFAULT.cpuCalibration;
     const __prof = _cronProf();   // [V33.527] 단계별 시간(CPU 대리값)
+    __pb = {};                    // [V33.534] 파싱 바이트 계측(이번 크론)
     ctx.waitUntil((async () => {
       // [PAID 가드] Workers Paid 한도 90% 도달 시 모든 작업 차단 (초과 과금 방지)
       try {
@@ -54300,7 +54337,8 @@ export default {
 
       // [PAID 가드] 이번 invocation 사용량 누적 — request 1건 + (비sleep경과×보정) CPU 추정
       __prof.mark("end");
-      try { await tickUsage(env.DB, __cronStart, __usageCalib, __fetchBudget.used || 0, __prof.acc); } catch (e) {}
+      const __pbNow = __pb; __pb = null;
+      try { await tickUsage(env.DB, __cronStart, __usageCalib, __fetchBudget.used || 0, __prof.acc, __pbNow); } catch (e) {}
     })());
   }
 };

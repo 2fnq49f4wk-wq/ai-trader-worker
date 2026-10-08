@@ -47,7 +47,7 @@ chk(/실사용량 동기화[\s\S]{0,80}continue-on-error: true[\s\S]{0,400}node 
   Date.now = realNow;
   chk(p.acc.pre === 300 && p.acc.a === 600 && p.acc.b === 200, "단계별 합산(같은 이름은 더한다)", JSON.stringify(p.acc));
   const marks = (S.match(/__prof\.mark\("[\w.]+"\)/g) || []).length;
-  chk(marks >= 25 && /const __prof = _cronProf\(\);/.test(S) && /tickUsage\(env\.DB, __cronStart, __usageCalib, __fetchBudget\.used \|\| 0, __prof\.acc\)/.test(S),
+  chk(marks >= 25 && /const __prof = _cronProf\(\);/.test(S) && /tickUsage\(env\.DB, __cronStart, __usageCalib, __fetchBudget\.used \|\| 0, __prof\.acc(, __pbNow)?\)/.test(S),
     "크론 경계 " + marks + "곳 · 끝에서 usage 기록과 함께 한 번에 쓴다", String(marks));
   chk(/const d = Math\.max\(0, \(now - p\.t\) - Math\.max\(0, sl - p\.sl\)\);/.test(S), "서브틱 sleep 은 단계 시간에서 뺀다");
 }
