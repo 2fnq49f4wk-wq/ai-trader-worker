@@ -114,3 +114,13 @@ try {
   const p = await get("/api/pipeline");
   out("pipeline", JSON.stringify(p).slice(0, 1500));
 } catch (e) { out("pipeline_fail", String(e)); }
+
+// ⑥ 왜 안 사나 — 엔진 자신의 심사 기록(최근 1,200줄)
+try {
+  const L = await get("/api/logs?limit=1200");
+  const pat = /심사완료|NOBUY|\[EVAL\]|AI_PRIMARY|NEGEXP|PERF-GATE|perf_gate|차단|ai_primary_gate|MAXPOS|CRASH|EQ-CURVE|equityCurve/i;
+  const seen = new Map();
+  for (const l of L) { const m = String(l.message || l.msg || ""); if (!pat.test(m)) continue;
+    const k = m.replace(/\d+(\.\d+)?/g, "#").slice(0, 140); const e = seen.get(k) || { n: 0, ex: m.slice(0, 400), ts: l.ts }; e.n++; seen.set(k, e); }
+  out("why_nobuy", [...seen.values()].sort((a, b) => b.n - a.n).slice(0, 25).map((e) => e.n + "× " + new Date(e.ts).toISOString().slice(5, 16) + " " + e.ex));
+} catch (e) { out("logs_fail", String(e)); }
