@@ -49,6 +49,10 @@ on:
         description: '인트로 — 웹킷(아이패드·맥 사파리)·크로뮴으로 저장소 index.html 인트로를 시각별 캡처 → ui-probe-shots 가지(tools/ui-probe-intro.mjs)'
         type: boolean
         default: false
+      usage:
+        description: 'Cloudflare 실측 CPU — 이번 달 합계 + 최근 48시간 시간대별(tools/usage-sync.mjs --dry --hours) · 워커에 쓰지 않는다'
+        type: boolean
+        default: false
       shapes:
         description: '모델 구조 응답(/api/nn-viz 모델별 · omni-structure · ai-mode)을 ui-probe-data 가지에 저장 — 화면 설계용 · 브라우저 없음'
         type: boolean
@@ -142,6 +146,13 @@ jobs:
           TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
         run: node tools/probe-exits.mjs "$URL" || true
 
+      - name: 실측 CPU 시간대별
+        if: inputs.usage
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node tools/usage-sync.mjs --dry --hours || true
+
       - name: 폰 속도
         if: inputs.speed && steps.url.outputs.url != ''
         env:
@@ -174,13 +185,13 @@ jobs:
           node tools/probe-kr-nxt.mjs "${{ vars.WORKER_URL }}" || true
 
       - name: 브라우저 준비
-        if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed && !inputs.intro }}
+        if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed && !inputs.intro && !inputs.usage }}
         run: |
           npm i --no-save --no-audit --no-fund playwright@1
           npx playwright install --with-deps chromium webkit
 
       - name: OMNI 화면 측정
-        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed && !inputs.intro
+        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed && !inputs.intro && !inputs.usage
         env:
           URL: ${{ steps.url.outputs.url }}
           IMG: ${{ inputs.img && '1' || '0' }}
