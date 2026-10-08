@@ -63,11 +63,14 @@ for (const s of steps) {
 }
 rows.sort((a, b) => b[3] - a[3]);
 out("step_delta", rows.slice(0, 25).map((r) => r[0] + " 돈" + r[1] + "/안돈" + r[2] + " ΔCPU " + r[3] + "ms"));
-// 최소제곱: cpu ≈ b0 + Σ b_s · [s 활성] (능선 0.1 — 표본이 적어도 터지지 않게)
-const S = rows.map((r) => r[0]).slice(0, 15);
-if (S.length && C.length > S.length + 5) {
-  const X = C.map((c) => [1].concat(S.map((s) => ((c.prof.s[s] || 0) >= 200 ? 1 : 0)))), y = C.map((c) => c.cpu);
-  const k = S.length + 1, A = Array.from({ length: k }, () => new Array(k).fill(0)), b = new Array(k).fill(0);
+// 최소제곱: cpu ≈ b0 + Σ b_s · [s 활성] + Σ b_k · 작업량_k (능선 0.1 — 표본이 적어도 터지지 않게)
+//   [V33.537] 작업량(c): ev 평가 종목 · sc 단타 스캔 · mb 분봉 조회 · ai AI 후보 · cand 진입 후보 — 단위당 CPU(ms)를 준다
+const CK = ["ev", "sc", "mb", "ai", "cand"].filter((k) => C.some((c) => c.prof.c && (c.prof.c[k] || 0) > 0));
+if (CK.length) out("work", C.slice(0, 30).map((c) => c.cpu + "ms " + CK.map((k) => k + "=" + ((c.prof.c || {})[k] || 0)).join(",")));
+const S = rows.map((r) => r[0]).slice(0, 12);
+if ((S.length || CK.length) && C.length > S.length + CK.length + 5) {
+  const X = C.map((c) => [1].concat(S.map((s) => ((c.prof.s[s] || 0) >= 200 ? 1 : 0)), CK.map((k) => (c.prof.c || {})[k] || 0))), y = C.map((c) => c.cpu);
+  const k = S.length + CK.length + 1, A = Array.from({ length: k }, () => new Array(k).fill(0)), b = new Array(k).fill(0);
   for (let i = 0; i < X.length; i++) for (let a = 0; a < k; a++) { b[a] += X[i][a] * y[i]; for (let c2 = 0; c2 < k; c2++) A[a][c2] += X[i][a] * X[i][c2]; }
   for (let a = 1; a < k; a++) A[a][a] += 0.1;
   for (let col = 0; col < k; col++) { let piv = col; for (let r2 = col + 1; r2 < k; r2++) if (Math.abs(A[r2][col]) > Math.abs(A[piv][col])) piv = r2;
@@ -76,5 +79,6 @@ if (S.length && C.length > S.length + 5) {
   const beta = b.map((v, i) => v / (A[i][i] || 1e-9));
   const share = S.map((s, i) => [s, Math.round(beta[i + 1]), C.filter((c) => (c.prof.s[s] || 0) >= 200).length]);
   out("ols", "기저(매분 공통) " + Math.round(beta[0]) + "ms · " + share.sort((a, b2) => b2[1] - a[1]).map((r) => r[0] + " " + r[1] + "ms×" + r[2]).join(" · "));
+  if (CK.length) out("ols_work", CK.map((kk, i) => kk + " " + beta[S.length + 1 + i].toFixed(2) + "ms/개").join(" · "));
 }
 out("fetch_paths", Object.entries(reqs).sort((a, b) => b[1].cpu - a[1].cpu).slice(0, 15).map(([k, v]) => k + " n" + v.n + " cpu" + Math.round(v.cpu) + "ms"));

@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.536";
+const _BUILD_VER = "V33.537";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -7589,6 +7589,7 @@ async function tickUsage(DB, startedAt, calibration, extraSubreqs, steps, parseB
    JSON.parse 비용은 바이트에 비례하니, 크론 1회 동안 state 키(접두어별)마다 파싱한 바이트를 센다 → usage.days[dd].pb (kB).
    크론 밖(요청 처리)에서는 __pb 가 null 이라 아무것도 안 한다. */
 let __pb = null;
+let __cronCnt = null;   // [V33.537] 크론 1회 작업량(평가 종목·단타 스캔·분봉 조회·후보) — tail 회귀로 단위당 CPU 를 가른다
 function _pbKey(k) { k = String(k); const i = k.indexOf(":"); return i > 0 ? k.slice(0, i) + ":*" : k; }
 function _pbAdd(k, n) { if (__pb && n > 0) { const g = _pbKey(k); __pb[g] = (__pb[g] || 0) + n; } }
 /* [V33.536] ★전 종목 일봉 일괄 캐시를 '필요할 때만' 파싱한다★ — 종전엔 ~1,000종목(12.5MB)을 한 번에 전부 JSON.parse 했다
@@ -25921,6 +25922,7 @@ async function runTradingCycle(env) {
       }
       // [V12.130] 평가 커버리지 관측 — 몇 %를 실제로 봤는지 로그로 남긴다(종전엔 중단 시에만 보였다).
       try {
+        if (__cronCnt) { __cronCnt.ev += evalProcessed; __cronCnt.cand += (__candLog ? __candLog.length : 0); }
         await log(DB, "INFO", null, "[EVAL] " + market.toUpperCase() + " 평가 " + evalProcessed + "/" + fetched.length +
           "종목(" + (fetched.length ? (evalProcessed / fetched.length * 100).toFixed(0) : "0") + "%)" +
           (evalTimedOut ? " TIME-CAP" : " 완주") +
@@ -26089,6 +26091,7 @@ async function runTradingCycle(env) {
         " trust=" + (_t9 ? (_t9.trusted ? "OK" : (_t9.reason || "no")) : "미학습") +
         " obs=" + __stinObs + " aiEntry=" + aiScalpUsed + "]";
     } catch (e) {}
+    if (__cronCnt) { __cronCnt.sc += scalpScanUsed; __cronCnt.mb += minuteFetchUsed; __cronCnt.ai += aiPrimaryUsed + aiScalpUsed; }
     await log(DB, "INFO", null, "Done: tried=" + tried + " skip=" + skipped + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail + " minBars=" + minuteFetchUsed + " scalp[elig=" + scalpEligible + " scan=" + scalpScanUsed + " sig=" + scalpSig + " gates=" + JSON.stringify(__scalpDiag) + "]" + _scDiagTxt + " cycleMs=" + cycleMs);
     // [V32.1] 로그 보존 확대 — 종전 500행 상한은 매분 쏟아지는 INFO에 밀려 ERROR/WARN이
     //   금세 사라져 "에러가 안 보인다"던 문제. 이제 (1)전체 최근 1500행 유지 + (2)그와 별개로
@@ -53314,6 +53317,7 @@ export default {
     let __usageCalib = USAGE_LIMITS_DEFAULT.cpuCalibration;
     const __prof = _cronProf();   // [V33.527] 단계별 시간(CPU 대리값)
     __pb = {};                    // [V33.534] 파싱 바이트 계측(이번 크론)
+    __cronCnt = { ev: 0, sc: 0, mb: 0, ai: 0, cand: 0 };
     ctx.waitUntil((async () => {
       // [PAID 가드] Workers Paid 한도 90% 도달 시 모든 작업 차단 (초과 과금 방지)
       try {
@@ -54437,7 +54441,7 @@ export default {
       /* [V33.536] 크론 1회 단계 요약을 콘솔로 — wrangler tail 이 주는 이 호출의 ★실제 CPU 시간★ 과 짝지어(tools/cron-tail.mjs)
          어느 단계가 CPU 를 먹는지 회귀로 가른다(워커 안 Date.now 는 계산 중 멈춰 단계 시간만으로는 CPU 를 못 본다). */
       try { const _a = {}; for (const _k in __prof.acc) { const _v = Math.round(__prof.acc[_k]); if (_v > 0) _a[_k] = _v; }
-        console.log("CRONPROF " + JSON.stringify({ s: _a, f: __fetchBudget.used || 0, pb: Object.keys(__pbNow || {}).reduce(function (t, k) { return t + (__pbNow[k] || 0); }, 0) })); } catch (e) {}
+        console.log("CRONPROF " + JSON.stringify({ s: _a, c: __cronCnt || {}, f: __fetchBudget.used || 0, pb: Object.keys(__pbNow || {}).reduce(function (t, k) { return t + (__pbNow[k] || 0); }, 0) })); } catch (e) {}
       try { await tickUsage(env.DB, __cronStart, __usageCalib, __fetchBudget.used || 0, __prof.acc, __pbNow); } catch (e) {}
     })());
   }

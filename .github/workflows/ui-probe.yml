@@ -58,7 +58,7 @@ on:
         type: boolean
         default: false
       tail:
-        description: '크론 단계별 실제 CPU — wrangler tail 로 호출마다 Cloudflare CPU 시간 + CRONPROF 단계 → 단계별 CPU 회귀(tools/cron-tail.mjs · 15분) · 워커에 쓰지 않는다'
+        description: '크론 단계별 실제 CPU — wrangler tail 로 호출마다 Cloudflare CPU 시간 + CRONPROF 단계 → 단계별·작업량별 CPU 회귀(tools/cron-tail.mjs · 25분) · 워커에 쓰지 않는다'
         type: boolean
         default: false
       shapes:
@@ -73,7 +73,7 @@ concurrency:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     name: OMNI 화면 측정
     permissions:
       contents: write   # 캡처를 ui-probe-shots 가지에만 올린다(main 은 건드리지 않는다 · 배포 트리거 없음)
@@ -173,7 +173,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: node tools/cron-tail.mjs ai-trader-app 900 || true
+        run: node tools/cron-tail.mjs ai-trader-app 1500 || true
 
       - name: 폰 속도
         if: inputs.speed && steps.url.outputs.url != ''
