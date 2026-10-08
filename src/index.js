@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.529";
+const _BUILD_VER = "V33.530";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -4634,6 +4634,11 @@ const DEFAULT_CFG = {
   roundTripCostPct: { us: 0.02, kr: 0.21 },
   // [V8.4] autoTune이 손실 신호를 여기에 자동 추가 → resolveSignals에서 제외
   disabledSignals: [],
+  /* [V33.530] ★추격 매수 차단★ — 원장 감사(probe-ai-audit, 6~10월 매수 602건 · 다음 5·20일 시장 초과):
+     미국: 그날 +2% 이상 오른 뒤 산 상위 ⅓ → 5일 −1.49%p(t −2.82 · 적중 32%) · 20일 −3.03%p(t −2.84). 나머지 ⅔ 는 ≈0.
+     한국: 5일 +6.5% 이상 오른 뒤 산 상위 ⅓ → 5일 −3.04%p(t −2.30). 단기 반전(잘 알려진 현상)과 같은 방향.
+     단타(scalp)는 따로 판단하므로 건드리지 않는다. 끄려면 enabled:false. */
+  antiChase: { us: { enabled: true, maxRet1d: 2.0 }, kr: { enabled: true, maxRet5d: 6.5 } },
   // === RS 필터 ===
   rsFilterEnabled: true,
   rsLookbackDays: 20,
@@ -8200,6 +8205,19 @@ const _STATE_PRICE_KEYS = { price: 1, prevClose: 1, pre: 1, post: 1, regPrice: 1
 function _stateNumTrim(k, v) {
   if (typeof v !== "number" || !isFinite(v) || Number.isInteger(v)) return v;
   return _STATE_PRICE_KEYS[k] ? Math.round(v * 1e4) / 1e4 : +v.toPrecision(6);
+}
+/* [V33.530] 추격 매수 차단 판정(순수 함수 — 게이트가 직접 잰다). 5일 수익 = 지금가 / 5거래일 전 종가 − 1. */
+function antiChaseRet5(closes, price) {
+  const n = Array.isArray(closes) ? closes.length : 0;
+  if (n < 6 || !(price > 0)) return null;
+  const base = closes[n - 6];
+  return base > 0 ? (price / base - 1) * 100 : null;
+}
+function antiChaseWhy(ac, ret1d, ret5d) {
+  if (!ac || ac.enabled === false) return null;
+  if (ac.maxRet1d != null && typeof ret1d === "number" && isFinite(ret1d) && ret1d >= ac.maxRet1d) return "1d+" + ret1d.toFixed(1) + "%";
+  if (ac.maxRet5d != null && typeof ret5d === "number" && isFinite(ret5d) && ret5d >= ac.maxRet5d) return "5d+" + ret5d.toFixed(1) + "%";
+  return null;
 }
 /* [V33.493] 묵은 상태 사본에 ★시세만★ 새로 끼운다 — 관심종목·지수·거래 창. 실패하면 null(사본 그대로 나간다). */
 async function _patchStateQuotes(DB, body) {
@@ -24515,6 +24533,22 @@ async function runTradingCycle(env) {
           //   식별자에도 예외를 안 던지고 "undefined" 를 돌려주므로 조건이 항상 false 가 되어
           //   ★예외 한 줄 없이 기능만 죽어 있었다★(V33.46 이후 줄곧). ctxScore 가점(±2)만 살아
           //   있었고 사이즈 배수는 한 번도 적용된 적이 없다. 로그로는 절대 드러나지 않는 종류의 사고다.
+          /* [V33.530] ★추격 매수 차단★(DEFAULT_CFG.antiChase 주석 — 원장 실측 근거) — 추세·스냅 신규 진입만. 단타는 그대로. */
+          if (stratResults.length > 0 && !heldSymbols.has(symbol)) {
+            try {
+              const _acAll = cfg.antiChase || DEFAULT_CFG.antiChase || {};
+              const _ac = _acAll[market];
+              if (_ac && _ac.enabled !== false && stratResults.some(function (sr) { return sr.strategy !== "scalp"; })) {
+                const _r5 = antiChaseRet5(closes, price);
+                const _why = antiChaseWhy(_ac, dayPct, _r5);
+                if (_why) {
+                  stratResults = stratResults.filter(function (sr) { return sr.strategy === "scalp"; });
+                  incBlock("CHASE[" + _why + "]");
+                  if (!stratResults.length) continue;
+                }
+              }
+            } catch (e) {}
+          }
           let _spillMult = 1;
           if (stratResults.length > 0) {
             let ctxScore = 0;
@@ -54267,7 +54301,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

@@ -781,6 +781,9 @@ jobs:
       # [V33.529] Vibe-Trading 팩터 선별기 — 귀무 통과 0 · 양성 대조 검출 · 라이선스 표기
       - name: 팩터 선별기 검사
         run: node tools/check-factor-screen.mjs
+      # [V33.530] 추격 매수 차단 — 원장 감사 근거(미국 1일 +2% · 한국 5일 +6.5% 이후 매수가 시장 대비 손해)
+      - name: 추격 매수 차단 검사
+        run: node tools/check-anti-chase.mjs
       # [V33.480] 신호 음수기대 게이트는 시장별 — 한국 손실이 섞인 통계로 미국 AI 진입(PF 1.34)이 꺼졌다.
       - name: 시장별 신호 게이트 검사
         run: node tools/check-negexp-mkt.mjs

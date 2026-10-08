@@ -12,6 +12,16 @@
 
 ## Current handoff
 
+- V33.530 (10/08): ★수익률이 낮은 이유 — 원장 감사(tools/probe-ai-audit.mjs · ui-probe audit)★
+  - 6/03~10/07 매수 602건을 '그 종목의 다음 5·20일 − 같은 기간 시장(SPY·KODEX200)' 으로 잼(청산과 무관한 고른 실력):
+    미국 전체 20일 −1.35%p(t −2.39) · 월별 악화(6월 −1.05 → 9월 −5.37) · AI_PRIMARY −1.44 · AI_SCALP 5일 −2.41(t −2.43) · 규칙 SC_VWAP 20일 −7.01(t −3.86).
+    한국 AI_PRIMARY 20일 −6.13%p(t −3.20, 적중 31%) · TR_PULLBACK +17.6(n33, 6월 몰림 — 과신 금지).
+  - 노출·비용: 미국 평균 투자 63% · 실현 +2.69% vs SPY 보유 +5.45% · ★회전 40.8배/4개월 · 비용 추정 3.06%(= 실현 수익만큼)★. 한국 23% · −5.39% vs 시장 −9.03%(우리 노출로 −2.08%) · 회전 24배 · 비용 4.0%.
+  - 이미 막혀 있던 것: disabledSignals [AI_SCALP, SC_VWAP] · 한국 AI_PRIMARY 는 NEGEXP_SIG 가 전부 차단(10/08 심사: 후보 28 → 진입 0, 후보가 RSI 64~76·당일 +5~14% 급등주).
+  - ★추격 가설 검증★: 미국 진입 직전 1일 +2% 이상(상위⅓) 매수 → 5일 −1.49%p(t −2.82, 적중 32%) · 20일 −3.03(t −2.84), 나머지 ≈0.
+    한국 5일 +6.5% 이상(상위⅓) → 5일 −3.04%p(t −2.30). → `antiChase` 진입 차단(신규 추세·스냅만, 단타·보유 무관, 사유 CHASE[..]). 게이트 check-anti-chase.
+  - 다음: AI_PRIMARY 후보 생성(_uptrend·techBuy·RSI≤84 → 급등주 쏠림)을 모델 순위 기반으로 · 팩터 선별 결과(omni_factors 회차)로 반전/저변동 팩터 검토 · 회전율 억제.
+
 - V33.529 (10/08): ★Vibe-Trading(HKUDS, MIT) 알파 동물원 선별기★ — 사용자: "홍콩대 vibe-trading 소스 가져와 수익률 대폭 업그레이드".
   - `trainer/modal/vt/`: Vibe-Trading `agent/src/factors/{base,_backend}.py` + `zoo/{qlib158,alpha101,gtja191}`(≈450 팩터) — MIT LICENSE·NOTICE·qlib158 Apache 표기·업스트림 커밋 보존,
     수정 2곳 표기(`_backend` 설정계층 → 환경변수, 패키지 `__init__` 비움).
