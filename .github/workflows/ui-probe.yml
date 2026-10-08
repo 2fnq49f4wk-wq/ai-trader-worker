@@ -49,6 +49,10 @@ on:
         description: '인트로 — 웹킷(아이패드·맥 사파리)·크로뮴으로 저장소 index.html 인트로를 시각별 캡처 → ui-probe-shots 가지(tools/ui-probe-intro.mjs)'
         type: boolean
         default: false
+      audit:
+        description: 'AI 감사 — 매수 종목의 5·20일 뒤 시장 초과(선별력) · 평균 투자비중 · 시장 보유 대비 · 회전율·비용(tools/probe-ai-audit.mjs) · 브라우저 없음'
+        type: boolean
+        default: false
       usage:
         description: 'Cloudflare 실측 CPU — 이번 달 합계 + 최근 48시간 시간대별(tools/usage-sync.mjs --dry --hours) · 워커에 쓰지 않는다'
         type: boolean
@@ -146,6 +150,12 @@ jobs:
           TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
         run: node tools/probe-exits.mjs "$URL" || true
 
+      - name: AI 감사
+        if: inputs.audit && steps.url.outputs.url != ''
+        env:
+          URL: ${{ steps.url.outputs.url }}
+        run: node tools/probe-ai-audit.mjs "$URL" || true
+
       - name: 실측 CPU 시간대별
         if: inputs.usage
         env:
@@ -186,13 +196,13 @@ jobs:
           node tools/probe-kr-nxt.mjs "${{ vars.WORKER_URL }}" || true
 
       - name: 브라우저 준비
-        if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed && !inputs.intro && !inputs.usage }}
+        if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed && !inputs.intro && !inputs.usage && !inputs.audit }}
         run: |
           npm i --no-save --no-audit --no-fund playwright@1
           npx playwright install --with-deps chromium webkit
 
       - name: OMNI 화면 측정
-        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed && !inputs.intro && !inputs.usage
+        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed && !inputs.intro && !inputs.usage && !inputs.audit
         env:
           URL: ${{ steps.url.outputs.url }}
           IMG: ${{ inputs.img && '1' || '0' }}
