@@ -12,6 +12,11 @@
 
 ## Current handoff
 
+- V33.521 (10/08): ★속도·트래픽 측정 장치★ — 추측으로 고치지 않고 먼저 잰다.
+  - 응답 헤더 `x-lux-c`: swrJson 전 경로(l1·l1s·l2·r2·build·join) + /api/state(l1·l1s·l2·r2·build).
+  - `tools/probe-api-speed.mjs <url> [동시수]`: 대시보드 조회 25종 연속 3회 TTFB·크기·층 + 동시 24회 몰아치기(중앙·최대·실패). ui-probe `speed` 입력이 먼저 돌린다(API 줄).
+  - 게이트 check-load-speed ⑦.
+
 - V33.520 (10/08): ★탑무버 첫 칸 = 회사명★ (사용자 지시 — V33.422 '티커만' 을 갈아냄).
   - `moverRow` 가 공용 `displayName`(q.name → 한국/미국 이름표 → 없으면 티커) 으로 적고, 티커는 말풍선(title)에 남긴다. 표 머리 Ticker → 종목.
   - 이름이 길어 이름 칸 26→36%(좁은 화면 32→44%), 한 줄 말줄임 `.fv-mvname`.

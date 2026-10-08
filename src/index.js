@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.520";
+const _BUILD_VER = "V33.521";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -26914,6 +26914,9 @@ async function handleRequest(request, env, ctx) {
     const _br = Math.max(3, Math.min(20, Math.floor(_num(freshMs, 15000) / 1000)));
     const jhdr = Object.assign({ "content-type": "application/json",
       "cache-control": "public, max-age=" + _br }, cors);
+    /* [V33.521] ★어느 층이 답했는지 헤더로 남긴다(x-lux-c)★ — 운영 측정(tools/probe-api-speed.mjs)이 "느린 게 D1 빌드인가 R2 인가"를
+       추측 없이 가른다. l1=아이솔레이트 메모리 · l1s=메모리(낡음, 뒤에서 갱신) · l2=엣지 캐시 · r2=R2 사본 · build=직접 빌드 · join=남의 빌드를 같이 기다림 */
+    const jh = function (l) { return Object.assign({ "x-lux-c": l }, jhdr); };
     // [V33.55] ★배포하면 판단이 즉시 갱신되게★ L1(아이솔레이트 메모리)은 재배포로 사라지지만
     //   L2(caches.default)는 남아, 판정 로직을 고쳐 배포해도 최대 staleMs(1시간) 동안 옛 판단이
     //   그대로 재배포됐다. 국면 분류를 고쳐도 화면이 안 바뀌던 원인.
@@ -26948,11 +26951,11 @@ async function handleRequest(request, env, ctx) {
     // ── L1: 아이솔레이트 메모리 ──
     const hit = store[key];
     const age = hit ? Date.now() - hit.ts : Infinity;
-    if (hit && age < freshMs) return new Response(hit.str, { headers: jhdr });
+    if (hit && age < freshMs) return new Response(hit.str, { headers: jh("l1") });
     if (hit && age < staleMs) {
       const p = refresh();
       if (p && ctx && ctx.waitUntil) ctx.waitUntil(p);
-      return new Response(hit.str, { headers: jhdr });
+      return new Response(hit.str, { headers: jh("l1s") });
     }
     // ── L2: colo 공유 Edge Cache (콜드 아이솔레이트가 D1로 몰리는 것을 막는다) ──
     try {
@@ -26967,7 +26970,7 @@ async function handleRequest(request, env, ctx) {
             const p = refresh();
             if (p && ctx && ctx.waitUntil) ctx.waitUntil(p);
           }
-          return new Response(body, { headers: jhdr });
+          return new Response(body, { headers: jh("l2") });
         }
       }
     } catch (e) {}
@@ -26984,7 +26987,7 @@ async function handleRequest(request, env, ctx) {
             const same = md.ver === _BUILD_VER;
             store[key] = { ts: same ? bAt : 0, str: body };          // L1 워밍(옛 판이면 곧바로 낡은 것으로)
             if (!same || rAge > freshMs) { const p = refresh(); if (p && ctx && ctx.waitUntil) ctx.waitUntil(p); }
-            return new Response(body, { headers: jhdr });
+            return new Response(body, { headers: jh("r2") });
           }
         }
       } catch (e) {}
@@ -26997,8 +27000,9 @@ async function handleRequest(request, env, ctx) {
         없었다 — 부하가 가장 클 때만 잠금이 없는 셈이었다.)
        먼저 도착한 요청 하나만 빌드하고, 나머지는 그 약속을 같이 기다린다. */
     const fk = "__f_" + key;
-    let fp = store[fk];
+    let fp = store[fk], _lay = "join";
     if (!fp) {
+      _lay = "build";
       fp = store[fk] = Promise.resolve().then(build).then(function (v) {
         const s2 = JSON.stringify(v), t2 = Date.now();
         store[key] = { ts: t2, str: s2 };
@@ -27007,7 +27011,7 @@ async function handleRequest(request, env, ctx) {
       })["finally"](function () { store[fk] = null; });
     }
     const s = await fp;
-    return new Response(s, { headers: jhdr });
+    return new Response(s, { headers: jh(_lay) });
   };
 
   try {
@@ -30482,12 +30486,12 @@ async function handleRequest(request, env, ctx) {
      const __sc = globalThis.__stateCache;
      const __age = __sc ? Date.now() - __sc.ts : Infinity;
      if (__sc && __age < FRESH_MS) {
-       return new Response(__sc.str || JSON.stringify(__sc.data, __numTrim), { headers: __jh });
+       return new Response(__sc.str || JSON.stringify(__sc.data, __numTrim), { headers: Object.assign({ "x-lux-c": "l1" }, __jh) });
      }
      if (__sc && __age < USABLE_MS) {
        const __bp = __refresh();
        if (__bp && ctx && ctx.waitUntil) ctx.waitUntil(__bp);
-       return new Response(__sc.str || JSON.stringify(__sc.data, __numTrim), { headers: __jh });
+       return new Response(__sc.str || JSON.stringify(__sc.data, __numTrim), { headers: Object.assign({ "x-lux-c": "l1s" }, __jh) });
      }
      // ── L2: colo 공유 Edge Cache ──
      try {
@@ -30502,7 +30506,7 @@ async function handleRequest(request, env, ctx) {
              const __bp = __refresh();
              if (__bp && ctx && ctx.waitUntil) ctx.waitUntil(__bp);
            }
-           return new Response(__body, { headers: __jh });
+           return new Response(__body, { headers: Object.assign({ "x-lux-c": "l2" }, __jh) });
          }
        }
      } catch (e) {}
@@ -30529,7 +30533,7 @@ async function handleRequest(request, env, ctx) {
              const __mk = setState(env.DB, "state_last_req", Date.now()).catch(function () {});
              if (ctx && ctx.waitUntil) ctx.waitUntil(__mk);
            }
-           return new Response(__body, { headers: Object.assign({ "X-Cache": "r2", "X-State-Age": String(Math.round(__rage / 1000)) }, __jh) });
+           return new Response(__body, { headers: Object.assign({ "X-Cache": "r2", "x-lux-c": "r2", "X-State-Age": String(Math.round(__rage / 1000)) }, __jh) });
          }
        } catch (e) {}
      }
@@ -30541,7 +30545,7 @@ async function handleRequest(request, env, ctx) {
       const __pp = Promise.all([caches.default.put(__edgeKey, new Response(__c.str, { headers: {
         "content-type": "application/json", "cache-control": "s-maxage=300", "x-built-at": String(__c.ts) } })).catch(function () {}), __r2Put(__c)]);
       if (ctx && ctx.waitUntil) ctx.waitUntil(__pp);
-      return new Response(__c.str, { headers: __jh });
+      return new Response(__c.str, { headers: Object.assign({ "x-lux-c": "build" }, __jh) });
      } catch (e) {
       // [V12.126] ★500 에러 방지★ /api/state는 전체 대시보드가 의존하는 단일 통합 응답인데
       //   try/catch 없이 20개 이상의 순차 DB조회가 하나로 이어져, 그중 하나만 던져도 요청 전체가

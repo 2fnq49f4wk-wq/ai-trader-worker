@@ -72,5 +72,19 @@ console.log("⑥ 서비스워커");
 chk(/navigationPreload\.enable\(\)/.test(SW) && /e\.preloadResponse/.test(SW), "내비게이션 미리받기(문서가 워커 기동과 동시에 출발)", "미리받기 없음");
 chk(/url\.pathname\.startsWith\('\/_b\/'\)/.test(SW) && /const BUILD = 'b-immutable'/.test(SW) && /k !== BUILD/.test(SW), "/_b/ 캐시 우선 · 판이 바뀌어도 그 캐시는 지우지 않는다", "/_b/ 처리 없음");
 chk(/const VER = 'lux-v33\.(49[89]|5\d\d)'/.test(SW), "서비스워커 판 갱신", "VER 그대로");
+console.log("⑦ 캐시 층 표시(V33.521) — 운영 측정이 느린 원인을 추측 없이 가른다");
+{
+  const SRC = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const a = SRC.indexOf("const swrJson = async function"), b = SRC.indexOf("// === [개선] /api/state 통합 응답 ===", a);
+  const f = a > 0 && b > a ? SRC.slice(a, b) : "";
+  chk(f && !/headers: jhdr \}/.test(f) && ["l1", "l1s", "l2", "r2"].every((l) => f.includes('jh("' + l + '")')) && /jh\(_lay\)/.test(f) && /_lay = "build"/.test(f),
+    "swrJson 응답은 전부 x-lux-c(l1·l1s·l2·r2·build·join) 를 단다", "층 표시가 빠진 swrJson 응답이 있다");
+  const sa = SRC.indexOf("const FRESH_MS = 12000, USABLE_MS = 150000;"), sb = SRC.indexOf("[V12.126] ★500 에러 방지★", sa);
+  const st = sa > 0 && sb > sa ? SRC.slice(sa, sb) : "";
+  chk(st && ["l1", "l1s", "l2", "r2", "build"].every((l) => st.includes('"x-lux-c": "' + l + '"')),
+    "/api/state 도 층마다 x-lux-c 를 단다", "/api/state 층 표시 누락");
+  chk(/node tools\/probe-api-speed\.mjs/.test(readFileSync(new URL("../.github/workflows/ui-probe.yml", import.meta.url), "utf8")),
+    "운영 점검(speed)이 API 별 속도·동시 접속을 잰다", "probe-api-speed 가 운영 점검에 없다");
+}
 if (fails) { console.log("\n✗ 로딩 속도 계약 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 로딩 속도 계약 통과");

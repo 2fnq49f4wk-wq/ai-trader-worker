@@ -147,6 +147,8 @@ jobs:
         env:
           URL: ${{ steps.url.outputs.url }}
         run: |
+          # [V33.521] API 별 TTFB · 캐시 층 · 동시 24회 몰아치기 — 브라우저 없이 먼저 잰다
+          node tools/probe-api-speed.mjs "$URL" 24 || true
           npm i --no-save --no-audit --no-fund playwright@1 >/dev/null 2>&1 && npx playwright install --with-deps chromium >/dev/null 2>&1 && node tools/ui-probe-speed.mjs "$URL" || true
 
       - name: 시세 대조
