@@ -3,7 +3,10 @@ import json
 import math
 import sys
 
-REQUIRED = ("mind", "dnn", "gbdt", "xgb", "lgb", "cat")
+# [V33.527] dnn 은 V33.422 에서 퇴역 — 워커 /api/ai/selfcheck 의 externalTrain 에 키 자체가 없다.
+#   그런데 여기 남아 있어 나이가 늘 9999 → 워치독이 ★6시간마다 무조건 GPU 학습★ 을 돌렸다(10/06~10/08 정기 회차 전부 '학습 실행').
+#   워커가 내보내는 키(_mm)와 같아야 한다 — check-recovery-provenance 가 대조한다.
+REQUIRED = ("mind", "gbdt", "xgb", "lgb", "cat")
 
 def oldest_required_age(payload):
     models = payload.get("externalTrain") or {}

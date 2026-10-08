@@ -184,3 +184,13 @@ print('targeted recovery routes each stage through the single plan table')
 const r=spawnSync('python',['-c',py],{cwd:new URL('..',import.meta.url),encoding:'utf8',env:{...process.env,PYTHONUTF8:'1'}});
 assert.equal(r.status,0,r.stdout+'\n'+r.stderr);console.log(r.stdout);
 console.log('PASS: embargo weight alignment; all-model recovery; KR event provenance and v7 session timestamps');
+// [V33.527] 워치독 신선도 필수 목록 = 워커가 실제로 내보내는 externalTrain 키. 퇴역 모델(dnn)이 남아 있으면 나이가 늘 9999 → 6시간마다 헛 GPU 학습.
+{
+  const mm = /const _mm = \{([^}]*)\};\s*\n\s*R\.externalTrain = \{\};/.exec(src);
+  assert.ok(mm, 'selfcheck externalTrain 키 표(_mm)를 못 찾았다');
+  const keys = [...mm[1].matchAll(/(\w+):/g)].map((m) => m[1]).sort();
+  const py = readFileSync(new URL('./modal_freshness.py', import.meta.url), 'utf8');
+  const req = [...(/^REQUIRED = \(([^)]*)\)/m.exec(py) || [, ''])[1].matchAll(/"(\w+)"/g)].map((m) => m[1]).sort();
+  assert.deepEqual(req, keys, 'modal_freshness REQUIRED ' + req.join(',') + ' ≠ 워커 externalTrain ' + keys.join(','));
+  console.log('ok   워치독 신선도 필수 목록 = 워커 externalTrain 키(' + keys.join(',') + ')');
+}
