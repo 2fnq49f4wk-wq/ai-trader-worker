@@ -39,7 +39,8 @@ if (PROD) {   // 운영 상태 적재 — 운영 표에 로컬보다 많은 칸�
     for (const k of Object.keys(row)) if (!have.has(k)) sql.exec("ALTER TABLE " + t + " ADD COLUMN " + k); };
   const load = (t, rows) => { if (!rows.length) return; for (const r of rows.slice(0, 50)) addCols(t, r);
     sql.exec("BEGIN"); for (const r of rows) { const ks = Object.keys(r); sql.prepare("INSERT OR REPLACE INTO " + t + " (" + ks.join(",") + ") VALUES (" + ks.map(() => "?").join(",") + ")").run(...ks.map((k) => r[k])); } sql.exec("COMMIT"); };
-  load("state", readFileSync(PROD + "/state.jsonl", "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)));
+  // 운영의 잠금(사이클 락·단계 락)까지 복사되면 그 단계가 '이미 누가 도는 중' 으로 보고 건너뛴다 → 락 키는 버린다
+  load("state", readFileSync(PROD + "/state.jsonl", "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => !/lock/i.test(r.k)));
   load("positions", JSON.parse(readFileSync(PROD + "/positions.json", "utf8")));
   load("trades", JSON.parse(readFileSync(PROD + "/trades.json", "utf8")));
 }
