@@ -3197,6 +3197,38 @@ def _label_ablation(X, PNL, TS, SYM, MKT, featver, D, UNIQ=None, featnames=None,
                       f"{('—' if _bt is None else '%.2f' % _bt):>7s} {spread:+19.3f}%")
             except Exception as e:
                 print(f"      {name:26s} 실패(무시): {e}")
+        # [V33.518] ★조기중단 기준 비교★ — 운영 부스터·GBDT 는 보정구간(학습 꼬리) logloss 로 멈춰 6~15그루에서 선다
+        #   (10/08 GBDT trees=10 · valAcc 50.8%). 같은 표본의 고정 200판 LightGBM 은 52.8% 다. logloss 는 기간 사이 ★기저율 이동★
+        #   (양성비율 변화)에 끌려 일찍 멈출 수 있다 — 순위(AUC)는 그 이동에 둔감하다. 보정구간은 같고 기준만 바꿔 같은 검증행에서 잰다.
+        try:
+            _o2, _tr2, _ca2, _va2, _nv2, _e2 = _split_ts(TS, 0.2, _EMBARGO_MS, min_val=200, horizon_ms=_HORIZON_MS, cal_frac=0.10, tag="공정비교-조기중단")
+            _dn = [c for c in cands if c[0].startswith("D ")]
+            if len(_va2) == len(_va) and len(_ca2) >= 2000:
+                _tr2m = np.asarray(_tr2, dtype=np.int64)[_dn[0][2][np.asarray(_tr2, dtype=np.int64)]] if _dn else np.asarray(_tr2, dtype=np.int64)
+                for _nm, _metric, _trx in (("A 보정 logloss 조기중단(운영식)", "binary_logloss", np.asarray(_tr2, dtype=np.int64)),
+                                          ("A 보정 AUC 조기중단", "auc", np.asarray(_tr2, dtype=np.int64)),
+                                          ("D 보정 AUC 조기중단", "auc", _tr2m)):
+                    try:
+                        _dtr = lgb.Dataset(Xs[_trx], label=_Ysign[_trx], weight=UWs[_trx], free_raw_data=False)
+                        _dca = lgb.Dataset(Xs[_ca2], label=_Ysign[_ca2], weight=UWs[_ca2], reference=_dtr, free_raw_data=False)
+                        _b2 = lgb.train({"objective": "binary", "metric": _metric, "learning_rate": 0.05, "num_leaves": 31,
+                                         "min_data_in_leaf": 200, "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 1,
+                                         "verbose": -1, "seed": 7}, _dtr, num_boost_round=1000, valid_sets=[_dca],
+                                        callbacks=[lgb.early_stopping(90, verbose=False)])
+                        pv = _b2.predict(Xs[_va], num_iteration=_b2.best_iteration)
+                        acc = float(((pv >= 0.5) == (_yA > 0.5)).mean())
+                        icp, _r = _calc_ic(pv, _pA)
+                        _bm, _bir, _bt, _bk = _calc_ic_blocks(pv, _pA)
+                        q80, q20 = np.quantile(pv, 0.8), np.quantile(pv, 0.2)
+                        spread = float(_pA[pv >= q80].mean() - _pA[pv <= q20].mean())
+                        print(f"      {_nm + ' (' + str(_b2.best_iteration) + '판)':26s} {acc*100:7.1f}% {(acc-_majA)*100:+7.2f}%p {icp:9.4f} "
+                              f"{('—' if _bt is None else '%.2f' % _bt):>7s} {spread:+19.3f}%")
+                    except Exception as e:
+                        print(f"      {_nm:26s} 실패(무시): {e}")
+            else:
+                print("      [조기중단 비교] 검증행이 달라 생략(%d vs %d · 보정 %d)" % (len(_va2), len(_va), len(_ca2)))
+        except Exception as e:
+            print("   [라벨실험·조기중단 비교] 생략:", e)
         print("      ★읽는 법★ 모두 같은 행·같은 자다. 운영 반영 후보 = 초과·IC(pnl)·블록t·스프레드가 A 보다 ★모두★ 높은 줄.")
     except Exception as e:
         print("   [라벨실험·공정비교] 실패(무시):", e)
