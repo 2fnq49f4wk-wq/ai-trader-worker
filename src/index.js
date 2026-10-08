@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.525";
+const _BUILD_VER = "V33.526";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -26495,9 +26495,16 @@ function rateLimitAuthFail(request) {
    이건 인증이 아니라 ★CSRF 방어★ 다. 키를 아는 사람은 여전히 무엇이든 할 수 있다 —
    그게 맞는 설계다(그 키가 이 시스템의 관리자 자격이다).
 */
+/* [V33.526] ★일을 시키는 GET 도 문을 지난다★ — 외부 시세를 긁고 D1 에 쓰는 GET(가격·일봉 샤드 갱신)과
+   캐시를 우회해 다시 만들게 하는 GET(force/refresh/run=1)은 읽기가 아니다. 누구나 주소만 알면 서버 일을 무한히 시킬 수 있었다.
+   화면 버튼은 같은 출처라 그대로 통과한다(Sec-Fetch-Site/Referer) — 막히는 것은 출처 없는 바깥 호출뿐(TRAIN_KEY 면 통과). */
+function _isWorkGet(url) {
+  return /^\/api\/refresh_(shard|daily_shard)$/.test(url.pathname) ||
+    (/^\/api\//.test(url.pathname) && /(^|[?&])(force|refresh|run)=1(&|$)/.test(url.search));
+}
 function mutationGuard(request, url, env) {
   const m = request.method;
-  if (m === "GET" || m === "HEAD" || m === "OPTIONS") return null;
+  if ((m === "GET" || m === "HEAD" || m === "OPTIONS") && !(m !== "OPTIONS" && _isWorkGet(url))) return null;
   const host = url.host;
   const sameHost = function (v) {
     if (!v) return false;
@@ -26829,7 +26836,10 @@ const MICRO_CACHE_TTL = {
   "/api/commodities": 20000, "/api/bonds": 30000, "/api/ta-screener": 60000,
   "/api/tech-summary": 120000, "/api/fundamentals": 600000, "/api/stock-profile": 300000, "/api/analyst": 600000, "/api/chart": 300000,
   /* [V33.523] 운영 탐침(10/08 04:39Z · 동시 24회): news-picks 0.7초 · nn-viz 0.66→3~4초 · alerts(보유종목마다 D1 한 번) · macro · logs 가 매번 D1 */
-  "/api/news-picks": 60000, "/api/nn-viz": 60000, "/api/alerts": 30000, "/api/macro": 60000, "/api/logs": 5000
+  "/api/news-picks": 60000, "/api/nn-viz": 60000, "/api/alerts": 30000, "/api/macro": 60000, "/api/logs": 5000,
+  /* [V33.526] 화면이 부르는 GET 중 캐시 층이 없던 나머지(전수 대조: public/*.html·js 의 /api/* × 라우트) — 설정(/api/cfg)·상태변경은 넣지 않는다 */
+  "/api/whatif": 300000, "/api/stock-report": 300000, "/api/report/monthly": 300000, "/api/r2-status": 60000,
+  "/api/llm/instruction": 60000, "/api/daily-stats": 30000
 };
 const MICRO_CACHE_MAX = 300;
 const __microCache = new Map();
@@ -26837,7 +26847,7 @@ function _microTtl(request, url) {
   if (request.method !== "GET") return 0;
   const ttl = MICRO_CACHE_TTL[url.pathname];
   if (!ttl) return 0;
-  if (/(^|[?&])(force|run|refresh|nocache)=/.test(url.search)) return 0;
+  if (/(^|[?&])(force|run|refresh|nocache|fresh)=/.test(url.search)) return 0;
   // 분봉 차트는 종목상세가 15초마다 다시 물으므로 짧게 — 일봉 이상은 5분
   if (url.pathname === "/api/chart" && /(^|&|\?)interval=(1m|2m|5m|15m|30m|60m|90m|1h)(&|$)/.test(url.search)) return 10000;
   return ttl;
@@ -26886,9 +26896,12 @@ const MC_STALE_MAX = { "/api/macro": 21600000, "/api/econ": 21600000, "/api/econ
   "/api/tech-summary": 21600000, "/api/shard_meta": 3600000, "/api/news": 3600000, "/api/news-picks": 3600000,
   "/api/nn-viz": 3600000, "/api/ta-screener": 3600000, "/api/fx": 3600000, "/api/crisis": 3600000 };
 function _mcStaleMax(ttl, path) { return MC_STALE_MAX[path] || Math.min(3600000, Math.max(ttl * 10, 120000)); }
-function _mcResp(ent, tag) {
+/* [V33.526] 브라우저도 TTL 의 절반(3~30초)은 스스로 답하게 한다 — 같은 화면의 폴링이 워커 요청으로 곱해지지 않는다(요청 한도 보호).
+   화면이 주는 값은 같다: 서버도 그 시간 동안은 같은 사본을 준다. 강제 갱신(force/refresh=1)은 주소가 달라 이 캐시를 안 탄다. */
+function _mcCC(ttl) { return "public, max-age=" + Math.max(3, Math.min(30, Math.floor((ttl || 0) / 2000))); }
+function _mcResp(ent, tag, ttl) {
   return new Response(ent.body, { status: 200, headers: Object.assign({}, ent.headers, {
-    "X-Micro-Cache": tag, "x-lux-c": tag, "X-Micro-Age": String(Math.max(0, Math.round((Date.now() - ent.ts) / 1000))) }) });
+    "X-Micro-Cache": tag, "x-lux-c": tag, "cache-control": _mcCC(ttl), "X-Micro-Age": String(Math.max(0, Math.round((Date.now() - ent.ts) / 1000))) }) });
 }
 async function microSwr(request, url, ctx, run) {
   const ttl = _microTtl(request, url);
@@ -26920,8 +26933,8 @@ async function microSwr(request, url, ctx, run) {
     return p;
   };
   const e = __microCache.get(key);
-  if (e && now - e.ts <= ttl) return _mcResp(e, "hit");
-  if (e && now - e.ts <= staleMax) { bg(refresh()); return _mcResp(e, "l1s"); }
+  if (e && now - e.ts <= ttl) return _mcResp(e, "hit", ttl);
+  if (e && now - e.ts <= staleMax) { bg(refresh()); return _mcResp(e, "l1s", ttl); }
   if (R2 && !__mcInflight.has(key)) {
     try {
       const g = await R2.get(r2Key);
@@ -26932,7 +26945,7 @@ async function microSwr(request, url, ctx, run) {
             headers: { "content-type": md.ct || "application/json" } };
           __microCache.set(key, ent);
           if (md.ver !== _BUILD_VER || age > ttl) bg(refresh());
-          return _mcResp(Object.assign({}, ent, { ts: at }), "r2");
+          return _mcResp(Object.assign({}, ent, { ts: at }), "r2", ttl);
         }
         try { if (g.body && g.body.cancel) g.body.cancel(); } catch (e2) {}
       }
@@ -26943,7 +26956,7 @@ async function microSwr(request, url, ctx, run) {
   try { snap = await refresh(); }
   catch (e) { return Response.json({ error: "read failed", detail: String((e && e.message) || e) }, { status: 503, headers: { "x-lux-c": "error" } }); }
   return new Response(snap.body, { status: snap.status, headers: Object.assign({}, snap.headers, {
-    "X-Micro-Cache": joined ? "join" : "miss", "x-lux-c": joined ? "join" : "build" }) });
+    "X-Micro-Cache": joined ? "join" : "miss", "x-lux-c": joined ? "join" : "build" }, snap.status === 200 ? { "cache-control": _mcCC(ttl) } : { "cache-control": "no-store" }) });
 }
 
 async function handleRequest(request, env, ctx, _inner) {
@@ -54202,7 +54215,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

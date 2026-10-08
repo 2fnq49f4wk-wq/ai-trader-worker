@@ -12,6 +12,12 @@
 
 ## Current handoff
 
+- V33.526 (10/08): ★부하 구멍 막기 + 리퀴드 메탈 테마★ (사용자: "부하 걸릴 곳 전부 안정적으로 · 설정한 최대 범위 아래에서 · 성능 저하 없이" · "리퀴드 메탈 느낌")
+  - 화면이 부르는 /api/* GET 74경로 전수 대조 → 캐시 층 없던 6개(whatif·stock-report·report/monthly·r2-status·llm/instruction·daily-stats)를 SWR 층에. 게이트 check-micro-cache ⑤ 가 새로 생기는 빈틈도 막는다(예외: cfg·build·client-perf·state·omni-structure, 이유 적힘).
+  - ★일 시키는 GET★(refresh_shard·refresh_daily_shard·force/refresh/run=1)을 mutationGuard 로 — 바깥에서 주소만으로 외부 시세 긁기·D1 쓰기·캐시 우회를 무한히 시키던 구멍. 화면 버튼(같은 출처)·TRAIN_KEY 는 그대로(check-abuse).
+  - SWR 응답에 브라우저 max-age(TTL/2, 3~30초) — 같은 화면 폴링이 워커 요청으로 곱해지지 않는다(요청 한도 보호, 값은 동일).
+  - `public/liquid-metal.css`(맨 뒤 로드): 다크 기본 테마 전용 — 금속판 패널 + 크롬 테두리 + 브러시드 헤더 + 수은 활성 메뉴 + 금속 버튼(지날 때만 반사광) + 로고 광택. 상시 애니메이션 2개(transform/background-position)·backdrop-filter 없음·움직임 줄이기 존중·상승/하락 색 불변. 게이트 check-liquid-metal.
+
 - V33.525 (10/08): ★사용량 한도 = Cloudflare 실측 CPU★ (추정 시한폭탄 해제)
   - 워커: `usage_actual:yyyymm`(POST /api/usage/actual · TRAIN_KEY 만) · `_usageCpu(u)` = 실측 + 동기화 뒤 추정 증가분(실측 없음/36h+/다른 달 → 추정).
     셧다운·부가조회 중단(75%)·alt 슬리브(82%)·/api/usage·상태·진단 전부 같은 식. 추정 기록(usage:yyyymm)은 그대로.

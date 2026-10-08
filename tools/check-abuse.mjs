@@ -176,6 +176,7 @@ const BOOT = ["/api/state", "/api/ml-status", "/api/ai-mode", "/api/selfcheck", 
   new vm.Script(`
     function _safeEq(a,b){var x=String(a==null?"":a),y=String(b==null?"":b);if(x.length!==y.length)return false;var d=0;for(var i=0;i<x.length;i++)d|=x.charCodeAt(i)^y.charCodeAt(i);return d===0;}
     function rateLimitAuthFail(){}
+    ${src.slice(src.indexOf("function _isWorkGet(url) {"), src.indexOf("\n}", src.indexOf("function _isWorkGet(url) {")) + 2)}
     ${mod2}
     this.mutationGuard = mutationGuard;
   `).runInContext(c3);
@@ -186,6 +187,13 @@ const BOOT = ["/api/state", "/api/ml-status", "/api/ai-mode", "/api/selfcheck", 
 
   chk(mg(mk("GET", {}), U, ENV) === null, "읽기(GET)는 아무 영향이 없다 — 대시보드는 그대로 공개 조회다",
     "GET 까지 막았다 — 화면이 통째로 죽는다");
+  /* [V33.526] 일을 시키는 GET — 외부 시세 긁기·D1 쓰기(가격/일봉 샤드), 캐시 우회 재생성(force/refresh/run=1) */
+  const W1 = new URL("https://ai-trader-app.example.workers.dev/api/refresh_shard?market=us&shard=0");
+  const W2 = new URL("https://ai-trader-app.example.workers.dev/api/news?force=1");
+  chk(!!mg(mk("GET", {}), W1, ENV) && !!mg(mk("GET", {}), W2, ENV), "출처 없는 '일 시키는 GET'(샤드 갱신·force=1)은 거절 — 바깥에서 서버 일을 무한히 못 시킨다", "통과함");
+  chk(mg(mk("GET", { "sec-fetch-site": "same-origin" }), W1, ENV) === null && mg(mk("GET", { "x-train-key": "s3cret-key-value" }), W2, ENV) === null,
+    "화면 버튼(같은 출처)·관리 키는 그대로 통과", "화면 버튼이 막힌다");
+  chk(mg(mk("GET", {}), new URL("https://ai-trader-app.example.workers.dev/api/news"), ENV) === null, "평범한 조회는 그대로 공개", "막힘");
   chk(mg(mk("POST", { origin: "https://ai-trader-app.example.workers.dev" }), U, ENV) === null,
     "자기 페이지에서 온 POST 는 통과한다(사이트 기능 무영향)",
     "동일 출처 POST 가 막힌다 — 설정 변경·청산 버튼이 전부 죽는다");

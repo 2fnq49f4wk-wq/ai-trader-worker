@@ -88,5 +88,26 @@ console.log("④ SWR 층(V33.523) — 실제 fetch 처리기를 느린 가짜 D1
 chk(/if \(!_inner && _microTtl\(request, url\)\) \{\n    return await microSwr\(request, url, ctx, function \(\) \{ return handleRequest\(request, env, ctx, true\); \}\);/.test(S) &&
     S.indexOf("if (!_inner && _microTtl(request, url))") > S.indexOf("const _vg = viewerGate("),
   "SWR 층은 한도·읽기문 뒤 · 안쪽 호출은 한도를 두 번 세지 않는다", "배선");
+console.log("⑤ 전수 대조(V33.526) — 화면이 부르는 /api/* GET 은 전부 캐시 층(swrJson·SWR 마이크로·자체 사본)을 탄다");
+{
+  const { readdirSync } = await import("node:fs");
+  const pub = new URL("../public/", import.meta.url);
+  let fe = "";
+  for (const f of readdirSync(pub)) if (/\.(html|js)$/.test(f)) fe += readFileSync(new URL(f, pub), "utf8");
+  const eps = [...new Set(fe.match(/\/api\/[a-zA-Z0-9\/_-]+/g) || [])];
+  const mcSrc = (S.match(/const MICRO_CACHE_TTL = \{[\s\S]*?\};/) || [""])[0];
+  /* 일부러 캐시하지 않는 것 — 이유를 같이 적는다 */
+  const ALLOW = { "/api/cfg": "설정 — 바꾼 즉시 보여야 한다", "/api/build": "판 확인 — no-store 한 줄(D1 없음)", "/api/client-perf": "기기 기록(POST 위주)",
+    "/api/state": "자체 L1/L2/R2 + 크론 사본", "/api/omni-structure": "자체 R2 사본(6시간)" };
+  const miss = [];
+  for (const e of eps) {
+    const i = S.indexOf('path === "' + e + '"');
+    if (i < 0) continue;                               // 접두 라우트·폐지 경로는 이 대조 밖
+    const seg = S.slice(i, i + 2500);
+    if (/swrJson\(/.test(seg) || mcSrc.includes('"' + e + '"') || /request\.method === "POST"/.test(seg.slice(0, 120)) || ALLOW[e]) continue;
+    miss.push(e);
+  }
+  chk(miss.length === 0, "캐시 층 없는 화면 GET 0개(대조 " + eps.length + "경로)", "캐시 없음: " + miss.join(", "));
+}
 if (fails) { console.log("\n✗ 마이크로 캐시 계약 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 마이크로 캐시 계약 통과");

@@ -1,0 +1,241 @@
+/* ══ [V33.526] LIQUID METAL — 사용자 지시: "사이트 디자인을 리퀴드 메탈 느낌으로" ══════════════════════════════
+   액체 금속(수은·크롬)의 세 가지 성질만 쓴다 — ① 깊은 흑연 바탕 위 은빛 반사 ② 가장자리를 따라 흐르는 크롬 테두리 ③ 천천히 흐르는 광택.
+   ★성능 규칙★(폰 포함): 움직이는 것은 transform/opacity/background-position 뿐(GPU 합성) · 상시 애니메이션은 화면 전체 1겹 +
+   로고 1개뿐 · 패널마다 backdrop-filter 를 걸지 않는다(스크롤이 무거워진다) · prefers-reduced-motion 이면 모두 멈춘다.
+   ★범위★: 기본(다크) 테마만. 라이트 테마(html[data-theme="light"])는 그대로 둔다. 데이터 색(상승 초록·하락 빨강)은 바꾸지 않는다. */
+
+html:not([data-theme="light"]) {
+  --lm-ink: #07080a;
+  --lm-base: #0c0d10;
+  --lm-steel-1: #1d2026;
+  --lm-steel-2: #14161b;
+  --lm-steel-3: #0f1115;
+  --lm-chrome-hi: rgba(255, 255, 255, .55);
+  --lm-chrome-mid: rgba(205, 214, 228, .22);
+  --lm-chrome-lo: rgba(255, 255, 255, .05);
+  --lm-mercury: linear-gradient(135deg, #f4f6fa 0%, #aeb6c3 22%, #e9edf3 42%, #7d8696 63%, #d9dee6 82%, #9aa3b1 100%);
+  --lm-edge: linear-gradient(135deg, rgba(255,255,255,.70) 0%, rgba(255,255,255,.10) 22%, rgba(206,216,232,.46) 47%, rgba(255,255,255,.06) 70%, rgba(255,255,255,.55) 100%);
+  /* 금속판: 왼쪽 위에서 들어오는 반사광 + 아래로 깊어지는 흑연 */
+  --lm-surface: radial-gradient(130% 70% at 0% 0%, rgba(235,240,248,.085), transparent 55%),
+                radial-gradient(90% 60% at 100% 100%, rgba(150,162,182,.06), transparent 60%),
+                linear-gradient(165deg, #23262d 0%, #16181d 44%, #0d0f12 100%);
+  --lm-glow: 0 1px 0 rgba(255,255,255,.07) inset, 0 -1px 0 rgba(0,0,0,.55) inset, 0 10px 28px -14px rgba(0,0,0,.85);
+  /* 기존 토큰을 금속 쪽으로 — 화면 곳곳이 이 변수들을 쓴다 */
+  --bg: var(--lm-base);
+  --s1: #15171c;
+  --s2: #1c1f25;
+  --s3: #252932;
+  --bd: #3a3f49;
+  --bd2: #23262d;
+  --t1: #f3f5f8;
+  --t2: #b9c0cb;
+  --t3: #858d99;
+  --acc: #e8ecf2;
+  --panel: #111317;
+  --elev: #181b20;
+  --border: #2a2e36;
+}
+
+/* ── 바탕: 흑연 + 천천히 흐르는 수은 광택(화면 전체 1겹, 고정 · transform 만 움직인다) ── */
+html:not([data-theme="light"]) body {
+  background-color: var(--lm-base);
+  background-image:
+    radial-gradient(1200px 700px at 12% -10%, rgba(190, 200, 216, .10), transparent 60%),
+    radial-gradient(900px 600px at 105% 8%, rgba(150, 165, 190, .08), transparent 62%),
+    radial-gradient(1000px 800px at 50% 120%, rgba(120, 132, 150, .10), transparent 60%);
+  background-attachment: fixed;
+}
+html:not([data-theme="light"]) body::before {
+  content: "";
+  position: fixed;
+  inset: -20%;
+  z-index: -1;   /* 캔버스 바탕 위 · 모든 본문 아래 — 기존 요소의 position 을 건드리지 않는다 */
+  pointer-events: none;
+  background:
+    radial-gradient(40% 30% at 30% 40%, rgba(225, 232, 244, .11), transparent 70%),
+    radial-gradient(35% 28% at 70% 60%, rgba(180, 192, 212, .09), transparent 70%),
+    radial-gradient(25% 20% at 55% 15%, rgba(255, 255, 255, .06), transparent 70%);
+  filter: blur(18px);
+  will-change: transform;
+  animation: lm-flow 46s ease-in-out infinite alternate;
+}
+@keyframes lm-flow {
+  0%   { transform: translate3d(-4%, -2%, 0) scale(1.00) rotate(0deg); }
+  50%  { transform: translate3d(3%, 2%, 0) scale(1.06) rotate(4deg); }
+  100% { transform: translate3d(-2%, 4%, 0) scale(1.02) rotate(-3deg); }
+}
+
+/* ── 사이드바: 연마한 강철 + 세로 반사띠 ── */
+html:not([data-theme="light"]) .sidebar {
+  background:
+    linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,.035) 46%, rgba(255,255,255,0) 54%),
+    linear-gradient(180deg, #16181d 0%, #0e1013 55%, #121418 100%);
+  border-right: 1px solid transparent;
+  border-image: linear-gradient(180deg, rgba(255,255,255,.28), rgba(255,255,255,.05) 40%, rgba(255,255,255,.18) 75%, rgba(255,255,255,.04)) 1;
+  box-shadow: 1px 0 0 rgba(0,0,0,.6), 8px 0 30px -18px rgba(0,0,0,.9);
+}
+html:not([data-theme="light"]) .nav-item {
+  transition: background-color .2s ease, color .2s ease, box-shadow .2s ease;
+}
+html:not([data-theme="light"]) .nav-item:hover {
+  background: linear-gradient(90deg, rgba(255,255,255,.07), rgba(255,255,255,.02));
+  color: #fff;
+}
+/* 선택된 메뉴 = 한 방울의 수은 */
+html:not([data-theme="light"]) .nav-item.active {
+  color: #0b0c0f;
+  background: var(--lm-mercury);
+  background-size: 200% 200%;
+  border-left-color: transparent;
+  box-shadow: 0 1px 0 rgba(255,255,255,.6) inset, 0 -1px 0 rgba(0,0,0,.35) inset, 0 6px 18px -8px rgba(200,210,226,.45);
+  font-weight: 700;
+}
+html:not([data-theme="light"]) .nav-item.active .nav-item-icon,
+html:not([data-theme="light"]) .nav-item.active .nav-item-label { color: #0b0c0f; }
+html:not([data-theme="light"]) .nav-item.active .lux-ico { --lux-star-b: #0b0c0f; --lux-star-f: #2a2f38; }
+
+/* ── 패널: 금속판 + 흐르는 크롬 테두리(배경 두 겹 — 추가 요소 없이) ── */
+html:not([data-theme="light"]) .fv-panel,
+html:not([data-theme="light"]) .watchlist-section,
+html:not([data-theme="light"]) .trades-summary-item,
+html:not([data-theme="light"]) .detail-sec {
+  background: var(--lm-surface) padding-box, var(--lm-edge) border-box;
+  border: 1px solid transparent;
+  box-shadow: var(--lm-glow);
+}
+html:not([data-theme="light"]) .fv-panel-head {
+  /* 헤어라인 가공(브러시드 메탈) — 정지 그림이라 비용 없음 */
+  background:
+    repeating-linear-gradient(90deg, rgba(255,255,255,.018) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.02) 58%, rgba(0,0,0,.18));
+  border-bottom: 1px solid transparent;
+  border-image: linear-gradient(90deg, rgba(255,255,255,.04), rgba(226,232,242,.42) 30%, rgba(255,255,255,.08) 62%, rgba(226,232,242,.30) 88%, rgba(255,255,255,.04)) 1;
+}
+/* 패널 제목 = 밝은 은색 + 약한 금속 광(제목 칸 안의 보조글 .fv-panel-sub 는 원래 색 그대로) */
+html:not([data-theme="light"]) .fv-panel-head {
+  color: #eef1f5;
+  text-shadow: 0 1px 0 rgba(0,0,0,.65), 0 0 14px rgba(214,224,240,.14);
+}
+/* 페이지 제목 = 크롬 글씨(자식 요소 없는 제목만) */
+html:not([data-theme="light"]) .page-title {
+  background: var(--lm-mercury);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: #e9edf3;
+  letter-spacing: .06em;
+}
+
+/* ── 표 ── */
+html:not([data-theme="light"]) .fv-table th {
+  color: #9aa3b0;
+  background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,0));
+  border-bottom: 1px solid rgba(255,255,255,.07);
+}
+html:not([data-theme="light"]) .fv-table tbody tr { transition: background-color .15s ease; }
+html:not([data-theme="light"]) .fv-table tbody tr:hover { background: linear-gradient(90deg, rgba(220,228,240,.07), rgba(220,228,240,.015)); }
+html:not([data-theme="light"]) .fv-tick { color: #dfe5ee; }
+
+/* ── 버튼·칩: 금속 단추 + 지나갈 때만 반사광이 한 번 흐른다(상시 애니메이션 없음) ── */
+html:not([data-theme="light"]) .btn,
+html:not([data-theme="light"]) button.btn,
+html:not([data-theme="light"]) .sb-btn,
+html:not([data-theme="light"]) .llm-btn,
+html:not([data-theme="light"]) .fv-askchip,
+html:not([data-theme="light"]) .trade-filter-btn,
+html:not([data-theme="light"]) .detail-tf-btn,
+html:not([data-theme="light"]) .detail-ind-btn {
+  position: relative;
+  overflow: hidden;
+  color: #e7ebf1;
+  background: linear-gradient(180deg, #2a2e36 0%, #1a1d23 52%, #15171c 100%) padding-box,
+              linear-gradient(135deg, rgba(255,255,255,.40), rgba(255,255,255,.06) 45%, rgba(255,255,255,.22)) border-box;
+  border: 1px solid transparent;
+  box-shadow: 0 1px 0 rgba(255,255,255,.10) inset, 0 2px 6px -2px rgba(0,0,0,.7);
+}
+html:not([data-theme="light"]) .btn::after,
+html:not([data-theme="light"]) .sb-btn::after,
+html:not([data-theme="light"]) .llm-btn::after,
+html:not([data-theme="light"]) .fv-askchip::after {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0; left: -60%;
+  width: 45%;
+  pointer-events: none;
+  background: linear-gradient(100deg, transparent, rgba(255,255,255,.28), transparent);
+  transform: translateX(0) skewX(-18deg);
+  opacity: 0;
+}
+html:not([data-theme="light"]) .btn:hover::after,
+html:not([data-theme="light"]) .sb-btn:hover::after,
+html:not([data-theme="light"]) .llm-btn:hover::after,
+html:not([data-theme="light"]) .fv-askchip:hover::after {
+  opacity: 1;
+  transform: translateX(340%) skewX(-18deg);
+  transition: transform .7s cubic-bezier(.2,.7,.2,1), opacity .2s ease;
+}
+html:not([data-theme="light"]) .btn:hover,
+html:not([data-theme="light"]) .sb-btn:hover,
+html:not([data-theme="light"]) .llm-btn:hover { color: #fff; }
+html:not([data-theme="light"]) .btn.active,
+html:not([data-theme="light"]) .trade-filter-btn.active,
+html:not([data-theme="light"]) .detail-tf-btn.active,
+html:not([data-theme="light"]) .detail-ind-btn.active,
+html:not([data-theme="light"]) .btn.primary {
+  color: #0b0c0f;
+  background: var(--lm-mercury) padding-box, linear-gradient(135deg, #fff, #8d96a5) border-box;
+  font-weight: 700;
+}
+
+/* ── 입력칸 ── */
+html:not([data-theme="light"]) input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+html:not([data-theme="light"]) select,
+html:not([data-theme="light"]) textarea {
+  background: linear-gradient(180deg, #0c0d10, #121418);
+  border-color: #343944;
+  color: var(--t1);
+  box-shadow: 0 1px 2px rgba(0,0,0,.6) inset;
+}
+html:not([data-theme="light"]) input:focus,
+html:not([data-theme="light"]) select:focus,
+html:not([data-theme="light"]) textarea:focus {
+  outline: none;
+  border-color: #c9d1dd;
+  box-shadow: 0 0 0 3px rgba(210, 218, 232, .14), 0 1px 2px rgba(0,0,0,.6) inset;
+}
+
+/* ── 로고: 크롬 글씨 위로 광택이 천천히 흐른다(요소 1개 · background-position) ── */
+html:not([data-theme="light"]) .sb-brand-name,
+html:not([data-theme="light"]) .m-ab-title,
+html:not([data-theme="light"]) .brand-name,
+html:not([data-theme="light"]) .sidebar-logo-text {
+  background: linear-gradient(100deg, #6f7888 0%, #ffffff 16%, #7f8898 32%, #dfe5ee 50%, #69727f 68%, #ffffff 84%, #7f8898 100%);
+  background-size: 260% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: lm-sheen 9s linear infinite;
+}
+@keyframes lm-sheen { from { background-position: 0% 50%; } to { background-position: 260% 50%; } }
+
+/* ── 스크롤바: 가는 크롬 레일 ── */
+html:not([data-theme="light"]) ::-webkit-scrollbar { width: 9px; height: 9px; }
+html:not([data-theme="light"]) ::-webkit-scrollbar-track { background: #0b0c0f; }
+html:not([data-theme="light"]) ::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #5c6370, #2c3038 50%, #5c6370);
+  border-radius: 9px;
+  border: 2px solid #0b0c0f;
+}
+html:not([data-theme="light"]) * { scrollbar-color: #4a505b #0b0c0f; }
+
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-theme="light"]) body::before,
+  html:not([data-theme="light"]) .sb-brand-name,
+html:not([data-theme="light"]) .m-ab-title,
+  html:not([data-theme="light"]) .brand-name,
+  html:not([data-theme="light"]) .sidebar-logo-text { animation: none !important; }
+  html:not([data-theme="light"]) .btn:hover::after,
+  html:not([data-theme="light"]) .sb-btn:hover::after,
+  html:not([data-theme="light"]) .llm-btn:hover::after,
+  html:not([data-theme="light"]) .fv-askchip:hover::after { transition: none; opacity: 0; }
+}
