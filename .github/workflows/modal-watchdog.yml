@@ -77,6 +77,17 @@ jobs:
           echo "계정 서브도메인 자동 확인: $SUB"
           echo "url=https://$NAME.$SUB.workers.dev" >> "$GITHUB_OUTPUT"
 
+      # [V33.525] ★사용량 한도를 실측 CPU 로★ — 워커의 '추정'(크론 벽시계 × 0.01)은 실제의 ~9배라 85% 자동 셧다운이 헛돈다
+      #   (10/08: 추정 31.5% · 8일째 → ~10/21 셧다운 예정이었다). 실패해도 워커는 종전 추정 그대로(안전 쪽) — 학습 감시를 막지 않는다.
+      - name: 실사용량 동기화(Cloudflare GraphQL → 워커)
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
+          WORKER_URL: ${{ steps.url.outputs.url }}
+        run: node tools/usage-sync.mjs || true
+
       - name: 모델 신선도 확인
         id: fresh
         env:

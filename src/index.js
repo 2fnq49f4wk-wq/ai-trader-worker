@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.524";
+const _BUILD_VER = "V33.525";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -7460,9 +7460,25 @@ async function getUsageState(DB) {
   const mk = _usageMonthKey();
   try {
     const v = await getState(DB, "usage:" + mk, null);
-    if (v && typeof v === "object") return { mk: mk, data: v };
+    if (v && typeof v === "object") return { mk: mk, data: v, actual: await getUsageActual(DB, mk) };
   } catch (e) {}
-  return { mk: mk, data: { requests: 0, cpuMs: 0, subreqs: 0, lastShutdown: 0, lastWarn: 0 } };
+  return { mk: mk, data: { requests: 0, cpuMs: 0, subreqs: 0, lastShutdown: 0, lastWarn: 0 }, actual: await getUsageActual(DB, mk) };
+}
+/* ══ [V33.525] ★사용량 추정 대신 Cloudflare 실측 CPU 로 한도를 잰다★ ═══════════════════════════════════════
+   추정 = 크론 벽시계 × 0.01(cpuCalibration). 벽시계 대부분은 D1·외부 fetch 대기라 실제 CPU 가 아니다(6/16 대시보드 실측: 추정의 ~1/9).
+   10/08 05:05Z: 추정 31.5%(8일째) → 이 속도면 ~10/21 85% 에서 ★엔진 자동 셧다운★, 75% 에서 부가조회 중단 — 실제로는 한도의 수 % 인데.
+   → GitHub Actions(modal-watchdog, 6시간마다)가 GraphQL(workersInvocationsAdaptive sum.cpuTimeUs)로 이 달 실측 CPU 를 읽어
+     POST /api/usage/actual 로 넣는다. 한도 판정은 ★실측 + (그 뒤에 쌓인 추정 증가분)★ — 동기화 사이도 보수적으로 센다.
+   실측이 없거나 36시간 넘게 묵었거나 달이 다르면 종전 추정 그대로(안전 쪽). 추정 기록 자체(usage:yyyymm)는 건드리지 않는다. */
+const USAGE_ACTUAL_MAX_AGE_MS = 36 * 3600000;
+function _usageCpu(u) {
+  const est = (u && u.data && u.data.cpuMs) || 0;
+  const a = u && u.actual;
+  if (!a || a.mk !== u.mk || !(a.cpuMs >= 0) || !(Date.now() - (a.at || 0) < USAGE_ACTUAL_MAX_AGE_MS)) return est;
+  return a.cpuMs + Math.max(0, est - (a.estAtSync || 0));
+}
+async function getUsageActual(DB, mk) {
+  try { const a = await getState(DB, "usage_actual:" + mk, null); return (a && typeof a === "object") ? a : null; } catch (e) { return null; }
 }
 async function recordUsage(DB, deltaReq, deltaCpuMs, deltaSubreqs) {
   try {
@@ -7495,7 +7511,7 @@ async function isUsageShutdown(DB, cfg) {
     if (lim.enabled === false) return false;
     const u = await getUsageState(DB);
     const reqRatio = (u.data.requests || 0) / Math.max(1, lim.monthlyRequests);
-    const cpuRatio = (u.data.cpuMs || 0) / Math.max(1, lim.monthlyCpuMs);
+    const cpuRatio = _usageCpu(u) / Math.max(1, lim.monthlyCpuMs);
     const worst = Math.max(reqRatio, cpuRatio);
     if (worst >= lim.shutdownAt) {
       // 셧다운 로그는 한 시간에 한 번만 (DB 부담 방지)
@@ -8731,7 +8747,7 @@ async function updateMarketContext(DB, cfg) {
     const u = await getUsageState(DB);
     const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg && cfg.usageLimits) || {});
     const ratio = Math.max((u.data.requests || 0) / Math.max(1, lim.monthlyRequests),
-                           (u.data.cpuMs || 0) / Math.max(1, lim.monthlyCpuMs));
+                           _usageCpu(u) / Math.max(1, lim.monthlyCpuMs));
     if (ratio >= (mc.enrichMaxUsageRatio != null ? mc.enrichMaxUsageRatio : 0.75)) return cached;
   } catch (e) {}
   // 3) invocation subrequest 잔여 예산이 부족하면 코어용으로 양보
@@ -9874,7 +9890,7 @@ async function updateSectorNewsSentiment(DB, cfg, force) {
   try {
     const u = await getUsageState(DB);
     const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg && cfg.usageLimits) || {});
-    const ratio = Math.max((u.data.requests||0)/Math.max(1,lim.monthlyRequests), (u.data.cpuMs||0)/Math.max(1,lim.monthlyCpuMs));
+    const ratio = Math.max((u.data.requests||0)/Math.max(1,lim.monthlyRequests), _usageCpu(u)/Math.max(1,lim.monthlyCpuMs));
     if (ratio >= sc.enrichMaxUsageRatio) return cached;
   } catch(e) {}
   const groups = Object.keys(SECTOR_NEWS_REP);
@@ -20498,8 +20514,8 @@ async function buildStatePayload(env) {
             const us = await getUsageState(env.DB);
             const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg.usageLimits || {}));
             const rr = (us.data.requests || 0) / Math.max(1, lim.monthlyRequests);
-            const cr = (us.data.cpuMs || 0) / Math.max(1, lim.monthlyCpuMs);
-            return { data: us.data, limits: { monthlyRequests: lim.monthlyRequests, monthlyCpuMs: lim.monthlyCpuMs }, reqPct: (rr*100).toFixed(1), cpuPct: (cr*100).toFixed(1), worstPct: (Math.max(rr,cr)*100).toFixed(1), shutdownAt: lim.shutdownAt, warnAt: lim.warnAt };
+            const cr = _usageCpu(us) / Math.max(1, lim.monthlyCpuMs);
+            return { data: us.data, actual: us.actual || null, cpuMsEff: _usageCpu(us), limits: { monthlyRequests: lim.monthlyRequests, monthlyCpuMs: lim.monthlyCpuMs }, reqPct: (rr*100).toFixed(1), cpuPct: (cr*100).toFixed(1), worstPct: (Math.max(rr,cr)*100).toFixed(1), shutdownAt: lim.shutdownAt, warnAt: lim.warnAt };
           } catch(e) { return null; }
         })()
       };
@@ -31178,7 +31194,7 @@ async function handleRequest(request, env, ctx, _inner) {
       const usageState = await getUsageState(env.DB);
       const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg.usageLimits || {}));
       const reqRatio = (usageState.data.requests || 0) / Math.max(1, lim.monthlyRequests);
-      const cpuRatio = (usageState.data.cpuMs || 0) / Math.max(1, lim.monthlyCpuMs);
+      const cpuRatio = _usageCpu(usageState) / Math.max(1, lim.monthlyCpuMs);
       const lockTs = await getState(env.DB, "force_lock_ts", null);
       return Response.json({
         ok: true,
@@ -31504,7 +31520,7 @@ async function handleRequest(request, env, ctx, _inner) {
           resetFetchBudget(40);
           const u = await getUsageState(env.DB);
           const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, cfg.usageLimits || {});
-          const ratio = Math.max((u.data.requests||0)/Math.max(1,lim.monthlyRequests), (u.data.cpuMs||0)/Math.max(1,lim.monthlyCpuMs));
+          const ratio = Math.max((u.data.requests||0)/Math.max(1,lim.monthlyRequests), _usageCpu(u)/Math.max(1,lim.monthlyCpuMs));
           if (ratio < (cfg.altEnrichMaxUsageRatio != null ? cfg.altEnrichMaxUsageRatio : 0.82)) {
             onDemand = await fetchBatchQuotes(BOND_SYMBOLS.concat(TREASURY_YIELD_SYMBOLS), { maxFallback: BOND_SYMBOLS.length + TREASURY_YIELD_SYMBOLS.length, DB: env.DB });
             // 보충된 국채 시세는 quote 저장(다음 사이클·매매에서 재사용)
@@ -32478,11 +32494,13 @@ async function handleRequest(request, env, ctx, _inner) {
       const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, cfg.usageLimits || {});
       const u = await getUsageState(env.DB);
       const reqRatio = (u.data.requests || 0) / Math.max(1, lim.monthlyRequests);
-      const cpuRatio = (u.data.cpuMs || 0) / Math.max(1, lim.monthlyCpuMs);
+      const cpuRatio = _usageCpu(u) / Math.max(1, lim.monthlyCpuMs);
       const worst = Math.max(reqRatio, cpuRatio);
       return Response.json({
         monthKey: u.mk,
         usage: u.data,
+        actual: u.actual || null, cpuMsEff: _usageCpu(u),
+        cpuBasis: _usageCpu(u) !== (u.data.cpuMs || 0) ? "실측(Cloudflare)+이후 추정 증가분" : "추정(크론 벽시계×보정)",
         limits: lim,
         ratios: {
           requests: +(reqRatio * 100).toFixed(2),
@@ -32496,6 +32514,22 @@ async function handleRequest(request, env, ctx, _inner) {
       }, { headers: cors });
     }
 
+    /* [V33.525] Cloudflare 실측 CPU 동기화 — modal-watchdog 워크플로가 6시간마다 넣는다(TRAIN_KEY 필수 · 페이지에서는 못 넣는다). */
+    if (path === "/api/usage/actual" && request.method === "POST") {
+      const k = request.headers.get("x-train-key") || "";
+      if (!env.TRAIN_KEY || !_safeEq(k, env.TRAIN_KEY)) return Response.json({ error: "forbidden" }, { status: 403, headers: cors });
+      let b = {}; try { b = await request.json(); } catch (e) {}
+      const u = await getUsageState(env.DB);
+      const mk = Number(b.mk), cpuMs = Number(b.cpuMs), reqs = Number(b.requests);
+      if (mk !== u.mk || !(cpuMs >= 0) || !isFinite(cpuMs)) return Response.json({ error: "bad body", want: { mk: u.mk } }, { status: 400, headers: cors });
+      const rec = { mk: mk, cpuMs: Math.round(cpuMs), requests: isFinite(reqs) ? Math.round(reqs) : null, at: Date.now(),
+        estAtSync: u.data.cpuMs || 0, src: String(b.src || "cf-graphql").slice(0, 40), rows: Number(b.rows) || null };
+      await setState(env.DB, "usage_actual:" + mk, rec);
+      const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (await getState(env.DB, "cfg", {})).usageLimits || {});
+      try { await log(env.DB, "INFO", null, "[USAGE] 실측 CPU " + (rec.cpuMs / 1000).toFixed(0) + "초(" + (rec.cpuMs / Math.max(1, lim.monthlyCpuMs) * 100).toFixed(2) +
+        "%) · 추정 " + ((u.data.cpuMs || 0) / 1000).toFixed(0) + "초(" + ((u.data.cpuMs || 0) * 100 / Math.max(1, lim.monthlyCpuMs)).toFixed(2) + "%) — 한도 판정은 실측 기준"); } catch (e) {}
+      return Response.json({ ok: true, rec: rec, estimate: u.data.cpuMs || 0 }, { headers: cors });
+    }
     if (path === "/api/usage/reset") {
       // [관리] 월 사용량 강제 리셋 (테스트/오작동 복구용) — POST 권장이지만 GET 허용
       const u = await getUsageState(env.DB);
@@ -32554,10 +32588,11 @@ async function handleRequest(request, env, ctx, _inner) {
         const u = await getUsageState(env.DB);
         const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, cfg.usageLimits || {});
         const reqR = (u.data.requests || 0) / Math.max(1, lim.monthlyRequests);
-        const cpuR = (u.data.cpuMs || 0) / Math.max(1, lim.monthlyCpuMs);
+        const cpuR = _usageCpu(u) / Math.max(1, lim.monthlyCpuMs);
         usageDiag = {
           monthKey: u.mk,
-          requests: u.data.requests || 0, cpuMs: u.data.cpuMs || 0,
+          requests: u.data.requests || 0, cpuMs: u.data.cpuMs || 0, cpuMsEff: _usageCpu(u),
+          cpuBasis: (u.actual && _usageCpu(u) !== (u.data.cpuMs || 0)) ? "actual" : "estimate",
           reqPct: +(reqR * 100).toFixed(2), cpuPct: +(cpuR * 100).toFixed(2),
           worstPct: +(Math.max(reqR, cpuR) * 100).toFixed(2),
           shutdownAtPct: (lim.shutdownAt || 0.9) * 100,
@@ -53495,7 +53530,7 @@ export default {
           try {
             const u = await getUsageState(env.DB);
             const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, _acfg.usageLimits || {});
-            const ratio = Math.max((u.data.requests || 0) / Math.max(1, lim.monthlyRequests), (u.data.cpuMs || 0) / Math.max(1, lim.monthlyCpuMs));
+            const ratio = Math.max((u.data.requests || 0) / Math.max(1, lim.monthlyRequests), _usageCpu(u) / Math.max(1, lim.monthlyCpuMs));
             if (ratio >= (_acfg.altEnrichMaxUsageRatio != null ? _acfg.altEnrichMaxUsageRatio : 0.82)) {
               _altOk = false;
               await log(env.DB, "WARN", null, "[ALT] 월 사용량 " + (ratio * 100).toFixed(1) + "% — alt 슬리브(원자재·국채) 양보(코어 거래 우선)");
@@ -54167,7 +54202,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

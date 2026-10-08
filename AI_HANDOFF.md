@@ -12,6 +12,13 @@
 
 ## Current handoff
 
+- V33.525 (10/08): ★사용량 한도 = Cloudflare 실측 CPU★ (추정 시한폭탄 해제)
+  - 워커: `usage_actual:yyyymm`(POST /api/usage/actual · TRAIN_KEY 만) · `_usageCpu(u)` = 실측 + 동기화 뒤 추정 증가분(실측 없음/36h+/다른 달 → 추정).
+    셧다운·부가조회 중단(75%)·alt 슬리브(82%)·/api/usage·상태·진단 전부 같은 식. 추정 기록(usage:yyyymm)은 그대로.
+  - `tools/usage-sync.mjs`: GraphQL workersInvocationsAdaptive sum{cpuTimeUs,requests} (이번 달 UTC, scriptName 필터) → 워커. 0행이면 안 넣음.
+    modal-watchdog(6시간) 단계로 실행 · continue-on-error. 토큰에 Account Analytics:Read 권한이 없으면 USAGE graphql_error 로 남고 종전 추정 유지.
+  - 게이트 check-usage-actual.
+
 - V33.524 (10/08): 운영 재측정(run 37729635170): 동시 24회 최댓값 16.8초 → ★0.8초★ · fx 12.2초→0.17초 · news 16.5초→0.08초 · nn-viz 3.2→0.16초 · 느린/실패 0.
   - /api/macro 첫 요청 30초(getState 한 줄 — 크론이 분 경계에 D1 을 쥠) → 느리게 바뀌는 자료는 낡은 사본 최대 1~6시간(MC_STALE_MAX, 뒤에서 즉시 갱신).
   - ★state 사본 크론 매분 → 2분으로 되돌림★: 사용량 추정 = 크론 벽시계 × 0.01 이고 85% 에서 엔진을 세운다. 빌드 1회 29초라 매분이면 하루 +1.4%p.
