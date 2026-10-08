@@ -12,6 +12,15 @@
 
 ## Current handoff
 
+- V33.531 (10/08): ★Vibe-Trading 부품 대량 도입 + 포트폴리오 실험실★ (사용자: "최대한 많은 요소를 홍콩대 vibe 에서 가지고 와라")
+  - vt/ 추가: zoo/academic(12) · factor_analysis_core · quantlib(퍼지·엠바고·조합 CV · 디플레이티드/확률적 샤프·PBO·BH · VaR/ES/EVT · HRP · 시장충격 · 미시구조 · 팩터모형/Fama-MacBeth · 귀인 · VaR 백테스트)
+    · backtest(metrics·models·validation·factor_costs·constraints · 최적화기 5종). 32개 모듈 import 확인. 안 가져온 것: LLM 에이전트·스킬·유료/지역 데이터 로더·브로커·전체 엔진(에이전트 런타임 의존) — vt/README_LUX.md.
+  - `trainer/modal/portfolio_lab.py`: Qlib 표준 구성(동물원 피처 LightGBM 순위 → TopK-Dropout K10/20·drop2) × 비중(동일·Vibe 동일변동성·위험균형)
+    · Vibe 퍼지 전진 5구간 · 비용(미국 왕복 0.1% · 한국 매수 0.115% / 매도 0.315%) · 기준 = 유니버스 동일비중 · Vibe 디플레이티드 샤프 · 부트스트랩 CI.
+    ★미리 정한 기준★: 시험 구간 ≥75% 초과>0 · DSR ≥ 0.95 · 낙폭 ≤ 기준+5%p. 합성 귀무 통과 0 · 양성 대조 통과(게이트 check-portfolio-lab).
+  - 실행: modal-deploy `omni_now + omni_lab`(+ `omni_factors`). OMNI 이미지에만 pandas·scipy. 팩터 선별에 academic 추가.
+  - ★다음★: 실데이터 결과 → 통과 시 트레이너가 매일 목표 보유목록을 올리고 워커가 실행(워커 CPU 거의 0)하는 '순위 포트폴리오' 전략 — 미통과면 운영 그대로.
+
 - V33.530 (10/08): ★수익률이 낮은 이유 — 원장 감사(tools/probe-ai-audit.mjs · ui-probe audit)★
   - 6/03~10/07 매수 602건을 '그 종목의 다음 5·20일 − 같은 기간 시장(SPY·KODEX200)' 으로 잼(청산과 무관한 고른 실력):
     미국 전체 20일 −1.35%p(t −2.39) · 월별 악화(6월 −1.05 → 9월 −5.37) · AI_PRIMARY −1.44 · AI_SCALP 5일 −2.41(t −2.43) · 규칙 SC_VWAP 20일 −7.01(t −3.86).

@@ -4441,10 +4441,12 @@ def _omni_image():
         if not src.exists():
             return None
         # [V33.529] 팩터 선별기(Vibe-Trading 알파 동물원 · vt/ MIT) — pandas 는 OMNI 이미지에만(본 학습 이미지는 그대로)
-        img = image.pip_install("pandas==2.2.3").add_local_file(str(src), "/root/omni.py")
-        _fs, _vt = src.with_name("factor_screen.py"), src.with_name("vt")
+        img = image.pip_install("pandas==2.2.3", "scipy==1.14.1").add_local_file(str(src), "/root/omni.py")
+        _fs, _vt, _pl = src.with_name("factor_screen.py"), src.with_name("vt"), src.with_name("portfolio_lab.py")
         if _fs.exists():
             img = img.add_local_file(str(_fs), "/root/factor_screen.py")
+        if _pl.exists():   # [V33.531] 포트폴리오 실험실(Qlib TopK-Dropout · Vibe 최적화기·검증)
+            img = img.add_local_file(str(_pl), "/root/portfolio_lab.py")
         if _vt.is_dir():
             img = img.add_local_dir(str(_vt), "/root/vt")
         return img
@@ -4462,14 +4464,14 @@ if _OMNI_IMAGE is not None:
     #   '성능이 안 난다' 와 구별이 안 된다).
     @app.function(image=_OMNI_IMAGE, secrets=[modal.Secret.from_name("lux-dnn")],
                   timeout=6900, cpu=8.0, memory=32768)
-    def omni_job(upload: bool = True, limit: int = 0, ksec: int = 0, flow: int = 0, news: int = 0, rally: int = 0, split: int = 0, wf: int = 0, earn: int = 0, factors: int = 0):
+    def omni_job(upload: bool = True, limit: int = 0, ksec: int = 0, flow: int = 0, news: int = 0, rally: int = 0, split: int = 0, wf: int = 0, earn: int = 0, factors: int = 0, lab: int = 0):
         import os
         import sys
         import time
         sys.path.insert(0, "/root")
         # [V33.529] ★팩터 선별 회차★ — 일봉만 받아 Vibe-Trading 동물원(Alpha158·101·GTJA191)을 우리 유니버스에서 잰다.
         #   OMNI 학습·업로드는 하지 않는다(연구용). 통과 팩터는 모델 전진평가·신뢰 관문을 다시 거쳐야 운영에 들어간다.
-        if factors:
+        if factors or lab:
             import requests
             import omni
             import factor_screen
@@ -4489,13 +4491,22 @@ if _OMNI_IMAGE is not None:
             for got in omni._get_bars(BASE, HDR, syms, "1d", print):
                 daily.update(got)
             print("   · 일봉 %d종목 수신 (%.0fs)" % (len(daily), time.time() - t0))
-            try:
-                factor_screen.screen(daily, mkt, omni.day_key_of_daily, log=print)
-            except Exception as e:  # noqa: BLE001
-                import traceback
-                print("   ⚠️ 팩터 선별 실패:", repr(e))
-                traceback.print_exc()
-            print("   · 팩터 선별 끝 %.0fs" % (time.time() - t0))
+            if factors:
+                try:
+                    factor_screen.screen(daily, mkt, omni.day_key_of_daily, log=print)
+                except Exception as e:  # noqa: BLE001
+                    import traceback
+                    print("   ⚠️ 팩터 선별 실패:", repr(e))
+                    traceback.print_exc()
+                print("   · 팩터 선별 끝 %.0fs" % (time.time() - t0))
+            if lab:   # [V33.531] 포트폴리오 실험실 — Qlib TopK-Dropout + Vibe 부품(업로드 없음)
+                try:
+                    import portfolio_lab
+                    portfolio_lab.run_lab(daily, mkt, omni.day_key_of_daily, log=print)
+                except Exception as e:  # noqa: BLE001
+                    import traceback
+                    print("   ⚠️ 포트폴리오 실험실 실패:", repr(e))
+                    traceback.print_exc()
             return
         # [V33.425c] 컨테이너에 준 코어(cpu=8.0)를 LightGBM 에 그대로 알려 준다 — 안 알려 주면
         #   OpenMP 가 ★호스트의 논리 코어 수★ 만큼 스레드를 띄워 서로 밀어낸다.

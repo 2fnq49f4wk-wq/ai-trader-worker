@@ -32,7 +32,7 @@ import numpy as np
 HORIZONS = (5, 20)
 MIN_NAMES = 40
 PASS_T, PASS_RES_T, PASS_WIN, MAX_RED = 3.5, 2.5, 3, 0.7
-ZOOS = ("qlib158", "alpha101", "gtja191")
+ZOOS = ("qlib158", "alpha101", "gtja191", "academic")   # [V33.531] academic(BAB·Carhart·52주고점·비유동성·왜도·단기반전 …) 추가
 PER_FACTOR_SEC = 120
 PASS_HALF_T = 2.0      # 앞·뒤 절반 각각 |t| ≥ 2 · 같은 부호(반분 재현)
 MIN_DAYS = 250         # IC 를 잰 날이 1년 미만인 팩터는 판정하지 않는다(긴 예열 팩터)

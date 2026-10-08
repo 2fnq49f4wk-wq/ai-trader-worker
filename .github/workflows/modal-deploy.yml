@@ -67,6 +67,10 @@ on:
         description: '팩터 선별 — Vibe-Trading 알파 동물원(Alpha158·101·GTJA191)을 우리 일봉에서 잰다(재기만 · OMNI 학습 안 함) — omni_now 와 함께'
         type: boolean
         default: false
+      omni_lab:
+        description: '포트폴리오 실험실 — Vibe 동물원 피처 LightGBM 순위 + Qlib TopK-Dropout + Vibe 최적화기·디플레이티드 샤프(재기만 · 업로드 없음) — omni_now 와 함께'
+        type: boolean
+        default: false
       omni_ksec:
         description: 'OMNI 장중 횡단면 칸 실험(재기만 · 업로드 안 함) — omni_now 와 함께'
         type: boolean
@@ -232,9 +236,9 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           set -o pipefail
-          modal run trainer/modal/modal_train.py::omni_job --ksec ${{ inputs.omni_ksec && 1 || 0 }} --flow ${{ inputs.omni_flow && 1 || 0 }} --news ${{ inputs.omni_news && 1 || 0 }} --rally ${{ inputs.omni_rally && 1 || 0 }} --split ${{ inputs.omni_split && 1 || 0 }} --wf ${{ inputs.omni_wf && 1 || 0 }} --earn ${{ inputs.omni_earn && 1 || 0 }} --factors ${{ inputs.omni_factors && 1 || 0 }} 2>&1 | tee omni.log
+          modal run trainer/modal/modal_train.py::omni_job --ksec ${{ inputs.omni_ksec && 1 || 0 }} --flow ${{ inputs.omni_flow && 1 || 0 }} --news ${{ inputs.omni_news && 1 || 0 }} --rally ${{ inputs.omni_rally && 1 || 0 }} --split ${{ inputs.omni_split && 1 || 0 }} --wf ${{ inputs.omni_wf && 1 || 0 }} --earn ${{ inputs.omni_earn && 1 || 0 }} --factors ${{ inputs.omni_factors && 1 || 0 }} --lab ${{ inputs.omni_lab && 1 || 0 }} 2>&1 | tee omni.log
       - name: OMNI summary
         if: always()
         run: |
           [ -f omni.log ] || exit 0
-          { echo "### OMNI 복합모델 학습"; echo ""; echo '```'; grep -E 'OMNI|팩터선별|위약|★ |^ +(30m|60m|1d|5d|20d) +나무' omni.log | head -120; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### OMNI 복합모델 학습"; echo ""; echo '```'; grep -E 'OMNI|팩터선별|위약|포트폴리오실험실|구간[0-9]|K1|K2|결론|★ |^ +(30m|60m|1d|5d|20d) +나무' omni.log | head -120; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
