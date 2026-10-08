@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.535";
+const _BUILD_VER = "V33.536";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -7591,6 +7591,29 @@ async function tickUsage(DB, startedAt, calibration, extraSubreqs, steps, parseB
 let __pb = null;
 function _pbKey(k) { k = String(k); const i = k.indexOf(":"); return i > 0 ? k.slice(0, i) + ":*" : k; }
 function _pbAdd(k, n) { if (__pb && n > 0) { const g = _pbKey(k); __pb[g] = (__pb[g] || 0) + n; } }
+/* [V33.536] ★전 종목 일봉 일괄 캐시를 '필요할 때만' 파싱한다★ — 종전엔 ~1,000종목(12.5MB)을 한 번에 전부 JSON.parse 했다
+   (운영 계측 10/08: 크론 파싱 바이트의 54%). 매매 사이클은 한 시장(149~446종목)만 쓰고, 아이솔레이트가 자주 바뀌어 캐시가 자주 비었다.
+   원문 문자열을 들고 있다가 읽히는 종목만 파싱해 기억한다 — 같은 객체를 돌려주므로 의미는 종전과 같다(키 순회도 같다).
+   파싱 실패 종목은 종전처럼 '없음'(undefined). 원문은 파싱된 배열보다 메모리도 작다(exceededMemory 완화). */
+function _dailyBulkLazy(rows) {
+  const raw = new Map(), memo = new Map();
+  for (const r of (rows || [])) if (r && r.k && r.v) raw.set(String(r.k).slice(6), r.v);
+  const val = function (sym) {
+    if (memo.has(sym)) return memo.get(sym);
+    const t = raw.get(sym); let v;
+    if (t !== undefined) { if (__pb) _pbAdd("dailyBulk", t.length); try { v = JSON.parse(t); } catch (e) { v = undefined; } }
+    memo.set(sym, v); return v;
+  };
+  return new Proxy({}, {
+    get: function (_t, k) { return (typeof k === "string" && raw.has(k)) ? val(k) : undefined; },
+    has: function (_t, k) { return typeof k === "string" && raw.has(k) && val(k) !== undefined; },
+    ownKeys: function () { return Array.from(raw.keys()).filter(function (k) { return val(k) !== undefined; }); },
+    getOwnPropertyDescriptor: function (_t, k) {
+      if (typeof k !== "string" || !raw.has(k)) return undefined;
+      const v = val(k); return v === undefined ? undefined : { value: v, enumerable: true, configurable: true, writable: false };
+    }
+  });
+}
 function _cronProf() {
   const p = { acc: {}, name: "pre", t: Date.now(), sl: __sleepAccumMs };
   p.mark = function (name) {
@@ -23231,11 +23254,7 @@ async function runTradingCycle(env) {
             allDaily = globalThis.__allDailyCache.map;
           } else {
             const drows = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
-            allDaily = {};
-            for (const r of (drows.results || [])) {
-              if (__pb && r.v) _pbAdd("dailyBulk", r.v.length);
-              try { allDaily[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
-            }
+            allDaily = _dailyBulkLazy(drows.results);   // [V33.536] 읽히는 종목만 파싱
             globalThis.__allDailyCache = { ts: Date.now(), map: allDaily };
           }
           for (const sym of missingDaily) {
@@ -29140,12 +29159,16 @@ async function handleRequest(request, env, ctx, _inner) {
       const syms = String(url.searchParams.get("s") || "").split(",").map(function (x) { return x.trim(); })
                      .filter(Boolean).slice(0, 25);
       /* [V33.427] "없다" 와 "못 읽었다" 를 가른다 — 못 읽은 종목은 errs 로 돌려준다(학습기가 로그에 적는다). */
-      const bars = {}, errs = [];
+      /* [V33.536] ★파싱하지 않고 원문을 그대로 잇는다★ — R2 에 JSON.stringify 로 쓴 원문이다. 종전엔 종목마다 parse → 다시 stringify 했다
+         (학습 회차마다 일봉·5분봉 수천 종목분 — 워커 CPU). 응답 모양은 종전과 같다. */
+      const parts = [], errs = [];
       for (const sym of syms) {
-        try { const g = await R2.get(_obKey(res, sym)); if (g) bars[sym] = JSON.parse(await g.text()); }
+        try { const g = await R2.get(_obKey(res, sym)); if (g) { const t = await g.text(); const c0 = t ? t.charCodeAt(0) : 0; if (c0 === 123 || c0 === 91) parts.push(JSON.stringify(sym) + ":" + t); } }
         catch (e) { errs.push(sym); }
       }
-      return Response.json({ ok: true, res: res, bars: bars, n: Object.keys(bars).length, errs: errs }, { headers: cors });
+      const _LB = String.fromCharCode(123), _RB = String.fromCharCode(125);   // 중괄호를 문자열에 직접 쓰지 않는다(블록 검사기들이 괄호를 센다)
+      const _body = JSON.stringify({ ok: true, res: res, n: parts.length, errs: errs, bars: 0 }).replace(/"bars":0/, '"bars":' + _LB + parts.join(",") + _RB);
+      return new Response(_body, { headers: Object.assign({}, cors, { "content-type": "application/json; charset=utf-8" }) });
     }
     /* [V33.430] 한국 종목 수급 이력 — 학습기(OMNI_FLOW 실험)용. 색인은 엄격히(못 읽으면 503 — 빈 색인을 주지 않는다). */
     if (path === "/api/omni-flows-index") {
@@ -30931,10 +30954,7 @@ async function handleRequest(request, env, ctx, _inner) {
             _hmDaily = globalThis.__allDailyCache.map;
           } else {
             const rows0 = await env.DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
-            _hmDaily = {};
-            for (const r of (rows0.results || [])) {
-              try { _hmDaily[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
-            }
+            _hmDaily = _dailyBulkLazy(rows0.results);   // [V33.536]
             globalThis.__allDailyCache = { ts: Date.now(), map: _hmDaily };
           }
           const rows = { results: Object.keys(_hmDaily).map(function (s) { return { k: "daily:" + s, __d: _hmDaily[s] }; }) };
@@ -32284,7 +32304,7 @@ async function handleRequest(request, env, ctx, _inner) {
             __allDaily = {};
             try {
               const drows = await env.DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
-              for (const r of (drows.results || [])) { try { __allDaily[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {} }
+              __allDaily = _dailyBulkLazy(drows.results);   // [V33.536]
               globalThis.__allDailyCache = { ts: Date.now(), map: __allDaily };
             } catch (e) {}
           }
@@ -54414,6 +54434,10 @@ export default {
       // [PAID 가드] 이번 invocation 사용량 누적 — request 1건 + (비sleep경과×보정) CPU 추정
       __prof.mark("end");
       const __pbNow = __pb; __pb = null;
+      /* [V33.536] 크론 1회 단계 요약을 콘솔로 — wrangler tail 이 주는 이 호출의 ★실제 CPU 시간★ 과 짝지어(tools/cron-tail.mjs)
+         어느 단계가 CPU 를 먹는지 회귀로 가른다(워커 안 Date.now 는 계산 중 멈춰 단계 시간만으로는 CPU 를 못 본다). */
+      try { const _a = {}; for (const _k in __prof.acc) { const _v = Math.round(__prof.acc[_k]); if (_v > 0) _a[_k] = _v; }
+        console.log("CRONPROF " + JSON.stringify({ s: _a, f: __fetchBudget.used || 0, pb: Object.keys(__pbNow || {}).reduce(function (t, k) { return t + (__pbNow[k] || 0); }, 0) })); } catch (e) {}
       try { await tickUsage(env.DB, __cronStart, __usageCalib, __fetchBudget.used || 0, __prof.acc, __pbNow); } catch (e) {}
     })());
   }
@@ -54421,7 +54445,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

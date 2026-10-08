@@ -55,5 +55,18 @@ try {
   chk(single.some((u) => /000660/.test(u)), "배치가 못 준 종목(000660)은 단건 폴백을 탄다(값 손실 없음)", single.join(" "));
 } finally { globalThis.fetch = realFetch; }
 
+// ④ [V33.536] 일봉 일괄 캐시 — 읽히는 종목만 파싱 · 의미는 종전(전량 파싱한 객체)과 같다
+{
+  const rows = [{ k: "daily:AAA", v: JSON.stringify({ closes: [1, 2] }) }, { k: "daily:BBB", v: "{bad json" }, { k: "daily:CCC", v: JSON.stringify({ closes: [3] }) }];
+  const L = M._dailyBulkLazy(rows);
+  const a1 = L.AAA, a2 = L.AAA;
+  chk(a1 && a1.closes[1] === 2 && a1 === a2, "읽은 종목은 파싱해 같은 객체를 돌려준다(기억)");
+  chk(L.BBB === undefined && !("BBB" in L) && L.ZZZ === undefined && ("CCC" in L), "파싱 실패·없는 종목 = 없음(종전과 같다)");
+  chk(JSON.stringify(Object.keys(L)) === JSON.stringify(["AAA", "CCC"]), "키 순회(Object.keys) = 파싱 성공한 종목들(종전과 같다)", JSON.stringify(Object.keys(L)));
+  const S2 = (await import("node:fs")).readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  chk((S2.match(/_dailyBulkLazy\((drows|rows0)\.results\)/g) || []).length === 3 && !/__allDaily\[r\.k\.slice\(6\)\] = JSON\.parse/.test(S2), "일괄 캐시 세 곳 모두 지연 파싱");
+  chk(/parts\.push\(JSON\.stringify\(sym\) \+ ":" \+ t\)/.test(S2), "학습기 봉 응답은 원문을 그대로 잇는다(파싱·재직렬화 없음)");
+}
+
 if (fails) { console.log("\n✗ 크론 CPU 절감 계약 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 크론 CPU 절감 계약 통과");
