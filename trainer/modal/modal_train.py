@@ -3211,22 +3211,33 @@ def _label_ablation(X, PNL, TS, SYM, MKT, featver, D, UNIQ=None, featnames=None,
                 _tr2m = np.asarray(_tr2, dtype=np.int64)[_dn[0][2][np.asarray(_tr2, dtype=np.int64)]] if _dn else np.asarray(_tr2, dtype=np.int64)
                 for _nm, _metric, _trx in (("A 보정 logloss 조기중단(운영식)", "binary_logloss", np.asarray(_tr2, dtype=np.int64)),
                                           ("A 보정 AUC 조기중단", "auc", np.asarray(_tr2, dtype=np.int64)),
-                                          ("D 보정 AUC 조기중단", "auc", _tr2m)):
+                                          ("D 보정 AUC 조기중단", "auc", _tr2m),
+                                          # [V33.520] 판 수와 최근성을 가른다 — 보정구간(최근 10%)을 학습에서 뺀 채 ★고정 200판★
+                                          ("A 고정200판(보정 제외 학습)", None, np.asarray(_tr2, dtype=np.int64)),
+                                          ("A 고정400판(보정 제외 학습)", "fixed400", np.asarray(_tr2, dtype=np.int64))):
                     try:
                         _dtr = lgb.Dataset(Xs[_trx], label=_Ysign[_trx], weight=UWs[_trx], free_raw_data=False)
                         _dca = lgb.Dataset(Xs[_ca2], label=_Ysign[_ca2], weight=UWs[_ca2], reference=_dtr, free_raw_data=False)
-                        _b2 = lgb.train({"objective": "binary", "metric": _metric, "learning_rate": 0.05, "num_leaves": 31,
-                                         "min_data_in_leaf": 200, "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 1,
-                                         "verbose": -1, "seed": 7}, _dtr, num_boost_round=1000, valid_sets=[_dca],
-                                        callbacks=[lgb.early_stopping(90, verbose=False)])
+                        _hp = {"objective": "binary", "learning_rate": 0.05, "num_leaves": 31,
+                               "min_data_in_leaf": 200, "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 1,
+                               "verbose": -1, "seed": 7}
+                        if _metric in (None, "fixed400"):
+                            _b2 = lgb.train(_hp, _dtr, num_boost_round=(400 if _metric == "fixed400" else 200))
+                            _b2.best_iteration = (400 if _metric == "fixed400" else 200)
+                        else:
+                            _hp["metric"] = _metric
+                            _b2 = lgb.train(_hp, _dtr, num_boost_round=1000, valid_sets=[_dca],
+                                            callbacks=[lgb.early_stopping(90, verbose=False)])
                         pv = _b2.predict(Xs[_va], num_iteration=_b2.best_iteration)
                         acc = float(((pv >= 0.5) == (_yA > 0.5)).mean())
                         icp, _r = _calc_ic(pv, _pA)
                         _bm, _bir, _bt, _bk = _calc_ic_blocks(pv, _pA)
                         q80, q20 = np.quantile(pv, 0.8), np.quantile(pv, 0.2)
                         spread = float(_pA[pv >= q80].mean() - _pA[pv <= q20].mean())
+                        _mm, _mir, _mt, _mk = _calc_ic_blocks(pv, _yA, mkt=_MKva) if _MKva is not None else (None, None, None, 0)
                         print(f"      {_nm + ' (' + str(_b2.best_iteration) + '판)':26s} {acc*100:7.1f}% {(acc-_majA)*100:+7.2f}%p {icp:9.4f} "
-                              f"{('—' if _bt is None else '%.2f' % _bt):>7s} {spread:+19.3f}%")
+                              f"{('—' if _bt is None else '%.2f' % _bt):>7s} {spread:+19.3f}% "
+                              f"{('—' if _mm is None else '%.4f·%.2f' % (_mm, _mt)):>18s}")
                     except Exception as e:
                         print(f"      {_nm:26s} 실패(무시): {e}")
             else:
