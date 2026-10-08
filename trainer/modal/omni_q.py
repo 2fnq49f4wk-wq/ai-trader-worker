@@ -27,6 +27,8 @@ G1_T = 3.0
 G2_FRAC = 0.75
 G2_MIN = 3
 G3_MIN_DAYS = 30
+BAND = 0.25          # [반복 2] ② 보유 띠: 상위 10% 로 들어가 상위 25% 밖으로 밀려야 교체(Qlib TopK-Dropout 의 회전 억제)
+ZOOS_Q = ("qlib158", "academic", "alpha101")   # [반복 2] alpha101 추가 — 12년 선별에서 한국 상위 통과(alpha101_040·044 t 9~10)
 COST_RT = {"us": 0.0005 + 0.0005, "kr": (0.00015 + 0.001) + (0.00015 + 0.001 + 0.002)}   # 왕복(실험실 COST 와 같다)
 
 
@@ -60,8 +62,9 @@ def gate1(br):
     return bool(br["lb"] is not None and br["lb"] > 0.5 and br["t"] is not None and br["t"] >= G1_T)
 
 
-def decile_excess(scores, fwd, days, cost_rt, q=Q, step=H):
-    """H일마다 갈아타는 상위 q 동일비중의 '유니버스 동일비중 대비 초과' (회전 비용 뺀 뒤) — 기간 평균."""
+def decile_excess(scores, fwd, days, cost_rt, q=Q, step=H, band=None):
+    """H일마다 다시 보는 상위 q 동일비중의 '유니버스 동일비중 대비 초과' (회전 비용 뺀 뒤) — 기간 목록.
+    band=None: 매번 상위 q 로 통째 교체. band=b: 보유 종목은 상위 b 안에 있는 한 유지하고, 빈자리만 상위 q 의 최상위로 채운다."""
     prev, xs = None, []
     for d in days[::step]:
         a, r = scores[d], fwd[d]
@@ -70,7 +73,17 @@ def decile_excess(scores, fwd, days, cost_rt, q=Q, step=H):
             continue
         idx = np.where(ok)[0]
         k = max(1, int(round(len(idx) * q)))
-        top = set(idx[np.argsort(-a[idx])[:k]].tolist())
+        order = idx[np.argsort(-a[idx])]
+        if band is None or prev is None:
+            top = set(order[:k].tolist())
+        else:
+            kb = max(k, int(round(len(idx) * band)))
+            keep = prev & set(order[:kb].tolist())
+            top = set(keep)
+            for j in order:
+                if len(top) >= k:
+                    break
+                top.add(int(j))
         turn = 1.0 if prev is None else len(top - prev) / float(k)
         xs.append(float(np.mean(r[list(top)]) - np.mean(r[idx])) - turn * cost_rt)
         prev = top
@@ -105,6 +118,35 @@ def gate3(picks, C, y_rank, dk_index):
     return {"days": int(len(v)), "mu": round(mu, 4), "lb": round(lb, 4), "ok": bool(len(v) >= G3_MIN_DAYS and lb > 0.5)}
 
 
+def _features_q(P, log):
+    """portfolio_lab._features 와 같되 동물원에 alpha101 을 더한다(반복 2)."""
+    import factor_screen as fs
+    old = fs.ZOOS
+    facs = None
+    fs.ZOOS = ZOOS_Q
+    try:
+        facs = fs.load_factors(log)
+    finally:
+        fs.ZOOS = old
+    avail = {"open", "high", "low", "close", "volume", "vwap", "amount", "returns"}
+    out, names = [], []
+    t0 = time.time()
+    for fid, fn, need in facs:
+        if not need <= avail:
+            continue
+        try:
+            F = fn({k: P[k] for k in avail})
+        except Exception:  # noqa: BLE001
+            continue
+        if F is None or getattr(F, "shape", (0, 0))[1] < 20:
+            continue
+        F = F.replace([np.inf, -np.inf], np.nan).reindex_like(P["close"])
+        out.append(F.rank(axis=1, pct=True).values.astype(np.float32))
+        names.append(fid)
+    log("      피처 %d개 (%s · %.0fs)" % (len(names), "+".join(ZOOS_Q), time.time() - t0))
+    return (np.stack(out, axis=2) if out else None), names
+
+
 def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=print):
     import lightgbm as lgb
     import factor_screen as fs
@@ -123,7 +165,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             continue
         C = P["close"]
         D, S = C.shape
-        X, names = pl._features(P, log)
+        X, names = _features_q(P, log)
         if X is None:
             continue
         fwd = (C.shift(-(H + 1)) / C.shift(-1) - 1.0)
@@ -137,7 +179,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         lab_end = np.arange(len(days)) + H + 1
         splits = list(purged_walk_forward_splits(len(days), label_end_times=lab_end, n_folds=FOLDS, embargo_fraction=0.02, expanding=True))
         scores = np.full((D, S), np.nan, dtype=np.float32)
-        test_all, fold_x = [], []
+        test_all, fold_x, fold_x0 = [], [], []
         for sp in splits:
             tr, te = days[sp.train], days[sp.test]
             Xtr, ytr = X[tr].reshape(-1, X.shape[2]), y[tr].reshape(-1)
@@ -146,14 +188,16 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 continue
             bst = lgb.train(_lgb_params(), lgb.Dataset(Xtr[m], label=ytr[m]), num_boost_round=300)
             scores[te] = bst.predict(X[te].reshape(-1, X.shape[2])).reshape(len(te), S).astype(np.float32)
-            xs = decile_excess(scores, fwdv, list(te), COST_RT[mk])
+            xs = decile_excess(scores, fwdv, list(te), COST_RT[mk], band=BAND)          # [반복 2] ② = 보유 띠
+            xs0 = decile_excess(scores, fwdv, list(te), COST_RT[mk])                   # 참고: 통째 교체(반복 1 정의)
             fold_x.append(round(float(np.mean(xs)), 5) if xs else None)
+            fold_x0.append(round(float(np.mean(xs0)), 5) if xs0 else None)
             test_all += list(te)
         br = beat_rate(scores, y, test_all)
         g1 = gate1(br)
         g2, pos, need = gate2(fold_x)
         log("      [OMNI-Q %s] ① 상위10%% 승률 %s · 하한 %s · t %s · 날 %d → %s" % (mk, br["mu"], br["lb"], br["t"], br["days"], "통과" if g1 else "미달"))
-        log("      [OMNI-Q %s] ② 비용 뺀 %d일 초과(구간별) %s → 양수 %d/%d 필요 %d → %s" % (mk, H, fold_x, pos, len(fold_x), need, "통과" if g2 else "미달"))
+        log("      [OMNI-Q %s] ② 비용 뺀 %d일 초과(보유 띠 상위%d%%→%d%%, 구간별) %s → 양수 %d/%d 필요 %d → %s · 참고 통째교체 %s" % (mk, H, int(Q * 100), int(BAND * 100), fold_x, pos, len(fold_x), need, "통과" if g2 else "미달", fold_x0))
         # 최종 모델: 라벨이 있는 모든 날로 학습 → 마지막 날(오늘 피처) 채점
         Xa, ya = X[days].reshape(-1, X.shape[2]), y[days].reshape(-1)
         m = np.isfinite(ya)
@@ -192,7 +236,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         speak = bool(g1 and g2 and g3["ok"])
         body = {"mkt": mk, "day": day, "h": H, "q": Q, "trainedAt": int(time.time() * 1000), "nFeat": len(names), "n": len(sc),
                 "scores": sc, "top": top,
-                "gate": {"g1": dict(br, ok=g1, needT=G1_T), "g2": {"folds": fold_x, "pos": pos, "need": need, "ok": g2},
+                "gate": {"g1": dict(br, ok=g1, needT=G1_T), "g2": {"folds": fold_x, "foldsFullSwap": fold_x0, "band": BAND, "pos": pos, "need": need, "ok": g2},
                          "g3": dict(g3, needDays=G3_MIN_DAYS), "speak": speak}}
         out[mk] = body["gate"]
         log("      [OMNI-Q %s] 오늘(%s) %d종목 채점 · 상위 %d · 발언 %s (%.0fs)" % (mk, day, len(sc), len(top), "가능" if speak else "불가(섀도우)", time.time() - t0))
