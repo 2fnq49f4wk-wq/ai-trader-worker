@@ -37,6 +37,9 @@ chk(A && A.regPrice === 250.5 && A.price === 252.1 && A.dayPct === 0.64, "미국
 chk(A && A.name === "Apple" && A.shares === 15e9 && A.rank === 3, "이름·순위·주식수(시총 박스)는 유지", "기본 칸 " + JSON.stringify(A));
 chk(patched && patched.watchlist.find((w) => w.symbol === "ZZZZ").pending === true, "D1 에 없는 종목은 사본 그대로", "pending 소실");
 chk(patched && patched.cfg && patched.cfg.x === 1 && patched.quotesPatched === 2 && patched.quotesAt >= now, "나머지 필드 보존 · quotesAt/quotesPatched 표시", "메타 " + JSON.stringify({ q: patched && patched.quotesPatched }));
+chk(patched && patched.marketStatus && typeof patched.marketStatus.us === "boolean" && typeof patched.marketStatus.kr === "boolean",
+  "[V33.517] 장 상태(marketStatus)도 다시 잰다 — 개장 전 사본의 kr=false 가 장중에 나가지 않게", "marketStatus " + JSON.stringify(patched && patched.marketStatus));
+chk(/st\.marketStatus = _ms;/.test(S) && /getHolidaySet\(mk, parseInt\(td\.slice\(0, 4\), 10\)\)\.has\(td\)/.test(S), "[V33.517] 규칙(시계·공휴일표)으로만 — LLM·지수 조회 없이", "배선");
 chk((await M._patchStateQuotes(DB, JSON.stringify({ watchlist: [] }))) === null, "관심종목이 없으면 null(사본 그대로 나간다)", "빈 사본 처리");
 
 console.log("③ 배선");

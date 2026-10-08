@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.516";
+const _BUILD_VER = "V33.517";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8184,8 +8184,22 @@ async function _patchStateQuotes(DB, body) {
     const ix = await getStates(DB, st.indices.map(function (x) { return "index:" + x.symbol; }));
     st.indices = st.indices.map(function (x) { const v = ix["index:" + x.symbol]; return v ? Object.assign({ symbol: x.symbol }, v) : x; });
   }
-  // 장 상태(marketStatus)는 휴장 판정이 캐시 미스면 LLM 까지 갈 수 있어 이 빠른 길에서 다시 재지 않는다(사본 값 · 다음 폴링이 새 값)
   try { st.tradingWindow = { us: isTradingWindow("us"), kr: isTradingWindow("kr") }; } catch (e) {}
+  /* [V33.517] ★장 상태도 다시 잰다★ — 운영 탐침(10/08 00:21Z): 개장 21분 뒤인데 사본(개장 전 빌드)의 marketStatus.kr=false 가 그대로 나갔다.
+     휴장 판정은 이제 규칙뿐이다(주말 · 공휴일표 · 그날 캐시) — LLM 이 없으니 빠른 길에서 다시 재도 된다. 한국 '휴장' 캐시는 믿지 않는다(isMarketTradingDay 와 같은 규칙). */
+  try {
+    const _ms = {};
+    for (const mk of ["us", "kr"]) {
+      let open = isMarketOpen(mk);
+      if (open) {
+        const td = localDateStr(mk);
+        if (td && getHolidaySet(mk, parseInt(td.slice(0, 4), 10)).has(td)) open = false;
+        else if (td && mk !== "kr") { const c = await getState(DB, "market_open:" + mk + ":" + td, null); if (c && c.open === false) open = false; }
+      }
+      _ms[mk] = open;
+    }
+    st.marketStatus = _ms;
+  } catch (e) {}
   st.quotesAt = Date.now(); st.quotesPatched = n;
   return JSON.stringify(st, _stateNumTrim);
 }
@@ -18869,17 +18883,25 @@ function _pgStats(list) {
 function _pgPooled(keys, market, tag) {
   const own = keys[market + ":" + tag];
   if (!own || own.mode !== "open" || !(own.n >= 3) || own.n >= PERF_GATE.minN || !(own.mean < 0)) return null;
-  let n = 0, sum = 0, gp = 0, gl = 0;
+  let n = 0, sum = 0, gp = 0, gl = 0, sibBlocked = null, sibProb = null;
   for (const k in keys) {
     if (k.slice(k.indexOf(":") + 1) !== tag) continue;
     const e = keys[k];
+    if (k !== market + ":" + tag && e) {
+      if (e.mode === "blocked") sibBlocked = k;
+      else if (e.mode === "probation") sibProb = k;
+    }
     if (!(e && e.n > 0) || e.mean == null) continue;
     n += e.n; sum += e.mean * e.n; gp += _num(e.gp, 0); gl += _num(e.gl, 0);
   }
-  if (n < PERF_GATE.minN) return null;
-  const mean = sum / n, pf = gl > 0 ? gp / gl : (gp > 0 ? 99 : null);
-  if (!(mean < 0 && pf != null && pf < PERF_GATE.blockPf)) return null;
-  return { n: n, mean: +mean.toFixed(3), pf: +pf.toFixed(3) };
+  const mean = n ? sum / n : null, pf = gl > 0 ? gp / gl : (gp > 0 ? 99 : null);
+  if (n >= PERF_GATE.minN && mean < 0 && pf != null && pf < PERF_GATE.blockPf) return { n: n, mean: +mean.toFixed(3), pf: +pf.toFixed(3) };
+  /* [V33.517] ★다른 시장의 같은 전략이 자기 관문으로 이미 판정됐으면 그 판정을 따른다★ — 운영(10/08 01:32Z):
+     us:AI-SCALP:SCALP 가 7일 막힘 → 시험(probation · 표본 0 부터 다시) 으로 넘어가자 합산 표본이 n6 으로 줄어
+     kr:AI-SCALP:SCALP(n6 · PF 0.017)가 다시 ★온전한 크기로★ 열렸다. 막힘이면 막고 · 시험이면 이 시장도 시험(반 크기). */
+  if (sibBlocked) return { n: n, mean: mean == null ? null : +mean.toFixed(3), pf: pf == null ? null : +pf.toFixed(3), sib: sibBlocked };
+  if (sibProb) return { n: n, mean: mean == null ? null : +mean.toFixed(3), pf: pf == null ? null : +pf.toFixed(3), sib: sibProb, probation: true };
+  return null;
 }
 async function perfGateLoad(DB, force) {
   const g = globalThis;
@@ -18935,8 +18957,10 @@ async function perfGateCheck(DB, market, signal, strategy) {
     const e = pg.keys[market + ":" + tag];
     if (!e || e.mode === "open") {
       const pl = _pgPooled(pg.keys, market, tag);   // [V33.514] 표본 미달 · 자기도 음수 → 전 시장 합산으로 판정(막는 쪽만)
+      if (pl && pl.probation) return { ok: true, mult: PERF_GATE.probationMult, key: market + ":" + tag, pooled: true,
+        why: "이 시장 " + (e ? e.n : 0) + "건 평균 " + (e ? e.mean : "—") + "% · 같은 전략(" + pl.sib + ") 시험 중 → 반 크기" };
       if (pl) return { ok: false, mult: 0, key: market + ":" + tag, pooled: true,
-        why: "이 시장 " + (e ? e.n : 0) + "건 평균 " + (e ? e.mean : "—") + "% · 같은 전략 전 시장 " + pl.n + "건 평균 " + pl.mean + "% · PF " + pl.pf };
+        why: "이 시장 " + (e ? e.n : 0) + "건 평균 " + (e ? e.mean : "—") + "% · 같은 전략 전 시장 " + pl.n + "건 평균 " + pl.mean + "% · PF " + pl.pf + (pl.sib ? " · " + pl.sib + " 막힘" : "") };
       return { ok: true, mult: 1, key: market + ":" + tag };
     }
     if (e.mode === "blocked") return { ok: false, mult: 0, key: market + ":" + tag, why: "최근 " + e.n + "건 평균 " + e.mean + "% · PF " + e.pf };

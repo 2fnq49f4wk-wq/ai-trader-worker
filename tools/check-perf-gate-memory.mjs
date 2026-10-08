@@ -57,6 +57,13 @@ console.log("④ 같은 전략 전 시장 합산(V33.514 · 막는 쪽만)");
   chk(R._pgPooled(keys, "us", "AI:TREND") === null, "표본 문턱을 넘은 키는 자기 증거로만(합산 안 씀)", "자기 증거");
   const k2 = Object.assign({}, keys, { "kr:AI-SCALP:SCALP": Object.assign({}, keys["kr:AI-SCALP:SCALP"], { n: 2 }) });
   chk(R._pgPooled(k2, "kr", "AI-SCALP:SCALP") === null, "이 시장 표본 3건 미만이면 합산하지 않는다", "n2");
+  // [V33.517] 운영 10/08: 미국 쪽이 시험(n0)으로 넘어가 합산 표본이 줄자 한국(n6·PF 0.017)이 온전한 크기로 다시 열렸다
+  const k3 = Object.assign({}, keys, { "us:AI-SCALP:SCALP": { mode: "probation", n: 0, mean: null, pf: null, gp: 0, gl: 0 } });
+  const p3 = R._pgPooled(k3, "kr", "AI-SCALP:SCALP");
+  chk(p3 && p3.probation === true, "[V33.517] 다른 시장이 시험 중이면 이 시장(표본 미달·음수)도 시험(반 크기)", JSON.stringify(p3));
+  const k4 = Object.assign({}, keys, { "us:AI-SCALP:SCALP": { mode: "blocked", n: 2, mean: -1, pf: 0.1, gp: 0.1, gl: 2 } });
+  const p4 = R._pgPooled(k4, "kr", "AI-SCALP:SCALP");
+  chk(p4 && !p4.probation && p4.sib === "us:AI-SCALP:SCALP", "[V33.517] 다른 시장이 막힘이면 합산 표본이 문턱 미만이어도 막는다", JSON.stringify(p4));
   const src = S.slice(S.indexOf("async function perfGateCheck("), S.indexOf("async function perfGateCheck(") + 1400);
   chk(/const pl = _pgPooled\(pg\.keys, market, tag\);/.test(src) && /pooled: true/.test(src), "perfGateCheck 가 열림 판정 전에 합산을 본다", "배선");
 }
