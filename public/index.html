@@ -184,8 +184,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.519">
-<script src="/neural-observatory.js?v=33.519" defer></script>
+<meta name="lux-build" content="V33.520">
+<script src="/neural-observatory.js?v=33.520" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -2235,6 +2235,8 @@ html[data-theme="light"] .table tbody tr:nth-child(even){background:rgba(20,30,5
 .fv-table tbody tr:hover{background:var(--fviz-hover);}
 .fv-table tbody tr:last-child td{border-bottom:none;}
 .fv-tick{color:var(--fviz-blue);font-weight:700;}
+/* [V33.520] TOP MOVERS 회사명 — 칸 폭 안에서 한 줄 말줄임(표가 이름 길이에 흔들리지 않게) */
+.fv-mvname{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .fv-sig{font-size:9px;color:var(--t3);}
 
 /* [V12.23] 헤드라인·원자재·채권 — 항상 3개 한 줄(폰 제외). 좁은 화면은 셀을 조밀하게 압축해
@@ -2376,15 +2378,16 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
 .fv-movers-grid .fv-table{table-layout:fixed;width:100%;}
 .fv-movers-grid .fv-table th,.fv-movers-grid .fv-table td{
   padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.fv-movers-grid .fv-table th:nth-child(1),.fv-movers-grid .fv-table td:nth-child(1){width:26%;}
-.fv-movers-grid .fv-table th:nth-child(2),.fv-movers-grid .fv-table td:nth-child(2){width:28%;}
-.fv-movers-grid .fv-table th:nth-child(3),.fv-movers-grid .fv-table td:nth-child(3){width:26%;}
-.fv-movers-grid .fv-table th:nth-child(4),.fv-movers-grid .fv-table td:nth-child(4){width:20%;}
+/* [V33.520] 첫 칸이 티커 → 회사명으로 바뀌어 더 길다 — 이름 칸을 넓히고 숫자 칸을 줄인다 */
+.fv-movers-grid .fv-table th:nth-child(1),.fv-movers-grid .fv-table td:nth-child(1){width:36%;}
+.fv-movers-grid .fv-table th:nth-child(2),.fv-movers-grid .fv-table td:nth-child(2){width:24%;}
+.fv-movers-grid .fv-table th:nth-child(3),.fv-movers-grid .fv-table td:nth-child(3){width:22%;}
+.fv-movers-grid .fv-table th:nth-child(4),.fv-movers-grid .fv-table td:nth-child(4){width:18%;}
 @media(max-width:1500px){ /* 좁으면 SIGNAL 열 숨겨 숫자 우선 확보 */
   .fv-movers-grid .fv-table th:nth-child(4),.fv-movers-grid .fv-table td:nth-child(4){display:none;}
-  .fv-movers-grid .fv-table th:nth-child(1),.fv-movers-grid .fv-table td:nth-child(1){width:32%;}
-  .fv-movers-grid .fv-table th:nth-child(2),.fv-movers-grid .fv-table td:nth-child(2){width:34%;}
-  .fv-movers-grid .fv-table th:nth-child(3),.fv-movers-grid .fv-table td:nth-child(3){width:34%;}
+  .fv-movers-grid .fv-table th:nth-child(1),.fv-movers-grid .fv-table td:nth-child(1){width:44%;}
+  .fv-movers-grid .fv-table th:nth-child(2),.fv-movers-grid .fv-table td:nth-child(2){width:30%;}
+  .fv-movers-grid .fv-table th:nth-child(3),.fv-movers-grid .fv-table td:nth-child(3){width:26%;}
 }
 @media(max-width:700px){.fv-movers-grid{grid-template-columns:1fr;}
   .fv-movers-grid table:first-child{border-right:none;border-bottom:1px solid var(--bd2);}}
@@ -4021,8 +4024,8 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
           <div class="fv-panel">
             <div class="fv-panel-head">TOP MOVERS <span class="fv-panel-sub">워치리스트 기준 · 실시간</span></div>
             <div class="fv-movers-grid">
-              <table class="fv-table"><thead><tr><th>Ticker</th><th class="right">Last</th><th class="right">Change</th><th>Signal</th></tr></thead><tbody id="fvGainers"></tbody></table>
-              <table class="fv-table"><thead><tr><th>Ticker</th><th class="right">Last</th><th class="right">Change</th><th>Signal</th></tr></thead><tbody id="fvLosers"></tbody></table>
+              <table class="fv-table"><thead><tr><th>종목</th><th class="right">Last</th><th class="right">Change</th><th>Signal</th></tr></thead><tbody id="fvGainers"></tbody></table>
+              <table class="fv-table"><thead><tr><th>종목</th><th class="right">Last</th><th class="right">Change</th><th>Signal</th></tr></thead><tbody id="fvLosers"></tbody></table>
             </div>
           </div>
           <div class="fv-panel">
@@ -6377,11 +6380,11 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         var sig = held ? 'HELD' : (isUp ? 'Top Gainer' : 'Top Loser');
         var pct = it.pct, px = it.px;                    // ★정규장 값★ — 표 전체가 같은 자로 잰다
         var cls = pct >= 0 ? 'pos' : 'neg';
-        /* [V33.422] ★티커만 적는다★ (사용자 지시) — 국기 이모지도, 한국 종목명 대체도 뺀다.
-           티커 자체가 시장을 말한다(.KS/.KQ = 한국). 이름은 더블탭 → 종목상세에 있다.
-           이모지는 기기마다 폭이 달라 칸을 밀고, 종목명은 길이가 제각각이라 표가 흔들렸다. */
+        /* [V33.520] ★회사명으로 적는다★ (사용자 지시 — V33.422 의 '티커만' 을 바꾼다). 티커는 말풍선(title)에 남긴다.
+           이름 길이가 제각각이라 표가 흔들리던 문제는 칸 안에서 한 줄 말줄임(.fv-mvname)으로 막는다. */
+        var _nm = displayName(Object.assign({ symbol: it.sym }, it.q), it.mkt) || it.sym;
         return '<tr data-sym="'+escapeHtml(it.sym)+'" style="cursor:pointer;" title="더블클릭(더블탭) → 종목상세">'+
-          '<td><span class="fv-tick" title="'+escapeHtml((it.q.name || DYNAMIC_NAMES[it.sym] || it.sym))+'">'+escapeHtml(it.sym)+'</span></td>'+
+          '<td><span class="fv-tick fv-mvname" title="'+escapeHtml(_nm + ' · ' + it.sym)+'">'+escapeHtml(_nm)+'</span></td>'+
           '<td class="right">'+fmtNum(px)+'</td>'+
           '<td class="right '+cls+'">'+(pct>=0?'+':'')+fmtNum(pct,2)+'%</td>'+
           '<td class="fv-sig">'+sig+'</td></tr>';
@@ -20648,11 +20651,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.519">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.519">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.519">
-<link rel="stylesheet" href="/model-evidence.css?v=33.519">
-<script src="/model-evidence.js?v=33.519"></script>
-<script src="/workspace-ui.js?v=33.519"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.520">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.520">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.520">
+<link rel="stylesheet" href="/model-evidence.css?v=33.520">
+<script src="/model-evidence.js?v=33.520"></script>
+<script src="/workspace-ui.js?v=33.520"></script>
 </body>
 </html>

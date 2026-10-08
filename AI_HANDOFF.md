@@ -12,6 +12,12 @@
 
 ## Current handoff
 
+- V33.520 (10/08): ★탑무버 첫 칸 = 회사명★ (사용자 지시 — V33.422 '티커만' 을 갈아냄).
+  - `moverRow` 가 공용 `displayName`(q.name → 한국/미국 이름표 → 없으면 티커) 으로 적고, 티커는 말풍선(title)에 남긴다. 표 머리 Ticker → 종목.
+  - 이름이 길어 이름 칸 26→36%(좁은 화면 32→44%), 한 줄 말줄임 `.fv-mvname`.
+  - 게이트 `check-top-movers` ⑤ 를 새 지시로 바꿈(회사명·티커 물러섬·title·말줄임).
+  - ⚠️ 로컬에서 deploy.yml 의 `node tools/*.mjs` 를 통째로 돌리면 `build-split.mjs` 가 public/index.html 을 ★제자리에서 분할★한다(_b/ · full.html 생성). 게이트 목록 돌릴 땐 build-split 을 빼라. 실수로 돌렸으면 public/full.html 이 원본이다.
+
 - Status: **10/08 03:27Z 실험대 결론 — 운영 바꾸지 않음(사전 규칙). 다음은 다구간 전진평가.**
   | 같은 검증행 247,148 · LightGBM | 초과 | IC(pnl) | 블록t | 상위−하위20% | ★시장중립 블록IC·t(관문의 자)★ |
   | A 200판(학습=보정 포함) | +1.94 | .0877 | 4.08 | +1.524% | .0282·1.56 |

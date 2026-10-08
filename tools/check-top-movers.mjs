@@ -91,7 +91,7 @@ console.log("\n④ ★줄 세우기가 맞는가★ (상승표는 내림차순 �
     "★두 표가 같은 쪽을 보고 있다★");
 }
 
-console.log("\n⑤ ★티커만 적는가★ · ★없던 정보를 만들지 않는가★  [V33.422]");
+console.log("\n⑤ ★회사명으로 적는가★ · ★없던 정보를 만들지 않는가★  [V33.422 → V33.520]");
 {
   /* ★선언이 아니라 ★쓰임★ 을 본다.★ 이 저장소에서 "이름만 세고 실제 사용을 안 세는" 실수는
      반복해서 난다 — 행 HTML 안에서 무엇이 실리는지 직접 본다. */
@@ -103,14 +103,23 @@ console.log("\n⑤ ★티커만 적는가★ · ★없던 정보를 만들지 �
   chk(!/\\uD83C\\uDDF[0-9A-F]/i.test(rowBody) && !/[\u{1F1E6}-\u{1F1FF}]/u.test(rowBody),
     "행에 국기 이모지가 ★없다★",
     "★국기 이모지가 아직 행에 실린다★");
-  /* ② 첫 칸은 ★티커★ 다 — 한국 종목명으로 바꾸지 않는다. */
-  chk(/escapeHtml\(it\.sym\)\+'<\/span>/.test(rowBody.replace(/\s+/g, "")) ||
-      />'\+escapeHtml\(it\.sym\)\+'</.test(rowBody),
-    "첫 칸에 ★티커(it.sym)★ 를 그대로 적는다",
-    "★첫 칸이 티커가 아니다 — 이름·깃발로 바뀌어 있다★");
-  chk(!/DYNAMIC_NAMES\[it\.sym\] \|\| it\.sym\.replace/.test(rowBody),
-    "한국 종목을 이름으로 갈아끼우지 않는다(티커가 곧 시장 표시다: .KS/.KQ)",
-    "★아직 한국은 이름으로 표시한다★");
+  /* ② [V33.520 사용자 지시] 첫 칸은 ★회사명★ 이다 — "탑무버에 티커로 표시하지 말고 회사명으로".
+        (V33.422 의 '티커만' 을 갈아낸다.) 이름은 화면 공용 도우미 displayName 으로 얻는다 —
+        시세가 싣고 온 q.name → 한국/미국 이름표 순. 이름을 못 찾으면 ★티커로 물러선다★(빈 칸 금지).
+        티커는 말풍선(title)에 남아 같은 이름(우선주 등)도 가릴 수 있다. */
+  const flat = rowBody.replace(/\s+/g, "");
+  chk(/displayName\(/.test(rowBody) && /\|\|it\.sym;/.test(flat),
+    "첫 칸 이름은 공용 displayName 에서 오고, 없으면 티커로 물러선다",
+    "★이름을 공용 도우미로 안 얻거나, 이름이 없을 때 빈 칸이 된다★");
+  chk(/>'\+escapeHtml\(_nm\)\+'<\/span>/.test(flat) && !/>'\+escapeHtml\(it\.sym\)\+'<\/span>/.test(flat),
+    "첫 칸에 ★회사명★ 을 적는다(티커가 아니다)",
+    "★첫 칸이 아직 티커다 — 사용자 지시(회사명)와 다르다★");
+  chk(/title="'\+escapeHtml\(_nm\+'·'\+it\.sym\)/.test(flat),
+    "티커는 말풍선(title)에 남긴다",
+    "★티커가 화면에서 완전히 사라졌다 — 같은 이름 종목을 가릴 수 없다★");
+  chk(/\.fv-mvname\{[^}]*text-overflow:ellipsis[^}]*white-space:nowrap/.test(H.replace(/\s+/g, "")),
+    "긴 회사명은 한 줄 말줄임 — 표 폭이 흔들리지 않는다",
+    "★긴 회사명이 줄바꿈되어 표가 흔들린다★");
   chk(/q\.market \|\| \(\/\\\.\(KS\|KQ\)\$\/\.test\(sym\) \? 'kr' : 'us'\)/.test(H),
     "시장은 ★시세가 이미 싣고 있는 q.market★ 을 쓴다(없을 때만 티커로 추정)",
     "★시장을 티커로만 추정한다 — 이미 있는 정보를 안 쓴다★");
