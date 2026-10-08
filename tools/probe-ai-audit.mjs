@@ -102,3 +102,15 @@ for (const m of ["us", "kr"]) {
     benchHoldPct: benchRet == null ? null : +benchRet.toFixed(2), benchAtOurExposurePct: benchRet == null ? null : +(benchRet * avgExp).toFixed(2),
     turnoverX: +turnover.toFixed(1), estCostPctOfCap: +(turnover / 2 * COST[m] * 100).toFixed(2) });
 }
+
+// ⑤ 지금 설정 — 전략·단타·자동차단(무엇이 이미 막혀 있나)
+try {
+  const c = await get("/api/cfg");
+  const pick = (o, ks) => { const r = {}; for (const k of ks) if (o && o[k] !== undefined) r[k] = o[k]; return r; };
+  out("cfg.strategies", pick(c, ["strategies", "strategiesByMarket", "scalp", "aiScalp", "aiPrimary", "disabledSignals", "maxPositions", "maxPositionsByMarket", "positionPct", "riskPerTrade", "feeUS", "feeKR", "slipUS", "slipKR", "stopLoss", "takeProfit1", "takeProfit2", "minHoldMin", "reentryCooldownMin"]));
+  out("cfg.keys", Object.keys(c || {}).slice(0, 200));
+} catch (e) { out("cfg_fail", String(e)); }
+try {
+  const p = await get("/api/pipeline");
+  out("pipeline", JSON.stringify(p).slice(0, 1500));
+} catch (e) { out("pipeline_fail", String(e)); }
