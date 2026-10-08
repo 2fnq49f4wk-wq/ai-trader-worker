@@ -12,6 +12,14 @@
 
 ## Current handoff
 
+- V33.529 (10/08): ★Vibe-Trading(HKUDS, MIT) 알파 동물원 선별기★ — 사용자: "홍콩대 vibe-trading 소스 가져와 수익률 대폭 업그레이드".
+  - `trainer/modal/vt/`: Vibe-Trading `agent/src/factors/{base,_backend}.py` + `zoo/{qlib158,alpha101,gtja191}`(≈450 팩터) — MIT LICENSE·NOTICE·qlib158 Apache 표기·업스트림 커밋 보존,
+    수정 2곳 표기(`_backend` 설정계층 → 환경변수, 패키지 `__init__` 비움).
+  - `trainer/modal/factor_screen.py`: 우리 미국·한국 일봉에서 시장별 랭크 IC(실행지연 1일) · Newey-West(지연 2h) t · ★위약 문턱★(미래수익 종목 순열 8벌의 |t| 최댓값) ·
+    ★반분 재현★(앞·뒤 절반 |t|≥2 같은 부호) · 4구간 부호 · 중복도(ret5·ret20·vol20·rsi14 와 순위상관 <0.7) · 잔차 IC(|t|≥2.5) — 미리 정한 기준.
+    합성 실력 0 에서 Newey-West 만으로는 450개 중 3~5개가 통과했다 → 위약·반분으로 막음. 게이트 check-factor-screen(귀무 0 · 양성 대조 kmid 검출).
+  - 실행: modal-deploy `omni_now + omni_factors`(OMNI 학습·업로드 안 함). ★다음: 통과 팩터만 OMNI 패널/위원회 피처 후보로 → 전진평가 → 신뢰 관문.★
+
 - V33.528 (10/08): 리퀴드 메탈 격자무늬 제거(사용자 지적) — 패널 머리 헤어라인 줄무늬 삭제(매끄러운 반사광만), 옛 '호수 달빛' 9px 가로줄 층(body::after, 고정·z-index 0 이라 카드 위에 그려졌다)·AI 두뇌 36px 격자 덮개를 다크에서 끔. 게이트 check-liquid-metal(반복 패턴 금지).
 
 - V33.527 (10/08): ★실측 CPU 가 진짜로 한도 쪽이다★ — Cloudflare GraphQL 실측 9,672,465ms(32.2%) = 추정 9,500,538ms. "추정은 실제의 ~9배"(6/16 주석)는 지금은 틀렸다.

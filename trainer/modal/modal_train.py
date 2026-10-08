@@ -4440,7 +4440,14 @@ def _omni_image():
         src = pathlib.Path(globals().get("__file__") or "modal_train.py").resolve().with_name("omni.py")
         if not src.exists():
             return None
-        return image.add_local_file(str(src), "/root/omni.py")
+        # [V33.529] 팩터 선별기(Vibe-Trading 알파 동물원 · vt/ MIT) — pandas 는 OMNI 이미지에만(본 학습 이미지는 그대로)
+        img = image.pip_install("pandas==2.2.3").add_local_file(str(src), "/root/omni.py")
+        _fs, _vt = src.with_name("factor_screen.py"), src.with_name("vt")
+        if _fs.exists():
+            img = img.add_local_file(str(_fs), "/root/factor_screen.py")
+        if _vt.is_dir():
+            img = img.add_local_dir(str(_vt), "/root/vt")
+        return img
     except Exception as e:  # noqa: BLE001 — 기존 학습기를 절대 막지 않는다
         # stderr 로 — 이 모듈을 읽어 JSON 을 뽑는 검사기들이 stdout 을 파싱한다
         print("⚠️ OMNI 이미지 준비 실패 — 기존 학습은 영향 없음:", e, file=_sys.stderr)
@@ -4455,11 +4462,41 @@ if _OMNI_IMAGE is not None:
     #   '성능이 안 난다' 와 구별이 안 된다).
     @app.function(image=_OMNI_IMAGE, secrets=[modal.Secret.from_name("lux-dnn")],
                   timeout=6900, cpu=8.0, memory=32768)
-    def omni_job(upload: bool = True, limit: int = 0, ksec: int = 0, flow: int = 0, news: int = 0, rally: int = 0, split: int = 0, wf: int = 0, earn: int = 0):
+    def omni_job(upload: bool = True, limit: int = 0, ksec: int = 0, flow: int = 0, news: int = 0, rally: int = 0, split: int = 0, wf: int = 0, earn: int = 0, factors: int = 0):
         import os
         import sys
         import time
         sys.path.insert(0, "/root")
+        # [V33.529] ★팩터 선별 회차★ — 일봉만 받아 Vibe-Trading 동물원(Alpha158·101·GTJA191)을 우리 유니버스에서 잰다.
+        #   OMNI 학습·업로드는 하지 않는다(연구용). 통과 팩터는 모델 전진평가·신뢰 관문을 다시 거쳐야 운영에 들어간다.
+        if factors:
+            import requests
+            import omni
+            import factor_screen
+            BASE = os.environ["BASE_URL"].rstrip("/")
+            HDR = {"x-train-key": os.environ["TRAIN_KEY"]}
+            t0 = time.time()
+            print("⑪-F 팩터 선별 — Vibe-Trading 알파 동물원 × 우리 미국·한국 일봉 (업로드 없음)")
+            r = requests.get(BASE + "/api/omni-bars-index", headers=HDR, timeout=60)
+            r.raise_for_status()
+            _j = r.json()
+            ix = (_j.get("index") or {}).get("s") or {}
+            syms = sorted(set(ix) | set(_j.get("universe") or []))
+            if limit:
+                syms = syms[:limit]
+            mkt = {s: ((ix.get(s) or {}).get("m") or ("kr" if s.endswith((".KS", ".KQ")) else "us")) for s in syms}
+            daily = {}
+            for got in omni._get_bars(BASE, HDR, syms, "1d", print):
+                daily.update(got)
+            print("   · 일봉 %d종목 수신 (%.0fs)" % (len(daily), time.time() - t0))
+            try:
+                factor_screen.screen(daily, mkt, omni.day_key_of_daily, log=print)
+            except Exception as e:  # noqa: BLE001
+                import traceback
+                print("   ⚠️ 팩터 선별 실패:", repr(e))
+                traceback.print_exc()
+            print("   · 팩터 선별 끝 %.0fs" % (time.time() - t0))
+            return
         # [V33.425c] 컨테이너에 준 코어(cpu=8.0)를 LightGBM 에 그대로 알려 준다 — 안 알려 주면
         #   OpenMP 가 ★호스트의 논리 코어 수★ 만큼 스레드를 띄워 서로 밀어낸다.
         os.environ.setdefault("OMNI_THREADS", "8")

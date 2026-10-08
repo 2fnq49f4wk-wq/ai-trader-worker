@@ -49,7 +49,7 @@ jobs:
       #   → 맨 앞으로 옮긴다. 순서를 check-ci-budget 이 강제한다.
       #   ※ "없으면 건너뛴다" 로 고치지 않는다 — 그러면 영원히 초록인 장식이 된다.
       - name: Install numpy (파이썬 재현 게이트용 — 게이트보다 먼저)
-        run: python3 -m pip install --quiet --break-system-packages numpy lightgbm   # [V33.522] lightgbm: check-walk-forward 가 실제 학습으로 잰다
+        run: python3 -m pip install --quiet --break-system-packages numpy lightgbm pandas   # [V33.522] lightgbm: check-walk-forward 가 실제 학습으로 잰다
       - name: Syntax check
         run: node tools/check-syntax.mjs src/index.js
       # [V33.311] Claude·Codex 인계 계약 — 다른 도구가 이어받아도 규약·경계를 잃지 않는가.
@@ -778,6 +778,9 @@ jobs:
       # [V33.526] 리퀴드 메탈 테마 — 다크 전용 · 상시 애니메이션 2개(transform) · backdrop-filter 없음 · 움직임 줄이기 존중
       - name: 리퀴드 메탈 테마 검사
         run: node tools/check-liquid-metal.mjs
+      # [V33.529] Vibe-Trading 팩터 선별기 — 귀무 통과 0 · 양성 대조 검출 · 라이선스 표기
+      - name: 팩터 선별기 검사
+        run: node tools/check-factor-screen.mjs
       # [V33.480] 신호 음수기대 게이트는 시장별 — 한국 손실이 섞인 통계로 미국 AI 진입(PF 1.34)이 꺼졌다.
       - name: 시장별 신호 게이트 검사
         run: node tools/check-negexp-mkt.mjs
