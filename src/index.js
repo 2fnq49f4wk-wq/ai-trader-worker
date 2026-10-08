@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.523";
+const _BUILD_VER = "V33.524";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -26863,14 +26863,20 @@ async function microCachePut(request, response) {
 const __mcInflight = new Map();
 const __mcR2At = new Map();
 const MC_NO_R2 = { "/api/logs": 1, "/api/chart": 1 };   // 로그는 5초짜리 · 차트는 종목마다 키가 갈라져 R2 쓰기만 늘린다
-function _mcStaleMax(ttl) { return Math.min(3600000, Math.max(ttl * 10, 120000)); }
+/* 느리게 바뀌는 자료는 낡은 사본을 더 오래 준다(뒤에서 곧 갱신) — 운영 탐침(04:54Z): /api/macro 는 getState 한 줄인데 크론이 D1 을 쥔 분 경계에
+   첫 요청이 30초 끊김. 조용한 시간(10분+) 뒤 첫 방문자도 R2 사본을 즉시 받게 한다. 화면은 다음 폴링에서 새 값을 받는다. */
+const MC_STALE_MAX = { "/api/macro": 21600000, "/api/econ": 21600000, "/api/econ-impact": 21600000, "/api/earnings": 21600000,
+  "/api/insider": 21600000, "/api/fundamentals": 21600000, "/api/stock-profile": 21600000, "/api/analyst": 21600000,
+  "/api/tech-summary": 21600000, "/api/shard_meta": 3600000, "/api/news": 3600000, "/api/news-picks": 3600000,
+  "/api/nn-viz": 3600000, "/api/ta-screener": 3600000, "/api/fx": 3600000, "/api/crisis": 3600000 };
+function _mcStaleMax(ttl, path) { return MC_STALE_MAX[path] || Math.min(3600000, Math.max(ttl * 10, 120000)); }
 function _mcResp(ent, tag) {
   return new Response(ent.body, { status: 200, headers: Object.assign({}, ent.headers, {
     "X-Micro-Cache": tag, "x-lux-c": tag, "X-Micro-Age": String(Math.max(0, Math.round((Date.now() - ent.ts) / 1000))) }) });
 }
 async function microSwr(request, url, ctx, run) {
   const ttl = _microTtl(request, url);
-  const key = _microKey(url), now = Date.now(), staleMax = _mcStaleMax(ttl);
+  const key = _microKey(url), now = Date.now(), staleMax = _mcStaleMax(ttl, url.pathname);
   const R2 = (MC_NO_R2[url.pathname] || typeof _bigR2 !== "function") ? null : _bigR2();
   const r2Key = "cache/micro/" + encodeURIComponent(key);
   const bg = function (p) { try { if (ctx && ctx.waitUntil) ctx.waitUntil(p.catch(function () {})); } catch (e) {} };
@@ -30550,10 +30556,10 @@ async function handleRequest(request, env, ctx, _inner) {
      /* [V33.523] ★트래픽이 늘어도 D1 이 같이 늘지 않게 — 무거운 빌드는 크론 하나만★
         종전: 화면을 받는 아이솔레이트가 ★저마다★ 12초마다 풀 빌드(quote 범위 스캔 · computeAllCash · 포지션 …)를 돌렸다.
         아이솔레이트 수는 방문자 수를 따라 늘어난다 — 방문자 10배 = D1 풀 빌드 10배. D1 은 데이터베이스 하나라 이게 곧 상한이다.
-        이제: 크론이 매분(화면이 열려 있을 때) R2 사본을 짓고, 아이솔레이트는 ★그 사본 + 시세만 새로 끼우기★(D1 범위 읽기 1회)로 갱신한다.
-        거래는 크론 안에서만 일어나므로(runTradingCycle) 포지션·현금은 크론 빌드로 충분히 새롭다(≤1분).
-        사본이 3분을 넘게 묵으면(크론이 못 짓는 중) 종전처럼 직접 풀 빌드로 물러선다 — 화면이 멈추지 않는다. */
-     const LIGHT_MAX_MS = 180000;
+        이제: 크론이 2분마다(화면이 열려 있을 때) R2 사본을 짓고, 아이솔레이트는 ★그 사본 + 시세만 새로 끼우기★(D1 범위 읽기 1회)로 갱신한다.
+        거래는 크론 안에서만 일어나므로(runTradingCycle) 포지션·현금은 크론 빌드로 새로워진다(≤2~4분). 시세는 매 갱신마다 새로 끼운다.
+        사본이 4분을 넘게 묵으면(크론이 못 짓는 중) 종전처럼 직접 풀 빌드로 물러선다 — 화면이 멈추지 않는다. */
+     const LIGHT_MAX_MS = 240000;   // [V33.524] 크론이 2분마다(빌드 ~30초) 짓는다 — 사본 나이가 정상적으로 2.5분까지 간다
      const __lightRefresh = async function () {
        if (!__R2s) return false;
        const g = await __R2s.get(__r2Key);
@@ -53386,15 +53392,14 @@ export default {
       catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] trading cycle fail: " + e.message); } catch (e2) {} }
 
       // 1.05) [V33.515] /api/state R2 사본을 크론이 미리 짓는다 — 최근 15분 안에 화면이 열려 있을 때만 · 사본이 묵었을 때만
-      //   [V33.523] 2분 → ★매분★(사본 50초 초과 시): 아이솔레이트는 이제 풀 빌드 대신 이 사본 + 시세 끼우기로 갱신한다(요청 경로 __lightRefresh).
-      //   풀 빌드가 아이솔레이트 수만큼 → 크론 1회/분으로 준다. 직전 빌드가 25초를 넘겼으면 2분 간격으로 물러선다(크론 시간 보호).
+      //   [V33.524] 2분마다 · 사본 110초 초과 시(짝수 분마다 새로). 아이솔레이트는 풀 빌드 대신 이 사본 + 시세 끼우기로 갱신한다(요청 경로 __lightRefresh).
+      //   ※ V33.523 이 매분으로 올렸다가 되돌렸다 — 크론 실행 시간이 곧 사용량 추정(벽시계×보정)이고 그 추정이 85% 에서 엔진을 세운다.
+      //     운영(10/08): 이 빌드 1회 29초 → 매분이면 추정이 하루 +1.4%p. 2분이면 V33.515 와 같은 부담이다.
       try {
-        const _slow = _num(globalThis.__stateCronSlowAt, 0) && Date.now() - _num(globalThis.__stateCronSlowAt, 0) < 600000;
-        if (!_slow || new Date().getUTCMinutes() % 2 === 0) {
+        if (new Date().getUTCMinutes() % 2 === 0) {
           const _lr = _num(await getState(env.DB, "state_last_req", 0), 0);
           if (Date.now() - _lr < 15 * 60000) {
-            const _sr = await stateR2Refresh(env, 50000);
-            if (_sr && _sr.ms > 25000) globalThis.__stateCronSlowAt = Date.now();
+            const _sr = await stateR2Refresh(env, 110000);
             if (_sr && _sr.ms > 25000) {
               const _w = _num(await getState(env.DB, "state_r2_warn", 0), 0);
               if (Date.now() - _w > 1800000) { await setState(env.DB, "state_r2_warn", Date.now());

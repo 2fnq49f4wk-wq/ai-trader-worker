@@ -10,9 +10,9 @@ chk(/^async function buildStatePayload\(env\) \{/m.test(S), "빌더가 최상위
 chk(/const __buildState = function \(\) \{ return buildStatePayload\(env\); \};/.test(S), "요청 경로가 같은 빌더를 부른다(두 벌 아님)");
 chk(!/const __buildState = async \(\) => \{/.test(S), "옛 클로저 빌더가 남아 있지 않다");
 const sch = S.slice(S.indexOf("try { await runTradingCycle(env); }"), S.indexOf("try { await runTradingCycle(env); }") + 2000);
-chk(/"state_last_req"/.test(sch) && /15 \* 60000/.test(sch) && /stateR2Refresh\(env, 50000\)/.test(sch) &&
-    /__stateCronSlowAt/.test(sch) && /getUTCMinutes\(\) % 2 === 0/.test(sch),
-  "크론: [V33.523] 매분(사본 50초 초과) · 최근 15분 화면 열림 · 직전 빌드 25초+ 면 2분 간격으로 물러선다", "크론 배선");
+chk(/"state_last_req"/.test(sch) && /15 \* 60000/.test(sch) && /stateR2Refresh\(env, 110000\)/.test(sch) && /getUTCMinutes\(\) % 2 === 0/.test(sch),
+  "크론: 2분마다(사본 110초 초과) · 최근 15분 화면 열림 — 매분은 사용량 추정(벽시계)을 하루 +1.4%p 올린다(V33.524 되돌림)", "크론 배선");
+chk(/const LIGHT_MAX_MS = 240000;/.test(S), "아이솔레이트는 4분 안의 사본까지 시세만 끼워 쓴다(2분 주기 + 빌드 시간)", "LIGHT_MAX_MS");
 chk(/setState\(env\.DB, "state_last_req", Date\.now\(\)\)/.test(S) && /__stateReqMarkAt/.test(S), "요청 경로가 열림 표시를 남긴다(아이솔레이트당 1분 1회)");
 chk(/__r2Key = STATE_R2_KEY/.test(S), "요청 경로와 크론이 같은 R2 키");
 const M = await import("../src/index.js");
