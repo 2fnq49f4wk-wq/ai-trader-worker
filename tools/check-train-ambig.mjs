@@ -9,7 +9,7 @@ const W = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
 const T = readFileSync(new URL("../trainer/modal/modal_train.py", import.meta.url), "utf8");
 let fails = 0;
 const chk = (c, m, d) => { if (c) console.log("  ok   " + m); else { fails++; console.log("  FAIL " + m + (d ? " — " + d : "")); } };
-chk(/trainDropAmbig: LUXML\.trainDropAmbig === true,/.test(W) && /^\s*trainDropAmbig: true,/m.test(W), "워커: 기본 켬 · 불리언 그대로 내려보낸다");
+chk(/trainDropAmbig: LUXML\.trainDropAmbig === true,/.test(W) && /^\s*trainDropAmbig: (true|false),/m.test(W), "워커: 설정 하나(현재 끔 — V33.518 시장중립 블록IC 하락으로 되돌림) · 불리언 그대로 내려보낸다");
 chk(/_TRAIN_KEEP = _ambig_keep_mask\(X, PNL, featnames\) if bool\(\(cfg or \{\}\)\.get\("trainDropAmbig"\)\) else None/.test(T), "트레이너: 워커 설정으로만 켠다");
 const g = T.slice(T.indexOf("def _train_and_upload_gbdt("), T.indexOf("def _train_and_upload_gbdt(") + 4000);
 chk(/horizon_ms=_HORIZON_MS, cal_frac=0\.10, tag=tag\)\n    _tri = _apply_train_keep\(order, _tri, tag\)/.test(g), "GBDT·MIND: 분할 직후 학습행만");

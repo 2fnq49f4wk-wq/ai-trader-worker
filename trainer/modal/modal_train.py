@@ -3159,7 +3159,9 @@ def _label_ablation(X, PNL, TS, SYM, MKT, featver, D, UNIQ=None, featnames=None,
         _yA = _Ysign[_va]; _pA = Ps[_va]
         _majA = float(max(_yA.mean(), 1 - _yA.mean()))
         print("   ── [라벨실험·공정비교] 학습=후보 라벨 · 채점=전체 검증행(sign 라벨 · 실제 pnl) ──")
-        print(f"      {'학습 라벨':26s} {'valAcc':>8s} {'초과':>8s} {'IC(pnl)':>9s} {'블록t':>7s} {'상위20%−하위20% pnl':>20s}")
+        print(f"      {'학습 라벨':26s} {'valAcc':>8s} {'초과':>8s} {'IC(pnl)':>9s} {'블록t':>7s} {'상위20%−하위20% pnl':>20s} {'시장중립 블록IC·t':>18s}")
+        # [V33.518] 신뢰 관문의 IC 경로는 ★시장별로 평균을 뺀★ 블록 IC 다 — 같은 자를 같이 잰다(10/08 운영: 정확도는 올랐는데 이 값이 셋 다 내려갔다).
+        _MKva = (np.asarray(MKT)[order][_va] if MKT is not None and len(MKT) == N else None)
         _fair = [("A 운영(sign)", _Ysign, _all)]
         for (name, Yc, use, why, Xc, Wc) in cands:
             if Xc is None and Wc is None and name[:1] in ("B", "C", "D"):
@@ -3193,8 +3195,10 @@ def _label_ablation(X, PNL, TS, SYM, MKT, featver, D, UNIQ=None, featnames=None,
                 _bm, _bir, _bt, _bk = _calc_ic_blocks(pv, _pA)
                 q80, q20 = np.quantile(pv, 0.8), np.quantile(pv, 0.2)
                 spread = float(_pA[pv >= q80].mean() - _pA[pv <= q20].mean())
+                _mm, _mir, _mt, _mk = _calc_ic_blocks(pv, _yA, mkt=_MKva) if _MKva is not None else (None, None, None, 0)
                 print(f"      {name:26s} {acc*100:7.1f}% {(acc-_majA)*100:+7.2f}%p {icp:9.4f} "
-                      f"{('—' if _bt is None else '%.2f' % _bt):>7s} {spread:+19.3f}%")
+                      f"{('—' if _bt is None else '%.2f' % _bt):>7s} {spread:+19.3f}% "
+                      f"{('—' if _mm is None else '%.4f·%.2f' % (_mm, _mt)):>18s}")
             except Exception as e:
                 print(f"      {name:26s} 실패(무시): {e}")
         # [V33.518] ★조기중단 기준 비교★ — 운영 부스터·GBDT 는 보정구간(학습 꼬리) logloss 로 멈춰 6~15그루에서 선다
@@ -3229,7 +3233,7 @@ def _label_ablation(X, PNL, TS, SYM, MKT, featver, D, UNIQ=None, featnames=None,
                 print("      [조기중단 비교] 검증행이 달라 생략(%d vs %d · 보정 %d)" % (len(_va2), len(_va), len(_ca2)))
         except Exception as e:
             print("   [라벨실험·조기중단 비교] 생략:", e)
-        print("      ★읽는 법★ 모두 같은 행·같은 자다. 운영 반영 후보 = 초과·IC(pnl)·블록t·스프레드가 A 보다 ★모두★ 높은 줄.")
+        print("      ★읽는 법★ 모두 같은 행·같은 자다. 운영 반영 후보 = 초과·IC(pnl)·블록t·스프레드·★시장중립 블록IC(관문의 자)★ 가 A 보다 ★모두★ 높은 줄.")
     except Exception as e:
         print("   [라벨실험·공정비교] 실패(무시):", e)
 
