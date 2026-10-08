@@ -118,6 +118,9 @@ hrows=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='_h
 exec(compile(ast.Module(body=[hrows],type_ignores=[]),'hrows','exec'),ns)
 split=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='_split_ts')
 exec(compile(ast.Module(body=[split],type_ignores=[]),'split','exec'),ns)
+# [V33.516] 부스터가 분할 직후 학습 띠 제외(_apply_train_keep)를 부른다 — 같이 떼어 온다(끔 = _TRAIN_KEEP None).
+atk=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='_apply_train_keep')
+exec(compile(ast.Module(body=[atk],type_ignores=[]),'atk','exec'),ns); ns['_TRAIN_KEEP']=None
 for name in ('_train_and_upload_boosters','_train_per_market'):
  f=copy.deepcopy(next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name==name))
  if name.endswith('boosters'):

@@ -636,6 +636,11 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         Y = np.array([1.0 if s["y"] else 0.0 for s in samples], dtype=np.float64)
         print(f"   라벨: 워커 저장값({_lm}) 사용 — 양성비율 {Y.mean():.3f}")
     PNL = np.array([s.get("pnl", 0.0) for s in samples], dtype=np.float64)
+    # [V33.516] 학습 띠 제외 마스크 — 워커 설정이 유일한 출처(cfg.trainDropAmbig). 끄면 None(종전).
+    global _TRAIN_KEEP
+    _TRAIN_KEEP = _ambig_keep_mask(X, PNL, featnames) if bool((cfg or {}).get("trainDropAmbig")) else None
+    print("   [학습 띠 제외] " + ("켬 — 부스터·GBDT·MIND 의 학습행에서 |pnl/ATR| < 0.25×중앙 을 뺀다 (제외 %d/%d)" % (int((~_TRAIN_KEEP).sum()), len(_TRAIN_KEEP))
+                                if _TRAIN_KEEP is not None else "끔(워커 설정) — 종전 그대로"))
     # [V33.76] 시장 라벨 — 워커가 이제 표본마다 m("us"/"kr"/"cm")을 내려준다.
     MKT = np.array([str(s.get("m") or "us") for s in samples])
     HV = np.array([1.0 if s.get("hv") else 0.0 for s in samples], dtype=np.float64)
@@ -1972,6 +1977,49 @@ def _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ=None, 
     return {"acc": acc, "lb": lb}
 
 
+# ══ [V33.516] ★학습에서 '애매한 띠' 를 뺀다 — 라벨 실험대 공정 비교가 이긴 줄(D)★ ═════════════════════════════
+#   2026-10-08 공정 비교(같은 전체 검증행 · sign 라벨 · 실제 pnl 로 채점, LightGBM 200R):
+#     A 운영(sign)              초과 +1.94%p · IC(pnl) 0.0877 · 블록t 4.08 · 상위20%−하위20% pnl +1.524%
+#     D 변동성정규화+데드밴드    초과 +2.11%p · IC(pnl) 0.0915 · 블록t 4.63 · 스프레드 +1.608%  ← 네 지표 모두 A 보다 높다
+#     B 데드밴드 0.25×중앙       초과 +2.13%p · IC 0.0912 · 블록t 4.57 · 스프레드 +1.553%       ← 같은 생각(애매한 띠 제외)도 이김
+#   D 의 라벨은 sign 과 ★부호가 같다★(pnl/ATR) — 다른 점은 |pnl/ATR| < 0.25×중앙 인 행을 ★학습에서만★ 빼는 것.
+#   검증·보정 행은 그대로라 신뢰 관문이 재는 자(sign · 전체 검증행)는 바뀌지 않는다 — 관문을 낮추는 일이 아니다.
+#   워커 설정(cfg.trainDropAmbig)이 유일한 출처다(끄면 종전과 같다).
+_TRAIN_KEEP = None
+
+
+def _ambig_keep_mask(X, PNL, featnames, mult=0.25):
+    import numpy as np
+    try:
+        fn = list(featnames or [])
+        if "atrPct" not in fn:
+            return None
+        atr = np.abs(np.asarray(X, dtype=np.float64)[:, fn.index("atrPct")])
+        if not np.isfinite(atr).all() or float(np.nanmedian(atr)) <= 0:
+            return None
+        z = np.asarray(PNL, dtype=np.float64) / np.maximum(atr, 1e-6)
+        thr = mult * float(np.median(np.abs(z)))
+        return np.abs(z) >= thr
+    except Exception:
+        return None
+
+
+def _apply_train_keep(order, tri, tag=""):
+    import numpy as np
+    k = _TRAIN_KEEP
+    if k is None:
+        return tri
+    if len(k) != len(order):
+        print(f"   ⚠️ [학습 띠 제외] {tag}: 마스크 길이 {len(k)} ≠ 표본 {len(order)} — 적용하지 않는다(종전대로)")
+        return tri
+    out = tri[k[order][tri]]
+    if len(out) < 200:
+        print(f"   [학습 띠 제외] {tag}: 남는 학습행 {len(out)} — 너무 적어 종전대로")
+        return tri
+    print(f"   [학습 띠 제외] {tag}: 애매한 띠(|pnl/ATR| < 0.25×중앙) 학습 {len(tri)} → {len(out)} — 검증·보정 행은 그대로")
+    return out
+
+
 def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ=None,
                            endpoint="/api/gbdt-import", tag="GBDT", hp=None):
     """[V33.249] endpoint/tag/hp 를 받아 ★같은 학습기★ 를 위원장 슬롯에도 쓴다.
@@ -2000,6 +2048,7 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ=None,
     # [V33.388] 조기중단을 ★검증에서 하지 않는다★ — 아래 보정구간 주석 참고.
     order, _tri, _cali, _vai, nval, _emb = _split_ts(TS, VALFRAC, _EMBARGO_MS, min_val=200,
                                                      horizon_ms=_HORIZON_MS, cal_frac=0.10, tag=tag)
+    _tri = _apply_train_keep(order, _tri, tag)   # [V33.516] 학습행만 — 검증·보정은 그대로
     Xs = X[order].astype(np.float64); Ys = Y[order].astype(np.float64)
     Xtr, Ytr = Xs[_tri], Ys[_tri]
     Xva, Yva = Xs[_vai], Ys[_vai]
@@ -3171,6 +3220,7 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None, U
     #     검증은 채점에만 쓴다. ★이 변경은 보고되는 숫자를 낮춘다 — 낮아진 쪽이 참이다.★
     order, _tri, _cali, _vai, nval, _emb = _split_ts(TS, 0.2, _EMBARGO_MS, min_val=200,
                                                      horizon_ms=_HORIZON_MS, cal_frac=0.10, tag="부스팅")
+    _tri = _apply_train_keep(order, _tri, "부스팅")   # [V33.516] 학습행만 — 검증·보정은 그대로
     Xs = X[order].astype(np.float64); Ys = Y[order].astype(int)
     Xtr, Ytr = Xs[_tri], Ys[_tri]
     Xva, Yva = Xs[_vai], Ys[_vai]
