@@ -29,7 +29,7 @@ async function bars(sym) {
   let c = null;
   try {
     const j = await get("/api/chart?symbol=" + encodeURIComponent(sym) + "&interval=1d&range=1y");
-    const cs = (j.candles || []).filter((x) => x && x.c > 0).map((x) => ({ t: x.t < 1e12 ? x.t * 1000 : x.t, c: +x.c }));
+    const cs = (j.candles || []).filter((x) => x && x.c > 0).map((x) => ({ t: x.t < 1e12 ? x.t * 1000 : x.t, c: +x.c, v: +x.v || 0 }));
     c = cs.length > 30 ? cs : null;
   } catch (e) { c = null; }
   daily.set(sym, c);
@@ -75,6 +75,31 @@ for (const m of ["us", "kr"]) {
     if (A.length < 30) continue;
     const t3 = [A.slice(0, Math.floor(A.length / 3)), A.slice(Math.floor(A.length / 3), Math.floor(2 * A.length / 3)), A.slice(Math.floor(2 * A.length / 3))];
     out(m + ".chase_" + pk, t3.map((g, i) => ["하", "중", "상"][i] + "(" + g[0][pk].toFixed(1) + "~" + g[g.length - 1][pk].toFixed(1) + "%) x5 " + JSON.stringify(stat(g.map((s) => s.x5))) + " x20 " + JSON.stringify(stat(g.map((s) => s.x20)))));
+  }
+}
+/* [V33.535] ★미리 등록한 검정 — 가격·거래량 상관(qlib158 CORR20)★
+   12년 팩터 선별(run 37738295879): 한국에서 corr(종가, log(거래량+1), 20일) 이 높을수록 이후 부진(IC −0.02~−0.03, t −7~−8). 미국은 통과 0.
+   우리 실제 매수에도 그런가? 진입 ★전날까지★ 봉으로 corr20(미래 정보 없음) → 3등분 → 다음 5·20일 시장 초과.
+   채택 규칙(데이터 보기 전에 고정): 한국에서 ① 상위⅓ x20 평균 < 0 이고 t ≤ −2.0 ② 상위⅓ x20 이 하위⅓ 보다 2%p 이상 낮다
+   ③ x5 도 같은 방향(상위⅓ < 하위⅓). 셋 다면 한국 신규진입에 '상관 상한' 차단을 넣는다(문턱 = 상위⅓ 하한). 미국은 참고만. */
+const corr20 = (cs, ts) => { let i = idxAt(cs, ts); if (i < 0) return null;
+  if (new Date(cs[i].t).toISOString().slice(0, 10) === new Date(ts).toISOString().slice(0, 10)) i--;   // 진입 당일 봉은 아직 미완성 → 전날까지
+  if (i < 19) return null; const x = [], y = [];
+  for (let k = i - 19; k <= i; k++) { x.push(cs[k].c); y.push(Math.log((cs[k].v || 0) + 1)); }
+  const mx = x.reduce((a, b) => a + b, 0) / 20, my = y.reduce((a, b) => a + b, 0) / 20; let sxy = 0, sxx = 0, syy = 0;
+  for (let k = 0; k < 20; k++) { sxy += (x[k] - mx) * (y[k] - my); sxx += (x[k] - mx) ** 2; syy += (y[k] - my) ** 2; }
+  return (sxx > 0 && syy > 0) ? sxy / Math.sqrt(sxx * syy) : null; };
+for (const s of sel) { const b = buys.find((x) => x.ts === s.ts); const cs = b && daily.get(b.symbol); s.c20 = cs ? corr20(cs, s.ts) : null; }
+for (const m of ["us", "kr"]) {
+  const A = sel.filter((s) => s.m === m && s.c20 != null).sort((a, b) => a.c20 - b.c20);
+  if (A.length < 30) { out(m + ".corr20", { n: A.length, note: "표본 부족" }); continue; }
+  const t3 = [A.slice(0, Math.floor(A.length / 3)), A.slice(Math.floor(A.length / 3), Math.floor(2 * A.length / 3)), A.slice(Math.floor(2 * A.length / 3))];
+  const st = t3.map((g) => ({ lo: +g[0].c20.toFixed(3), hi: +g[g.length - 1].c20.toFixed(3), x5: stat(g.map((s) => s.x5)), x20: stat(g.map((s) => s.x20)) }));
+  out(m + ".corr20_terciles", st);
+  if (m === "kr") {
+    const top = st[2], bot = st[0];
+    const c1 = top.x20.mean < 0 && top.x20.t <= -2.0, c2 = (bot.x20.mean - top.x20.mean) >= 2.0, c3 = top.x5.mean < bot.x5.mean;
+    out("kr.corr20_verdict", { c1_topNegT: c1, c2_spread2pp: c2, c3_x5same: c3, adopt: c1 && c2 && c3, threshold: top.lo });
   }
 }
 for (const m of ["us", "kr"]) {
