@@ -59,6 +59,13 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split("/").pop()
             .map(([k, v]) => k + " " + Math.round(v / 1000) + "s(" + Math.round(v / tot * 100) + "%)").join(" · "));
         }
       } catch (e) { out("steps_fail", String(e)); }
+      // [V33.534] 매매 단계 안쪽 — 엔진이 이미 남기는 시간 줄(prefetch · EVAL · EVAL-COST · TIME-CAP)을 최근 것부터
+      try {
+        const L = await (await fetch(WORKER_URL.replace(/\/$/, "") + "/api/logs?limit=1500")).json();
+        const pat = /^prefetch\[|^\[EVAL(-COST)?\]|^\[TIME-CAP\]|^Done: tried=/;
+        const hits = (Array.isArray(L) ? L : []).filter((l) => pat.test(String(l.message || l.msg || ""))).slice(0, 40);
+        for (const l of hits) out("tlog", new Date(l.ts).toISOString().slice(5, 16) + " " + String(l.message || l.msg).slice(0, 360));
+      } catch (e) { out("tlog_fail", String(e)); }
     }
   }
   out("actual", Object.assign({ mk, script: SCRIPT, from: start.toISOString() }, s, { cpuPctOf30M: +(s.cpuMs / 30000000 * 100).toFixed(2) }));
