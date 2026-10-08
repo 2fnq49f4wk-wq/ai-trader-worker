@@ -5,7 +5,7 @@
  * 구성: D1 = node:sqlite 어댑터 · R2 = 메모리 · 네트워크 = 모의(네이버 실시간 시세는 합성값, 나머지 404)
  *   · 일봉 = 종목마다 합성 320봉(운영과 같은 길이·스키마) · 시각 = 지정한 UTC 로 고정 이동.
  * [V33.538] --prod <dir>: tools/prod-state-dump.mjs 가 ★읽기만★ 해서 뜬 운영 state·보유·거래로 돈다(모델·설정 그대로) — 시각은 지금,
- *   R2 대형 모델은 CLOUDFLARE_API_TOKEN 이 있으면 Cloudflare API 로 읽는다(읽기 전용). 쓰기는 전부 로컬(sqlite·메모리)에만.
+ *   R2 대형 모델(big/)은 WORKER_URL·TRAIN_KEY 가 있으면 /api/bench-r2 로 읽는다(읽기 전용). 쓰기는 전부 로컬(sqlite·메모리)에만.
  * 사용법: node --cpu-prof --cpu-prof-dir=<dir> tools/cron-cpu-bench.mjs [--at 2026-10-08T02:00:00Z] [--cycles 3]
  *   출력: 사이클마다 걸린 시간 + 마지막에 자기시간(self) 상위 함수. 프로파일 파일은 --cpu-prof-dir 에. */
 import { DatabaseSync } from "node:sqlite";
@@ -72,9 +72,8 @@ const obj = (k, v) => ({ key: k, size: v.length, uploaded: new RealDate(), httpM
 const toBuf = async (v) => typeof v === "string" ? Buffer.from(v) : (v instanceof ArrayBuffer ? Buffer.from(v) : (ArrayBuffer.isView(v) ? Buffer.from(v.buffer, v.byteOffset, v.byteLength) : Buffer.from(await new Response(v).arrayBuffer())));
 const realFetch = globalThis.fetch;
 const r2Remote = async (k) => {   // [V33.538] 운영 R2 읽기 전용(필요한 키만 · 한 번만)
-  if (!PROD || r2.has(k) || r2Miss.has(k) || !process.env.CLOUDFLARE_API_TOKEN) return;
-  try { const r = await realFetch("https://api.cloudflare.com/client/v4/accounts/" + process.env.CLOUDFLARE_ACCOUNT_ID + "/r2/buckets/ai-trader-models/objects/" + encodeURIComponent(k),
-      { headers: { Authorization: "Bearer " + process.env.CLOUDFLARE_API_TOKEN } });
+  if (!PROD || r2.has(k) || r2Miss.has(k) || !process.env.TRAIN_KEY || !process.env.WORKER_URL || !/^big\//.test(k)) return;
+  try { const r = await realFetch(process.env.WORKER_URL.replace(/\/$/, "") + "/api/bench-r2?k=" + encodeURIComponent(k), { headers: { "x-train-key": process.env.TRAIN_KEY } });
     if (r.ok) { r2.set(k, Buffer.from(await r.arrayBuffer())); r2Got++; } else r2Miss.add(k); } catch (e) { r2Miss.add(k); }
 };
 const r2Miss = new Set(); let r2Got = 0;

@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.537";
+const _BUILD_VER = "V33.538";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -29118,6 +29118,29 @@ async function handleRequest(request, env, ctx, _inner) {
         " ②" + (g.g2 && g.g2.ok ? "통과" : "미달") + " ③" + (g.g3 && g.g3.ok ? "통과" : "미달(장부 " + _num(g.g3 && g.g3.days, 0) + "일)") +
         " → " + (st.speak ? "★발언★(하위 절반 신규진입 차단)" : "섀도우") + (added ? " · 장부 +1(" + picksN + ")" : "")); } catch (e) {}
       return Response.json({ ok: true, speak: st.speak, picksN: picksN, added: added }, { headers: cors });
+    }
+    /* [V33.538] ★벤치용 운영 상태 읽기(학습키 · 읽기 전용)★ — 로컬 CPU 프로파일(tools/cron-cpu-bench --prod)이 모델·설정·보유 그대로 돌도록.
+       Cloudflare API 토큰엔 D1 권한이 없다(7403). 자격증명처럼 보이는 키는 내보내지 않는다. 쓰기 경로 없음. */
+    if (path === "/api/bench-state") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const what = url.searchParams.get("t") || "state";
+      if (what === "positions") return Response.json({ ok: true, rows: ((await env.DB.prepare("SELECT * FROM positions").all()).results || []) }, { headers: cors });
+      if (what === "trades") return Response.json({ ok: true, rows: ((await env.DB.prepare("SELECT * FROM trades ORDER BY id DESC LIMIT 3000").all()).results || []) }, { headers: cors });
+      const after = String(url.searchParams.get("after") || "");
+      const lim = Math.max(1, Math.min(200, _num(url.searchParams.get("limit"), 120)));
+      const rows = ((await env.DB.prepare("SELECT k, v, updated_ts FROM state WHERE k > ? ORDER BY k LIMIT ?").bind(after, lim).all()).results || []);
+      const SECRETISH = /token|secret|passw|cookie|crumb|apikey|api_key|auth|session|credential/i;
+      return Response.json({ ok: true, last: rows.length ? rows[rows.length - 1].k : null,
+        rows: rows.filter(function (r) { return !SECRETISH.test(r.k); }) }, { headers: cors });
+    }
+    if (path === "/api/bench-r2") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const key = String(url.searchParams.get("k") || "");
+      const R2 = _bigR2();
+      if (!R2 || !/^big\/[A-Za-z0-9_.:\-]+$/.test(key)) return Response.json({ error: "big/ 키만" }, { status: 400, headers: cors });
+      const o = await R2.get(key);
+      if (!o) return new Response("", { status: 404, headers: cors });
+      return new Response(o.body, { headers: Object.assign({}, cors, { "content-type": "application/octet-stream" }) });
     }
     if (path === "/api/omni-q-picks") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
