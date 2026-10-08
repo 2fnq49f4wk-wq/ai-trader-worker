@@ -12,6 +12,17 @@
 
 ## Current handoff
 
+- V33.523 (10/08): ★트래픽 확장 — D1 이 방문자 수를 따라 늘지 않게★ (운영 탐침 run 37728471624 근거)
+  - 측정(동시 24회): /api/fx 중앙 12.2초(getState 한 줄인데 — 크론이 매분 D1 을 쥘 때 줄섬) · /api/news 첫 30초 끊김·동시 16.5초 · nn-viz 3~4초 ·
+    news-picks 0.7초 · 첫 방문 kr-halt/alerts 미완료. 캐시 층이 있는 것(state·indices·heatmap…)은 데운 뒤 20ms · 동시 0.1~0.4초.
+  - ① 마이크로 캐시 → ★SWR 층(microSwr)★: 단일비행(동시 24 → D1 1) · TTL 지나도 staleMax(10×TTL, 2분~1시간)까지 즉시 주고 뒤에서 갱신 ·
+    새 아이솔레이트는 R2 `cache/micro/<key>` 부터(workers.dev 에서도 공유, 키당 아이솔레이트당 1분 1회 쓰기 · logs/chart 는 R2 안 씀).
+    대상 추가: news-picks · nn-viz · alerts · macro · logs(5초). 한도·읽기문 뒤에서만, 안쪽 호출(_inner)은 한도를 다시 안 센다.
+  - ② /api/state: 아이솔레이트가 12초마다 ★각자 풀 빌드★(SQL ~33줄) 하던 것을 → R2 사본 + 시세 끼우기(SQL 2줄)로. 풀 빌드는 크론이 매분(사본 50초+, 화면 열림 15분 안, 직전 빌드 25초+면 2분 간격).
+    사본이 3분+ 묵으면 종전처럼 직접 풀 빌드(화면 안 멈춤). '화면 열림' 표시는 아이솔레이트당 5분 1회(사본 90초+면 1분).
+  - 게이트: check-micro-cache ④(실제 fetch 처리기 + 느린 가짜 D1/R2) · check-state-cron(SQL 수 세기). probe-api-speed 목록 갱신(404 두 개 빼고 kr-halt·alerts 등 추가).
+  - 커스텀 도메인을 붙이면 caches.default(L2)도 살아난다 — 코드 변경 없이 콜로 단위 공유가 하나 더 생긴다.
+
 - V33.522 (10/08): ★다구간 전진평가(부스터 학습 방식)★ — `_walk_forward_boost` (trainer), target=ablate 회차에서만(`_ABL_WALKFWD`).
   - 마지막 20% 를 4창 · 창마다 그 직전까지만 학습(엠바고/지평 간격). 후보 P 운영식 · R 보정포함 재적합(P 판수×1.1) · F 고정200 · RB R+데드밴드0.25 · RL R+최근730일.
   - ★미리 정한 규칙★: 시장중립IC 창평균 > P · 3/4창 승 · IC(pnl)·스프레드 ≥ P · ★절대 바닥★ 자기 시장중립 t(창평균) ≥ 1.65 · 초과 > 0.

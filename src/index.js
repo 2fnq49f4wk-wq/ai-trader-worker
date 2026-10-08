@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.522";
+const _BUILD_VER = "V33.523";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -26811,7 +26811,9 @@ const MICRO_CACHE_TTL = {
   "/api/news": 60000, "/api/fx": 30000, "/api/econ": 60000, "/api/econ-impact": 60000, "/api/earnings": 120000,
   "/api/insider": 120000, "/api/crisis": 30000, "/api/kr-halt": 15000, "/api/shard_meta": 300000,
   "/api/commodities": 20000, "/api/bonds": 30000, "/api/ta-screener": 60000,
-  "/api/tech-summary": 120000, "/api/fundamentals": 600000, "/api/stock-profile": 300000, "/api/analyst": 600000, "/api/chart": 300000
+  "/api/tech-summary": 120000, "/api/fundamentals": 600000, "/api/stock-profile": 300000, "/api/analyst": 600000, "/api/chart": 300000,
+  /* [V33.523] 운영 탐침(10/08 04:39Z · 동시 24회): news-picks 0.7초 · nn-viz 0.66→3~4초 · alerts(보유종목마다 D1 한 번) · macro · logs 가 매번 D1 */
+  "/api/news-picks": 60000, "/api/nn-viz": 60000, "/api/alerts": 30000, "/api/macro": 60000, "/api/logs": 5000
 };
 const MICRO_CACHE_MAX = 300;
 const __microCache = new Map();
@@ -26851,7 +26853,78 @@ async function microCachePut(request, response) {
   } catch (e) {}
 }
 
-async function handleRequest(request, env, ctx) {
+/* ══ [V33.523] ★마이크로 캐시를 SWR 층으로 — 단일비행 · 낡은 사본 즉시 · R2 로 아이솔레이트 간 공유★ ═════════════════
+   운영 탐침(10/08 04:39Z, tools/probe-api-speed · 동시 24회): /api/fx 는 getState 한 줄인데 ★중앙 12.2초★, /api/news 첫 요청 30초 끊김·동시 16.5초.
+   원인: 마이크로 캐시는 아이솔레이트 메모리뿐이라 ① 몰려든 요청이 새 아이솔레이트마다 ★각자★ D1 로 가고(단일비행 없음)
+   ② TTL 이 지나면 다음 사용자가 D1 을 기다리며 ③ 그때 크론이 매분 D1 을 쥐고 있으면 한 줄 읽기도 10초+ 줄을 선다.
+   → 같은 키는 ★한 번만★ 핸들러로 보내고(나머지는 그 약속을 같이 기다린다), TTL 이 지나도 staleMax 까지는 ★있는 것을 즉시★ 주고
+     뒤에서 새로 받는다. 새 아이솔레이트는 R2 사본(cache/micro/…)부터 본다 — 커스텀 도메인이 아니어도(workers.dev) 공유된다.
+   보안 경로는 그대로다 — 남용 한도·읽기문을 통과한 요청만 여기에 온다. 200·JSON 만 담는다. */
+const __mcInflight = new Map();
+const __mcR2At = new Map();
+const MC_NO_R2 = { "/api/logs": 1, "/api/chart": 1 };   // 로그는 5초짜리 · 차트는 종목마다 키가 갈라져 R2 쓰기만 늘린다
+function _mcStaleMax(ttl) { return Math.min(3600000, Math.max(ttl * 10, 120000)); }
+function _mcResp(ent, tag) {
+  return new Response(ent.body, { status: 200, headers: Object.assign({}, ent.headers, {
+    "X-Micro-Cache": tag, "x-lux-c": tag, "X-Micro-Age": String(Math.max(0, Math.round((Date.now() - ent.ts) / 1000))) }) });
+}
+async function microSwr(request, url, ctx, run) {
+  const ttl = _microTtl(request, url);
+  const key = _microKey(url), now = Date.now(), staleMax = _mcStaleMax(ttl);
+  const R2 = (MC_NO_R2[url.pathname] || typeof _bigR2 !== "function") ? null : _bigR2();
+  const r2Key = "cache/micro/" + encodeURIComponent(key);
+  const bg = function (p) { try { if (ctx && ctx.waitUntil) ctx.waitUntil(p.catch(function () {})); } catch (e) {} };
+  const refresh = function () {
+    if (__mcInflight.has(key)) return __mcInflight.get(key);
+    const p = (async function () {
+      const res = await run();
+      const headers = {};
+      res.headers.forEach(function (v, k) { if (!/^(set-cookie|content-length|content-encoding)$/i.test(k)) headers[k] = v; });
+      const snap = { status: res.status, body: await res.text(), headers: headers, ts: Date.now() };
+      if (snap.status === 200 && /json/i.test(headers["content-type"] || "") && snap.body.length <= 2000000) {
+        __microCache.delete(key);
+        __microCache.set(key, { ts: snap.ts, body: snap.body, headers: headers });
+        while (__microCache.size > MICRO_CACHE_MAX) __microCache.delete(__microCache.keys().next().value);
+        if (R2 && (!__mcR2At.has(key) || snap.ts - __mcR2At.get(key) > 60000)) {
+          __mcR2At.set(key, snap.ts);
+          bg(R2.put(r2Key, snap.body, { httpMetadata: { contentType: "application/json" },
+            customMetadata: { at: String(snap.ts), ver: _BUILD_VER, ct: String(headers["content-type"] || "application/json") } }));
+        }
+      }
+      return snap;
+    })();
+    __mcInflight.set(key, p);
+    p.then(function () { __mcInflight.delete(key); }, function () { __mcInflight.delete(key); });
+    return p;
+  };
+  const e = __microCache.get(key);
+  if (e && now - e.ts <= ttl) return _mcResp(e, "hit");
+  if (e && now - e.ts <= staleMax) { bg(refresh()); return _mcResp(e, "l1s"); }
+  if (R2 && !__mcInflight.has(key)) {
+    try {
+      const g = await R2.get(r2Key);
+      if (g) {
+        const md = g.customMetadata || {}, at = Number(md.at || 0), age = now - at;
+        if (at > 0 && age >= 0 && age <= staleMax) {
+          const ent = { ts: md.ver === _BUILD_VER ? at : 0, body: await g.text(),
+            headers: { "content-type": md.ct || "application/json" } };
+          __microCache.set(key, ent);
+          if (md.ver !== _BUILD_VER || age > ttl) bg(refresh());
+          return _mcResp(Object.assign({}, ent, { ts: at }), "r2");
+        }
+        try { if (g.body && g.body.cancel) g.body.cancel(); } catch (e2) {}
+      }
+    } catch (e3) {}
+  }
+  const joined = __mcInflight.has(key);
+  let snap;
+  try { snap = await refresh(); }
+  catch (e) { return Response.json({ error: "read failed", detail: String((e && e.message) || e) }, { status: 503, headers: { "x-lux-c": "error" } }); }
+  return new Response(snap.body, { status: snap.status, headers: Object.assign({}, snap.headers, {
+    "X-Micro-Cache": joined ? "join" : "miss", "x-lux-c": joined ? "join" : "build" }) });
+}
+
+async function handleRequest(request, env, ctx, _inner) {
   const url = new URL(request.url);
   const path = url.pathname;
   /* [V33.375] ★ACAO 를 '*' 에서 동일 출처로 좁힌다.★ 종전에는 ★아무 웹사이트의 스크립트나★
@@ -26864,6 +26937,8 @@ async function handleRequest(request, env, ctx) {
   // ★프리플라이트는 한도 밖에 둔다★ — 브라우저가 자동으로 보내는 것이라, 여기에 쓰기 비용을
   //   물리면 정상 사용자가 자기 예산을 프리플라이트로 태우게 된다.
   if (request.method === "OPTIONS") return new Response(null, { headers: cors });
+  // [V33.523] _inner = SWR 층(microSwr)이 같은 요청을 핸들러로 다시 보낸 것 — 한도·읽기문은 바깥에서 이미 통과했다(두 번 세지 않는다)
+  if (!_inner) {
   // [V33.190] 남용 방어 — 라우팅보다 먼저. 여기서 끊으면 D1 을 한 번도 안 건드린다.
   const _rl = rateLimit(request, path, cors);
   if (_rl) return _rl;
@@ -26871,8 +26946,13 @@ async function handleRequest(request, env, ctx) {
      하지 않는다(viewerGate 주석 ① 참조). 여기서 끊으면 D1 을 한 번도 안 건드린다. */
   const _vg = viewerGate(request, url, env);
   if (_vg) return _vg;
+  }
+  // [V33.523] 공용 읽기 API — SWR 층(단일비행 · 낡은 사본 즉시 · R2 공유). 한도·읽기문을 통과한 뒤에만.
+  if (!_inner && _microTtl(request, url)) {
+    return await microSwr(request, url, ctx, function () { return handleRequest(request, env, ctx, true); });
+  }
   // [V33.496] 공용 읽기 API — 한도·읽기문을 통과한 뒤에만 메모리 사본을 준다(D1 줄서기 회피)
-  const _mc = microCacheGet(request, url);
+  const _mc = _inner ? null : microCacheGet(request, url);
   if (_mc) return _mc;
   /* [V33.375] 크롤러에게 명시적으로 말한다. X-Robots-Tag 헤더와 ★둘 다★ 둔다 —
      robots.txt 는 크롤이 시작되기 전에 읽히고, 헤더는 직접 링크로 들어온 것까지 덮는다. */
@@ -30467,15 +30547,45 @@ async function handleRequest(request, env, ctx) {
        globalThis.__stateR2At = Date.now();
        return __R2s.put(__r2Key, c.str, { httpMetadata: { contentType: "application/json" }, customMetadata: { at: String(c.ts) } }).catch(function () {});
      };
+     /* [V33.523] ★트래픽이 늘어도 D1 이 같이 늘지 않게 — 무거운 빌드는 크론 하나만★
+        종전: 화면을 받는 아이솔레이트가 ★저마다★ 12초마다 풀 빌드(quote 범위 스캔 · computeAllCash · 포지션 …)를 돌렸다.
+        아이솔레이트 수는 방문자 수를 따라 늘어난다 — 방문자 10배 = D1 풀 빌드 10배. D1 은 데이터베이스 하나라 이게 곧 상한이다.
+        이제: 크론이 매분(화면이 열려 있을 때) R2 사본을 짓고, 아이솔레이트는 ★그 사본 + 시세만 새로 끼우기★(D1 범위 읽기 1회)로 갱신한다.
+        거래는 크론 안에서만 일어나므로(runTradingCycle) 포지션·현금은 크론 빌드로 충분히 새롭다(≤1분).
+        사본이 3분을 넘게 묵으면(크론이 못 짓는 중) 종전처럼 직접 풀 빌드로 물러선다 — 화면이 멈추지 않는다. */
+     const LIGHT_MAX_MS = 180000;
+     const __lightRefresh = async function () {
+       if (!__R2s) return false;
+       const g = await __R2s.get(__r2Key);
+       const at = g && g.customMetadata ? +(g.customMetadata.at || 0) : 0;
+       const age = at ? Date.now() - at : Infinity;
+       // '화면 열림' 표시 — 크론은 최근 15분 안에 이게 있어야 사본을 짓는다. 아이솔레이트당 5분에 한 번(사본이 90초+ 묵었으면 1분에 한 번)
+       const _mkGap = age > 90000 ? 60000 : 300000;
+       if (!globalThis.__stateReqMarkAt || Date.now() - globalThis.__stateReqMarkAt > _mkGap) {
+         globalThis.__stateReqMarkAt = Date.now();
+         try { await setState(env.DB, "state_last_req", Date.now()); } catch (e) {}
+       }
+       if (!g || !(age >= 0 && age < LIGHT_MAX_MS)) { try { if (g && g.body && g.body.cancel) g.body.cancel(); } catch (e) {} return false; }
+       let body = await g.text();
+       try { const pb = await _patchStateQuotes(env.DB, body); if (pb) body = pb; } catch (e) {}
+       const c = { ts: Date.now(), data: null, str: body, baseAt: at };
+       globalThis.__stateCache = c;
+       try { await caches.default.put(__edgeKey, new Response(c.str, { headers: {
+         "content-type": "application/json", "cache-control": "s-maxage=300", "x-built-at": String(c.ts) } })); } catch (e) {}
+       return true;
+     };
      const __refresh = function () {
        if (globalThis.__stateBuilding) return null;
        globalThis.__stateBuilding = true;
-       return __buildState().then(function (pl) {
-         const c = __mkCache(pl);
-         globalThis.__stateCache = c;
-         return Promise.all([caches.default.put(__edgeKey, new Response(c.str, { headers: {
-           "content-type": "application/json", "cache-control": "s-maxage=300", "x-built-at": String(c.ts) } }))
-           .catch(function () {}), __r2Put(c)]);
+       return __lightRefresh().catch(function () { return false; }).then(function (done) {
+         if (done) return null;
+         return __buildState().then(function (pl) {
+           const c = __mkCache(pl);
+           globalThis.__stateCache = c;
+           return Promise.all([caches.default.put(__edgeKey, new Response(c.str, { headers: {
+             "content-type": "application/json", "cache-control": "s-maxage=300", "x-built-at": String(c.ts) } }))
+             .catch(function () {}), __r2Put(c)]);
+         });
        }).catch(function () {}).then(function () { globalThis.__stateBuilding = false; });
      };
      // [V32.1] FRESH_MS 8s→12s — 프론트 폴링(10s)마다 백그라운드 재빌드가 돌아 D1을 계속
@@ -53275,12 +53385,16 @@ export default {
       try { await runTradingCycle(env); }
       catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] trading cycle fail: " + e.message); } catch (e2) {} }
 
-      // 1.05) [V33.515] /api/state R2 사본을 크론이 미리 짓는다 — 최근 15분 안에 화면이 열려 있을 때만 · 2분마다 · 사본이 2분보다 묵었을 때만
+      // 1.05) [V33.515] /api/state R2 사본을 크론이 미리 짓는다 — 최근 15분 안에 화면이 열려 있을 때만 · 사본이 묵었을 때만
+      //   [V33.523] 2분 → ★매분★(사본 50초 초과 시): 아이솔레이트는 이제 풀 빌드 대신 이 사본 + 시세 끼우기로 갱신한다(요청 경로 __lightRefresh).
+      //   풀 빌드가 아이솔레이트 수만큼 → 크론 1회/분으로 준다. 직전 빌드가 25초를 넘겼으면 2분 간격으로 물러선다(크론 시간 보호).
       try {
-        if (new Date().getUTCMinutes() % 2 === 0) {
+        const _slow = _num(globalThis.__stateCronSlowAt, 0) && Date.now() - _num(globalThis.__stateCronSlowAt, 0) < 600000;
+        if (!_slow || new Date().getUTCMinutes() % 2 === 0) {
           const _lr = _num(await getState(env.DB, "state_last_req", 0), 0);
           if (Date.now() - _lr < 15 * 60000) {
-            const _sr = await stateR2Refresh(env, 120000);
+            const _sr = await stateR2Refresh(env, 50000);
+            if (_sr && _sr.ms > 25000) globalThis.__stateCronSlowAt = Date.now();
             if (_sr && _sr.ms > 25000) {
               const _w = _num(await getState(env.DB, "state_r2_warn", 0), 0);
               if (Date.now() - _w > 1800000) { await setState(env.DB, "state_r2_warn", Date.now());

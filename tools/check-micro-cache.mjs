@@ -38,13 +38,55 @@ chk(M.MICRO_CACHE_TTL["/api/chart"] > 0 && /MICRO_CACHE_MAX = 300/.test(S) && /_
 chk(/if \(response\.headers\.get\("X-Micro-Cache"\)\) return;/.test(S), "캐시에서 나간 응답은 다시 담지 않는다", "재적재");
 
 console.log("③ 배선");
-const hr = S.indexOf("async function handleRequest(request, env, ctx) {");
+const hr = S.indexOf("async function handleRequest(request, env, ctx, _inner) {");
 const body = S.slice(hr, hr + 6000);
-const iRl = body.indexOf("const _rl = rateLimit("), iVg = body.indexOf("const _vg = viewerGate("), iMc = body.indexOf("const _mc = microCacheGet(request, url);");
+const iRl = body.indexOf("const _rl = rateLimit("), iVg = body.indexOf("const _vg = viewerGate("), iMc = body.indexOf("const _mc = _inner ? null : microCacheGet(request, url);");
 chk(iRl > 0 && iVg > iRl && iMc > iVg, "꺼내기는 남용 한도·읽기문 뒤(보안 경로 그대로)", "순서 " + [iRl, iVg, iMc].join(","));
 const fe = S.indexOf("async fetch(request, env, ctx) {");
 const fb = S.slice(fe, fe + 1500);
 const iPut = fb.indexOf("microCachePut(request, _res)"), iSec = fb.indexOf("return withSecurityHeaders(_res);");
 chk(iPut > 0 && iSec > iPut, "담기(복제)는 응답을 내보내기 전에 시작한다", "담기 위치 " + [iPut, iSec].join(","));
+console.log("④ SWR 층(V33.523) — 실제 fetch 처리기를 느린 가짜 D1(300ms)·가짜 R2 로 부른다");
+{
+  const MP = new URL("../src/index.js", import.meta.url).href;
+  let d1 = 0;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const stmt = (q) => ({ bind: () => stmt(q), all: async () => { d1++; await sleep(300); return { results: [] }; },
+    first: async () => { d1++; await sleep(300); return /WHERE k/.test(q) ? { v: JSON.stringify({ usdkrw: 1400 }) } : null; }, run: async () => ({}), raw: async () => [] });
+  const DB = { prepare: (q) => stmt(q), batch: async (a) => a.map(() => ({ results: [] })), exec: async () => ({}) };
+  const _cs = globalThis.caches;
+  globalThis.caches = { default: { match: async () => null, put: async () => {} } };
+  const store = new Map();
+  const R2 = { head: async () => null, put: async (k, v, o) => { store.set(k, { v, md: o.customMetadata }); },
+    get: async (k) => { const e = store.get(k); return e ? { customMetadata: e.md, text: async () => e.v } : null; } };
+  const env = { DB, MODELS: R2 };
+  const call = async (Mx, path) => { const w = []; const t0 = Date.now(); const r = await Mx.default.fetch(new Request("https://x.test" + (path || "/api/fx")), env, { waitUntil: (p) => w.push(p) });
+    await r.text(); const ms = Date.now() - t0; await Promise.all(w).catch(() => {}); return { st: r.status, c: r.headers.get("x-lux-c"), ms }; };
+  const A = await import(MP + "?swr=a");
+  d1 = 0;
+  const burst = await Promise.all(Array.from({ length: 24 }, () => call(A)));
+  const lay = burst.reduce((m, b) => (m[b.c] = (m[b.c] || 0) + 1, m), {});
+  chk(d1 === 1 && lay.build === 1 && lay.join === 23 && burst.every((b) => b.st === 200), "동시 24회 → D1 1번(단일비행) · 나머지 23개는 같이 기다린다", "d1=" + d1 + " " + JSON.stringify(lay));
+  d1 = 0; const h = await call(A);
+  chk(h.c === "hit" && d1 === 0, "다음 요청은 메모리(hit) · D1 0", JSON.stringify(h) + " d1=" + d1);
+  chk([...store.keys()].some((k) => k.startsWith("cache/micro/")), "R2 사본을 남긴다(다른 아이솔레이트가 쓴다)", [...store.keys()].join(","));
+  const B = await import(MP + "?swr=b");
+  d1 = 0; const b1 = await call(B);
+  chk(b1.c === "r2" && d1 === 0, "새 아이솔레이트: R2 사본 · D1 0", JSON.stringify(b1) + " d1=" + d1);
+  const C = await import(MP + "?swr=c");
+  for (const [, e] of store) e.md = Object.assign({}, e.md, { at: String(Date.now() - 40000) });
+  d1 = 0; const c1 = await call(C);
+  chk(c1.c === "r2" && c1.ms < 250 && d1 === 1, "TTL 지난 사본: 즉시 주고(" + c1.ms + "ms) 뒤에서 새로 받는다(D1 1)", JSON.stringify(c1) + " d1=" + d1);
+  const D = await import(MP + "?swr=d");
+  for (const [, e] of store) e.md = Object.assign({}, e.md, { at: String(Date.now() - 7200000) });
+  d1 = 0; const d4 = await call(D);
+  chk(d4.c === "build" && d1 === 1, "staleMax 넘은 사본은 안 준다 — 직접 받는다", JSON.stringify(d4));
+  const f = await call(D, "/api/fx?force=1");
+  chk(f.c === null, "force 가 붙으면 캐시 층을 안 탄다", JSON.stringify(f));
+  globalThis.caches = _cs;
+}
+chk(/if \(!_inner && _microTtl\(request, url\)\) \{\n    return await microSwr\(request, url, ctx, function \(\) \{ return handleRequest\(request, env, ctx, true\); \}\);/.test(S) &&
+    S.indexOf("if (!_inner && _microTtl(request, url))") > S.indexOf("const _vg = viewerGate("),
+  "SWR 층은 한도·읽기문 뒤 · 안쪽 호출은 한도를 두 번 세지 않는다", "배선");
 if (fails) { console.log("\n✗ 마이크로 캐시 계약 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 마이크로 캐시 계약 통과");

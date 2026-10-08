@@ -14,8 +14,10 @@ const EPS = [
   "/api/state", "/api/indices", "/api/heatmap", "/api/trades?limit=50", "/api/trades?limit=3000",
   "/api/ai-mode", "/api/ai-picks", "/api/pipeline", "/api/events", "/api/commodities", "/api/bonds",
   "/api/fx", "/api/news", "/api/news-picks", "/api/logs?limit=1200", "/api/ml-status", "/api/diag",
-  "/api/macro", "/api/econ", "/api/earnings", "/api/tick", "/api/chart?symbol=AAPL", "/api/chart?symbol=005930.KS",
-  "/api/nn-viz?model=overview", "/api/version",
+  "/api/macro", "/api/econ", "/api/earnings", "/api/chart?symbol=AAPL", "/api/chart?symbol=005930.KS",
+  "/api/nn-viz?model=overview", "/api/build",
+  // [V33.523] 첫 방문 폰 측정에서 끝나지 않던 것(kr-halt · alerts) + 부팅 때 같이 치는 것
+  "/api/kr-halt", "/api/alerts", "/api/crisis", "/api/insider", "/api/econ-impact", "/api/shard_meta", "/api/ta-screener",
 ];
 
 async function hit(p) {
