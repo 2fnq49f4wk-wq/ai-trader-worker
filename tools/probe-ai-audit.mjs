@@ -62,6 +62,21 @@ for (const b of buys) {
 const stat = (xs) => { const v = xs.filter((x) => x != null && isFinite(x)); const n = v.length; if (n < 3) return { n };
   const mu = v.reduce((a, b) => a + b, 0) / n, sd = Math.sqrt(v.reduce((a, b) => a + (b - mu) ** 2, 0) / (n - 1));
   return { n, mean: +mu.toFixed(2), t: +(mu / (sd / Math.sqrt(n))).toFixed(2), hit: +(v.filter((x) => x > 0).length / n * 100).toFixed(0) }; };
+// [추격 가설] 진입 직전 1일·5일 상승폭으로 3등분 → 다음 5·20일 시장 초과. 급등 직후 매수가 손해인지 우리 원장으로 잰다.
+const prior = (cs, ts, h) => { const i = idxAt(cs, ts); if (i - h < 0) return null; return (cs[i].c / cs[i - h].c - 1) * 100; };
+for (const s of sel) {
+  const b = buys.find((x) => x.ts === s.ts);
+  const cs = b && daily.get(b.symbol);
+  s.p1 = cs ? prior(cs, s.ts, 1) : null; s.p5 = cs ? prior(cs, s.ts, 5) : null;
+}
+for (const m of ["us", "kr"]) {
+  for (const pk of ["p1", "p5"]) {
+    const A = sel.filter((s) => s.m === m && s[pk] != null).sort((a, b) => a[pk] - b[pk]);
+    if (A.length < 30) continue;
+    const t3 = [A.slice(0, Math.floor(A.length / 3)), A.slice(Math.floor(A.length / 3), Math.floor(2 * A.length / 3)), A.slice(Math.floor(2 * A.length / 3))];
+    out(m + ".chase_" + pk, t3.map((g, i) => ["하", "중", "상"][i] + "(" + g[0][pk].toFixed(1) + "~" + g[g.length - 1][pk].toFixed(1) + "%) x5 " + JSON.stringify(stat(g.map((s) => s.x5))) + " x20 " + JSON.stringify(stat(g.map((s) => s.x20)))));
+  }
+}
 for (const m of ["us", "kr"]) {
   const A = sel.filter((s) => s.m === m);
   out(m + ".select_all", { x5: stat(A.map((s) => s.x5)), x20: stat(A.map((s) => s.x20)), raw20: stat(A.map((s) => s.r20)) });
