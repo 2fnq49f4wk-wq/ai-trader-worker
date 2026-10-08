@@ -787,6 +787,9 @@ jobs:
       # [V33.534] 크론 CPU 절감 — 판단 불변(스토캐스틱 비트 동일 · 네이버 배치 종목 단건 재조회 제거 · 못 받은 종목은 폴백 유지)
       - name: 크론 CPU 절감 검사
         run: node tools/check-cron-cpu.mjs
+      # [V33.535] OMNI-Q — Qlib 표준 머리 · 실력 증명 관문(①표본 밖 승률 ②비용 뺀 초과 ③라이브 장부) · 발언은 좁히기만
+      - name: OMNI-Q 검사
+        run: node tools/check-omni-q.mjs
       # [V33.531] 포트폴리오 실험실 — Qlib TopK-Dropout + Vibe 부품(퍼지 전진·DSR·최적화기) · 귀무 0 · 양성 대조 통과
       - name: 포트폴리오 실험실 검사
         run: node tools/check-portfolio-lab.mjs

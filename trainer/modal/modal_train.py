@@ -4443,6 +4443,9 @@ def _omni_image():
         # [V33.529] 팩터 선별기(Vibe-Trading 알파 동물원 · vt/ MIT) — pandas 는 OMNI 이미지에만(본 학습 이미지는 그대로)
         img = image.pip_install("pandas==2.2.3", "scipy==1.14.1").add_local_file(str(src), "/root/omni.py")
         _fs, _vt, _pl = src.with_name("factor_screen.py"), src.with_name("vt"), src.with_name("portfolio_lab.py")
+        _oq = src.with_name("omni_q.py")
+        if _oq.exists():   # [V33.535] OMNI-Q(Qlib 표준 머리 · 실력 증명 관문)
+            img = img.add_local_file(str(_oq), "/root/omni_q.py")
         if _fs.exists():
             img = img.add_local_file(str(_fs), "/root/factor_screen.py")
         if _pl.exists():   # [V33.531] 포트폴리오 실험실(Qlib TopK-Dropout · Vibe 최적화기·검증)
@@ -4464,13 +4467,50 @@ if _OMNI_IMAGE is not None:
     #   '성능이 안 난다' 와 구별이 안 된다).
     @app.function(image=_OMNI_IMAGE, secrets=[modal.Secret.from_name("lux-dnn")],
                   timeout=6900, cpu=8.0, memory=32768)
-    def omni_job(upload: bool = True, limit: int = 0, ksec: int = 0, flow: int = 0, news: int = 0, rally: int = 0, split: int = 0, wf: int = 0, earn: int = 0, factors: int = 0, lab: int = 0):
+    def omni_job(upload: bool = True, limit: int = 0, ksec: int = 0, flow: int = 0, news: int = 0, rally: int = 0, split: int = 0, wf: int = 0, earn: int = 0, factors: int = 0, lab: int = 0, omniq: int = 0):
         import os
         import sys
         import time
         sys.path.insert(0, "/root")
         # [V33.529] ★팩터 선별 회차★ — 일봉만 받아 Vibe-Trading 동물원(Alpha158·101·GTJA191)을 우리 유니버스에서 잰다.
         #   OMNI 학습·업로드는 하지 않는다(연구용). 통과 팩터는 모델 전진평가·신뢰 관문을 다시 거쳐야 운영에 들어간다.
+        def _daily_all():
+            import requests
+            import omni
+            BASE = os.environ["BASE_URL"].rstrip("/")
+            HDR = {"x-train-key": os.environ["TRAIN_KEY"]}
+            t0 = time.time()
+            r = requests.get(BASE + "/api/omni-bars-index", headers=HDR, timeout=60)
+            r.raise_for_status()
+            _j = r.json()
+            ix = (_j.get("index") or {}).get("s") or {}
+            syms = sorted(set(ix) | set(_j.get("universe") or []))
+            if limit:
+                syms = syms[:limit]
+            mkt = {s: ((ix.get(s) or {}).get("m") or ("kr" if s.endswith((".KS", ".KQ")) else "us")) for s in syms}
+            daily = {}
+            for got in omni._get_bars(BASE, HDR, syms, "1d", print):
+                daily.update(got)
+            print("   · 일봉 %d종목 수신 (%.0fs)" % (len(daily), time.time() - t0))
+            return BASE, HDR, daily, mkt
+
+        def _run_omniq():
+            # [V33.535] OMNI-Q — Qlib 표준 머리 · 실력 증명 관문(①표본 밖 승률 ②비용 뺀 초과 ③라이브 장부). 실패해도 OMNI 를 막지 않는다.
+            try:
+                sys.path.insert(0, "/root")
+                os.environ.setdefault("OMNI_THREADS", "8")
+                import omni
+                import omni_q
+                BASE, HDR, daily, mkt = _daily_all()
+                omni_q.run(daily, mkt, omni.day_key_of_daily, BASE=BASE, HDR=HDR, upload=upload, log=print)
+            except Exception as e:  # noqa: BLE001
+                import traceback
+                print("   ⚠️ OMNI-Q 실패:", repr(e))
+                traceback.print_exc()
+
+        if omniq and not (factors or lab):
+            _run_omniq()
+            return
         if factors or lab:
             import requests
             import omni
@@ -4545,6 +4585,9 @@ if _OMNI_IMAGE is not None:
             print("   ⚠️ OMNI 실패:", repr(e))
             traceback.print_exc()
         print("   · OMNI 끝 %.0fs" % (time.time() - t0))
+        # [V33.535] 정기 회차(업로드 · 실험 아님)마다 OMNI-Q 도 갱신 — 라이브 장부(③)가 매일 쌓이게
+        if upload and not (ksec or flow or news or rally or split or wf or earn):
+            _run_omniq()
 
 
 @app.local_entrypoint()

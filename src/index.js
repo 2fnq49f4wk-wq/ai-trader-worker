@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.534";
+const _BUILD_VER = "V33.535";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -12866,6 +12866,30 @@ async function omniVizData(DB) {
   };
   return out;
 }
+/* ══ [V33.535] ★OMNI-Q — Qlib 표준 머리(동물원 피처 166 × LightGBM 순위) · 실력 증명 관문★ ══════════════════════
+   옛 발언 관문(상위 ≥10% 정밀도 하한 ≥ 60%)은 공개 데이터로 도달할 수 없었다 — 가장 강한 공개 표준(Qlib LightGBM + Alpha158/101 류)도
+   우리 12년 일봉 표본 밖에서 상위 10% 의 '동료 중앙값 승률' 미국 52.1%(t 7.5) · 한국 53.6%(t 16)(run 37762301209).
+   사용자 결정(10/08): ★실력 증명 관문★ 으로 교체 — ① 표본 밖 승률 95% 하한 > 50% · t ≥ 3 ② 비용 뺀 초과가 시험 구간 ≥75% 에서 +
+   ③ 라이브 장부(학습기가 올린 '그날 상위 10%', 같은 날 덮어쓰기 금지)를 H일 뒤 실제 가격으로 채점 — 30일 이상 · 95% 하한 > 50%.
+   셋 다일 때만 발언하고, 발언은 ★좁히기만★ 한다: 신규 추세·스냅 진입 중 OMNI-Q 하위 절반(점수 < 0.5)을 막는다. 점수는 학습기가 매긴다
+   (워커 CPU ≈ 0 — 피처 166개를 JS 로 옮기지 않는다). 학습기 trainer/modal/omni_q.py · 게이트 tools/check-omni-q.mjs. */
+const OMNIQ = { maxPicks: 260, maxAgeMs: 5 * 86400000, lowPct: 0.5, minScores: 20 };
+function omniqSpeakOf(g) {
+  return !!(g && g.g1 && g.g1.ok === true && g.g2 && g.g2.ok === true && g.g3 && g.g3.ok === true);
+}
+function omniqBlocks(st, symbol, nowMs) {
+  if (!st || st.speak !== true || !omniqSpeakOf(st.gate)) return false;
+  if (!(nowMs - _num(st.trainedAt, 0) <= OMNIQ.maxAgeMs)) return false;   // 낡은 점수로 막지 않는다
+  const v = st.scores ? st.scores[symbol] : undefined;
+  return typeof v === "number" && isFinite(v) && v < OMNIQ.lowPct;          // 점수 없는 종목은 막지 않는다
+}
+function omniqPicksAppend(picks, day, top, nowMs) {
+  const arr = Array.isArray(picks) ? picks.slice() : [];
+  if (arr.some(function (p) { return p && p.day === day; })) return { picks: arr, added: false };   // 같은 날은 덮어쓰지 않는다
+  arr.push({ day: day, top: (Array.isArray(top) ? top : []).slice(0, 200).map(String), ts: nowMs });
+  arr.sort(function (a, b) { return String(a.day) < String(b.day) ? -1 : 1; });
+  return { picks: arr.slice(-OMNIQ.maxPicks), added: true };
+}
 function omniHeadsOk(heads) {
   const out = [];
   for (const h of OMNI_HORIZONS) {
@@ -22640,6 +22664,8 @@ async function runTradingCycle(env) {
         if (_m % 2 !== 0) continue;
       }
       const positions = await getPositions(DB, market);  // key: "SYM::strategy"
+      let __omniq = null;   // [V33.535] OMNI-Q 점수(발언 중일 때만 하위 절반 신규진입 차단)
+      try { __omniq = await getState(DB, "omniq:" + market, null); } catch (e) { __omniq = null; }
       const feeRate = market === "us" ? mcfg.feeUS : mcfg.feeKR;
       const regime = regimes[market];
       // [V33.119] 국면 스냅샷을 남긴다 — AI 두뇌 창이 "폭등 레버리지가 왜 안 열리나" 를
@@ -24584,6 +24610,13 @@ async function runTradingCycle(env) {
                 }
               }
             } catch (e) {}
+          }
+          /* [V33.535] ★OMNI-Q 하위 절반 차단★ — 관문 ①②③ 모두 통과해 발언 중일 때만. 추세·스냅 신규 진입만(단타·보유 무관). 좁히기만 한다. */
+          if (stratResults.length > 0 && !heldSymbols.has(symbol) && omniqBlocks(__omniq, symbol, Date.now()) &&
+              stratResults.some(function (sr) { return sr.strategy !== "scalp"; })) {
+            stratResults = stratResults.filter(function (sr) { return sr.strategy === "scalp"; });
+            incBlock("OMNIQ_LOW");
+            if (!stratResults.length) continue;
           }
           let _spillMult = 1;
           if (stratResults.length > 0) {
@@ -29040,10 +29073,53 @@ async function handleRequest(request, env, ctx, _inner) {
                              probeNanRows: vr.probeNanRows, headsOk: headsOk, mode: "shadow",
                              panelDay: model.panelDay, panelN: vr.panelN }, { headers: cors });
     }
+    /* [V33.535] OMNI-Q 업로드(학습기) — 시장별 오늘 점수 + 관문 ①②③. 발언은 워커가 세 관문에서 ★다시★ 판정한다. */
+    if (path === "/api/omni-q" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      let body = null; try { body = await request.json(); } catch (e) {}
+      const mk = body && (body.mkt === "us" || body.mkt === "kr") ? body.mkt : null;
+      const nS = (body && body.scores && typeof body.scores === "object") ? Object.keys(body.scores).length : 0;
+      if (!mk || !body.day || nS < OMNIQ.minScores) return Response.json({ error: "mkt·day·scores(≥" + OMNIQ.minScores + ") 필요" }, { status: 400, headers: cors });
+      const g = (body.gate && typeof body.gate === "object") ? body.gate : {};
+      const st = { day: String(body.day), h: _num(body.h, 5), q: _num(body.q, 0.1), trainedAt: _num(body.trainedAt, Date.now()),
+                   nFeat: _num(body.nFeat, 0), n: nS, scores: body.scores, gate: g, speak: omniqSpeakOf(g), ts: Date.now() };
+      await setState(env.DB, "omniq:" + mk, st);
+      // 라이브 장부 — 엄격 읽기(못 읽으면 쓰지 않는다: 빈 배열로 덮으면 전진 기록이 사라진다)
+      let picksN = null, added = false;
+      try {
+        const cur = await getState(env.DB, "omniq_picks:" + mk, [], true);
+        const r = omniqPicksAppend(cur, st.day, body.top, Date.now());
+        if (r.added) await setState(env.DB, "omniq_picks:" + mk, r.picks);
+        picksN = r.picks.length; added = r.added;
+      } catch (e) {}
+      try { await log(env.DB, "INFO", null, "[OMNI-Q] " + mk.toUpperCase() + " " + st.day + " " + nS + "종목 · ①" + (g.g1 && g.g1.ok ? "통과" : "미달") +
+        " ②" + (g.g2 && g.g2.ok ? "통과" : "미달") + " ③" + (g.g3 && g.g3.ok ? "통과" : "미달(장부 " + _num(g.g3 && g.g3.days, 0) + "일)") +
+        " → " + (st.speak ? "★발언★(하위 절반 신규진입 차단)" : "섀도우") + (added ? " · 장부 +1(" + picksN + ")" : "")); } catch (e) {}
+      return Response.json({ ok: true, speak: st.speak, picksN: picksN, added: added }, { headers: cors });
+    }
+    if (path === "/api/omni-q-picks") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const mk = url.searchParams.get("mkt") === "kr" ? "kr" : "us";
+      let picks;
+      try { picks = await getState(env.DB, "omniq_picks:" + mk, [], true); }
+      catch (e) { return Response.json({ error: "장부 읽기 실패(D1)" }, { status: 503, headers: cors }); }
+      return Response.json({ ok: true, mkt: mk, picks: picks }, { headers: cors });
+    }
     /* [V33.420] GET /api/omni-status — 업로드된 OMNI 의 머리별 성적(나무 제외). */
     if (path === "/api/omni-status") {
       const meta = await getState(env.DB, OMNI_MODEL.metaKey, null);
-      return Response.json({ ok: true, meta: meta }, { headers: cors });
+      /* [V33.535] OMNI-Q 요약(점수표 제외 · 상위 10개만) */
+      const omniQ = {};
+      for (const _m of ["us", "kr"]) {
+        try {
+          const q = await getState(env.DB, "omniq:" + _m, null);
+          if (q) {
+            const _top = Object.keys(q.scores || {}).sort(function (a, b) { return q.scores[b] - q.scores[a]; }).slice(0, 10);
+            omniQ[_m] = { day: q.day, trainedAt: q.trainedAt, n: q.n, nFeat: q.nFeat, h: q.h, gate: q.gate, speak: q.speak, top10: _top };
+          }
+        } catch (e) {}
+      }
+      return Response.json({ ok: true, meta: meta, omniQ: omniQ }, { headers: cors });
     }
     if (path === "/api/omni-bars-index") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
@@ -54345,7 +54421,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

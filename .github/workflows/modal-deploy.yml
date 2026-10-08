@@ -71,6 +71,10 @@ on:
         description: '포트폴리오 실험실 — Vibe 동물원 피처 LightGBM 순위 + Qlib TopK-Dropout + Vibe 최적화기·디플레이티드 샤프(재기만 · 업로드 없음) — omni_now 와 함께'
         type: boolean
         default: false
+      omni_q:
+        description: 'OMNI-Q 만 — Qlib 표준 머리(동물원 피처 LightGBM) 학습 · 실력 증명 관문 ①②③ · 오늘 점수 업로드(정기 회차도 자동으로 돈다) — omni_now 와 함께'
+        type: boolean
+        default: false
       omni_ksec:
         description: 'OMNI 장중 횡단면 칸 실험(재기만 · 업로드 안 함) — omni_now 와 함께'
         type: boolean
@@ -236,7 +240,7 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           set -o pipefail
-          modal run trainer/modal/modal_train.py::omni_job --ksec ${{ inputs.omni_ksec && 1 || 0 }} --flow ${{ inputs.omni_flow && 1 || 0 }} --news ${{ inputs.omni_news && 1 || 0 }} --rally ${{ inputs.omni_rally && 1 || 0 }} --split ${{ inputs.omni_split && 1 || 0 }} --wf ${{ inputs.omni_wf && 1 || 0 }} --earn ${{ inputs.omni_earn && 1 || 0 }} --factors ${{ inputs.omni_factors && 1 || 0 }} --lab ${{ inputs.omni_lab && 1 || 0 }} 2>&1 | tee omni.log
+          modal run trainer/modal/modal_train.py::omni_job --ksec ${{ inputs.omni_ksec && 1 || 0 }} --flow ${{ inputs.omni_flow && 1 || 0 }} --news ${{ inputs.omni_news && 1 || 0 }} --rally ${{ inputs.omni_rally && 1 || 0 }} --split ${{ inputs.omni_split && 1 || 0 }} --wf ${{ inputs.omni_wf && 1 || 0 }} --earn ${{ inputs.omni_earn && 1 || 0 }} --factors ${{ inputs.omni_factors && 1 || 0 }} --lab ${{ inputs.omni_lab && 1 || 0 }} --omniq ${{ inputs.omni_q && 1 || 0 }} 2>&1 | tee omni.log
       - name: OMNI summary
         if: always()
         run: |
