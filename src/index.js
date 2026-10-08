@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.526";
+const _BUILD_VER = "V33.527";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -7480,7 +7480,7 @@ function _usageCpu(u) {
 async function getUsageActual(DB, mk) {
   try { const a = await getState(DB, "usage_actual:" + mk, null); return (a && typeof a === "object") ? a : null; } catch (e) { return null; }
 }
-async function recordUsage(DB, deltaReq, deltaCpuMs, deltaSubreqs) {
+async function recordUsage(DB, deltaReq, deltaCpuMs, deltaSubreqs, steps) {
   try {
     const u = await getUsageState(DB);
     u.data.requests = (u.data.requests || 0) + (deltaReq || 0);
@@ -7495,6 +7495,11 @@ async function recordUsage(DB, deltaReq, deltaCpuMs, deltaSubreqs) {
     day.s += (deltaSubreqs || 0);
     // [V66] invocation당 fetch 피크 — Workers 한도(1000/요청, 가드 850) 대비 여유 추적용
     if ((deltaSubreqs || 0) > (day.fp || 0)) day.fp = deltaSubreqs;
+    // [V33.527] 단계별 활성 벽시계(ms) 일 합계 — CPU 대리값(×cpuCalibration). /api/usage 의 usage.days[dd].stp 로 보인다.
+    if (steps && typeof steps === "object") {
+      const st = day.stp || (day.stp = {});
+      for (const k of Object.keys(steps)) { const v = Math.round(steps[k] || 0); if (v > 0) st[k] = (st[k] || 0) + v; }
+    }
     await setState(DB, "usage:" + u.mk, u.data);
     return u.data;
   } catch (e) { return null; }
@@ -7545,10 +7550,25 @@ async function isUsageShutdown(DB, cfg) {
 }
 // 매 invocation 끝(또는 끝부분)에서 호출 — 누적 추적.
 //   cpuMs는 (전체경과 − sleep) × cpuCalibration 으로 추정(I/O 대기를 CPU로 과대계상하지 않게).
-async function tickUsage(DB, startedAt, calibration, extraSubreqs) {
+async function tickUsage(DB, startedAt, calibration, extraSubreqs, steps) {
   const wallActive = Math.max(1, (Date.now() - (startedAt || Date.now())) - __sleepAccumMs);
   const calib = (typeof calibration === "number" && calibration > 0) ? calibration : 0.10;
-  return recordUsage(DB, 1, Math.round(wallActive * calib), extraSubreqs || 0);
+  return recordUsage(DB, 1, Math.round(wallActive * calib), extraSubreqs || 0, steps);
+}
+/* ══ [V33.527] ★크론 단계별 시간(CPU 대리값)★ ═════════════════════════════════════════════════════════
+   Cloudflare 실측(10/08): 이번 달 CPU 32.2% · 8일째 — 이 속도면 ~10/20 에 설정 한도 85% 도달(엔진 자동 셧다운).
+   실측 CPU 는 '크론 활성 벽시계 × 0.01' 과 거의 같았다(9.67M vs 9.50M) — 그래서 단계별 활성 벽시계가 곧 CPU 의 몫이다.
+   Workers 는 안에서 CPU 를 잴 수 없다 → 단계 경계마다 시각을 찍고(sleep 은 뺀다) 하루 단위로 usage 레코드에 합친다(추가 D1 쓰기 0).
+   어느 단계가 CPU 를 먹는지 ★추측 없이★ 고르고, 성능(매매 판단)에 영향 없는 것부터 줄인다. invocation 마다 지역 객체라 겹쳐 돌아도 안 섞인다. */
+function _cronProf() {
+  const p = { acc: {}, name: "pre", t: Date.now(), sl: __sleepAccumMs };
+  p.mark = function (name) {
+    const now = Date.now(), sl = __sleepAccumMs;
+    const d = Math.max(0, (now - p.t) - Math.max(0, sl - p.sl));
+    p.acc[p.name] = (p.acc[p.name] || 0) + d;
+    p.name = name; p.t = now; p.sl = sl;
+  };
+  return p;
 }
 
 let __yahooHostFlip = 0;
@@ -53126,6 +53146,7 @@ export default {
     __sleepAccumMs = 0;  // [실시간] invocation 시작마다 sleep 누적 초기화
     cycMemoReset();      // [V33.170] 사이클 상수 캐시 초기화 — warm isolate 의 옛 값을 물려받지 않는다
     let __usageCalib = USAGE_LIMITS_DEFAULT.cpuCalibration;
+    const __prof = _cronProf();   // [V33.527] 단계별 시간(CPU 대리값)
     ctx.waitUntil((async () => {
       // [PAID 가드] Workers Paid 한도 90% 도달 시 모든 작업 차단 (초과 과금 방지)
       try {
@@ -53160,12 +53181,14 @@ export default {
       } catch (e) {}
 
       // [V32.57] Modal 학습 지연 자동 재트리거(30분 스로틀·8h 쿨다운 — 대부분 상태 1건 read 후 리턴)
+      __prof.mark("autoRetrain");
       try { await _luxAutoRetrainModal(env); } catch (e) {}
 
       // [V19] 0) LLM 일일 분석 — 거래 사이클보다 "먼저, 단독" 실행.
       //   293종목 거래 사이클(115s)과 같은 invocation에서 돌리면 LLM 외부 API fetch가
       //   시간/subrequest 예산 경쟁에 밀려 타임아웃났다(회귀 반복). 여기서 깨끗한 예산으로
       //   먼저 끝내고, 그 다음에 무거운 거래 사이클을 돌린다. 실패해도 거래는 정상 진행.
+      __prof.mark("llm");
       try {
         // [V9.8] LLM 외부 API fetch는 깨끗한 subrequest 예산에서 시작해야 한다.
         //   __fetchBudget는 모듈 전역이라 warm isolate에선 직전 invocation의 거래 사이클이
@@ -53193,6 +53216,7 @@ export default {
         }
       } catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] LLM analysis fail: " + e.message); } catch (e2) {} }
 
+      __prof.mark("r2mig");
       // 0.9) [V33.19] D1에 남아 있는 대형모델을 R2로 1회 이관 — R2 바인딩이 붙은 뒤 자동 실행.
       //   32MB를 읽고 쓰는 무거운 작업이라 거래 사이클 "앞"에서 한 번만 하고, 성공/실패 여부를
       //   상태에 남겨 다시 시도하지 않는다. 실패해도 D1 원본이 그대로라 서비스 영향 없음.
@@ -53213,6 +53237,7 @@ export default {
         }
       } catch (e) { try { await log(env.DB, "WARN", null, "[R2] 이관 시도 중 예외: " + (e && e.message) + " (D1 원본 유지)"); } catch (e2) {} }
 
+      __prof.mark("histMig");
       // 0.95) [V33.22] 딥이력(hist:, 약 71MB)을 R2로 조금씩 이관 — 틱당 최대 12종목·6초.
       //   읽기가 R2→D1 폴백이라 진행 중에도 전 종목이 정상 조회된다. 다 옮기면 로그 1회 남기고 멈춘다.
       try {
@@ -53251,6 +53276,7 @@ export default {
         } catch (e2) {}
       }
 
+      __prof.mark("barHarvest");
       // 0.955) [V33.70] ★과거 분봉 백필 수확 — 위치 재배치★
       //   V33.65/66 에서 야간 파이프라인 안쪽에 뒀는데 [ST-BACKFILL] 로그가 계속 0건이었다.
       //   그 블록은 하루1회 게이트·락·앞단계 예산소진의 영향을 받아 실제로는 거의 도달하지 않는다.
@@ -53320,6 +53346,7 @@ export default {
         }
       } catch (e) { try { await log(env.DB, "WARN", null, "[ST-BACKFILL] 예외: " + (e && e.message)); } catch (e2) {} }
 
+      __prof.mark("social");
       // 0.9555) [V33.109] ★소셜 멀티소스 수집(StockTwits · Reddit)★
       //   전용 예산·간격을 쓰고 실패해도 매매엔 영향이 없다. 실패는 social_health 에 남는다
       //   — '0건' 이 수집실패인지 진짜 0인지 구분할 수 없으면 원인을 영영 못 찾는다.
@@ -53335,6 +53362,7 @@ export default {
         }
       } catch (e) { try { await log(env.DB, "WARN", null, "[SOCIAL] 예외: " + (e && e.message)); } catch (e2) {} }
 
+      __prof.mark("ghost");
       // 0.954) [V33.74] ★유령거래 1회성 정리★ — 사용자 지시("유령 거래 정리해서 실제 수치로 맞춰").
       //   배포 후 크론에서 딱 한 번 돈다(버전 키로 고정). 지우기 전에 R2로 전량 백업한다.
       //   정리하면 US +5.87%→+0.3%대, 원자재 +1.22%→−9%대로 내려간다 — 실제 수치다.
@@ -53369,6 +53397,7 @@ export default {
       /* [V33.422] 0.955) ALT 소급생성(XALPHA·FLOW 표본) 삭제 — 두 모델 퇴역.
          장 마감마다 일봉 캐시를 통째로 읽어 쓰는 위원이 없는 표본을 만들고 있었다. */
 
+      __prof.mark("ledgerAudit");
       // 0.956) [V33.73] ★원장 정합성 자동감사★
       //   runLedgerAudit 는 유령매도(보유초과 매도)·포지션 드리프트를 정확히 잡아내는데
       //   /api/audit 수동 호출에만 걸려 있어, 실제로 CM 17건·US 2건이 몇 주 동안 아무도 모르게
@@ -53420,6 +53449,7 @@ export default {
         }
       } catch (e) { try { await log(env.DB, "WARN", null, "[원장감사] 예외: " + (e && e.message)); } catch (e2) {} }
 
+      __prof.mark("sampleSnap");
       // 0.96) [V33.27] 학습표본 R2 스냅샷 — 트레이너가 D1을 17만 행 훑지 않게 미리 떠 둔다.
       //   장중엔 절대 돌리지 않는다(거래 우선). 장외에 파트 단위로 조금씩 쌓고 12시간마다 갱신.
       try {
@@ -53435,10 +53465,12 @@ export default {
         }
       } catch (e) { try { await log(env.DB, "WARN", null, "[R2] 표본 스냅샷 예외: " + (e && e.message)); } catch (e2) {} }
 
+      __prof.mark("trading");
       // 1) 주식/지수 가격 갱신 + 거래 (가장 무거움)
       try { await runTradingCycle(env); }
       catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] trading cycle fail: " + e.message); } catch (e2) {} }
 
+      __prof.mark("stateR2");
       // 1.05) [V33.515] /api/state R2 사본을 크론이 미리 짓는다 — 최근 15분 안에 화면이 열려 있을 때만 · 사본이 묵었을 때만
       //   [V33.524] 2분마다 · 사본 110초 초과 시(짝수 분마다 새로). 아이솔레이트는 풀 빌드 대신 이 사본 + 시세 끼우기로 갱신한다(요청 경로 __lightRefresh).
       //   ※ V33.523 이 매분으로 올렸다가 되돌렸다 — 크론 실행 시간이 곧 사용량 추정(벽시계×보정)이고 그 추정이 85% 에서 엔진을 세운다.
@@ -53461,6 +53493,7 @@ export default {
             await log(env.DB, "WARN", null, "[STATE-R2] 상태 사본 사전 빌드 실패: " + ((e && e.message) || e)); } } catch (e2) {}
       }
 
+      __prof.mark("backfill");
       // 1.5) [V12.8] 신규 편입 종목 즉시 백필 + [V12.9] 오염 quote 전량 재기록 마이그레이션.
       //   - 백필: quote가 아예 없는 종목은 장 시간과 무관하게 사이클당 60개씩 채움.
       //   - 재기록: 과거 v8 롤오버 버그로 오염된 미국 quote 전체(560개)를 수정된 fetch로
@@ -53531,6 +53564,7 @@ export default {
         }
       } catch (e) {}
 
+      __prof.mark("altSleeve");
       // 2+3) [신규] alt 슬리브 실시간 거래 — 원자재(cm)·미국국채(bdus)·한국국채(bdkr)
       //   기존 "매분 시세갱신 + 16:00 1회 거래"를 실시간(매 사이클 장중 매매)으로 통합.
       //   [예산 안전] 월 사용량이 altEnrichMaxUsageRatio(코어 셧다운 0.90보다 낮음) 초과 시
@@ -53558,6 +53592,7 @@ export default {
         }
       } catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] alt sleeves fail: " + e.message); } catch (e2) {} }
 
+      __prof.mark("fx");
       // 4) 환율 갱신 — [V9.1] 하루 1회(06:30) → 10분 주기 실시간화.
       //    기존엔 06:30 KST 1회만 갱신해 장중 내내 새벽 환율이 그대로 표시됐음(현실과 수 원대 차이).
       //    FX 휴장(주말) 제외, 마지막 갱신 후 10분 경과 시에만 실행 — 10쌍 fetch라 예산 부담 미미.
@@ -53572,6 +53607,7 @@ export default {
         }
       } catch (e) {}
 
+      __prof.mark("macro");
       // 5) 경제지표 갱신 (매일 07:00 KST) — runTradingCycle 내부에도 트리거가 있으나
       //    엔진 disabled 상태에서도 매크로는 갱신되도록 여기서도 안전하게 한 번 더 보장.
       // [V33.34] 정규 창(07:00~08:59) 또는 26시간 넘게 묵었으면 갱신 시도.
@@ -53581,11 +53617,13 @@ export default {
         catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] macro fail: " + e.message); } catch (e2) {} }
       }
 
+      __prof.mark("edgar");
       // 7) SEC EDGAR 공시 스캔 — 미국 프리마켓 직전(UTC 08:00~08:30)에만, 거래 fetch와 분리
       //    최근 8-K/어닝 직후 미국 종목의 신규 진입을 보수화 (변동성 회피)
       try { await fetchSecFilings(env); }
       catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] sec fetch fail: " + e.message); } catch (e2) {} }
 
+      __prof.mark("luxai");
       // 7.5) [LUX-AI] 야간 자가학습 — 하루 1회. 반사실 라벨링 → 감성수집 → 6단 학습.
       //    미학습/표본부족이면 각 함수가 자동 대기(observe)라 거래영향 0.
       try {
@@ -53599,6 +53637,7 @@ export default {
              스캔은 D1 읽기 몇 번이라 값싸고, 결과를 ai_pipe_partial 에 남기면
              ★다음 틱의 진입 게이트가 그걸 보고 연다.★ 그러니 맨 앞에서 해 둔다.
              (6분 스로틀이 있어 매분 스캔하지 않는다.) */
+          __prof.mark("ai.scan");
           try {
             const _dayNow = new Date().toISOString().slice(0, 10);
             const _lastDone = await getState(env.DB, "ai_trained_day", null);
@@ -53612,6 +53651,7 @@ export default {
           //   걸렸다. 풀이 rebuildTarget 미만인 동안에는 '매 cron 틱'마다 짧은 예산(22s)으로 수확을 추가
           //   실행해 몇 시간 내 재구축을 끝낸다. 일일 파이프라인과 별개(게이트 무관), 90s 락으로 틱 겹침
           //   방지, 거래윈도우 밖일 때만(시세 사이클 CPU 경쟁 회피).
+          __prof.mark("ai.harvestCatchup");
           try {
             if (HARVEST.enabled && LUXML.enabled) {
               // [V12.127] ★D1 부하 감소★ 종전엔 COUNT(*)(ml_samples 전체 스캔)가 락 체크보다 먼저 실행돼
@@ -53704,6 +53744,7 @@ export default {
           //   아무리 쌓여도 편입되지 않았다(실측: 미라벨 후보 1,403건 적체, 실거래 기반 표본 0건).
           //   성숙 판정은 함수 내부에서 horizon으로 하므로 자주 돌려도 안전·멱등하다.
           //   10분 락으로 틱 겹침만 막고 장중/장외 무관하게 상시 편입한다.
+          __prof.mark("ai.cflabel");
           try {
             const _cfLock = _num(await getState(env.DB, "cf_label_lock", 0), 0);
             if (Date.now() - _cfLock > 600000) {
@@ -53719,6 +53760,7 @@ export default {
              딥이력 수집과 같은 모양으로 매 틱 잠금 뒤에 조금씩 돈다:
                장외 4분마다 16종목(시간당 ≈240) · 장중 15분마다 4종목(거래 사이클을 방해하지 않게)
              받는 것은 I/O 뿐이다 — 피처·라벨 계산은 Modal 이 한다(워커 CPU 로 학습하지 않는다). */
+          __prof.mark("ai.omniBars");
           try {
             const _obLock = _num(await getState(env.DB, "omnibars_lock", 0), 0);
             const _obOpen = (typeof isTradingWindow === "function") && (isTradingWindow("us") || isTradingWindow("kr"));
@@ -53732,6 +53774,7 @@ export default {
 
           /* [V33.430] ★한국 종목 수급 이력 수집★ — 봉 수집기와 같은 모양(잠금 뒤 조금씩).
              장외 5분마다 12종목 · 장중 20분마다 3종목. I/O 뿐이다(피처는 Modal 이 만든다). */
+          __prof.mark("ai.krFlow");
           try {
             const _ofLock = _num(await getState(env.DB, "omniflow_lock", 0), 0);
             const _ofOpen = (typeof isTradingWindow === "function") && isTradingWindow("kr");
@@ -53743,6 +53786,7 @@ export default {
           } catch (e) { try { await log(env.DB, "ERROR", null, "[OMNI-FLOW] " + ((e && e.message) || e)); } catch (e2) {} }
 
           /* [V33.472] ★한국 종목 뉴스 이력 수집★ — 수급 수집기와 같은 모양(잠금 뒤 조금씩). I/O 뿐이다. */
+          __prof.mark("ai.krNews");
           try {
             const _onLock = _num(await getState(env.DB, "omninews_lock", 0), 0);
             const _onOpen = (typeof isTradingWindow === "function") && isTradingWindow("kr");
@@ -53754,6 +53798,7 @@ export default {
           } catch (e) { try { await log(env.DB, "ERROR", null, "[OMNI-NEWS] " + ((e && e.message) || e)); } catch (e2) {} }
 
           /* [V33.486] ★미국 실적 서프라이즈 이력★ — 뉴스 수집기와 같은 모양(잠금 뒤 하루치씩). I/O 뿐이다. */
+          __prof.mark("ai.earnings");
           try {
             const _oeLock = _num(await getState(env.DB, "omniearn_lock", 0), 0);
             const _oeOpen = (typeof isTradingWindow === "function") && isTradingWindow("us");
@@ -53769,6 +53814,7 @@ export default {
              ★영원히 한 행도 못 잰다★. 전진검증이 운영에서 한 번도 안 쌓이는 구조였다.
              꼬리 파일 덕에 한 종목이 수 ms 라, 수집기처럼 틱마다 조금씩 돌 수 있다.
              장외에 모인 종목들은 같은 결정시각(전 세션 마지막 격자봉)을 공유하므로 동료가 자연히 모인다. */
+          __prof.mark("ai.omniShadow");
           try {
             const _osLock = _num(await getState(env.DB, "omniscore_lock", 0), 0);
             const _osOpen = (typeof isTradingWindow === "function") && (isTradingWindow("us") || isTradingWindow("kr"));
@@ -53787,6 +53833,7 @@ export default {
           //   봉수가 7.5배라 표본 기여도 그만큼 크다 → 커버리지를 올리는 게 표본 증가의 본질.
           //   종전엔 이 수집이 야간 파이프라인 _stg("deephist") 안에만 있어 하루 1회로 제한됐다.
           //   커버리지 90% 미만인 동안엔 장외에 20분 주기로 추가 수집한다(외부 fetch 예산가드 내장).
+          __prof.mark("ai.deephist");
           try {
             const _dhLock = _num(await getState(env.DB, "deephist_lock", 0), 0);
             const _mktOpen3 = (typeof isTradingWindow === "function") && (isTradingWindow("us") || isTradingWindow("kr"));
@@ -53848,6 +53895,7 @@ export default {
           // [V12.125] 내부자거래·실적캘린더 자동 갱신 — 장중 핫패스에서 여기(장 마감 시간대·저우선순위
           //   구간)로 이동. 각자 15분/6h 내부 캐시가 있어 이 블록이 자주 돌아도 실제 외부 fetch는 그
           //   주기로만 발생. 10분 락으로 틱 겹침 방지, 거래윈도우 밖일 때만(시세/평가 CPU 경쟁 회피).
+          __prof.mark("ai.insider");
           try {
             const _ieLock = _num(await getState(env.DB, "insider_earn_lock", 0), 0);
             const _mktOpen2 = (typeof isTradingWindow === "function") && (isTradingWindow("us") || isTradingWindow("kr"));
@@ -53874,6 +53922,7 @@ export default {
           // [V33.48] ★장중 증분 스캔★ — 하루 1회(야간)였던 전종목 스캔을 20분마다 '구간 단위'로
           //   이어 돌린다. 회당 300행 상한이라 D1 전송량은 종전 야간 1회분과 비슷한 수준으로 유지되고,
           //   픽은 계속 갱신된다(사용자 지적: "최근 스캔이 9시로 뜬다").
+          __prof.mark("ai.incScan");
           try {
             // [V33.56] 20분×300행 → 10분×150행. 시간당 읽는 행수는 900 으로 동일한데
             //   픽 갱신 빈도만 2배가 된다 — 부하를 늘리지 않고 신선도만 올리는 교환.
@@ -53905,6 +53954,7 @@ export default {
           const _PIPE_VER = "V33.78-label|f" + LUXML.featVer + "." + LUXML.featNames.length
             + "-flow" + FLOWML.featVer + "-xa" + XALPHA.featVer + "-st" + STACKML.featVer
             + "-memo" + MEMOML.featVer + "-dual" + DUALHEAD.featVer + "-i" + STIN_FEATVER;
+          __prof.mark("ai.pipeline");
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
@@ -54203,19 +54253,21 @@ export default {
         }
       } catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] AI train fail: " + e.message); } catch (e2) {} }
 
+      __prof.mark("subticks");
       // 8) [실시간] 분(分) 내 빠른 포지션 감시 — 남은 시간만큼 sleep 서브틱으로 손절/익절 점검
       try { await runFastWatch(env, __cronStart); }
       catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] fast watch fail: " + e.message); } catch (e2) {} }
 
       // [PAID 가드] 이번 invocation 사용량 누적 — request 1건 + (비sleep경과×보정) CPU 추정
-      try { await tickUsage(env.DB, __cronStart, __usageCalib, __fetchBudget.used || 0); } catch (e) {}
+      __prof.mark("end");
+      try { await tickUsage(env.DB, __cronStart, __usageCalib, __fetchBudget.used || 0, __prof.acc); } catch (e) {}
     })());
   }
 };
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

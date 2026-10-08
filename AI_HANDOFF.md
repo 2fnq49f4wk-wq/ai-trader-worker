@@ -12,6 +12,13 @@
 
 ## Current handoff
 
+- V33.527 (10/08): ★실측 CPU 가 진짜로 한도 쪽이다★ — Cloudflare GraphQL 실측 9,672,465ms(32.2%) = 추정 9,500,538ms. "추정은 실제의 ~9배"(6/16 주석)는 지금은 틀렸다.
+  하루 ~4.5%p → ~10/20 85%(엔진 자동 셧다운). 시간대별(48h): 크론 1회 CPU 0.5~2.3초(×1440/일)가 거의 전부 · 화면 요청은 2~60ms · 23~00Z(한국 개장)에 20초+ CPU·메모리초과 7·6건.
+  - 크론 단계별 활성 시간 측정 추가(`_cronProf`, 31곳) → usage.days[dd].stp. `ui-probe usage` 가 시간대별 + 단계별을 보여준다. ★다음: 몇 시간 쌓인 뒤 상위 단계부터 매매 판단에 영향 없는 것을 줄인다.★
+  - 워치독 헛 GPU 학습 고침: modal_freshness REQUIRED 에 퇴역 dnn 이 남아 나이가 늘 9999 → 6시간마다 학습(10/06~08 전부). 필수 목록 = 워커 externalTrain 키(게이트).
+  - 전진평가 실데이터(4창·110만): 시장중립IC 운영식 .0253(t .83, 최근창 −.039 t −2.89) vs 보정포함 재적합 .0421(t 1.83)·고정200 .0460(t 2.03)·최근730 .0468(t 1.90) — 3/4창 승.
+    그러나 미리 정한 규칙의 '초과정확도 > 0' 을 ★모든 후보(운영 포함)가 못 넘음★(창1 기저율 이동 −17%p) → 규칙대로 운영 그대로. 다음 회차 실험에서 다시 본다.
+
 - V33.526 (10/08): ★부하 구멍 막기 + 리퀴드 메탈 테마★ (사용자: "부하 걸릴 곳 전부 안정적으로 · 설정한 최대 범위 아래에서 · 성능 저하 없이" · "리퀴드 메탈 느낌")
   - 화면이 부르는 /api/* GET 74경로 전수 대조 → 캐시 층 없던 6개(whatif·stock-report·report/monthly·r2-status·llm/instruction·daily-stats)를 SWR 층에. 게이트 check-micro-cache ⑤ 가 새로 생기는 빈틈도 막는다(예외: cfg·build·client-perf·state·omni-structure, 이유 적힘).
   - ★일 시키는 GET★(refresh_shard·refresh_daily_shard·force/refresh/run=1)을 mutationGuard 로 — 바깥에서 주소만으로 외부 시세 긁기·D1 쓰기·캐시 우회를 무한히 시키던 구멍. 화면 버튼(같은 출처)·TRAIN_KEY 는 그대로(check-abuse).

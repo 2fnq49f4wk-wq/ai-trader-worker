@@ -48,6 +48,18 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split("/").pop()
       for (const h of Object.keys(byH).sort()) { const b = byH[h];
         out("hour", h.slice(5, 13) + "Z cpu=" + Math.round(b.cpuMs / 1000) + "s req=" + b.req + " cpu/req=" + Math.round(b.cpuMs / Math.max(1, b.req)) + "ms p50=" + Math.round(b.p50 / 1000) + "ms p99=" + Math.round(b.p99 / 1000) + "ms st=" + JSON.stringify(b.st)); }
     } catch (e) { out("hours_fail", String(e)); }
+    // [V33.527] 워커가 적은 크론 단계별 활성 시간(CPU 대리값) — 오늘(UTC) 큰 순
+    if (WORKER_URL) {
+      try {
+        const u = await (await fetch(WORKER_URL.replace(/\/$/, "") + "/api/usage")).json();
+        const days = (u.usage && u.usage.days) || {};
+        for (const dd of Object.keys(days).sort().slice(-2)) {
+          const st = days[dd].stp || {}, tot = Object.values(st).reduce((a, b) => a + b, 0) || 1;
+          out("steps", dd + "일 합계 " + Math.round(tot / 1000) + "s · " + Object.entries(st).sort((a, b) => b[1] - a[1]).slice(0, 18)
+            .map(([k, v]) => k + " " + Math.round(v / 1000) + "s(" + Math.round(v / tot * 100) + "%)").join(" · "));
+        }
+      } catch (e) { out("steps_fail", String(e)); }
+    }
   }
   out("actual", Object.assign({ mk, script: SCRIPT, from: start.toISOString() }, s, { cpuPctOf30M: +(s.cpuMs / 30000000 * 100).toFixed(2) }));
   if (!s.rows) { out("skip", "행이 없다 — 넣지 않는다(0 을 실측으로 오인하지 않게)"); process.exit(0); }

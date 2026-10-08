@@ -39,5 +39,17 @@ const US = readFileSync(new URL("./usage-sync.mjs", import.meta.url), "utf8");
 chk(/if \(!s\.rows\) \{ out\("skip"/.test(US), "0행이면 넣지 않는다(0 을 실측으로 오인 금지)");
 chk(/scriptName: "\$\{script\}"/.test(U.buildQuery("a", "ai-trader-app", "s", "e")) || /scriptName: "ai-trader-app"/.test(U.buildQuery("a", "ai-trader-app", "s", "e")), "이 워커 스크립트만 센다");
 chk(/실사용량 동기화[\s\S]{0,80}continue-on-error: true[\s\S]{0,400}node tools\/usage-sync\.mjs \|\| true/.test(WD), "워치독: 실패해도 학습 감시를 막지 않는다");
+// [V33.527] 크론 단계별 시간 — 단계 경계마다 합산 · sleep 은 뺀다 · usage 레코드의 일 합계(stp)로만 남긴다(추가 쓰기 0)
+{
+  const realNow = Date.now; let t = 1000; Date.now = () => t;
+  const p = M._cronProf();
+  t += 300; p.mark("a"); t += 500; p.mark("b"); t += 200; p.mark("a"); t += 100; p.mark("end");
+  Date.now = realNow;
+  chk(p.acc.pre === 300 && p.acc.a === 600 && p.acc.b === 200, "단계별 합산(같은 이름은 더한다)", JSON.stringify(p.acc));
+  const marks = (S.match(/__prof\.mark\("[\w.]+"\)/g) || []).length;
+  chk(marks >= 25 && /const __prof = _cronProf\(\);/.test(S) && /tickUsage\(env\.DB, __cronStart, __usageCalib, __fetchBudget\.used \|\| 0, __prof\.acc\)/.test(S),
+    "크론 경계 " + marks + "곳 · 끝에서 usage 기록과 함께 한 번에 쓴다", String(marks));
+  chk(/const d = Math\.max\(0, \(now - p\.t\) - Math\.max\(0, sl - p\.sl\)\);/.test(S), "서브틱 sleep 은 단계 시간에서 뺀다");
+}
 if (fails) { console.log("\n✗ 실측 사용량 계약 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 실측 사용량 계약 통과");
