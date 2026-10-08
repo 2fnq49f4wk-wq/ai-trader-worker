@@ -683,6 +683,19 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     #   본 경로. MIND 의 하이퍼파라미터가 두 곳에 그대로 복사돼 있어, 한쪽만 고치면 조용히
     #   갈라진다(이 저장소가 세션 창·라벨 공급자에서 이미 겪은 그 모양이다).
     #   여기서 한 번 만들고 두 경로가 같은 것을 쓴다.
+    # [V33.514] ★target=ablate 단독 회차가 0초 만에 죽었다★ — "cannot access free variable 'mw'".
+    #   Xn·mw 는 DNN 준비 구간(아래)에서 만들어지는데 단독 회차는 그 전에 돌아간다. 없으면 그 두 줄(A′·A″·A‴)만 빠지고 나머지는 잰다.
+    def _ablate_stage():
+        try:
+            _mw = mw
+        except NameError:
+            _mw = None
+        try:
+            _xn = Xn
+        except NameError:
+            _xn = None
+        return _label_ablation(X, PNL, TS, SYM, MKT, featver, D,
+                               UNIQ=UNIQ, featnames=featnames, Xn=_xn, MW=_mw)
     _PLAN = [
         ("gbdt", lambda: _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ)),
         ("boosters", lambda: _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL, UNIQ)),
@@ -705,8 +718,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                                                 featnames=featnames, cfg=cfg, SYM=SYM)),
         # [V33.380] 라벨 실험대 — ★아무것도 업로드하지 않는다.★ "성능이 안 나온다" 의 원인이
         #   모델인지 라벨인지를 같은 분할·같은 학습기로 재서 숫자로 답한다(_label_ablation 주석).
-        ("ablate", lambda: _label_ablation(X, PNL, TS, SYM, MKT, featver, D,
-                                           UNIQ=UNIQ, featnames=featnames, Xn=Xn, MW=mw)),
+        ("ablate", lambda: _ablate_stage()),
     ]
     _PLAN_BY = dict(_PLAN)
     # Codex V33.349: recover a timed-out tail stage without paying for DNN again.
