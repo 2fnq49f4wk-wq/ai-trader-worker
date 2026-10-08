@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.518";
+const _BUILD_VER = "V33.519";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -11984,6 +11984,11 @@ async function _omFwdRet(R2, sym, hz, tdec, cache) {
   const tl = await _obTailLoad(R2, sym);
   const vt = pick(tl && tl[res]);
   if (vt !== undefined) { if (cache) cache.set(key, tl && tl[res]); return vt; }
+  /* [V33.519] ★꼬리가 결정봉 시각을 이미 덮는데 그 봉이 없으면 전체 파일에도 없다★(꼬리는 전체 파일의 끝부분) — 두 번째 읽기를 건너뛴다.
+     운영(10/08 01:31Z 한국 장중): "봉없음 757 · 색인건너뜀 453 · (예산소진)" — 거래정지·빈 봉 종목마다 꼬리+전체 두 번 읽었다. */
+  const _tb = tl && tl[res];
+  const _decT = sp.bars ? (tdec - OMNI_CONSTS.base) : (tdec - 86400);
+  if (_tb && Array.isArray(_tb.t) && _tb.t.length && _num(_tb.t[0], Infinity) <= _decT) return null;   // 캐시는 안 남긴다(같은 종목의 더 옛 결정이 꼬리만 보고 지나가지 않게)
   /* 꼬리에 결정봉이 없다 — 오래된 결정이다. 전체 파일을 한 번 읽고 기억한다. */
   const full = await _obLoad(R2, res, sym);
   if (cache) cache.set(key, full);

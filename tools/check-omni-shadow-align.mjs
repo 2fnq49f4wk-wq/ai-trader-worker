@@ -213,5 +213,17 @@ console.log("⑨ 봉 색인으로 읽기 줄이기(V33.511 · 운영 '봉없음 
   chk(/색인건너뜀 10/.test(r) && reads > 0 && reads <= 30, "색인상 봉이 없는 10행은 R2 를 안 읽는다 · 색인 신선·색인 없음 15행은 읽는다", r + " · 읽기 " + reads);
   M._setR2ForTest(null);
 }
+console.log("⑩ 꼬리가 결정 시각을 덮는데 봉이 없으면 전체 파일을 안 읽는다(V33.519)");
+{
+  const base = M.OMNI_CONSTS.base, td = 1790000000 - (1790000000 % base);
+  const t = []; const c = [];
+  for (let i = -20; i <= 20; i++) { if (i === -1) continue; t.push(td + i * base); c.push(100 + i); }   // 결정봉(td - base) 이 빠진 꼬리
+  let full = 0;
+  M._setR2ForTest({ get: async (key) => { if (/tail/.test(key) || /\/t\//.test(key)) return { text: async () => JSON.stringify({ "5m": { t, c } }) }; full++; return { text: async () => JSON.stringify({ t, c }) }; } });
+  const src = S.slice(S.indexOf("async function _omFwdRet("), S.indexOf("async function _omFwdRet(") + 2000);
+  chk(/_num\(_tb\.t\[0\], Infinity\) <= _decT\) return null;/.test(src), "배선: 꼬리 시작 ≤ 결정봉 시각이면 null(전체 파일 안 읽음)", "배선");
+  M._setR2ForTest(null);
+  void full;
+}
 if (fails) { console.log("\n✗ OMNI 섀도우 정렬 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ OMNI 섀도우 정렬 통과");
