@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.532";
+const _BUILD_VER = "V33.533";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -22171,9 +22171,9 @@ async function executeSellAlt(DB, sleeve, symbol, pos, sellQty, price, reason, c
   return { pnlPct: pnlPct, cash: cash };
 }
 // 실시간 슬리브 사이클 — 시세 fetch+저장+swing 매매. 거래시간 아니면 스킵.
-async function runAltSleeveCycle(env, key) {
+async function runAltSleeveCycle(env, key, shared) {
   const DB = env.DB;
-  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+  const cfg = (shared && shared.cfg) || migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const sleeve = _altSleeve(key, cfg);
   if (!sleeve) return;
   if (cfg.altRealtime === false) return;
@@ -22182,12 +22182,12 @@ async function runAltSleeveCycle(env, key) {
   if (!_altQuoteWindow(sleeve)) return;
   const _canExec = _altTradeWindow(sleeve);        // 주문은 실제 거래시간에만
   resetFetchBudget(120);
-  let cash = await computeAllCash(DB, cfg);
+  let cash = (shared && shared.cash) || await computeAllCash(DB, cfg);
   if (typeof cash[key] !== "number") cash[key] = (key === "bdkr") ? cfg.initialCashBDKR : (key === "bdus" ? cfg.initialCashBDUS : cfg.initialCashCM);
   const positions = await getPositions(DB, key);
   const swingRules = cfg.swingRules || {};
   let tried = 0, bought = 0, sold = 0, fetchFail = 0;
-  const _aiReadyAlt = await mlAiReadyState(DB);   // [V12.106] AI 가동중이면 규칙엔진 신규매수 차단(청산은 유지)
+  const _aiReadyAlt = (shared && shared.aiReady !== undefined) ? shared.aiReady : await mlAiReadyState(DB);   // [V12.106] AI 가동중이면 규칙엔진 신규매수 차단(청산은 유지)
   const BATCH = 6;
   const fetched = [];
   for (let i = 0; i < sleeve.syms.length; i += BATCH) {
@@ -53619,8 +53619,12 @@ export default {
           } catch (e) {}
         }
         if (_altOk) {
+          /* [V33.533] 세 슬리브가 매분 ★각자★ 설정·현금(5시장 × 원장 조회)·AI 준비를 다시 읽었다(단계 측정: 크론 활성시간의 17%).
+             한 번 읽어 나눠 쓴다 — 현금 객체는 같은 것을 넘겨 슬리브가 쓴 결과가 다음 슬리브에 그대로 보인다(종전과 같은 값). */
+          let _shared = null;
+          try { _shared = { cfg: _acfg, cash: await computeAllCash(env.DB, _acfg), aiReady: await mlAiReadyState(env.DB) }; } catch (e) { _shared = null; }
           for (const _k of ["cm", "bdus", "bdkr"]) {
-            try { await runAltSleeveCycle(env, _k); }
+            try { await runAltSleeveCycle(env, _k, _shared); }
             catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] alt " + _k + " fail: " + e.message); } catch (e2) {} }
           }
         }
@@ -53781,7 +53785,9 @@ export default {
           __prof.mark("ai.cflabel");
           try {
             const _cfLock = _num(await getState(env.DB, "cf_label_lock", 0), 0);
-            if (Date.now() - _cfLock > 600000) {
+            /* [V33.533] 10분 → 30분. 단계 측정(_cronProf, 10/08): 이 단계가 크론 활성시간의 17%(1회 ≈3분).
+               라벨은 학습(하루 2회)에만 쓰인다 — 30분이면 학습 전에 충분히 다 편입된다(매매 판단 영향 0). */
+            if (Date.now() - _cfLock > 1800000) {
               await setState(env.DB, "cf_label_lock", Date.now());
               // [V33.348] 야간 경로와 ★같은 공급자★ 를 쓴다 — 한쪽만 고치면 라벨이 갈린다(B-7).
               const _cfr = await mlLabelCandidates(env.DB, _cfPriceLookup(env.DB), {});
