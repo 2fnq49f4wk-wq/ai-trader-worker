@@ -23,6 +23,9 @@ chk(kf.length === 2 && kf.every((k) => !/(width|height|top|left|margin|padding|b
 chk(/@media \(prefers-reduced-motion: reduce\)[\s\S]*body::before[\s\S]*animation: none !important/.test(body), "움직임 줄이기 설정이면 멈춘다");
 chk(/body::before \{[\s\S]*?pointer-events: none;[\s\S]*?\}/.test(body) && /z-index: -1;/.test(body), "바탕 광택은 클릭 안 받고 본문 아래");
 chk(!/--pos\s*:|--neg\s*:|--green\s*:|--red\s*:/.test(body), "상승/하락 색은 그대로");
+chk(!/repeating-(linear|radial)-gradient/.test(body) && !/background-size:\s*\d+px \d+px/.test(body), "[V33.528] 줄무늬·격자 패턴 없음 — 매끄러운 금속(사용자 지적)");
+chk(/html:not\(\[data-theme="light"\]\) body::after \{ display: none; \}/.test(body) && /#page-nnviz \.nnviz-content::after \{ display: none; \}/.test(body),
+  "옛 가로줄 층(body::after)·두뇌 화면 격자 덮개를 끈다(카드 위에 그려지던 것)");
 const iLm = H.indexOf('<link rel="stylesheet" href="/liquid-metal.css?v=' + V + '">'), iMe = H.indexOf('<link rel="stylesheet" href="/model-evidence.css?v=');
 chk(iLm > iMe && iMe > 0, "index.html 이 다른 스타일 뒤에 같은 판(?v=" + V + ")으로 싣는다", "위치/판 " + [iLm, iMe].join(","));
 if (fails) { console.log("\n✗ 리퀴드 메탈 계약 " + fails + "건 실패"); process.exit(1); }
