@@ -12,6 +12,14 @@
 
 ## Current handoff
 
+- V33.545 (10/11) ★로딩 — 실측 기반 수정(ui-probe speed run 38164512000)★
+  - 실측: /api/commodities 30초 시간초과 4회(콜드 15.8s) · ml-status 콜드 12.2s · pipeline 8.5s · state 1~1.8s(R2 800KB) · 첫 방문 visible 5.3s.
+  - swrJson: R2 사본이 staleMs(1h) 넘어도 24시간 안이면 ★먼저 주고★ 뒤에서 갱신(층 표시 r2old) — 밤새 방문 없던 뒤 첫 화면의 콜드 빌드(73s) 제거.
+  - 원자재·국채 화면: computeAllCash(5개 시장 원장 재계산) → _cashForRead 60초 기억 · 원자재 stale 10분→6시간. 매매·입출금은 그대로 정확값.
+  - GBDT↔OMNI: 위원회 GBDT 질문(오를까)은 미국에서 예측 불가(AUC 0.50) — OMNI-Q(동료 대비)가 예측 가능한 부분을 맡는다(발언 시 하위 절반 차단).
+    미신뢰 GBDT 는 매매 사이클에서 로드조차 안 함(CPU 낭비 없음 · 확인). 한국 GBDT(가중 0.30)는 실전 유지.
+  - 다음: 첫 방문 5.3s 중 큰 덩어리(/api/state 800KB · 클라이언트 긴 작업 1.3s) · kr-halt 버스트 재빌드.
+
 - V33.544 (10/11) ★매매 사이클 I/O 계측 — 신선도 병목(사이클 50~117s → 2분마다 평가)을 재기만★
   - runTradingCycle 의 D1 핸들을 감싸 질의 수·대기 합, fetch 는 모듈에서 한 번 감싸 수·대기 합 → [EVAL-COST] 줄 'IO(사이클 누적) D1 n회 xs · 외부 n회 ys'.
     판단 불변(그대로 넘김). 가설이었던 '단타 모델 매 호출 D1 읽기' 는 틀렸다 — mlScalpLoad 는 이미 5분 기억.

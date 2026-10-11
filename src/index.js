@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.544";
+const _BUILD_VER = "V33.545";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -15116,6 +15116,15 @@ async function computeCashFromTrades(DB, market, cfg) {
 }
 
 // 전체 시장 cash 객체를 trades에서 재구성
+/* [V33.545] 읽기 전용 화면(원자재·국채)용 현금 — 60초 기억. computeAllCash 는 5개 시장 원장을 다시 계산해 D1 이 바쁠 때 15~30초가 걸렸다
+   (운영 측정 10/11: /api/commodities 30초 시간초과 4회). 매매·입출금 경로는 그대로 computeAllCash(정확한 값)를 쓴다. */
+async function _cashForRead(DB, cfg) {
+  const c = globalThis.__cashReadMemo;
+  if (c && Date.now() - c.at < 60000) return c.v;
+  const v = await computeAllCash(DB, cfg);
+  globalThis.__cashReadMemo = { at: Date.now(), v: v };
+  return v;
+}
 async function computeAllCash(DB, cfg) {
   // [V12.128] 5개 시장을 순차 처리하면 시장당 D1 왕복 4회 × 5 = 20회가 직렬로 쌓인다
   //   (deposits/outflows는 시장마다 같은 키를 중복으로 다시 읽었다). 병렬로 돌려 지연을
@@ -27293,12 +27302,16 @@ async function handleRequest(request, env, ctx, _inner) {
           const md = g.customMetadata || {}, bAt = Number(md.at || 0), rAge = Date.now() - bAt;
           /* [V33.445] 옛 판(배포 전) 사본도 ★먼저 주고★ 뒤에서 새 판으로 다시 만든다 — 판이 다르면 버렸더니 배포 직후 첫 방문이
              D1 콜드 빌드를 기다리다 15초 제한에 끊겼다(운영 실측: 배포 직후 [AI 관제실] mode 조회 실패). */
-          if (rAge >= 0 && rAge < staleMs) {
+          /* [V33.545] ★한동안 아무도 안 본 뒤의 첫 방문이 콜드 빌드를 기다리지 않게★ — 사본이 staleMs(보통 1h)를 넘으면 종전엔 버리고
+             D1 콜드 빌드를 기다렸다(운영 실측 10/08: /api/ai-mode 73초 · 밤사이 방문 없음 → 아침 첫 화면이 멈춤).
+             24시간 안의 사본은 ★먼저 주고★ 뒤에서 다시 만든다 — 다음 갱신(수 초 뒤)부터 새 값. 화면이 비거나 멈추는 것보다 낫다. */
+          const HARD_STALE = Math.max(staleMs, 86400000);
+          if (rAge >= 0 && rAge < HARD_STALE) {
             const body = await g.text();
-            const same = md.ver === _BUILD_VER;
-            store[key] = { ts: same ? bAt : 0, str: body };          // L1 워밍(옛 판이면 곧바로 낡은 것으로)
+            const same = md.ver === _BUILD_VER && rAge < staleMs;
+            store[key] = { ts: same ? bAt : 0, str: body };          // L1 워밍(옛 판·오래된 사본이면 곧바로 낡은 것으로)
             if (!same || rAge > freshMs) { const p = refresh(); if (p && ctx && ctx.waitUntil) ctx.waitUntil(p); }
-            return new Response(body, { headers: jh("r2") });
+            return new Response(body, { headers: jh(rAge < staleMs ? "r2" : "r2old") });
           }
         }
       } catch (e) {}
@@ -31752,10 +31765,10 @@ async function handleRequest(request, env, ctx, _inner) {
     if (path === "/api/commodities") {
       // [V12.131] 실측 14.9s — 원자재마다 quote를 순차 getState로 읽고(왕복 N회) computeAllCash까지
       //   직렬로 돌았다. 일괄 조회 + 병렬화 + SWR(가격은 cron이 갱신하므로 15s 신선도면 충분).
-      return await swrJson("commodities", 15000, 600000, async function () {
+      return await swrJson("commodities", 15000, 6 * 3600000, async function () {   // [V33.545] 10분 → 6시간(국채와 같은 이유: 뜸한 방문의 첫 요청이 차가운 빌드를 기다렸다)
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const [cash, rawPos, qmap] = await Promise.all([
-        computeAllCash(env.DB, cfg),
+        _cashForRead(env.DB, cfg),   // [V33.545] 읽기 전용 — 60초 기억
         getPositions(env.DB, "cm"),
         getStates(env.DB, COMMODITIES.map(function (c) { return "quote:" + c.symbol; }))
       ]);
@@ -31796,7 +31809,7 @@ async function handleRequest(request, env, ctx, _inner) {
          30초 안 = 사본 · 10분 안 = 사본을 먼저 주고 뒤에서 새로(외부 시세 보충도 뒤에서). */
       return await swrJson("bonds", 30000, 6 * 3600000, async function () {   // [V33.454] 10분 → 6시간: 뜸한 방문의 첫 요청이 차가운 빌드(16초+)를 기다렸다
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
-      const cash = await computeAllCash(env.DB, cfg);
+      const cash = await _cashForRead(env.DB, cfg);   // [V33.545] 읽기 전용 — 60초 기억
       // [FIX] 장 마감 중엔 runAltSleeveCycle이 시세를 안 받아 watchlist가 빔(TLT만 marketContext가 채움).
       //   저장된 quote 중 누락/오래된(15분+) 게 있으면 온디맨드 1배치로 보충(예산 안전: 캐시 5분).
       let onDemand = {};

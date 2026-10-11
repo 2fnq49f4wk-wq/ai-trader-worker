@@ -77,8 +77,13 @@ console.log("⑦ 캐시 층 표시(V33.521) — 운영 측정이 느린 원인�
   const SRC = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
   const a = SRC.indexOf("const swrJson = async function"), b = SRC.indexOf("// === [개선] /api/state 통합 응답 ===", a);
   const f = a > 0 && b > a ? SRC.slice(a, b) : "";
-  chk(f && !/headers: jhdr \}/.test(f) && ["l1", "l1s", "l2", "r2"].every((l) => f.includes('jh("' + l + '")')) && /jh\(_lay\)/.test(f) && /_lay = "build"/.test(f),
+  chk(f && !/headers: jhdr \}/.test(f) && ["l1", "l1s", "l2"].every((l) => f.includes('jh("' + l + '")')) && /jh\(rAge < staleMs \? "r2" : "r2old"\)/.test(f) && /jh\(_lay\)/.test(f) && /_lay = "build"/.test(f),
     "swrJson 응답은 전부 x-lux-c(l1·l1s·l2·r2·build·join) 를 단다", "층 표시가 빠진 swrJson 응답이 있다");
+  // [V33.545] 한동안 방문이 없던 뒤 첫 요청이 콜드 빌드를 기다리지 않는다(24시간 안 R2 사본을 먼저 주고 뒤에서 갱신) · 읽기 화면 현금 60초 기억
+  chk(/const HARD_STALE = Math\.max\(staleMs, 86400000\)/.test(f) && /rAge < HARD_STALE/.test(f),
+    "swrJson: 24시간 안 사본은 먼저 준다(밤새 방문 없던 뒤 첫 화면이 73초 기다리던 것)", "★오래된 사본을 버리고 콜드 빌드를 기다린다★");
+  chk(/_cashForRead\(env\.DB, cfg\),   \/\/ \[V33\.545\]/.test(SRC) && /async function _cashForRead/.test(SRC),
+    "원자재 화면: 현금은 60초 기억(5개 시장 원장 재계산이 30초 시간초과를 냈다)", "★읽기 화면이 매번 원장 전체를 다시 계산한다★");
   const sa = SRC.indexOf("const FRESH_MS = 12000, USABLE_MS = 150000;"), sb = SRC.indexOf("[V12.126] ★500 에러 방지★", sa);
   const st = sa > 0 && sb > sa ? SRC.slice(sa, sb) : "";
   chk(st && ["l1", "l1s", "l2", "r2", "build"].every((l) => st.includes('"x-lux-c": "' + l + '"')),
