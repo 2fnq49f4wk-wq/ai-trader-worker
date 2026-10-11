@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.553";
+const _BUILD_VER = "V33.555";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -10715,6 +10715,7 @@ const OMNIBARS = {
   perRunOff: 16,                                   // 장외 한 번에 도는 종목 수(종목당 요청 2회)
   perRunIn: 4,                                     // 장중 — 거래 사이클을 방해하지 않게 작게
   gapOffMs: 4 * 60000,
+  gapWeekendMs: 30 * 60000,                        // [V33.555] 주말 — 새 봉이 없다(운영 tail: 주말 크론 CPU 의 ~28% 가 이 수집)
   gapInMs: 15 * 60000
 };
 
@@ -10947,7 +10948,7 @@ async function omniBarsCollect(DB, opts) {
   const index = _ixr.index;
   const ixBefore = Object.keys(index.s).length;
   const nowMs = Date.now();
-  let done = 0, fetched = 0, skipped = 0, failed = 0, added = 0, tails = 0, adopted = 0, prevFail = 0, frSet = 0;
+  let done = 0, fetched = 0, skipped = 0, failed = 0, added = 0, tails = 0, adopted = 0, prevFail = 0, frSet = 0, noNew = 0;
   /* [V33.507] ★채점을 기다리는 종목부터★ — OMNI 전진채점(30분·60분·1일)은 결정 ★뒤★ 5분봉이 꼬리에 들어와야 잰다.
      커서는 유니버스를 차례로 돌아 장외 한 바퀴 ≈4시간 · 장중엔 시간당 16종목이라, 결정(10:30·13:30 ET · 10:00·13:00 KST)
      직후의 봉이 그날 안에 거의 안 들어왔다(운영 10/07 04시: 30m 139 · 60m 136 정지 · 1d·5d 만 증가).
@@ -10992,6 +10993,14 @@ async function omniBarsCollect(DB, opts) {
         failed++; ent[res] = Object.assign({}, meta || {}, { err: nowMs, bad: "spacing", g: fresh.g || null }); continue;
       }
       fetched++;
+      /* [V33.555] ★새 봉이 없으면 옛 파일을 열지 않는다★ — 운영 tail(주말 10/11): 봉 수집 회차가 CPU 332ms/회(주말 크론 CPU 의 ~28%).
+         받은 봉의 마지막 시각이 색인의 마지막 시각보다 새롭지 않으면(주말·휴장·거래정지) 수 MB 파일 읽기·합치기·쓰기를 건너뛰고 '받았다' 만 적는다. */
+      //   마지막 봉의 ★종가·거래량까지★ 같아야 건너뛴다 — 장중에 받은 미완성 봉이 장 마감 뒤 확정값으로 바뀌는 경우는 다시 쓴다.
+      const _fi = fresh.t.length - 1, _fLast = _num(fresh.t[_fi], 0);
+      if (curVer && meta && _num(meta.last, 0) > 0 && _fLast > 0 && _fLast <= _num(meta.last, 0)
+          && meta.lc != null && fresh.c[_fi] === meta.lc && fresh.v[_fi] === meta.lv) {
+        ent[res] = Object.assign({}, meta, { upd: nowMs }); noNew++; continue;
+      }
       /* [V33.427] 색인이 아니라 ★파일★ 에 묻는다 — 색인이 그 종목을 잊었어도 쌓은 봉은 남긴다. */
       const pv = await _obPrevFor(R2, res, sym, meta);
       if (!pv.ok) { prevFail++; failed++; continue; }              // 못 읽었으면 ★덮어쓰지 않는다★
@@ -11006,7 +11015,8 @@ async function omniBarsCollect(DB, opts) {
       tparts[res] = merged;
       added += Math.max(0, merged.t.length - before);
       ent[res] = { n: merged.t.length, first: merged.t[0], last: merged.t[merged.t.length - 1], upd: nowMs,
-                   v: OMNIBARS.ver[res], g: fresh.g || null };
+                   v: OMNIBARS.ver[res], g: fresh.g || null,
+                   lc: merged.c[merged.c.length - 1], lv: merged.v[merged.v.length - 1] };   // [V33.555] 마지막 봉 지문(새 봉 없음 판정)
     }
     /* [V33.427] ★꼬리 파일★ — 섀도우 채점은 이것만 읽는다(수 MB 전체 파일을 안 읽는다). */
     if (tparts["5m"] || tparts["1d"]) { if (await _obTailPut(R2, sym, tparts, ent.m, nowMs)) tails++; }
@@ -11030,7 +11040,7 @@ async function omniBarsCollect(DB, opts) {
   try { await setState(DB, "omnibars_cursor", { i: idx, at: nowMs }); } catch (e) {}
   const nSym = Object.keys(index.s).length;
   let n5 = 0, n1 = 0; for (const s in index.s) { if (index.s[s]["5m"] && index.s[s]["5m"].n) n5++; if (index.s[s]["1d"] && index.s[s]["1d"].n) n1++; }
-  return "[OMNI-BARS] " + done + "종목" + (prio.length ? "(채점대기 우선 " + prio.length + (frSet ? " · 수익 미리 " + frSet : "") + ")" : "") + " · 받음 " + fetched + " · 꼬리 " + tails + " · 신선해서 건너뜀 " + skipped + " · 실패 " + failed +
+  return "[OMNI-BARS] " + done + "종목" + (prio.length ? "(채점대기 우선 " + prio.length + (frSet ? " · 수익 미리 " + frSet : "") + ")" : "") + " · 받음 " + fetched + (noNew ? "(새 봉 없음 " + noNew + " — 파일 안 엶)" : "") + " · 꼬리 " + tails + " · 신선해서 건너뜀 " + skipped + " · 실패 " + failed +
          (prevFail ? "(옛파일 못읽음 " + prevFail + " — 안 덮음)" : "") +
          (adopted ? " · 색인에 없던 파일 되살림 " + adopted : "") + " · 색인 " + ixBefore + "→" + Object.keys(index.s).length +
          " · 새 봉 +" + added + " · 커버 5분봉 " + n5 + "/" + uni.length + " · 일봉 " + n1 + "/" + uni.length +
@@ -54126,7 +54136,9 @@ export default {
           try {
             const _obLock = _num(await getState(env.DB, "omnibars_lock", 0), 0);
             const _obOpen = (typeof isTradingWindow === "function") && (isTradingWindow("us") || isTradingWindow("kr"));
-            const _obGap = _obOpen ? OMNIBARS.gapInMs : OMNIBARS.gapOffMs;
+            // [V33.555] 주말(토 · 일 22시Z 전 — 한국 월요일 장 전)엔 새 봉이 없다 — 30분 간격(채점 대기 우선 몫은 그대로 돈다)
+            const _obD = new Date(), _obWkd = _obD.getUTCDay() === 6 || (_obD.getUTCDay() === 0 && _obD.getUTCHours() < 22);
+            const _obGap = _obOpen ? OMNIBARS.gapInMs : (_obWkd ? OMNIBARS.gapWeekendMs : OMNIBARS.gapOffMs);
             if (Date.now() - _obLock > _obGap) {
               await setState(env.DB, "omnibars_lock", Date.now());
               const _obr = await omniBarsCollect(env.DB, {});
@@ -54289,7 +54301,10 @@ export default {
             // [V33.56] 20분×300행 → 10분×150행. 시간당 읽는 행수는 900 으로 동일한데
             //   픽 갱신 빈도만 2배가 된다 — 부하를 늘리지 않고 신선도만 올리는 교환.
             const _isLock = _num(await getState(env.DB, "ai_incrscan_lock", 0), 0);
-            if (Date.now() - _isLock > 10 * 60000) {
+            /* [V33.555] 주말(토 · 일 22시Z 전)엔 일봉이 안 바뀐다 — 같은 피처로 같은 픽을 10분마다 다시 매기던 것(운영 tail 205ms/회) → 60분.
+               실적·수급 수집기는 주말에도 과거 이력을 채우는 일이 있어 그대로 둔다. */
+            const _isD = new Date(), _isWkd = _isD.getUTCDay() === 6 || (_isD.getUTCDay() === 0 && _isD.getUTCHours() < 22);
+            if (Date.now() - _isLock > (_isWkd ? 60 : 10) * 60000) {
               await setState(env.DB, "ai_incrscan_lock", Date.now());
               const _ir = await mlUniverseScanNightly(env.DB, { slice: 150 });
               if (_ir) await log(env.DB, "INFO", null, _ir);

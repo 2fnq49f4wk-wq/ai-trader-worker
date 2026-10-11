@@ -202,6 +202,12 @@ console.log("\n⑥ [V33.427] ★못 읽었으면 쓰지 않는다 · 색인은 �
   chk(/if \(!pv\.ok\) \{ prevFail\+\+; failed\+\+; continue; \}/.test(col) && /merged\.ver = OMNIBARS\.ver\[res\];/.test(col),
       "옛 파일을 못 읽으면 그 해상도는 건너뛴다 · 파일에 판을 적는다",
       "옛 파일 읽기 실패 뒤에도 덮어쓴다 — 또는 파일이 판을 모른다");
+  // [V33.555] 새 봉이 없으면 옛 파일을 안 연다 — 단 마지막 봉의 종가·거래량까지 같을 때만(장중 미완성 봉이 확정값으로 바뀌면 다시 쓴다)
+  chk(/_fLast <= _num\(meta\.last, 0\)\s*\n\s*&& meta\.lc != null && fresh\.c\[_fi\] === meta\.lc && fresh\.v\[_fi\] === meta\.lv\) \{\s*\n\s*ent\[res\] = Object\.assign\(\{\}, meta, \{ upd: nowMs \}\); noNew\+\+; continue;/.test(col)
+      && /lc: merged\.c\[merged\.c\.length - 1\], lv: merged\.v\[merged\.v\.length - 1\]/.test(col)
+      && col.indexOf("noNew++") < col.indexOf("await _obPrevFor("),
+      "새 봉 없음(마지막 봉 시각·종가·거래량 같음)이면 옛 파일 읽기·합치기·쓰기를 건너뛴다", "★새 봉이 없어도 수 MB 파일을 다시 쓴다 — 또는 미완성 봉을 확정값으로 못 바꾼다★");
+  chk(/gapWeekendMs: 30 \* 60000/.test(S) && /_obWkd \? OMNIBARS\.gapWeekendMs : OMNIBARS\.gapOffMs/.test(S), "주말엔 수집 간격 30분");
   chk(/const _ixr = await _obIndexLoad\(env\.DB\);\s*\n\s*if \(!_ixr\.ok\) return Response\.json\(\{ error: "색인 읽기 실패/.test(S) && /universe: \(DEFAULT_US/.test(S),
       "학습기용 색인 엔드포인트는 실패를 503 으로 말하고 유니버스를 같이 준다",
       "★엔드포인트가 D1 오류를 빈 색인으로 돌려준다 — 학습기가 조용히 0종목으로 돈다★");
