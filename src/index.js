@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.540";
+const _BUILD_VER = "V33.541";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -42578,7 +42578,17 @@ async function mlMindLoad(DB) {
      FM 은 GPU 완전수렴(시드 6 · 검증 51,800행 · 유효 3,555)에서도 47.9% 였다 —
      같은 표본에서 트리는 53.5~54.2%(IC t 2.5~4.7). 모델 형태가 이 과제에 안 맞는 것이지
      자원이 부족했던 게 아니다. 자리는 그대로 두고 내용물을 바꾼다. */
-  try { const m = await getState(DB, "mind_model", null);
+  try {
+    /* [V33.541] ★위원장 모델을 매번 통째로 파싱하지 않는다★ — 운영 계측 10/10·11: mind_model 파싱이 하루 0.7~1.1GB(크론 파싱의 51~69%).
+       호출처 8곳이 사이클마다 부른다. 작은 질의(updated_ts·길이)로 바뀌었는지만 보고, 같으면 아이솔레이트에 기억한 객체를 준다
+       (새 업로드는 updated_ts 가 바뀌어 다음 읽기에 바로 반영). 호출처는 읽기만 한다(변경 없음 — 확인함). */
+    let m = null;
+    try {
+      const meta = await DB.prepare("SELECT updated_ts AS u, length(v) AS n FROM state WHERE k = 'mind_model'").first();
+      const c = globalThis.__mindMemo;
+      if (meta && meta.u != null && c && c.u === meta.u && c.n === meta.n) m = c.m;   // 시각이 없는 행은 기억하지 않는다
+      else if (meta) { m = await getState(DB, "mind_model", null); globalThis.__mindMemo = { u: meta.u, n: meta.n, m: m }; }
+    } catch (e2) { m = await getState(DB, "mind_model", null); }
     if (!m || m.featVer !== LUXML.featVer || !m.meta) return null;
     if (!m.fm && !(Array.isArray(m.trees) && m.trees.length)) return null;
     return m; } catch (e) { return null; }
