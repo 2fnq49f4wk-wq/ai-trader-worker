@@ -116,6 +116,10 @@ console.log("⑦ 캐시 층 표시(V33.521) — 운영 측정이 느린 원인�
       "지도: 툴팁은 올렸을 때만 만든다 · 같은 값은 DOM 에 다시 쓰지 않는다", "★렌더마다 전 타일 툴팁·속성을 다시 쓴다★");
     chk(/if \(!init\) market\.scrollTop = 0;/.test(WU) && /luxMarketView\(market\.getAttribute\('data-market-view'\) \|\| 'all', true\)/.test(WU),
       "시장 탭: 처음 붙일 때 scrollTop 을 쓰지 않는다", "★부팅 중 scrollTop 쓰기★");
+    // [V33.552] 멈춤 기록 비컨은 화면 크기를 미리 읽어 둔 값으로 보낸다 · 부팅 첫 showPage 는 scrollTop 을 안 읽는다
+    const sd = H.slice(H.indexOf("function send(force) {"), H.indexOf("document.addEventListener('scroll'", H.indexOf("function send(force) {")));
+    chk(sd && /vp: vpStr,/.test(sd) && !/innerWidth/.test(sd) && /if\(pg && showPage\.__shown\) requestAnimationFrame/.test(H),
+      "비컨·첫 페이지 표시가 부팅 중 레이아웃을 강제하지 않는다", "★send 가 innerWidth 를 읽거나 첫 showPage 가 scrollTop 을 읽는다★");
     const rw = H.slice(H.indexOf("function railWidthVar(){"), H.indexOf("function railGate("));
     chk(/RAIL\.__ro = new ResizeObserver/.test(rw) && /else if \(shown\) w = Math\.round\(RAIL\.el\.getBoundingClientRect/.test(rw),
       "레일 폭: ResizeObserver(없는 브라우저만 직접 잼)", "★레일 폭을 부팅 중 직접 잰다★");
