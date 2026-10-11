@@ -40,3 +40,21 @@ for (const [k, u] of Object.entries(KRC)) {
     out("kr " + k, { http: r.status, len: txt.length, snip });
   } catch (e) { out("kr " + k, { err: String(e.message || e).slice(0, 80) }); }
 }
+// [V33.561] 네이버 국채 JSON 필드 · 한국 물가 후보
+try {
+  const r = await fetch("https://m.stock.naver.com/front-api/marketIndex/productDetail?category=bond&reutersCode=KR3YT%3DRR", { headers: UA });
+  const j = await r.json(); const res = j.result || {};
+  const flat = {}; for (const [k, v] of Object.entries(res)) if (v == null || typeof v !== "object") flat[k] = v;
+  out("naver bond3y fields", flat);
+} catch (e) { out("naver bond3y fields err", String(e.message || e)); }
+for (const [k, u] of Object.entries({
+  bok_main: "https://www.bok.or.kr/portal/main/main.do",
+  naver_econ: "https://m.stock.naver.com/front-api/marketIndex/economicIndicator?countryCode=KOR",
+  kosis_cpi_json: "https://kosis.kr/openapi/statisticsData.do?method=getList&format=json&jsonVD=Y&userStatsId=&orgId=101&tblId=DT_1J22003",
+  index_go_cpi: "https://www.index.go.kr/unity/potal/main/EachDtlPageDetail.do?idx_cd=1060"
+})) {
+  try {
+    const r = await fetch(u, { headers: UA, signal: AbortSignal.timeout(15000) }); const t = await r.text();
+    const i = t.indexOf("소비자물가"); out("krcpi " + k, { http: r.status, len: t.length, at: i, near: i >= 0 ? t.slice(Math.max(0, i - 120), i + 260).replace(/\s+/g, " ") : t.slice(0, 200).replace(/\s+/g, " ") });
+  } catch (e) { out("krcpi " + k, { err: String(e.message || e).slice(0, 80) }); }
+}
