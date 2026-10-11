@@ -12,6 +12,14 @@
 
 ## Current handoff
 
+- V33.553 (10/11) ★CPU 낭비 — 묶어 읽기가 위원장 모델 나무까지 풀었다★
+  - 운영 파싱 계측(ui-probe usage): 11일 파싱 1,958MB 중 mind_model 1,245MB(64%). 평일 하루 ~72MB, 오늘(탐침 몰아치기) ~520MB.
+    원인: getStates([... "mind_model" ...]) 6곳(상태 화면 빌드 = 화면 열려 있으면 크론 매분 · 자가진단 · 자동 재학습 판정 · ai-ask · 진단)이
+    source·trainedAt·featVer 만 쓰면서 나무 전체를 받아 JSON.parse 했다.
+  - 고침: getStates 가 mind_model 은 D1(SQLite json_remove '$.trees' · json_valid 가드)에서 나무를 떼고 받는다. 전체가 필요한 mlMindLoad 는 getState 그대로.
+    게이트 check-cron-cpu(실제 node:sqlite 로 머리만·다른 키 그대로·깨진 행에도 안 죽음·로더는 전체).
+  - 주말 기준선(시장 닫힘): 크론 60회/시 · 14~30s/시(회당 230~450ms). wrangler tail(25분) 결과로 무엇이 도는지 확인 중.
+
 - V33.552 (10/11) ★부팅 강제 레이아웃 마지막 둘 — 멈춤 비컨 innerWidth · 첫 showPage scrollTop★
   - V33.549 운영 확인(run 38168776081): 지도 렌더 881→15ms · 재방문 정보 보임 2,118→1,457ms · 세 번째 1,939→1,297ms.
   - 남은 상위: send(멈춤 비컨) 206~249ms 가 전부 `innerWidth` 한 줄(부팅 중 굳음을 보낼 때 문서 전체 레이아웃) → <head> 에서 한 번 + resize 때만 읽는다.

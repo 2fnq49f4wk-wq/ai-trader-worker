@@ -77,5 +77,27 @@ try {
   chk((S3.match(/Object\.assign\(\{\}, USAGE_LIMITS_DEFAULT/g) || []).length === 1, "사용량 한도 읽는 곳은 전부 _usageLimits 를 거친다");
 }
 
+// [V33.553] 묶어 읽기(getStates)는 mind_model 의 나무를 D1 에서 떼고 받는다(파싱 바이트 51~64% 의 주범) — 실제 SQLite 로 돌린다
+{
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE state (k TEXT PRIMARY KEY, v TEXT, updated_ts INTEGER)");
+  const big = { source: "external", trainedAt: 5, featVer: 9, trees: Array.from({ length: 300 }, (_, i) => [i, i + 1, i + 2]) };
+  db.prepare("INSERT INTO state VALUES (?,?,?)").run("mind_model", JSON.stringify(big), 1);
+  db.prepare("INSERT INTO state VALUES (?,?,?)").run("gbdt_trust", JSON.stringify({ trusted: true, trees: [1] }), 1);
+  db.prepare("INSERT INTO state VALUES (?,?,?)").run("bad", "not json", 1);
+  const D1 = { prepare(sql) { const st = db.prepare(sql); let a = []; const o = { bind(...x) { a = x; return o; }, async all() { return { results: st.all(...a) }; }, async first() { return st.get(...a); } }; return o; } };
+  const r = await M.getStates(D1, ["mind_model", "gbdt_trust", "bad"]);
+  chk(r.mind_model && r.mind_model.trees === undefined && r.mind_model.trainedAt === 5 && r.mind_model.featVer === 9 && r.gbdt_trust && r.gbdt_trust.trees.length === 1,
+    "getStates: mind_model 은 머리만(나무는 D1 이 뗀다) · 다른 키는 그대로", JSON.stringify(r).slice(0, 200));
+  db.prepare("INSERT OR REPLACE INTO state VALUES (?,?,?)").run("mind_model", "{broken", 1);
+  const r2 = await M.getStates(D1, ["mind_model", "gbdt_trust"]);
+  chk(r2.gbdt_trust && r2.gbdt_trust.trusted === true, "깨진 mind_model 행이 있어도 묶어 읽기 전체가 죽지 않는다(json_valid)");
+  const S4 = (await import("node:fs")).readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  // 나무가 필요한 위원장 로더는 묶어 읽기를 쓰지 않는다
+  const ml = S4.slice(S4.indexOf("async function mlMindLoad(DB)"), S4.indexOf("async function mlMindLoad(DB)") + 1500);
+  chk(/getState\(DB, "mind_model", null\)/.test(ml) && !/getStates\(/.test(ml), "위원장 로더(mlMindLoad)는 전체를 읽는다(getState)");
+}
+
 if (fails) { console.log("\n✗ 크론 CPU 절감 계약 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 크론 CPU 절감 계약 통과");
