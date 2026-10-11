@@ -29,7 +29,10 @@ chk(pk.length === M.OMNIQ.maxPicks && pk[0].day === String(20250000 + 300 - M.OM
 const blk = S.slice(S.indexOf("/* [V33.535] ★OMNI-Q 하위 절반 차단★"), S.indexOf("let _spillMult = 1;"));
 chk(/!heldSymbols\.has\(symbol\)/.test(blk) && /sr\.strategy === "scalp"/.test(blk) && /incBlock\("OMNIQ_LOW"\)/.test(blk), "배선: 신규 추세·스냅만 · 단타 남김 · 사유 OMNIQ_LOW");
 chk(/omniqSpeakOf\(g\)/.test(S.slice(S.indexOf('path === "/api/omni-q" && request.method === "POST"'), S.indexOf('path === "/api/omni-q-picks"'))), "업로드: 발언을 워커가 세 관문에서 다시 판정");
-chk(/_run_omniq\(\)/.test(MT) && /if upload and not \(ksec or flow or news or rally or split or wf or earn\):\s*\n\s*_run_omniq\(\)/.test(MT), "정기 회차(업로드)마다 OMNI-Q 갱신 → 라이브 장부가 쌓인다");
+const GW = readFileSync(new URL("../.github/workflows/omniq-gha.yml", import.meta.url), "utf8");
+chk(/cron: "20 7 \* \* 1-5"/.test(GW) && /cron: "20 21 \* \* 1-5"/.test(GW) && /omniq_gha\.py/.test(GW) && /secrets\.TRAIN_KEY/.test(GW),
+  "정기 OMNI-Q = GitHub Actions(무료) 평일 두 번 → 라이브 장부가 매일 쌓인다");
+chk(!/if upload and not \(ksec or flow or news or rally or split or wf or earn\):\s*\n\s*_run_omniq\(\)/.test(MT), "Modal 정기 회차에서는 OMNI-Q 를 돌리지 않는다(크레딧 절약)");
 
 // ── 학습기 관문 수학(실제 파이썬) ──
 const py = `

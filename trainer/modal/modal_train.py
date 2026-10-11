@@ -4587,9 +4587,8 @@ if _OMNI_IMAGE is not None:
             print("   ⚠️ OMNI 실패:", repr(e))
             traceback.print_exc()
         print("   · OMNI 끝 %.0fs" % (time.time() - t0))
-        # [V33.535] 정기 회차(업로드 · 실험 아님)마다 OMNI-Q 도 갱신 — 라이브 장부(③)가 매일 쌓이게
-        if upload and not (ksec or flow or news or rally or split or wf or earn):
-            _run_omniq()
+        # [V33.535→V33.542] OMNI-Q 정기 갱신은 GitHub Actions(.github/workflows/omniq-gha.yml · 공개 저장소 무료 · 무제한)로 옮겼다.
+        #   Modal 은 월 크레딧 한도라 여기서는 수동(omniq=1/2)일 때만 돈다.
 
 
 @app.local_entrypoint()

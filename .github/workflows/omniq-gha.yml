@@ -1,0 +1,44 @@
+# [V33.542] OMNI-Q 학습 — GitHub Actions(공개 저장소: 무료 · 분 무제한). Modal(월 크레딧 한도) 대신.
+#   하루 두 번(한국 장 마감 뒤 07:20Z · 미국 장 마감 뒤 21:20Z) — 라이브 장부(관문 ③)가 매일 쌓인다.
+name: OMNI-Q 학습 (GitHub Actions · 무료)
+on:
+  schedule:
+    - cron: "20 7 * * 1-5"
+    - cron: "20 21 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      lab:
+        description: '연구 회차(DoubleEnsemble vs LightGBM · 순위 1·20일 · 상승확률 · 위험 전진평가)'
+        type: boolean
+        default: false
+concurrency: { group: omniq-gha, cancel-in-progress: false }
+jobs:
+  train:
+    # 공개 저장소일 때만(표준 러너 분 무제한·무료). 비공개로 바뀌면 월 2,000분 한도를 태우지 않게 아예 돌지 않는다(check-ci-budget).
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install --quiet numpy pandas==2.2.3 scipy==1.14.1 lightgbm requests
+      - name: 워커 주소
+        id: url
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$WORKER_URL" ]; then echo "url=${WORKER_URL%/}" >> "$GITHUB_OUTPUT"; exit 0; fi
+          NAME=$(grep -m1 '^name' wrangler.toml | sed 's/.*= *"//; s/"//')
+          SUB=$(curl -sS --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" | python3 -c 'import sys,json;print((json.load(sys.stdin).get("result") or {}).get("subdomain") or "")')
+          echo "url=https://$NAME.$SUB.workers.dev" >> "$GITHUB_OUTPUT"
+      - name: OMNI-Q 학습·관문·업로드
+        env:
+          BASE_URL: ${{ steps.url.outputs.url }}
+          TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
+          OMNIQ_LAB: ${{ inputs.lab && '1' || '0' }}
+        run: python trainer/modal/omniq_gha.py 2>&1 | grep -v RuntimeWarning | tee omniq.log
+      - if: always()
+        run: '{ echo "### OMNI-Q"; echo; echo "\`\`\`"; grep -E "OMNI-Q|피처|일봉|끝" omniq.log | head -60; echo "\`\`\`"; } >> "$GITHUB_STEP_SUMMARY"'

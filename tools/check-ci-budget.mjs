@@ -64,6 +64,14 @@ for (const f of files) {
   if (!scheduled) continue;
   // 주석을 걷어내고 본다 — 설명 주석에 적은 예시를 실제 호출로 세면 안 된다.
   const code = txt.split("\n").filter(l => !/^\s*#/.test(l)).join("\n");
+  /* [V33.542] ★러너에서 직접 계산하는 공개 저장소 전용 작업★ 은 Modal 학습을 기다리는 게 아니다(Modal 호출 없음).
+     공개 저장소의 표준 러너는 분 제한이 없다 — 단 비공개로 바뀌면 2,000분 한도를 태우므로 작업이 공개일 때만 돌아야 한다. */
+  if (!/modal\s+run|modal_train\.py/.test(code)) {
+    const pub = /if:\s*\$\{\{\s*!github\.event\.repository\.private\s*\}\}/.test(code);
+    console.log(`     ${f} — 예약 있음 · Modal 호출 없음(러너 직접 계산) · 공개 전용 ${pub ? "예" : "★아니오★"}`);
+    ok(pub, `${f} 는 러너에서 직접 계산한다 — 공개 저장소일 때만 돈다(비공개면 월 2,000분 한도)`);
+    continue;
+  }
   const blocking = [...code.matchAll(/modal\s+run\s+(?!--detach)(?:--(?!detach)\S+\s+)*\S*modal_train\.py/g)];
   console.log(`     ${f} — 예약 있음 · 블로킹 학습 호출 ${blocking.length}건`);
   ok(blocking.length === 0,

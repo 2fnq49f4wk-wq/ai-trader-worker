@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.541";
+const _BUILD_VER = "V33.542";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -45335,6 +45335,14 @@ async function mlGBDTTrainNightly(DB) {
       if (_live && _live.source === "external" && _live.featVer === LUXML.featVer && _live.trainedAt &&
           (Date.now() - _live.trainedAt) < 36 * 3600000 && _gt && _gt.trusted) {
         return "[GBDT] 외부GPU 학습모델 신뢰 중(valAcc " + ((_num(_live.valAcc, 0)) * 100).toFixed(1) + "%) — 야간 자가학습 생략(외부 소유)";
+      }
+      /* [V33.542] ★외부 학습기가 살아 있으면(36h 안 · 같은 판) 신뢰 여부와 무관하게 워커 자가학습을 건너뛴다(MIND 와 같은 규칙)★
+         사용자 10/11: "CPU 로 학습하는 것 외부로". 외부(Modal)는 같은 모델을 더 많은 표본·더 긴 시간으로 학습한다 — 워커판은
+         CPU 예산 안 미수렴이라 외부판보다 나을 근거가 없고, 실측상 워커판도 신뢰 관문을 못 넘었다(위원회 gbdt 미투표 · 10/08).
+         외부가 끊기면(36h 넘게 갱신 없음) 종전대로 워커가 학습한다 — 공백 없음. */
+      if (_live && _live.source === "external" && _live.featVer === LUXML.featVer && _live.trainedAt &&
+          (Date.now() - _live.trainedAt) < 36 * 3600000) {
+        return "[GBDT] 외부 학습기 가동 중(최근 " + Math.round((Date.now() - _live.trainedAt) / 3600000) + "h 전 · 신뢰 " + (_gt && _gt.trusted ? "예" : "대기") + ") — 워커 자가학습 생략(CPU 절약)";
       }
     } catch (e) {}
     /* ══ [V33.410] ★배포된 모델의 '지금' 신뢰도를 잰다 — 재기만 한다★ ═══════════════════
