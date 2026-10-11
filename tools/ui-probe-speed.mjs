@@ -65,6 +65,22 @@ for (const visit of ["first", "repeat", "third"]) {
       self.set(k, (self.get(k) || 0) + (dt[i] || 0) / 1000);
     }
     out(visit + "_cpu", [...self.entries()].filter(([k]) => !/^\((idle|program|garbage collector)\)/.test(k)).sort((a, b2) => b2[1] - a[1]).slice(0, 14).map(([k, v]) => k + " " + Math.round(v) + "ms"));
+    // [V33.549] 상위 함수 안에서 ★어느 줄★ 이 시간을 먹나(positionTicks) — 문서 원문 줄을 같이 찍는다(강제 레이아웃은 그 줄의 자기 시간으로 잡힌다)
+    try {
+      const top = [...self.entries()].filter(([k]) => !/^\(/.test(k)).sort((a, b2) => b2[1] - a[1]).slice(0, 2).map(([k]) => k);
+      if (!globalThis.__docSrc) globalThis.__docSrc = (await (await fetch(BASE + "/")).text()).split("\n");
+      for (const k of top) {
+        const lt = new Map();
+        for (const n of profile.nodes) {
+          const f = n.callFrame, u = (f.url || "").replace(BASE, "").replace(/\?.*$/, "").slice(-28);
+          if ((f.functionName || "(anon)") + " " + u + ":" + (f.lineNumber + 1) !== k) continue;
+          for (const pt of (n.positionTicks || [])) lt.set(pt.line, (lt.get(pt.line) || 0) + pt.ticks);
+        }
+        const isDoc = / \/:\d+$/.test(k);
+        out(visit + "_lines", k + " → " + JSON.stringify([...lt.entries()].sort((a, b2) => b2[1] - a[1]).slice(0, 6)
+          .map(([ln, tk]) => tk + "t L" + ln + (isDoc ? " " + String(globalThis.__docSrc[ln - 1] || "").trim().slice(0, 90) : ""))));
+      }
+    } catch (e) { out(visit + "_lines", "failed " + String(e).slice(0, 80)); }
     out(visit + "_cpu_sys", [...self.entries()].filter(([k]) => /^\((program|garbage collector)\)/.test(k)).map(([k, v]) => k.split(" ")[0] + " " + Math.round(v) + "ms"));
   } catch (e) { out(visit + "_cpu", "profile failed " + String(e).slice(0, 80)); }
   out(visit + "_longtasks", await p.evaluate(() => { const t = window.__lt || {}; return { n: t.n, sumMs: Math.round(t.sum || 0), maxMs: Math.round(t.max || 0), over200: t.over200 }; }));
