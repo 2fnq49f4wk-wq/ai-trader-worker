@@ -21,6 +21,11 @@ chk(M.omniqBlocks(st, "A", now) && !M.omniqBlocks(st, "B", now) && !M.omniqBlock
 chk(!M.omniqBlocks(Object.assign({}, st, { trainedAt: now - 6 * 86400000 }), "A", now), "5일 넘은 점수로는 막지 않는다");
 chk(!M.omniqBlocks(Object.assign({}, st, { speak: true, gate: G(true, true, false) }), "A", now), "speak 표시가 있어도 관문 ③ 미달이면 막지 않는다");
 chk(!M.omniqBlocks(Object.assign({}, st, { speak: false }), "A", now) && !M.omniqBlocks(null, "A", now), "섀도우(발언 안 함)·점수 없음 → 무동작");
+// [V33.543] 20일 머리 — 자기 관문(gate20) 셋 다 통과일 때만 heads.r20 하위 절반을 막는다
+const st20 = { speak: false, gate: G(true, true, false), speak20: true, gate20: G(true, true, true), trainedAt: now - 3600000, scores: { A: 0.9 }, heads: { r20: { A: 0.3, B: 0.7 } } };
+chk(M.omniqBlocks(st20, "A", now) && !M.omniqBlocks(st20, "B", now), "20일 머리 발언 중이면 20일 하위 절반만 막는다(5일 머리 섀도우여도)");
+chk(!M.omniqBlocks(Object.assign({}, st20, { gate20: G(true, true, false) }), "A", now), "20일 머리도 ③ 미달이면 막지 않는다");
+chk(/omniq_picks20:/.test(S) && /url\.searchParams\.get\("h"\) === "20"/.test(S), "20일 머리 장부 · 학습기 채점용 조회(h=20)");
 let r = M.omniqPicksAppend([], "20261007", ["A", "B"], now);
 r = M.omniqPicksAppend(r.picks, "20261007", ["X"], now + 1);
 chk(!r.added && r.picks.length === 1 && r.picks[0].top.join() === "A,B", "같은 날 장부는 덮어쓰지 않는다");

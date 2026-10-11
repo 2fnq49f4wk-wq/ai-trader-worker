@@ -34,6 +34,7 @@ ZOOS_Q = ("qlib158", "academic", "alpha101")   # [반복 2] alpha101 추가 — 
 #   학습기 두 종: LightGBM(Qlib 기본) vs DoubleEnsemble(Qlib 벤치마크 상위 — 표본 재가중 SR + 피처 선택 FS 로 하위 모델을 쌓는다, Zhang et al. 2020 ICDM).
 #   ★미리 등록(데이터 보기 전)★: DE 는 두 시장 모두에서 ① 하한이 LGB 보다 ≥0.002 높고 ② 를 통과할 때만 5일 머리 학습기로 채택(LEARNER_5D).
 HEADS_RANK = (1, 5, 20)
+H20 = 20                    # [V33.543] 두 번째 발언 머리 지평
 LEARNER_5D = "lgb"          # 연구 회차(OMNIQ_LAB=1) 결과로만 바꾼다
 DE_K = 4                    # DoubleEnsemble 하위 모델 수
 DE_SR_BINS, DE_FS_BINS = 10, 5
@@ -281,14 +282,14 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 tdays += list(te)
             return sc, tdays
 
-        def judge(sc, tdays, lab_rank, fwd_vals, tag):
+        def judge(sc, tdays, lab_rank, fwd_vals, tag, step=H):
             fx, fx0 = [], []
             for sp in splits:
                 te = [d for d in days[sp.test] if d in set(tdays)]
                 if not te:
                     continue
-                xs = decile_excess(sc, fwd_vals, te, COST_RT[mk], band=BAND)
-                xs0 = decile_excess(sc, fwd_vals, te, COST_RT[mk])
+                xs = decile_excess(sc, fwd_vals, te, COST_RT[mk], band=BAND, step=step)   # 지평만큼 쉬고 갈아탄다(겹침 없음)
+                xs0 = decile_excess(sc, fwd_vals, te, COST_RT[mk], step=step)
                 fx.append(round(float(np.mean(xs)), 5) if xs else None)
                 fx0.append(round(float(np.mean(xs0)), 5) if xs0 else None)
             b = beat_rate(sc, lab_rank, tdays)
@@ -301,6 +302,12 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         LAB = _os.environ.get("OMNIQ_LAB") == "1"
         scores, test_all = cv(y, LEARNER_5D)
         br, fold_x, fold_x0, g2, pos, need = judge(scores, test_all, y, fwdv, "5일 · " + LEARNER_5D)
+        # [V33.543] ★두 번째 발언 머리 — 20일 순위★(연구 회차 10/11: 미국 ① 53.3% t 12.9 · 한국 54.0% t 18.0 · ② 4/4). 관문 ①②③ 동일 · 20일마다 갈아탐.
+        f20 = (C.shift(-(H20 + 1)) / C.shift(-1) - 1.0)
+        y20 = f20.rank(axis=1, pct=True).values
+        s20, t20 = cv(y20)
+        br20, fx20, _, g2_20, pos20, need20 = judge(s20, t20, y20, f20.values, "20일 순위(발언 머리 2)", step=H20)
+        g1_20 = gate1(br20)
         lab_rep = {}
         if LAB:
             # (연구) DoubleEnsemble vs LightGBM — 미리 등록한 채택 규칙의 재료
@@ -308,7 +315,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             bde, fde, _, g2de, _, _ = judge(sde, tde, y, fwdv, "5일 · DoubleEnsemble")
             lab_rep["de"] = {"lb": bde["lb"], "t": bde["t"], "g2": g2de, "folds": fde, "lgbLb": br["lb"]}
             # (연구) 순위 머리 1·20일
-            for Hh in (1, 20):
+            for Hh in (1,):   # 20일은 위에서 매 회차 잰다
                 fh = (C.shift(-(Hh + 1)) / C.shift(-1) - 1.0)
                 yh = fh.rank(axis=1, pct=True).values
                 sh, th = cv(yh)
@@ -391,10 +398,28 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 log("      ⚠️ [OMNI-Q %s] 장부 읽기 실패: %r — ③ 미달로 둔다" % (mk, e))
         log("      [OMNI-Q %s] ③ 라이브 장부 채점 날 %d · 승률 %s · 하한 %s (필요 %d일·하한>50%%) → %s" % (mk, g3["days"], g3["mu"], g3["lb"], G3_MIN_DAYS, "통과" if g3["ok"] else "미달"))
         speak = bool(g1 and g2 and g3["ok"])
+        # [V33.543] 20일 머리 — 오늘 상위 10%(장부) · ③ 은 픽 뒤 21거래일이 지나야 채점된다(장부 h=20 · 덮어쓰기 금지)
+        top20, g3_20 = [], {"days": 0, "mu": None, "lb": None, "ok": False}
+        r20 = extra.get("r20") or {}
+        if r20:
+            k20 = max(1, int(round(len(r20) * Q)))
+            top20 = [s_ for s_, _ in sorted(r20.items(), key=lambda kv: -kv[1])[:k20]]
+        if req is not None:
+            try:
+                r = req.get(BASE + "/api/omni-q-picks", params={"mkt": mk, "h": "20"}, headers=HDR, timeout=60)
+                r.raise_for_status()
+                g3_20 = gate3(r.json().get("picks") or [], C, y20, {str(k2): i for i, k2 in enumerate(C.index)})
+            except Exception as e:  # noqa: BLE001
+                log("      ⚠️ [OMNI-Q %s] 20일 장부 읽기 실패: %r — ③ 미달로 둔다" % (mk, e))
+        speak20 = bool(g1_20 and g2_20 and g3_20["ok"])
+        log("      [OMNI-Q %s · 20일] ③ 장부 채점 날 %d · 하한 %s → %s · 발언 %s" % (mk, g3_20["days"], g3_20["lb"], "통과" if g3_20["ok"] else "미달", "가능" if speak20 else "불가(섀도우)"))
         body = {"mkt": mk, "day": day, "h": H, "q": Q, "trainedAt": int(time.time() * 1000), "nFeat": len(names), "n": len(sc),
                 "scores": sc, "top": top, "heads": extra, "learner": LEARNER_5D, "lab": lab_rep or None,
                 "gate": {"g1": dict(br, ok=g1, needT=G1_T), "g2": {"folds": fold_x, "foldsFullSwap": fold_x0, "band": BAND, "pos": pos, "need": need, "ok": g2},
-                         "g3": dict(g3, needDays=G3_MIN_DAYS), "speak": speak}}
+                         "g3": dict(g3, needDays=G3_MIN_DAYS), "speak": speak},
+                "top20": top20,
+                "gate20": {"g1": dict(br20, ok=g1_20, needT=G1_T), "g2": {"folds": fx20, "band": BAND, "step": H20, "pos": pos20, "need": need20, "ok": g2_20},
+                           "g3": dict(g3_20, needDays=G3_MIN_DAYS), "speak": speak20}}
         out[mk] = body["gate"]
         log("      [OMNI-Q %s] 오늘(%s) %d종목 채점 · 상위 %d · 발언 %s (%.0fs)" % (mk, day, len(sc), len(top), "가능" if speak else "불가(섀도우)", time.time() - t0))
         if req is not None:

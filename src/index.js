@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.542";
+const _BUILD_VER = "V33.543";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -12916,10 +12916,14 @@ function omniqSpeakOf(g) {
   return !!(g && g.g1 && g.g1.ok === true && g.g2 && g.g2.ok === true && g.g3 && g.g3.ok === true);
 }
 function omniqBlocks(st, symbol, nowMs) {
-  if (!st || st.speak !== true || !omniqSpeakOf(st.gate)) return false;
+  if (!st) return false;
   if (!(nowMs - _num(st.trainedAt, 0) <= OMNIQ.maxAgeMs)) return false;   // 낡은 점수로 막지 않는다
-  const v = st.scores ? st.scores[symbol] : undefined;
-  return typeof v === "number" && isFinite(v) && v < OMNIQ.lowPct;          // 점수 없는 종목은 막지 않는다
+  const low = function (map) { const v = map ? map[symbol] : undefined; return typeof v === "number" && isFinite(v) && v < OMNIQ.lowPct; };
+  // 5일 머리 — 관문 ①②③ 통과로 발언 중일 때만
+  if (st.speak === true && omniqSpeakOf(st.gate) && low(st.scores)) return true;
+  // [V33.543] 20일 머리 — 자기 관문(gate20) ①②③ 을 따로 통과해 발언 중일 때만(점수는 heads.r20)
+  if (st.speak20 === true && omniqSpeakOf(st.gate20) && low(st.heads && st.heads.r20)) return true;
+  return false;                                                             // 점수 없는 종목은 막지 않는다
 }
 function omniqPicksAppend(picks, day, top, nowMs) {
   const arr = Array.isArray(picks) ? picks.slice() : [];
@@ -29121,7 +29125,10 @@ async function handleRequest(request, env, ctx, _inner) {
                    nFeat: _num(body.nFeat, 0), n: nS, scores: body.scores, gate: g, speak: omniqSpeakOf(g), ts: Date.now(),
                    /* [V33.539] 복합 머리(순위 1·20일 · 상승확률 · 위험) — 기록·관측용. 발언(매매 영향)은 5일 머리(scores)만 */
                    heads: (body.heads && typeof body.heads === "object") ? body.heads : null,
-                   learner: String(body.learner || "lgb"), lab: (body.lab && typeof body.lab === "object") ? body.lab : null };
+                   learner: String(body.learner || "lgb"), lab: (body.lab && typeof body.lab === "object") ? body.lab : null,
+                   /* [V33.543] 두 번째 발언 머리(20일) — 자기 관문을 워커가 다시 판정 */
+                   gate20: (body.gate20 && typeof body.gate20 === "object") ? body.gate20 : null,
+                   speak20: omniqSpeakOf(body.gate20) };
       await setState(env.DB, "omniq:" + mk, st);
       // 라이브 장부 — 엄격 읽기(못 읽으면 쓰지 않는다: 빈 배열로 덮으면 전진 기록이 사라진다)
       let picksN = null, added = false;
@@ -29130,6 +29137,14 @@ async function handleRequest(request, env, ctx, _inner) {
         const r = omniqPicksAppend(cur, st.day, body.top, Date.now());
         if (r.added) await setState(env.DB, "omniq_picks:" + mk, r.picks);
         picksN = r.picks.length; added = r.added;
+      } catch (e) {}
+      // [V33.543] 20일 머리 장부 — 같은 규칙(엄격 읽기 · 같은 날 덮어쓰기 금지)
+      try {
+        if (Array.isArray(body.top20) && body.top20.length) {
+          const cur20 = await getState(env.DB, "omniq_picks20:" + mk, [], true);
+          const r20 = omniqPicksAppend(cur20, st.day, body.top20, Date.now());
+          if (r20.added) await setState(env.DB, "omniq_picks20:" + mk, r20.picks);
+        }
       } catch (e) {}
       try { await log(env.DB, "INFO", null, "[OMNI-Q] " + mk.toUpperCase() + " " + st.day + " " + nS + "종목 · ①" + (g.g1 && g.g1.ok ? "통과" : "미달") +
         " ②" + (g.g2 && g.g2.ok ? "통과" : "미달") + " ③" + (g.g3 && g.g3.ok ? "통과" : "미달(장부 " + _num(g.g3 && g.g3.days, 0) + "일)") +
@@ -29162,8 +29177,9 @@ async function handleRequest(request, env, ctx, _inner) {
     if (path === "/api/omni-q-picks") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const mk = url.searchParams.get("mkt") === "kr" ? "kr" : "us";
+      const _pk = url.searchParams.get("h") === "20" ? "omniq_picks20:" : "omniq_picks:";   // [V33.543] 20일 머리 장부
       let picks;
-      try { picks = await getState(env.DB, "omniq_picks:" + mk, [], true); }
+      try { picks = await getState(env.DB, _pk + mk, [], true); }
       catch (e) { return Response.json({ error: "장부 읽기 실패(D1)" }, { status: 503, headers: cors }); }
       return Response.json({ ok: true, mkt: mk, picks: picks }, { headers: cors });
     }
@@ -29178,7 +29194,8 @@ async function handleRequest(request, env, ctx, _inner) {
           if (q) {
             const _top = Object.keys(q.scores || {}).sort(function (a, b) { return q.scores[b] - q.scores[a]; }).slice(0, 10);
             omniQ[_m] = { day: q.day, trainedAt: q.trainedAt, n: q.n, nFeat: q.nFeat, h: q.h, gate: q.gate, speak: q.speak, top10: _top,
-                          learner: q.learner || "lgb", heads: q.heads ? Object.keys(q.heads) : [], lab: q.lab || null };
+                          learner: q.learner || "lgb", heads: q.heads ? Object.keys(q.heads) : [], lab: q.lab || null,
+                          gate20: q.gate20 || null, speak20: !!q.speak20 };
           }
         } catch (e) {}
       }
