@@ -1,0 +1,47 @@
+# [V33.548] 위원회 학습 단계 — GitHub Actions 러너(공개 저장소: 무료 · 분 무제한 · 4코어 16GB · GPU 없음).
+#   Modal(월 크레딧 한도) 대신 CPU 단계를 여기서 돌릴 수 있는지 먼저 실험대(ablate · 업로드 없음)로 확인한다.
+#   ablate = 다구간 전진평가(V33.522 · 부스터/GBDT 학습 방식 P·R·F·RB·RL) — 미리 정한 규칙을 넘는 후보가 있을 때만 운영 반영.
+name: 위원회 학습 (GitHub Actions · 무료)
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: '단계(ablate=실험대·업로드 없음 / gbdt / boosters / markets / mind / memo / scalp)'
+        type: choice
+        default: ablate
+        options: [ablate, gbdt, boosters, markets, mind, memo, scalp]
+concurrency: { group: train-gha, cancel-in-progress: false }
+jobs:
+  train:
+    # 공개 저장소일 때만(표준 러너 분 무제한·무료). 비공개면 월 2,000분 한도를 태우지 않게 돌지 않는다(check-ci-budget).
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: |
+          pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet modal numpy requests xgboost lightgbm catboost
+      - name: 워커 주소
+        id: url
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$WORKER_URL" ]; then echo "url=${WORKER_URL%/}" >> "$GITHUB_OUTPUT"; exit 0; fi
+          NAME=$(grep -m1 '^name' wrangler.toml | sed 's/.*= *"//; s/"//')
+          SUB=$(curl -sS --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" | python3 -c 'import sys,json;print((json.load(sys.stdin).get("result") or {}).get("subdomain") or "")')
+          echo "url=https://$NAME.$SUB.workers.dev" >> "$GITHUB_OUTPUT"
+      - name: 학습 단계
+        env:
+          BASE_URL: ${{ steps.url.outputs.url }}
+          TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
+          TRAIN_TARGET: ${{ inputs.target }}
+        run: |
+          free -g | head -2
+          python -u trainer/modal/train_gha.py 2>&1 | grep -v RuntimeWarning | tee train.log
+      - if: always()
+        run: '{ echo "### 위원회 학습 ${{ inputs.target }}"; echo; echo "\`\`\`"; grep -E "다구간|채택|규칙|창|후보|끝|예외|표본" train.log | head -80; echo "\`\`\`"; } >> "$GITHUB_STEP_SUMMARY"'

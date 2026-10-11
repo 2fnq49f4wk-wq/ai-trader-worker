@@ -12,6 +12,14 @@
 
 ## Current handoff
 
+- V33.548 (10/11) ★위원회 학습 단계를 GitHub Actions(무료)에서 — 첫 대상: 다구간 전진평가(ablate · 업로드 없음)★
+  - trainer/modal/train_gha.py: train_job 을 .local() 로 그대로 부른다(Modal 클라우드 호출 없음 · modal.Dict 없으면 기본값 물러섬 확인).
+    GPU 없음 → all·dnn 거절. .github/workflows/train-gha.yml(수동 · 공개 저장소만 · 120분 · torch CPU).
+  - GBDT 판단(사용자 조건부 지시): OMNI 가 GBDT 의 질문(오를까)에서 더 낫지 않다(OMNI-Q 상승확률 AUC 미국 0.500) → 합치지 않고 GBDT 를 올린다.
+    근거 있는 손잡이 = 학습 방식(조기중단 6~16그루·보정구간 제외가 실력을 버림 · 실험대 블록t 4.08 vs 0.44). V33.522 의 미리 정한 규칙
+    (시장중립IC 창평균 > 운영식 · 3/4창 승 · IC(pnl)·스프레드 ≥ 운영식 · 자기 t ≥ 1.65 · 초과 > 0)을 넘는 후보만 운영 반영.
+  - 다음: train-gha target=ablate 결과 → 규칙 충족 후보가 있으면 GBDT·부스터 학습에 반영. 메모리(16GB)·시간(120분) 실측도 같이 본다.
+
 - V33.547 (10/11) ★로딩·낭비 — kr-halt 매 요청 D1 쓰기 · state 중복 필드 · 클라이언트 긴 작업 계측★
   - /api/kr-halt: GET 마다 krhalt:state 를 되썼다(빌드 ~1s · 버스트 17회). 쓸 이유(날 바뀜·문턱 넘김·새 발동·직전 관측 60초 묵음)가 있을 때만 쓴다.
     지수 두 개도 한 번에 읽는다(getStates). 지속 판정 창(3분)보다 짧은 1분 주기라 판정 불변(check-kr-halt 통과).

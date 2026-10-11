@@ -1,0 +1,20 @@
+"""[V33.548] 위원회 학습 단계(train_job)를 GitHub Actions 러너(공개 저장소 → 무료 · 분 무제한 · 4코어 16GB)에서 돌린다.
+사용자 10/11: "학습을 클라우드플레어·유료 말고 무료로 외부에서". Modal 은 월 $30 크레딧(사용량 한도)이라 무제한 무료가 아니다.
+train_job 을 ★그대로★ 부른다(.local — Modal 클라우드 호출 없음): 표본 수집·학습·신뢰 관문·업로드가 Modal 회차와 같은 코드다.
+modal.Dict(단계 실측 저장소)는 인증이 없어 열리지 않는다 → train_job 이 이미 '없으면 기본값' 으로 물러선다.
+환경: BASE_URL, TRAIN_KEY, TRAIN_TARGET(단계 이름 · 기본 ablate — 아무것도 올리지 않는 실험대)."""
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+
+import modal_train as mt  # noqa: E402
+
+target = os.environ.get("TRAIN_TARGET") or "ablate"
+if target in ("all", "dnn"):
+    raise SystemExit("GitHub Actions 러너엔 GPU 가 없다 — all·dnn 은 Modal 에서만(단계 이름을 고르라)")
+fn = mt.train_job
+run = getattr(fn, "local", None)
+res = run(target=target) if callable(run) else fn(target=target)
+print("   · train_gha 끝:", res)
