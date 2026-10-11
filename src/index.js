@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.558";
+const _BUILD_VER = "V33.559";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8368,7 +8368,9 @@ async function fetchBatchQuotes(symbols, opts) {
     const codeMap = {};
     for (const s of krSyms) codeMap[s.split(".")[0]] = s;
     const codes = Object.keys(codeMap);
-    const NB = 60;
+    /* [V33.559] 60 → 500: 러너 실측(10/11 ui-probe naver · probe-batch-limits): 네이버 실시간은 한 요청에 446종목(한국 전 종목)을
+       245ms 에 전부 돌려준다(20:540ms · 60:159ms · 446:245ms · 누락 0). 8번 → 1번(외부 요청·지연 감소). URL ≈ 3.2KB. */
+    const NB = 500;
     const nslices = [];
     for (let i = 0; i < codes.length; i += NB) nslices.push(codes.slice(i, i + NB));
     await Promise.all(nslices.map(async function(sl){
@@ -32857,6 +32859,26 @@ async function handleRequest(request, env, ctx, _inner) {
       }
     }
 
+    /* [V33.559] ★워커(Cloudflare)에서 본 야후 spark 묶음 한도★ — 러너(Azure)는 야후가 429 로 막아 못 잰다. 학습키 전용 · 읽기만.
+       묶음 크기마다 v7/v8 spark 로 유니버스 앞 n 종목을 보내 돌려받은 종목 수·지연·HTTP 를 준다(SPARK_CHUNK 를 정하는 근거). */
+    if (path === "/api/batch-limits") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const syms = (DEFAULT_US || []).filter(function (s0) { return s0.indexOf(".") < 0; });
+      const res = [];
+      for (const pth of SPARK_PATHS) {
+        for (const n of [20, 30, 50, 80, 120]) {
+          const ch = syms.slice(0, n), t0 = Date.now();
+          try {
+            const r = await fetch("https://query1.finance.yahoo.com/" + pth + "?symbols=" + encodeURIComponent(ch.join(",")) + "&range=5d&interval=1d",
+              { headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15" }, signal: AbortSignal.timeout(8000) });
+            let got = 0;
+            if (r.ok) { try { got = Object.keys(parseSparkQuotes(await r.json(), ch)).length; } catch (e) {} } else { try { await r.text(); } catch (e) {} }
+            res.push({ path: pth, sent: n, http: r.status, got: got, ms: Date.now() - t0 });
+          } catch (e) { res.push({ path: pth, sent: n, err: String((e && e.message) || e).slice(0, 60), ms: Date.now() - t0 }); }
+        }
+      }
+      return Response.json({ ok: true, spark: res, sparkChunk: SPARK_CHUNK, nqChunk: NQ_CHUNK }, { headers: cors });
+    }
     if (path === "/api/naver-chart-test" && request.method === "POST") {
       const out = {};
       const code = "005930";

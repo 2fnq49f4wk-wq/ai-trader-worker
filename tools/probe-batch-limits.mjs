@@ -54,3 +54,12 @@ for (const path of ["v7/finance/spark", "v8/finance/spark"]) {
     await new Promise((z) => setTimeout(z, 600));
   }
 }
+// [V33.559] 워커(Cloudflare)에서 본 야후 spark 한도 — 러너 IP 는 야후가 429 로 막는다
+if (process.env.WORKER_URL && process.env.TRAIN_KEY) {
+  try {
+    const r = await fetch(process.env.WORKER_URL.replace(/\/$/, "") + "/api/batch-limits", { headers: { "x-train-key": process.env.TRAIN_KEY } });
+    const j = await r.json();
+    for (const x of (j.spark || [])) out("worker spark", x);
+    out("worker chunks", { sparkChunk: j.sparkChunk, nqChunk: j.nqChunk });
+  } catch (e) { out("worker err", String(e.message || e)); }
+}

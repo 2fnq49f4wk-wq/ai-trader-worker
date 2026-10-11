@@ -232,6 +232,9 @@ jobs:
 
       - name: 네이버 뉴스 깊이
         if: inputs.naver
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
         run: |
           node tools/probe-naver-news.mjs || true
           node tools/probe-yahoo.mjs || true
