@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.555";
+const _BUILD_VER = "V33.556";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -53263,9 +53263,13 @@ async function mlLabelCandidates(DB, priceLookup, opts) {
     try { await DB.prepare("DELETE FROM ml_candidates WHERE featver < ?").bind(LUXML.featVer).run(); } catch (e) {}
     const maxAgeMs = ((opts && opts.maxHorizon) || 20) * 86400000;
     const now = Date.now();
+    /* [V33.556] ★익은 후보만 읽는다★ — 종전엔 가장 오래된 미라벨 3,000행을 feat(행당 수 KB)까지 통째로 받아 대부분 '미성숙' 으로 버렸다
+       (30분마다 · 운영 tail: 이 단계 1회 CPU ~700ms · 벽시계 225초). 성숙 판정(아래 _calDays: ceil(h×7/5)+1 일)을 SQL 로 먼저 건다 —
+       정수 지평이면 (h×7+4)/5 가 같은 올림이다. 아래 JS 판정은 그대로 둔다(이중 안전). */
     const rows = await DB.prepare(
-      "SELECT id, market, symbol, strategy, feat, entry_price, stop_pct, horizon, ts FROM ml_candidates WHERE labeled = 0 AND featver = ? ORDER BY ts ASC LIMIT 3000"
-    ).bind(LUXML.featVer).all();
+      "SELECT id, market, symbol, strategy, feat, entry_price, stop_pct, horizon, ts FROM ml_candidates WHERE labeled = 0 AND featver = ? AND ts <= ? " +
+      "AND ts + ((CAST((MAX(1, COALESCE(NULLIF(horizon, 0), 5)) * 7 + 4) / 5 AS INTEGER) + 1) * 86400000) <= ? ORDER BY ts ASC LIMIT 3000"
+    ).bind(LUXML.featVer, now - 3 * 86400000, now).all();   // ts <= now−3일: 어떤 지평도 3일(ceil(1×7/5)+1) 전엔 안 익는다 — 색인 범위를 탄다
     const cands = (rows && rows.results) ? rows.results : [];
     let labeled = 0, skipped = 0, purged = 0, deduped = 0;
     const delStmts = [];

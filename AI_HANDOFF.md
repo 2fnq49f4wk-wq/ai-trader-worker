@@ -12,6 +12,11 @@
 
 ## Current handoff
 
+- V33.556 (10/11) ★반사실 라벨(ai.cflabel) — 익은 후보만 읽는다★
+  - 운영 tail: 이 단계 1회 CPU ~700ms(주말 최대 크론 818ms) · 벽시계 225초 · 30분마다. 원인: 미라벨 3,000행을 feat(행당 수 KB)까지 받아 대부분 '미성숙' 으로 버림.
+  - SQL 에 성숙식(ts + (ceil(h×7/5)+1)일 ≤ now)과 색인 범위(ts ≤ now−3일)를 건다. JS 판정은 이중 안전으로 남김.
+    게이트 check-cron-cpu: SQL 식 = JS 판정(지평 0~20·null × 나이 0~40일, 실제 node:sqlite · 불일치 0).
+
 - V33.555 (10/11) ★주말 CPU 낭비 — wrangler tail 실측(25분 · 크론 25회 · 시장 닫힘)★
   - 실측: 크론 평균 237ms · 중앙 96ms · 기저(아무것도 안 함) 42~97ms. 회귀(OLS): ai.omniBars 332ms×5회 · ai.incScan 205ms×3 · stateR2 159ms×2 ·
     krFlow·krNews·earnings 각 73ms×4. 실측 시간대별 CPU(주말) 14~30s/시.

@@ -99,5 +99,26 @@ try {
   chk(/getState\(DB, "mind_model", null\)/.test(ml) && !/getStates\(/.test(ml), "위원장 로더(mlMindLoad)는 전체를 읽는다(getState)");
 }
 
+// [V33.556] 반사실 라벨: 익은 후보만 SQL 로 읽는다 — SQL 성숙식이 JS 판정(_calDays)과 ★모든 지평·나이에서 같은지★ 실제 SQLite 로
+{
+  const S5 = (await import("node:fs")).readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const f = S5.slice(S5.indexOf("async function mlLabelCandidates("), S5.indexOf("async function mlLabelCandidates(") + 4000);
+  const m = /"AND (ts \+ \(\(CAST[^"]+) <= \? ORDER BY ts ASC LIMIT 3000"/.exec(f);
+  chk(!!m && /\.bind\(LUXML\.featVer, now - 3 \* 86400000, now\)\.all\(\)/.test(f) && /if \(now - c\.ts < _due\) \{ skipped\+\+; continue; \}/.test(f), "반사실 라벨: 성숙 조건을 SQL 에 건다(JS 판정은 이중 안전으로 남김)");
+  if (m) {
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(":memory:"); db.exec("CREATE TABLE ml_candidates (ts INTEGER, horizon INTEGER)");
+    const now = 1e12, D = 86400000, calDays = (h) => Math.ceil(Math.max(1, h) * 7 / 5) + 1;
+    let bad = 0;
+    for (const h of [0, 1, 2, 3, 4, 5, 7, 10, 15, 20, null]) for (let age = 0; age <= 40; age += 0.25) {
+      db.exec("DELETE FROM ml_candidates"); const ts = Math.round(now - age * D);
+      db.prepare("INSERT INTO ml_candidates VALUES (?,?)").run(ts, h);
+      const sq = db.prepare("SELECT COUNT(*) n FROM ml_candidates WHERE " + m[1] + " <= ?").get(now).n;
+      if (sq !== ((now - ts) >= calDays(h || 5) * D ? 1 : 0)) bad++;
+    }
+    chk(bad === 0, "SQL 성숙식 = JS 성숙 판정(지평 0~20·null × 나이 0~40일)", "불일치 " + bad);
+  }
+}
+
 if (fails) { console.log("\n✗ 크론 CPU 절감 계약 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 크론 CPU 절감 계약 통과");
