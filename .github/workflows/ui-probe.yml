@@ -57,6 +57,10 @@ on:
         description: 'Cloudflare 실측 CPU — 이번 달 합계 + 최근 48시간 시간대별(tools/usage-sync.mjs --dry --hours) · 워커에 쓰지 않는다'
         type: boolean
         default: false
+      verify:
+        description: '이번 변경 회귀 점검 — 상태 필드·현금·학습칩·위원회 모델 표·OMNI-Q·kr-halt·실적·차트(tools/probe-verify.mjs) · 브라우저 없음'
+        type: boolean
+        default: false
       bench:
         description: '운영 상태로 크론 CPU 프로파일 — D1 을 읽기만 해 로컬 벤치(모델·설정·보유 그대로 · 네트워크 모의 · 쓰기는 로컬만)로 돌려 함수별 CPU(tools/prod-state-dump.mjs + cron-cpu-bench.mjs --prod)'
         type: boolean
@@ -151,6 +155,12 @@ jobs:
           node tools/probe-models.mjs "$URL" || true
           node tools/probe-kr-us.mjs "$URL" || true
 
+      - name: 변경 회귀 점검
+        if: inputs.verify && steps.url.outputs.url != ''
+        env:
+          URL: ${{ steps.url.outputs.url }}
+        run: node tools/probe-verify.mjs "$URL" || true
+
       - name: 청산 반사실
         if: inputs.exits && steps.url.outputs.url != ''
         env:
@@ -229,13 +239,13 @@ jobs:
           node tools/probe-kr-nxt.mjs "${{ vars.WORKER_URL }}" || true
 
       - name: 브라우저 준비
-        if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed && !inputs.intro && !inputs.usage && !inputs.audit }}
+        if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed && !inputs.intro && !inputs.usage && !inputs.audit && !inputs.verify }}
         run: |
           npm i --no-save --no-audit --no-fund playwright@1
           npx playwright install --with-deps chromium webkit
 
       - name: OMNI 화면 측정
-        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed && !inputs.intro && !inputs.usage && !inputs.audit
+        if: steps.url.outputs.url != '' && !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed && !inputs.intro && !inputs.usage && !inputs.audit && !inputs.verify
         env:
           URL: ${{ steps.url.outputs.url }}
           IMG: ${{ inputs.img && '1' || '0' }}
