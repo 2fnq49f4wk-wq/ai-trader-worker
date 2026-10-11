@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.539";
+const _BUILD_VER = "V33.540";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -7454,6 +7454,20 @@ function fetchBudgetLeft() { return Math.max(0, __fetchBudget.max - __fetchBudge
 //   • CPU time: 30,000,000 ms / month  (초과 시 $0.02/M)
 // 둘 중 하나가 USAGE_LIMITS.shutdownAt(기본 90%) 이상이면 enabled=false 자동 차단.
 // 매월 1일 자동 리셋(yyyymm 키). cfg.usageLimits 로 사용자가 임계값 조정 가능.
+/* ══ [V33.540] ★사용자 결정(10/11): CPU 정지 기준을 포함량의 85% → 150% 로★ ══════════════════════════════
+   실측 10/11 16Z: 월 CPU 48.4%(10.7일) — 이대로면 10/19께 85% 에서 '전 사이클 정지'. 클라우드플레어 유료 플랜 초과분은
+   100만 CPU ms 당 $0.02 라 150% 까지 써도 추가 요금 ≈ $0.3/월. 사용자: "한도 올림 + 절감 병행".
+   ★정지 기준만 옮기면 안 된다★ — 75~82% 에서 먼저 꺼지는 부가 기능(시장맥락·섹터뉴스 보강 · 대체 슬리브)이 성능을 깎는다.
+   그래서 '예산' 자체를 늘린다: monthlyCpuMs(포함량 3천만) × USAGE_CPU_ALLOW → 기존 비율 문턱(정지 0.85 · 보강 0.75 · 슬리브 0.82)이
+   전부 같은 비율로 옮겨 가고, 정지는 정확히 포함량의 150% 에서 일어난다. 저장된 cfg.usageLimits 가 무엇이든 이 배수는 적용된다.
+   되돌리려면 USAGE_CPU_ALLOW = 1 (절감이 끝나 다시 85% 안에 들면). 화면의 '%' 는 늘어난 예산 대비다 — 포함량 대비는 cpuPctIncluded. */
+const USAGE_CPU_ALLOW = 1.5 / 0.85;
+function _usageLimits(over) {
+  const l = Object.assign({}, USAGE_LIMITS_DEFAULT, over || {});
+  l.includedCpuMs = l.monthlyCpuMs;
+  l.monthlyCpuMs = Math.round(l.monthlyCpuMs * USAGE_CPU_ALLOW);
+  return l;
+}
 const USAGE_LIMITS_DEFAULT = {
   enabled: true,            // 사용량 셧다운 활성 (false면 무제한)
   monthlyRequests: 10000000,  // Paid 포함 요청 수
@@ -7537,7 +7551,7 @@ async function isUsageShutdown(DB, cfg) {
       try { await log(DB, "WARN", null, "[FORCE LOCK] 관리자 강제 락 활성 — 모든 사이클 차단"); } catch (e) {}
       return true;
     }
-    const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg && cfg.usageLimits) || {});
+    const lim = _usageLimits((cfg && cfg.usageLimits) || {});
     if (lim.enabled === false) return false;
     const u = await getUsageState(DB);
     const reqRatio = (u.data.requests || 0) / Math.max(1, lim.monthlyRequests);
@@ -8839,7 +8853,7 @@ async function updateMarketContext(DB, cfg) {
   // 2) [여유분 보장] 월 사용량이 enrich 임계 초과면 enrichment 중단 — 만료 캐시라도 반환(코어 보호)
   try {
     const u = await getUsageState(DB);
-    const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg && cfg.usageLimits) || {});
+    const lim = _usageLimits((cfg && cfg.usageLimits) || {});
     const ratio = Math.max((u.data.requests || 0) / Math.max(1, lim.monthlyRequests),
                            _usageCpu(u) / Math.max(1, lim.monthlyCpuMs));
     if (ratio >= (mc.enrichMaxUsageRatio != null ? mc.enrichMaxUsageRatio : 0.75)) return cached;
@@ -9983,7 +9997,7 @@ async function updateSectorNewsSentiment(DB, cfg, force) {
   if (!force && cached && cached.ts && (Date.now() - cached.ts) < (sc.refreshHours || 6) * 3600000) return cached;
   try {
     const u = await getUsageState(DB);
-    const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg && cfg.usageLimits) || {});
+    const lim = _usageLimits((cfg && cfg.usageLimits) || {});
     const ratio = Math.max((u.data.requests||0)/Math.max(1,lim.monthlyRequests), _usageCpu(u)/Math.max(1,lim.monthlyCpuMs));
     if (ratio >= sc.enrichMaxUsageRatio) return cached;
   } catch(e) {}
@@ -20633,10 +20647,10 @@ async function buildStatePayload(env) {
         usageState: await (async () => {
           try {
             const us = await getUsageState(env.DB);
-            const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg.usageLimits || {}));
+            const lim = _usageLimits((cfg.usageLimits || {}));
             const rr = (us.data.requests || 0) / Math.max(1, lim.monthlyRequests);
             const cr = _usageCpu(us) / Math.max(1, lim.monthlyCpuMs);
-            return { data: us.data, actual: us.actual || null, cpuMsEff: _usageCpu(us), limits: { monthlyRequests: lim.monthlyRequests, monthlyCpuMs: lim.monthlyCpuMs }, reqPct: (rr*100).toFixed(1), cpuPct: (cr*100).toFixed(1), worstPct: (Math.max(rr,cr)*100).toFixed(1), shutdownAt: lim.shutdownAt, warnAt: lim.warnAt };
+            return { data: us.data, actual: us.actual || null, cpuMsEff: _usageCpu(us), limits: { monthlyRequests: lim.monthlyRequests, monthlyCpuMs: lim.monthlyCpuMs }, reqPct: (rr*100).toFixed(1), cpuPct: (cr*100).toFixed(1), cpuPctIncluded: (_usageCpu(us) / Math.max(1, lim.includedCpuMs) * 100).toFixed(1), cpuAllow: +USAGE_CPU_ALLOW.toFixed(3), worstPct: (Math.max(rr,cr)*100).toFixed(1), shutdownAt: lim.shutdownAt, warnAt: lim.warnAt };
           } catch(e) { return null; }
         })()
       };
@@ -31421,7 +31435,7 @@ async function handleRequest(request, env, ctx, _inner) {
     if (path === "/api/usage" && request.method === "GET") {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const usageState = await getUsageState(env.DB);
-      const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg.usageLimits || {}));
+      const lim = _usageLimits((cfg.usageLimits || {}));
       const reqRatio = (usageState.data.requests || 0) / Math.max(1, lim.monthlyRequests);
       const cpuRatio = _usageCpu(usageState) / Math.max(1, lim.monthlyCpuMs);
       const lockTs = await getState(env.DB, "force_lock_ts", null);
@@ -31748,7 +31762,7 @@ async function handleRequest(request, env, ctx, _inner) {
         if (stale || anyMissing) {
           resetFetchBudget(40);
           const u = await getUsageState(env.DB);
-          const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, cfg.usageLimits || {});
+          const lim = _usageLimits(cfg.usageLimits || {});
           const ratio = Math.max((u.data.requests||0)/Math.max(1,lim.monthlyRequests), _usageCpu(u)/Math.max(1,lim.monthlyCpuMs));
           if (ratio < (cfg.altEnrichMaxUsageRatio != null ? cfg.altEnrichMaxUsageRatio : 0.82)) {
             onDemand = await fetchBatchQuotes(BOND_SYMBOLS.concat(TREASURY_YIELD_SYMBOLS), { maxFallback: BOND_SYMBOLS.length + TREASURY_YIELD_SYMBOLS.length, DB: env.DB });
@@ -32720,7 +32734,7 @@ async function handleRequest(request, env, ctx, _inner) {
     if (path === "/api/usage") {
       // [PAID 가드] 월 사용량 현황 — Workers Paid 한도 대비 비율
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
-      const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, cfg.usageLimits || {});
+      const lim = _usageLimits(cfg.usageLimits || {});
       const u = await getUsageState(env.DB);
       const reqRatio = (u.data.requests || 0) / Math.max(1, lim.monthlyRequests);
       const cpuRatio = _usageCpu(u) / Math.max(1, lim.monthlyCpuMs);
@@ -32754,7 +32768,7 @@ async function handleRequest(request, env, ctx, _inner) {
       const rec = { mk: mk, cpuMs: Math.round(cpuMs), requests: isFinite(reqs) ? Math.round(reqs) : null, at: Date.now(),
         estAtSync: u.data.cpuMs || 0, src: String(b.src || "cf-graphql").slice(0, 40), rows: Number(b.rows) || null };
       await setState(env.DB, "usage_actual:" + mk, rec);
-      const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (await getState(env.DB, "cfg", {})).usageLimits || {});
+      const lim = _usageLimits((await getState(env.DB, "cfg", {})).usageLimits || {});
       try { await log(env.DB, "INFO", null, "[USAGE] 실측 CPU " + (rec.cpuMs / 1000).toFixed(0) + "초(" + (rec.cpuMs / Math.max(1, lim.monthlyCpuMs) * 100).toFixed(2) +
         "%) · 추정 " + ((u.data.cpuMs || 0) / 1000).toFixed(0) + "초(" + ((u.data.cpuMs || 0) * 100 / Math.max(1, lim.monthlyCpuMs)).toFixed(2) + "%) — 한도 판정은 실측 기준"); } catch (e) {}
       return Response.json({ ok: true, rec: rec, estimate: u.data.cpuMs || 0 }, { headers: cors });
@@ -32815,7 +32829,7 @@ async function handleRequest(request, env, ctx, _inner) {
       let usageDiag = null;
       try {
         const u = await getUsageState(env.DB);
-        const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, cfg.usageLimits || {});
+        const lim = _usageLimits(cfg.usageLimits || {});
         const reqR = (u.data.requests || 0) / Math.max(1, lim.monthlyRequests);
         const cpuR = _usageCpu(u) / Math.max(1, lim.monthlyCpuMs);
         usageDiag = {
@@ -53774,7 +53788,7 @@ export default {
         if (_altOk) {
           try {
             const u = await getUsageState(env.DB);
-            const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, _acfg.usageLimits || {});
+            const lim = _usageLimits(_acfg.usageLimits || {});
             const ratio = Math.max((u.data.requests || 0) / Math.max(1, lim.monthlyRequests), _usageCpu(u) / Math.max(1, lim.monthlyCpuMs));
             if (ratio >= (_acfg.altEnrichMaxUsageRatio != null ? _acfg.altEnrichMaxUsageRatio : 0.82)) {
               _altOk = false;
@@ -54476,7 +54490,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

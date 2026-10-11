@@ -68,5 +68,14 @@ try {
   chk(/parts\.push\(JSON\.stringify\(sym\) \+ ":" \+ t\)/.test(S2), "학습기 봉 응답은 원문을 그대로 잇는다(파싱·재직렬화 없음)");
 }
 
+// ⑤ [V33.540] 사용자 결정(10/11): 정지 = 포함량의 150% · 비율 문턱(보강 0.75 · 슬리브 0.82)도 같은 배수로 옮겨 간다 · 저장된 cfg 가 85% 여도 적용
+{
+  const L = M._usageLimits({ shutdownAt: 0.85, monthlyCpuMs: 30000000 });
+  chk(Math.abs(L.monthlyCpuMs * L.shutdownAt / 30000000 - 1.5) < 1e-3 && L.includedCpuMs === 30000000, "정지 지점 = 포함량 150% (저장된 cfg 85% 여도)", JSON.stringify(L));
+  chk(Math.abs(L.monthlyCpuMs * 0.75 / 30000000 - 0.75 * 1.5 / 0.85) < 1e-3, "부가기능 문턱(0.75)도 같은 배수로 이동 — 정지 전에 성능이 먼저 깎이지 않는다");
+  const S3 = (await import("node:fs")).readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  chk((S3.match(/Object\.assign\(\{\}, USAGE_LIMITS_DEFAULT/g) || []).length === 1, "사용량 한도 읽는 곳은 전부 _usageLimits 를 거친다");
+}
+
 if (fails) { console.log("\n✗ 크론 CPU 절감 계약 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 크론 CPU 절감 계약 통과");
