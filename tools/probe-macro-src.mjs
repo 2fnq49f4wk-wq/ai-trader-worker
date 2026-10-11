@@ -18,3 +18,25 @@ for (const cd of ["IRR_GOVT03Y", "IRR_GOVT10Y", "IRR_CD91", "IRR_CALL"]) {
     out("naver " + cd, { http: r.status, rows: m, len: txt.length });
   } catch (e) { out("naver " + cd, { err: String(e.message || e).slice(0, 80) }); }
 }
+// [V33.561] 한국 기준금리·물가 후보
+const KRC = {
+  bok_base: "https://www.bok.or.kr/portal/singl/baseRate/list.do?dataSeCd=01&menuNo=200643",
+  naver_bond3y: "https://m.stock.naver.com/front-api/marketIndex/productDetail?category=bond&reutersCode=KR3YT%3DRR",
+  naver_bond10y: "https://m.stock.naver.com/front-api/marketIndex/productDetail?category=bond&reutersCode=KR10YT%3DRR",
+  naver_bondlist: "https://m.stock.naver.com/front-api/marketIndex/bondList",
+  fred_krcpi2: "https://fred.stlouisfed.org/graph/fredgraph.csv?id=KORCPALTT01CTGYM",
+  fred_krbase: "https://fred.stlouisfed.org/graph/fredgraph.csv?id=INTDSRKRM193N",
+  fred_kr3y: "https://fred.stlouisfed.org/graph/fredgraph.csv?id=IRSTCI01KRM156N",
+  kosis_cpi_page: "https://kosis.kr/statHtml/statHtml.do?orgId=101&tblId=DT_1J22003"
+};
+for (const [k, u] of Object.entries(KRC)) {
+  try {
+    const r = await fetch(u, { headers: UA, signal: AbortSignal.timeout(15000) });
+    const txt = await r.text();
+    let snip = "";
+    if (k === "bok_base") { const m = [...txt.matchAll(/<td[^>]*>\s*(\d{4})\s*<\/td>\s*<td[^>]*>\s*([^<]+?)\s*<\/td>\s*<td[^>]*>\s*([\d.]+)\s*<\/td>/g)].slice(0, 3).map((x) => x.slice(1).join("|")); snip = JSON.stringify(m); }
+    else if (k.startsWith("fred")) { snip = JSON.stringify(txt.trim().split("\n").slice(-2)); }
+    else snip = txt.slice(0, 300).replace(/\s+/g, " ");
+    out("kr " + k, { http: r.status, len: txt.length, snip });
+  } catch (e) { out("kr " + k, { err: String(e.message || e).slice(0, 80) }); }
+}
