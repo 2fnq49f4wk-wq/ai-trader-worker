@@ -112,5 +112,48 @@ ok(/if j is None:\s*\n\s*raise RuntimeError\("export 재시도 소진"\)/.test(P
    "재시도가 소진되면 ★던진다★ — 빈 표본을 지어내 조용히 학습하지 않는다");
 ok(/params\["limit"\] = page/.test(PY), "줄인 페이지가 ★실제 요청에 반영된다★(변수만 줄이고 안 보내면 무의미하다)");
 
+/* [V33.550] ★total=0 은 '끝' 이 아니다★ — 운영(10/11 GitHub Actions 학습): 워커 COUNT 실패로 74만째에서 total=0 이 왔고
+   fetch_all 이 off ≥ total 로 조용히 끝냈다(121만 중 74만). fetch_all 전체를 떼어 가짜 서버로 실제로 돌린다. */
+{
+  const F0 = PY.indexOf("    def fetch_all():"), F1 = PY.indexOf("        return samples, cfg, fv, fn", F0);
+  ok(F0 > 0 && F1 > F0, "fetch_all 을 소스에서 떼어 왔다");
+  const FN = PY.slice(F0, F1 + "        return samples, cfg, fv, fn".length).split("\n").map((l) => l.replace(/^    /, "")).join("\n");
+  const py2 = `
+import json, hashlib
+FN = ${JSON.stringify("")}
+` + "FN = " + JSON.stringify(FN) + `
+TOTAL = 100000
+def run(zero_from):
+    st = {"n": 0}
+    class _R:
+        def __init__(self, j): self.status_code, self.text, self._j = 200, "", j
+        def json(self): return self._j
+    class _S:
+        class RequestException(Exception): pass
+        @staticmethod
+        def get(url, params=None, headers=None, timeout=None):
+            lim = int(params["limit"]); start = st["n"]; k = min(lim, TOTAL - start)
+            rows = [{"ts": 10**9 - (start + i), "s": "S", "x": [0], "y": 1, "pnl": 0} for i in range(max(0, k))]
+            st["n"] += len(rows); page_i = start // lim
+            tot = 0 if (zero_from is not None and page_i >= zero_from) else TOTAL
+            return _R({"config": {}, "featVer": 1, "featNames": ["a"], "total": tot, "samples": rows,
+                       "nextCursorTs": rows[-1]["ts"] if rows else None, "nextCursorId": 1})
+    g = {"requests": _S, "time": type("T", (), {"sleep": staticmethod(lambda s: None)}), "hashlib": hashlib,
+         "BASE": "http://x", "HDR": {}, "KEY": "k", "print": lambda *a, **k: None}
+    exec(FN, g)
+    return len(g["fetch_all"]()[0])
+print(json.dumps({"normal": run(None), "zeroMid": run(2), "zeroAll": run(0)}))
+`;
+  const tmp2 = join(tmpdir(), "expres2-" + process.pid + ".py");
+  let R2 = null;
+  try { writeFileSync(tmp2, py2); R2 = JSON.parse(execFileSync("python3", [tmp2], { encoding: "utf8", timeout: 120000 }).trim()); }
+  catch (e) { console.error("  ✗ FAIL fetch_all 실행 실패: " + String(e.stdout || e.stderr || e.message).slice(0, 400)); fail++; }
+  finally { try { unlinkSync(tmp2); } catch (e) {} }
+  if (R2) {
+    console.log("     fetch_all 받은 건수: " + JSON.stringify(R2));
+    ok(R2.normal === 100000, "정상: total 을 다 받는다");
+    ok(R2.zeroMid === 100000 && R2.zeroAll === 100000, "★total 이 도중에(또는 처음부터) 0 이어도 끝까지 받는다★ — 덜 찬 페이지에서만 끝난다");
+  }
+}
 if (fail) { console.error(`\n✗ 수집 복원력 계약 ${fail}건 실패 (총 ${n})`); process.exit(1); }
 console.log(`\n✓ 수집 복원력 계약 통과 (${n}개 단언) — ★무거워서 실패하면 더 가볍게 다시 묻는다★`);

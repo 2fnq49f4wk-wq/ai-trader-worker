@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.549";
+const _BUILD_VER = "V33.550";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -28927,10 +28927,12 @@ async function handleRequest(request, env, ctx, _inner) {
       }
       // [V33.27] R2 스냅샷이 신선하면 거기서 파트를 그대로 서빙한다 — D1 은 전혀 건드리지 않는다.
       //   (학습 1회당 17만 행 × 9페이지 조회가 D1 폭주의 최대 유발원이었다)
+      let _snapTot = null;   // [V33.550] 같은 기준시각(anchorTs)의 사진이면 그 total 을 쓴다 — 아이솔레이트마다 121만 행 COUNT 를 다시 하지 않는다
       try {
         const _R2 = _bigR2();
         if (_R2) {
           const _snap = await getState(env.DB, _mlSnapStateKey(LUXML.featVer), null);
+          if (_snap && _snap.done && _snap.anchorTs && _num(_snap.total, 0) > 0) _snapTot = { a: _num(_snap.anchorTs, 0), n: _num(_snap.total, 0) };
           /* [V33.247] ★사진이 살아 있는 풀과 크게 다르면 서빙하지 않는다.★
              스냅샷 빌더는 ★장외에만★ 돈다(거래 우선). 그래서 무효화를 빌더에만 두면
              장중 내내 굶은 사진이 계속 나간다 — 실제로 total=8 이 그렇게 서빙됐다.
@@ -29037,7 +29039,7 @@ async function handleRequest(request, env, ctx, _inner) {
          같은 D1 큐를 쓴다("D1 DB is overloaded" 의 재료다).
          → (featVer, anchorTs) 키로 아이솔레이트에 캐시한다. 같은 키면 같은 답이므로 신선도 손실이 없다.
          ※ 아이솔레이트가 갈리면 다시 세는데, 그건 정확성 문제가 아니라 절약폭 문제다. */
-      const total = await mlExportTotalCached(env.DB, LUXML.featVer, anchorTs);
+      const total = (_snapTot && _snapTot.a === anchorTs) ? _snapTot.n : await mlExportTotalCached(env.DB, LUXML.featVer, anchorTs);
       // [V33.12] ★OFFSET 페이지네이션 → 커서(keyset) 방식★ 종전엔 마지막 페이지가 OFFSET 160000이라
       //   D1이 매 페이지마다 앞선 행을 전부 훑고 버렸다(9페이지 합계 약 78만 스텝). 표본이 늘수록
       //   제곱으로 무거워져, D1이 조금만 바빠도 export가 실패 → Modal 학습 전체가 중단됐다.
@@ -37338,13 +37340,17 @@ async function mlExportTotalCached(DB, featVer, anchorTs) {
   const key = featVer + "|" + anchorTs;
   const c = globalThis.__mlExportTotal;
   if (c && c.k === key && (Date.now() - _num(c.ts, 0)) < ML_EXPORT_TOTAL_TTL_MS) return c.v;
-  let total = 0;
+  /* [V33.550] ★세기에 실패하면 0 이 아니라 '모름'(null)★ — 운영(10/11 GitHub Actions 학습): 74만째 페이지에서 COUNT 가 실패해 total=0 이 나갔고,
+     트레이너는 off ≥ total 로 ★수집을 조용히 끝냈다★ — 121만 중 74만(61%)만 받았다. 같은 판의 직전 값이 있으면 그것을, 없으면 null. */
+  let total = null;
   try {
     const r = await DB.prepare("SELECT COUNT(*) AS c FROM ml_samples WHERE featver = ? AND ts <= ?")
       .bind(featVer, anchorTs).first();
     total = _num(r && r.c, 0);
     globalThis.__mlExportTotal = { k: key, v: total, ts: Date.now() };
-  } catch (e) {}
+  } catch (e) {
+    if (c && String(c.k).split("|")[0] === String(featVer)) total = c.v;
+  }
   return total;
 }
 

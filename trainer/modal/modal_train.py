@@ -330,6 +330,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         anchor = 0  # [V11.1] 스냅샷 앵커 — 수집 중 신규 수확행이 OFFSET을 밀어 중복/누락되는 것 방지
         cur_ts = cur_id = 0   # [V33.12] 커서 페이지네이션 — OFFSET 누적 스캔(표본^2) 제거
         _seen_pages = set()   # [V33.365] 페이지 중복 탐지 — 아래 설명 참조
+        total = 0             # [V33.550] 0 = 아직 모름(끝 판정에 쓰지 않는다)
         while True:
             # [V33.365] ★offset 은 ★언제나★ 보낸다.★ 종전엔 if/else 라 커서를 한 번 받으면
             #   offset 을 영영 안 보냈는데, 워커의 R2 스냅샷 분기는 offset 으로 파트를 고른다.
@@ -405,13 +406,17 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                         "R2 스냅샷 파트와 커서가 어긋난 상태다. 이 표본으로는 학습하지 않는다.")
                 _seen_pages.add(_sig)
             samples.extend(got)
-            total = j.get("total", len(samples))
-            print(f"  내려받음 {len(samples)}/{total}")
+            # [V33.550] ★total 0·없음 = '모름' 이지 '끝' 이 아니다★ — 운영(10/11): 워커 COUNT 실패로 total=0 이 오자
+            #   off ≥ total 로 수집이 조용히 끝났다(121만 중 74만). 이제 끝은 '덜 찬 페이지' 와 '알려진 total 도달' 로만 판정한다.
+            _t = j.get("total")
+            if isinstance(_t, (int, float)) and _t > 0:
+                total = int(_t)
+            print(f"  내려받음 {len(samples)}/{total if total else '?'}")
             off += len(got)
             nxt_ts, nxt_id = j.get("nextCursorTs"), j.get("nextCursorId")
             if nxt_ts:
                 cur_ts, cur_id = nxt_ts, nxt_id
-            if len(got) < page or off >= total or not got:
+            if len(got) < page or (total > 0 and off >= total) or not got:
                 break
         return samples, cfg, fv, fn
 
