@@ -175,6 +175,19 @@ if (insp) {
   const tot = [...self.values()].reduce((a, b) => a + b, 0);
   console.log("BENCH prof total " + Math.round(tot / 1000) + "ms over " + (CYCLES - PROF_FROM) + " cycles");
   for (const [k, v] of [...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30)) console.log("BENCH self " + (v / 1000).toFixed(0).padStart(6) + "ms " + (v / tot * 100).toFixed(1).padStart(5) + "% " + k);
+  // [V33.557] 자기 시간 상위 함수(워커 소스) 안에서 ★어느 줄★ 인지 — positionTicks(샘플 수) · 원문 줄 함께
+  try {
+    const SRCL = readFileSync(new URL("../src/index.js", import.meta.url), "utf8").split("\n");
+    const topK = [...self.entries()].filter(([k]) => / :\d+$/.test(k)).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k]) => k);
+    for (const k of topK) {
+      const lt = new Map();
+      for (const n of profile.nodes) { const f = n.callFrame; if (!f.url.includes("src/index.js")) continue;
+        if ((f.functionName || "(anon)") + " :" + (f.lineNumber + 1) !== k) continue;
+        for (const pt of (n.positionTicks || [])) lt.set(pt.line, (lt.get(pt.line) || 0) + pt.ticks); }
+      for (const [ln, tk] of [...lt.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6))
+        console.log("BENCH line " + k + " L" + ln + " " + tk + "t  " + String(SRCL[ln - 1] || "").trim().slice(0, 150));
+    }
+  } catch (e) { console.log("BENCH line n/a " + e.message); }
 }
 const logs = sql.prepare("SELECT level, message FROM logs ORDER BY id DESC LIMIT 400").all();
 for (const l of logs.filter((x) => /^(prefetch|\[EVAL|Done:|\[TIME-CAP|\[SCHED)/.test(x.message)).slice(0, 12)) console.log("BENCH log " + l.level + " " + l.message.slice(0, 300));

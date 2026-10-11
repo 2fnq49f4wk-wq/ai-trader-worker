@@ -120,5 +120,20 @@ try {
   }
 }
 
+// [V33.557] ADX 기억 — 같은 배열·같은 마지막 봉·같은 기간일 때만 기억값, 하나라도 다르면 다시 계산(순수 함수 결과와 항상 같다)
+{
+  const C = [], H = [], L = []; let x = 100;
+  for (let i = 0; i < 320; i++) { x *= 1 + Math.sin(i * 0.37) * 0.02; C.push(x); H.push(x * 1.01); L.push(x * 0.99); }
+  const a1 = M.getADX(H, L, C, 14), core = M._getADXCore(H, L, C, 14);
+  const a2 = M.getADX(H, L, C, 14);
+  C[C.length - 1] *= 1.05; H[H.length - 1] = C[C.length - 1] * 1.01;   // 장중 마지막 봉이 제자리에서 바뀐 경우
+  const a3 = M.getADX(H, L, C, 14), c3 = M._getADXCore(H, L, C, 14);
+  const a4 = M.getADX(H, L, C, 7), c4 = M._getADXCore(H, L, C, 7);
+  C.push(C[C.length - 1] * 1.01); H.push(C[C.length - 1] * 1.01); L.push(C[C.length - 1] * 0.99);   // 봉 추가
+  const a5 = M.getADX(H, L, C, 14), c5 = M._getADXCore(H, L, C, 14);
+  chk(a1 === core && a2 === a1 && a3 === c3 && a3 !== a1 && a4 === c4 && a5 === c5,
+    "getADX 기억: 같은 입력이면 기억값 · 마지막 봉 변경·기간 변경·봉 추가면 다시 계산(전부 순수 계산과 같다)", JSON.stringify([a1, core, a2, a3, c3, a4, c4, a5, c5]));
+}
+
 if (fails) { console.log("\n✗ 크론 CPU 절감 계약 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 크론 CPU 절감 계약 통과");

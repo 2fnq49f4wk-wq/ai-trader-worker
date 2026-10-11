@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.556";
+const _BUILD_VER = "V33.557";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -7236,8 +7236,24 @@ function getATR(closes, p, highs, lows) {
 // [추세 강도] ADX(Average Directional Index) — Wilder 표준.
 //   추세의 "방향성/강도"를 0~100으로. 높으면 강추세, 낮으면 횡보(추세전략 휩쏘 위험).
 //   추가 fetch 0 — 기존 일봉(highs/lows/closes)만 사용.
+/* [V33.557] ★같은 배열의 ADX 를 한 사이클에 여러 번 다시 계산하지 않는다★ — 운영 상태 벤치(미국 장중): getADX 가 사이클 CPU 상위 2위
+   (사이클당 ~17ms). 같은 종목·같은 일봉 배열로 전략 평가·스캘프·패턴·피처 등 7곳 이상이 따로 부른다.
+   종가 배열 객체를 열쇠로(WeakMap — 배열이 버려지면 같이 사라진다) 고가·저가 배열·길이·기간·마지막 봉 값이 모두 같을 때만 기억한 값을 준다.
+   입력이 같으면 결과가 같다(순수 함수) — 판단 불변. */
+const __adxMemo = new WeakMap();
 function getADX(highs, lows, closes, period) {
   period = period || 14;
+  if (Array.isArray(closes) && closes.length) {
+    const m = __adxMemo.get(closes), n = closes.length;
+    if (m && m.h === highs && m.l === lows && m.p === period && m.n === n && m.c === closes[n - 1]
+        && Array.isArray(highs) && Array.isArray(lows) && m.hh === highs[n - 1] && m.ll === lows[n - 1]) return m.v;
+    const v = _getADXCore(highs, lows, closes, period);
+    try { __adxMemo.set(closes, { h: highs, l: lows, p: period, n: n, c: closes[n - 1], hh: Array.isArray(highs) ? highs[n - 1] : undefined, ll: Array.isArray(lows) ? lows[n - 1] : undefined, v: v }); } catch (e) {}
+    return v;
+  }
+  return _getADXCore(highs, lows, closes, period);
+}
+function _getADXCore(highs, lows, closes, period) {
   if (!Array.isArray(highs) || !Array.isArray(lows) || !Array.isArray(closes)) return null;
   const n = closes.length;
   if (n < period * 2 + 1 || highs.length !== n || lows.length !== n) return null;
@@ -54654,7 +54670,7 @@ export default {
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
 export { _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
-export { getStates, _STATE_LITE, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
+export { getStates, _STATE_LITE, getADX, _getADXCore, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
      실제로 돌린다. 두 고침 다 "성적으로만 드러나는" 종류라 문장으로는 못 지킨다. */
