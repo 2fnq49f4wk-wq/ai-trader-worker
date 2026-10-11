@@ -12,6 +12,14 @@
 
 ## Current handoff
 
+- V33.547 (10/11) ★로딩·낭비 — kr-halt 매 요청 D1 쓰기 · state 중복 필드 · 클라이언트 긴 작업 계측★
+  - /api/kr-halt: GET 마다 krhalt:state 를 되썼다(빌드 ~1s · 버스트 17회). 쓸 이유(날 바뀜·문턱 넘김·새 발동·직전 관측 60초 묵음)가 있을 때만 쓴다.
+    지수 두 개도 한 번에 읽는다(getStates). 지속 판정 창(3분)보다 짧은 1분 주기라 판정 불변(check-kr-halt 통과).
+  - /api/state: 관심종목 1,004개의 같은 값 두 번째 이름(dailyRsi=rsi·dailyMa=ma·dailyAtr=atr·dispPrice=price·dispPct=dayPct)을 직렬화 때 뺀다.
+    화면은 그 이름을 읽지 않는다(게이트가 정적으로 확인). 값이 다르면 그대로. null 필드 생략은 안 함(화면 병합 시 묵은 시간외 값 잔존 위험).
+  - ui-probe-speed: 방문마다 CPU 표본(1ms) → 자기 시간 큰 함수 14개(SPD *_cpu). 재방문 긴 작업 1.3s 의 정체를 다음 측정에서 가른다.
+  - 다음: speed 재측정 → *_cpu 상위 함수 고치기 · 첫 방문 domInteractive 3.1s(동기 스크립트) 확인.
+
 - V33.546 (10/11) ★로딩 — 실적·뉴스 30초 멈춤 수정(ui-probe speed job 114547798644)★
   - 원인 ①: microSwr 가 빌드 진행 중이면 R2 사본을 건너뛰고 그 빌드를 기다렸다(join) → /api/news join 23s · /api/earnings 30s 시간초과×3.
     수정: 진행 중이어도 사본 먼저. staleMax 넘었지만 24시간 안 사본이 있으면 빌드는 12초까지만 기다리고 사본(r2old)을 준다.

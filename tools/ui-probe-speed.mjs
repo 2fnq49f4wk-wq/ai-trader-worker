@@ -31,6 +31,8 @@ for (const visit of ["first", "repeat", "third"]) {
   cdp.on("Network.responseReceived", (e) => { const u = e.response.url; if (/\.(js|css)(\?|$)|\/$|\.html/.test(u) && u.startsWith(BASE)) big.push({ u: u.replace(BASE, "").slice(0, 50), st: e.response.status, fromCache: !!(e.response.fromDiskCache || e.response.fromServiceWorker || e.response.fromPrefetchCache) }); });
   await p.addInitScript(() => { window.__lt = { n: 0, sum: 0, max: 0, over200: 0 }; try { new PerformanceObserver((l) => { for (const e of l.getEntries()) { const t = window.__lt; t.n++; t.sum += e.duration; t.max = Math.max(t.max, e.duration); if (e.duration > 200) t.over200++; } }).observe({ type: "longtask", buffered: true }); } catch (e) {} });
   if (visit === "first") await p.addInitScript(() => { try { if (!sessionStorage.getItem("__c")) { localStorage.clear(); sessionStorage.setItem("__c", "1"); } } catch (e) {} });
+  // [V33.547] 긴 작업(재방문 최대 1.3s)의 정체 — CPU 표본(1ms)을 떠서 자기 시간 큰 함수 순으로 보인다(추측 없이 고칠 곳을 가른다)
+  await cdp.send("Profiler.enable"); await cdp.send("Profiler.setSamplingInterval", { interval: 1000 }); await cdp.send("Profiler.start");
   const t0 = Date.now();
   await p.goto(BASE + "/", { waitUntil: "commit", timeout: 90000 });
   const hit = {};
@@ -52,6 +54,19 @@ for (const visit of ["first", "repeat", "third"]) {
   const navT = [...reqs.values()].reduce((a, r) => Math.min(a, r.t0), Infinity);
   out(visit + "_reqs", [...reqs.values()].filter((r) => /^\/(api\/|_b\/|$)|\.js|\.css/.test(r.u)).map((r) => ({ u: r.u, s: Math.round((r.t0 - navT) * 1000), e: r.t1 ? Math.round((r.t1 - navT) * 1000) : null, kb: r.kb }))
     .sort((a, b2) => (b2.e || 1e9) - (a.e || 1e9)).slice(0, 18));
+  try {
+    const { profile } = await cdp.send("Profiler.stop");
+    const self = new Map(), byId = new Map(profile.nodes.map((n) => [n.id, n]));
+    const dt = profile.timeDeltas || [], smp = profile.samples || [];
+    for (let i = 0; i < smp.length; i++) {
+      const n = byId.get(smp[i]); if (!n) continue;
+      const f = n.callFrame, u = (f.url || "").replace(BASE, "").replace(/\?.*$/, "").slice(-28);
+      const k = (f.functionName || "(anon)") + " " + u + ":" + (f.lineNumber + 1);
+      self.set(k, (self.get(k) || 0) + (dt[i] || 0) / 1000);
+    }
+    out(visit + "_cpu", [...self.entries()].filter(([k]) => !/^\((idle|program|garbage collector)\)/.test(k)).sort((a, b2) => b2[1] - a[1]).slice(0, 14).map(([k, v]) => k + " " + Math.round(v) + "ms"));
+    out(visit + "_cpu_sys", [...self.entries()].filter(([k]) => /^\((program|garbage collector)\)/.test(k)).map(([k, v]) => k.split(" ")[0] + " " + Math.round(v) + "ms"));
+  } catch (e) { out(visit + "_cpu", "profile failed " + String(e).slice(0, 80)); }
   out(visit + "_longtasks", await p.evaluate(() => { const t = window.__lt || {}; return { n: t.n, sumMs: Math.round(t.sum || 0), maxMs: Math.round(t.max || 0), over200: t.over200 }; }));
   await p.waitForTimeout(visit === "first" ? 6000 : 1500);   // 첫 방문 뒤 서비스워커가 자리 잡을 시간
   await p.close();

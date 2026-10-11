@@ -88,6 +88,23 @@ console.log("⑦ 캐시 층 표시(V33.521) — 운영 측정이 느린 원인�
   const ma = SRC.indexOf("async function microSwr("), mf = ma > 0 ? SRC.slice(ma, ma + 6000) : "";
   chk(mf && !/if \(R2 && !__mcInflight\.has\(key\)\)/.test(mf) && /age <= 86400000/.test(mf) && /"r2old"/.test(mf) && /setTimeout\(function \(\) \{ r\(null\); \}, 12000\)/.test(mf),
     "microSwr: 진행 중 빌드가 있어도 사본 먼저 · 오래된 사본이면 12초 뒤 사본으로(실적·뉴스 30초 멈춤)", "★빌드 진행 중이면 사본을 건너뛰고 빌드를 기다린다★");
+  // [V33.547] /api/state 관심종목: 짝과 같은 값의 두 번째 이름은 빼고 보낸다 — 화면이 그 이름을 읽기 시작하면 이 줄이 막는다
+  {
+    const { readdirSync } = await import("node:fs");
+    const pub = new URL("../public/", import.meta.url);
+    const CL = readdirSync(pub).filter((f) => /\.(html|js)$/.test(f) && f !== "sw.js").map((f) => readFileSync(new URL(f, pub), "utf8")).join("\n");
+    const used = ["dailyRsi", "dailyMa", "dailyAtr", "dispPrice", "dispPct"].filter((k) => new RegExp("\\b" + k + "\\b").test(CL));
+    const M = await import("../src/index.js");
+    const o = JSON.parse(JSON.stringify({ w: [{ price: 1.5, dispPrice: 1.5, dayPct: 2, dispPct: 3, rsi: 50, dailyRsi: 50 }], cfg: { dailyMa: 5 } }, M._stateNumTrim));
+    chk(!used.length && o.w[0].dispPrice === undefined && o.w[0].dailyRsi === undefined && o.w[0].dispPct === 3 && o.cfg.dailyMa === 5,
+      "/api/state: 같은 값 두 번째 이름(dailyRsi·dailyMa·dailyAtr·dispPrice·dispPct)은 뺀다 · 값이 다르면 그대로", "화면이 읽는 이름: " + used.join(",") + " · " + JSON.stringify(o));
+  }
+  // [V33.547] /api/kr-halt: 매 요청 D1 쓰기 금지 — 쓸 이유(날 바뀜·문턱·새 발동·60초 묵음)가 있을 때만
+  {
+    const ka = SRC.indexOf("async function krHaltSnapshot("), kf = ka > 0 ? SRC.slice(ka, ka + 4000) : "";
+    chk(/if \(_rwKh && _need\) await setState\(DB, "krhalt:state", st\)/.test(kf) && /nowTs - \(prev\.ts \|\| 0\) < 60000/.test(kf) && !/if \(_rwKh\) await setState/.test(kf),
+      "kr-halt: 평소엔 1분에 한 번만 상태를 쓴다(요청마다 쓰던 ~1s 빌드)", "★GET 마다 D1 쓰기★");
+  }
   const sa = SRC.indexOf("const FRESH_MS = 12000, USABLE_MS = 150000;"), sb = SRC.indexOf("[V12.126] ★500 에러 방지★", sa);
   const st = sa > 0 && sb > sa ? SRC.slice(sa, sb) : "";
   chk(st && ["l1", "l1s", "l2", "r2", "build"].every((l) => st.includes('"x-lux-c": "' + l + '"')),

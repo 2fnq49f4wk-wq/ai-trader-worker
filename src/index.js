@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.546";
+const _BUILD_VER = "V33.547";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -5195,13 +5195,20 @@ async function krHaltSnapshot(DB, now) {
   /* [V33.427c] 읽기 실패면 되쓰지 않는다 — 기본값으로 누적 상태를 덮는 사고(색인 1,008→294)와 같은 자리 */
   let st = null, _rwKh = true;
   try { st = await getState(DB, "krhalt:state", null, true); } catch (e) { _rwKh = false; }
+  /* [V33.547] ★매 요청 D1 쓰기 제거★ — 운영 탐침: 이 GET 은 부를 때마다 krhalt:state 를 되써서 빌드 1건 ~1s(쓰기 대기)였다.
+     쓸 이유가 있을 때만 쓴다: 날이 바뀜 · 지금이나 직전 관측에 문턱 넘김(지속 판정에 직전 시각이 필요) · 새 발동 · 직전 관측이 60초 묵음.
+     평소(문턱 근처 아님)엔 1분에 한 번이면 된다 — 지속 판정 창(holdMs 3분)보다 짧다. */
+  let _need = !st || st.day !== day;
   if (!st || st.day !== day) st = { day: day, obs: {}, fired: {} };
+  const _anyOk = function (o) { return !!(o && ((o.scUp && o.scUp.ok) || (o.scDn && o.scDn.ok) || (o.cb || []).some(function (c) { return c && c.ok; }))); };
   const outMk = {};
+  const _ix = await getStates(DB, Object.keys(KRHALT.sidecar).map(function (k) { return "index:" + KRHALT.sidecar[k].idx; }));
   for (const key of Object.keys(KRHALT.sidecar)) {
     const sc = KRHALT.sidecar[key];
-    const q = await getState(DB, "index:" + sc.idx, null);
+    const q = _ix["index:" + sc.idx] || null;
     const pct = q && typeof q.dayPct === "number" ? q.dayPct : null;
     const prev = st.obs[key] || null;
+    const _firedN = (st.fired[key] || []).length;
     const m = krHaltMarket(key, pct, kst.totalMin, prev, st.fired[key] || []);
     outMk[key] = m;
     // 이번 관측 기록
@@ -5224,9 +5231,10 @@ async function krHaltSnapshot(DB, now) {
           st.fired[key].push({ kind: "cb", step: s2.step, pct: +pct.toFixed(2), ts: nowTs, proxy: false });
       }
       m.fired = st.fired[key];
+      if (_anyOk(prev) || _anyOk(st.obs[key]) || st.fired[key].length !== _firedN || !prev || !(nowTs - (prev.ts || 0) < 60000)) _need = true;
     }
   }
-  if (_rwKh) await setState(DB, "krhalt:state", st);
+  if (_rwKh && _need) await setState(DB, "krhalt:state", st);
   return {
     day: day, kstMin: kst.totalMin,
     session: kst.totalMin >= KRHALT.openMin && kst.totalMin <= KRHALT.closeMin,
@@ -8266,7 +8274,13 @@ function applyDisplayOverMarket(q) {
 /* [V33.493] /api/state 직렬화 — 소수는 유효숫자 6자리로 줄이되(용량 ~30%↓) ★가격 칸은 소수 4자리까지 그대로★.
    종전엔 가격도 6자리라 27,477.31 → 27,477.3 · 12,345.67 → 12,345.7 처럼 끝자리가 잘렸다(지수·고가 종목). */
 const _STATE_PRICE_KEYS = { price: 1, prevClose: 1, pre: 1, post: 1, regPrice: 1, dispPrice: 1, avg: 1 };
+/* [V33.547] ★같은 값을 두 이름으로 두 번 보내지 않는다★ — 관심종목 1,004개 × (dailyRsi=rsi · dailyMa=ma · dailyAtr=atr · dispPrice=price · dispPct=dayPct).
+   화면은 앞쪽 이름(dailyRsi·dailyMa·dailyAtr·dispPrice·dispPct)을 한 번도 읽지 않는다(정적 검사 — check-load-speed).
+   ★값이 짝과 똑같을 때만★ 뺀다 — 다르면(시간외 등) 그대로 나간다. 서버 판단 경로(quote: 원본)는 손대지 않는다. */
+const _STATE_DUP_OF = { dailyRsi: "rsi", dailyMa: "ma", dailyAtr: "atr", dispPrice: "price", dispPct: "dayPct" };
 function _stateNumTrim(k, v) {
+  const _d = _STATE_DUP_OF[k];
+  if (_d && this && typeof this === "object" && !Array.isArray(this) && this[_d] === v && v !== undefined) return undefined;
   if (typeof v !== "number" || !isFinite(v) || Number.isInteger(v)) return v;
   return _STATE_PRICE_KEYS[k] ? Math.round(v * 1e4) / 1e4 : +v.toPrecision(6);
 }
