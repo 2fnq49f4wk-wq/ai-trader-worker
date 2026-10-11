@@ -25,6 +25,18 @@ chk(!M.omniqBlocks(Object.assign({}, st, { speak: false }), "A", now) && !M.omni
 const st20 = { speak: false, gate: G(true, true, false), speak20: true, gate20: G(true, true, true), trainedAt: now - 3600000, scores: { A: 0.9 }, heads: { r20: { A: 0.3, B: 0.7 } } };
 chk(M.omniqBlocks(st20, "A", now) && !M.omniqBlocks(st20, "B", now), "20일 머리 발언 중이면 20일 하위 절반만 막는다(5일 머리 섀도우여도)");
 chk(!M.omniqBlocks(Object.assign({}, st20, { gate20: G(true, true, false) }), "A", now), "20일 머리도 ③ 미달이면 막지 않는다");
+// [V33.558] 잠정 발언 + 자동 회수(사용자 결정 10/11) — ①②가 강하면(① t ≥ 5 · ② 전 구간 양수) ③ 전에도 좁히기 발언 · 실시간 평균 < 50%(10일+) · 30일 ③ 실패면 회수
+const P = (t, folds, g3) => ({ g1: { ok: true, t: t }, g2: { ok: true, folds: folds }, g3: g3 || { days: 0, ok: false } });
+const stP = (g) => ({ speak: false, gate: g, trainedAt: now - 3600000, scores: { A: 0.2, B: 0.8 } });
+chk(M.omniqBlocks(stP(P(6.85, [0.003, 0.002, 0.002, 0.003])), "A", now) && !M.omniqBlocks(stP(P(6.85, [0.003, 0.002, 0.002, 0.003])), "B", now),
+  "잠정 발언: ①②가 강하면 ③ 전에도 하위 절반만 막는다");
+chk(!M.omniqProvOf(P(4.9, [0.003, 0.002, 0.002, 0.003])) && !M.omniqProvOf(P(9, [0.003, -0.001, 0.002, 0.003])) && !M.omniqProvOf({ g1: { ok: false, t: 9 }, g2: { ok: true, folds: [1, 1, 1] } }),
+  "잠정 조건: ① t < 5 · ② 한 구간이라도 음수 · ① 미통과면 잠정 없음");
+chk(M.omniqProvOf(P(9, [1, 1, 1, 1], { days: 9, mu: 0.4, ok: false })) && !M.omniqProvOf(P(9, [1, 1, 1, 1], { days: 10, mu: 0.49, ok: false })) && M.omniqProvOf(P(9, [1, 1, 1, 1], { days: 12, mu: 0.52, lb: 0.47, ok: false })),
+  "자동 회수: 10일 이상 평균 < 50% 면 회수 · 10일 전엔 판단 안 함 · 평균 ≥ 50% 면 하한이 넓어도 유지");
+chk(!M.omniqProvOf(P(9, [1, 1, 1, 1], { days: 30, mu: 0.51, lb: 0.49, ok: false })) && M.omniqProvOf(P(9, [1, 1, 1, 1], { days: 30, mu: 0.53, lb: 0.51, ok: true })),
+  "30일 ③ 정식 시험 실패면 잠정도 회수");
+chk(!M.omniqBlocks(Object.assign(stP(P(9, [1, 1, 1])), { trainedAt: now - 6 * 86400000 }), "A", now), "잠정이어도 낡은 점수(5일+)로는 막지 않는다");
 chk(/omniq_picks20:/.test(S) && /url\.searchParams\.get\("h"\) === "20"/.test(S), "20일 머리 장부 · 학습기 채점용 조회(h=20)");
 let r = M.omniqPicksAppend([], "20261007", ["A", "B"], now);
 r = M.omniqPicksAppend(r.picks, "20261007", ["X"], now + 1);

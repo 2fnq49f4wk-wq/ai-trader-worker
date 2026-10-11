@@ -36,17 +36,22 @@ ZOOS_Q = ("qlib158", "academic", "alpha101")   # [반복 2] alpha101 추가 — 
 HEADS_RANK = (1, 5, 20)
 H20 = 20                    # [V33.543] 두 번째 발언 머리 지평
 LEARNER_5D = "lgb"          # 연구 회차(OMNIQ_LAB=1) 결과로만 바꾼다
+#   [V33.558] 후보 "lgb_reg"(정규화 강화 · 잎 15 · 잎당 1,000 · L2 10 · 피처 60% · 150판) — 같은 규칙(두 시장 ① 하한 +0.002 · ② 통과)일 때만 채택.
 DE_K = 4                    # DoubleEnsemble 하위 모델 수
 DE_SR_BINS, DE_FS_BINS = 10, 5
 DE_FS_RATIO = (0.8, 0.7, 0.6, 0.5, 0.4)
 COST_RT = {"us": 0.0005 + 0.0005, "kr": (0.00015 + 0.001) + (0.00015 + 0.001 + 0.002)}   # 왕복(실험실 COST 와 같다)
 
 
-def _lgb_params(seed=7):
+def _lgb_params(seed=7, reg=False):
     import os
-    return {"objective": "regression", "learning_rate": 0.05, "num_leaves": 31, "min_data_in_leaf": 200,
-            "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 1, "lambda_l2": 1.0,
-            "verbose": -1, "seed": seed, "num_threads": int(os.environ.get("OMNI_THREADS", "8"))}
+    p = {"objective": "regression", "learning_rate": 0.05, "num_leaves": 31, "min_data_in_leaf": 200,
+         "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 1, "lambda_l2": 1.0,
+         "verbose": -1, "seed": seed, "num_threads": int(os.environ.get("OMNI_THREADS", "8"))}
+    if reg:
+        # [V33.558] 정규화 강화 후보(과적합 대응 · 연구 회차에서만 비교) — 잎 15 · 잎당 최소 1,000행 · L2 10 · 피처 60%
+        p.update({"num_leaves": 15, "min_data_in_leaf": 1000, "lambda_l2": 10.0, "feature_fraction": 0.6})
+    return p
 
 
 def beat_rate(scores, y, days, q=Q):
@@ -128,9 +133,9 @@ def gate3(picks, C, y_rank, dk_index):
     return {"days": int(len(v)), "mu": round(mu, 4), "lb": round(lb, 4), "ok": bool(len(v) >= G3_MIN_DAYS and lb > 0.5)}
 
 
-def _fit_lgb(X, y, objective="regression", rounds=300, weight=None, seed=7):
+def _fit_lgb(X, y, objective="regression", rounds=300, weight=None, seed=7, reg=False):
     import lightgbm as lgb
-    p = _lgb_params(seed)
+    p = _lgb_params(seed, reg=reg)
     p["objective"] = objective
     return lgb.train(p, lgb.Dataset(X, label=y, weight=weight), num_boost_round=rounds)
 
@@ -267,19 +272,42 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         splits = list(purged_walk_forward_splits(len(days), label_end_times=lab_end, n_folds=FOLDS, embargo_fraction=0.02, expanding=True))
         F = X.shape[2]
 
-        def cv(lab, learner="lgb", objective="regression"):
-            """퍼지 전진 표본 밖 점수(날짜×종목) + 시험 날 목록."""
+        fitdiag = {}
+
+        def cv(lab, learner="lgb", objective="regression", diag=None, diag_y=None):
+            """퍼지 전진 표본 밖 점수(날짜×종목) + 시험 날 목록.
+            [V33.558] diag 이름을 주면 ★적합 진단★ — 마지막 구간 모델로 학습구간 끝 250일의 승률(표본 안)을 재서 표본 밖 승률과 나란히 둔다.
+            표본 안 ≫ 표본 밖(차 > 0.08) = 과적합 · 둘 다 ≈ 0.5 = 과소적합. 판정에 쓰지 않는다(기록·관측)."""
             sc = np.full((D, S), np.nan, dtype=np.float32)
             tdays = []
+            last = None
             for sp in splits:
                 tr, te = days[sp.train], days[sp.test]
                 Xtr, ytr = X[tr].reshape(-1, F), lab[tr].reshape(-1)
                 mm = np.isfinite(ytr)
                 if mm.sum() < 5000:
                     continue
-                mdl = DoubleEnsemble().fit(Xtr[mm], ytr[mm]) if learner == "de" else _fit_lgb(Xtr[mm], ytr[mm], objective)
+                mdl = (DoubleEnsemble().fit(Xtr[mm], ytr[mm]) if learner == "de" else
+                       _fit_lgb(Xtr[mm], ytr[mm], objective, rounds=(150 if learner == "lgb_reg" else 300), reg=(learner == "lgb_reg")))
                 sc[te] = mdl.predict(X[te].reshape(-1, F)).reshape(len(te), S).astype(np.float32)
                 tdays += list(te)
+                last = (mdl, tr, te)
+            if diag and last is not None:
+                try:
+                    mdl, tr, te = last
+                    ins = tr[-250:]
+                    si = np.full((D, S), np.nan, dtype=np.float32)
+                    si[ins] = mdl.predict(X[ins].reshape(-1, F)).reshape(len(ins), S).astype(np.float32)
+                    yy = y if diag_y is None else diag_y
+                    bi, bo = beat_rate(si, yy, list(ins)), beat_rate(sc, yy, list(te))
+                    gap = (bi["mu"] - bo["mu"]) if (bi["mu"] is not None and bo["mu"] is not None) else None
+                    kind = ("과적합 의심" if gap is not None and gap > 0.08 else
+                            "과소적합 의심" if (bi["mu"] is not None and bi["mu"] < 0.51) else "정상 범위")
+                    fitdiag[diag] = {"inMu": bi["mu"], "outMu": bo["mu"], "gap": None if gap is None else round(gap, 4), "kind": kind}
+                    log("      [OMNI-Q %s · 적합 진단 %s] 표본 안(학습 끝 250일) 승률 %s · 표본 밖(마지막 구간) %s · 차 %s → %s" %
+                        (mk, diag, bi["mu"], bo["mu"], fitdiag[diag]["gap"], kind))
+                except Exception as e:  # noqa: BLE001 — 진단은 본 판정을 막지 않는다
+                    log("      [OMNI-Q 적합 진단 실패] %s" % e)
             return sc, tdays
 
         def judge(sc, tdays, lab_rank, fwd_vals, tag, step=H):
@@ -300,12 +328,12 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
 
         import os as _os
         LAB = _os.environ.get("OMNIQ_LAB") == "1"
-        scores, test_all = cv(y, LEARNER_5D)
+        scores, test_all = cv(y, LEARNER_5D, diag="5일")
         br, fold_x, fold_x0, g2, pos, need = judge(scores, test_all, y, fwdv, "5일 · " + LEARNER_5D)
         # [V33.543] ★두 번째 발언 머리 — 20일 순위★(연구 회차 10/11: 미국 ① 53.3% t 12.9 · 한국 54.0% t 18.0 · ② 4/4). 관문 ①②③ 동일 · 20일마다 갈아탐.
         f20 = (C.shift(-(H20 + 1)) / C.shift(-1) - 1.0)
         y20 = f20.rank(axis=1, pct=True).values
-        s20, t20 = cv(y20)
+        s20, t20 = cv(y20, diag="20일", diag_y=y20)
         br20, fx20, _, g2_20, pos20, need20 = judge(s20, t20, y20, f20.values, "20일 순위(발언 머리 2)", step=H20)
         g1_20 = gate1(br20)
         lab_rep = {}
@@ -314,6 +342,11 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             sde, tde = cv(y, "de")
             bde, fde, _, g2de, _, _ = judge(sde, tde, y, fwdv, "5일 · DoubleEnsemble")
             lab_rep["de"] = {"lb": bde["lb"], "t": bde["t"], "g2": g2de, "folds": fde, "lgbLb": br["lb"]}
+            # (연구) [V33.558] 정규화 강화 LightGBM — 과적합 대응. ★미리 등록★: 두 시장 모두 ① 하한이 LGB 보다 ≥0.002 높고 ② 통과일 때만 채택
+            sreg, treg = cv(y, "lgb_reg", diag="5일·정규화")
+            breg, freg, _, g2reg, _, _ = judge(sreg, treg, y, fwdv, "5일 · 정규화 강화")
+            lab_rep["reg"] = {"lb": breg["lb"], "t": breg["t"], "g2": g2reg, "folds": freg, "lgbLb": br["lb"],
+                              "fit": fitdiag.get("5일·정규화"), "fitLgb": fitdiag.get("5일")}
             # (연구) 순위 머리 1·20일
             for Hh in (1,):   # 20일은 위에서 매 회차 잰다
                 fh = (C.shift(-(Hh + 1)) / C.shift(-1) - 1.0)
@@ -376,7 +409,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         # 최종 모델: 라벨이 있는 모든 날로 학습 → 마지막 날(오늘 피처) 채점
         Xa, ya = X[days].reshape(-1, F), y[days].reshape(-1)
         m = np.isfinite(ya)
-        bst = DoubleEnsemble().fit(Xa[m], ya[m]) if LEARNER_5D == "de" else _fit_lgb(Xa[m], ya[m])
+        bst = (DoubleEnsemble().fit(Xa[m], ya[m]) if LEARNER_5D == "de" else
+               _fit_lgb(Xa[m], ya[m], rounds=(150 if LEARNER_5D == "lgb_reg" else 300), reg=(LEARNER_5D == "lgb_reg")))
         last = D - 1
         # 미완성 봉 금지: 한국 장중(00:00~06:30Z)에 돌면 오늘 일봉이 덜 찼다 → 어제까지(미국은 이 학습기 시각(00:10·12:10Z)에 장이 닫혀 있다)
         if mk == "kr":
@@ -446,10 +480,10 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         body = {"mkt": mk, "day": day, "h": H, "q": Q, "trainedAt": int(time.time() * 1000), "nFeat": len(names), "n": len(sc),
                 "scores": sc, "top": top, "heads": extra, "learner": LEARNER_5D, "lab": lab_rep or None,
                 "gate": {"g1": dict(br, ok=g1, needT=G1_T), "g2": {"folds": fold_x, "foldsFullSwap": fold_x0, "band": BAND, "pos": pos, "need": need, "ok": g2},
-                         "g3": dict(g3, needDays=G3_MIN_DAYS), "speak": speak},
+                         "g3": dict(g3, needDays=G3_MIN_DAYS), "speak": speak, "fit": fitdiag.get("5일")},
                 "top20": top20,
                 "gate20": {"g1": dict(br20, ok=g1_20, needT=G1_T), "g2": {"folds": fx20, "band": BAND, "step": H20, "pos": pos20, "need": need20, "ok": g2_20},
-                           "g3": dict(g3_20, needDays=G3_MIN_DAYS), "speak": speak20}}
+                           "g3": dict(g3_20, needDays=G3_MIN_DAYS), "speak": speak20, "fit": fitdiag.get("20일")}}
         out[mk] = body["gate"]
         log("      [OMNI-Q %s] 오늘(%s) %d종목 채점 · 상위 %d · 발언 %s (%.0fs)" % (mk, day, len(sc), len(top), "가능" if speak else "불가(섀도우)", time.time() - t0))
         if req is not None:
