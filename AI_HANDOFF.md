@@ -12,6 +12,13 @@
 
 ## Current handoff
 
+- V33.546 (10/11) ★로딩 — 실적·뉴스 30초 멈춤 수정(ui-probe speed job 114547798644)★
+  - 원인 ①: microSwr 가 빌드 진행 중이면 R2 사본을 건너뛰고 그 빌드를 기다렸다(join) → /api/news join 23s · /api/earnings 30s 시간초과×3.
+    수정: 진행 중이어도 사본 먼저. staleMax 넘었지만 24시간 안 사본이 있으면 빌드는 12초까지만 기다리고 사본(r2old)을 준다.
+  - 원인 ②: /api/earnings 빌드 — 야후 v7(죽음) 이 8초×재시도로 ~24초 매달린 뒤 나스닥 7일치를 차례로(타임아웃 없이) 받았다.
+    수정: 야후 6초 상한 · 나스닥 7일 병렬 · 하나당 6초. 둘 다 실패해 빈 목록이면 이전 캘린더를 덮지 않는다.
+  - 게이트: check-load-speed 에 microSwr 사본 우선 계약 추가. 다음: speed 재측정 → /api/state 800KB · kr-halt 버스트.
+
 - V33.545 (10/11) ★로딩 — 실측 기반 수정(ui-probe speed run 38164512000)★
   - 실측: /api/commodities 30초 시간초과 4회(콜드 15.8s) · ml-status 콜드 12.2s · pipeline 8.5s · state 1~1.8s(R2 800KB) · 첫 방문 visible 5.3s.
   - swrJson: R2 사본이 staleMs(1h) 넘어도 24시간 안이면 ★먼저 주고★ 뒤에서 갱신(층 표시 r2old) — 밤새 방문 없던 뒤 첫 화면의 콜드 빌드(73s) 제거.

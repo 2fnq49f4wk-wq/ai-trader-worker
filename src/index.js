@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.545";
+const _BUILD_VER = "V33.546";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -27140,12 +27140,17 @@ async function microSwr(request, url, ctx, run) {
   const e = __microCache.get(key);
   if (e && now - e.ts <= ttl) return _mcResp(e, "hit", ttl);
   if (e && now - e.ts <= staleMax) { bg(refresh()); return _mcResp(e, "l1s", ttl); }
-  if (R2 && !__mcInflight.has(key)) {
+  /* [V33.546] ★빌드가 이미 도는 중이어도 사본을 먼저 본다★ — 종전엔 진행 중 빌드가 있으면 R2 사본을 건너뛰고 그 빌드를 기다렸다(join).
+     빌드가 느린 경로(운영 10/11: /api/earnings 30초 시간초과 3회 · /api/news join 23초)에서 화면이 멈췄다. */
+  let _old = null;   // staleMax 를 넘었지만 24시간 안의 사본 — 빌드가 오래 걸리면 마지막 수단으로 준다
+  if (R2) {
     try {
       const g = await R2.get(r2Key);
       if (g) {
         const md = g.customMetadata || {}, at = Number(md.at || 0), age = now - at;
-        if (at > 0 && age >= 0 && age <= staleMax) {
+        if (at > 0 && age > staleMax && age <= 86400000) {
+          _old = { ts: 0, body: await g.text(), headers: { "content-type": md.ct || "application/json" }, at: at };
+        } else if (at > 0 && age >= 0 && age <= staleMax) {
           const ent = { ts: md.ver === _BUILD_VER ? at : 0, body: await g.text(),
             headers: { "content-type": md.ct || "application/json" } };
           __microCache.set(key, ent);
@@ -27158,7 +27163,14 @@ async function microSwr(request, url, ctx, run) {
   }
   const joined = __mcInflight.has(key);
   let snap;
-  try { snap = await refresh(); }
+  if (_old) {   // 오래된 사본이 있으면 빌드를 12초까지만 기다리고, 넘으면 사본을 준다(빌드는 뒤에서 계속)
+    const rp = refresh(); bg(rp);
+    const winner = await Promise.race([rp.then(function (x) { return x; }, function () { return null; }),
+                                       new Promise(function (r) { setTimeout(function () { r(null); }, 12000); })]);
+    if (!winner) return _mcResp(Object.assign({}, _old, { ts: _old.at }), "r2old", ttl);
+    snap = winner;
+  }
+  try { if (!snap) snap = await refresh(); }
   catch (e) { return Response.json({ error: "read failed", detail: String((e && e.message) || e) }, { status: 503, headers: { "x-lux-c": "error" } }); }
   return new Response(snap.body, { status: snap.status, headers: Object.assign({}, snap.headers, {
     "X-Micro-Cache": joined ? "join" : "miss", "x-lux-c": joined ? "join" : "build" }, snap.status === 200 ? { "cache-control": _mcCC(ttl) } : { "cache-control": "no-store" }) });
@@ -32198,7 +32210,10 @@ async function handleRequest(request, env, ctx, _inner) {
               usTickers.map(function(s){ return encodeURIComponent(s); }).join(",") +
               "&fields=symbol,longName,shortName,earningsTimestamp,earningsTimestampStart,earningsTimestampEnd,epsForward";
             if (auth && auth.crumb) u += "&crumb=" + encodeURIComponent(auth.crumb);
-            const j = await yahooFetch(u, auth && auth.cookie ? { "Cookie": auth.cookie } : null);
+            /* [V33.546] ★야후 v7 은 6초까지만★ — v7 이 죽어 있으면 yahooFetch 가 8초×재시도로 ~24초를 매달려
+               /api/earnings 가 30초 시간초과를 냈다(운영 10/11). 넘으면 나스닥 캘린더로 바로 넘어간다. */
+            const j = await Promise.race([yahooFetch(u, auth && auth.cookie ? { "Cookie": auth.cookie } : null).catch(function () { return null; }),
+                                          new Promise(function (r) { setTimeout(function () { r(null); }, 6000); })]);
             const rows = (j && j.quoteResponse && j.quoteResponse.result) || [];
             rows.forEach(function(row){
               const ts0 = row.earningsTimestamp || row.earningsTimestampStart;
@@ -32215,33 +32230,37 @@ async function handleRequest(request, env, ctx, _inner) {
         if (items.length < 3) {
           const nUA = { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
             "Accept": "application/json", "Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/" };
-          let fetched = 0;
-          for (let d = 0; d < 10 && fetched < 7; d++) {
+          // [V33.546] ★7일치를 한꺼번에 · 하나당 6초★ — 종전엔 하루씩 차례로(타임아웃 없이) 받아 느린 날 하나가 전체를 붙잡았다
+          const days = [];
+          for (let d = 0; d < 10 && days.length < 7; d++) {
             const dt = new Date(Date.now() + d * 86400000);
             const dow = dt.getUTCDay();
             if (dow === 0 || dow === 6) continue;
-            const ds = dt.toISOString().slice(0, 10);
-            try {
-              const r = await fetch("https://api.nasdaq.com/api/calendar/earnings?date=" + ds, { headers: nUA });
-              fetched++;
-              if (!r.ok) continue;
-              const j2 = await r.json();
-              const rows2 = (j2 && j2.data && j2.data.rows) || [];
-              rows2.slice(0, 30).forEach(function(rw){
-                if (!rw || !rw.symbol) return;
-                items.push({ symbol: rw.symbol, name: rw.companyName || rw.name || rw.symbol,
-                  ts: new Date(ds + "T12:00:00Z").getTime(),
-                  when: rw.time || "", eps: (rw.epsForecast != null && rw.epsForecast !== "" ? rw.epsForecast : null),
-                  epsType: "q", watch: !!watchSet[String(rw.symbol).toUpperCase()], src: "nasdaq" });
-              });
-            } catch (e) {}
+            days.push(dt.toISOString().slice(0, 10));
           }
+          const got = await Promise.all(days.map(function (ds) {
+            return fetch("https://api.nasdaq.com/api/calendar/earnings?date=" + ds, { headers: nUA, signal: AbortSignal.timeout(6000) })
+              .then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
+          }));
+          got.forEach(function (j2, i) {
+            const ds = days[i];
+            const rows2 = (j2 && j2.data && j2.data.rows) || [];
+            rows2.slice(0, 30).forEach(function(rw){
+              if (!rw || !rw.symbol) return;
+              items.push({ symbol: rw.symbol, name: rw.companyName || rw.name || rw.symbol,
+                ts: new Date(ds + "T12:00:00Z").getTime(),
+                when: rw.time || "", eps: (rw.epsForecast != null && rw.epsForecast !== "" ? rw.epsForecast : null),
+                epsType: "q", watch: !!watchSet[String(rw.symbol).toUpperCase()], src: "nasdaq" });
+            });
+          });
         }
         // 과거 3일~미래 30일만, 시간순
         const lo = Date.now() - 3 * 86400000, hi = Date.now() + 30 * 86400000;
         items = items.filter(function(it){ return it.ts >= lo && it.ts <= hi; });
         items.sort(function(a, b){ return a.ts - b.ts || (b.watch ? 1 : 0) - (a.watch ? 1 : 0); });
         items = items.slice(0, 80);
+        // [V33.546] 두 출처가 다 실패해 빈 목록이면 멀쩡한 이전 캘린더를 덮지 않는다
+        if (!items.length && cached && cached.items && cached.items.length) return cached;
         const payload = { items: items, ts: Date.now() };
         try { await setState(env.DB, ck, payload); } catch (e2) {}
         return payload;

@@ -84,6 +84,10 @@ console.log("⑦ 캐시 층 표시(V33.521) — 운영 측정이 느린 원인�
     "swrJson: 24시간 안 사본은 먼저 준다(밤새 방문 없던 뒤 첫 화면이 73초 기다리던 것)", "★오래된 사본을 버리고 콜드 빌드를 기다린다★");
   chk(/_cashForRead\(env\.DB, cfg\),   \/\/ \[V33\.545\]/.test(SRC) && /async function _cashForRead/.test(SRC),
     "원자재 화면: 현금은 60초 기억(5개 시장 원장 재계산이 30초 시간초과를 냈다)", "★읽기 화면이 매번 원장 전체를 다시 계산한다★");
+  // [V33.546] microSwr: 빌드가 이미 돌아도 R2 사본을 먼저 본다 · 24시간 안 오래된 사본이 있으면 빌드는 12초까지만 기다린다
+  const ma = SRC.indexOf("async function microSwr("), mf = ma > 0 ? SRC.slice(ma, ma + 6000) : "";
+  chk(mf && !/if \(R2 && !__mcInflight\.has\(key\)\)/.test(mf) && /age <= 86400000/.test(mf) && /"r2old"/.test(mf) && /setTimeout\(function \(\) \{ r\(null\); \}, 12000\)/.test(mf),
+    "microSwr: 진행 중 빌드가 있어도 사본 먼저 · 오래된 사본이면 12초 뒤 사본으로(실적·뉴스 30초 멈춤)", "★빌드 진행 중이면 사본을 건너뛰고 빌드를 기다린다★");
   const sa = SRC.indexOf("const FRESH_MS = 12000, USABLE_MS = 150000;"), sb = SRC.indexOf("[V12.126] ★500 에러 방지★", sa);
   const st = sa > 0 && sb > sa ? SRC.slice(sa, sb) : "";
   chk(st && ["l1", "l1s", "l2", "r2", "build"].every((l) => st.includes('"x-lux-c": "' + l + '"')),
