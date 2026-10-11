@@ -75,6 +75,10 @@ on:
         description: 'OMNI-Q 만 — Qlib 표준 머리(동물원 피처 LightGBM) 학습 · 실력 증명 관문 ①②③ · 오늘 점수 업로드(정기 회차도 자동으로 돈다) — omni_now 와 함께'
         type: boolean
         default: false
+      omni_q_lab:
+        description: 'OMNI-Q 연구 회차 — DoubleEnsemble vs LightGBM(미리 등록한 채택 규칙) · 순위 1·20일 · 상승확률 · 위험 머리 전진평가 + 업로드 — omni_now 와 함께'
+        type: boolean
+        default: false
       omni_ksec:
         description: 'OMNI 장중 횡단면 칸 실험(재기만 · 업로드 안 함) — omni_now 와 함께'
         type: boolean
@@ -240,7 +244,7 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           set -o pipefail
-          modal run trainer/modal/modal_train.py::omni_job --ksec ${{ inputs.omni_ksec && 1 || 0 }} --flow ${{ inputs.omni_flow && 1 || 0 }} --news ${{ inputs.omni_news && 1 || 0 }} --rally ${{ inputs.omni_rally && 1 || 0 }} --split ${{ inputs.omni_split && 1 || 0 }} --wf ${{ inputs.omni_wf && 1 || 0 }} --earn ${{ inputs.omni_earn && 1 || 0 }} --factors ${{ inputs.omni_factors && 1 || 0 }} --lab ${{ inputs.omni_lab && 1 || 0 }} --omniq ${{ inputs.omni_q && 1 || 0 }} 2>&1 | tee omni.log
+          modal run trainer/modal/modal_train.py::omni_job --ksec ${{ inputs.omni_ksec && 1 || 0 }} --flow ${{ inputs.omni_flow && 1 || 0 }} --news ${{ inputs.omni_news && 1 || 0 }} --rally ${{ inputs.omni_rally && 1 || 0 }} --split ${{ inputs.omni_split && 1 || 0 }} --wf ${{ inputs.omni_wf && 1 || 0 }} --earn ${{ inputs.omni_earn && 1 || 0 }} --factors ${{ inputs.omni_factors && 1 || 0 }} --lab ${{ inputs.omni_lab && 1 || 0 }} --omniq ${{ inputs.omni_q_lab && 2 || (inputs.omni_q && 1 || 0) }} 2>&1 | tee omni.log
       - name: OMNI summary
         if: always()
         run: |

@@ -12,6 +12,14 @@
 
 ## Current handoff
 
+- V33.539 (10/11) ★OMNI 복합 모델 1·2단계 — 다중 머리 + DoubleEnsemble(Qlib 이식)★
+  - omni_q.py: 같은 피처(267)로 머리 여러 개 — 순위 5일(발언 머리 · 관문 ①②③ 그대로) + 순위 1·20일 · 상승확률(절대 · binary) · 위험(다음 5일 변동성 순위).
+    정기 회차는 추가 머리를 전체 학습 1회로만 채점·업로드(관측용 · 매매 영향 없음). 워커 omniq:<mkt>.heads 에 저장 · /api/omni-status omniQ.heads.
+  - DoubleEnsemble(Zhang et al. 2020 · Qlib DEnsembleModel 핵심: 손실곡선 표본 재가중 SR + 섞기 중요도 피처 선택 FS · 하위 LGB 4개 평균).
+    ★미리 등록★: 두 시장 모두 ① 하한이 LGB 보다 ≥0.002 높고 ② 통과일 때만 LEARNER_5D="de".
+  - 연구 회차: modal-deploy omni_now + omni_q_lab → OMNIQ_LAB=1 — DE vs LGB · 1·20일 순위 ①② · 상승확률 AUC · 위험 IC 를 표본 밖으로.
+  - 다음: 연구 회차 결과로 LEARNER_5D 판정 → 상승확률 머리가 미국 GBDT(하한 47.6%)보다 나은지 같은 잣대로 비교(3단계).
+
 - ★10/11 사용자 지시 — 다음 세션 작업 계획(맥락 470k↑ 라 새 세션에서 시작)★
   사용자: "업계 최고 그 이상 · 미국 GBDT 성능 올려 · OMNI 능력 전부 OMNI-Q 에 · OMNI 를 여러 역할을 하는 복합 모델로(대형 LLM 처럼) ·
   OMNI-Q 가 GBDT·LightGBM 역할도 · 필수 모델은 퇴역 말고 강화하거나 같은 역할의 더 좋은 모델로 교체 · GitHub 검증 모델 개조 사용 OK".

@@ -57,13 +57,17 @@ good = [{"day": str(20260101 + i), "top": ["S29", "S28", "S27"]} for i in range(
 bad = [{"day": str(20260101 + i), "top": ["S0", "S1", "S2"]} for i in range(35)]
 few = good[:10]
 dk = {str(k): i for i, k in enumerate(C.index)}
+# DoubleEnsemble(Qlib DEnsemble 이식): 심은 신호를 배우고 · 하위 모델이 K 개 · 피처 선택으로 뒤 모델 피처가 줄어든다
+rd = np.random.default_rng(9); Xd = rd.normal(size=(20000, 20)).astype(np.float32); yd = (0.3 * Xd[:, 0] + rd.normal(size=20000)).astype(np.float32)
+dm = q.DoubleEnsemble(k=3, rounds=60).fit(Xd, yd); Xe = rd.normal(size=(5000, 20)).astype(np.float32)
+de_chk = {"corr": float(np.corrcoef(dm.predict(Xe), 0.3 * Xe[:, 0])[0, 1]), "k": len(dm.models), "nf": [int(len(f)) for f in dm.feats]}
 # 보유 띠: 같은 점수·같은 수익이면 띠 쪽 회전 비용이 통째 교체보다 작다(같거나) — 회전 억제가 실제로 일어난다
 rs = np.random.default_rng(5); sc = rs.normal(0, 1, (200, 100)); sc = np.cumsum(sc, axis=0) * 0.2 + rs.normal(0, 1, (200, 100)); fw = rs.normal(0, 0.02, (200, 100))
 full = q.decile_excess(sc, fw, list(range(200)), 0.01); band = q.decile_excess(sc, fw, list(range(200)), 0.01, band=0.25)
 nocost_f = q.decile_excess(sc, fw, list(range(200)), 0.0); nocost_b = q.decile_excess(sc, fw, list(range(200)), 0.0, band=0.25)
 cost_f = (np.sum(nocost_f) - np.sum(full)); cost_b = (np.sum(nocost_b) - np.sum(band))
 print(json.dumps({"null": [b0, g10, g20], "sig": [b1, g11, g21],
-                  "g3good": q.gate3(good, C, yr, dk), "g3bad": q.gate3(bad, C, yr, dk), "g3few": q.gate3(few, C, yr, dk), "costF": cost_f, "costB": cost_b}))
+                  "g3good": q.gate3(good, C, yr, dk), "g3bad": q.gate3(bad, C, yr, dk), "g3few": q.gate3(few, C, yr, dk), "costF": cost_f, "costB": cost_b, "de": de_chk}))
 `;
 let J = null;
 try { J = JSON.parse(execFileSync("python3", ["-c", py], { encoding: "utf8" }).trim().split("\n").pop()); }
@@ -71,6 +75,7 @@ catch (e) { chk(false, "파이썬 실행", String(e).slice(0, 300)); }
 if (J) {
   chk(J.null[1] === false && J.null[2] === false, "귀무(실력 0): ①② 미달", JSON.stringify(J.null[0]));
   chk(J.sig[1] === true && J.sig[0].lb > 0.5 && J.sig[0].t >= 3, "심은 신호: ① 통과(하한>50% · t≥3)", JSON.stringify(J.sig[0]));
+  chk(J.de && J.de.corr > 0.5 && J.de.k === 3 && J.de.nf[2] < J.de.nf[0], "DoubleEnsemble: 심은 신호 학습 · 하위 모델 3 · 피처 선택으로 줄어듦", JSON.stringify(J.de));
   chk(J.costB < J.costF * 0.8, "보유 띠(10%→25%)가 회전 비용을 실제로 줄인다", JSON.stringify([J.costF, J.costB]));
   chk(J.g3good.ok === true && J.g3bad.ok === false && J.g3few.ok === false && J.g3few.days === 10, "③ 장부 채점: 좋은 장부 통과 · 나쁜 장부 미달 · 30일 미만 미달", JSON.stringify([J.g3good, J.g3bad, J.g3few]));
 }

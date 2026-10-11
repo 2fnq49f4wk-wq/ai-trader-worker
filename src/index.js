@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.538";
+const _BUILD_VER = "V33.539";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -29104,7 +29104,10 @@ async function handleRequest(request, env, ctx, _inner) {
       if (!mk || !body.day || nS < OMNIQ.minScores) return Response.json({ error: "mkt·day·scores(≥" + OMNIQ.minScores + ") 필요" }, { status: 400, headers: cors });
       const g = (body.gate && typeof body.gate === "object") ? body.gate : {};
       const st = { day: String(body.day), h: _num(body.h, 5), q: _num(body.q, 0.1), trainedAt: _num(body.trainedAt, Date.now()),
-                   nFeat: _num(body.nFeat, 0), n: nS, scores: body.scores, gate: g, speak: omniqSpeakOf(g), ts: Date.now() };
+                   nFeat: _num(body.nFeat, 0), n: nS, scores: body.scores, gate: g, speak: omniqSpeakOf(g), ts: Date.now(),
+                   /* [V33.539] 복합 머리(순위 1·20일 · 상승확률 · 위험) — 기록·관측용. 발언(매매 영향)은 5일 머리(scores)만 */
+                   heads: (body.heads && typeof body.heads === "object") ? body.heads : null,
+                   learner: String(body.learner || "lgb"), lab: (body.lab && typeof body.lab === "object") ? body.lab : null };
       await setState(env.DB, "omniq:" + mk, st);
       // 라이브 장부 — 엄격 읽기(못 읽으면 쓰지 않는다: 빈 배열로 덮으면 전진 기록이 사라진다)
       let picksN = null, added = false;
@@ -29160,7 +29163,8 @@ async function handleRequest(request, env, ctx, _inner) {
           const q = await getState(env.DB, "omniq:" + _m, null);
           if (q) {
             const _top = Object.keys(q.scores || {}).sort(function (a, b) { return q.scores[b] - q.scores[a]; }).slice(0, 10);
-            omniQ[_m] = { day: q.day, trainedAt: q.trainedAt, n: q.n, nFeat: q.nFeat, h: q.h, gate: q.gate, speak: q.speak, top10: _top };
+            omniQ[_m] = { day: q.day, trainedAt: q.trainedAt, n: q.n, nFeat: q.nFeat, h: q.h, gate: q.gate, speak: q.speak, top10: _top,
+                          learner: q.learner || "lgb", heads: q.heads ? Object.keys(q.heads) : [], lab: q.lab || null };
           }
         } catch (e) {}
       }

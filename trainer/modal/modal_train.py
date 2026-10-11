@@ -4499,6 +4499,8 @@ if _OMNI_IMAGE is not None:
             try:
                 sys.path.insert(0, "/root")
                 os.environ.setdefault("OMNI_THREADS", "8")
+                if omniq == 2:   # [V33.539] 연구 회차 — DoubleEnsemble 비교 · 순위 1·20일 · 상승확률 · 위험 머리 전진평가
+                    os.environ["OMNIQ_LAB"] = "1"
                 import omni
                 import omni_q
                 BASE, HDR, daily, mkt = _daily_all()
