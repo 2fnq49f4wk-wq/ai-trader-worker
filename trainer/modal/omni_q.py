@@ -342,6 +342,36 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             ric = float(np.nanmean(ics)) if ics else None
             log("      [OMNI-Q %s · 위험] 다음 5일 변동성 순위 IC %s (날 %d)" % (mk, None if ric is None else round(ric, 4), len(ics)))
             lab_rep["risk"] = {"ic": None if ric is None else round(ric, 4)}
+            # [V33.543] ★위험 사이징 미리 등록 검정★ — 5일 상위10% 를 동일비중 vs 예측 위험 역가중(w ∝ 1/(0.5+위험순위), 평균 1, 0.6~1.4)
+            #   채택: 두 시장 모두 ≥3/4 구간에서 샤프(기간 수익 평균/표준편차) ≥ 동일비중 × 1.10 · 평균 수익 하락 ≤ 0.02%p/기간
+            sz = []
+            for sp in splits:
+                te = [d for d in days[sp.test] if d in set(test_all) and d in set(tv_)]
+                eq_r, rw_r = [], []
+                for d in te[::H]:
+                    a5, rk, rr = scores[d], sv_[d], fwdv[d]
+                    ok_ = np.isfinite(a5) & np.isfinite(rk) & np.isfinite(rr)
+                    if ok_.sum() < 20:
+                        continue
+                    idx = np.where(ok_)[0]
+                    kq = max(1, int(round(len(idx) * Q)))
+                    top_ = idx[np.argsort(-a5[idx])[:kq]]
+                    rkq = _rank01(sv_[d][idx])[np.argsort(-a5[idx])[:kq]]
+                    w = 1.0 / (0.5 + rkq)
+                    w = np.clip(w / w.mean(), 0.6, 1.4)
+                    w = w / w.mean()
+                    eq_r.append(float(np.mean(rr[top_])))
+                    rw_r.append(float(np.sum(w * rr[top_]) / len(top_)))
+                if len(eq_r) >= 10:
+                    se, sr = float(np.std(eq_r)), float(np.std(rw_r))
+                    sh_e = float(np.mean(eq_r)) / se if se > 0 else 0.0
+                    sh_r = float(np.mean(rw_r)) / sr if sr > 0 else 0.0
+                    sz.append({"shEq": round(sh_e, 4), "shRw": round(sh_r, 4), "muEq": round(float(np.mean(eq_r)), 5), "muRw": round(float(np.mean(rw_r)), 5),
+                               "win": bool(sh_r >= sh_e * 1.10 and float(np.mean(rw_r)) >= float(np.mean(eq_r)) - 0.0002)})
+            nwin = sum(1 for z in sz if z["win"])
+            ok_sz = bool(len(sz) >= 3 and nwin >= max(3, int(math.ceil(0.75 * len(sz)))))
+            log("      [OMNI-Q %s · 위험 사이징] 구간 %s → 이김 %d/%d → %s" % (mk, sz, nwin, len(sz), "통과" if ok_sz else "미달"))
+            lab_rep["sizing"] = {"folds": sz, "wins": nwin, "ok": ok_sz}
         g1 = gate1(br)
         # 최종 모델: 라벨이 있는 모든 날로 학습 → 마지막 날(오늘 피처) 채점
         Xa, ya = X[days].reshape(-1, F), y[days].reshape(-1)
