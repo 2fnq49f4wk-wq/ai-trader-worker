@@ -120,6 +120,12 @@ console.log("⑦ 캐시 층 표시(V33.521) — 운영 측정이 느린 원인�
     chk(/RAIL\.__ro = new ResizeObserver/.test(rw) && /else if \(shown\) w = Math\.round\(RAIL\.el\.getBoundingClientRect/.test(rw),
       "레일 폭: ResizeObserver(없는 브라우저만 직접 잼)", "★레일 폭을 부팅 중 직접 잰다★");
   }
+  // [V33.551] /api/chart: 사본(일봉 6h·분봉 5m) 먼저 + 뒤에서 새로 · 네이버 요청 6초 상한(005930.KS 30초 시간초과)
+  {
+    const ca = SRC.indexOf('if (path === "/api/chart") {'), cf = ca > 0 ? SRC.slice(ca, SRC.indexOf("// === [V58 신규] 경제지표 캘린더", ca)) : "";
+    chk(/const __stale = intraday \? 5 \* 60 \* 1000 : 6 \* 3600 \* 1000/.test(cf) && /__chartInflight/.test(cf) && (cf.match(/headers: naverHdr, signal: AbortSignal\.timeout\(6000\)/g) || []).length === 2 && !/headers: naverHdr \}/.test(cf),
+      "차트: 묵은 사본 먼저(뒤에서 새로 · 키당 하나) · 네이버 요청 6초 상한", "★차트가 외부 응답을 기다린다★");
+  }
   const sa = SRC.indexOf("const FRESH_MS = 12000, USABLE_MS = 150000;"), sb = SRC.indexOf("[V12.126] ★500 에러 방지★", sa);
   const st = sa > 0 && sb > sa ? SRC.slice(sa, sb) : "";
   chk(st && ["l1", "l1s", "l2", "r2", "build"].every((l) => st.includes('"x-lux-c": "' + l + '"')),

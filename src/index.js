@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.550";
+const _BUILD_VER = "V33.551";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -31965,7 +31965,9 @@ async function handleRequest(request, env, ctx, _inner) {
       if (cached && cached.ts && (Date.now() - cached.ts) < ttl) {
         return Response.json(cached, { headers: cors });
       }
-      try {
+      /* [V33.550] ★차트는 사본 먼저, 새로 받기는 뒤에서★ — 운영 탐침(10/11): 첫 빌드 AAPL 3.7~4.7s · 005930.KS 30초 시간초과 1회
+         (네이버 요청에 시간 제한이 없었다). 일봉 6시간·분봉 5분 안의 사본이 있으면 바로 주고 같은 키 빌드는 아이솔레이트당 하나만 뒤에서. */
+      const __buildChart = async () => {
         let candles = [], price = null;
 
         if (isKRsym) {
@@ -31981,7 +31983,7 @@ async function handleRequest(request, env, ctx, _inner) {
           if (intraday) {
             // 분봉 — /minute{N} (timeframe 쿼리 아님, 경로에 분 단위 포함)
             const tfMin = interval === "1m" ? "" : interval === "5m" ? "5" : interval === "15m" ? "15" : interval === "30m" ? "30" : "60";
-            const rq = await fetch(naverBase + "minute" + tfMin, { headers: naverHdr });
+            const rq = await fetch(naverBase + "minute" + tfMin, { headers: naverHdr, signal: AbortSignal.timeout(6000) });
             if (!rq.ok) throw new Error("naver minute " + rq.status);
             const rows2 = await rq.json();
             if (!Array.isArray(rows2)) throw new Error("naver minute bad format");
@@ -32009,7 +32011,7 @@ async function handleRequest(request, env, ctx, _inner) {
             const fromS2 = from2.getUTCFullYear()+String(from2.getUTCMonth()+1).padStart(2,"0")+String(from2.getUTCDate()).padStart(2,"0");
             const tf = interval === "1wk" ? "week" : interval === "1mo" ? "month" : "day";
             const rq = await fetch(naverBase + tf + "?startDateTime=" + fromS2 + "0000&endDateTime=" + toS2 + "0000",
-              { headers: naverHdr });
+              { headers: naverHdr, signal: AbortSignal.timeout(6000) });
             if (!rq.ok) throw new Error("naver " + tf + " " + rq.status);
             const rows2 = await rq.json();
             if (!Array.isArray(rows2)) throw new Error("naver " + tf + " bad format");
@@ -32067,6 +32069,20 @@ async function handleRequest(request, env, ctx, _inner) {
         if (candles.length > 0) {
           try { await setState(env.DB, ck, payload); } catch (e) {}
         }
+        return payload;
+      };
+      const __stale = intraday ? 5 * 60 * 1000 : 6 * 3600 * 1000;
+      if (cached && cached.ts && cached.candles && cached.candles.length > 0 && (Date.now() - cached.ts) < __stale) {
+        const __cf = globalThis.__chartInflight || (globalThis.__chartInflight = new Set());
+        if (!__cf.has(ck)) {
+          __cf.add(ck);
+          const __bp = __buildChart().catch(function () {}).then(function () { __cf.delete(ck); });
+          if (ctx && ctx.waitUntil) ctx.waitUntil(__bp);
+        }
+        return Response.json(cached, { headers: cors });
+      }
+      try {
+        const payload = await __buildChart();
         return Response.json(payload, { headers: cors });
       } catch (e) {
         // 에러 시 기존 캐시(스테일)도 반환하되, 빈 캔들 캐시는 무시
