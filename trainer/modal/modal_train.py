@@ -3263,7 +3263,36 @@ def _label_ablation(X, PNL, TS, SYM, MKT, featver, D, UNIQ=None, featnames=None,
             print("   [전진평가] 실패(무시):", e)
 
 
-def _walk_forward_boost(Xs, Ps, TSs, UWs, MKs, absmed, K=4, span=0.20, lgb_mod=None):
+# ══ [V33.554] ★전진평가 규칙 v2 — 사용자 승인 2026-10-11 20:00Z(결과 보기 전 등록이 아니라, 결과를 본 뒤 ★바꾼★ 규칙이라 아래 '새 표본' 확인을 붙인다)★ ══
+#   바뀐 것 하나: 절대 바닥의 '초과정확도(다수클래스 대비) > 0' → ★AUC★(창 평균 > 0.5 · 3창 이상 > 0.5 · P 이상).
+#   이유: 다수클래스 대비 정확도는 그 창의 오름/내림 비율(기저율)에 끌려간다 — 10/11 회차에서 창1 이 기저율 쏠림으로
+#   ★운영식 포함 모든 후보★ 가 −12~−18%p 였다. AUC 는 '오른 종목에 더 높은 점수를 줬나' 만 재서 비율과 무관하다.
+#   ★사후 변경이므로★ 이 규칙으로 채택하려면 등록 시각 뒤에 쌓인 ★새 표본★ 에서도 후보가 이겨야 한다
+#   (등록 전 학습 → 새 표본 채점: AUC > 0.5 · 시장중립 IC > 운영식). 새 표본이 WF_FRESH_MIN 미만이면 '보류'.
+WF_RULE_VER = 2
+WF_RULE_REG_TS = 1791748800000.0   # 2026-10-11T20:00:00Z
+WF_FRESH_MIN = 3000
+
+
+def _auc_rank(pv, y):
+    """순위 AUC(동점 평균 순위) — 오른 표본(y=1)이 내린 표본보다 높은 점수를 받을 확률. 표본이 한쪽뿐이면 None."""
+    import numpy as np
+    pv = np.asarray(pv, dtype=np.float64); y = np.asarray(y) > 0.5
+    n1 = int(y.sum()); n0 = int(y.size - n1)
+    if n1 == 0 or n0 == 0:
+        return None
+    order = np.argsort(pv, kind="mergesort"); r = np.empty(pv.size, dtype=np.float64)
+    sp = pv[order]; i = 0
+    while i < sp.size:
+        j = i
+        while j + 1 < sp.size and sp[j + 1] == sp[i]:
+            j += 1
+        r[order[i:j + 1]] = (i + j) / 2.0 + 1.0
+        i = j + 1
+    return float((r[y].sum() - n1 * (n1 + 1) / 2.0) / (n1 * n0))
+
+
+def _walk_forward_boost(Xs, Ps, TSs, UWs, MKs, absmed, K=4, span=0.20, lgb_mod=None, reg_ts=None):
     """[V33.522] ★다구간 전진평가 — 한 구간·한 조건의 승리는 옮겨지지 않았다(V33.516→518 되돌림)★.
 
     10/08 실험대: 운영 부스터의 방향 예측력(IC(pnl))은 ★최근 10%(보정구간)를 학습에서 빼는 것★ 이 깎았고(.0877→.0219),
@@ -3308,7 +3337,7 @@ def _walk_forward_boost(Xs, Ps, TSs, UWs, MKs, absmed, K=4, span=0.20, lgb_mod=N
         q80, q20 = np.quantile(pv, 0.8), np.quantile(pv, 0.2)
         spread = float(p[pv >= q80].mean() - p[pv <= q20].mean())
         mm, _mir, mt, _mk = _calc_ic_blocks(pv, y, mkt=(MKs[va] if MKs is not None else None))
-        return {"ex": acc - maj, "ic": float(icp or 0.0), "sp": spread,
+        return {"ex": acc - maj, "auc": _auc_rank(pv, y), "ic": float(icp or 0.0), "sp": spread,
                 "mn": (None if mm is None else float(mm)), "mt": (None if mt is None else float(mt))}
 
     for k in range(K):
@@ -3370,14 +3399,62 @@ def _walk_forward_boost(Xs, Ps, TSs, UWs, MKs, absmed, K=4, span=0.20, lgb_mod=N
         ps = _mean([b["sp"] for b in base.values()]) if base else None
         # 상대 승리만으론 부족하다 — 실력 0 인 합성 표본에서도 '3/4 승' 이 우연히 나왔다(게이트 check-walk-forward 의 귀무 시험).
         # ★절대 바닥★ 도 같이: 자기 자신의 시장중립 블록 t(창 평균)가 신뢰 관문과 같은 1.65 이상 · 초과정확도 평균 > 0.
+        # [V33.554 · 규칙 v2] 초과정확도 대신 AUC — 창 평균 > 0.5 · 3창 이상 > 0.5 · 운영식(P) 이상
+        mauc = _mean([x.get("auc") for x in L]); pauc = _mean([b.get("auc") for b in base.values()]) if base else None
+        aucw = sum(1 for x in L if x.get("auc") is not None and x["auc"] > 0.5)
         ok = (nm != names[0] and pm is not None and mmn is not None and mmn > pm and wins >= 3
               and mic is not None and pi is not None and mic >= pi and msp is not None and ps is not None and msp >= ps
-              and mmt is not None and mmt >= 1.65 and mex is not None and mex > 0)
-        verdict[nm] = {"ex": mex, "ic": mic, "sp": msp, "mn": mmn, "mt": mmt, "wins": wins, "n": len(L), "adopt": bool(ok)}
-        print(f"      {nm:26s} 창{len(L)} 초과 {(mex or 0)*100:+.2f}%p · IC {(mic or 0):.4f} · 스프레드 {(msp or 0):+.3f}% · "
+              and mmt is not None and mmt >= 1.65
+              and mauc is not None and mauc > 0.5 and aucw >= 3 and (pauc is None or mauc >= pauc))
+        verdict[nm] = {"ex": mex, "auc": mauc, "aucWins": aucw, "ic": mic, "sp": msp, "mn": mmn, "mt": mmt, "wins": wins, "n": len(L), "adopt": bool(ok), "fresh": None}
+        print(f"      {nm:26s} 창{len(L)} 초과 {(mex or 0)*100:+.2f}%p · AUC {('—' if mauc is None else '%.4f' % mauc)}({aucw}창>0.5) · IC {(mic or 0):.4f} · 스프레드 {(msp or 0):+.3f}% · "
               f"시장중립IC {('—' if mmn is None else '%.4f' % mmn)}·t {('—' if mmt is None else '%.2f' % mmt)} · 승 {wins}/{len(L)}" + ("  ← ★규칙 충족 — 운영 반영 후보★" if ok else ""))
+    # ── [V33.554 · 규칙 v2] ★새 표본 확인★ — 규칙을 결과를 본 뒤 바꿨으므로, 등록 시각 뒤 표본에서도 이겨야 채택 ──
+    _reg = WF_RULE_REG_TS if reg_ts is None else float(reg_ts)
+    cands = [nm for nm in names[1:] if verdict.get(nm, {}).get("adopt")]
+    if cands:
+        fr = np.nonzero(TSs > _reg)[0]
+        trn = np.nonzero(TSs < _reg - gap)[0]
+        print(f"   ── [전진평가·새 표본] 규칙 v{WF_RULE_VER} 등록 뒤 표본 {fr.size}건(최소 {WF_FRESH_MIN}) · 등록 전 학습 {trn.size}건 ──")
+        if fr.size < WF_FRESH_MIN or trn.size < 20000:
+            for nm in cands:
+                verdict[nm]["adopt"] = False; verdict[nm]["fresh"] = "hold"
+            print("      ★보류★ — 새 표본이 모자라 판정하지 않는다(다음 회차에 다시). 운영 그대로.")
+        else:
+            ncal = max(2000, int(trn.size * 0.10)); tr_p, cal = trn[:-ncal], trn[-ncal:]
+            fs = {}
+            try:
+                dtr = lgb.Dataset(Xs[tr_p], label=Ys[tr_p], weight=UWs[tr_p], free_raw_data=False)
+                dca = lgb.Dataset(Xs[cal], label=Ys[cal], weight=UWs[cal], reference=dtr, free_raw_data=False)
+                hpp = dict(hp); hpp["metric"] = "binary_logloss"
+                bP = lgb.train(hpp, dtr, num_boost_round=1000, valid_sets=[dca], callbacks=[lgb.early_stopping(90, verbose=False)])
+                itP = max(1, int(bP.best_iteration or 1)); itR = max(20, int(round(itP * 1.1)))
+                fs[names[0]] = _score(bP.predict(Xs[fr], num_iteration=itP), fr)
+                spec = {names[1]: (itR, trn), names[2]: (200, trn),
+                        names[3]: (itR, trn[np.abs(Ps[trn]) >= 0.25 * absmed]),
+                        names[4]: (itR, trn[TSs[trn] >= _reg - 730 * 86400000.0])}
+                for nm in cands:
+                    rnd, trx = spec[nm]
+                    bst = lgb.train(hp, lgb.Dataset(Xs[trx], label=Ys[trx], weight=UWs[trx], free_raw_data=False), num_boost_round=rnd)
+                    fs[nm] = _score(bst.predict(Xs[fr]), fr)
+            except Exception as e:
+                print("      새 표본 채점 실패 — 보류:", e)
+                for nm in cands:
+                    verdict[nm]["adopt"] = False; verdict[nm]["fresh"] = "hold"
+                fs = {}
+            bp = fs.get(names[0])
+            for nm in cands:
+                if nm not in fs:
+                    continue
+                f = fs[nm]
+                okf = (f.get("auc") is not None and f["auc"] > 0.5 and f.get("mn") is not None and bp is not None
+                       and bp.get("mn") is not None and f["mn"] > bp["mn"])
+                verdict[nm]["adopt"] = bool(okf); verdict[nm]["fresh"] = {"auc": f.get("auc"), "mn": f.get("mn"), "pMn": (bp or {}).get("mn")}
+                print(f"      {nm:26s} 새 표본 AUC {('—' if f.get('auc') is None else '%.4f' % f['auc'])} · 시장중립IC "
+                      f"{('—' if f.get('mn') is None else '%.4f' % f['mn'])} vs 운영식 {('—' if not bp or bp.get('mn') is None else '%.4f' % bp['mn'])}"
+                      + ("  ← ★새 표본에서도 이김 — 운영 반영 후보★" if okf else "  ← 새 표본에서 못 이김(채택 안 함)"))
     if not any(v.get("adopt") for v in verdict.values()):
-        print("      결론(미리 정한 규칙): 규칙을 모두 채운 후보 없음 → 운영 그대로.")
+        print(f"      결론(규칙 v{WF_RULE_VER}): 규칙을 모두 채운 후보 없음 → 운영 그대로.")
     return verdict
 
 

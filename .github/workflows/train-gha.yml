@@ -3,6 +3,9 @@
 #   ablate = 다구간 전진평가(V33.522 · 부스터/GBDT 학습 방식 P·R·F·RB·RL) — 미리 정한 규칙을 넘는 후보가 있을 때만 운영 반영.
 name: 위원회 학습 (GitHub Actions · 무료)
 on:
+  # [V33.554] 매주 일요일 22:10Z 다구간 전진평가(ablate · 업로드 없음) — 규칙 v2 의 '새 표본' 확인이 쌓이는 대로 판정(모자라면 보류)
+  schedule:
+    - cron: "10 22 * * 0"
   workflow_dispatch:
     inputs:
       target:
@@ -39,7 +42,7 @@ jobs:
         env:
           BASE_URL: ${{ steps.url.outputs.url }}
           TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
-          TRAIN_TARGET: ${{ inputs.target }}
+          TRAIN_TARGET: ${{ inputs.target || 'ablate' }}
         run: |
           free -g | head -2
           python -u trainer/modal/train_gha.py 2>&1 | grep -v RuntimeWarning | tee train.log
