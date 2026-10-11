@@ -12,6 +12,17 @@
 
 ## Current handoff
 
+- V33.549 (10/11) ★화면 긴 작업 — 부팅 중 강제 레이아웃 3곳 제거(운영 CPU 표본·줄별 시간으로 찾음)★
+  - 측정(ui-probe speed · 중급 폰 CPU 4배): 재방문 긴 작업 1.3s 의 정체 = renderFvHeatmapInto 자기 시간 633~881ms, 그중 ★792~881틱이 한 줄★
+    `var W = host.clientWidth` — 덱·표가 막 바뀐 직후 크기를 읽어 문서 전체를 즉시 레이아웃. 지도는 부팅에 2~3번 그린다.
+    첫 방문 window.luxMarketView 253ms = `market.scrollTop = 0`(초기화 때도 씀) · 데스크톱 railWidthVar 777ms(로컬) = getBoundingClientRect.
+  - 고침: 지도 크기·레일 폭은 ResizeObserver 로 받는다(강제 레이아웃 0 · 크기 바뀌면 다시 그림 — 종전 리사이즈 처리와 같은 결과) ·
+    시장 탭 초기화는 scrollTop 을 안 쓴다 · getComputedStyle(host) 대신 인라인 position.
+    지도 툴팁(타일 ~500 × 600자)은 올렸을 때만 만든다 · 타일 속성은 값이 바뀔 때만 쓴다(fvSA/fvTC).
+  - 이번 측정에서 이미 확인: /api/earnings 30초 시간초과 → 120ms · /api/news join 23s → 120ms(V33.546) · state 796→725KB(V33.547).
+  - 로컬(합성 500종목 · CPU 4배): 지도 244→19ms · 시장탭 276→0 · 레일 834→0. 타일 500 · 글씨 983 · 툴팁 정상 · 오류 0.
+  - 게이트 check-load-speed ⑦에 4줄. 다음: speed 재측정(운영) · /api/chart 첫 빌드(AAPL 3.7~4.7s · 005930 30s 1회) · logs 버스트.
+
 - V33.548 (10/11) ★위원회 학습 단계를 GitHub Actions(무료)에서 — 첫 대상: 다구간 전진평가(ablate · 업로드 없음)★
   - trainer/modal/train_gha.py: train_job 을 .local() 로 그대로 부른다(Modal 클라우드 호출 없음 · modal.Dict 없으면 기본값 물러섬 확인).
     GPU 없음 → all·dnn 거절. .github/workflows/train-gha.yml(수동 · 공개 저장소만 · 120분 · torch CPU).

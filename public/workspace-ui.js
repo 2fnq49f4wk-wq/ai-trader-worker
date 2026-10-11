@@ -43,11 +43,13 @@
     document.head.appendChild(sc);
     setTimeout(function () { if (studioState === 1) finish(false); }, 15000);
   }
-  window.luxMarketView = function (view) {
+  window.luxMarketView = function (view, init) {
     if (!market || ['all', 'macro', 'fx', 'news'].indexOf(view) < 0) return;
     market.setAttribute('data-market-view', view);
     paintButtons(market, 'data-market-tab', view);
-    market.scrollTop = 0;
+    /* [V33.549] scrollTop 쓰기는 ★문서 전체 레이아웃을 즉시★ 강제한다 — 부팅 중(첫 페인트 전) 이 한 줄이 휴대폰 속도 253ms(운영 프로파일).
+       처음 붙일 때는 원래 0 이라 건너뛴다. 탭을 바꿀 때만 맨 위로. */
+    if (!init) market.scrollTop = 0;
   };
   document.addEventListener('click', function (event) {
     var button = event.target.closest('button');
@@ -73,5 +75,5 @@
       section.hidden = sector !== 'all' && section.getAttribute('data-sector') !== sector;
     });
   }).observe(newsBody, { childList: true });
-  if (market) window.luxMarketView(market.getAttribute('data-market-view') || 'all');
+  if (market) window.luxMarketView(market.getAttribute('data-market-view') || 'all', true);
 }());

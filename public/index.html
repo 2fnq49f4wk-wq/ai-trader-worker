@@ -184,8 +184,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.547">
-<script src="/neural-observatory.js?v=33.547" defer></script>
+<meta name="lux-build" content="V33.549">
+<script src="/neural-observatory.js?v=33.549" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -6863,17 +6863,51 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     var hm = $('heatmapModal');
     if (hm && hm.classList.contains('show')) renderFvHeatmapInto($('tvHeatmapContainer'));
   }
+  /* [V33.549] ★값이 같으면 DOM 을 건드리지 않는다★ — 지도는 25초마다·보충 데이터 도착마다 다시 그린다. 타일 ~500개 × 속성 ~12개를
+     매번 다시 쓰면(값이 같아도) 스타일·레이아웃이 통째로 무효화된다(운영 탐침: renderFvHeatmapInto 자기 시간 630ms/회). */
+  function fvSA(el, k, v) {
+    var c = el.__a || (el.__a = {}), sv = String(v);
+    if (c[k] === sv) return;
+    c[k] = sv; el.setAttribute(k, sv);
+  }
+  function fvTC(el, v) { if (el.__tc !== v) { el.__tc = v; el.textContent = v; } }
   function fvSvgEl(tag, attrs) {
     var el = document.createElementNS(SVGNS, tag);
     for (var k in attrs) el.setAttribute(k, attrs[k]);
     return el;
+  }
+  function fvHostSize(host) {
+    if (typeof ResizeObserver === 'undefined') return { w: host.clientWidth, h: host.clientHeight };
+    if (!host.__fvRO) {
+      host.__fvRO = new ResizeObserver(function (ents) {
+        var e = ents[ents.length - 1], cr = e && e.contentRect;
+        if (!cr) return;
+        // contentRect 는 패딩을 뺀 크기 — clientWidth(패딩 포함)와 같게 맞춘다
+        var cs = host.__fvPad || (host.__fvPad = getComputedStyle(host));
+        var w = Math.round(cr.width + (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0));
+        var h = Math.round(cr.height + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0));
+        var old = host.__fvSize;
+        host.__fvSize = { w: w, h: h };
+        if (!old || Math.abs(old.w - w) > 2 || Math.abs(old.h - h) > 2) {
+          // 처음 크기를 받았거나 크기가 바뀌었다 → 이 그릇을 다시 그린다(종전 resize 처리와 같은 결과)
+          if (host.__fvGesturing) host.__fvRenderPending = true; else renderFvHeatmapInto(host);
+        }
+      });
+      host.__fvRO.observe(host);
+    }
+    return host.__fvSize || null;
   }
   function renderFvHeatmapInto(host) {
     if (!host) return;
     // [V72] 핀치/드래그 도중 10초 폴링 재렌더가 카메라를 커밋해 화면이 튀던 문제 — 제스처 끝난 뒤로 미룸
     if (host.__fvGesturing) { host.__fvRenderPending = true; return; }
     var quotes = window.__lastQuotesArr || [];
-    var W = host.clientWidth, H = host.clientHeight || 360;
+    /* [V33.549] ★크기를 재지 않고 관찰한다★ — 그릇의 clientWidth 를 읽는 순간 브라우저는 그때까지 바뀐 문서 전체를 즉시 레이아웃한다.
+       운영 프로파일(휴대폰 속도): 이 한 줄이 렌더 1회 792~881ms(부팅 중 덱·표가 막 바뀐 직후라 문서 전체). 지도는 부팅에 2~3번 그린다.
+       ResizeObserver 는 브라우저가 어차피 하는 레이아웃 뒤에 크기를 알려 준다 — 강제 레이아웃 0회. 처음엔 크기를 받은 뒤 그린다. */
+    var _sz = fvHostSize(host);
+    if (!_sz) return;
+    var W = _sz.w, H = _sz.h || 360;
     if (W < 60) return;
     var met = FV_METRICS[fvHeatMetric] || FV_METRICS['1d'];
     // [V76] 현재 줌 배율 — 텍스트 표시 임계값을 화면상 크기 기준으로 보정.
@@ -6955,7 +6989,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         host.parentNode.insertBefore(zc, host);
         host.__fvZc = zc;
       }
-      if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+      if (!host.style.position) host.style.position = 'relative';   // [V33.549] getComputedStyle 는 문서 스타일 재계산을 강제한다 — 두 그릇(#fvHeatmap·#tvHeatmapContainer) 모두 CSS 위치 지정이 없다(static)
       host.style.overflow = 'hidden';   // [V72] 제스처 중 CSS transform된 SVG가 패널 밖으로 비져나오지 않게
       host.__fvZoomLbl = zc.querySelector('.fv-zl');
       zc.addEventListener('click', function(e){
@@ -6974,8 +7008,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     var tiles = host.__fvT, secEls = host.__fvS;
     var seen = {}, seenSec = {};
     var heldUS = (typeof heldMap !== 'undefined' && heldMap && heldMap[fvHeatMarket]) ? heldMap[fvHeatMarket] : {};
-    var fvCur = (fvHeatMarket === 'kr') ? '₩' : '$';
-    var fvPx = function(p){ return fvCur + (fvHeatMarket === 'kr' ? Math.round(p).toLocaleString('ko-KR') : p.toFixed(2)); };
 
     secRects.forEach(function(sr){
       var s = sr.it;
@@ -7012,16 +7044,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         seen[q.symbol] = 1;
         var v = met.get(q);
         var isHeld = !!heldUS[q.symbol];
-        var relV = (typeof q.vol === 'number' && typeof q.avgVol20 === 'number' && q.avgVol20 > 0) ? (q.vol / q.avgVol20) : null;
-        var tipHtml = '<b style="font-size:11px;">' + q.symbol + '</b>' + (q.name && q.name !== q.symbol ? ' <span style="color:#999;">' + q.name + '</span>' : '')
-          + (isHeld ? ' <span style="color:#ffc107;font-weight:700;">● 보유중</span>' : '') + '<br>'
-          + '현재가 <b>' + fvPx(q.price) + '</b> · 1일 ' + fvFmtPct(q.dayPct)
-          + ((typeof q.regPct === 'number' && typeof q.dayPct === 'number' && Math.abs(q.regPct - q.dayPct) > 0.005) ? ' · 장중 ' + fvFmtPct(q.regPct) : '') + '<br>'
-          + '1주 ' + fvFmtPct(q.return5) + ' · 1개월 ' + fvFmtPct(q.return20) + ' · 3개월 ' + fvFmtPct(q.return60) + '<br>'
-          + '1년 ' + fvFmtPct(q.ret1y) + ' · 5년 ' + fvFmtPct(q.ret5y) + '<br>'
-          + '거래량 <b>' + fvFmtVol(q.vol) + '</b>주' + (typeof q.vol === 'number' ? ' · 거래대금 <b>' + fvCur + fvFmtVol(q.vol * q.price) + '</b>' : '')
-          + (relV != null ? ' · <b style="color:' + (relV >= 1.5 ? '#3fb950' : relV <= 0.6 ? '#8b949e' : '#ddd') + ';">평균比 ' + relV.toFixed(1) + 'x</b>' : '') + '<br>'
-          + 'RSI ' + (typeof q.rsi === 'number' ? q.rsi.toFixed(0) : '—') + ' · ' + s.name + ' · 더블클릭=차트분석';
         var t = tiles[q.symbol];
         if (!t) {
           var g = fvSvgEl('g', { 'data-sym': q.symbol });
@@ -7036,12 +7058,12 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
           svg.appendChild(g);
           t = tiles[q.symbol] = { g: g, rect: rc, t1: t1, t2: t2 };
         }
-        t.g.setAttribute('data-tip', tipHtml);
-        t.rect.setAttribute('x', r.x); t.rect.setAttribute('y', r.y);
-        t.rect.setAttribute('width', r.w); t.rect.setAttribute('height', r.h);
-        t.rect.setAttribute('fill', fvMetricColor(v));
-        t.rect.setAttribute('stroke', isHeld ? '#ffc107' : '#0a0c10');
-        t.rect.setAttribute('stroke-width', isHeld ? '1' : '0.6');
+        t.g.__tip = [q, s.name, fvHeatMarket, isHeld];   // [V33.549] 툴팁은 올렸을 때만 만든다(타일 ~500개 × 렌더마다 600자 문자열·속성 쓰기를 없앰)
+        fvSA(t.rect, 'x', r.x); fvSA(t.rect, 'y', r.y);
+        fvSA(t.rect, 'width', r.w); fvSA(t.rect, 'height', r.h);
+        fvSA(t.rect, 'fill', fvMetricColor(v));
+        fvSA(t.rect, 'stroke', isHeld ? '#ffc107' : '#0a0c10');
+        fvSA(t.rect, 'stroke-width', isHeld ? '1' : '0.6');
         // ── 벡터 텍스트 — 타일 기하에 맞는 폰트(SVG 단위). 줌인하면 비례 확대돼 자동으로 선명하게 보임 ──
         // KR은 티커(005930.KS)가 무의미하므로 종목명 표시. 한글 글리프는 폴백폰트라 폭이 ASCII(0.62)보다
         // 훨씬 넓다(~1.05) → 폭 계수를 분리하지 않으면 폰트가 과대 계산돼 글자가 타일 밖으로 튀어나옴.
@@ -7057,21 +7079,21 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         if (fs * fvZoom >= 1.6) {
           var sub = (fvHeatMetric === 'vol') ? fvFmtVol(q.vol) : fvMetricText(v);
           var showSub = r.h >= fs * 2.3 && fs * fvZoom >= 2.2;
-          t.t1.setAttribute('x', cx);
-          t.t1.setAttribute('y', showSub ? (r.y + r.h / 2 - fs * 0.15) : (r.y + r.h / 2 + fs * 0.36));
-          t.t1.setAttribute('font-size', fs.toFixed(2));
+          fvSA(t.t1, 'x', cx);
+          fvSA(t.t1, 'y', showSub ? (r.y + r.h / 2 - fs * 0.15) : (r.y + r.h / 2 + fs * 0.36));
+          fvSA(t.t1, 'font-size', fs.toFixed(2));
           // 폭 클램프 — 폰트 메트릭과 무관하게 타일 너비(95%)를 넘으면 자동 압축 → 절대 안 튀어나감
           var maxW = r.w * 0.94;
-          if (label.length * cw * fs > maxW) { t.t1.setAttribute('textLength', maxW.toFixed(1)); t.t1.setAttribute('lengthAdjust', 'spacingAndGlyphs'); }
-          else t.t1.removeAttribute('textLength');
-          t.t1.textContent = label;
+          if (label.length * cw * fs > maxW) { fvSA(t.t1, 'textLength', maxW.toFixed(1)); fvSA(t.t1, 'lengthAdjust', 'spacingAndGlyphs'); }
+          else { if (t.t1.__a && t.t1.__a.textLength != null) { t.t1.removeAttribute('textLength'); t.t1.__a.textLength = null; } }
+          fvTC(t.t1, label);
           if (showSub) {
-            t.t2.setAttribute('x', cx);
-            t.t2.setAttribute('y', r.y + r.h / 2 + fs * 0.85);
-            t.t2.setAttribute('font-size', (fs * 0.62).toFixed(2));
-            t.t2.textContent = sub;
-          } else t.t2.textContent = '';
-        } else { t.t1.textContent = ''; t.t2.textContent = ''; }
+            fvSA(t.t2, 'x', cx);
+            fvSA(t.t2, 'y', r.y + r.h / 2 + fs * 0.85);
+            fvSA(t.t2, 'font-size', (fs * 0.62).toFixed(2));
+            fvTC(t.t2, sub);
+          } else fvTC(t.t2, '');
+        } else { fvTC(t.t1, ''); fvTC(t.t2, ''); }
       });
     });
     // 사라진 요소 제거
@@ -7090,6 +7112,21 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     if (subEl) subEl.textContent = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 갱신';
   }
   function fvFmtPct(v) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'; }
+  // [V33.549] 지도 타일 툴팁 — 마우스를 올린 타일 하나만 만든다(종전: 렌더마다 전 타일의 HTML 을 만들어 data-tip 에 썼다)
+  function fvTipHtml(q, secName, mkt, isHeld) {
+    var cur = (mkt === 'kr') ? '₩' : '$';
+    var px = function(p){ return cur + (mkt === 'kr' ? Math.round(p).toLocaleString('ko-KR') : p.toFixed(2)); };
+    var relV = (typeof q.vol === 'number' && typeof q.avgVol20 === 'number' && q.avgVol20 > 0) ? (q.vol / q.avgVol20) : null;
+    return '<b style="font-size:11px;">' + q.symbol + '</b>' + (q.name && q.name !== q.symbol ? ' <span style="color:#999;">' + q.name + '</span>' : '')
+      + (isHeld ? ' <span style="color:#ffc107;font-weight:700;">● 보유중</span>' : '') + '<br>'
+      + '현재가 <b>' + px(q.price) + '</b> · 1일 ' + fvFmtPct(q.dayPct)
+      + ((typeof q.regPct === 'number' && typeof q.dayPct === 'number' && Math.abs(q.regPct - q.dayPct) > 0.005) ? ' · 장중 ' + fvFmtPct(q.regPct) : '') + '<br>'
+      + '1주 ' + fvFmtPct(q.return5) + ' · 1개월 ' + fvFmtPct(q.return20) + ' · 3개월 ' + fvFmtPct(q.return60) + '<br>'
+      + '1년 ' + fvFmtPct(q.ret1y) + ' · 5년 ' + fvFmtPct(q.ret5y) + '<br>'
+      + '거래량 <b>' + fvFmtVol(q.vol) + '</b>주' + (typeof q.vol === 'number' ? ' · 거래대금 <b>' + cur + fvFmtVol(q.vol * q.price) + '</b>' : '')
+      + (relV != null ? ' · <b style="color:' + (relV >= 1.5 ? '#3fb950' : relV <= 0.6 ? '#8b949e' : '#ddd') + ';">평균比 ' + relV.toFixed(1) + 'x</b>' : '') + '<br>'
+      + 'RSI ' + (typeof q.rsi === 'number' ? q.rsi.toFixed(0) : '—') + ' · ' + secName + ' · 더블클릭=차트분석';
+  }
   // 이벤트 위임 — 타일 클릭(차트분석)·섹터 줌·툴팁·호버 (SVG 버전)
   // [V12.68] 더블클릭/더블탭 → 종목상세 열기 (TopMovers·MAP 공용)
   //   openStockDetail이 심볼 접미사(.KS/.KQ)로 시장을 자동판정하므로 sym만 넘기면 됨.
@@ -7161,7 +7198,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
           rc.setAttribute('stroke', '#ffffff'); rc.setAttribute('stroke-width', '1.2');
         }
         host.__fvHover = g;
-        tip.innerHTML = g.getAttribute('data-tip') || '';
+        tip.innerHTML = g.__tip ? fvTipHtml(g.__tip[0], g.__tip[1], g.__tip[2], g.__tip[3]) : '';
         tip.style.display = 'block';
         tip.style.left = Math.min(e.clientX + 14, window.innerWidth - 290) + 'px';
         tip.style.top = Math.min(e.clientY + 14, window.innerHeight - 140) + 'px';
@@ -17414,7 +17451,20 @@ html:root .page > *{ flex-shrink:0; }
     // [V33.8] 1000px 이상(아이패드 가로 포함)에서 레일을 띄운다. 실제 렌더 폭을 읽어
     //   화면 구간별로 레일 폭이 달라져도(1000~1279는 168px) FAB 위치가 정확히 따라간다.
     var shown = RAIL.el && !RAIL.el.hidden && window.innerWidth >= 1000;
-    var w = shown ? Math.round(RAIL.el.getBoundingClientRect().width) || RAIL_W : 0;
+    /* [V33.549] ★폭을 재지 않고 관찰한다★ — getBoundingClientRect 는 문서 전체 레이아웃을 즉시 강제한다(데스크톱 폭 부팅 777ms · CPU 4배 로컬 프로파일).
+       ResizeObserver 가 브라우저 레이아웃 뒤에 폭을 알려 주면 다시 부른다. 그 전엔 기본 폭(RAIL_W). */
+    var w = 0;
+    if (shown && typeof ResizeObserver !== 'undefined') {
+      if (!RAIL.__ro) {
+        RAIL.__ro = new ResizeObserver(function (ents) {
+          var e = ents[ents.length - 1], bb = e && e.borderBoxSize && e.borderBoxSize[0];
+          RAIL.__roW = Math.round(bb ? bb.inlineSize : (e && e.contentRect ? e.contentRect.width : 0)) || 0;
+          railWidthVar();
+        });
+        RAIL.__ro.observe(RAIL.el);
+      }
+      w = RAIL.__roW || RAIL_W;
+    } else if (shown) w = Math.round(RAIL.el.getBoundingClientRect().width) || RAIL_W;
     // [V33.454] 값이 같으면 쓰지 않는다 — 문서 뿌리의 CSS 변수를 쓰면 페이지 전체 스타일을 다시 계산한다(운영 프로파일 164ms · 휴대폰 속도)
     if(RAIL.__w === w) return;
     RAIL.__w = w;
@@ -20651,13 +20701,13 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.547">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.547">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.547">
-<link rel="stylesheet" href="/model-evidence.css?v=33.547">
+<link rel="stylesheet" href="/brain-console.css?v=33.549">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.549">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.549">
+<link rel="stylesheet" href="/model-evidence.css?v=33.549">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.547">
-<script src="/model-evidence.js?v=33.547"></script>
-<script src="/workspace-ui.js?v=33.547"></script>
+<link rel="stylesheet" href="/liquid-metal.css?v=33.549">
+<script src="/model-evidence.js?v=33.549"></script>
+<script src="/workspace-ui.js?v=33.549"></script>
 </body>
 </html>

@@ -105,6 +105,21 @@ console.log("⑦ 캐시 층 표시(V33.521) — 운영 측정이 느린 원인�
     chk(/if \(_rwKh && _need\) await setState\(DB, "krhalt:state", st\)/.test(kf) && /nowTs - \(prev\.ts \|\| 0\) < 60000/.test(kf) && !/if \(_rwKh\) await setState/.test(kf),
       "kr-halt: 평소엔 1분에 한 번만 상태를 쓴다(요청마다 쓰던 ~1s 빌드)", "★GET 마다 D1 쓰기★");
   }
+  // [V33.549] 부팅 중 강제 레이아웃 금지(운영 프로파일: 지도 clientWidth 792~881ms/회 · 시장탭 scrollTop 253ms · 레일 폭 777ms(데스크톱))
+  {
+    const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+    const WU = readFileSync(new URL("../public/workspace-ui.js", import.meta.url), "utf8");
+    const ra = H.indexOf("function renderFvHeatmapInto(host)"), rf = ra > 0 ? H.slice(ra, H.indexOf("function fvFmtPct", ra)) : "";
+    chk(rf && !/host\.clientWidth|host\.clientHeight|getComputedStyle\(host\)/.test(rf) && /fvHostSize\(host\)/.test(rf) && /new ResizeObserver/.test(H.slice(H.indexOf("function fvHostSize"), ra)),
+      "지도: 크기를 재지 않고 ResizeObserver 로 받는다(렌더마다 문서 전체 강제 레이아웃 제거)", "★renderFvHeatmapInto 가 크기를 직접 읽는다★");
+    chk(rf && !/setAttribute\('data-tip'/.test(rf) && /g\.__tip \? fvTipHtml\(/.test(H) && /function fvSA\(el, k, v\)/.test(H),
+      "지도: 툴팁은 올렸을 때만 만든다 · 같은 값은 DOM 에 다시 쓰지 않는다", "★렌더마다 전 타일 툴팁·속성을 다시 쓴다★");
+    chk(/if \(!init\) market\.scrollTop = 0;/.test(WU) && /luxMarketView\(market\.getAttribute\('data-market-view'\) \|\| 'all', true\)/.test(WU),
+      "시장 탭: 처음 붙일 때 scrollTop 을 쓰지 않는다", "★부팅 중 scrollTop 쓰기★");
+    const rw = H.slice(H.indexOf("function railWidthVar(){"), H.indexOf("function railGate("));
+    chk(/RAIL\.__ro = new ResizeObserver/.test(rw) && /else if \(shown\) w = Math\.round\(RAIL\.el\.getBoundingClientRect/.test(rw),
+      "레일 폭: ResizeObserver(없는 브라우저만 직접 잼)", "★레일 폭을 부팅 중 직접 잰다★");
+  }
   const sa = SRC.indexOf("const FRESH_MS = 12000, USABLE_MS = 150000;"), sb = SRC.indexOf("[V12.126] ★500 에러 방지★", sa);
   const st = sa > 0 && sb > sa ? SRC.slice(sa, sb) : "";
   chk(st && ["l1", "l1s", "l2", "r2", "build"].every((l) => st.includes('"x-lux-c": "' + l + '"')),
