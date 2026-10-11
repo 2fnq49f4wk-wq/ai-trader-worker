@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.543";
+const _BUILD_VER = "V33.544";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -22376,8 +22376,39 @@ async function runAltSleeveCycle(env, key, shared) {
   }
 }
 
+/* [V33.544] ★매매 사이클 I/O 계측★ — 사이클이 50~117s 라 다음 분 크론이 락에 막혀 사실상 2분마다 평가한다(데이터 신선도의 진짜 병목).
+   워커 시계는 I/O 동안엔 흐르므로 D1·fetch 대기를 직접 잴 수 있다. 사이클 동안 D1 핸들을 감싸 질의 수·대기 합을,
+   fetch 는 호출 수·대기 합을 센다 → EVAL-COST 줄에 'IO D1 n회 xs · 외부 n회 ys' 로 남긴다(판단에는 관여하지 않는다). */
+let __ioMeter = null;
+/* fetch 계측 — 모듈 로드 때 한 번 감싼다(그대로 넘기고 수·대기만 더한다). 사이클 밖 호출도 섞이지만 진단용이다. */
+if (typeof globalThis.fetch === "function" && !globalThis.__ioFetchWrapped) {
+  const __rawFetch = globalThis.fetch;
+  globalThis.fetch = async function () {
+    const t = Date.now();
+    try { return await __rawFetch.apply(globalThis, arguments); }
+    finally { if (__ioMeter) { __ioMeter.fn++; __ioMeter.fms += Date.now() - t; } }
+  };
+  globalThis.__ioFetchWrapped = true;
+}
+function _ioDB(DB) {
+  const M = __ioMeter;
+  const wrapS = function (raw) {
+    const timed = function (fnName) {
+      return async function () { const t = Date.now(); try { return await raw[fnName].apply(raw, arguments); } finally { if (M) { M.d1n++; M.d1ms += Date.now() - t; } } };
+    };
+    return { __raw: raw, bind: function () { return wrapS(raw.bind.apply(raw, arguments)); },
+             all: timed("all"), first: timed("first"), run: timed("run"), raw: timed("raw") };
+  };
+  return {
+    prepare: function (q) { return wrapS(DB.prepare(q)); },
+    batch: async function (ss) { const t = Date.now(); try { return await DB.batch(ss.map(function (x) { return (x && x.__raw) || x; })); } finally { if (M) { M.d1n++; M.d1ms += Date.now() - t; } } },
+    exec: function (q) { return DB.exec(q); },
+    dump: function () { return DB.dump ? DB.dump() : null; }
+  };
+}
 async function runTradingCycle(env) {
-  const DB = env.DB;
+  __ioMeter = { d1n: 0, d1ms: 0, fn: 0, fms: 0 };
+  const DB = _ioDB(env.DB);
   resetFetchBudget(850);  // [PAID] Paid 1000 한도의 85% — 가격+일봉+분봉+LLM+여유
   await ensureSchema(DB);
   let cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
@@ -25977,7 +26008,9 @@ async function runTradingCycle(env) {
           const _resid = Math.round(_symTotalMs - _known);
           if (_resid > 0) _pp.push("기타 " + _resid + "ms");
           await log(DB, _per > ENRICH.slowSymMs ? "WARN" : "INFO", null,
-            "[EVAL-COST] " + market.toUpperCase() + " 종목당 평균 " + _per + "ms · 부가조회 " +
+            "[EVAL-COST] " + market.toUpperCase() + " 종목당 평균 " + _per + "ms" +
+            (__ioMeter ? " · IO(사이클 누적) D1 " + __ioMeter.d1n + "회 " + (__ioMeter.d1ms / 1000).toFixed(1) + "s · 외부 " + __ioMeter.fn + "회 " + (__ioMeter.fms / 1000).toFixed(1) + "s" : "") +
+            " · 부가조회 " +
             Math.round(_enrich.spent) + "/" + _enrich.budget + "ms" +
             (_enrich.skipped ? "(예산소진 " + _enrich.skipped + "건 생략)" : "") +
             /* [V33.327] 상한에 걸려 포기한 건수 — 안 적으면 "왜 부가정보가 비었나" 를

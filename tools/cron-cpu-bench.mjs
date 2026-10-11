@@ -47,13 +47,14 @@ if (PROD) {   // 운영 상태 적재 — 운영 표에 로컬보다 많은 칸�
 const stCache = new Map();
 const prep = (q) => { let s = stCache.get(q); if (!s) { s = sql.prepare(q); stCache.set(q, s); } return s; };
 const conv = (a) => a.map((v) => v === undefined ? null : (typeof v === "boolean" ? (v ? 1 : 0) : v));
-let d1Calls = 0;
+let d1Calls = 0; let d1BySql = {};
+const _d1k = (q, a) => { let k = q.replace(/\s+/g, " ").slice(0, 90); if (/WHERE k = \?/.test(q) && a && typeof a[0] === "string") k += " [" + String(a[0]).replace(/[:][^:]*$/, ":*") + "]"; d1BySql[k] = (d1BySql[k] || 0) + 1; };
 function stmt(q, args) {
   return {
     bind: (...a) => stmt(q, conv(a)),
-    all: async () => { d1Calls++; return { results: prep(q).all(...args), success: true, meta: {} }; },
-    first: async (col) => { d1Calls++; const r = prep(q).get(...args); return r ? (col ? r[col] : r) : null; },
-    run: async () => { d1Calls++; const r = prep(q).run(...args); return { success: true, meta: { changes: r.changes, last_row_id: Number(r.lastInsertRowid) } }; },
+    all: async () => { d1Calls++; _d1k(q, args); return { results: prep(q).all(...args), success: true, meta: {} }; },
+    first: async (col) => { d1Calls++; _d1k(q, args); const r = prep(q).get(...args); return r ? (col ? r[col] : r) : null; },
+    run: async () => { d1Calls++; _d1k(q, args); const r = prep(q).run(...args); return { success: true, meta: { changes: r.changes, last_row_id: Number(r.lastInsertRowid) } }; },
     raw: async () => { d1Calls++; return prep(q).all(...args).map((o) => Object.values(o)); },
     _sync: () => { const s = prep(q); return s.reader ? { results: s.all(...args), success: true } : { success: true, meta: { changes: s.run(...args).changes } }; },
   };
@@ -154,6 +155,8 @@ for (let c = 0; c < CYCLES; c++) {
   await worker.scheduled({ scheduledTime: Date.now(), cron: "*/1 * * * *" }, env, ctx);
   await Promise.all(pend.splice(0));
   const cu = process.cpuUsage(cu0);
+  if (c === CYCLES - 1) console.log("BENCH d1 " + JSON.stringify(Object.entries(d1BySql).sort((a, b) => b[1] - a[1]).slice(0, 30)));
+  d1BySql = {};
   if (c === CYCLES - 1) console.log("BENCH pat " + JSON.stringify(Object.entries(netByPat).sort((a, b) => b[1] - a[1]).slice(0, 25)));
   netByPat = {};
   if (PROD && c === 0) console.log("BENCH r2 운영에서 읽음 " + r2Got + " · 없음 " + r2Miss.size + " " + JSON.stringify([...r2Miss].slice(0, 10)));
