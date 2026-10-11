@@ -179,7 +179,14 @@ jobs:
           TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
         run: |
           node tools/prod-state-dump.mjs "$RUNNER_TEMP/ps" || exit 0
-          node tools/cron-cpu-bench.mjs --prod "$RUNNER_TEMP/ps" --cycles 8 --prof-from 2 --no-pipeline 2>&1 | grep -E "^BENCH|^DUMP" | cut -c1-400 || true
+          # [V33.557] 장이 닫혀 있으면(주말) 매매 경로가 안 돈다 — 가장 최근 평일의 미국 장중(18:00Z)·한국 장중(02:00Z)으로 시계를 맞춰 각각 잰다
+          for HH in 18 02; do
+            AT=$(python3 -c "import datetime as d;t=d.datetime.now(d.timezone.utc)-d.timedelta(days=1 if '$HH'=='18' else 0)
+          while t.weekday()>4: t-=d.timedelta(days=1)
+          print(t.strftime('%Y-%m-%dT')+'$HH:00:00Z')")
+            echo "BENCH at $AT"
+            node tools/cron-cpu-bench.mjs --prod "$RUNNER_TEMP/ps" --at "$AT" --cycles 8 --prof-from 2 --no-pipeline 2>&1 | grep -E "^BENCH|^DUMP" | cut -c1-400 || true
+          done
           rm -rf "$RUNNER_TEMP/ps"
 
       - name: 크론 단계별 실제 CPU(tail)
