@@ -241,6 +241,7 @@ jobs:
           node tools/probe-kr-daily.mjs "${{ vars.WORKER_URL }}" || true
           node tools/probe-kr-nxt.mjs "${{ vars.WORKER_URL }}" || true
           node tools/probe-batch-limits.mjs || true
+          node tools/probe-macro-src.mjs || true
 
       - name: 브라우저 준비
         if: ${{ !inputs.devlog && !inputs.returns && !inputs.shapes && !inputs.naver && !inputs.exits && !inputs.prices && !inputs.speed && !inputs.intro && !inputs.usage && !inputs.audit && !inputs.verify }}
