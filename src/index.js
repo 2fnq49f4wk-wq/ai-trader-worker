@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.559";
+const _BUILD_VER = "V33.560";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -5312,6 +5312,13 @@ function _usHolidaySet(year) {
 // 한국 양력 공휴일 + 대체공휴일 규칙 계산.
 //   음력 명절(설날/추석/석가탄신일)은 양력 변환이 해마다 달라 하드코딩이 부정확(전날·대체 누락) →
 //   음력은 테이블 대신 "지수(KOSPI) 실제 거래일" 폴백으로 정확 판정(_indexFreshOpen, 장중 호출).
+/* [V33.560] 한국 음력 명절·선거일 등 규칙으로 못 만드는 휴장일(KRX) — 해마다 확인해 추가한다.
+   2026: 설(2/16~18) · 부처님오신날 대체(5/25 — 5/24 일요일) · 지방선거(6/3 · KRX 공지) · 추석(9/24·25 — 9/26 은 토요일)
+   2027: 설(2/5 · 2/8 대체 — 2/6 토 · 2/7 일) · 부처님오신날(5/13) · 추석(9/14~16) */
+const KR_LUNAR_HOLIDAYS = {
+  2026: ["2026-02-16", "2026-02-17", "2026-02-18", "2026-05-25", "2026-06-03", "2026-09-24", "2026-09-25"],
+  2027: ["2027-02-05", "2027-02-08", "2027-05-13", "2027-09-14", "2027-09-15", "2027-09-16"]
+};
 function _krHolidaySet(year) {
   const s = new Set();
   const subst = []; // 대체공휴일 대상(주말 겹치면 다음 평일로 대체 — 한국 법정규칙)
@@ -5324,7 +5331,14 @@ function _krHolidaySet(year) {
   add(10, 3, true);   // 개천절
   add(10, 9, true);   // 한글날
   add(12, 25, true);  // 성탄절
+  if (year >= 2026) add(7, 17, true);   // [V33.560] 제헌절 — 2026년 관공서 공휴일 재지정(KRX 2026-07-17 휴장 공지 · 2027 은 토요일 → 7/19 대체)
   s.add(_ymd(year, 5, 1)); // 근로자의 날 (증시 휴장, 대체 없음)
+  // [V33.560] KRX 연말 폐장일 — 12/31 이 평일이면 휴장(매년 공지)
+  { const d31 = new Date(Date.UTC(year, 11, 31)).getUTCDay(); if (d31 !== 0 && d31 !== 6) s.add(_ymd(year, 12, 31)); }
+  // [V33.560] ★음력 명절·선거일은 날짜를 명시한다★ — 종전엔 "지수 신선도 폴백" 에 맡겼는데 그 폴백이 장 시작 전엔 늘 '휴장' 을 줘
+  //   프리마켓을 매일 막았다(아래 _indexFreshOpen). 출처가 엇갈리는 날(2027 설 연휴 2/9)은 넣지 않는다 —
+  //   빠뜨리면 시세가 안 와서 자연 차단되지만, 잘못 넣으면 열린 날 거래를 막는다.
+  for (const ymd of (KR_LUNAR_HOLIDAYS[year] || [])) s.add(ymd);
   // 대체공휴일: 대상 공휴일이 토/일이면 다음 비공휴일 평일을 휴장 추가
   subst.forEach(function(md){
     const dow = new Date(Date.UTC(year, md[0] - 1, md[1])).getUTCDay();
@@ -5418,6 +5432,15 @@ async function _indexFreshOpen(DB, market, today) {
         // [FIX] 지수가 아직 당일로 안 바뀜(야후 지연·장초반). 장중이면 휴장 단정 말고 개장 가정 —
         //   진짜 휴장이면 시세도 stale이라 실거래는 가격 신선도 게이트에서 자연 차단된다.
         if (isMarketOpen(market)) return true;
+        /* [V33.560] ★정규장 시작 전에는 지수로 휴장을 판단하지 않는다★ — 사용자 10/12(월) 08시대 KST: "오늘 휴장 아닌데 휴장으로 판단하고 거래 중단".
+           장 시작 전 지수의 마지막 거래일은 ★언제나★ 어제 이전이다(오늘 봉이 아직 없다) → 종전 코드는 매일 프리마켓(넥스트레이드 08:00~)을
+           '휴장' 으로 막았다. 연휴 뒤(10/9 한글날 금요일 → 지수 10/8)라 화면에 드러났을 뿐 매일 그랬다.
+           공휴일은 규칙·명시 표(_krHolidaySet)가 먼저 거른다. 장 시작 전은 개장 가정 — 표에 없는 휴일이면 시세가 안 와 자연 차단된다.
+           장 마감 뒤(지수가 오늘로 안 바뀐 채 장이 끝남)는 종전대로 휴장으로 본다. */
+        const _p0 = market === "us" ? getUSEt(new Date()) : getKST(new Date());
+        const _openMin = market === "us" ? 9 * 60 + 30 : 9 * 60;
+        const _nowMin = market === "us" ? (_p0 && _p0.totalMin) : (_p0 && _p0.totalMin);
+        if (typeof _nowMin === "number" && _nowMin < _openMin) return true;
         return false;
       }
     }
@@ -54713,7 +54736,7 @@ export default {
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
 export { omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
-export { getStates, _STATE_LITE, getADX, _getADXCore, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
+export { getStates, _STATE_LITE, getADX, _getADXCore, getHolidaySet, _indexFreshOpen, isMarketTradingDay, KR_LUNAR_HOLIDAYS, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
      실제로 돌린다. 두 고침 다 "성적으로만 드러나는" 종류라 문장으로는 못 지킨다. */
