@@ -13,6 +13,10 @@
  *   ★실제로 socialFetchStep 을 돌려서★ 확인한다(문자열 검사 아님).
  */
 import { socialFetchStep, _socialBackoffMs, _socialBackoffLeftMs, SOCIAL } from "../src/index.js";
+/* [V33.565] Reddit 은 기본 꺼짐(데이터센터 IP 403 상시). 기본값을 먼저 확인하고, 아래 백오프 장치 시험은 켠 상태로 돌린다
+   (다시 켤 때 장치가 살아 있어야 한다). */
+{ const _def = SOCIAL.redditEnabled; console.log((_def === false ? "  ok   " : "✗ FAIL ") + "Reddit 기본 꺼짐(운영 24h 403 68회 · 성공 0)"); if (_def !== false) process.exitCode = 1; }
+SOCIAL.redditEnabled = true;
 
 const SYMS = Array.from({ length: 60 }, (_, i) => "SY" + i);   // 미국 티커만(KR·선물 접미사 없음)
 

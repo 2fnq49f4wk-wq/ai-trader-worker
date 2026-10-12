@@ -271,5 +271,23 @@ const atKR = (y, mo, d, h, mi) => new Date(Date.UTC(y, mo - 1, d, h - 9, mi));
   ok(/420/.test(table) && /1200/.test(table), "표 안에는 당연히 숫자가 있다(대조군)");
 }
 
+/* [V33.565] ★한국 거래 창 = 넥스트레이드 실제 체결 창★ — 프리 08:00~08:50 · 애프터 15:40~20:00.
+   08:50~09:00(KRX 시가 동시호가)·15:30~15:40(NXT 주문 접수)은 관측만 하고 거래 세션이 아니다(10/12 08:58 KST 오탐 ERROR 의 원인). */
+{
+  const C = { extTrade: { enabled: true, kr: { pre: true, post: true }, us: { pre: true, post: true } } };
+  const kst = (y, mo, d, h, mi) => new Date(Date.UTC(y, mo - 1, d, h - 9, mi));
+  const at = (h, mi) => extTradeSession("kr", C, kst(2026, 10, 13, h, mi));
+  ok(at(8, 0) === "pre" && at(8, 49) === "pre", "KR 프리 08:00~08:49 거래 세션");
+  ok(at(8, 50) === null && at(8, 58) === null, "KR 08:50~09:00 은 거래 세션 아님(NXT 쉼 · KRX 동시호가)");
+  ok(at(15, 30) === null && at(15, 39) === null, "KR 15:30~15:39 은 거래 세션 아님(NXT 주문 접수)");
+  ok(at(15, 40) === "post" && at(19, 59) === "post" && at(20, 0) === null, "KR 애프터 15:40~19:59 거래 세션");
+  const w = marketWindows("kr", kst(2026, 10, 13, 8, 55));
+  ok(JSON.stringify(w.pre) === "[480,540]" && JSON.stringify(w.post) === "[930,1200]", "관측 창(시세 받기·표시)은 그대로 08:00~09:00 / 15:30~20:00");
+  const cs = (h, mi) => extTradeSession("kr", C, kst(2026, 11, 19, h, mi));
+  ok(cs(9, 0) === "pre" && cs(9, 50) === null && cs(16, 39) === null && cs(16, 40) === "post", "수능일: NXT 1시간 지연 창(프리 09:00~09:50 · 애프터 16:40~)");
+  const ny = (h, mi) => extTradeSession("kr", C, kst(2027, 1, 4, h, mi));
+  ok(ny(8, 30) === null && ny(9, 30) === null && ny(15, 45) === "post", "연초 개장일: 프리 거래 안 함(운영 시각 미확인) · 애프터는 평소");
+}
+
 console.log(fail ? `\n실패 ${fail}건` : "\n전부 통과");
 process.exit(fail ? 1 : 0);

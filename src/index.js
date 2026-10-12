@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.565";
+const _BUILD_VER = "V33.566";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -5515,8 +5515,13 @@ async function _indexFreshOpen(DB, market, today) {
    ※ preTrade/postTrade 가 없으면 pre/post 를 그대로 쓴다(한국은 갈라 둘 이유가 없다). */
 const MARKET_HOURS = {
   us: { pre: [240, 570], preTrade: [420, 570], regular: [570, 960], post: [960, 1200], quoteTail: 10 },
-  kr: { pre: [480, 540], regular: [540, 930], post: [930, 1200], quoteTail: 0, postTail: 10 }
+  kr: { pre: [480, 540], regular: [540, 930], post: [930, 1200], preTrade: [480, 530], postTrade: [940, 1200], quoteTail: 0, postTail: 10 }
 };
+/* [V33.565] ★한국 거래 창 = 넥스트레이드 실제 체결 창★(결함 A-2 해결) — 프리 08:00~08:50 · 애프터 15:40~20:00.
+   종전엔 관측 창(08:00~09:00 / 15:30~20:00)이 곧 거래 창이라 08:50~09:00(KRX 시가 동시호가 · NXT 쉼)·15:30~15:40(NXT 주문 접수)에도
+   '시간외 거래 중' 으로 판정했다. 그 20분엔 체결이 없으니 시세 경로(V33.346)는 체결 시각을 0 으로 두고, 판정은
+   '평가가능 0종목 · 체결시각 미상 336 — 수집 경로 점검' ERROR 를 냈다(운영 10/12 08:58 KST ×5 — 수집은 멀쩡했다).
+   휴장 오판과 같은 종류다: 시각 가정이 실제 장 운영과 달랐다. 관측(시세 받기·표시)은 그대로 두고 ★거래 판정만★ 실제 창으로 좁힌다. */
 /* [V33.497] postTail = 장후(시간외) 창이 닫힌 뒤 ★가격만★ 더 받는 분. 운영 탐침(10/06 14:24Z): 한국 마지막 갱신이 19:56 KST 였고
    넥스트레이드는 20:00 까지 체결한다 — 그 사이 마지막 체결이 빠져 화면 값이 네이버 종가와 최대 1.55% 달랐다(넥센 6,330 vs 6,430).
    거래는 하지 않는다(거래창·세션 판정은 그대로) — 정규장 quoteTail 과 같은 생각이다. */
@@ -5575,10 +5580,12 @@ const MARKET_HOURS_SPECIAL = {
   },
   kr: {
     // 수능일 — 전 일정 1시간 지연(장전 09:00~10:00 · 정규장 10:00~16:00 · 장후 16:00~21:00).
-    "2026-11-19": { pre: [540, 600], regular: [600, 960], post: [960, 1260], why: "대학수학능력시험" },
-    "2027-11-18": { pre: [540, 600], regular: [600, 960], post: [960, 1260], why: "대학수학능력시험" },
-    // 연초 개장일 — 10:00 개장, 마감은 정상(15:30).
-    "2027-01-04": { pre: [480, 600], regular: [600, 930], post: [930, 1200], why: "연초 개장일" }
+    // [V33.565] 거래 창은 넥스트레이드 체결 창(1시간 지연: 프리 09:00~09:50 · 애프터 16:40~21:00)으로 명시한다.
+    "2026-11-19": { pre: [540, 600], regular: [600, 960], post: [960, 1260], preTrade: [540, 590], postTrade: [1000, 1260], why: "대학수학능력시험" },
+    "2027-11-18": { pre: [540, 600], regular: [600, 960], post: [960, 1260], preTrade: [540, 590], postTrade: [1000, 1260], why: "대학수학능력시험" },
+    // 연초 개장일 — 10:00 개장, 마감은 정상(15:30). [V33.565] 그날 넥스트레이드 프리마켓 운영 시각이 확인되지 않아
+    //   프리 거래는 열지 않는다(관측만 · 빈 창). 모르면 걸지 않는다 — 장후는 평소 체결 창.
+    "2027-01-04": { pre: [480, 600], regular: [600, 930], post: [930, 1200], preTrade: [], postTrade: [940, 1200], why: "연초 개장일" }
   }
 };
 
@@ -33223,6 +33230,36 @@ async function handleRequest(request, env, ctx, _inner) {
       } catch (e) { groups = [{ sig: "logs 읽기 실패", n: 0, sample: String(e && e.message) }]; }
       return Response.json({ ok: true, hours: hrs, fetchToday: today, fetchYesterday: yest, logGroups: groups }, { headers: cors });
     }
+    /* [V33.565] ★옛 경로 실측★(학습키 · 고정 목록 · 읽기 전용) — 운영 코드가 실제로 부르는 야후 경로를 같은 함수(yahooFetch · 같은 헤더·재시도)로
+       crumb 없이/있이 불러 본다. v10 quoteSummary·v7 options 는 2023 이후 crumb 를 요구한다 — 지금 코드는 crumb 없이 부른다. */
+    if (path === "/api/src-probe") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      resetFetchBudget(60);
+      let auth = null; try { auth = await getYahooAuth(env.DB); } catch (e) {}
+      const cr = auth && auth.crumb ? "&crumb=" + encodeURIComponent(auth.crumb) : "";
+      const ck = auth && auth.cookie ? { "Cookie": auth.cookie } : null;
+      const shape = function (j) { if (!j) return "null"; const k = Object.keys(j)[0]; const v = j[k]; return k + (v && v.error ? (" error=" + JSON.stringify(v.error).slice(0, 80)) : (v && v.result ? " result=" + (Array.isArray(v.result) ? v.result.length : 1) : "")); };
+      const L = [
+        ["v10_noCrumb", "https://query1.finance.yahoo.com/v10/finance/quoteSummary/AAPL?modules=price", null],
+        ["v10_crumb", "https://query1.finance.yahoo.com/v10/finance/quoteSummary/AAPL?modules=price" + cr, ck],
+        ["v7opt_noCrumb", "https://query1.finance.yahoo.com/v7/finance/options/AAPL", null],
+        ["v7opt_crumb", "https://query1.finance.yahoo.com/v7/finance/options/AAPL?" + cr.slice(1), ck],
+        ["v7quote_crumb", "https://query1.finance.yahoo.com/v7/finance/quote?symbols=AAPL,MSFT" + cr, ck],
+        ["v8chart", "https://query1.finance.yahoo.com/v8/finance/chart/AAPL?range=1d&interval=5m", null]
+      ];
+      const res = [{ k: "auth", crumb: !!(auth && auth.crumb), cookie: !!(auth && auth.cookie) }];
+      for (const [k, u, h] of L) {
+        const t0 = Date.now();
+        try { const j = await yahooFetch(u, h); res.push({ k: k, ok: true, ms: Date.now() - t0, shape: shape(j) }); }
+        catch (e) { res.push({ k: k, ok: false, ms: Date.now() - t0, err: String((e && e.message) || e).slice(0, 140) }); }
+      }
+      for (const sym of ["005930.KS", "AAPL"]) {
+        const t0 = Date.now();
+        try { const mb = await fetchMinuteBars(sym, { interval: SCALP_BAR_MIN + "m", range: "2d" }); res.push({ k: "minute " + sym, ok: true, ms: Date.now() - t0, n: mb && mb.closes ? mb.closes.length : 0 }); }
+        catch (e) { res.push({ k: "minute " + sym, ok: false, ms: Date.now() - t0, err: String((e && e.message) || e).slice(0, 140) }); }
+      }
+      return Response.json({ ok: true, res: res }, { headers: cors });
+    }
     if (path === "/api/macro-src") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const yr = new Date().getUTCFullYear(), ym = new Date().toISOString().slice(0, 7).replace("-", "");
@@ -48830,8 +48867,14 @@ function _luxPickTech(dd, sym, market) {
 //   장중 소셜 감정은 몇 시간이면 낡는다. 24시간 평균은 '어제 뉴스'를 오늘 신호로 쓰는 셈이다.
 const SOCIAL = {
   enabled: true,
-  symsPerRound: 30,          // 12 → 30. StockTwits 가 주축이므로 회전을 크게 돌린다.
-  pagesPerSym: 3,            // 종목당 페이지(30건/페이지) → 최대 90건. 오래된 페이지는 조기중단.
+  /* [V33.565] ★현실적인 양으로★(사용자: "실제로 불가능한 걸 하지 마라") — 운영 24h(10/11~12): StockTwits 가 회차마다
+     ~12건 성공 뒤 HTTP 429(rate limit · 실측 12성공/18실패 그대로) → 30종목×3쪽(회차당 최대 90요청)은 상대 한도를 넘는 양이었다.
+     회차당 최대 8종목×2쪽=16요청(대개 ~10)으로 줄인다 — 실패로 태우던 요청이 사라지고, 회전은 느려도 받은 값은 온전하다. */
+  symsPerRound: 8,           // 30 → 8 (429 없이 받히는 양)
+  pagesPerSym: 2,            // 3 → 2 (30건/쪽 · 신선구간 6시간이면 대부분 1~2쪽으로 끝난다)
+  /* [V33.565] Reddit 은 끈다 — 2023 API 정책 이후 키 없는 요청을 데이터센터 IP 에서 막는다. 운영 24h 68회 전부 403(성공 0).
+     20분 백오프로 계속 두드리는 것은 받을 수 없는 데이터를 기다리는 것이다. 판단 계수는 원래 0(수집 전용)이라 매매 영향 없음. */
+  redditEnabled: false,
   gapMin: 10,                // 20 → 10분. 최신성이 핵심이라 자주 돈다.
   freshH: 6,                 // ★하드 컷오프★ — 이보다 오래된 글은 세지 않는다(24 → 6).
   halfLifeH: 2,              // ★반감기★ — 2시간마다 가중치 절반.
@@ -48972,8 +49015,10 @@ async function socialFetchStep(DB) {
     let stOk = 0, stFail = 0, rdN = 0, stMsgs = 0;
 
     // ── Reddit: 1회 fetch 로 전 종목 언급을 얻는다(가성비가 가장 높다) ──
-    const _rdLeft = await _socialBackoffLeftMs(DB, "reddit");
-    if (_rdLeft > 0) {
+    const _rdLeft = SOCIAL.redditEnabled === false ? 0 : await _socialBackoffLeftMs(DB, "reddit");
+    if (SOCIAL.redditEnabled === false) {
+      await _socialHealth(DB, "reddit", { ok: false, err: "비활성 — 데이터센터 IP 403 상시(V33.565)", disabled: true });
+    } else if (_rdLeft > 0) {
       /* [V33.362] Reddit 은 한 번 호출이라 예산 낭비는 작지만, 403 을 10분마다 계속
          두드리는 것이 차단을 푸는 방법은 아니다. 실측에서 403 이 떠 있었다. */
       await _socialHealth(DB, "reddit", { ok: false, err: "백오프 대기 " + Math.ceil(_rdLeft / 60000) + "분",

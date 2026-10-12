@@ -13,3 +13,9 @@ for (const [day, tab] of [["today", j.fetchToday], ["yesterday", j.fetchYesterda
   out(day + " healthy", rows.filter((x) => x.bad + x.ex === 0).map((x) => x.k + ":" + x.ok).slice(0, 60).join(" "));
 }
 for (const g of (j.logGroups || [])) out("log", { n: g.n, last: g.last ? new Date(g.last).toISOString().slice(5, 16) : null, sig: g.sig, sample: g.sample });
+// [V33.565] 옛 경로 실측 — 야후 v10/v7 crumb 유무 · 분봉(한·미)
+try {
+  const r2 = await fetch(base + "/api/src-probe", { headers: { "x-train-key": process.env.TRAIN_KEY } });
+  const j2 = await r2.json();
+  for (const x of (j2.res || [])) out("src", x);
+} catch (e) { out("src err", String(e.message || e)); }

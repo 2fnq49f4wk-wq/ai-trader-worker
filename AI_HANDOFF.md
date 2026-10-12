@@ -21,6 +21,14 @@
   - 조용한 고장을 보이게: fetch 감싸개가 원천(호스트+경로 앞 3칸)별 성공·HTTP 오류(상태별)·예외를 센다(판단 관여 없음 · 예외 그대로 전달) →
     크론이 10분마다 D1 fetch_health:YYYYMMDD 에 합침 · /api/ingest-health(학습키): 원천 건강표 + 최근 24h WARN/ERROR 문장 모양별 묶음.
     ui-probe verify 가 tools/probe-ingest-health.mjs 로 찍는다. 게이트 check-ingest-health.mjs. ★다음: 이 표에서 실패율 높은 원천부터 옛 경로 정리★
+  - ★(V33.566 배포분) 운영 24h WARN/ERROR 묶음에서 찾은 같은 종류 셋★(run 38195024209 · /api/ingest-health):
+    ① ERROR '[FETCH] KR 시간외 pre 평가가능 0종목 · 체결시각 미상 336 — 수집 경로 점검' ×5(08:58 KST) — 수집 고장이 아니라 ★창 가정 오류★:
+       08:50~09:00(KRX 동시호가 · NXT 쉼)을 거래 세션으로 판정. 결함 A-2 해결 — MARKET_HOURS.kr preTrade [480,530] · postTrade [940,1200]
+       (관측 창은 그대로) · 수능일 NXT 1시간 지연 창 · 연초 개장일 프리 거래 끔(운영 시각 미확인). 게이트 check-session-windows 7개 추가.
+    ② Reddit HTTP 403 ×68(성공 0) — 2023 이후 키 없는 데이터센터 IP 차단 → SOCIAL.redditEnabled=false(받을 수 없는 데이터를 두드리지 않는다).
+    ③ StockTwits 429 — 회차당 30종목×3쪽(최대 90요청)이 상대 한도 초과(12성공/18실패) → 8종목×2쪽(≤16).
+       소셜은 계수 0(수집 전용)이라 매매 영향 없음. 게이트 check-social-backoff(기본 꺼짐 확인 + 장치는 켠 채 시험).
+  - 옛 경로 실측 도구: /api/src-probe(학습키) — 야후 v10 quoteSummary·v7 options 를 crumb 없이/있이(운영 코드는 crumb 없이 부른다) · 분봉.
   - 현실적인 양: 한 번에 받는 수는 실측 상한 그대로(네이버 446 · 나스닥 20 · 야후 20 · 워커 동시 연결 6 중 분봉 선행 4 · 호출당 외부 요청 850 예산).
 
 - V33.564 (10/12 01:30Z 예약 점검 · 한국 장중) ★사이클 I/O 판정 → 단타 분봉 선행 병렬 조회★
