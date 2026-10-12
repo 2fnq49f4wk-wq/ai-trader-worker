@@ -25,5 +25,15 @@ try {
   at("2026-10-12T07:30:00Z");
   chk(await M._indexFreshOpen(fakeDB(RealDate.UTC(2026, 9, 12, 6, 30) / 1000), "kr", "2026-10-12") === true, "장 마감 뒤 지수가 오늘이면 개장");
 } finally { globalThis.Date = RealDate; }
+// [V33.565] 미국 반장 표 — NYSE Group 2026~2028 공지: 2026 반장 11/27·12/24 · 2027 반장 11/26 하나(7/2·12/23 은 정상장)
+{ const SS = (await import("node:fs")).readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const i = SS.indexOf("const MARKET_HOURS_SPECIAL"), blk = SS.slice(i, SS.indexOf("kr: {", i));
+  const days = [...blk.matchAll(/^\s*"(\d{4}-\d{2}-\d{2})":/gm)].map((m) => m[1]);
+  chk(JSON.stringify(days) === JSON.stringify(["2026-11-27", "2026-12-24", "2027-11-26"]), "미국 반장 표 = NYSE 공지(2027 은 11/26 하나)", JSON.stringify(days));
+  const H27 = M.getHolidaySet("us", 2027);
+  chk(["2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31", "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24"].every((d) => H27.has(d)) && H27.size === 10,
+      "미국 2027 휴장 10일(NYSE 공지: 7/5 · 12/24 대체 · 6/18 준틴스 대체)", JSON.stringify([...H27].sort()));
+  chk(!M.getHolidaySet("us", 2027).has("2027-12-31"), "2028-01-01(토) 은 전날(12/31) 대체휴장 없음 — NYSE 규칙");
+}
 if (fails) { console.log("\n✗ 휴장일 판정 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 휴장일 판정 통과");

@@ -164,6 +164,7 @@ jobs:
         run: |
           node tools/probe-verify.mjs "$URL" || true
           node tools/probe-macro-us.mjs || true
+          node tools/probe-ingest-health.mjs 24 || true
 
       - name: 청산 반사실
         if: inputs.exits && steps.url.outputs.url != ''

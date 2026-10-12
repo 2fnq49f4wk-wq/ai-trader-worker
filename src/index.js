@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.564";
+const _BUILD_VER = "V33.565";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -5568,9 +5568,10 @@ const MARKET_HOURS_SPECIAL = {
     // 조기폐장(반장) — 13:00 ET 마감. 장후는 그 시각부터 17:00 ET 까지.
     "2026-11-27": { regular: [570, 780], post: [780, 1020], why: "추수감사절 다음날 반장" },
     "2026-12-24": { regular: [570, 780], post: [780, 1020], why: "성탄 전야 반장" },
-    "2027-07-02": { regular: [570, 780], post: [780, 1020], why: "독립기념일 전 반장" },
-    "2027-11-26": { regular: [570, 780], post: [780, 1020], why: "추수감사절 다음날 반장" },
-    "2027-12-23": { regular: [570, 780], post: [780, 1020], why: "성탄 전야 반장" }
+    /* [V33.565] 2027 반장은 ★11/26 하나뿐★(NYSE Group 2026~2028 휴장·조기폐장 공지). 7/4 가 일요일(7/5 대체휴장) ·
+       12/25 가 토요일(12/24 휴장)이라 그 전날 반장이 없다 — 종전 표의 2027-07-02 · 2027-12-23 은 규칙을 기계적으로 옮긴 오류였고,
+       그대로면 그 이틀 13:00 ET 에 정규장을 닫은 것으로 판정했다(휴장일 오판과 같은 종류: 날짜 표가 사실과 다름). */
+    "2027-11-26": { regular: [570, 780], post: [780, 1020], why: "추수감사절 다음날 반장" }
   },
   kr: {
     // 수능일 — 전 일정 1시간 지연(장전 09:00~10:00 · 정규장 10:00~16:00 · 장후 16:00~21:00).
@@ -7105,7 +7106,9 @@ async function runInternalMacroUpdate(env, forceRun) {
     const prev = await getState(DB, "macro_data", { us: {}, kr: {}, updatedAt: null });
     const next = Object.assign({}, prev, { us: Object.assign({}, prev.us), kr: Object.assign({}, prev.kr), updatedAt: Date.now(), source: "internal_yahoo_rates" });
     const today = new Date().toISOString().slice(0, 10);
-    const setRate = function (key, v, suffix) { if (v != null) next.us[key] = { value: v.toFixed(2) + (suffix || ""), asOf: today, released: "", source_url: "", fetchedAt: Date.now(), proxy: true }; };
+    /* [V33.565] 대용 시세엔 체결 시각이 없다 — 조회한 날을 '기준일' 로 적으면 미국 채권 휴장일(10/12)에도 그날 값인 척한다.
+       공식 값이 없을 때만 쓰는 값이므로 '조회 YYYY-MM-DD' 로 적고 관측일(obsDate)은 비운다(화면이 기준일로 오해하지 않게). */
+    const setRate = function (key, v, suffix) { if (v != null) next.us[key] = { value: v.toFixed(2) + (suffix || ""), asOf: "조회 " + today, obsDate: null, released: "", source_url: "", fetchedAt: Date.now(), proxy: true, source: "야후 시장금리 대용(공식 원천 실패 시)" }; };
     // 정책금리 근사 = 13주 T-bill(^IRX) — 연준금리와 통상 ±0.2%p
     // [V33.561] 공식 값(FRED: 연준 목표범위 · 10년 일별)이 있으면 프록시로 덮지 않는다 — 프록시는 공식 값이 없을 때만
     /* [V33.563] 공식 값(FRED·뉴욕연은·재무부 — proxy 표시 없고 3일 안에 받음)이 있으면 대용으로 덮지 않는다. 대용은 공식이 없을 때만. */
@@ -22730,12 +22733,58 @@ async function runAltSleeveCycle(env, key, shared) {
    워커 시계는 I/O 동안엔 흐르므로 D1·fetch 대기를 직접 잴 수 있다. 사이클 동안 D1 핸들을 감싸 질의 수·대기 합을,
    fetch 는 호출 수·대기 합을 센다 → EVAL-COST 줄에 'IO D1 n회 xs · 외부 n회 ys' 로 남긴다(판단에는 관여하지 않는다). */
 let __ioMeter = null;
+/* ══ [V33.565] ★외부 원천 건강표 — 실제 운영 호출의 성공/실패를 원천별로 센다★ ══════════════════════════
+   10/12 사고 둘(휴장 오판 · 금융 지표 날짜 멈춤)의 공통점: 고장이 ★조용했다★. FRED 는 우리가 붙인 옛 브라우저 흉내 헤더 때문에
+   워커에서 매번 520 이었는데, 호출부가 실패를 '이전 값 유지' 로 삼켜 몇 달 같은 날짜가 떠 있었다.
+   → fetch 감싸개에서 원천(호스트 + 경로 앞 3칸 · 숫자/종목코드는 *)별로 성공·HTTP 오류(상태별)·예외를 센다(판단에는 관여하지 않는다).
+   크론이 10분마다 D1 'fetch_health:YYYYMMDD' 에 합쳐 쓴다(10분에 1회) · /api/ingest-health(학습키)로 본다. */
+const __fh = new Map();
+let __fhFlushAt = 0;
+function _fhKey(u) {
+  try {
+    const x = new URL(typeof u === "string" ? u : ((u && u.url) || String(u)));
+    if (/\.internal$/.test(x.host)) return null;
+    const seg = x.pathname.split("/").filter(Boolean).slice(0, 3).map(function (s0) { return (/\d/.test(s0) || s0.length > 28) ? "*" : s0; });
+    return x.host + (seg.length ? "/" + seg.join("/") : "");
+  } catch (e) { return null; }
+}
+function _fhRec(key, status, err) {
+  if (!key) return;
+  let e0 = __fh.get(key);
+  if (!e0) { if (__fh.size >= 300) return; e0 = { ok: 0, bad: 0, ex: 0, st: {}, err: null, errAt: 0, okAt: 0 }; __fh.set(key, e0); }
+  const now = Date.now();
+  if (err) { e0.ex++; e0.err = String(err).slice(0, 120); e0.errAt = now; }
+  else if (status >= 200 && status < 400) { e0.ok++; e0.okAt = now; }
+  else { e0.bad++; e0.st[status] = (e0.st[status] || 0) + 1; e0.err = "HTTP " + status; e0.errAt = now; }
+}
+function _fhMerge(acc, add) {
+  const out = Object.assign({}, acc || {});
+  for (const k of Object.keys(add || {})) {
+    const a = out[k] || { ok: 0, bad: 0, ex: 0, st: {}, err: null, errAt: 0, okAt: 0 }, b = add[k];
+    const st = Object.assign({}, a.st); for (const c of Object.keys(b.st || {})) st[c] = (st[c] || 0) + b.st[c];
+    out[k] = { ok: a.ok + b.ok, bad: a.bad + b.bad, ex: a.ex + b.ex, st: st,
+               err: (b.errAt || 0) >= (a.errAt || 0) ? (b.err || a.err) : a.err, errAt: Math.max(a.errAt || 0, b.errAt || 0), okAt: Math.max(a.okAt || 0, b.okAt || 0) };
+  }
+  return out;
+}
+async function fetchHealthFlush(DB, force) {
+  const now = Date.now();
+  if (!force && now - __fhFlushAt < 10 * 60000) return false;
+  if (!__fh.size) { __fhFlushAt = now; return false; }
+  const add = {}; for (const [k, v] of __fh) add[k] = v;
+  __fh.clear(); __fhFlushAt = now;
+  const key = "fetch_health:" + new Date(now).toISOString().slice(0, 10).replace(/-/g, "");
+  try { const cur = await getState(DB, key, {}, true); await setState(DB, key, _fhMerge(cur, add)); } catch (e) {}   // 엄격 읽기 — 못 읽으면 쓰지 않는다(누적을 빈 표로 덮지 않게)
+  return true;
+}
 /* fetch 계측 — 모듈 로드 때 한 번 감싼다(그대로 넘기고 수·대기만 더한다). 사이클 밖 호출도 섞이지만 진단용이다. */
 if (typeof globalThis.fetch === "function" && !globalThis.__ioFetchWrapped) {
   const __rawFetch = globalThis.fetch;
   globalThis.fetch = async function () {
     const t = Date.now();
-    try { return await __rawFetch.apply(globalThis, arguments); }
+    let _k = null; try { _k = _fhKey(arguments[0]); } catch (e) {}
+    try { const r = await __rawFetch.apply(globalThis, arguments); try { _fhRec(_k, r.status, null); } catch (e) {} return r; }
+    catch (e) { try { _fhRec(_k, 0, (e && e.message) || e); } catch (e2) {} throw e; }
     finally { if (__ioMeter) { __ioMeter.fn++; __ioMeter.fms += Date.now() - t; } }
   };
   globalThis.__ioFetchWrapped = true;
@@ -33149,6 +33198,31 @@ async function handleRequest(request, env, ctx, _inner) {
        묶음 크기마다 v7/v8 spark 로 유니버스 앞 n 종목을 보내 돌려받은 종목 수·지연·HTTP 를 준다(SPARK_CHUNK 를 정하는 근거). */
     /* [V33.563] ★미국 공식 지표 원천 — 워커(Cloudflare)에서 닿는가★(학습키 · 고정 목록 · 읽기 전용)
        V33.561 운영: FRED 그래프 CSV 가 워커에서 7개 전부 실패(러너에선 됨). 대체 원천을 ★실제로 돌 곳★ 에서 잰다. */
+    /* [V33.565] ★수집 건강 진단★(학습키 · 읽기 전용) — 원천별 성공/실패(오늘·어제) + 최근 N시간 WARN/ERROR 를 문장 모양별로 묶어 센다. */
+    if (path === "/api/ingest-health") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      try { await fetchHealthFlush(env.DB, true); } catch (e) {}
+      const d0 = new Date(), ymd = function (d) { return d.toISOString().slice(0, 10).replace(/-/g, ""); };
+      const today = await getState(env.DB, "fetch_health:" + ymd(d0), {});
+      const yest = await getState(env.DB, "fetch_health:" + ymd(new Date(d0.getTime() - 86400000)), {});
+      const hrs = Math.max(1, Math.min(72, parseInt(url.searchParams.get("hours") || "24", 10)));
+      const since = Date.now() - hrs * 3600000;
+      let groups = [];
+      try {
+        const rs = await env.DB.prepare("SELECT ts, level, message FROM logs WHERE ts > ? AND level IN ('WARN','ERROR') ORDER BY id DESC LIMIT 4000").bind(since).all();
+        const G = new Map();
+        for (const r of ((rs && rs.results) || [])) {
+          const m = String(r.message || "");
+          const nRep = (function () { const x = /\(×(\d+) ·/.exec(m); return x ? Number(x[1]) : 1; })();
+          const sig = r.level + " " + m.replace(/\s*\(×\d+ ·[^)]*\)\s*$/, "").replace(/[0-9]+([.,][0-9]+)*/g, "#").replace(/[A-Z0-9]{2,}\.(KS|KQ)\b/g, "SYM").slice(0, 110);
+          const g = G.get(sig) || { sig: sig, n: 0, last: 0, sample: m.slice(0, 220) };
+          g.n += nRep; if (r.ts > g.last) { g.last = r.ts; g.sample = m.slice(0, 220); }
+          G.set(sig, g);
+        }
+        groups = [...G.values()].sort(function (a, b) { return b.n - a.n; }).slice(0, 60);
+      } catch (e) { groups = [{ sig: "logs 읽기 실패", n: 0, sample: String(e && e.message) }]; }
+      return Response.json({ ok: true, hours: hrs, fetchToday: today, fetchYesterday: yest, logGroups: groups }, { headers: cors });
+    }
     if (path === "/api/macro-src") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const yr = new Date().getUTCFullYear(), ym = new Date().toISOString().slice(0, 7).replace("-", "");
@@ -55022,13 +55096,14 @@ export default {
       try { const _a = {}; for (const _k in __prof.acc) { const _v = Math.round(__prof.acc[_k]); if (_v > 0) _a[_k] = _v; }
         console.log("CRONPROF " + JSON.stringify({ s: _a, c: __cronCnt || {}, f: __fetchBudget.used || 0, pb: Object.keys(__pbNow || {}).reduce(function (t, k) { return t + (__pbNow[k] || 0); }, 0) })); } catch (e) {}
       try { await tickUsage(env.DB, __cronStart, __usageCalib, __fetchBudget.used || 0, __prof.acc, __pbNow); } catch (e) {}
+      try { await fetchHealthFlush(env.DB, false); } catch (e) {}   // [V33.565] 원천 건강표(10분에 1회)
     })());
   }
 };
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { getStates, _STATE_LITE, getADX, _getADXCore, getHolidaySet, _indexFreshOpen, isMarketTradingDay, KR_LUNAR_HOLIDAYS, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
