@@ -12,6 +12,11 @@
 
 ## Current handoff
 
+- V33.568 (10/12 한국 장중) ★사이클의 남은 덩어리 — D1 ~260회가 어디서 나나 계측★
+  - V33.564 뒤 KR 사이클 61~68s 인데 하나 걸러 'D1 ~260회 · 누적 대기 78~90s'. 일봉 갱신(75종목 개별 getState·setState)이 의심되지만
+    같은 dailyRefresh=75 인 사이클이 'D1 6회' 로도 찍혀 추측으로는 안 맞는다 → 질의 머리(동사·테이블) + state 키 접두로 묶어 횟수·대기를 센다.
+    [EVAL-COST] 끝에 '[D1 상위 …]' 4개(D1 20회 넘을 때만). 판단 불변. 게이트 check-ingest-health 에 2개. ★다음: 이 표로 큰 것부터 묶음 조회★
+
 - V33.567 (10/12) ★옛 코드 오작동 — 야후 v10/v7 이 crumb 없이 401★
   - 운영 실측(/api/src-probe · run 38195927187): v10 quoteSummary·v7 options — crumb 없음 HTTP 401 · 있음 정상. v8 chart·분봉(한·미)은 정상.
     crumb 없이 부르던 곳 6: anlFetchUS(애널리스트) · fundSectorOf(섹터) · flowFetchPositioning(공매도·기관) · flowFetchPutCall ·

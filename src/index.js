@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.567";
+const _BUILD_VER = "V33.568";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -22811,24 +22811,34 @@ if (typeof globalThis.fetch === "function" && !globalThis.__ioFetchWrapped) {
   };
   globalThis.__ioFetchWrapped = true;
 }
+/* [V33.568] ★어떤 질의가 D1 을 먹나★ — 사이클 하나 걸러 'D1 ~260회 · 누적 대기 78~90s' 가 찍히는데 어디서인지 계측 밖이었다.
+   질의 머리(동사·테이블) + 첫 인자(state 키라면 ':' 앞 접두)로 묶어 횟수·대기 합을 센다 → EVAL-COST 에 상위 4개. 판단 불변. */
+function _ioTag(q, a0) {
+  const t = String(q || "").replace(/\s+/g, " ").trim();
+  const verb = (/^(\w+)/.exec(t) || [, "?"])[1].toUpperCase();
+  const tb = (/\b(?:FROM|INTO|UPDATE)\s+(\w+)/i.exec(t) || [, "?"])[1];
+  const head = verb + " " + tb;
+  const k = (typeof a0 === "string" && tb === "state") ? a0.split(":")[0].slice(0, 24) : "";
+  return head + (k ? " [" + k + "]" : "");
+}
 function _ioDB(DB) {
   const M = __ioMeter;
-  const wrapS = function (raw) {
+  const wrapS = function (raw, tag) {
     const timed = function (fnName) {
-      return async function () { const t = Date.now(); try { return await raw[fnName].apply(raw, arguments); } finally { if (M) { M.d1n++; M.d1ms += Date.now() - t; } } };
+      return async function () { const t = Date.now(); try { return await raw[fnName].apply(raw, arguments); } finally { if (M) { const d = Date.now() - t; M.d1n++; M.d1ms += d; if (M.q && tag) { const e0 = M.q[tag] || (M.q[tag] = { n: 0, ms: 0 }); e0.n++; e0.ms += d; } } } };
     };
-    return { __raw: raw, bind: function () { return wrapS(raw.bind.apply(raw, arguments)); },
+    return { __raw: raw, bind: function () { return wrapS(raw.bind.apply(raw, arguments), _ioTag(tag, arguments[0])); },
              all: timed("all"), first: timed("first"), run: timed("run"), raw: timed("raw") };
   };
   return {
-    prepare: function (q) { return wrapS(DB.prepare(q)); },
+    prepare: function (q) { return wrapS(DB.prepare(q), q); },
     batch: async function (ss) { const t = Date.now(); try { return await DB.batch(ss.map(function (x) { return (x && x.__raw) || x; })); } finally { if (M) { M.d1n++; M.d1ms += Date.now() - t; } } },
     exec: function (q) { return DB.exec(q); },
     dump: function () { return DB.dump ? DB.dump() : null; }
   };
 }
 async function runTradingCycle(env) {
-  __ioMeter = { d1n: 0, d1ms: 0, fn: 0, fms: 0 };
+  __ioMeter = { d1n: 0, d1ms: 0, fn: 0, fms: 0, q: {} };
   const DB = _ioDB(env.DB);
   resetFetchBudget(850);  // [PAID] Paid 1000 한도의 85% — 가격+일봉+분봉+LLM+여유
   await ensureSchema(DB);
@@ -26442,6 +26452,9 @@ async function runTradingCycle(env) {
           await log(DB, _per > ENRICH.slowSymMs ? "WARN" : "INFO", null,
             "[EVAL-COST] " + market.toUpperCase() + " 종목당 평균 " + _per + "ms" +
             (__ioMeter ? " · IO(사이클 누적) D1 " + __ioMeter.d1n + "회 " + (__ioMeter.d1ms / 1000).toFixed(1) + "s · 외부 " + __ioMeter.fn + "회 " + (__ioMeter.fms / 1000).toFixed(1) + "s" : "") +
+            /* [V33.568] D1 상위 질의 4개(횟수·대기) — 'D1 260회' 가 어디서 나는지 */
+            (__ioMeter && __ioMeter.q && __ioMeter.d1n > 20 ? " [D1 상위 " + Object.entries(__ioMeter.q).sort(function (a, b) { return b[1].ms - a[1].ms; }).slice(0, 4)
+              .map(function (x) { return x[0] + " ×" + x[1].n + " " + (x[1].ms / 1000).toFixed(1) + "s"; }).join(" · ") + "]" : "") +
             " · 부가조회 " +
             Math.round(_enrich.spent) + "/" + _enrich.budget + "ms" +
             (_enrich.skipped ? "(예산소진 " + _enrich.skipped + "건 생략)" : "") +
@@ -55165,7 +55178,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _setYAuthDB, yahooFetch, _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _ioTag, _setYAuthDB, yahooFetch, _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { getStates, _STATE_LITE, getADX, _getADXCore, getHolidaySet, _indexFreshOpen, isMarketTradingDay, KR_LUNAR_HOLIDAYS, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
