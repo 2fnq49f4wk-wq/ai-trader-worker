@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.570";
+const _BUILD_VER = "V33.571";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -23667,12 +23667,20 @@ async function runTradingCycle(env) {
       const dailyTargetArr = Array.from(dailyTargets).slice(0, maxDailyPerCycle);
       const dailyMap = {};   // symbol -> daily data (이번에 갱신/캐시 로드된 것)
       let dailyFetchTried = 0, dailyFetchFail = 0;   // [통계FIX] 일봉 fetch 전멸 감지용
+      /* [V33.571] ★갱신 대상 일봉 캐시를 한 번에 읽는다★ — 운영 계측(V33.568 [D1 상위]): 사이클마다 'SELECT state [daily] ×73~77 · 누적 대기 30~33s'.
+         종목마다 getState 한 번씩(20개 병렬 배치)이던 것을 getStates 한 질의로 접는다(같은 행 · 같은 파싱 · 못 읽으면 종전처럼 '캐시 없음'). */
+      let __dailyPre = {};
+      try {   // D1 은 질의당 바인드 인자 100개 상한 — 90개씩 나눈다(설정으로 갱신 수를 키워도 안전)
+        const _dk = dailyTargetArr.map(function (s0) { return "daily:" + s0; });
+        for (let j = 0; j < _dk.length; j += 90) Object.assign(__dailyPre, await getStates(DB, _dk.slice(j, j + 90)));
+      } catch (e) {}
+      const __dailyOf = function (s0) { const v = __dailyPre["daily:" + s0]; return v === undefined ? null : v; };
       for (let i = 0; i < dailyTargetArr.length; i += DBATCH) {
         const slice = dailyTargetArr.slice(i, i + DBATCH);
         const results = await Promise.all(slice.map(async function(symbol){
           try {
             // 캐시 우선, 만료 시 fallback fetch
-            let cached = await getState(DB, "daily:" + symbol, null);
+            let cached = __dailyOf(symbol);   // [V33.571] 위 묶음 읽기
             // [V33.217] 신선도 판정을 getDailyCached 와 ★같은 함수★ 로 한다 —
             //   여기만 days 를 안 보면 이 경로로 들어온 종목은 영원히 옛 스키마로 남는다.
             if (cached && cached.ts && (Date.now() - cached.ts) < cacheMin * 60 * 1000 && _dailyCacheOk(cached)) {
@@ -23706,7 +23714,7 @@ async function runTradingCycle(env) {
           for (let k = i + DBATCH; k < dailyTargetArr.length; k++) {
             const sym2 = dailyTargetArr[k];
             if (dailyMap[sym2] === undefined) {
-              dailyMap[sym2] = await getState(DB, "daily:" + sym2, null);
+              dailyMap[sym2] = __dailyOf(sym2);   // [V33.571] 묶음 읽기 재사용(종목별 D1 왕복 없음)
             }
           }
           break;
@@ -24350,6 +24358,7 @@ async function runTradingCycle(env) {
       // [V32.3] 프리페치(시세배치·일봉 일괄로드)와 모델 로딩이 D1 과부하 시 길어질 수 있어,
       //   평가 루프 진입 직전 락 TTL을 한 번 더 갱신 → 여전히 소유 중이면 만료 임박을 리셋해 탈취 방지.
       try { await refreshCycleLock(DB, cfg.cycleLockTTL || 180000, myLockPid); } catch (e) {}
+      let __lockRefAt = Date.now();   // [V33.571] 평가 루프 락 갱신은 시간 간격으로
       _enrich.budget = Math.max(0, Math.round(evalBudgetMs * ENRICH.share));   // [V33.172] 지갑 확정
       /* [V33.564] 한국 단타 분봉 선행 병렬 조회(위 MBPRE 주석) — 단타가 분봉을 볼 수 있는 상태(AI 단타 가동 또는 표본 관측)일 때만 */
       let __mbPre = null;
@@ -24410,7 +24419,9 @@ async function runTradingCycle(env) {
         }
         // [V32.1] 긴 평가 루프 중에도 주기적으로 락 TTL 갱신 — 한 시장 평가가 수십 초로 길어지면
         //   그 사이 락이 만료돼 다음 크론에 탈취되고, 이후 시장/후처리가 소유권을 잃던 문제 예방.
-        if (evalProcessed % 20 === 0) {
+        /* [V33.571] 20종목마다 → 30초마다. 운영 계측: 'UPDATE state(락) ×24 · 6s'(446종목/20). 락 TTL 180s 에 사이클 ~60s 라 30초 간격이면 충분히 앞선다. */
+        if (Date.now() - __lockRefAt >= 30000) {
+          __lockRefAt = Date.now();
           try { await refreshCycleLock(DB, cfg.cycleLockTTL || 180000, myLockPid); } catch (e) {}
         }
         const symbol = item.symbol;

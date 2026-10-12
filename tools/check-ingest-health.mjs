@@ -28,5 +28,9 @@ chk(M._ioTag("SELECT v FROM state WHERE k = ?", "daily:005930.KS") === "SELECT s
     M._ioTag("INSERT INTO logs (ts, level) VALUES (?, ?)", 12) === "INSERT logs", "D1 질의 묶음 키(동사·테이블·state 접두)");
 chk(/\[D1 상위 " \+ Object\.entries\(__ioMine\.q\)/.test(S) && /__ioMeter = \{ d1n: 0, d1ms: 0, fn: 0, fms: 0, q: \{\} \};/.test(S), "EVAL-COST 에 D1 상위 질의 4개");
 chk(/const __ioMine = __ioMeter;/.test(S) && !/\(__ioMeter \? " · IO\(사이클 누적\)/.test(S), "EVAL-COST 는 그 사이클이 잡아 둔 계량기를 찍는다(겹친 크론이 바꾼 전역을 찍지 않는다)");
+// [V33.571] 사이클 D1 상위 두 가지를 접었다: 일봉 캐시 종목별 읽기 → 묶음(90개씩) · 평가 루프 락 갱신 20종목마다 → 30초마다
+chk(/let cached = __dailyOf\(symbol\);/.test(S) && /for \(let j = 0; j < _dk\.length; j \+= 90\) Object\.assign\(__dailyPre, await getStates\(DB, _dk\.slice\(j, j \+ 90\)\)\);/.test(S) &&
+    !/let cached = await getState\(DB, "daily:" \+ symbol, null\);/.test(S), "일봉 캐시는 사이클당 묶음 읽기(종목별 getState 없음 · 바인드 100 상한 안)");
+chk(/if \(Date\.now\(\) - __lockRefAt >= 30000\)/.test(S) && !/if \(evalProcessed % 20 === 0\) \{\s*try \{ await refreshCycleLock/.test(S), "평가 루프 락 갱신은 30초 간격(TTL 180s 보다 충분히 앞선다)");
 if (fails) { console.log("\n✗ 원천 건강표 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 원천 건강표 통과");
