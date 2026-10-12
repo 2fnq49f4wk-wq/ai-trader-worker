@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.568";
+const _BUILD_VER = "V33.569";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -33257,7 +33257,20 @@ async function handleRequest(request, env, ctx, _inner) {
         }
         groups = [...G.values()].sort(function (a, b) { return b.n - a.n; }).slice(0, 60);
       } catch (e) { groups = [{ sig: "logs 읽기 실패", n: 0, sample: String(e && e.message) }]; }
-      return Response.json({ ok: true, hours: hrs, fetchToday: today, fetchYesterday: yest, logGroups: groups }, { headers: cors });
+      /* [V33.569] 심사 사유 집계 — '후보는 있는데 체결 0' 이 무엇 때문인지(데이터 결측 사유가 섞였는지) 시장별로 센다. 주요사유 상위 3이 매 사이클 찍힌다. */
+      const reasons = { us: {}, kr: {} }; let cyc = { us: 0, kr: 0 };
+      try {
+        const rs2 = await env.DB.prepare("SELECT message FROM logs WHERE ts > ? AND level = 'SIGNAL' AND message LIKE '[심사완료]%' ORDER BY id DESC LIMIT 2000").bind(since).all();
+        for (const r of ((rs2 && rs2.results) || [])) {
+          const m = String(r.message || ""), mk = /\] KR /.test(m) ? "kr" : (/\] US /.test(m) ? "us" : null);
+          if (!mk) continue;
+          const rep = (function () { const x = /\(×(\d+) ·/.exec(m); return x ? Number(x[1]) : 1; })();
+          cyc[mk] += rep;
+          const t = /주요사유 ([^(]+)/.exec(m);
+          if (t) for (const part of t[1].split(",")) { const kv = /([\w.]+):(\d+)/.exec(part.trim()); if (kv) reasons[mk][kv[1]] = (reasons[mk][kv[1]] || 0) + Number(kv[2]) * rep; }
+        }
+      } catch (e) {}
+      return Response.json({ ok: true, hours: hrs, fetchToday: today, fetchYesterday: yest, logGroups: groups, judgeCycles: cyc, judgeReasons: reasons }, { headers: cors });
     }
     /* [V33.565] ★옛 경로 실측★(학습키 · 고정 목록 · 읽기 전용) — 운영 코드가 실제로 부르는 야후 경로를 같은 함수(yahooFetch · 같은 헤더·재시도)로
        crumb 없이/있이 불러 본다. v10 quoteSummary·v7 options 는 2023 이후 crumb 를 요구한다 — 지금 코드는 crumb 없이 부른다. */

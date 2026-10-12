@@ -19,3 +19,9 @@ try {
   const j2 = await r2.json();
   for (const x of (j2.res || [])) out("src", x);
 } catch (e) { out("src err", String(e.message || e)); }
+// [V33.569] 심사 사유(시장별 · 최근 N시간)
+try {
+  const r3 = await fetch(base + "/api/ingest-health?hours=" + (process.argv[2] || "24"), { headers: { "x-train-key": process.env.TRAIN_KEY } });
+  const j3 = await r3.json();
+  for (const mk of ["kr", "us"]) out("judge " + mk, { cycles: (j3.judgeCycles || {})[mk], reasons: Object.entries((j3.judgeReasons || {})[mk] || {}).sort((a, b) => b[1] - a[1]).slice(0, 12) });
+} catch (e) { out("judge err", String(e.message || e)); }
