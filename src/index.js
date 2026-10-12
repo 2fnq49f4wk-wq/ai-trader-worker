@@ -33042,6 +33042,34 @@ async function handleRequest(request, env, ctx, _inner) {
 
     /* [V33.559] ★워커(Cloudflare)에서 본 야후 spark 묶음 한도★ — 러너(Azure)는 야후가 429 로 막아 못 잰다. 학습키 전용 · 읽기만.
        묶음 크기마다 v7/v8 spark 로 유니버스 앞 n 종목을 보내 돌려받은 종목 수·지연·HTTP 를 준다(SPARK_CHUNK 를 정하는 근거). */
+    /* [V33.563] ★미국 공식 지표 원천 — 워커(Cloudflare)에서 닿는가★(학습키 · 고정 목록 · 읽기 전용)
+       V33.561 운영: FRED 그래프 CSV 가 워커에서 7개 전부 실패(러너에선 됨). 대체 원천을 ★실제로 돌 곳★ 에서 잰다. */
+    if (path === "/api/macro-src") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const yr = new Date().getUTCFullYear(), ym = new Date().toISOString().slice(0, 7).replace("-", "");
+      const L = [
+        ["fred_csv", "https://fred.stlouisfed.org/graph/fredgraph.csv?id=UNRATE", null, _MAC_UA],
+        ["fred_csv_noua", "https://fred.stlouisfed.org/graph/fredgraph.csv?id=UNRATE", null, {}],
+        ["nyfed_effr", "https://markets.newyorkfed.org/api/rates/unsecured/effr/last/1.json", null, _MAC_UA],
+        ["treasury_csv", "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/" + yr + "/all?type=daily_treasury_yield_curve&field_tdr_date_value=" + yr + "&page&_format=csv", null, _MAC_UA],
+        ["treasury_xml", "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_yield_curve&field_tdr_date_value_month=" + ym, null, _MAC_UA],
+        ["bls_v1_get", "https://api.bls.gov/publicAPI/v1/timeseries/data/LNS14000000", null, _MAC_UA],
+        ["bls_v1_post", "https://api.bls.gov/publicAPI/v1/timeseries/data/", JSON.stringify({ seriesid: ["CUUR0000SA0", "CUUR0000SA0L1E", "WPUFD4", "LNS14000000"], startyear: String(yr - 1), endyear: String(yr) }), _MAC_UA],
+        ["bea_pce_page", "https://www.bea.gov/data/personal-consumption-expenditures-price-index-excluding-food-and-energy", null, _MAC_UA],
+        ["dbnomics", "https://api.db.nomics.world/v22/providers/BEA", null, _MAC_UA]
+      ];
+      const res = [];
+      for (const [k, u, body, h] of L) {
+        const t0 = Date.now();
+        try {
+          const r = await fetch(u, { method: body ? "POST" : "GET", body: body || undefined,
+            headers: Object.assign({}, h, body ? { "Content-Type": "application/json" } : {}), signal: AbortSignal.timeout(12000) });
+          const t = await r.text();
+          res.push({ k: k, http: r.status, ms: Date.now() - t0, len: t.length, head: t.slice(0, 260).replace(/\s+/g, " ") });
+        } catch (e) { res.push({ k: k, err: String((e && e.message) || e).slice(0, 80), ms: Date.now() - t0 }); }
+      }
+      return Response.json({ ok: true, res: res }, { headers: cors });
+    }
     if (path === "/api/batch-limits") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const syms = (DEFAULT_US || []).filter(function (s0) { return s0.indexOf(".") < 0; });

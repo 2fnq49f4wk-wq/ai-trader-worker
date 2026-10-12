@@ -160,7 +160,10 @@ jobs:
         env:
           URL: ${{ steps.url.outputs.url }}
           TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
-        run: node tools/probe-verify.mjs "$URL" || true
+          WORKER_URL: ${{ steps.url.outputs.url }}
+        run: |
+          node tools/probe-verify.mjs "$URL" || true
+          node tools/probe-macro-us.mjs || true
 
       - name: 청산 반사실
         if: inputs.exits && steps.url.outputs.url != ''
