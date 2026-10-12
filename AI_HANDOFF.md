@@ -12,6 +12,22 @@
 
 ## Current handoff
 
+- V33.578 (10/12) ★거래 급감 원인 수리 + OMNI 섀도우 탈출(OMNI-Q 상위권 진입 경로)★ — 사용자: "AI 포지션 0 · 거래 줄어든 이유 · omni 아직 섀도우".
+  - 원인(trade-diag 10/12): 9/22(V33.407) 이후 AI 모드 신규 진입 경로가 AI_PRIMARY 하나뿐(규칙 신호는 V12.71 로 버려짐).
+    한국 AI_PRIMARY 는 NEGEXP_SIG 영구 차단(최근 매도 80건 창 — 새 매매가 없으면 영원히 안 바뀜) + OMNIQ_LOW·추격·폭락 차단 → 9/12 이후 0건.
+    실적 관문은 kr:AI:TREND 를 이미 '시험(반 크기)' 으로 열었는데 NEGEXP 가 그 시험을 막았다(교착). 미국은 위원회 백분위 문턱 통과가 드묾(2건).
+    원장 사유 "AI_PRIMARY undefined" = 신호에 detail 이 없었다.
+  - 고침 ① OMNIQ_ROUTE(미리 고정): OMNI-Q 머리(5·20일)가 발언/잠정 · 신선이면 그날 점수 ≥0.90 종목을 [AI-Q][TREND] OMNI_Q 로 직접 매수 —
+    잠정 ×0.5(상한·예산·실적관문 뒤) · 사이클 2 · 시장별 하루(18h) 3 · 잠정 동시 6. 보유: 최소 7/28 달력일 뒤 점수 <0.75 → OMNIQ-DROP.
+    관리 중엔 시간손절·위원회 청산(AI_EXIT/ROTATE) 끔 · 손절·트레일·EOD갭·치명악재 그대로. 점수 낡음/머리 회수/누락 → meta.omq 삭제 → 일반 규칙.
+    위원회는 막지도 키우지도 않음(p 만 기록) · WEAK_RS·NEGEXP_MS 만 예외, 나머지 위험 관문(추격·폭락·칼날·섹터·예산·실적관문…) 그대로.
+  - 고침 ② negExpDefersToPerfGate: AI 진입은 실적 관문이 그 키를 판정 중(시험 · 또는 n≥15 열림)이면 NEGEXP_SIG 대신 실적 관문에 맡긴다. 문턱 불변.
+  - 고침 ③ AI_PRIMARY detail(셋업·야간픽·정렬·다기간) · 사유에 위원회 p · detail 없는 신호도 undefined 안 찍음. 명부 OMNI = OMNI-Q 경로 가동이면 잠정/정식.
+  - 검증: tools/check-omniq-route.mjs(37 단언) · 로컬 실사이클(cron-cpu-bench 변형, KR 10/13 11:00): OMNI-Q 후보 2→체결 2, 다음 사이클 1 → 하루 3 상한에서 멈춤 ·
+    8일 보유+점수 0.62 → OMNIQ-DROP 1건(나머지 유지) · 점수 낡음 → '보유 관리 해제' 후 일반 규칙.
+  - ★다음★: 배포 후 [심사완료] 줄의 "OMNI-Q 후보 n 체결 m" 확인(한국장 · 미국장) · /api/trade-diag 의 AI-Q 매수 · 실적 관문 us/kr:AI-Q:TREND 누적.
+    발견(미수정): 거래별 켈리(V33.83)는 signal.mlMindP 가 위원회보다 앞에서 읽혀 신규 진입에서 사실상 안 돈다 — 사이즈 변경이라 따로 판단할 것.
+
 - V33.577 (10/12) ★매매 깔때기 진단 도구★ — 사용자: "포지션이 하나도 없다 · 최근 장 거래가 줄어든 이유". 거래 CSV: 9/17~18 규칙(RULE) 매수 다수 → 9/19~10/12 매수 2건(AI_PRIMARY).
   /api/trade-diag(학습키 · 집계만): 일별 후보(ml_candidates)·일별 매수(주체·신호)·daily_stats·실적 관문(perf_gate)·시장별 음수기대 신호·설정 차단·최근 심사 줄.
   tools/probe-trade-diag.mjs(ui-probe verify 단계). ★다음: 이 표로 막는 관문을 특정 → 결함이면 고치고, 사용자 결정 관문이면 근거와 함께 보고★

@@ -188,8 +188,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.577">
-<script src="/neural-observatory.js?v=33.577" defer></script>
+<meta name="lux-build" content="V33.578">
+<script src="/neural-observatory.js?v=33.578" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -15472,7 +15472,8 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
   window.LUX_omq = (function(){
     var e = function(v){ return String(v==null?'':v).replace(/[<>&"]/g,function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c];}); };
     var pc = function(x){ return (typeof x==='number' && isFinite(x)) ? (x*100).toFixed(1)+'%' : '—'; };
-    var ST = { speak:['발언','하위 절반 신규진입 차단'], prov:['잠정 발언','하위 절반 신규진입 차단 · 실시간 기록으로 회수 감시'],
+    /* [V33.578] 발언(정식·잠정) 중엔 좁히기(하위 절반 차단)에 더해 ★그날 상위 10% 를 직접 산다★(OMNI-Q 진입 경로) */
+    var ST = { speak:['발언','상위 10% 직접 매수 · 하위 절반 신규진입 차단'], prov:['잠정 발언','상위 10% 직접 매수(반 크기) · 하위 절반 차단 · 실시간 기록으로 회수 감시'],
                shadow:['섀도우','매매 영향 없음 · 관측만'] };
     function tag(st){ var t = ST[st] || ST.shadow; return '<span class="omq-st '+e(ST[st]?st:'shadow')+'" title="'+e(t[1])+'">'+e(t[0])+'</span>'; }
     function yn(ok){ return ok ? '<span class="y">✓</span>' : '<span class="n">✗</span>'; }
@@ -15494,7 +15495,15 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       if(!v) return '<span class="d">모델 없음 — 학습 대기</span>';
       return tag(v.state) + (v.state20 ? ' <span class="d">20일</span> '+tag(v.state20) : '')
         + ' <span class="d">· '+e(v.day||'—')+(v.trainedAt?' · 학습 '+ageTxt(v.trainedAt):'')+(v.n!=null?' · '+v.n+'종목':'')+'</span>'
-        + (v.fresh===false ? ' <span class="n">· 점수 낡음 → 막지 않음</span>' : '');
+        + (v.fresh===false ? ' <span class="n">· 점수 낡음 → 막지도 사지도 않음</span>' : '');
+    }
+    /* [V33.578] 진입 경로 한 줄 — 서버 omniqViewAll 의 route(매매 경로와 같은 술어)를 그대로 쓴다. */
+    function route(v){
+      var r = v && v.route; if(!r) return '';
+      if(!r.on) return '<span class="d">진입 경로 꺼짐(섀도우 또는 점수 낡음) · 관리 중 보유 '+(r.open||0)+'</span>';
+      return '<span class="y">진입 경로 켜짐</span> <span class="d">· 상위 '+Math.round((1-(r.entryPct||0.9))*100)+'% 매수 ×'+(r.mult!=null?r.mult:'?')
+        +' · 오늘 '+(r.today||0)+'/'+(r.maxPerDay||3)+'건 · 관리 중 보유 '+(r.open||0)+(r.mult<1?'/'+(r.maxOpenProv||6):'')
+        +' · 상위 '+Math.round((1-(r.holdPct||0.75))*100)+'% 밖이면 매도</span>';
     }
     /* 짧은 요약(사이드바 한눈): "美 잠정 발언 · 韓 섀도우" */
     function brief(oq){
@@ -15507,15 +15516,17 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       oq = oq || {};
       var mk = function(k, nm){
         var v = oq[k];
-        return '<div class="omq-mk"><b>'+nm+'</b><div class="omq-g">'+line(v)+(v?'<br>'+gates(v.gate):'')
+        return '<div class="omq-mk"><b>'+nm+'</b><div class="omq-g">'+line(v)+(v && v.route ? '<br>'+route(v) : '')+(v?'<br>'+gates(v.gate):'')
           +(v && v.gate20 ? '<br><span class="d">20일 머리 —</span> '+gates(v.gate20).replace(/<br>/g,' · ') : '')+'</div></div>';
       };
       return '<div class="omq-card"><h4>'+e(title||'OMNI-Q — 순위 모델(5일·20일)')+'</h4>'
         + mk('us','미국') + mk('kr','한국')
-        + '<div class="omq-g d">발언은 ★좁히기만★ 한다: 신규 추세·스냅 진입 중 OMNI-Q 하위 절반을 막는다(매수를 늘리지 않는다). '
-        + '잠정 발언은 ①②가 아주 강할 때(t ≥ 5 · 모든 시험 구간 +)만 열리고, 실시간 10일 평균 &lt; 50% 이거나 30일에 ③ 미통과면 자동 회수된다.</div></div>';
+        + '<div class="omq-g d">발언(정식·잠정) 중에 하는 일 둘: ① 그날 OMNI-Q 상위 10% 를 ★직접 산다★(관문 ②가 잰 바로 그 전략 — 잠정이면 반 크기 · 하루 3건 · 동시 6종목) '
+        + '— 상위 25% 밖으로 밀리면 판다(최소 5일 머리 7일 · 20일 머리 28일 보유). 손절·트레일·폭락·추격 같은 위험 관문은 그대로 적용된다. '
+        + '② 신규 추세·스냅 진입 중 하위 절반을 막는다. '
+        + '잠정 발언은 ①②가 아주 강할 때(t ≥ 5 · 모든 시험 구간 +)만 열리고, 실시간 10일 평균 &lt; 50% 이거나 30일에 ③ 미통과면 자동 회수된다(회수되면 새로 사지 않고, 들고 있던 것은 일반 규칙으로 넘어간다).</div></div>';
     }
-    return { tag: tag, gates: gates, line: line, brief: brief, card: card };
+    return { tag: tag, gates: gates, line: line, brief: brief, card: card, route: route };
   })();
 
   function NNV_paintGlance(d){
@@ -15623,7 +15634,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       var sts=[oq.us&&oq.us.state, oq.kr&&oq.kr.state];
       var st=sts.indexOf('speak')>=0?'on':(sts.indexOf('prov')>=0?'prov':'shadow');
       var body=L ? L.brief(oq) : '—';
-      var why=st==='shadow' ? '두 시장 모두 섀도우 — 매매 영향 없음' : '발언 중인 시장은 신규 추세·스냅 진입 중 하위 절반을 막는다(좁히기만)';
+      var why=st==='shadow' ? '두 시장 모두 섀도우 — 매매 영향 없음' : '발언 중인 시장은 그날 상위 10% 를 직접 산다(잠정 반 크기) · 상위 25% 밖이면 판다 · 하위 절반 신규진입은 막는다';
       return '<button type="button" class="brain-map-node" data-state="'+st+'" onclick="switchNnModel(\'omni\')">'
         +'<span class="brain-map-state">'+(st==='on'?'발언':st==='prov'?'잠정 발언':'섀도우')+'</span>'
         +'<strong>OMNI-Q 순위모델</strong><small>'+body+'<br>'+why+'</small></button>';
@@ -15639,7 +15650,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       +'<section class="brain-map-lane"><div class="brain-map-label">02 / EXPERT COMMITTEE <span>모델을 눌러 내부 관측 ↓</span></div><div class="brain-map-experts">'+experts+'</div></section>'
       /* [V33.562] OMNI-Q 는 투표선은 없지만 ★진입 게이트에서 좁힌다★(발언·잠정 발언일 때). 그 사실을 칸으로 그린다 —
          종전 칸은 "섀도우 · 매매엔 쓰지 않는다" 한 줄뿐이라, 잠정 발언 중인데도 안 쓰는 것으로 읽혔다. */
-      +'<section class="brain-map-lane"><div class="brain-map-label">02b / OMNI — 투표선 없음 · OMNI-Q 는 진입 게이트에서만 좁힌다 <span>·</span></div><div class="brain-map-routing">'
+      +'<section class="brain-map-lane"><div class="brain-map-label">02b / OMNI — 위원회 투표선 없음 · OMNI-Q 는 독립 진입 경로(상위 10% 매수) + 하위 절반 차단 <span>·</span></div><div class="brain-map-routing">'
       +modelNode('omni','OMNI 복합모델',omTxt+' · 섀도우 — 결합으로 가는 선이 없다(매매에 안 씀)')
       +omqNode(d.omniQ)
       +'</div></section>'
@@ -20826,13 +20837,13 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.577">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.577">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.577">
-<link rel="stylesheet" href="/model-evidence.css?v=33.577">
+<link rel="stylesheet" href="/brain-console.css?v=33.578">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.578">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.578">
+<link rel="stylesheet" href="/model-evidence.css?v=33.578">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.577">
-<script src="/model-evidence.js?v=33.577"></script>
-<script src="/workspace-ui.js?v=33.577"></script>
+<link rel="stylesheet" href="/liquid-metal.css?v=33.578">
+<script src="/model-evidence.js?v=33.578"></script>
+<script src="/workspace-ui.js?v=33.578"></script>
 </body>
 </html>

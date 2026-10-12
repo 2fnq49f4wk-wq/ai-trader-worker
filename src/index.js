@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.577";
+const _BUILD_VER = "V33.578";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13271,6 +13271,25 @@ async function omniqViewAll(DB) {
     const rs = await DB.prepare("SELECT k, CASE WHEN json_valid(v) THEN json_remove(v, '$.scores', '$.heads', '$.lab') ELSE v END AS v FROM state WHERE k IN ('omniq:us', 'omniq:kr')").all();
     for (const r of ((rs && rs.results) || [])) { try { out[String(r.k).slice(6)] = omniqView(JSON.parse(r.v)); } catch (e) {} }
   } catch (e) {}
+  /* [V33.578] 진입 경로 현황 — 화면이 "켜졌나 · 오늘 몇 건 · 지금 몇 종목 들고 있나" 를 같은 자로 말한다(D1 1회).
+     켜짐 판정은 매매 경로와 같은 술어(state · fresh)다 — 화면이 따로 판정하지 않는다. */
+  try {
+    const now = Date.now(), cnt = {};
+    const rs2 = await DB.prepare(
+      "SELECT 'open' AS t, market AS m, COUNT(*) AS n FROM positions WHERE json_extract(meta, '$.omq.h') IS NOT NULL GROUP BY market " +
+      "UNION ALL SELECT 'today', market, COUNT(*) FROM trades WHERE side = 'BUY' AND ts > ? AND reason LIKE '[AI-Q]%' GROUP BY market")
+      .bind(now - OMNIQ_ROUTE.dayWindowMs).all();
+    for (const r of ((rs2 && rs2.results) || [])) (cnt[r.m] || (cnt[r.m] = {}))[r.t] = _num(r.n, 0);
+    for (const mk of ["us", "kr"]) {
+      const v = out[mk]; if (!v) continue;
+      const live = function (s) { return s === "speak" || s === "prov"; };
+      v.route = { enabled: OMNIQ_ROUTE.enabled, on: !!(OMNIQ_ROUTE.enabled && v.fresh && (live(v.state) || live(v.state20))),
+                  mult: (v.state === "speak" || (!live(v.state) && v.state20 === "speak")) ? 1 : OMNIQ_ROUTE.provMult,
+                  open: _num(cnt[mk] && cnt[mk].open, 0), today: _num(cnt[mk] && cnt[mk].today, 0),
+                  entryPct: OMNIQ_ROUTE.entryPct, holdPct: OMNIQ_ROUTE.holdPct, maxPerDay: OMNIQ_ROUTE.maxPerDay,
+                  maxOpenProv: OMNIQ_ROUTE.maxOpenProv };
+    }
+  } catch (e) {}
   return out;
 }
 function omniqBlocks(st, symbol, nowMs) {
@@ -13282,6 +13301,76 @@ function omniqBlocks(st, symbol, nowMs) {
   // [V33.543] 20일 머리 — 자기 관문(gate20) 로 따로(점수는 heads.r20)
   if (((st.speak20 === true && omniqSpeakOf(st.gate20)) || omniqProvOf(st.gate20)) && low(st.heads && st.heads.r20)) return true;
   return false;                                                             // 점수 없는 종목은 막지 않는다
+}
+/* ══ [V33.578] ★OMNI-Q 상위권 진입 경로 — '좁히기만' 에서 '직접 산다' 로(섀도우 탈출)★ ══════════════════════════════
+   사용자(10/12): "ai 가 포지션을 아무것도 안 들고 있다 · 거래가 줄어든 이유 · omni 가 아직 섀도우 — 벗어나게 대폭 수정·업그레이드".
+   원장 진단(/api/trade-diag 10/12): 9/22(V33.407) 이후 AI 모드의 신규 진입 경로는 AI_PRIMARY 하나뿐이었다(규칙 신호는 V12.71 로 버려진다).
+     · 한국 AI_PRIMARY — NEGEXP_SIG 영구 차단(최근 96건 평균 −0.39%) + OMNIQ_LOW · 추격 · 폭락 차단 → 9/12 이후 0건
+     · 미국 AI_PRIMARY — 위원회 백분위 문턱을 넘는 건이 드물다 → 9/22 이후 2건(ARM · IQV)
+     · 후보는 하루 수백~수천인데(ml_candidates) 체결 0 — 길이 하나라 그 길이 막히면 전부 막힌다.
+   OMNI-Q 는 관문 ①(표본 밖 상위 10% 의 동료 중앙값 승률 95% 하한 > 50% · t ≥ 3)과 ②(상위 10% 를 H일마다 '띠 25%'로 갈아탈 때
+   비용 뺀 초과가 시험 구간 ≥75% 에서 +)를 통과해 '잠정 발언' 중인데, 지금 하는 일은 하위 절반 차단(좁히기)뿐이다.
+   → ②가 잰 ★바로 그 전략★(Qlib TopK-Dropout: 그날 상위 10% 를 사고, 상위 25% 밖으로 밀리면 판다)을 독립 진입 경로로 연다.
+   ★미리 고정(데이터 보기 전 · 바꾸려면 사용자 결정)★
+     진입   그 머리 점수 ≥ 0.90(그날 상위 10%) · 그 머리 상태 발언/잠정(omniqSpeakOf · omniqProvOf — 매 사이클 다시 판정) ·
+            점수 신선(OMNIQ.maxAgeMs) · 켜진 머리 중 하나라도 하위 절반이면 쉰다(omniqBlocks 와 같은 판정)
+     크기   잠정 ×0.5 · 정식 발언 ×1 — 수량 상한·예산·실적 관문을 다 적용한 ★뒤★ 곱한다(상한에 눌려 반 크기가 사라지지 않게)
+     상한   사이클당 2 · 시장별 하루(18시간) 3 · 잠정 중 동시 보유 6 — 추세 버킷 예산·보유 상한(美10/韓8)·섹터 3 은 그대로 위에 있다
+     보유   그 머리 점수 ≥ 0.75(상위 25% 띠) 동안 · 최소 H 거래일(5일 머리 7달력일 · 20일 머리 28달력일)
+     청산   최소 보유 뒤 점수 < 0.75 → OMNIQ-DROP. 손절·트레일·EOD 갭·치명 악재 청산은 그대로.
+            OMNI-Q 가 관리하는 동안 시간손절·위원회 청산(AI_EXIT · AI_ROTATE)은 끈다 — 그 규칙들이 OMNI-Q 가 잰 보유를 잘라낸다.
+     해제   점수 낡음 · 머리 회수(섀도우) · 점수표에서 빠짐 → 일반 추세 규칙으로 돌아간다(강제 매도 없음)
+     회수   잠정 규칙 그대로(실시간 10일 평균 < 50% · 30일 ③ 실패 → 섀도우 → 신규 진입 멈춤) + 원장 실적 관문(AI-Q:TREND 따로 셈)
+   위원회(백분위 문턱 · 메타 · 저확신 · 켈리)는 이 길을 막지도 키우지도 않는다 — 기록만 한다(적합 진단상 위원회의 표본 밖 실력이 더 약하다).
+   위험 관문(폭락 · 칼날 · 변동성 급등 · 분산매도 · 약세장 · 섹터 · 보유 상한 · 예산 · 추격 · 실적 관문 · 치명 악재 · 재무 · 히트 · 장중 확인)은
+   전부 그대로다. 상대강도 필터(WEAK_RS)만 뺀다 — 추세추종 신호용이고, OMNI-Q 는 20일 상대수익을 이미 피처로 본다. */
+const OMNIQ_ROUTE = { enabled: true, entryPct: 0.90, holdPct: 0.75, maxPerCycle: 2, maxPerDay: 3, dayWindowMs: 18 * 3600000,
+                      maxOpenProv: 6, provMult: 0.5, minHoldCal: { 5: 7, 20: 28 } };
+function _omqHeadOn(st, h) {
+  if (!st) return null;
+  const g = h === 20 ? st.gate20 : st.gate, sp = h === 20 ? st.speak20 : st.speak;
+  if (sp === true && omniqSpeakOf(g)) return "speak";
+  return omniqProvOf(g) ? "prov" : null;
+}
+function _omqScore(st, h, symbol) {
+  const m = h === 20 ? (st && st.heads && st.heads.r20) : (st && st.scores);
+  const v = m ? m[symbol] : undefined;
+  return (typeof v === "number" && isFinite(v)) ? v : null;
+}
+// 진입 판정(순수 함수) — 고르면 { h, s, mode, mult, day } · 아니면 null
+function omniqRoutePick(st, symbol, nowMs) {
+  if (!OMNIQ_ROUTE.enabled || !st || !symbol) return null;
+  if (!(nowMs - _num(st.trainedAt, 0) <= OMNIQ.maxAgeMs)) return null;
+  const on5 = _omqHeadOn(st, 5), on20 = _omqHeadOn(st, 20);
+  if (!on5 && !on20) return null;
+  const s5 = on5 ? _omqScore(st, 5, symbol) : null, s20 = on20 ? _omqScore(st, 20, symbol) : null;
+  if ((s5 != null && s5 < OMNIQ.lowPct) || (s20 != null && s20 < OMNIQ.lowPct)) return null;   // 머리끼리 엇갈리면 쉰다
+  let h = null, s = null, mode = null;
+  if (s5 != null && s5 >= OMNIQ_ROUTE.entryPct) { h = 5; s = s5; mode = on5; }
+  else if (s20 != null && s20 >= OMNIQ_ROUTE.entryPct) { h = 20; s = s20; mode = on20; }
+  if (h == null) return null;
+  return { h: h, s: s, mode: mode, mult: mode === "speak" ? 1 : OMNIQ_ROUTE.provMult, day: st.day || null };
+}
+// 보유 판정(순수 함수) — om = 포지션 meta.omq · { mode: "drop" | "hold" | "release" | "none", why }
+function omniqHoldOf(st, symbol, om, openedTs, nowMs) {
+  if (!om || typeof om !== "object") return { mode: "none" };
+  const h = _num(om.h, 5) === 20 ? 20 : 5;
+  if (!st || !(nowMs - _num(st.trainedAt, 0) <= OMNIQ.maxAgeMs)) return { mode: "release", why: "OMNI-Q 점수 낡음" };
+  if (!_omqHeadOn(st, h)) return { mode: "release", why: h + "일 머리 회수(섀도우)" };
+  const v = _omqScore(st, h, symbol);
+  if (v == null) return { mode: "release", why: "오늘 점수표에 없음" };
+  const held = Math.max(0, (nowMs - _num(openedTs, nowMs)) / 86400000);
+  if (held >= _num(OMNIQ_ROUTE.minHoldCal[h], h === 20 ? 28 : 7) && v < OMNIQ_ROUTE.holdPct)
+    return { mode: "drop", v: v, held: held, why: h + "일 머리 " + v.toFixed(2) + " < " + OMNIQ_ROUTE.holdPct + "(상위 25% 밖) · 보유 " + held.toFixed(1) + "일" };
+  return { mode: "hold", v: v, held: held };
+}
+// 오늘(최근 18시간) 이 시장에서 OMNI-Q 경로로 산 건수 — 못 세면 오늘 몫을 다 쓴 것으로 본다(넘치게 사지 않는다)
+async function omniqRouteToday(DB, market, nowMs) {
+  try {
+    const r = await DB.prepare("SELECT COUNT(*) AS n FROM trades WHERE market = ? AND side = 'BUY' AND ts > ? AND reason LIKE '[AI-Q]%'")
+      .bind(market, nowMs - OMNIQ_ROUTE.dayWindowMs).first();
+    return _num(r && r.n, 0);
+  } catch (e) { return OMNIQ_ROUTE.maxPerDay; }
 }
 function omniqPicksAppend(picks, day, top, nowMs) {
   const arr = Array.isArray(picks) ? picks.slice() : [];
@@ -19303,8 +19392,10 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
 
   // RS 필터 — isCounterTrend 신호·ETF는 면제
   // [ETF 면제] 지수 ETF는 지수 자체라 "지수 대비 아웃퍼폼"이 구조적으로 불가능
+  // [V33.578] OMNI-Q 진입도 면제 — 추세추종 신호용 필터다. OMNI-Q 는 20일 상대수익을 피처로 이미 보고 순위를 매긴다
+  //   (관문 ①② 는 이 필터 없이 상위 10% 전체로 쟀다 — 걸러 내면 잰 것과 다른 것을 사게 된다).
   const _isEtfRS = ctx && ctx.symbol && ETF_SYMBOLS.has(ctx.symbol);
-  if (cfg.rsFilterEnabled && !signal.isCounterTrend && !isPanicScalp && !_isEtfRS && regime.idxReturn20 != null) {
+  if (cfg.rsFilterEnabled && !signal.isCounterTrend && !signal.isOmniQ && !isPanicScalp && !_isEtfRS && regime.idxReturn20 != null) {
     const stockRet = getNDayReturn(closes, cfg.rsLookbackDays);
     if (stockRet != null) {
       const relPerf = stockRet - regime.idxReturn20;
@@ -19418,6 +19509,11 @@ async function extBuyGuard(DB, market, qty, price, signal, cfg, opts, now) {
    → 옛 형식은 규칙엔진(RULE) 으로 센다 · 창을 180일로 — 최근 maxN(40)건만 판단에 쓰므로 '오래된 성적' 이 아니라
      '마지막 40건' 이다. 막힌 전략은 종전대로 7일 뒤 반 크기 시험(8건)으로만 다시 연다. 문턱(blockPf·minN)은 그대로. */
 const PERF_GATE = { windowDays: 180, maxN: 40, minN: 15, blockPf: 0.8, coolDays: 7, probationMult: 0.5, probationMinN: 8 };
+/* [V33.578] 진입 주체 꼬리표 — 원장 사유 · 실적 관문이 ★같은 함수★ 로 정한다(따로 적으면 갈라진다).
+   실적 관문 구역 안에 둔다 — 관문 검사(tools/check-perf-gate)가 이 구역만 떼어 돌리므로, 밖에 두면 참조 오류가 catch 에 삼켜져 '막지 않음' 으로 샌다. */
+function _entryTag(signal) {
+  return (signal && signal.isAiScalp) ? "AI-SCALP" : (signal && signal.isOmniQ) ? "AI-Q" : (signal && signal.isAiPrimary) ? "AI" : "RULE";
+}
 function _pgTag(reason) {
   const s = String(reason || "");
   const m = s.match(/^\[([A-Z-]+)\]\[([A-Z-]+)\]/);
@@ -19509,7 +19605,7 @@ async function perfGateLoad(DB, force) {
 // 이 진입을 해도 되나 — { ok, mult, why }
 async function perfGateCheck(DB, market, signal, strategy) {
   try {
-    const tag = ((signal && signal.isAiScalp) ? "AI-SCALP" : (signal && signal.isAiPrimary) ? "AI" : "RULE") + ":" + String(strategy || "").toUpperCase();
+    const tag = _entryTag(signal) + ":" + String(strategy || "").toUpperCase();   // [V33.578] OMNI-Q 는 AI-Q 로 따로 센다
     const pg = await perfGateLoad(DB, false);
     const e = pg.keys[market + ":" + tag];
     if (!e || e.mode === "open") {
@@ -19573,11 +19669,15 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
      252670(인버스2X) AI 진입 하나가 −19.6% · −287만. 위원회는 개별주 피처로 학습했고, 손절(5%)·수량 산정은 1배 변동을 가정한다
      (2배 상품의 밤사이 갭이 손절을 뛰어넘는다). 스냅은 이미 제외 · 규칙 추세는 ADX 로 축소 중 · 꼬리위험 헤지(hedge)는 그대로. */
   if (strategy !== "hedge" && ((typeof LEVERAGED_ETF !== "undefined" && LEVERAGED_ETF.has(symbol)) || (typeof INVERSE_ETF !== "undefined" && INVERSE_ETF.has(symbol)))
-      && (strategy === "scalp" || (signal && (signal.isAiPrimary || signal.isAiScalp))) && !(cfg && cfg.levEtfAiEntries === true)) {
+      && (strategy === "scalp" || (signal && (signal.isAiPrimary || signal.isAiScalp || signal.isOmniQ))) && !(cfg && cfg.levEtfAiEntries === true)) {
     await log(DB, "INFO", symbol, "BUY 레버리지·인버스 ETF — AI·단타 진입 제외(" + strategy + ")");
     return cash;
   }
   if (_pg.mult < 1) { qty = Math.floor(qty * _pg.mult); if (qty <= 0) return cash; }
+  /* [V33.578] OMNI-Q 잠정 크기 — 수량 상한·예산·실적 관문을 다 지난 ★뒤★ 곱한다(앞에서 곱하면 종목비중 상한에 눌려 반 크기가 사라진다). */
+  if (signal && signal.isOmniQ && typeof signal.omqMult === "number" && signal.omqMult > 0 && signal.omqMult < 1) {
+    qty = Math.floor(qty * signal.omqMult); if (qty <= 0) return cash;
+  }
 
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
   // [V33.92] 슬리피지(FillModel)를 수수료와 같은 방식의 비용률로 얹는다.
@@ -19744,6 +19844,8 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
           signal: signal.name, signalMembers: signal.members || [signal.name],
           // Codex V33.329: retain actual entry setup for outcome audits without changing confluence votes.
           aiSetup: signal.setup || null,
+          // [V33.578] OMNI-Q 가 관리하는 보유 — 머리(5·20일) · 진입 점수 · 상태 · 채점일. 있으면 보유/청산을 OMNI-Q 띠가 정한다(omniqHoldOf).
+          omq: (signal && signal.isOmniQ && signal.omq) ? signal.omq : null,
           tp1Done: false, originalQty: qty,
           // [LUX-AI] 청산 시 학습용 — 진입 피처/사건키/모델확률/밴딧 컨텍스트
           entryFeatures: (signal && Array.isArray(signal.mlFeat)) ? signal.mlFeat : null,
@@ -19786,8 +19888,11 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
       // [V12.88] 원장에 매수 주체 태그 — AI 주도(AI_PRIMARY) vs 규칙엔진 신호 구분
       // [V33.39] AI 단타를 별도 표기(AI-SCALP)로 분리 — 지평이 다른 매매를 원장·화면에서
       //   같은 "AI"로 뭉뚱그리면 성과 분석이 섞여 어느 쪽이 버는지 알 수 없다.
-      reason: "[" + ((signal && signal.isAiScalp) ? "AI-SCALP" : (signal && signal.isAiPrimary) ? "AI" : "RULE") +
-              "][" + strategy.toUpperCase() + "] " + signal.name + " " + signal.detail
+      // [V33.578] 꼬리표는 _entryTag 한 곳에서(실적 관문과 같은 함수) · detail 이 없는 신호도 "undefined" 를 찍지 않는다 ·
+      //   AI 진입은 위원회 p 를 같이 남긴다(OMNI-Q 는 막지도 키우지도 않았지만 나중에 둘을 비교할 수 있게).
+      reason: "[" + _entryTag(signal) + "][" + strategy.toUpperCase() + "] " + signal.name +
+              (signal.detail != null && signal.detail !== "" ? " " + signal.detail : "") +
+              ((signal.isAiPrimary || signal.isOmniQ) && typeof signal.mlMindP === "number" ? " · 위원회 p " + (signal.mlMindP * 100).toFixed(0) + "%" : "")
     });
     const stmtPos = stmtSavePosition(DB, market, symbol, strategy, posToSave);
     await DB.batch([stmtTrade, stmtPos]);
@@ -19800,7 +19905,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   //   (단순 차감이 아니라 DB 재계산값 기준으로 덮어써 in-memory drift를 매 거래마다 교정)
   if (cash && typeof cash === "object") cash[market] = availCash - total;
   const stopPctRel = ((stopPrice - price) / price * 100).toFixed(1);
-  await log(DB, "BUY", symbol, "BUY [" + strategy + "] x" + qty + " @" + price.toFixed(2) + " " + signal.name + " " + signal.detail + " stop=" + stopPrice.toFixed(2) + "(" + stopPctRel + "%)");
+  await log(DB, "BUY", symbol, "BUY [" + strategy + "] x" + qty + " @" + price.toFixed(2) + " " + signal.name + (signal.detail != null && signal.detail !== "" ? " " + signal.detail : "") + " stop=" + stopPrice.toFixed(2) + "(" + stopPctRel + "%)");
   return cash;
 }
 
@@ -20403,7 +20508,9 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   //   [레버리지/인버스] decay(시간가치 손실) 회피 → 보유기간 상한을 절반으로 (장기 보유 금지).
   let timeStopD = isLevETF ? Math.max(3, Math.ceil((r.timeStopDays || 10) * 0.5)) : (r.timeStopDays || 10);
   if (_tsMult !== 1) timeStopD = Math.max(2, Math.round(timeStopD * _tsMult));   // [V33.44] 보합=조기회수 / 폭등=연장
-  if (heldDays >= timeStopD) {
+  // [V33.578] OMNI-Q 가 관리하는 보유(meta.omq)는 시간손절을 안 쓴다 — 보유 기간은 상위 25% 띠가 정한다(OMNIQ_ROUTE).
+  //   관리가 풀리면(점수 낡음·머리 회수) 메인 루프가 meta.omq 를 지우고, 그때부터 이 규칙이 다시 적용된다.
+  if (heldDays >= timeStopD && !meta.omq) {
     const minR = rPct * (r.timeStopMinR != null ? r.timeStopMinR : 0.5);
     if (pnlRate < minR) {
       return { sell: true, sellQty: pos.qty, reason: "TIME-STOP " + heldDays.toFixed(0) + "d " + pnlRate.toFixed(2) + "%" + (isLevETF ? " (LEV)" : "") + (_phase === "RANGE" ? " (보합조기)" : "") };
@@ -21346,6 +21453,18 @@ function sigStatsByMarket(rows, perMkt) {
     e.expectancy = e.winRate * e.avgWin + (1 - e.winRate) * e.avgLoss;
   }
   return out;
+}
+/* ══ [V33.578] ★AI 진입의 실적은 실적 관문(V33.459)이 '시험(반 크기)' 까지 갖춰 판정한다 — 신호 통계 관문과 겹치면 교착이다★ ══
+   운영(10/12 trade-diag): kr:AI:TREND 는 실적 관문이 7일 차단 뒤 시험(반 크기 · 8건)으로 열었는데, NEGEXP_SIG[AI_PRIMARY] 가
+   '그 시장 최근 매도 80건' 의 옛 성적(96건 평균 −0.39%)으로 계속 막았다. 새 매매가 없으니 그 80건은 영원히 같다 — 회복 경로가 없다
+   (V33.191 이 경계한 '자기실현적 정지'). 게다가 그 성적은 추격 차단(V33.530) · OMNI-Q 하위 절반 차단(V33.535) ★이전★ 파이프라인의 것이다.
+   → AI 진입(AI_PRIMARY · AI_SCALP · OMNI_Q)은 실적 관문이 그 키(시장:주체:전략)를 실제로 판정 중이면 — 시험 중이거나 표본 15건 이상으로 열림 —
+     실적 관문에 맡긴다(시험이면 반 크기 · 8건 뒤 여전히 지면 다시 7일 차단). 실적 관문에 기록이 없는 AI 키(예: 한국 AI 스냅)는 종전대로 막는다.
+     규칙 신호는 그대로다. 문턱(30건 · 기대값 < 0 · 평균 < 0)도 실적 관문 문턱도 하나도 안 바꾼다. */
+function negExpDefersToPerfGate(pg, market, signal, strategy) {
+  if (!(signal && (signal.isAiPrimary || signal.isAiScalp || signal.isOmniQ))) return false;
+  const e = pg && pg.keys && pg.keys[market + ":" + _entryTag(signal) + ":" + String(strategy || "").toUpperCase()];
+  return !!(e && (e.mode === "probation" || (e.mode === "open" && _num(e.n, 0) >= PERF_GATE.minN)));
 }
 /* 진입 게이트 판정(순수 함수) — 그 시장 · 그 신호 통계만. */
 function negExpBlocked(statsMkt, market, sigName) {
@@ -23208,6 +23327,9 @@ async function runTradingCycle(env) {
       const positions = await getPositions(DB, market);  // key: "SYM::strategy"
       let __omniq = null;   // [V33.535] OMNI-Q 점수(발언 중일 때만 하위 절반 신규진입 차단)
       try { __omniq = await getState(DB, "omniq:" + market, null); } catch (e) { __omniq = null; }
+      /* [V33.578] OMNI-Q 진입 경로 — 이 시장 이번 사이클 체결 수 · 오늘 체결 수(처음 필요할 때 원장에서 1회) · 지금 관리 중인 보유 수 */
+      let __omqBought = 0, __omqToday = null, __omqOpen = 0, __omqCand = 0;
+      for (const _pk in positions) { const _pm = positions[_pk] && positions[_pk].meta; if (_pm && _pm.omq) __omqOpen++; }
       const feeRate = market === "us" ? mcfg.feeUS : mcfg.feeKR;
       const regime = regimes[market];
       // [V33.119] 국면 스냅샷을 남긴다 — AI 두뇌 창이 "폭등 레버리지가 왜 안 열리나" 를
@@ -24617,6 +24739,29 @@ async function runTradingCycle(env) {
               }
             }
 
+            /* [V33.578] ★OMNI-Q 가 관리하는 보유★(OMNIQ_ROUTE) — 최소 보유 뒤 그 머리 점수가 상위 25% 띠 밖이면 판다(OMNIQ-DROP).
+               띠 안이면 아래 위원회 청산(AI_EXIT · AI_ROTATE)과 시간손절을 건너뛴다(관문 ②가 잰 보유를 그 규칙들이 잘라내지 않게).
+               손절·트레일·EOD 갭·치명 악재는 그대로 돈다. 점수가 낡았거나 머리가 회수되면 관리를 풀어 일반 추세 규칙으로 넘긴다. */
+            let _omqHeld = false;
+            if (held.meta && held.meta.omq) {
+              try {
+                const _hv = omniqHoldOf(__omniq, symbol, held.meta.omq, held.opened_ts, Date.now());
+                if (_hv.mode === "drop") {
+                  await executeSell(DB, market, symbol, held, held.qty, price, "OMNIQ-DROP " + _hv.why, mcfg, cash);
+                  sold++;
+                  const _sk = Object.keys(positions).some(k => positions[k].symbol === symbol && k !== posKey);
+                  if (!_sk) { heldSymbols.delete(symbol); const _sc = SECTOR_MAP[symbol]; if (_sc && sectorCounts[_sc]) sectorCounts[_sc]--; }
+                  continue;
+                }
+                if (_hv.mode === "release") {
+                  held.meta.omqEnd = { ts: Date.now(), why: _hv.why, h: held.meta.omq.h };
+                  delete held.meta.omq;
+                  try { await savePosition(DB, market, symbol, stratName, held); } catch (e0) {}
+                  try { await log(DB, "INFO", symbol, "[OMNI-Q] 보유 관리 해제 — " + _hv.why + " → 일반 추세 규칙"); } catch (e0) {}
+                } else if (_hv.mode === "hold") _omqHeld = true;
+              } catch (e) {}
+            }
+
             // [V22] 모델기반 청산(Learned Exit) — 보유 포지션을 기술예측기로 재평가.
             //   강한 약세전환(상승확률↓·신뢰도↑)이면 청산/이익실현. 저점 투매 방지 가드(minPnlForExit).
             // [V12.105] trend 전략 제외 — trendRules는 TP1(+1R)/TP2(+2.5R)/ATR트레일(3.0×)로 러너를
@@ -24653,7 +24798,7 @@ async function runTradingCycle(env) {
             //   minPnlForExit로 하드손절에 위임(저점 투매 방지). __aiReady(AI 운용 준비완료)일 때만 개입.
             {
               const _xc = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.exit : null;
-              if (_xc && _xc.committeeExit && __aiReady && daily && Array.isArray(daily.closes) && daily.closes.length >= 60) {
+              if (_xc && _xc.committeeExit && __aiReady && !_omqHeld && daily && Array.isArray(daily.closes) && daily.closes.length >= 60) {   // [V33.578] OMNI-Q 관리 보유 제외
                 try {
                   const _pnlY = held.avg > 0 ? ((price - held.avg) / held.avg) * 100 : 0;
                   if (_pnlY > (_xc.minPnlForExit != null ? _xc.minPnlForExit : -3.0)) {   // 큰 손실은 하드손절에 위임
@@ -25125,8 +25270,29 @@ async function runTradingCycle(env) {
                 //   분리돼 있으므로(getStrategyRules) 라우팅만으로 실제 운용이 달라진다.
                 //   · snap : 상승추세 안의 눌림(과매도) — 되돌림 노림, 짧은 보유
                 //   · trend: 추세 정렬 + 다중 타임프레임 매수 — 추종, 긴 보유
+                const _apSetup = _aiStrat === "snap" ? _snapEntry.name : (_trendCandidate && _trendCandidate.signal ? _trendCandidate.signal.name : "TREND_ALIGNMENT");
                 stratResults.push({ strategy: _aiStrat, weight: (_ap.baseWeight || 0.6),
-                  signal: { name: "AI_PRIMARY", members: ["AI_PRIMARY"], setup: _aiStrat === "snap" ? _snapEntry.name : (_trendCandidate && _trendCandidate.signal ? _trendCandidate.signal.name : "TREND_ALIGNMENT"), picked: _picked, techBuy: _techBuy, tfBull: _tfBull, isAiPrimary: true, aiStrat: _aiStrat, weight: (_ap.baseWeight || 0.6) } });
+                  signal: { name: "AI_PRIMARY", members: ["AI_PRIMARY"], setup: _apSetup, picked: _picked, techBuy: _techBuy, tfBull: _tfBull, isAiPrimary: true, aiStrat: _aiStrat, weight: (_ap.baseWeight || 0.6),
+                    /* [V33.578] 원장 사유가 "AI_PRIMARY undefined" 로 찍히던 것 — 이 신호엔 detail 이 없었다. 왜 후보가 됐는지를 적는다. */
+                    detail: "셋업 " + _apSetup + (_picked ? " · 야간 스캔픽" : "") + (_uptrend ? " · 상승 정렬" : "") + (_techBuy ? " · 다기간 매수 " + _tfBull + "/4" : "") } });
+              }
+            }
+            /* [V33.578] ★OMNI-Q 상위권 진입★(OMNIQ_ROUTE 주석) — 위원회와 독립된 경로 · 원장 꼬리표 [AI-Q](실적 관문 · 신호 통계가 따로 센다).
+               맨 앞에 넣는다 — 같은 종목에 AI_PRIMARY 가 함께 있어도 종목당 한 번만 산다(boughtThisSymbol). 이 경로가 위험 관문에
+               막히면 뒤의 후보가 종전대로 자기 차례를 받는다. 상한은 ★체결★ 기준이다(후보만 내고 막힌 건 상한을 쓰지 않는다). */
+            if (OMNIQ_ROUTE.enabled && __omniq && !heldSymbols.has(symbol) && !crashGate.blockNew && canTrade && closes.length >= 25
+                && __omqBought < OMNIQ_ROUTE.maxPerCycle && !(typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy && AI_PARAMS.autonomy.enabled === false)) {
+              const _oq = omniqRoutePick(__omniq, symbol, Date.now());
+              if (_oq && (_oq.mode === "speak" || __omqOpen < OMNIQ_ROUTE.maxOpenProv)) {
+                if (__omqToday == null) __omqToday = await omniqRouteToday(DB, market, Date.now());
+                if (__omqToday + __omqBought < OMNIQ_ROUTE.maxPerDay) {
+                  __omqCand++;
+                  stratResults.unshift({ strategy: "trend", weight: 1,
+                    signal: { name: "OMNI_Q", members: ["OMNI_Q"], isOmniQ: true, weight: 1, omqMult: _oq.mult,
+                      omq: { h: _oq.h, s: +_oq.s.toFixed(4), mode: _oq.mode, day: _oq.day, at: Date.now() },
+                      detail: _oq.h + "일 머리 상위 " + Math.max(1, Math.round((1 - _oq.s) * 100)) + "% (점수 " + _oq.s.toFixed(3) + " · " +
+                              (_oq.mode === "speak" ? "정식 발언" : "잠정 ×" + _oq.mult) + " · " + (_oq.day || "?") + " 채점)" } });
+                }
               }
             }
           } catch (e) {}
@@ -25546,8 +25712,14 @@ async function runTradingCycle(env) {
             try {
               /* [V33.480] ★그 시장의★ 신호 통계만 — 섞어 세면 한국 손실이 미국 진입을 껐다(2026-10-05). */
               if (negExpBlocked(signalStatsMkt, market, signal.name)) {
-                incBlock("NEGEXP_SIG[" + signal.name + "]");
-                continue;
+                // [V33.578] AI 진입은 실적 관문이 그 키를 판정 중이면(시험 · 표본 충분) 실적 관문에 맡긴다 — negExpDefersToPerfGate 주석
+                let _defer = false;
+                try { _defer = negExpDefersToPerfGate(await perfGateLoad(DB, false), market, signal, strategy); } catch (e0) {}
+                if (!_defer) {
+                  incBlock("NEGEXP_SIG[" + signal.name + "]");
+                  continue;
+                }
+                signal.negExpNote = "NEGEXP→실적관문";
               }
             } catch (e) {}
 
@@ -25561,7 +25733,9 @@ async function runTradingCycle(env) {
             //   과거 규칙신호의 성적으로 새 모델의 진입을 막으면 검증 자체가 불가능해진다.
             try {
               const _ms = __mktStratStats && __mktStratStats[market + "/" + strategy];
-              const _isAiSc = !!(signal && signal.isAiScalp);
+              // [V33.578] OMNI-Q 진입도 같은 이유로 예외 — 남의 성적(규칙·위원회 추세)으로 새 모델을 막으면 검증이 불가능하다.
+              //   OMNI-Q 자기 성적은 실적 관문(AI-Q:TREND)과 잠정 회수 규칙이 따로 본다.
+              const _isAiSc = !!(signal && (signal.isAiScalp || signal.isOmniQ));
               // [V33.116] 방향 조건 + ★유의성★ 을 모두 만족할 때만 막는다.
               //   pNeg 가 없는 구 스냅샷(2시간 캐시)에는 종전 동작을 유지한다 — 갱신되면 자동 전환.
               const _msSig = (_ms && typeof _ms.pNeg === "number")
@@ -25785,7 +25959,8 @@ async function runTradingCycle(env) {
             try {
               const _swc = mcfg.signalTypeWeights || {};
               if (_swc.perTradeKelly !== false) {
-                const _pK = (signal && typeof signal.mlMindP === "number") ? signal.mlMindP : null;
+                // [V33.578] OMNI-Q 경로는 위원회 p 로 크기를 정하지 않는다(OMNIQ_ROUTE — 크기는 잠정 ×0.5 가 정한다)
+                const _pK = (signal && typeof signal.mlMindP === "number" && !signal.isOmniQ) ? signal.mlMindP : null;
                 if (_pK != null && stopDist > 0) {
                   // b = 목표거리/손절거리. 래칫 구조상 실현 목표는 트레일이 결정하므로
                   //   전략별 tp1AtR(도달 R배수)을 목표 대용치로 쓴다(보수적으로 1.0 하한).
@@ -26139,7 +26314,8 @@ async function runTradingCycle(env) {
                 //   → 게이트 이전, 최종 p(그래프·뉴스 블렌드까지 끝난 값)가 정해진 직후로 옮긴다.
                 //     기권·관망 건은 제외한다(그건 확률 판단 자체를 안 한 것이다).
                 try {
-                  if (_md && typeof _md.p === "number" && isFinite(_md.p) && !_md.observe && !_md.abstain
+                  // [V33.578] OMNI-Q 후보는 넣지 않는다 — 다른 모델이 고른 집합이라 AI_PRIMARY 백분위 문턱의 분포를 비튼다.
+                  if (_md && typeof _md.p === "number" && isFinite(_md.p) && !_md.observe && !_md.abstain && !signal.isOmniQ
                       && !__candSyms.has(symbol + ":pdist")) {
                     __candSyms.add(symbol + ":pdist");
                     __pDistNew.push(+_md.p.toFixed(4));
@@ -26217,7 +26393,16 @@ async function runTradingCycle(env) {
                     continue;
                   }
                 }
-                if (_md && (_md.observe || _md.abstain)) {
+                if (signal.isOmniQ) {
+                  /* [V33.578] ★OMNI-Q 경로는 위원회가 막지도 키우지도 않는다★(OMNIQ_ROUTE 주석) — 기록만 남긴다.
+                     (ml_gate · 메타컷 · 열화 halt · 저확신 · 위원회 크기 배수 전부 미적용 · 크기는 잠정 ×0.5 가 정한다) */
+                  if (_md && typeof _md.p === "number" && !_md.observe && !_md.abstain) {
+                    signal.mlMindP = _md.p;
+                    signal.mlPPreCal2 = (typeof _md.pPreCal2 === "number") ? _md.pPreCal2 : null;
+                    signal.mlTechRaw = (typeof _md.techRaw === "number") ? _md.techRaw : null;
+                    signal.mlNewsRaw = (typeof _md.newsRaw === "number") ? _md.newsRaw : null;
+                  }
+                } else if (_md && (_md.observe || _md.abstain)) {
                   // 자기불신 / 기권 → 규칙엔진 수량 유지(ML 개입 안 함)
                 } else if (_md && _md.allow === false) {
                   await log(DB, "INFO", symbol, "[LUX-AI] 진입차단 P=" + (_md.p != null ? (_md.p * 100).toFixed(0) + "%" : "?") + " src=" + (_md.source || "?"));
@@ -26397,6 +26582,7 @@ async function runTradingCycle(env) {
                 if (market === "cm") cycleSpent.cm += actuallySpent;
                 else cycleSpent[market][_bk] += actuallySpent;
                 bought++; __funBuy++;   // [V33.407] 깔때기 — 실제 체결
+                if (signal && signal.isOmniQ) { __omqBought++; __omqOpen++; }   // [V33.578] OMNI-Q 경로 상한은 체결 기준
                 boughtThisSymbol = true;
                 heldSymbols.add(symbol);
                 strategiesHeldNow.add(strategy);
@@ -26580,7 +26766,9 @@ async function runTradingCycle(env) {
           await log(DB, "SIGNAL", null, "[심사완료] " + market.toUpperCase() +
             " 평가 " + (__candLog.length + _noSig) + "종목 → 후보 " + __candLog.length +
             " → 진입 " + _enterN + " · 보류 " + _holdN + (_blTot ? " · 차단 " + _blTot : "") +
-            (_top ? " — 주요사유 " + _top : ""));
+            (_top ? " — 주요사유 " + _top : "") +
+            /* [V33.578] OMNI-Q 경로가 실제로 후보를 냈는지 · 샀는지 — 길이 열렸는데 조용히 0 인지 구분한다 */
+            (__omqCand ? " · OMNI-Q 후보 " + __omqCand + " 체결 " + __omqBought + (__omqToday != null ? " (오늘 " + (__omqToday + __omqBought) + "/" + OMNIQ_ROUTE.maxPerDay + ")" : "") : ""));
         } catch (e) {}
       }
       if (stateSamples.length > 0) {
@@ -39688,15 +39876,31 @@ async function buildRoster(DB) {
         (좌석에 넣으면 'n/m 가동' 이 늘어나 "투표에 끼어 있다" 는 거짓말이 된다.) */
   const _om = await _omniMeta(DB);
   const _omOk = _om ? omniHeadsOk(_om.heads) : [];
-  add("omni", "OMNI (복합모델 · 분봉 · 동료 대비 상대 · 장타+단타 한 모델)", "shadow", {
-    trained: !!(_om && _num(_om.nTrees, 0) > 0), featVerOk: !_om ? true : (_om.v === OMNI_VER),
-    featVer: _om ? _om.v : null, wantVer: OMNI_VER,
-    tier: "shadow", mult: 0,
-    why: !_om ? "아직 업로드된 모델이 없다"
-       : (_om.v !== OMNI_VER ? ("판 불일치 v" + _om.v + " → v" + OMNI_VER)
-       : (_omOk.length ? ("섀도우 — 문턱을 넘은 머리 " + _omOk.join("·") + " (아직 매매에 안 쓴다)")
-                       : "섀도우 — 모든 지평이 발언 문턱 미달(쓰지 않는다)"))
-  });
+  /* [V33.578] ★OMNI 의 운용 머리는 OMNI-Q(일봉 순위 · 실력 증명 관문)다★ — 사용자(10/12) "omni 가 아직 섀도우".
+     OMNI-Q 가 발언/잠정이고 점수가 신선하면 독립 진입 경로(상위 10% 직접 매수 · 상위 25% 밖 매도)로 ★실매매★ 한다.
+     위원회 좌석은 아니다(seat 없음 — 'n/m 가동' 에 안 섞인다). 분봉 복합 머리는 여전히 섀도우라 그 사실을 why 에 함께 적는다. */
+  let _oqv = null;
+  try { _oqv = await omniqViewAll(DB); } catch (e) {}
+  const _oqOn = ["us", "kr"].filter(function (mk) { return _oqv && _oqv[mk] && _oqv[mk].route && _oqv[mk].route.on; });
+  const _oqFull = _oqOn.some(function (mk) { return _oqv[mk].route.mult === 1; });
+  const _omMinute = !_om ? "분봉 머리: 업로드 없음"
+       : (_om.v !== OMNI_VER ? ("분봉 머리: 판 불일치 v" + _om.v + " → v" + OMNI_VER)
+       : (_omOk.length ? ("분봉 머리: 섀도우(문턱 넘은 지평 " + _omOk.join("·") + " · 매매 미사용)") : "분봉 머리: 섀도우(모든 지평 문턱 미달)"));
+  if (_oqOn.length) {
+    const _r = function (mk) { const v = _oqv[mk]; return (mk === "us" ? "美" : "韓") + " " + (v.state === "speak" ? "발언" : "잠정") + " · 오늘 " + v.route.today + "건 · 보유 " + v.route.open; };
+    add("omni", "OMNI (복합모델 — OMNI-Q 순위 머리 가동 · 분봉 머리 섀도우)", "route", {
+      trained: true, featVerOk: true, tier: _oqFull ? "full" : "provisional", mult: _oqFull ? 1 : OMNIQ_ROUTE.provMult,
+      why: "OMNI-Q 진입 경로 가동 — 그날 상위 10% 직접 매수" + (_oqFull ? "" : "(잠정 ×" + OMNIQ_ROUTE.provMult + ")") +
+           " · 상위 25% 밖이면 매도 · 하위 절반 신규진입 차단 — " + _oqOn.map(_r).join(" / ") + " · " + _omMinute
+    });
+  } else {
+    add("omni", "OMNI (복합모델 · 분봉 · 동료 대비 상대 · 장타+단타 한 모델)", "shadow", {
+      trained: !!(_om && _num(_om.nTrees, 0) > 0), featVerOk: !_om ? true : (_om.v === OMNI_VER),
+      featVer: _om ? _om.v : null, wantVer: OMNI_VER,
+      tier: "shadow", mult: 0,
+      why: "섀도우 — OMNI-Q 순위 머리가 발언/잠정이 아니거나 점수가 낡았다(진입 경로 꺼짐) · " + _omMinute
+    });
+  }
   _rosterMemo = { at: _rNow, v: out };
   return out;
 }
@@ -55304,7 +55508,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { setStatesBatch, _ioTag, _setYAuthDB, yahooFetch, _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { OMNIQ_ROUTE, omniqRoutePick, omniqHoldOf, omniqRouteToday, _entryTag, negExpDefersToPerfGate, evaluateBuyBlocks, setStatesBatch, _ioTag, _setYAuthDB, yahooFetch, _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { getStates, _STATE_LITE, getADX, _getADXCore, getHolidaySet, _indexFreshOpen, isMarketTradingDay, KR_LUNAR_HOLIDAYS, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
