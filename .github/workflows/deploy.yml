@@ -796,6 +796,9 @@ jobs:
       # [V33.579] 두뇌관측 노드·모델 역할 설명(입력·은닉·출력·나무·시점 · 모델 카드 전부)
       - name: 노드·모델 역할 검사
         run: node tools/check-node-roles.mjs
+      # [V33.580] 워치독 나이 조회 — 가벼운 /api/ai/train-age · selfcheck 타임아웃으로 신선한데 GPU 학습 걸던 것
+      - name: 워치독 나이 조회 검사
+        run: node tools/check-train-age.mjs
       # [V33.531] 포트폴리오 실험실 — Qlib TopK-Dropout + Vibe 부품(퍼지 전진·DSR·최적화기) · 귀무 0 · 양성 대조 통과
       - name: 포트폴리오 실험실 검사
         run: node tools/check-portfolio-lab.mjs

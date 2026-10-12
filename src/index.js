@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.579";
+const _BUILD_VER = "V33.580";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -30856,6 +30856,12 @@ async function handleRequest(request, env, ctx, _inner) {
     //   [V11.2] featVer가 바뀌면 구표본이 전부 필터링되어 total=0이 되는데, 원본 일봉(daily:/hist: 캐시)은
     //   그대로 있어 재계산만 하면 됨. 다음 UTC자정까지 기다리지 않고 캐시에서 즉시 재수확하기 위한 트리거.
     // GET /api/ai/selfcheck — AI 레이어 자가 오류진단(읽기전용). 모델·표본·위원회·가드 이상을 목록화.
+    /* [V33.580] 외부 학습 나이(워치독 전용 · 가벼움) — externalTrainAges 주석 */
+    if (path === "/api/ai/train-age") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      try { return Response.json({ ok: true, at: Date.now(), externalTrain: await externalTrainAges(env.DB, Date.now()) }, { headers: cors }); }
+      catch (e) { return Response.json({ ok: false, error: String(e && e.message || e) }, { status: 503, headers: cors }); }
+    }
     if (path === "/api/ai/selfcheck") {
       /* [V33.190] ★이 워커에서 가장 비싼 조회인데 캐시가 없었다.★ 실측 5,976ms —
          요청 한 건마다 6초짜리 D1 작업을 통째로 새로 한다. 사용자가 둘만 돼도 12초어치가
@@ -47191,7 +47197,7 @@ async function aiSelfCheck(DB, env) {
         lastSkip: _auto.lastSkip || null, lastCheckAgeH: ageH(_auto.checkTs)
       };
       // 모델별 외부(Modal) 학습 도달 여부 — source==="external" 이면 Modal 산출물이 올라온 것.
-      const _mm = { mind: "mind_model", gbdt: "gbdt_trust", xgb: "xgb_trust", lgb: "lgb_trust", cat: "cat_trust" };
+      const _mm = EXT_TRAIN_KEYS;   // [V33.580] 가벼운 /api/ai/train-age 와 같은 표
       R.externalTrain = {};
       let _extN = 0, _extStale = [];
       for (const k of Object.keys(_mm)) {
@@ -51804,6 +51810,33 @@ async function _luxSelfCheck(DB) {
 //   스로틀: 30분마다 1회만 판정(대부분 상태 1건 read 후 리턴). 트리거 후 8h 쿨다운(스팸·중복 방지).
 //   조건: GITHUB_TOKEN 존재 + (외부 수신 이력 없음 or 최신 외부수신>14h) + 학습표본 충분(≥200).
 // Codex V33.349: receipt freshness and live admission are different measurements.
+/* ══ [V33.580] ★외부 학습 나이만 가볍게★ — Modal 워치독이 6시간마다 /api/ai/selfcheck 를 불렀는데, 그건 이 워커에서 가장 비싼 조회다
+   (mind_model 통째 파싱 + D1 수십 회). 장중 D1 큐가 밀리면 30초를 넘겨 타임아웃(10/12 16:01Z rc=28) →
+   워치독은 "나이 모름 = 낡음" 으로 보고 ★신선한데도 GPU 학습을 걸었다★(10/12 06:27Z · 16:01Z 두 번 다 '학습 실행').
+   여기서는 나이 판정에 필요한 칸(출처 · 학습 시각 · 판 · 사유 · 정확도)만 json_extract 로 읽는다 — 모델 본문을 끌어오지 않는다.
+   판정 규칙(latestExternalReceipt · 같은 키 표)은 selfcheck 와 ★같은 함수·같은 표★ 를 쓴다(따로 적으면 갈라진다). */
+const EXT_TRAIN_KEYS = { mind: "mind_model", gbdt: "gbdt_trust", xgb: "xgb_trust", lgb: "lgb_trust", cat: "cat_trust" };
+function externalTrainRow(live, shadow, wantVer, nowMs) {
+  const o = latestExternalReceipt(live, shadow);
+  const ah = (o && typeof o.trainedAt === "number" && o.trainedAt > 0) ? Math.round((nowMs - o.trainedAt) / 3600000) : null;
+  return { trained: !!o, external: !!(o && o.source === "external"), ageH: ah, shadow: !!o && o === shadow,
+           activeFeatVer: live ? _num(live.featVer, null) : null, admissionReason: o ? (o.reason || null) : null,
+           featVer: o ? _num(o.featVer, null) : null, wantVer: wantVer,
+           valAcc: (o && (o.valAcc != null ? o.valAcc : (o.gbdtAcc != null ? o.gbdtAcc : o.dnnAcc))) || null };
+}
+async function externalTrainAges(DB, nowMs) {
+  const now = _num(nowMs, Date.now()), ks = [];
+  for (const k in EXT_TRAIN_KEYS) ks.push(EXT_TRAIN_KEYS[k], EXT_TRAIN_KEYS[k] + "_ext");
+  const st = DB.prepare("SELECT k, json_extract(v,'$.source') AS source, json_extract(v,'$.trainedAt') AS trainedAt, json_extract(v,'$.featVer') AS featVer, " +
+    "json_extract(v,'$.reason') AS reason, json_extract(v,'$.valAcc') AS valAcc, json_extract(v,'$.gbdtAcc') AS gbdtAcc, json_extract(v,'$.dnnAcc') AS dnnAcc " +
+    "FROM state WHERE json_valid(v) AND k IN (" + ks.map(function () { return "?"; }).join(",") + ")");
+  const rs = await st.bind.apply(st, ks).all();
+  const S = {};
+  for (const r of ((rs && rs.results) || [])) S[r.k] = { source: r.source, trainedAt: _num(r.trainedAt, null), featVer: r.featVer, reason: r.reason, valAcc: r.valAcc, gbdtAcc: r.gbdtAcc, dnnAcc: r.dnnAcc };
+  const out = {};
+  for (const k in EXT_TRAIN_KEYS) out[k] = externalTrainRow(S[EXT_TRAIN_KEYS[k]] || null, S[EXT_TRAIN_KEYS[k] + "_ext"] || null, LUXML.featVer, now);
+  return out;
+}
 function latestExternalReceipt(live, shadow) {
   if (!live) return shadow || null;
   if (!shadow) return live;
@@ -55508,7 +55541,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { OMNIQ_ROUTE, omniqRoutePick, omniqHoldOf, omniqRouteToday, _entryTag, negExpDefersToPerfGate, evaluateBuyBlocks, setStatesBatch, _ioTag, _setYAuthDB, yahooFetch, _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { externalTrainAges, externalTrainRow, EXT_TRAIN_KEYS, OMNIQ_ROUTE, omniqRoutePick, omniqHoldOf, omniqRouteToday, _entryTag, negExpDefersToPerfGate, evaluateBuyBlocks, setStatesBatch, _ioTag, _setYAuthDB, yahooFetch, _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { getStates, _STATE_LITE, getADX, _getADXCore, getHolidaySet, _indexFreshOpen, isMarketTradingDay, KR_LUNAR_HOLIDAYS, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

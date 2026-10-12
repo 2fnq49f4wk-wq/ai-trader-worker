@@ -110,11 +110,22 @@ jobs:
             echo "age=unknown" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "확인 대상: $URL/api/ai/selfcheck"
-          # [V33.375] 읽기 문(VIEW_KEY)이 켜져 있으면 키 없는 GET 은 401 이다 — 관리자 키로 읽는다.
-          #   VIEW_KEY 미설정이면 이 헤더는 무시된다(오늘과 동작이 같다).
-          BODY=$(curl -sS --max-time 30 -H "X-Train-Key: ${TRAIN_KEY:-}" "$URL/api/ai/selfcheck")
-          RC=$?
+          # [V33.580] ★가벼운 나이 조회를 먼저★ — /api/ai/selfcheck 는 워커에서 가장 비싼 조회라 장중엔 30초를 넘겨
+          #   타임아웃(10/12 16:01Z rc=28) → '나이 모름' → 신선한데도 GPU 학습을 걸었다. /api/ai/train-age 는 같은 판정 함수로
+          #   나이 칸만 읽는다(모델 본문 파싱 없음). 두 번 시도 · 실패하면 종전 selfcheck(90초)로 물러난다.
+          BODY=""; RC=1
+          for TRY in 1 2; do
+            echo "확인 대상: $URL/api/ai/train-age (시도 $TRY)"
+            BODY=$(curl -sS --fail --max-time 45 -H "X-Train-Key: ${TRAIN_KEY:-}" "$URL/api/ai/train-age"); RC=$?
+            [ $RC -eq 0 ] && [ -n "$BODY" ] && break
+            sleep 10
+          done
+          if [ $RC -ne 0 ] || [ -z "$BODY" ]; then
+            echo "확인 대상: $URL/api/ai/selfcheck (물러남)"
+            # [V33.375] 읽기 문(VIEW_KEY)이 켜져 있으면 키 없는 GET 은 401 이다 — 관리자 키로 읽는다.
+            BODY=$(curl -sS --max-time 90 -H "X-Train-Key: ${TRAIN_KEY:-}" "$URL/api/ai/selfcheck")
+            RC=$?
+          fi
           if [ $RC -ne 0 ] || [ -z "$BODY" ]; then
             # ★조회 실패는 '신선하다'가 아니다★ — 모르면 돌린다(안 도는 것이 더 큰 손해).
             echo "::warning::신선도 조회 실패(rc=$RC) — 모르는 상태이므로 학습을 진행한다"
