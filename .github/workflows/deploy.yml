@@ -843,6 +843,9 @@ jobs:
       # [V33.565] 외부 원천 건강표 — 실제 운영 fetch 성공/실패를 원천별로(조용한 고장을 보이게)
       - name: 원천 건강표 계약
         run: node tools/check-ingest-health.mjs
+      # [V33.567] 옛 야후 경로(v10 quoteSummary·v7 options) crumb 자동 첨부 — 없으면 401(운영 실측)
+      - name: 야후 crumb 자동 첨부
+        run: node tools/check-yahoo-crumb.mjs
       # [V33.162] 종목별 애널리스트 자료 — 요구는 하나였다: "추측 말고 발표난 걸로".
       #   그래서 검사도 하나다 — 화면에 나가는 숫자의 출처가 분명한가.
       #   못 받으면 비우는지, 출처를 늘 밝히는지, '발표 원문' 과 '우리 관측' 을

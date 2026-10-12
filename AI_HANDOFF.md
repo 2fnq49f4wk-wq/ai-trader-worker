@@ -12,6 +12,14 @@
 
 ## Current handoff
 
+- V33.567 (10/12) ★옛 코드 오작동 — 야후 v10/v7 이 crumb 없이 401★
+  - 운영 실측(/api/src-probe · run 38195927187): v10 quoteSummary·v7 options — crumb 없음 HTTP 401 · 있음 정상. v8 chart·분봉(한·미)은 정상.
+    crumb 없이 부르던 곳 6: anlFetchUS(애널리스트) · fundSectorOf(섹터) · flowFetchPositioning(공매도·기관) · flowFetchPutCall ·
+    fetchOptionsSignal · optMicroNightly — 2023 야후 정책 뒤 ★조용히 401 → null(이전 값 유지)★ 였다.
+  - 고침: yahooFetch 한 곳에서 v7/v10(quoteSummary·options·quote) URL 에 crumb 가 없으면 공유 인증(yahoo_auth · 30분)의 crumb·쿠키를 붙인다
+    (이미 있으면 그대로 · v8 은 안 붙임 · 인증 실패면 종전대로). __yAuthDB 는 크론·요청 진입에서 넣는다. 게이트 check-yahoo-crumb.mjs.
+  - 확인 방법: 다음 미국장 뒤 /api/ingest-health 의 query1/2.finance.yahoo.com/*/finance/quoteSummary·options 실패율(401)이 0 이어야 한다.
+
 - V33.565 (10/12) ★사용자: "왜 이런 문제가 생겼나 · 휴장일과 비슷한 문제가 다른 지표·수치에도 있나 · 현실적인 양만 · 옛 코드 오작동 최신화"★
   - 원인 정리: ① 휴장 오판 = 장 시작 전엔 늘 '어제' 인 지수 날짜로 오늘 휴장을 추정(시간대 가정 오류) ② 금융 지표 = 실패를 '이전 값 유지' 로
     조용히 삼킴 + 옛 브라우저 흉내 헤더가 FRED 를 520 으로 막음 + 대용 값에 조회 날짜를 기준일로 적음. 공통점: ★날짜 가정이 사실과 다르고, 고장이 조용했다★.

@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.566";
+const _BUILD_VER = "V33.567";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8013,6 +8013,8 @@ async function getYahooAuth(DB) {
   }
   return __yahooAuth;
 }
+let __yAuthDB = null;   // [V33.566] yahooFetch 가 crumb 를 받아 올 D1(크론·요청 진입에서 넣는다)
+function _setYAuthDB(db) { __yAuthDB = db || null; }   // 게이트(check-yahoo-crumb)용
 async function yahooFetch(url, extraHeaders) {
   if (__fetchBudget.used >= __fetchBudget.max) {
     throw new Error("fetch budget exceeded (" + __fetchBudget.used + "/" + __fetchBudget.max + ")");
@@ -8031,6 +8033,19 @@ async function yahooFetch(url, extraHeaders) {
     "Referer": "https://finance.yahoo.com/"
   };
   if (extraHeaders) { for (const k in extraHeaders) headers[k] = extraHeaders[k]; }
+  /* ══ [V33.566] ★crumb 가 필요한 옛 경로에 crumb 를 자동으로 붙인다★ ══════════════════════════════
+     운영 실측(/api/src-probe · 10/12 02:29Z): v10 quoteSummary · v7 options 를 crumb 없이 부르면 ★HTTP 401★, 붙이면 정상.
+     그런데 anlFetchUS(애널리스트) · fundSectorOf(섹터) · flowFetchPositioning(공매도·기관) · fetchOptionsSignal · flowFetchPutCall ·
+     optMicroNightly 가 전부 crumb 없이 불렀다 — 2023 야후 정책 변경 뒤 ★조용히 401 → null(이전 값 유지)★ 이었다(옛 코드 오작동).
+     호출부 6곳을 하나씩 고치면 또 갈라진다 — 여기 한 곳에서 붙인다(이미 crumb 가 있으면 그대로 · 쿠키도 함께). */
+  if (/\/v(7|10)\/finance\/(quoteSummary|options|quote)\b/.test(u) && !/[?&]crumb=/.test(u)) {
+    let _a = (__yahooAuth && __yahooAuth.crumb && (Date.now() - __yahooAuth.ts) < 30 * 60 * 1000) ? __yahooAuth : null;
+    if (!_a && __yAuthDB) { try { _a = await getYahooAuth(__yAuthDB); } catch (e) { _a = null; } }
+    if (_a && _a.crumb) {
+      u += (u.indexOf("?") >= 0 ? "&" : "?") + "crumb=" + encodeURIComponent(_a.crumb);
+      if (_a.cookie && !headers["Cookie"]) headers["Cookie"] = _a.cookie;
+    }
+  }
   // 429/5xx/네트워크 실패 시 지수 백오프로 최대 3회 재시도
   // [V9.1] 각 fetch에 8초 타임아웃(AbortController) — 야후가 응답을 안 주고 매달리면
   //   invocation 전체가 멈춰 사이클 중단·락 잔존(엔진 지연)을 유발하므로 강제로 끊는다.
@@ -27587,6 +27602,7 @@ async function microSwr(request, url, ctx, run) {
 
 async function handleRequest(request, env, ctx, _inner) {
   const url = new URL(request.url);
+  try { if (env && env.DB) __yAuthDB = env.DB; } catch (e) {}   // [V33.566] 옛 야후 경로 crumb 자동 첨부용
   const path = url.pathname;
   /* [V33.375] ★ACAO 를 '*' 에서 동일 출처로 좁힌다.★ 종전에는 ★아무 웹사이트의 스크립트나★
      방문자의 브라우저를 통해 /api/state 를 읽고 ★응답 본문을 가져갈★ 수 있었다(쓰기는
@@ -53997,6 +54013,7 @@ export default {
   async scheduled(event, env, ctx) {
     __R2 = env.MODELS || null;   // [V33.13] 대형모델 저장소 바인딩(없으면 D1 청크 경로 유지)
     env = Object.assign({}, env, { DB: wrapD1(env.DB) });
+    __yAuthDB = env.DB;   // [V33.566] 옛 야후 경로 crumb 자동 첨부용
     // [FIX V8.8] 기존엔 runTradingCycle / refreshCommodityQuotes / runCommodityCycle을
     //   각각 ctx.waitUntil로 "동시" 실행했는데, 이들이 전역 __fetchBudget(yahoo fetch
     //   예산)을 공유하면서 서로 resetFetchBudget()로 카운터를 덮어쓰고 소진시켜
@@ -55148,7 +55165,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _setYAuthDB, yahooFetch, _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { getStates, _STATE_LITE, getADX, _getADXCore, getHolidaySet, _indexFreshOpen, isMarketTradingDay, KR_LUNAR_HOLIDAYS, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
