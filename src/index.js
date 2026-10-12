@@ -6932,9 +6932,10 @@ async function _krMacroFetch() {
     if (v) out.cpi = Object.assign(v, { source: "한국은행 「물가상황점검회의」 보도참고자료(통계청 CPI)", source_url: "https://www.bok.or.kr/portal/main/main.do" }); } catch (e) {}
   return out;
 }
+/* [V33.563] ★FRED 는 워커에서 브라우저 흉내 User-Agent 를 붙이면 520 을 준다★(운영 실측 /api/macro-src: Safari UA → 520 · 헤더 없음 → 200).
+   V33.561 이 그 UA 를 붙여 미국 7개가 전부 실패했다 — 헤더 없이 보낸다(게이트 check-macro 가 본다). */
 async function _fredSeries(id) {
   const r = await fetch("https://fred.stlouisfed.org/graph/fredgraph.csv?id=" + encodeURIComponent(id), {
-    headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15" },
     signal: AbortSignal.timeout(10000) });
   if (!r.ok) throw new Error("FRED " + id + " HTTP " + r.status);
   const out = [];
@@ -6943,6 +6944,34 @@ async function _fredSeries(id) {
     if (m) out.push({ d: m[1], v: Number(m[2]) });
   }
   return out;
+}
+/* [V33.563] 대체 공식 원천(워커에서 닿는 것을 실측함) — 뉴욕연은 EFFR(목표범위 포함) · 미 재무부 일별 수익률 CSV.
+   재무부 값은 ★관측일★ 이 함께 온다 — ^TNX 대용은 '오늘 날짜' 를 붙여, 미국 채권 휴장일(10/12 콜럼버스데이)에도 10/12 기준인 척했다. */
+function _nyfedParse(j) {
+  const r = j && Array.isArray(j.refRates) ? j.refRates[0] : null;
+  if (!r || typeof r.targetRateFrom !== "number" || typeof r.targetRateTo !== "number" || !/^\d{4}-\d{2}-\d{2}$/.test(String(r.effectiveDate || ""))) return null;
+  if (!(r.targetRateFrom >= 0 && r.targetRateTo >= r.targetRateFrom && r.targetRateTo < 25)) return null;
+  return { value: r.targetRateFrom.toFixed(2) + "-" + r.targetRateTo.toFixed(2), asOf: r.effectiveDate, obsDate: r.effectiveDate,
+           effr: typeof r.percentRate === "number" ? r.percentRate : null };
+}
+function _treasuryParse(csv) {
+  const lines = String(csv || "").trim().split(/\r?\n/);
+  if (lines.length < 2) return null;
+  const head = lines[0].split(",").map(function (x) { return x.replace(/"/g, "").trim(); });
+  const col = function (n) { return head.indexOf(n); };
+  const c = { m3: col("3 Mo"), y2: col("2 Yr"), y5: col("5 Yr"), y10: col("10 Yr"), y30: col("30 Yr") };
+  if (c.y10 < 0) return null;
+  let best = null;
+  for (const ln of lines.slice(1)) {   // 최신이 맨 위지만 순서에 기대지 않는다 — 날짜가 가장 늦은 줄
+    const f = ln.split(","), m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec((f[0] || "").trim());
+    if (!m) continue;
+    const d = m[3] + "-" + m[1] + "-" + m[2];
+    if (!best || d > best.d) best = { d: d, f: f };
+  }
+  if (!best) return null;
+  const v = function (i) { const x = i >= 0 ? Number(best.f[i]) : NaN; return (isFinite(x) && x > -1 && x < 25) ? x : null; };
+  const out = { obsDate: best.d, m3: v(c.m3), y2: v(c.y2), y5: v(c.y5), y10: v(c.y10), y30: v(c.y30) };
+  return out.y10 == null ? null : out;
 }
 // 순수 계산(게이트가 잰다): 시계열 → { value, asOf, obsDate }
 function _fredValue(kind, rows, rows2) {
@@ -6983,6 +7012,32 @@ async function runFredMacroUpdate(DB, force) {
       } catch (e) { fail.push(key); }
     }
   }
+  // [V33.563] 대체 사슬 — 연준 목표범위는 FRED 가 안 되면 뉴욕연은 · 국채 5·10·30년은 재무부 일별(관측일 그대로)
+  if (fail.indexOf("fed_rate") >= 0) {
+    try {
+      const r = await fetch("https://markets.newyorkfed.org/api/rates/unsecured/effr/last/1.json", { signal: AbortSignal.timeout(10000) });
+      const v = r.ok ? _nyfedParse(await r.json()) : null;
+      if (v) { next.us.fed_rate = { value: v.value, asOf: v.asOf, obsDate: v.obsDate, released: "", fetchedAt: Date.now(),
+        source: "뉴욕연은 EFFR 목표범위(실효 " + (v.effr != null ? v.effr.toFixed(2) + "%" : "—") + ")", source_url: "https://www.newyorkfed.org/markets/reference-rates/effr" };
+        got++; fail = fail.filter(function (k) { return k !== "fed_rate"; }); }
+    } catch (e) {}
+  }
+  try {
+    const yr = new Date().getUTCFullYear();
+    const r = await fetch("https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/" + yr +
+      "/all?type=daily_treasury_yield_curve&field_tdr_date_value=" + yr + "&page&_format=csv", { signal: AbortSignal.timeout(10000) });
+    const t = r.ok ? _treasuryParse(await r.text()) : null;
+    if (t) {
+      const src = "미 재무부 일별 국채 수익률(Par Yield Curve)", url = "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/TextView?type=daily_treasury_yield_curve";
+      for (const [k, x] of [["ust5y", t.y5], ["ust10y", t.y10], ["ust30y", t.y30]]) {
+        if (x == null) continue;
+        next.us[k] = { value: x.toFixed(2), asOf: t.obsDate, obsDate: t.obsDate, released: "", fetchedAt: Date.now(), source: src, source_url: url };
+        if (k !== "ust10y" || fail.indexOf("ust10y") >= 0) got++;
+      }
+      fail = fail.filter(function (k) { return k !== "ust10y"; });
+      next.us._treasury = { obsDate: t.obsDate, m3: t.m3, y2: t.y2, y5: t.y5, y10: t.y10, y30: t.y30, ts: Date.now() };
+    }
+  } catch (e) {}
   // [V33.561] 한국 — 네이버 국채(실시간) · 한국은행 기준금리 · 한은 물가점검 보도자료. 못 받은 지표는 이전 값 유지
   try {
     const kr = await _krMacroFetch();
@@ -7016,9 +7071,10 @@ async function runInternalMacroUpdate(env, forceRun) {
     const setRate = function (key, v, suffix) { if (v != null) next.us[key] = { value: v.toFixed(2) + (suffix || ""), asOf: today, released: "", source_url: "", fetchedAt: Date.now(), proxy: true }; };
     // 정책금리 근사 = 13주 T-bill(^IRX) — 연준금리와 통상 ±0.2%p
     // [V33.561] 공식 값(FRED: 연준 목표범위 · 10년 일별)이 있으면 프록시로 덮지 않는다 — 프록시는 공식 값이 없을 때만
-    const _hasFred = function (k) { return !!(prev.us && prev.us[k] && /^FRED/.test(String(prev.us[k].source || ""))); };
-    if (!_hasFred("fed_rate")) setRate("fed_rate", irx, "% (시장금리 프록시·^IRX)");
-    setRate("ust5y", y5); if (!_hasFred("ust10y")) setRate("ust10y", y10); setRate("ust30y", y30);
+    /* [V33.563] 공식 값(FRED·뉴욕연은·재무부 — proxy 표시 없고 3일 안에 받음)이 있으면 대용으로 덮지 않는다. 대용은 공식이 없을 때만. */
+    const _hasOff = function (k) { const o = prev.us && prev.us[k]; return !!(o && !o.proxy && o.source && (Date.now() - _num(o.fetchedAt, 0)) < 3 * 86400000); };
+    if (!_hasOff("fed_rate")) setRate("fed_rate", irx, "% (시장금리 프록시·^IRX)");
+    for (const [k, v] of [["ust5y", y5], ["ust10y", y10], ["ust30y", y30]]) if (!_hasOff(k)) setRate(k, v);
     // 수익률곡선(10년-3개월) — 음수면 역전(침체 선행신호)
     const curve = (y10 != null && irx != null) ? (y10 - irx) : null;
     next.us._rates = { short3mo: irx, y5: y5, y10: y10, y30: y30, curve10_3mo: curve != null ? +curve.toFixed(2) : null, inverted: curve != null ? curve < 0 : null, ts: Date.now() };
@@ -54923,7 +54979,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { getStates, _STATE_LITE, getADX, _getADXCore, getHolidaySet, _indexFreshOpen, isMarketTradingDay, KR_LUNAR_HOLIDAYS, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
