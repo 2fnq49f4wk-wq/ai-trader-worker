@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.569";
+const _BUILD_VER = "V33.570";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -22839,6 +22839,11 @@ function _ioDB(DB) {
 }
 async function runTradingCycle(env) {
   __ioMeter = { d1n: 0, d1ms: 0, fn: 0, fms: 0, q: {} };
+  /* [V33.570] ★이 사이클의 계량기를 붙잡아 둔다★ — __ioMeter 는 전역이라, 같은 아이솔레이트에서 다음 크론이 겹쳐 시작하면(사이클 60s+ ·
+     크론 1분) 새 계량기로 바뀐다. 그러면 EVAL-COST 가 ★겹친 호출(락에 막혀 D1 6회로 끝난)의 수치★ 를 찍었다 —
+     'D1 6회' 와 'D1 ~260회' 가 번갈아 보인 것은 사이클이 번갈아 가벼워서가 아니라 계측이 섞여서였다(D1 은 _ioDB 가 잡은 M 으로 정확).
+     외부 fetch 수는 전역 감싸개가 세므로 겹친 구간은 섞일 수 있다(진단용). */
+  const __ioMine = __ioMeter;
   const DB = _ioDB(env.DB);
   resetFetchBudget(850);  // [PAID] Paid 1000 한도의 85% — 가격+일봉+분봉+LLM+여유
   await ensureSchema(DB);
@@ -26451,9 +26456,9 @@ async function runTradingCycle(env) {
           if (_resid > 0) _pp.push("기타 " + _resid + "ms");
           await log(DB, _per > ENRICH.slowSymMs ? "WARN" : "INFO", null,
             "[EVAL-COST] " + market.toUpperCase() + " 종목당 평균 " + _per + "ms" +
-            (__ioMeter ? " · IO(사이클 누적) D1 " + __ioMeter.d1n + "회 " + (__ioMeter.d1ms / 1000).toFixed(1) + "s · 외부 " + __ioMeter.fn + "회 " + (__ioMeter.fms / 1000).toFixed(1) + "s" : "") +
+            (__ioMine ? " · IO(사이클 누적) D1 " + __ioMine.d1n + "회 " + (__ioMine.d1ms / 1000).toFixed(1) + "s · 외부 " + __ioMine.fn + "회 " + (__ioMine.fms / 1000).toFixed(1) + "s" : "") +
             /* [V33.568] D1 상위 질의 4개(횟수·대기) — 'D1 260회' 가 어디서 나는지 */
-            (__ioMeter && __ioMeter.q && __ioMeter.d1n > 20 ? " [D1 상위 " + Object.entries(__ioMeter.q).sort(function (a, b) { return b[1].ms - a[1].ms; }).slice(0, 4)
+            (__ioMine && __ioMine.q && __ioMine.d1n > 20 ? " [D1 상위 " + Object.entries(__ioMine.q).sort(function (a, b) { return b[1].ms - a[1].ms; }).slice(0, 4)
               .map(function (x) { return x[0] + " ×" + x[1].n + " " + (x[1].ms / 1000).toFixed(1) + "s"; }).join(" · ") + "]" : "") +
             " · 부가조회 " +
             Math.round(_enrich.spent) + "/" + _enrich.budget + "ms" +

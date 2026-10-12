@@ -26,6 +26,7 @@ chk(M._ioTag("SELECT v FROM state WHERE k = ?", "daily:005930.KS") === "SELECT s
     M._ioTag("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?)", "quote:AAPL") === "INSERT state [quote]" &&
     M._ioTag("UPDATE logs SET message = ? WHERE id = ?", "x") === "UPDATE logs" &&
     M._ioTag("INSERT INTO logs (ts, level) VALUES (?, ?)", 12) === "INSERT logs", "D1 질의 묶음 키(동사·테이블·state 접두)");
-chk(/\[D1 상위 " \+ Object\.entries\(__ioMeter\.q\)/.test(S) && /__ioMeter = \{ d1n: 0, d1ms: 0, fn: 0, fms: 0, q: \{\} \};/.test(S), "EVAL-COST 에 D1 상위 질의 4개");
+chk(/\[D1 상위 " \+ Object\.entries\(__ioMine\.q\)/.test(S) && /__ioMeter = \{ d1n: 0, d1ms: 0, fn: 0, fms: 0, q: \{\} \};/.test(S), "EVAL-COST 에 D1 상위 질의 4개");
+chk(/const __ioMine = __ioMeter;/.test(S) && !/\(__ioMeter \? " · IO\(사이클 누적\)/.test(S), "EVAL-COST 는 그 사이클이 잡아 둔 계량기를 찍는다(겹친 크론이 바꾼 전역을 찍지 않는다)");
 if (fails) { console.log("\n✗ 원천 건강표 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 원천 건강표 통과");
