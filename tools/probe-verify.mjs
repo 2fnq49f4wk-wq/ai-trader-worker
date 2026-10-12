@@ -75,12 +75,12 @@ try {
   const lg = await get("/api/logs?limit=500");
   const L = (lg.j && (lg.j.logs || lg.j.rows || lg.j)) || [];
   const arr = Array.isArray(L) ? L : [];
-  const since = Date.now() - 6 * 3600000;
+  const since = Date.now() - 30 * 60000;   // 최근 30분 — 고치기 전(배포 전) 로그를 오판으로 세지 않는다
   const hol = arr.filter((x) => /휴장일 감지/.test(String(x.msg || x.message || "")) && Number(x.ts) > since);
   for (const x of hol.slice(0, 5)) out("holiday log", { ts: new Date(Number(x.ts)).toISOString(), msg: String(x.msg || x.message).slice(0, 160) });
   const krAct = arr.filter((x) => /KR|한국|\.K[SQ]/.test(String(x.msg || x.message || "")) && Number(x.ts) > since).length;
   const kst = new Date(Date.now() + 9 * 3600000), wd = kst.getUTCDay(), mins = kst.getUTCHours() * 60 + kst.getUTCMinutes();
   const krDay = wd >= 1 && wd <= 5;
-  ok(!(krDay && hol.some((x) => /KR/.test(String(x.msg || x.message)))), "최근 6시간 한국 '휴장일 감지' 없음(평일)", { n: hol.length, krLogs6h: krAct, kstMin: mins });
+  ok(!(krDay && hol.some((x) => /KR/.test(String(x.msg || x.message)))), "최근 30분 한국 '휴장일 감지' 없음(평일)", { n: hol.length, krLogs30m: krAct, kstMin: mins });
 } catch (e) { ok(false, "휴장 감시 예외", String(e)); }
 out("result", bad ? bad + "건 실패" : "전부 통과");
