@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.574";
+const _BUILD_VER = "V33.575";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -23013,32 +23013,38 @@ async function runTradingCycle(env) {
     } catch (e) {}
 
     cfg = await autoTune(DB, cfg, regimes);
-    const signalStats = await getState(DB, "signal_stats", {});
-    const signalStatsMkt = await getState(DB, "signal_stats_mkt", {});   // [V33.480] NEGEXP_SIG 는 시장별
+    /* [V33.575] ★준비 단계 상태 읽기 묶음★ — 단계 시각(V33.574): 준비(prep) 14.5~15.8s. D1 평균 지연이 ~0.28s/질의(162회 45s)라
+       서로 독립인 상태 10개를 하나씩 읽으면 그것만 ~3s. 한 질의(getStates)로 읽고 아래는 그 값을 쓴다(같은 행 · 없거나 못 읽으면 종전 기본값). */
+    let __prepS = {};
+    try { __prepS = await getStates(DB, ["signal_stats", "signal_stats_mkt", "mkt_strat_stats", "xmkt_lead", "sector_pulse",
+                                         "sec_filings", "signal_type_stats", "rv_panel", "earnings_surprise", "mega_spill", "news_boost"]); } catch (e) { __prepS = {}; }
+    const __pv = function (k, def) { const v = __prepS[k]; return v === undefined ? def : v; };
+    const signalStats = __pv("signal_stats", {});
+    const signalStatsMkt = __pv("signal_stats_mkt", {});   // [V33.480] NEGEXP_SIG 는 시장별
     // [V33.44] 시장×전략 성과 롤업(2시간 캐시) — 구조적으로 지는 조합의 신규 진입을 막는다.
     let __mktStratStats = null;
-    try { const _mss = await getState(DB, "mkt_strat_stats", null); __mktStratStats = (_mss && _mss.m) ? _mss.m : null; } catch (e) {}
+    try { const _mss = __pv("mkt_strat_stats", null); __mktStratStats = (_mss && _mss.m) ? _mss.m : null; } catch (e) {}
     // [V33.45] 미국 반도체 → 한국 기술주 선행지표. 30분마다 갱신(daily: 종가만 읽어 fetch 0).
     let __xmktLead = null;
     try {
-      const _xl = await getState(DB, "xmkt_lead", null);
+      const _xl = __pv("xmkt_lead", null);
       __xmktLead = (_xl && (Date.now() - (_xl.ts || 0)) < 30 * 60000) ? _xl : (await updateCrossMarketLead(DB)) || _xl;
     } catch (e) {}
     // [V33.60] 섹터 6종 온도(30분 캐시) — 섹터 ETF 종가만 읽으므로 추가 fetch 0.
     try {
-      const _sp0 = await getState(DB, "sector_pulse", null);
+      const _sp0 = __pv("sector_pulse", null);
       if (!_sp0 || (Date.now() - (_sp0.ts || 0)) >= 30 * 60000) await computeSectorPulse(DB);
     } catch (e) {}
-    const secData = await getState(DB, "sec_filings", {});  // [SEC 공시] 미국 종목 보수화
+    const secData = __pv("sec_filings", {});  // [SEC 공시] 미국 종목 보수화
     const eventData = await buildEventRiskData(DB);  // [V62] 어닝스·경제지표·내부자 이벤트 리스크 (캐시 read만)
     // [V10] 스캘프 적응형 엣지 — 신호별 실현 성과(승률·평균손익) 캐시 1회 로드. 지는 신호 자동 가지치기에 사용.
     let _sigTypeStats = {};
-    try { _sigTypeStats = await getState(DB, "signal_type_stats", {}) || {}; } catch (e) {}
+    try { _sigTypeStats = __pv("signal_type_stats", {}) || {}; } catch (e) {}
     try { eventData.sigTypeStats = _sigTypeStats; } catch (e) {}
     /* [V33.250] 상대가치 패널(페어·횡단면·시총순위)을 사이클에 실어 보낸다 — 읽기 1회.
        evaluateAllStrategies 는 종목 하나만 보므로 교차종목 관계는 여기서 주입해야 한다.
        패널이 낡으면 rvContextFor 가 스스로 null 을 돌려준다(낡은 공적분으로 매매 금지). */
-    try { eventData.rvPanel = await getState(DB, "rv_panel", null); } catch (e) {}
+    try { eventData.rvPanel = __pv("rv_panel", null); } catch (e) {}
     let cash = await computeAllCash(DB, cfg);
     // [V9.1] executeBuy/Sell이 거래마다 cash 전체를 저장하므로, cm 키가 누락된 옛 상태를
     //   읽었을 때 원자재 현금이 사라지지 않도록 보강.
@@ -23101,11 +23107,11 @@ async function runTradingCycle(env) {
     let __earnCorr = null;
     try { __earnCorr = await earnCorrGet(DB); } catch (e) { __earnCorr = null; }
     let __earnSurp = null;
-    try { const _esS = await getState(DB, "earnings_surprise", null); __earnSurp = (_esS && _esS.m) || null; } catch (e) {}
+    try { const _esS = __pv("earnings_surprise", null); __earnSurp = (_esS && _esS.m) || null; } catch (e) {}
     // [V33.46] 메가캡 실적 파급 — 시총 상위 종목의 큰 서프라이즈를 섹터 전체 재평가로 확장.
     let __megaSpill = null;
     try {
-      const _msS = await getState(DB, "mega_spill", null);
+      const _msS = __pv("mega_spill", null);
       if (_msS && (Date.now() - (_msS.ts || 0)) < 60 * 60000) __megaSpill = _msS.g || null;
       else { const _c = await computeMegaSpill(DB, __earnSurp, cfg); if (_c) { await setState(DB, "mega_spill", _c); __megaSpill = _c.g; } }
     } catch (e) {}
@@ -23157,7 +23163,7 @@ async function runTradingCycle(env) {
     let sectorSentiment = null;
     // [V9.6] 뉴스 예측기 "내일 오를 종목" 사이징 부스트맵(제한적·경계) — 사이클당 1회 로드
     let newsBoostMap = null;
-    try { const _nb = await getState(DB, "news_boost", null); if (_nb && _nb.map) newsBoostMap = _nb.map; } catch (e) {}
+    try { const _nb = __pv("news_boost", null); if (_nb && _nb.map) newsBoostMap = _nb.map; } catch (e) {}
     if (marketsToTrade.length > 0) {
       try { sectorSentiment = await updateSectorNewsSentiment(DB, cfg); } catch (e) {}
       // [V9.9] 애널리스트 컨센서스 — 6h 캐시, 예산 가드 내장. US 종목 목표가·투자의견(가격독립 정보).

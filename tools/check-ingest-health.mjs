@@ -49,5 +49,10 @@ chk(/if \(Date\.now\(\) - __lockRefAt >= 30000\)/.test(S) && !/if \(evalProcesse
 }
 chk(["prep", ".pf", ".ev", ".ee", ".end"].every((k) => S.includes('__phMark(' + (k === "prep" ? '"prep"' : 'market + "' + k + '"') + ')')) && /cycleMs=" \+ cycleMs \+ \(__ph\.length \? " ph=" \+ __ph\.join\(","\) : ""\)/.test(S),
     "사이클 단계 시각(준비·시장별 프리페치·평가 시작/끝·시장 끝)이 Done 줄에 붙는다");
+// [V33.575] 준비 단계 상태 11개는 한 질의로(종전 기본값 그대로)
+chk(["signal_stats", "signal_stats_mkt", "mkt_strat_stats", "xmkt_lead", "sector_pulse", "sec_filings", "signal_type_stats", "rv_panel", "earnings_surprise", "mega_spill", "news_boost"]
+      .every((k) => { const i0 = S.indexOf("let __prepS = {};"), i1 = S.indexOf("sectorSentiment = await updateSectorNewsSentiment", i0), blk = S.slice(i0, i1);
+                     return i0 > 0 && i1 > i0 && blk.includes('__pv("' + k + '"') && !blk.includes('await getState(DB, "' + k + '", '); }),
+    "준비 단계 상태 11개는 묶음 읽기(준비 구간 안 개별 getState 없음)");
 if (fails) { console.log("\n✗ 원천 건강표 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 원천 건강표 통과");

@@ -225,7 +225,7 @@ console.log("⑥ 배선");
       "이력이 없으면 정상 통과한다(가지치기가 신규를 무조건 막지 않는다)",
       "이력 없는 신규까지 막힌다");
   }
-  chk(/eventData\.rvPanel = await getState\(DB, "rv_panel"/.test(S),
+  chk(/eventData\.rvPanel = (await getState\(DB, |__pv\()"rv_panel"/.test(S),   // [V33.575] 준비 단계 묶음 읽기도 같은 주입
     "사이클이 상대가치 패널을 주입한다", "패널이 주입되지 않아 페어·횡단면이 영영 null 이다");
   chk(/_stg\("rvpanel"/.test(S), "야간 파이프라인에 rvpanel 단계가 등록됐다", "패널을 만드는 단계가 없다");
   chk(/\["rvpanel", function \(DB\)/.test(S), "수동 실행 목록에도 있다(확인 경로)", "수동으로 돌려볼 방법이 없다");
