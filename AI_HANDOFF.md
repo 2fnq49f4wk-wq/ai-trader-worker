@@ -12,6 +12,10 @@
 
 ## Current handoff
 
+- V33.577 (10/12) ★매매 깔때기 진단 도구★ — 사용자: "포지션이 하나도 없다 · 최근 장 거래가 줄어든 이유". 거래 CSV: 9/17~18 규칙(RULE) 매수 다수 → 9/19~10/12 매수 2건(AI_PRIMARY).
+  /api/trade-diag(학습키 · 집계만): 일별 후보(ml_candidates)·일별 매수(주체·신호)·daily_stats·실적 관문(perf_gate)·시장별 음수기대 신호·설정 차단·최근 심사 줄.
+  tools/probe-trade-diag.mjs(ui-probe verify 단계). ★다음: 이 표로 막는 관문을 특정 → 결함이면 고치고, 사용자 결정 관문이면 근거와 함께 보고★
+
 - V33.576 (10/12) ★위원회 입력 상태 15개 묶음 읽기★ — 프리페치→평가 시작 20~27s 중 모델 본문 외 작은 상태(gbdt_trust·committee_cal·ml_evstats·port_stats·
   xs_panel·tech_prior_k·final_cal·decision_blend_k·social_k·noise_filter·sector_news_sentiment·memo_model·dual_bull/bear/quad_shift)를
   하나씩 읽던 것을 getStates 한 질의로(없거나 못 읽으면 종전 null). ai_pdist(엄격 읽기)·대형 모델(mind·gbdt·seq)은 종전 경로. 판단 불변.

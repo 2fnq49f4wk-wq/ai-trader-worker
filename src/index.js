@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.576";
+const _BUILD_VER = "V33.577";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -33298,6 +33298,55 @@ async function handleRequest(request, env, ctx, _inner) {
        묶음 크기마다 v7/v8 spark 로 유니버스 앞 n 종목을 보내 돌려받은 종목 수·지연·HTTP 를 준다(SPARK_CHUNK 를 정하는 근거). */
     /* [V33.563] ★미국 공식 지표 원천 — 워커(Cloudflare)에서 닿는가★(학습키 · 고정 목록 · 읽기 전용)
        V33.561 운영: FRED 그래프 CSV 가 워커에서 7개 전부 실패(러너에선 됨). 대체 원천을 ★실제로 돌 곳★ 에서 잰다. */
+    /* [V33.577] ★매매 깔때기 진단★(학습키 · 읽기 전용 · 집계만) — 사용자 10/12: "포지션이 하나도 없다 · 최근 장 거래가 줄어든 이유".
+       일별 후보(ml_candidates) · 일별 매수(진입 주체·신호) · daily_stats · 실적 관문(perf_gate) · 시장별 음수기대 신호 · 설정의 차단 목록 · 최근 심사 사유 줄. */
+    if (path === "/api/trade-diag") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const D = 86400000, now = Date.now(), since = now - 40 * D;
+      const kd = function (ts) { return new Date(ts + 9 * 3600000).toISOString().slice(0, 10); };
+      const out = { ok: true };
+      try {
+        const rs = await env.DB.prepare("SELECT ts, market, strategy FROM ml_candidates WHERE ts > ?").bind(since).all();
+        const m = {}; for (const r of ((rs && rs.results) || [])) { const k = kd(r.ts) + " " + r.market; m[k] = m[k] || { n: 0, by: {} }; m[k].n++; m[k].by[r.strategy] = (m[k].by[r.strategy] || 0) + 1; }
+        out.cand = m;
+      } catch (e) { out.candErr = String(e.message || e); }
+      try {
+        const rs = await env.DB.prepare("SELECT ts, market, side, reason, pnl_pct FROM trades WHERE ts > ? ORDER BY ts").bind(since).all();
+        const m = {}; for (const r of ((rs && rs.results) || [])) {
+          if (/sell/i.test(r.side)) continue;
+          const k = kd(r.ts) + " " + r.market, tag = (_pgTag(r.reason) || "?") + " " + ((/\]\s+([A-Z_]+)/.exec(String(r.reason || "")) || [])[1] || "?");
+          m[k] = m[k] || { n: 0, by: {} }; m[k].n++; m[k].by[tag] = (m[k].by[tag] || 0) + 1;
+        }
+        out.buys = m;
+      } catch (e) { out.buysErr = String(e.message || e); }
+      try { out.daily = ((await env.DB.prepare("SELECT day_key, signals, trades FROM daily_stats ORDER BY day_key DESC LIMIT 30").all()) || {}).results || []; } catch (e) {}
+      try { const pg = await perfGateLoad(env.DB, false); out.perfGate = pg && pg.keys; } catch (e) { out.perfGateErr = String(e.message || e); }
+      try {
+        const S2 = await getStates(env.DB, ["cfg", "signal_stats_mkt", "mkt_strat_stats", "ai_selfreview", "omniq:us", "omniq:kr", "ai_halt", "model_drift"]);
+        const c = S2.cfg || {};
+        out.cfg = { disabledSignals: c.disabledSignals || [], strategies: c.strategies || null, antiChase: c.antiChase || null, autonomy: (AI_PARAMS && AI_PARAMS.autonomy) || null,
+                    aiPrimary: AI_PARAMS && AI_PARAMS.aiPrimary ? { enabled: AI_PARAMS.aiPrimary.enabled, minP: AI_PARAMS.aiPrimary.minP, mode: AI_PARAMS.aiPrimary.mode } : null,
+                    budgetUsPct: c.budgetUsPct, budgetKrPct: c.budgetKrPct, maxPositions: c.maxPositions, markets: c.markets ? Object.keys(c.markets) : null };
+        const ssm = S2.signal_stats_mkt || {};
+        out.negexp = {};
+        for (const key of Object.keys(ssm)) {
+          const st = ssm[key] || {}, ix = key.indexOf(":"); if (ix < 0) continue;
+          let blocked = false; try { blocked = negExpBlocked(ssm, key.slice(0, ix), key.slice(ix + 1)); } catch (e) {}
+          out.negexp[key] = { n: st.count, avgPnl: st.avgPnl != null ? +(+st.avgPnl).toFixed(3) : null, win: st.winRate != null ? +(st.winRate * 100).toFixed(1) : null,
+                              exp: st.expectancy != null ? +(+st.expectancy).toFixed(3) : null, blocked: blocked };
+        }
+        out.mktStrat = S2.mkt_strat_stats ? (S2.mkt_strat_stats.m || S2.mkt_strat_stats) : null;
+        out.selfReviewBlock = S2.ai_selfreview ? (S2.ai_selfreview.block || S2.ai_selfreview.blocked || S2.ai_selfreview.avoid || null) : null;
+        out.aiHalt = S2.ai_halt || null; out.modelDrift = S2.model_drift || null;
+        for (const mk of ["us", "kr"]) { const q = S2["omniq:" + mk]; if (q) out["omniq_" + mk] = omniqView(q); }
+      } catch (e) { out.stateErr = String(e.message || e); }
+      try {
+        const lg = await env.DB.prepare("SELECT ts, level, message FROM logs WHERE (message LIKE '[심사완료]%' OR message LIKE '[NOBUY]%' OR message LIKE '%실적 관문%' OR message LIKE '[EVAL] %' OR message LIKE '%CHASE%') ORDER BY id DESC LIMIT 60").all();
+        out.logs = (((lg && lg.results) || [])).map(function (r) { return { t: new Date(r.ts).toISOString().slice(5, 16), m: String(r.message).slice(0, 300) }; });
+      } catch (e) {}
+      try { const pr = await env.DB.prepare("SELECT market, COUNT(*) n FROM positions GROUP BY market").all(); out.positions = (pr && pr.results) || []; } catch (e) {}
+      return Response.json(out, { headers: cors });
+    }
     /* [V33.565] ★수집 건강 진단★(학습키 · 읽기 전용) — 원천별 성공/실패(오늘·어제) + 최근 N시간 WARN/ERROR 를 문장 모양별로 묶어 센다. */
     if (path === "/api/ingest-health") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
