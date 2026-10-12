@@ -12,6 +12,10 @@
 
 ## Current handoff
 
+- V33.576 (10/12) ★위원회 입력 상태 15개 묶음 읽기★ — 프리페치→평가 시작 20~27s 중 모델 본문 외 작은 상태(gbdt_trust·committee_cal·ml_evstats·port_stats·
+  xs_panel·tech_prior_k·final_cal·decision_blend_k·social_k·noise_filter·sector_news_sentiment·memo_model·dual_bull/bear/quad_shift)를
+  하나씩 읽던 것을 getStates 한 질의로(없거나 못 읽으면 종전 null). ai_pdist(엄격 읽기)·대형 모델(mind·gbdt·seq)은 종전 경로. 판단 불변.
+
 - V33.575 (10/12 05:00Z) ★단계 시각 첫 실측 + 준비 단계 묶음 읽기★
   - ph(04:48·04:51 · cycleMs 63s·54s): 준비 prep 14.5~15.8s · 프리페치→평가 시작(모델 로딩 포함) 19.5~27s · 평가 13.7s · 후처리 1.5s.
     D1 평균 지연 ~0.28s/질의(162회 45s) — 하나씩 읽는 곳마다 그만큼 든다. V33.571~573 뒤 사이클 54~63s(목표 60s 근처).

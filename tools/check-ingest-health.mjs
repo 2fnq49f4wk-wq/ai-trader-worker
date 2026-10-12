@@ -54,5 +54,10 @@ chk(["signal_stats", "signal_stats_mkt", "mkt_strat_stats", "xmkt_lead", "sector
       .every((k) => { const i0 = S.indexOf("let __prepS = {};"), i1 = S.indexOf("sectorSentiment = await updateSectorNewsSentiment", i0), blk = S.slice(i0, i1);
                      return i0 > 0 && i1 > i0 && blk.includes('__pv("' + k + '"') && !blk.includes('await getState(DB, "' + k + '", '); }),
     "준비 단계 상태 11개는 묶음 읽기(준비 구간 안 개별 getState 없음)");
+// [V33.576] 위원회 입력 상태는 묶음 읽기
+chk(["gbdt_trust", "committee_cal", "ml_evstats", "port_stats", "xs_panel", "tech_prior_k", "final_cal", "decision_blend_k", "social_k", "noise_filter", "sector_news_sentiment", "memo_model", "dual_bull_model", "dual_bear_model", "dual_quad_shift"]
+      .every((k) => { const i0 = S.indexOf("let __mlS = {};"), i1 = S.indexOf("모델 열화(Concept Drift) 감지", i0), blk = S.slice(i0, i1);
+                     return i0 > 0 && i1 > i0 && blk.includes('__mv("' + k + '")') && !blk.includes('await getState(DB, "' + k + '"'); }),
+    "위원회 입력 상태 15개는 묶음 읽기(위원회 로드 구간 안 개별 getState 없음)");
 if (fails) { console.log("\n✗ 원천 건강표 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 원천 건강표 통과");

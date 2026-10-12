@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.575";
+const _BUILD_VER = "V33.576";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -24145,14 +24145,22 @@ async function runTradingCycle(env) {
           try { __guard = await mlGuardState(DB); } catch (e) {}
           /* [V33.422] DNN 퇴역 — 신뢰기록도 21MB 망도 안 읽는다. 매 사이클 비용이 0 이 된다. */
           /* [V33.422] DNN 퇴역 — 신뢰기록도 21MB 망도 안 읽는다(매 사이클 비용 0). */
-          try { __gbdtTrust = await getState(DB, "gbdt_trust", null); } catch (e) {}
+          /* [V33.576] ★위원회 입력 상태 15개 묶음 읽기★ — 단계 시각: 프리페치→평가 시작 20~27s(프리페치 ~10s · 나머지는 모델·상태 읽기가 줄지어).
+             서로 독립인 작은 상태들을 한 질의로(없거나 못 읽으면 종전 null · 대형 모델 본문(mind·gbdt·seq)은 종전 경로 그대로). ai_pdist 는 엄격 읽기라 따로. */
+          let __mlS = {};
+          try { __mlS = await getStates(DB, ["gbdt_trust", "committee_cal", "ml_evstats", "port_stats", "xs_panel", "tech_prior_k", "final_cal", "decision_blend_k",
+                                             "social_k", "noise_filter", "sector_news_sentiment"]
+                                            .concat(MEMOML.enabled ? ["memo_model"] : [])
+                                            .concat(DUALHEAD.enabled ? ["dual_bull_model", "dual_bear_model", "dual_quad_shift"] : [])); } catch (e) { __mlS = {}; }
+          const __mv = function (k) { const v = __mlS[k]; return v === undefined ? null : v; };
+          try { __gbdtTrust = __mv("gbdt_trust"); } catch (e) {}
           try { if (__gbdtTrust && __gbdtTrust.trusted) __gbdt = await mlGBDTLoad(DB, market); } catch (e) {}   // [V33.76] 시장 전용 모델 우선
-          try { __cal = await getState(DB, "committee_cal", null); } catch (e) {}
-          try { __evStats = await getState(DB, "ml_evstats", null); } catch (e) {}
+          try { __cal = __mv("committee_cal"); } catch (e) {}
+          try { __evStats = __mv("ml_evstats"); } catch (e) {}
           // [V33.90] 실제 원장 기준 성과통계 — EV 게이트가 표본풀 대신 이 값을 우선한다(사이클 1회).
-          try { __portStats = await getState(DB, "port_stats", null); } catch (e) {}
+          try { __portStats = __mv("port_stats"); } catch (e) {}
           try { __idxCloses = await _mlLoadIndexCloses(DB, market); } catch (e) {}
-          try { __xsPanel = await getState(DB, "xs_panel", null); } catch (e) {}   // [V21] 횡단면 랭크 패널
+          try { __xsPanel = __mv("xs_panel"); } catch (e) {}   // [V21] 횡단면 랭크 패널
           // [V33.78] FLOW 모델 + 피어용 일봉 스냅샷(사이클 1회). 모델이 없어도 표본 수집을 위해 캐시는 만든다.
           // [V33.107] ★연결 버그 — FLOW 스위치 하나에 무관한 8종이 묶여 있었다★
           //   XALPHA·STACK·MEMO·이중헤드·측정계수(techK/finalCal/blendK)·후보 p 분포는
@@ -24164,11 +24172,11 @@ async function runTradingCycle(env) {
           /* [V33.422] flow·xalpha·stack 퇴역 — 사이클마다 하던 세 번의 읽기를 안 한다. */
           /* [V33.422] flow·xalpha·stack 퇴역 — 사이클마다 하던 세 번의 읽기를 안 한다. */
           try { if (SEQML.enabled) __seqModel = await _seqCached(DB); } catch (e2) {}
-          try { if (MEMOML.enabled) __memoModel = await getState(DB, "memo_model", null); } catch (e2) {}
-          try { __techK = await getState(DB, "tech_prior_k", null); __finalCal = await getState(DB, "final_cal", null); __blendK = await getState(DB, "decision_blend_k", null); } catch (e2) {}
+          try { if (MEMOML.enabled) __memoModel = __mv("memo_model"); } catch (e2) {}
+          try { __techK = __mv("tech_prior_k"); __finalCal = __mv("final_cal"); __blendK = __mv("decision_blend_k"); } catch (e2) {}
           // [V33.109] 소셜 계수(측정 전엔 0) — 사이클 1회 로드.
-          try { __socialK = await getState(DB, "social_k", null); } catch (e2) {}
-          try { if (DUALHEAD.enabled) { __dualBull = await getState(DB, "dual_bull_model", null); __dualBear = await getState(DB, "dual_bear_model", null); __dualShift = await getState(DB, "dual_quad_shift", null); } } catch (e2) {}
+          try { __socialK = __mv("social_k"); } catch (e2) {}
+          try { if (DUALHEAD.enabled) { __dualBull = __mv("dual_bull_model"); __dualBear = __mv("dual_bear_model"); __dualShift = __mv("dual_quad_shift"); } } catch (e2) {}
           /* [V33.482] ★엄격히 읽는다★ — 느슨한 읽기는 D1 오류를 '없음(null)' 으로 돌려주고, 사이클 끝의 병합이 그걸 빈 배열로 알고
              새 몇십 건으로 ★2,000건을 덮어썼다★(실측 2026-10-05: ai_pdist:us 25건 · 9/14 엔 2,000건). 못 읽었으면 표시만 하고 쓰지 않는다. */
           try { __pDistCache = await getState(DB, "ai_pdist:" + market, null, true); __pDistReadOk = true; } catch (e2) { __pDistReadOk = false; __pDistCache = null; }
@@ -24299,9 +24307,9 @@ async function runTradingCycle(env) {
             const _fsyms = orderedEval.slice(0, 700).map(function (it) { return "fund:" + it.symbol; });
             __fundCache = await getStates(DB, _fsyms);
           } catch (e) { __fundCache = {}; }
-          try { __noiseFilter = await getState(DB, "noise_filter", null); } catch (e) {}
+          try { __noiseFilter = __mv("noise_filter"); } catch (e) {}
           try { __evMem = await mlLoadEventMemory(DB); } catch (e) {}
-          try { __sectorNews = await getState(DB, "sector_news_sentiment", null); } catch (e) {}
+          try { __sectorNews = __mv("sector_news_sentiment"); } catch (e) {}
           // [V16] 모델 열화(Concept Drift) 감지 — 위원회 검증정확도 기반. 열화면 ML 개입 보수화 + 재학습 플래그.
           try {
             /* [V33.422] ★열화 감시 대상을 DNN → GBDT 로 옮긴다.★ DNN 이 퇴역했으므로 그대로 두면
