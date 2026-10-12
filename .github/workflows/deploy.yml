@@ -846,6 +846,9 @@ jobs:
       # [V33.567] 옛 야후 경로(v10 quoteSummary·v7 options) crumb 자동 첨부 — 없으면 401(운영 실측)
       - name: 야후 crumb 자동 첨부
         run: node tools/check-yahoo-crumb.mjs
+      # [V33.572] 첫 화면 저장본으로 '자동 운용 중 (지연)' 을 띄우지 않는다(서버는 정상인데 화면만 지연이던 문제)
+      - name: 첫 화면 배지
+        run: node tools/check-boot-badge.mjs
       # [V33.162] 종목별 애널리스트 자료 — 요구는 하나였다: "추측 말고 발표난 걸로".
       #   그래서 검사도 하나다 — 화면에 나가는 숫자의 출처가 분명한가.
       #   못 받으면 비우는지, 출처를 늘 밝히는지, '발표 원문' 과 '우리 관측' 을

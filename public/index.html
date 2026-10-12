@@ -188,8 +188,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.571">
-<script src="/neural-observatory.js?v=33.571" defer></script>
+<meta name="lux-build" content="V33.572">
+<script src="/neural-observatory.js?v=33.572" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -11856,11 +11856,15 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     // [개선] /api/state 1회로 watchlist + indices까지 한 번에 받음
     // [V12.7 로딩속도] 응답 처리부를 _apply로 분리 — 첫 부팅 시 마지막 성공 데이터(localStorage)로
     //   즉시 화면을 그리고(체감 0초), 네트워크 응답이 오면 최신으로 덮어쓴다.
-    var _apply = function(r){
+    var _apply = function(r, fromCache){
         var state = r[0], trades = r[1], allTrades = r[2];
-        if (_needAll) { window.__allTradesCache = allTrades; window.__allTradesTs = Date.now(); }
+        if (_needAll && !fromCache) { window.__allTradesCache = allTrades; window.__allTradesTs = Date.now(); }
+        /* [V33.572] ★첫 화면용 저장본(localStorage)으로 그릴 때는 '수신' 이 아니다★ — 사용자 10/12: "접속하면 자동 운용 중 '지연' 이 뜨다가
+           다른 게 로딩되면 라이브로 바뀐다". 저장본 속 lastTick 은 마지막 방문 때 값(몇 분~몇 시간 전)이라 5분 문턱에 걸려 '(지연)' 이 붙고,
+           서버 응답이 오면 사라졌다 — ★표시만 지연이었고 서버 크론은 계속 돌고 있었다.★ 저장본일 땐 '서버 확인 중' 으로 두고 판정하지 않는다. */
+        window.__stateFromCache = !!fromCache;
         // [V33] 데이터 수신 성공 — 라이브 인디케이터용 시각 기록
-        window.__lastDataReceived = Date.now();
+        if (!fromCache) window.__lastDataReceived = Date.now();
         window.__serverLastTick = state.lastTick || null;
         // [V33.6] 하트비트 = "cron이 사이클에 진입했다"는 증거(장외 스킵 시에도 기록된다).
         //   좌측 "자동 운용 중" 배지가 장외를 '지연'으로 오판하지 않도록 함께 노출.
@@ -11952,7 +11956,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     };
     if (!window.__bootPainted) {
       window.__bootPainted = 1;
-      try { var _bc = localStorage.getItem('bootBundle'); if (_bc) { var _bb = JSON.parse(_bc); if (_bb && _bb.state) _apply([_bb.state, _bb.trades || [], []]); } } catch(e){}
+      try { var _bc = localStorage.getItem('bootBundle'); if (_bc) { var _bb = JSON.parse(_bc); if (_bb && _bb.state) _apply([_bb.state, _bb.trades || [], []], true); } } catch(e){}
     }
     /* [V33.490] ★TOP MOVERS 는 시세만 있으면 그린다★ — 종전엔 상태·최근거래·(첫 회차) 전체거래 3,000건이
        ★다 와야★ _apply 가 돌아, 무거운 거래 내역을 기다리는 동안 TOP MOVERS·시총맵이 비어 있었다.
@@ -18003,6 +18007,8 @@ html:root .page > *{ flex-shrink:0; }
     //   runTradingCycle 은 미국·한국이 모두 장외면 "사이클 스킵"으로 조기 종료해 last_tick 을
     //   갱신하지 않는다. 그 시각에도 cron 은 정상 동작 중이므로 last_tick 만 보면 밤·주말마다
     //   '지연' 경고가 뜬다. 하트비트는 사이클 진입 직후 무조건 기록되므로 생존 신호로 정확하다.
+    // [V33.572] 저장본으로 그린 첫 화면 — 서버 시각을 아직 모른다(지연으로 판정하지 않는다)
+    if(window.__stateFromCache){ sub.textContent = '서버 확인 중…'; if(box) box.classList.remove('stale'); return; }
     var t = Math.max(window.__serverLastTick || 0, window.__serverLastHeartbeat || 0);
     if(!t){ sub.textContent = '첫 사이클 대기 중'; if(box) box.classList.remove('stale'); return; }
     var age = Date.now() - t;
@@ -20820,13 +20826,13 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.571">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.571">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.571">
-<link rel="stylesheet" href="/model-evidence.css?v=33.571">
+<link rel="stylesheet" href="/brain-console.css?v=33.572">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.572">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.572">
+<link rel="stylesheet" href="/model-evidence.css?v=33.572">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.571">
-<script src="/model-evidence.js?v=33.571"></script>
-<script src="/workspace-ui.js?v=33.571"></script>
+<link rel="stylesheet" href="/liquid-metal.css?v=33.572">
+<script src="/model-evidence.js?v=33.572"></script>
+<script src="/workspace-ui.js?v=33.572"></script>
 </body>
 </html>
