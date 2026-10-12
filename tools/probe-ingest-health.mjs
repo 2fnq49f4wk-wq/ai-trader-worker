@@ -25,3 +25,10 @@ try {
   const j3 = await r3.json();
   for (const mk of ["kr", "us"]) out("judge " + mk, { cycles: (j3.judgeCycles || {})[mk], reasons: Object.entries((j3.judgeReasons || {})[mk] || {}).sort((a, b) => b[1] - a[1]).slice(0, 12) });
 } catch (e) { out("judge err", String(e.message || e)); }
+// [V33.572] 최근 사이클 비용 줄(같은 문장은 한 행에 묶이고 내용은 최신으로 덮인다 — '최근 N분 전' 꼬리가 최신 시각)
+try {
+  const r4 = await fetch(base + "/api/logs?limit=600");
+  const L = await r4.json();
+  const rows = (Array.isArray(L) ? L : []).filter((x) => /\[EVAL-COST\]|Done: tried=/.test(String(x.message || ""))).slice(0, 12);
+  for (const x of rows) out("cycle", { ts: new Date(Number(x.ts)).toISOString().slice(11, 16), msg: String(x.message).replace(/\s+/g, " ").slice(0, 420) });
+} catch (e) { out("cycle err", String(e.message || e)); }
