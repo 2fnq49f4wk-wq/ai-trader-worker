@@ -57,8 +57,12 @@ for (const p of ["/api/kr-halt", "/api/earnings", "/api/chart?symbol=AAPL", "/ap
 }
 // [V33.561] 금융 지표 — 갱신을 한 번 걸고(공식 원천) 값·기준일·원천을 찍는다
 try {
-  await fetch(BASE + "/api/macro/run", { method: "POST" }).then((r) => r.text()).catch(() => null);
-  const { j } = await get("/api/macro");
+  // [V33.562] 상태변경 POST 는 출처/학습키가 있어야 통과한다(mutationGuard) — 키 없이 보내면 403 이라 갱신이 안 걸렸다
+  const _rh = process.env.TRAIN_KEY ? { "x-train-key": process.env.TRAIN_KEY } : {};
+  const _rr = await fetch(BASE + "/api/macro/run", { method: "POST", headers: _rh }).then(async (r) => ({ s: r.status, t: (await r.text()).slice(0, 300) })).catch((e) => ({ s: 0, t: String(e) }));
+  out("macro run", _rr);
+  try { const lg = await get("/api/logs?limit=200"); const L = (lg.j && (lg.j.logs || lg.j.rows || lg.j)) || []; for (const x of (Array.isArray(L) ? L : []).filter((x) => /거시/.test(String(x.msg || x.message || ""))).slice(0, 6)) out("macro log", { ts: x.ts, lv: x.level, msg: String(x.msg || x.message).slice(0, 200) }); } catch (e) {}
+  const { j } = await get("/api/macro?ts=" + Date.now());
   for (const mk of ["us", "kr"]) for (const [k, v] of Object.entries((j && j[mk]) || {})) {
     if (k.startsWith("_")) continue;
     out("macro " + mk + "." + k, { value: v.value, asOf: v.asOf, obs: v.obsDate || null, released: v.released || null, src: (v.source || "").slice(0, 40), fetchedAgoH: v.fetchedAt ? +((Date.now() - v.fetchedAt) / 3600000).toFixed(1) : null });

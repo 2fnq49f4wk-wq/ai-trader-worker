@@ -12,6 +12,19 @@
 
 ## Current handoff
 
+- V33.562 (10/12) ★오른쪽 사이드바 · 두뇌관측을 지금 구조에 맞춤★(사용자: "우리 업데이트에 맞게 전부 최신화 · UI 문제 전부 수정")
+  - 문제: ① OMNI-Q 가 화면 어디에도 없었다 — V33.558 부터 '잠정 발언' 으로 실제 신규진입을 좁히는데 지도는 OMNI 칸을 "섀도우 · 매매엔 안 씀" 으로만 적음.
+    ② 퇴역 4종(9/23)이 사이드바·대시보드에 남아 있었다 — 서버가 칸을 안 보내니 DNN 은 늘 '억제', FLOW·XALPHA·STACK 은 설명문만 떠 살아 있는 듯 보였다(+'기존표본 소급' 행).
+    ③ 한눈 요약의 결합기가 'LIN' 회색 배지(STACK 퇴역 뒤 늘 IC 가중인데 꺼진 것처럼 읽힘). ④ 지도 배너가 3주 전 퇴역 공지.
+  - 서버: omniqView/omniqViewAll — 상태(speak·prov·shadow)는 매매 경로와 ★같은 술어★(omniqSpeakOf·omniqProvOf) · 관문 ①②③ · 적합 진단 · 낡음(5일).
+    점수표는 D1 안에서 json_remove 로 빼고 읽는다. /api/ai-mode(alt.omniQ) · nn-viz overview(omniQ) · OMNI 탭(omniVizData.omniQ) · /api/omni-status(view).
+  - 화면: window.LUX_omq(공용 글) → 사이드바 한눈 'OMNI-Q 美/韓' · 사이드바 'OMNI-Q 순위모델' 섹션 · 지도 02b 칸(OMNI-Q 노드 · 상태색) ·
+    지도 칩/배너/OMNI-Q 카드 · OMNI 탭 상단 카드 · 대시보드 AI 패널. 퇴역 행 삭제 · 결합기 'IC 가중'.
+  - 게이트 check-omni-q.mjs 에 화면 요약·배선·퇴역 행 부재 7개 추가.
+  - 운영 확인(ui-probe verify run 38186919430 · 10/12 00:09Z): OMNI-Q 미·한 모두 5일·20일 ★잠정 발언★(① t 6.85/17.6 · ② 4/4 구간 +) — 화면이 이제 그렇게 말한다.
+    같은 실행에서 금융 지표 점검 실패(공식 값 4/9): probe 의 POST /api/macro/run 이 학습키 없이 나가 mutationGuard 에 막혔다(갱신이 안 걸림).
+    → probe 가 TRAIN_KEY 헤더를 싣고 응답·'거시' 로그를 찍도록 고침(ui-probe.yml verify 단계에 키 전달). 크론은 macro_fred_at 6시간 가드로 따로 돈다.
+
 - V33.561 (10/12) ★금융 지표 — 날짜가 안 바뀌던 문제★(사용자: "금융 지표 날짜 업데이트를 안 한다 · 최신 데이터·정확한 수치·날짜")
   - 원인: 화면 표가 5월 정적 값(클라이언트 상수) + 서버는 ^IRX 대용 금리만 갱신 → CPI·실업률 등이 몇 달째 같은 '기준일'.
   - 고침(서버): runFredMacroUpdate(6시간마다 · macro_fred_at) — 미국은 FRED 공식 CSV(키 없음):

@@ -89,6 +89,23 @@ cost_f = (np.sum(nocost_f) - np.sum(full)); cost_b = (np.sum(nocost_b) - np.sum(
 print(json.dumps({"null": [b0, g10, g20], "sig": [b1, g11, g21],
                   "g3good": q.gate3(good, C, yr, dk), "g3bad": q.gate3(bad, C, yr, dk), "g3few": q.gate3(few, C, yr, dk), "costF": cost_f, "costB": cost_b, "de": de_chk}))
 `;
+// ── [V33.562] 화면 요약(omniqView): 상태는 매매 경로와 같은 술어 · 점수표는 싣지 않는다 · 화면 세 곳이 그 글을 쓴다 ──
+{
+  const gProv = { g1: { ok: true, t: 7.2, mu: 0.531, lb: 0.52 }, g2: { ok: true, folds: [0.01, 0.02, 0.005], pos: 3, need: 3 }, g3: { days: 2, mu: 0.6, ok: false }, fit: { kind: "정상 범위", inMu: 0.55, outMu: 0.53, gap: 0.02 } };
+  const gWeak = { g1: { ok: true, t: 3.1 }, g2: { ok: true, folds: [0.01, -0.01, 0.02] }, g3: { days: 0, ok: false } };
+  const qv = M.omniqView({ day: "2026-10-09", trainedAt: now - 3600000, n: 500, scores: { A: 0.1 }, heads: { r20: { A: 0.3 } }, speak: false, gate: gProv, gate20: gWeak, speak20: false }, now);
+  chk(qv.state === "prov" && qv.state20 === "shadow" && qv.fresh === true, "omniqView: 잠정 발언/섀도우 = omniqProvOf 와 같은 판정", JSON.stringify([qv.state, qv.state20]));
+  chk(qv.scores === undefined && qv.heads === undefined && qv.gate.fit.kind === "정상 범위" && qv.gate.g1.t === 7.2, "omniqView: 점수표 없음 · 관문/적합 진단 실림");
+  const qs = M.omniqView({ day: "x", trainedAt: now, speak: true, gate: G(true, true, false) }, now);
+  chk(qs.state === "shadow", "omniqView: speak 표시가 있어도 ③ 미통과면 발언 아님(워커가 다시 판정)");
+  const qOld = M.omniqView({ day: "x", trainedAt: now - 6 * 86400000, gate: gProv }, now);
+  chk(qOld.fresh === false, "omniqView: 5일 넘은 점수는 낡음 표시(매매 경로도 막지 않는다)");
+  chk(/_alt\.omniQ = await omniqViewAll/.test(S) && /_ov\.omniQ = await omniqViewAll/.test(S) && /omniQ: await omniqViewAll\(DB\)/.test(S), "omniqViewAll 배선: 사이드바(ai-mode) · 지도(overview) · OMNI 탭");
+  const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  chk(/window\.LUX_omq = /.test(H) && /omqNode\(d\.omniQ\)/.test(H) && /LUX_omq\.brief\(d\.omniQ\)/.test(H) && /sec\('OMNI-Q 순위모델'/.test(H) && /LUX_omq\.card\(d\.omniQ\)/.test(H),
+      "화면: 한눈 요약 · 지도 칸 · 사이드바 섹션 · OMNI 탭 카드가 OMNI-Q 를 그린다");
+  chk(!/arow\('flow'|arow\('xalpha'|arow\('stack'|mrow\('dnn'|am\('flow'|\['기존표본 소급'/.test(H), "화면: 퇴역 4종(DNN·FLOW·XALPHA·STACK) 행이 사이드바·대시보드에 남지 않는다");
+}
 let J = null;
 try { J = JSON.parse(execFileSync("python3", ["-c", py], { encoding: "utf8" }).trim().split("\n").pop()); }
 catch (e) { chk(false, "파이썬 실행", String(e).slice(0, 300)); }

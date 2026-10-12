@@ -474,7 +474,8 @@ try {
      ★두 패널이 같은 입력을 다르게 해석하는 것★ 이 이 저장소의 반복 사고라 계약으로 묶는다. */
   //   범위는 arow 선언부터 그 다음 선언(bfTxt)까지 — 처음엔 첫 `return [ico(` 까지로 잡았는데
   //   arow 는 맨 앞에 조기반환이 하나 있어 본문을 통째로 놓쳤다(검사가 헛돌았다).
-  const railBody = (hv.match(/var arow = function[\s\S]*?var bfTxt/) || [""])[0];
+  //   [V33.562] bfTxt(소급생성 · 퇴역)가 사라져 끝 표식을 다음 선언(cmList)으로 옮겼다.
+  const railBody = (hv.match(/var arow = function[\s\S]*?var cmList/) || [""])[0];
   if (/o\.staleVer != null/.test(railBody)) console.log("  ok   사이드바가 판 불일치를 '표본수집' 이 아니라 판 불일치로 적는다");
   else { nbad++; console.error("  FAIL 사이드바가 판 불일치를 표본수집으로 뭉갠다 — 구조패널과 다른 말을 한다"); }
   if (/o\.samples >= o\.minN/.test(railBody)) console.log("  ok   사이드바가 '문턱 충족인데 미학습' 을 수집 중이라 적지 않는다");

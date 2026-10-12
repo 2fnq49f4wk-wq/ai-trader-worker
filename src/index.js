@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.561";
+const _BUILD_VER = "V33.562";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13009,6 +13009,7 @@ async function omniVizData(DB) {
      그리고 칸 이름은 ★리터럴★ 로 적는다 — check-viz-fields 가 "화면이 읽는 칸을 서버가
      채우는가" 를 이 리터럴에서 읽기 때문이다(out.x = … 로 흩어 놓으면 검사가 눈이 먼다). */
   const out = { kind: "omni", ts: Date.now(), ver: OMNI_VER,
+    omniQ: await omniqViewAll(DB),   // [V33.562] OMNI 탭의 OMNI-Q 카드(발언 상태·관문·적합)
     feats: OMNI_FEATS, horizons: OMNI_HORIZONS, setups: OMNI_SETUPS,
     inputDim: OMNI_MODEL_FEATS.length, base: OMNI_CONSTS.base,
     trained: !!(m && _num(m.nTrees, 0) > 0),
@@ -13121,6 +13122,38 @@ function omniqProvOf(g) {
   if (d >= OMNIQ_PROV.revokeDays && g3.mu != null && _num(g3.mu, 1) < OMNIQ_PROV.revokeMu) return false;   // 실시간 평균 < 50% → 회수
   if (d >= OMNIQ_PROV.finalDays && g3.ok !== true) return false;                                         // 30일 정식 시험 실패 → 회수
   return true;
+}
+/* [V33.562] ★화면용 OMNI-Q 요약★ — 사이드바·두뇌관측이 "발언 / 잠정 발언 / 섀도우" 와 관문 ①②③·적합 진단을 같은 자로 읽는다.
+   상태는 매매 경로(omniqBlocks)와 ★같은 술어★(omniqSpeakOf · omniqProvOf)로만 정한다 — 화면이 따로 판정하지 않는다.
+   점수표(scores · heads)는 싣지 않는다(종목 수백 개 · 화면엔 필요 없다). */
+function _omqGateView(g) {
+  if (!g || typeof g !== "object") return null;
+  const g1 = g.g1 || {}, g2 = g.g2 || {}, g3 = g.g3 || {}, f = g.fit || null;
+  const r4 = function (x) { return (typeof x === "number" && isFinite(x)) ? +x.toFixed(4) : null; };
+  return {
+    g1: { ok: g1.ok === true, mu: r4(g1.mu), lb: r4(g1.lb), t: r4(g1.t), needT: _num(g1.needT, null) },
+    g2: { ok: g2.ok === true, pos: _num(g2.pos, null), need: _num(g2.need, null),
+          folds: Array.isArray(g2.folds) ? g2.folds.slice(0, 12).map(r4) : null },
+    g3: { ok: g3.ok === true, days: _num(g3.days, 0), mu: r4(g3.mu), lb: r4(g3.lb), needDays: _num(g3.needDays, OMNIQ_PROV.finalDays) },
+    fit: f ? { kind: f.kind || null, inMu: r4(f.inMu), outMu: r4(f.outMu), gap: r4(f.gap) } : null
+  };
+}
+function omniqView(q, nowMs) {
+  if (!q || typeof q !== "object") return null;
+  const now = _num(nowMs, Date.now());
+  const st = function (speak, g) { return (speak === true && omniqSpeakOf(g)) ? "speak" : (omniqProvOf(g) ? "prov" : "shadow"); };
+  return { day: q.day || null, trainedAt: _num(q.trainedAt, null), n: _num(q.n, null), nFeat: _num(q.nFeat, null),
+           learner: q.learner || "lgb", fresh: (now - _num(q.trainedAt, 0)) <= OMNIQ.maxAgeMs,
+           state: st(q.speak, q.gate), state20: q.gate20 ? st(q.speak20, q.gate20) : null,
+           gate: _omqGateView(q.gate), gate20: _omqGateView(q.gate20) };
+}
+async function omniqViewAll(DB) {
+  const out = {};
+  try {
+    const rs = await DB.prepare("SELECT k, CASE WHEN json_valid(v) THEN json_remove(v, '$.scores', '$.heads', '$.lab') ELSE v END AS v FROM state WHERE k IN ('omniq:us', 'omniq:kr')").all();
+    for (const r of ((rs && rs.results) || [])) { try { out[String(r.k).slice(6)] = omniqView(JSON.parse(r.v)); } catch (e) {} }
+  } catch (e) {}
+  return out;
 }
 function omniqBlocks(st, symbol, nowMs) {
   if (!st) return false;
@@ -28053,6 +28086,7 @@ async function handleRequest(request, env, ctx, _inner) {
                [V33.422] flow·xalpha·stack 칸 삭제 — 퇴역. 소급생성 진행률도 같이 사라진다. */
             roster: await buildRoster(env.DB)
           };
+          try { _alt.omniQ = await omniqViewAll(env.DB); } catch (e) {}   // [V33.562] 사이드바 OMNI-Q 줄
           // [V33.92] MEMO — ml_samples 를 원형으로 압축해 쓰므로 표본 풀은 스윙과 같다.
           try {
             const _mo = await getState(env.DB, "memo_model", null);
@@ -28666,6 +28700,7 @@ async function handleRequest(request, env, ctx, _inner) {
       /* [V33.301] ★불을 켜는 근거는 experts[]/dual[]/stack 이 아니라 명부다.★
          이 세 갈래는 각자 다른 필드(voting·tier·trained)를 실었고, 화면은 그것을 다시
          해석했다 — 사이드바와 갈라진 자리가 정확히 거기다. 두 화면이 같은 배열을 읽는다. */
+      try { _ov.omniQ = await omniqViewAll(env.DB); } catch (e) { _ov.omniQ = null; }   // [V33.562] 지도의 OMNI-Q 칸
       _ov.roster = await buildRoster(env.DB);
       _ov.tally = rosterTally(_ov.roster);
       _ov.votingCount = _ov.tally.live;
@@ -29471,7 +29506,8 @@ async function handleRequest(request, env, ctx, _inner) {
             omniQ[_m] = { day: q.day, trainedAt: q.trainedAt, n: q.n, nFeat: q.nFeat, h: q.h, gate: q.gate, speak: q.speak, top10: _top,
                           learner: q.learner || "lgb", heads: q.heads ? Object.keys(q.heads) : [], lab: q.lab || null,
                           gate20: q.gate20 || null, speak20: !!q.speak20,
-                          prov: !q.speak && omniqProvOf(q.gate), prov20: !q.speak20 && omniqProvOf(q.gate20) };   // [V33.558] 잠정 발언
+                          prov: !q.speak && omniqProvOf(q.gate), prov20: !q.speak20 && omniqProvOf(q.gate20),   // [V33.558] 잠정 발언
+                          view: omniqView(q) };   // [V33.562] 화면용 요약(상태·관문·적합)
           }
         } catch (e) {}
       }
@@ -54859,7 +54895,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { getStates, _STATE_LITE, getADX, _getADXCore, getHolidaySet, _indexFreshOpen, isMarketTradingDay, KR_LUNAR_HOLIDAYS, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
