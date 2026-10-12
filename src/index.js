@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.573";
+const _BUILD_VER = "V33.574";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -22898,6 +22898,10 @@ async function runTradingCycle(env) {
       ? " disabled=[" + cfg.disabledSignals.join(",") + "]" : "";
     await log(DB, "INFO", null, "=== Cycle start (V9.0) strats=[" + enabledStrats + "] conf=" + (cfg.requireConfluence ? "ON" : "OFF") + disabledSigNote + " ===");
     const cycleStartedAt = Date.now();
+    /* [V33.574] ★사이클 단계 시각★ — 한국 사이클 64~82s 중 가격 프리페치(~10s)+평가(~13s) 외 40~50s 가 계측 밖이었다.
+       단계 경계마다 '사이클 시작부터 몇 초' 를 적어 Done 줄에 붙인다(ph=준비→시장별 프리페치·평가시작·평가끝·시장끝→후처리). 판단 불변. */
+    const __ph = [];
+    const __phMark = function (k) { try { if (__ph.length < 24) __ph.push(k + ":" + ((Date.now() - cycleStartedAt) / 1000).toFixed(1)); } catch (e) {} };
     // [FIX V8.8] 엔진 heartbeat — 사이클 시작 직후 기록. 사이클이 중간에 타임아웃/중단돼도
     //   "엔진이 최근 돌긴 했다"를 추적해 last_tick만으로 '지연'을 오판하지 않도록 한다.
     try { await setState(DB, "last_heartbeat", Date.now()); } catch (e) {}
@@ -23169,6 +23173,7 @@ async function runTradingCycle(env) {
     //   락 TTL을 한 번 갱신 → 이 워커가 여전히 소유 중이면 만료 임박을 리셋해 탈취를 막는다.
     //   (탈취됐다면 refresh는 무동작이고 아래 ownsCycleLock에서 정상 차단된다.)
     await refreshCycleLock(DB, cfg.cycleLockTTL || 180000, myLockPid);
+    __phMark("prep");   // [V33.574] 준비단계(FX·감성·애널리스트·시장맥락) 끝
 
     for (const market of marketsForQuotes) {
       const mcfg = getMarketCfg(cfg, market);  // [V8.2] 시장별 독립 룰
@@ -23521,6 +23526,7 @@ async function runTradingCycle(env) {
       //   (3) 평가 대상     → 보유 종목(항상) + 일봉 캐시가 살아있는 종목.
       //                       일봉이 아직 없는 종목은 가격만 보이고 거래 판단은 대기.
       const prefetchStart = Date.now();
+      __phMark(market + ".pf");   // [V33.574]
 
       // --- (1) 전 종목 가격 배치 갱신 ---
       //   v7 이 차단된 환경 대비: v8 폴백은 매 사이클 일부만(라운드로빈) 처리하고
@@ -24380,6 +24386,7 @@ async function runTradingCycle(env) {
         }
       } catch (e) {}
       evalStartedAt = Date.now();   // [V12.123] 모델 로딩이 끝난 실제 평가 시작 시점으로 예산 기준을 이동
+      __phMark(market + ".ev");   // [V33.574] 프리페치·모델 로딩 끝 = 평가 시작
       // [V32.3] 프리페치(시세배치·일봉 일괄로드)와 모델 로딩이 D1 과부하 시 길어질 수 있어,
       //   평가 루프 진입 직전 락 TTL을 한 번 더 갱신 → 여전히 소유 중이면 만료 임박을 리셋해 탈취 방지.
       try { await refreshCycleLock(DB, cfg.cycleLockTTL || 180000, myLockPid); } catch (e) {}
@@ -26471,6 +26478,7 @@ async function runTradingCycle(env) {
              : (__funCand > 0 && __funBuy === 0 ? "  ★후보는 있는데 체결 0 — 하류(위원회·사전검사·예산)에서 끊겼다★" : "")) +
             (__aiPickPool ? " · AI픽풀 " + __aiPickPool.size + "종목" : " · AI픽풀 없음"));
       } catch (e) {}
+      __phMark(market + ".ee");   // [V33.574] 평가 루프 끝
       // [V33.172] ★"어디에 시간이 갔나"를 매 사이클 한 줄로 남긴다★
       //   평가가 450종목 → 34종목으로 주저앉은 원인을 찾는 데 3주치 커밋을 뒤져야 했다.
       //   원인은 평가 루프 안의 부가조회였는데, 그게 얼마를 먹는지 아무도 재고 있지 않았다.
@@ -26565,6 +26573,7 @@ async function runTradingCycle(env) {
         await log(DB, "INFO", null, "STATE[" + market + "] " + stateSamples.join(" | "));
       }
 
+      __phMark(market + ".end");   // [V33.574] 시장 후처리(픽 저장·심사 집계 등) 끝
       // [V8.5] 시장 처리 완료 — 다음 시장 처리 전 락 TTL 갱신 (stale 진입 방지)
       await refreshCycleLock(DB, cfg.cycleLockTTL || 180000, myLockPid);
     }
@@ -26630,7 +26639,7 @@ async function runTradingCycle(env) {
         " obs=" + __stinObs + " aiEntry=" + aiScalpUsed + "]";
     } catch (e) {}
     if (__cronCnt) { __cronCnt.sc += scalpScanUsed; __cronCnt.mb += minuteFetchUsed; __cronCnt.ai += aiPrimaryUsed + aiScalpUsed; }
-    await log(DB, "INFO", null, "Done: tried=" + tried + " skip=" + skipped + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail + " minBars=" + minuteFetchUsed + " scalp[elig=" + scalpEligible + " scan=" + scalpScanUsed + " sig=" + scalpSig + " gates=" + JSON.stringify(__scalpDiag) + "]" + _scDiagTxt + " cycleMs=" + cycleMs);
+    await log(DB, "INFO", null, "Done: tried=" + tried + " skip=" + skipped + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail + " minBars=" + minuteFetchUsed + " scalp[elig=" + scalpEligible + " scan=" + scalpScanUsed + " sig=" + scalpSig + " gates=" + JSON.stringify(__scalpDiag) + "]" + _scDiagTxt + " cycleMs=" + cycleMs + (__ph.length ? " ph=" + __ph.join(",") : ""));
     // [V32.1] 로그 보존 확대 — 종전 500행 상한은 매분 쏟아지는 INFO에 밀려 ERROR/WARN이
     //   금세 사라져 "에러가 안 보인다"던 문제. 이제 (1)전체 최근 1500행 유지 + (2)그와 별개로
     //   ERROR/WARN은 최근 1000행까지 추가 보존 → 오류 이력이 훨씬 오래 남는다.

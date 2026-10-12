@@ -47,5 +47,7 @@ chk(/if \(Date\.now\(\) - __lockRefAt >= 30000\)/.test(S) && !/if \(evalProcesse
   chk(w2 === 30 && calls.run === 30, "batch 실패 시 그 묶음만 하나씩 다시 써서 잃지 않는다", JSON.stringify({ w2, r: calls.run }));
   chk(/__dailyWrites\.push\(\["daily:" \+ symbol, toCache\]\);/.test(S) && /if \(__dailyWrites\.length\) \{ try \{ await setStatesBatch\(DB, __dailyWrites, 25\);/.test(S), "일봉 캐시 쓰기는 루프 뒤 묶음");
 }
+chk(["prep", ".pf", ".ev", ".ee", ".end"].every((k) => S.includes('__phMark(' + (k === "prep" ? '"prep"' : 'market + "' + k + '"') + ')')) && /cycleMs=" \+ cycleMs \+ \(__ph\.length \? " ph=" \+ __ph\.join\(","\) : ""\)/.test(S),
+    "사이클 단계 시각(준비·시장별 프리페치·평가 시작/끝·시장 끝)이 Done 줄에 붙는다");
 if (fails) { console.log("\n✗ 원천 건강표 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 원천 건강표 통과");
