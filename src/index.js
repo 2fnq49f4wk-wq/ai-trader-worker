@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.563";
+const _BUILD_VER = "V33.564";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -3131,6 +3131,43 @@ const ENRICH = {
        그래도 루프가 그 건에 붙잡히지 않는 것이 요점이다. */
   perCallMs: 2000
 };
+
+/* ══ [V33.564] ★한국 단타 분봉 — 선행 병렬 조회★ ═══════════════════════════════════════════════
+   예약 점검(10/12 01:30Z · ui-probe usage run 38192153191) [EVAL-COST]: KR 사이클 77~166s 중
+     D1 6회 1.5s(한 번 270회 89.6s 이상치) vs ★외부 45~82회 9~27s · 부가조회 지갑 16s 매번 소진(scalp 16s)★.
+   → 큰 쪽은 외부 조회다. 그중 단타 분봉(네이버 api.stock.naver.com)은 평가 루프 안에서 종목마다 ★직렬★ 로 기다린다.
+   평가 순서(orderedEval)의 앞쪽 max 종목 분봉을 루프 시작과 함께 conc 개씩 겹쳐 받아 두고, 루프는 그 결과를 꺼내 쓴다.
+   ★판단 불변★: 같은 함수·같은 인자·같은 데이터. 받은 지 maxAgeMs 를 넘긴 것은 버리고 그 자리에서 다시 받는다(신선도 그대로).
+   연결 수: Workers 는 호출당 동시 연결 6개 — 루프의 다른 조회 몫을 남기려 4개만 쓴다. 미국(야후)은 429 위험이라 넣지 않는다. */
+const MBPRE = { enabled: true, max: 80, conc: 4, maxAgeMs: 60000 };
+function mbPrefetchStart(symbols, fetcher, opts) {
+  const o = Object.assign({}, MBPRE, opts || {});
+  const map = new Map(), list = (symbols || []).slice(0, o.max);
+  const defs = new Map();
+  for (const s0 of list) {
+    let res, rej; const p = new Promise(function (a, b) { res = a; rej = b; });
+    p.catch(function () {});   // 안 쓰고 끝난 실패가 처리 안 된 거부로 남지 않게(꺼내 쓰는 쪽은 원래 약속을 그대로 받는다)
+    defs.set(s0, { res: res, rej: rej }); map.set(s0, { p: p, t: 0 });
+  }
+  let qi = 0;
+  const worker = async function () {
+    while (qi < list.length) {
+      const s0 = list[qi++], d = defs.get(s0), e0 = map.get(s0);
+      try { const v = await fetcher(s0); e0.t = Date.now(); d.res(v); } catch (e) { e0.t = Date.now(); d.rej(e); }
+    }
+  };
+  for (let w = 0; w < Math.max(1, o.conc); w++) worker();   // 기다리지 않는다 — 평가 루프와 겹쳐 돈다
+  return {
+    n: list.length, hit: 0, stale: 0,
+    // 꺼내기: 있으면(아직 받는 중이어도) 그 약속 · 받은 지 오래면 없음(호출부가 새로 받는다)
+    take: function (sym) {
+      const e0 = map.get(sym); if (!e0) return null;
+      map.delete(sym);
+      if (e0.t && Date.now() - e0.t > o.maxAgeMs) { this.stale++; return null; }
+      this.hit++; return e0.p;
+    }
+  };
+}
 
 const LIVETRIG = {
   minScore: 4,   // 승격 자격 — '신고가/MA20회복/급등4%' 급만. +2 짜리 약신호는 순환에 맡긴다
@@ -24228,6 +24265,14 @@ async function runTradingCycle(env) {
       //   평가 루프 진입 직전 락 TTL을 한 번 더 갱신 → 여전히 소유 중이면 만료 임박을 리셋해 탈취 방지.
       try { await refreshCycleLock(DB, cfg.cycleLockTTL || 180000, myLockPid); } catch (e) {}
       _enrich.budget = Math.max(0, Math.round(evalBudgetMs * ENRICH.share));   // [V33.172] 지갑 확정
+      /* [V33.564] 한국 단타 분봉 선행 병렬 조회(위 MBPRE 주석) — 단타가 분봉을 볼 수 있는 상태(AI 단타 가동 또는 표본 관측)일 때만 */
+      let __mbPre = null;
+      try {
+        if (MBPRE.enabled && market === "kr" && (__scalpLive || __stinPend) && isMarketOpen("kr") && fetchBudgetLeft() > MBPRE.max + 10) {
+          __mbPre = mbPrefetchStart(orderedEval.map(function (it) { return it && it.symbol; }).filter(Boolean),
+            function (sym) { return fetchMinuteBars(sym, { interval: SCALP_BAR_MIN + "m", range: "2d" }); });
+        }
+      } catch (e) { __mbPre = null; }
       for (const item of orderedEval) {
         const _evalElapsed = Date.now() - evalStartedAt;
         if (_evalElapsed > evalBudgetMs || (Date.now() - cycleStartedAt > hardCapMs && _evalElapsed > evalMinMs)) {
@@ -24747,7 +24792,10 @@ async function runTradingCycle(env) {
                 //   지표(RSI·MACD·볼린저·ADX)는 연속 시계열만 있으면 되므로 전일 봉이 붙는 순간
                 //   개장 첫 봉부터 산출이 가능해진다. 단, 규칙엔진이 쓰는 세션값(VWAP·dayHigh/Low)은
                 //   오늘 봉 기준이어야 하므로 fetchMinuteBars 가 그 필드들을 오늘분으로 유지한다.
-                const _scalpMb = await _enrichRun("scalp", function () { return fetchMinuteBars(symbol, { interval: SCALP_BAR_MIN + "m", range: "2d" }); });   // [V33.172] 지갑 결제
+                const _scalpMb = await _enrichRun("scalp", function () {   // [V33.172] 지갑 결제
+                  const _pre = __mbPre ? __mbPre.take(symbol) : null;   // [V33.564] 선행 조회분(같은 함수·같은 인자 · 60초 넘으면 새로)
+                  return _pre || fetchMinuteBars(symbol, { interval: SCALP_BAR_MIN + "m", range: "2d" });
+                });
                 // [V33.40] ★장중 단타 학습표본 관측★ 이미 받아온 분봉을 그대로 재사용하므로 추가
                 //   fetch 가 0이다. 피처는 라이브 판정과 같은 mlBuildFeatures 로 만들어 학습/추론
                 //   정합을 유지한다. 저장은 전량 R2(대기 버퍼도 R2) — D1 은 건드리지 않는다.
@@ -26335,6 +26383,7 @@ async function runTradingCycle(env) {
             ((_enrich.seqBuilt || _enrich.seqSkip) ? " · SEQ " + _enrich.seqBuilt + "종목 " +
               Math.round(_enrich.seqMs) + "ms" + (_enrich.seqSkip ? "(기권 " + _enrich.seqSkip + ")" : "") : "") +
             (_pp.length ? " — " + _pp.join(", ") : "") +
+            (__mbPre ? " · 분봉선행 " + __mbPre.hit + "/" + __mbPre.n + (__mbPre.stale ? "(낡아 재조회 " + __mbPre.stale + ")" : "") : "") +   // [V33.564]
             (_enrich.slow.length ? " · 느린종목 " + _enrich.slow.join(", ") : ""));
         }
       } catch (e) {}
@@ -54979,7 +55028,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { getStates, _STATE_LITE, getADX, _getADXCore, getHolidaySet, _indexFreshOpen, isMarketTradingDay, KR_LUNAR_HOLIDAYS, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
