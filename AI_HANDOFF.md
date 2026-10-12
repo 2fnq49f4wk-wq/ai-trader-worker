@@ -12,6 +12,13 @@
 
 ## Current handoff
 
+- V33.573 (10/12 04:30Z) ★V33.571 효과 실측 + 일봉 캐시 쓰기 묶음★
+  - 실측(verify run · probe-ingest-health 'cycle' 줄 04:15~04:27): D1 253 → ★162~186회★(누적 80s → 44~65s) · 종목당 36~42ms → ★27~31ms★ ·
+    상위에서 'SELECT state [daily] ×75' 와 락 갱신 ×24 가 사라졌다. cycleMs 는 64~82s(외부 대기가 들쭉날쭉: 04:25 외부 130회 121s).
+  - 남은 큰 것: 캐시 만료 회차의 'INSERT state [daily] ×75 · 19.6s' → setStatesBatch(25개씩 D1 batch · 실패 묶음만 하나씩 다시) 로 접음.
+    그 밖 상위는 작다(SELECT trades ×14 3.5s · logs ×8~12 · quote ×5). 게이트 check-ingest-health 3개.
+  - 같은 실측: 한국 24h 110사이클 차단 사유 OMNIQ_LOW 1499 · CTX_NEG 8(데이터 결측 사유 없음) · 야후 v10/v7 crumb 자동 첨부 운영 정상.
+
 - V33.572 (10/12) ★"자동 운용 중 (지연)" 이 접속 직후 잠깐 뜨던 것 — 표시만 지연, 서버는 정상★
   - 사용자: "접속하면 지연이 뜨다가 다른 게 로딩되면 라이브로 바뀐다 · 표시만인가 진짜 지연인가".
   - 원인: 첫 화면을 빨리 그리려고 localStorage 저장본(bootBundle)으로 먼저 _apply 한다 → 저장본의 lastTick(마지막 방문 때 값)이 5분 문턱에 걸려

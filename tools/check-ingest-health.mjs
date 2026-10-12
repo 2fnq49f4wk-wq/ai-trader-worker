@@ -32,5 +32,20 @@ chk(/const __ioMine = __ioMeter;/.test(S) && !/\(__ioMeter \? " · IO\(사이클
 chk(/let cached = __dailyOf\(symbol\);/.test(S) && /for \(let j = 0; j < _dk\.length; j \+= 90\) Object\.assign\(__dailyPre, await getStates\(DB, _dk\.slice\(j, j \+ 90\)\)\);/.test(S) &&
     !/let cached = await getState\(DB, "daily:" \+ symbol, null\);/.test(S), "일봉 캐시는 사이클당 묶음 읽기(종목별 getState 없음 · 바인드 100 상한 안)");
 chk(/if \(Date\.now\(\) - __lockRefAt >= 30000\)/.test(S) && !/if \(evalProcessed % 20 === 0\) \{\s*try \{ await refreshCycleLock/.test(S), "평가 루프 락 갱신은 30초 간격(TTL 180s 보다 충분히 앞선다)");
+// [V33.573] 묶음 쓰기 — 같은 SQL · 25개씩 한 batch · 실패한 묶음만 하나씩 다시(종전 동작)
+{
+  const calls = { batch: 0, run: 0, rows: [] };
+  const mk = (failBatch) => ({
+    prepare: (q) => ({ bind: (...a) => ({ q, a, run: async () => { calls.run++; calls.rows.push(a[0]); } }) }),
+    batch: async (st) => { calls.batch++; if (failBatch) throw new Error("too big"); for (const x of st) calls.rows.push(x.a[0]); }
+  });
+  const E = Array.from({ length: 60 }, (_, i) => ["daily:S" + i, { c: [i] }]);
+  const w = await M.setStatesBatch(mk(false), E, 25);
+  chk(w === 60 && calls.batch === 3 && calls.run === 0 && calls.rows.length === 60, "60건 → 25개씩 3번 batch", JSON.stringify({ w, b: calls.batch, r: calls.run }));
+  calls.batch = 0; calls.run = 0; calls.rows = [];
+  const w2 = await M.setStatesBatch(mk(true), E.slice(0, 30), 25);
+  chk(w2 === 30 && calls.run === 30, "batch 실패 시 그 묶음만 하나씩 다시 써서 잃지 않는다", JSON.stringify({ w2, r: calls.run }));
+  chk(/__dailyWrites\.push\(\["daily:" \+ symbol, toCache\]\);/.test(S) && /if \(__dailyWrites\.length\) \{ try \{ await setStatesBatch\(DB, __dailyWrites, 25\);/.test(S), "일봉 캐시 쓰기는 루프 뒤 묶음");
+}
 if (fails) { console.log("\n✗ 원천 건강표 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 원천 건강표 통과");
