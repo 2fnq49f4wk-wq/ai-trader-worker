@@ -6,6 +6,77 @@
   const finite=n=>typeof n==='number'&&Number.isFinite(n);
   const value=n=>finite(n)?n:null;
   const TAU=Math.PI*2;
+  /* ══ [V33.578] ★노드 역할 설명★ — 사용자(10/12): "두뇌관측에서 노드 역할이 뭔지 더 구체적으로 · 전체 모델 전부다".
+     종전 관측창은 노드를 고르면 "이름 — 가중치 강도 0.42" 만 말했다. 이제 ★무엇을 받고 · 무엇을 하며 · 높고 낮음이 무슨 뜻이고 ·
+     매매 판단에 어떻게 이어지는지★ 를 말한다. 수치는 지어내지 않는다 — 설명은 그 칸의 '종류'(입력 피처 · 은닉 뉴런 · 출력 · 나무 · 시점)와
+     피처 이름의 정의에서만 나온다. 서버가 준 역할(FEAT_ROLES)이 있으면 그것을 먼저 쓴다. */
+  const FEAT_TXT={
+    rsi14:'최근 14일 상승폭 대 하락폭(0~100). 70↑ 과열 — 되돌림 위험 · 30↓ 과매도 — 반등 후보',
+    maGapPct:'현재가가 20일 이동평균에서 몇 % 떨어져 있나. +면 평균 위(추세), 너무 크면 과열',
+    atrPct:'하루 평균 진폭(ATR)을 가격 대비 %로. 클수록 변동이 커 손절폭·수량이 달라진다',
+    dayPct:'오늘 등락률. 이미 많이 오른 날 추격하면 불리했다는 원장 실측과 연결된다',
+    distHighPct:'최근 고점까지 남은 거리%. 0 근처면 신고가 돌파 직전',
+    ma200Gap:'200일선 대비 위치 — 장기 추세의 위/아래', bollB:'볼린저 밴드 안 위치(0=하단 · 1=상단) — 1 넘으면 과열 돌파, 0 아래면 과매도 이탈',
+    macdH:'MACD 히스토그램 — 단기·중기 추세 가속/감속', volSurge:'평소(20일 평균) 대비 오늘 거래량 배수 — 높으면 관심 집중(돌파 확인 또는 투매), 낮으면 관심 부족',
+    atrRegime:'지금 변동성이 과거 1년 중 몇 백분위인가', pos52w:'52주 최저~최고 사이 위치(0~1) — 1 근처는 신고가권(추세), 0 근처는 바닥권(반등 또는 추락 지속)', gapPct:'오늘 시가 갭%',
+    streak:'연속 상승(+)·하락(−) 일수', ret5:'최근 5일 수익률 — 크게 오른 직후는 단기 되돌림이 잦았다(원장 추격 감사), 크게 내린 직후는 반등 후보', ret20:'최근 20일(약 한 달) 수익률 — 중기 모멘텀. +면 상승 흐름, −면 하락 흐름',
+    rs20:'20일 지수 대비 상대강도(+면 지수보다 강함)', rs60:'60일 지수 대비 상대강도', obvSlope:'OBV 기울기 — 거래량이 상승 쪽에 실리나',
+    distLow20Pct:'20일 저점(지지선)까지 거리%', rangePos:'오늘 고가~저가 사이 현재 위치', upDnVolR:'상승일 거래량 ÷ 하락일 거래량 — 매집/분산',
+    bodyRatio:'캔들 몸통 비율 — 방향 확신', wickSkew:'아래꼬리 대 위꼬리 — 저가 매수세', accel:'수익률의 가속도(모멘텀이 붙나 식나)',
+    maSlope20:'20일선 기울기 — 추세 세기', disparity20:'이동평균 이격도', rsiDiverg:'가격과 RSI 엇갈림(추세 소진 신호)',
+    bbSqueeze:'볼린저 폭 수축 — 큰 움직임 직전', taUpProb:'기술지표 종합 상승확률', regBull:'시장 강세 국면이면 1', regBear:'시장 약세 국면이면 1',
+    mktUS:'미국 종목이면 1', mktKR:'한국 종목이면 1', sigWeight:'후보를 낸 신호의 기본 가중', confluence:'동시에 켜진 신호 수'
+  };
+  const PREFIX=[
+    ['m_','5분봉(단타) 피처 — 오늘 장중 최근 5분봉들의 수익·변동·거래량. 수십 분~몇 시간 지평 판단의 재료'],
+    ['s_','세션 피처 — 장 시작 후 경과·VWAP 이탈·시가 갭처럼 "오늘 장이 어떻게 흘러가나"'],
+    ['h_','60분봉 피처 — 며칠에 걸친 시간봉 추세·RSI'],
+    ['d_','일봉 피처 — 수일~1년 일봉 수익률·변동성·이동평균 괴리·52주 위치. 5·20일 지평 판단의 뼈대'],
+    ['a_','형식 알파 — Qlib Alpha158/101 류 공식 팩터(거래량 변동·비유동성·왜도·첨도·반전 등)'],
+    ['q_','횡단면 순위 — 같은 날 유니버스 안에서 이 종목이 몇 등인가(0~1). 절대값이 아니라 "남보다" 를 본다'],
+    ['p_','동료(피어) 축 — 같은 묶음 대비 초과수익·베타·상관. 시장 전체 움직임을 걷어 낸 이 종목만의 몫'],
+    ['x_','맥락 — 시장·요일·시각 같은 달력 정보'],['hz_','지평 표시 — 이 행이 몇 분/며칠 뒤를 묻는 질문인지'],['st_','매매법 표시 — 어느 진입 방식의 후보인지']
+  ];
+  function featRole(name,serverRole){
+    const nm=String(name||'');
+    const base=nm.split(' — ')[0];
+    const pf=PREFIX.find(p=>base.indexOf(p[0])===0);
+    const what=FEAT_TXT[base]||serverRole||(pf?pf[1]:'');
+    return '입력 피처 「'+base+'」 — '+(what||'모델에 들어가는 숫자 한 칸(정의는 피처 표 참조)')
+      +'. 역할: 이 숫자가 다음 층으로 들어가 판단을 민다/당긴다. 세기가 클수록 이 모델이 이 입력에 거는 무게가 크다(방향은 위·아래 둘 다 가능).';
+  }
+  function hiddenRole(label){
+    return '은닉 뉴런('+label+') — 아래 층 모든 칸의 가중합에 비선형을 씌운 "조합 감지기". 혼자서는 이름이 없고, '
+      +'예컨대 "과매도 + 거래량 급증 + 지지선 근처" 처럼 여러 입력이 ★함께★ 나타날 때 켜지도록 학습된다. 세기 = 이 뉴런이 다음 층으로 보내는 영향의 크기.';
+  }
+  function outputRole(name){
+    return '출력 「'+String(name||'').split(' — ')[0]+'」 — 앞 층 신호를 모아 낸 최종 점수(로짓). 보정(온도/베타)을 거쳐 "이 후보가 이길 확률" 이 되고, '
+      +'위원회 결합 → 진입 문턱(백분위·손익분기) → 위험 관문 순서로 실제 매수 여부에 쓰인다.';
+  }
+  const HZ_TXT={'30m':'30분 뒤','60m':'60분 뒤','1d':'다음 날','5d':'5거래일 뒤','20d':'20거래일 뒤'};
+  function omniRole(kind,name){
+    const nm=String(name||'');
+    if(kind===0) return featRole(nm);
+    if(kind===1||kind===2) return hiddenRole(nm.split(' · ')[0]||'몸통')+' OMNI 의 몸통은 모든 지평이 함께 쓰는 공용 층이다 — 단타·장타 머리가 같은 패턴 감지기를 나눠 쓴다.';
+    if(kind===3){ const hz=(nm.match(/(30m|60m|1d|5d|20d)/)||[])[1];
+      return '머리 「'+nm.split(' — ')[0]+'」 — 공용 몸통 위에서 '+(hz?HZ_TXT[hz]:'한 지평')+' 같은 날 동료 대비 이길 확률을 따로 내는 출력. '
+        +'지평마다 자기 발언 문턱을 넘어야만 쓰인다(못 넘으면 섀도우 — 성적만 잰다).'; }
+    if(kind===4) return '나무 「'+nm+'」 — 부스팅 나무 한 그루. 입력 몇 개를 "피처 ≤ 문턱?" 으로 차례로 가르고(분기), 끝의 잎 값이 점수에 더해진다. '
+      +'수백 그루의 잎 값 합이 신경망 출력과 섞여(혼합 α) 머리 점수가 된다. 분기 수가 많을수록 더 잘게 나눈 규칙이다.';
+    return nm;
+  }
+  function seqRole(layer,name,top){
+    if(layer===0) return featRole(name)+' SEQ 에선 이 칸이 시점마다(최근 L일) 한 줄씩 들어가 시간 순서가 보존된다.';
+    return '시퀀스 숨은 칸 — 셀프 어텐션이 "어느 날을 볼지" 고른 뒤 섞은 표현. '+(top?'가장 크게 받는 입력: '+top+'. ':'')
+      +'블록을 지날수록 며칠 사이의 관계(예: 눌림 뒤 반등, 거래량 선행)를 담는다.';
+  }
+  function denseRole(layers,n){
+    const last=layers.length-1;
+    if(n.l===0) return featRole(n.name);
+    if(n.l===last) return outputRole(n.name);
+    return hiddenRole(n.label||('층 '+n.l));
+  }
+  const NODE_ROLE={featRole,hiddenRole,outputRole,omniRole,seqRole,denseRole,FEAT_TXT,PREFIX};
   function project(p,c){
     const x=p.x*Math.cos(c.yaw)+p.z*Math.sin(c.yaw);
     const z=-p.x*Math.sin(c.yaw)+p.z*Math.cos(c.yaw);
@@ -415,7 +486,7 @@
   }
   function mountCore(host,config){
     const d=config.data||{},reduced=matchMedia('(prefers-reduced-motion: reduce)');
-    host.innerHTML='<section class="nerve-room"><header class="nerve-heading"><div><span class="nerve-kicker">HOLOGRAPHIC NEURAL CORE</span><h3>모든 뉴런 · 모든 가중치 · 모든 나무 분기</h3></div><span class="nerve-status">3D / ALL PARAMETERS</span></header><div class="nerve-controls"></div><div class="nerve-viewport omni-core-vp"><div class="omni-spin"><canvas tabindex="0" role="img" aria-label="OMNI 신경망과 나무 숲의 모든 파라미터를 새벽빛 선으로 그린 3D 구조"></canvas></div><div class="nerve-corner">DRAG TO ORBIT</div></div><div class="nerve-layers"></div><div class="nerve-inspector"><label>층 <select class="nerve-layer"></select></label><label>노드 <select class="nerve-node"></select></label><output aria-live="polite"></output></div><footer class="nerve-note">선 밝기 = 실제 값의 크기(신경망 |가중치| · 나무 잎 값). 유리 껍질·아크릴 띠·반사광·흐르는 빛·홍채·빛줄기는 장식이며 값이 없습니다.</footer></section>';
+    host.innerHTML='<section class="nerve-room"><header class="nerve-heading"><div><span class="nerve-kicker">HOLOGRAPHIC NEURAL CORE</span><h3>모든 뉴런 · 모든 가중치 · 모든 나무 분기</h3></div><span class="nerve-status">3D / ALL PARAMETERS</span></header><div class="nerve-controls"></div><div class="nerve-viewport omni-core-vp"><div class="omni-spin"><canvas tabindex="0" role="img" aria-label="OMNI 신경망과 나무 숲의 모든 파라미터를 새벽빛 선으로 그린 3D 구조"></canvas></div><div class="nerve-corner">DRAG TO ORBIT</div></div><div class="nerve-layers"></div><div class="nerve-inspector"><label>층 <select class="nerve-layer"></select></label><label>노드 <select class="nerve-node"></select></label><output aria-live="polite"></output></div><p class="nerve-role" aria-live="polite"></p><footer class="nerve-note">선 밝기 = 실제 값의 크기(신경망 |가중치| · 나무 잎 값). 유리 껍질·아크릴 띠·반사광·흐르는 빛·홍채·빛줄기는 장식이며 값이 없습니다.</footer></section>';
     const room=host.firstElementChild,vp=room.querySelector('.nerve-viewport'),spinEl=room.querySelector('.omni-spin');let canvas=room.querySelector('canvas');
     const controls=room.querySelector('.nerve-controls'),info=room.querySelector('output'),layerSel=room.querySelector('.nerve-layer'),nodeSel=room.querySelector('.nerve-node');
     // [V33.461] 손가락 화면: 위아래는 스크롤(touch-action:pan-y) · 좌우로 밀어 돌린다 — 안내도 그렇게
@@ -465,6 +536,7 @@
     function populate(){nodeSel.replaceChildren();const g=sc.groups[+layerSel.value||0];if(!g)return;g.ids.forEach(id=>nodeSel.add(new Option(sc.name[id].split(' — ')[0],String(id))));}
     function inspect(id){v.selected=id;send({type:'select',id});const g=sc.groups.findIndex(x=>x.ids.includes(id));if(g>=0){layerSel.value=String(g);populate();nodeSel.value=String(id);}
       const vv=sc.val[id],base=sc.name[id],tail=(vv===vv?' · 세기 '+(vv*100).toFixed(0)+'%(최대 대비)':' · 값 없음');
+      try{const rp=room.querySelector('.nerve-role');if(rp){const gk=sc.groups.find(x=>x.ids.includes(id));const lb=gk?String(gk.label):'';rp.textContent=NODE_ROLE.omniRole(lb==='입력'?0:lb.indexOf('몸통')===0?1:lb==='머리'?3:lb==='나무'?4:-1,base);}}catch(e){}   // [V33.578] 노드 역할
       if(wk){info.textContent=base+tail;send({type:'count',id});}   // 선은 워커에만 있다 — 개수는 워커가 센다
       else{let cnt=0;for(let j=0;j<sc.la.length;j++)if(sc.la[j]===id||sc.lb[j]===id)cnt++;info.textContent=base+' · 닿은 선 '+fmt(cnt)+'개'+tail;}
       dirty=true;wake();}
@@ -611,7 +683,7 @@
       detail:false,spread:1,yaw:-.35,pitch:.3,zoom:1,panX:0,panY:0,spin:seq&&!reduced.matches,motion:!reduced.matches};
     let scene,points=[],selected=-1,raf=0,last=0,visible=true,dead=false,dirty=true,phase=0,w=1,h=1,draws=0,totalMs=0;
     const cache=document.createElement('canvas');let cached=false;
-    host.innerHTML='<section class="nerve-room"><header class="nerve-heading"><div><span class="nerve-kicker">'+(seq?'TEMPORAL NEURAL VOLUME':'NEURAL SIGNAL FIELD')+'</span><h3>'+(seq?'시간을 연결하는 신경망':'신호가 모이고, 판단이 되는 과정')+'</h3></div><span class="nerve-status">'+(seq?'3D':'2D')+' / STRUCTURE</span></header><div class="nerve-controls"></div><div class="nerve-viewport"><canvas tabindex="0" role="img" aria-label="신경망 구조. 아래 층과 노드 선택으로 값을 확인할 수 있습니다."></canvas><div class="nerve-corner">'+(seq?'DRAG TO ORBIT':'INPUT → HIDDEN → OUTPUT')+'</div></div><div class="nerve-layers"></div><div class="nerve-inspector"><label>층 <select class="nerve-layer"></select></label><label>노드 <select class="nerve-node"></select></label><output aria-live="polite">노드를 선택하면 저장된 값을 확인합니다.</output></div><footer class="nerve-note">움직임은 신호 흐름의 연출입니다. 실시간 활성값이 아닙니다. 연결선은 구조를 간추려 표시합니다.</footer></section>';
+    host.innerHTML='<section class="nerve-room"><header class="nerve-heading"><div><span class="nerve-kicker">'+(seq?'TEMPORAL NEURAL VOLUME':'NEURAL SIGNAL FIELD')+'</span><h3>'+(seq?'시간을 연결하는 신경망':'신호가 모이고, 판단이 되는 과정')+'</h3></div><span class="nerve-status">'+(seq?'3D':'2D')+' / STRUCTURE</span></header><div class="nerve-controls"></div><div class="nerve-viewport"><canvas tabindex="0" role="img" aria-label="신경망 구조. 아래 층과 노드 선택으로 값을 확인할 수 있습니다."></canvas><div class="nerve-corner">'+(seq?'DRAG TO ORBIT':'INPUT → HIDDEN → OUTPUT')+'</div></div><div class="nerve-layers"></div><div class="nerve-inspector"><label>층 <select class="nerve-layer"></select></label><label>노드 <select class="nerve-node"></select></label><output aria-live="polite">노드를 선택하면 저장된 값을 확인합니다.</output></div><p class="nerve-role" aria-live="polite">노드를 고르면 그 칸이 무엇을 받고 무엇을 하는지 여기 적습니다.</p><footer class="nerve-note">움직임은 신호 흐름의 연출입니다. 실시간 활성값이 아닙니다. 연결선은 구조를 간추려 표시합니다.</footer></section>';
     const room=host.firstElementChild,viewport=room.querySelector('.nerve-viewport'),canvas=room.querySelector('canvas'),ctx=canvas.getContext('2d');
     const controls=room.querySelector('.nerve-controls'),info=room.querySelector('output'),layerSelect=room.querySelector('.nerve-layer'),nodeSelect=room.querySelector('.nerve-node');
     try{if(matchMedia('(pointer:coarse)').matches){const cn=room.querySelector('.nerve-corner');if(cn)cn.textContent='좌우로 밀어 돌리기 · 위아래는 스크롤';}}catch(e){}   // [V33.461] 손가락: 위아래는 스크롤
@@ -647,6 +719,7 @@
           +(n.l>0&&n.l<4&&finite(out)?' · 출력 몫 '+(out*100).toFixed(1)+'%':'');
       }
       info.textContent=n.name+(seq?' · t'+n.t:'')+' — '+(n.v==null?'관측값 없음':(seq?'표본값 ':'가중치 강도 ')+n.v)+(role?' · '+role:'')+detail;
+      try{const rp=room.querySelector('.nerve-role');if(rp)rp.textContent=seq?NODE_ROLE.seqRole(n.l,n.name,n.l>0?role:null):(n.l===0?NODE_ROLE.featRole(n.name,role):NODE_ROLE.denseRole(layers,n));}catch(e){}   // [V33.578] 노드 역할
       dirty=true;wake();
     }
     layerSelect.onchange=()=>{populate();inspect(+nodeSelect.value);};nodeSelect.onchange=()=>inspect(+nodeSelect.value);
@@ -734,7 +807,7 @@
     active={destroy};resize.observe(viewport);intersection.observe(viewport);document.addEventListener('visibilitychange',visibility);reduced.addEventListener('change',reduce);rebuild();
     return active;
   }
-  root.NeuralObservatory={mount,dense,sequence,attention,project,omniCore,drawCore,drawRest,omWorkerMain};
+  root.NeuralObservatory={mount,dense,sequence,attention,project,omniCore,drawCore,drawRest,omWorkerMain,NODE_ROLE};
   // [V33.439] 이 파일이 ★Worker 안에서★ 읽히면(OMNI 별도 스레드) 그리기 루프를 켠다 — 창에서는 아무 일도 없다
   if(typeof WorkerGlobalScope!=='undefined'&&typeof self!=='undefined'&&self instanceof WorkerGlobalScope)omWorkerMain();
 })(typeof window!=='undefined'?window:globalThis);

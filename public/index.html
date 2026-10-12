@@ -188,8 +188,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.578">
-<script src="/neural-observatory.js?v=33.578" defer></script>
+<meta name="lux-build" content="V33.579">
+<script src="/neural-observatory.js?v=33.579" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4962,6 +4962,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     <div class="nnv-banner" id="nnvBanner" style="display:none;"></div>
     <div class="nnv-chips" id="nnvChips"></div>
     <div class="nnv-stage" id="nnvStage"><div class="nnv-empty">불러오는 중…</div></div>
+    <div class="nnv-mrole-one" id="nnvMRole"></div>
     <div class="nnv-roles" id="nnvRoles"></div>
     <div class="nnv-legend" id="nnvLegend" style="display:none;">
       <span><i style="background:#4aa3ff;"></i>입력층(피처)</span>
@@ -13688,6 +13689,15 @@ setTimeout(function(){
 #page-nnviz .nnv-feat-row{display:flex;align-items:center;gap:10px;padding:5px 0;}
 #page-nnviz .nnv-feat-name{width:150px;flex:none;font-size:11px;color:#cdddf7;font-family:'IBM Plex Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 #page-nnviz .nnv-feat-role{font-size:9.5px;color:#6f84aa;}
+/* [V33.578] 모델별 역할 카드 */
+#page-nnviz .nnv-mroles{border:1px solid var(--bd,#2a2f3a);border-radius:10px;padding:10px 12px;margin:10px 0;}
+#page-nnviz .nnv-mroles-h{font-size:12px;font-weight:700;color:var(--t1,#e8ecf3);margin:0 0 6px;}
+#page-nnviz .nnv-mrole{border-top:1px solid color-mix(in srgb, var(--bd,#2a2f3a) 70%, transparent);padding:6px 0;font-size:11px;line-height:1.55;color:var(--t2,#b9c3d6);}
+#page-nnviz .nnv-mrole summary{cursor:pointer;color:var(--t1,#e8ecf3);}
+#page-nnviz .nnv-mrole div{display:grid;grid-template-columns:64px minmax(0,1fr);gap:6px;margin:3px 0;overflow-wrap:anywhere;}
+#page-nnviz .nnv-mrole div>span{color:var(--t3,#6f84aa);font-size:10px;}
+#page-nnviz .nnv-mrole-st{font-size:10px;color:var(--amber,#fbbf24);}
+#page-nnviz .nnv-mroles-f{font-size:10px;color:var(--t3,#6f84aa);margin-top:6px;}
 #page-nnviz .nnv-feat-bar{flex:1;height:9px;background:rgba(20,30,52,.7);border-radius:5px;overflow:hidden;}
 #page-nnviz .nnv-feat-bar span{display:block;height:100%;background:linear-gradient(90deg,#7d4bff,#00e0ff);}
 #page-nnviz .nnv-feat-pct{width:40px;flex:none;text-align:right;font-size:10.5px;color:#9fb4dc;font-family:'IBM Plex Mono',monospace;}
@@ -15665,6 +15675,42 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       +'<div class="brain-map-foot">실선: 정식 합류 · 점선: 잠정 합류 · 상태와 수치는 서버 명부 기준. 아래 검증 근거에서 표본·하한·IC·홀드아웃을 확인할 수 있습니다.</div></div>';
   }
 
+  /* ══ [V33.578] ★모델별 역할 — 무엇을 받고 · 무엇을 내고 · 매매에 어디서 쓰이나★ (사용자 10/12: "노드 역할을 더 구체적으로 · 전체 모델 전부") ══
+     상태 글자는 명부(LUXR — 서버 buildRoster)에서만 온다. 여기 적는 건 각 모델의 ★고정된 역할★ 이고 성적은 아래 검증 근거가 말한다. */
+  var LUX_MODEL_ROLES = [
+    ['mind','MIND · 위원장(인수분해기계 FM)','후보 종목의 일봉 피처 벡터(가격·추세·변동성·수급·상대강도·국면)','"5일 안에 이길 확률" 하나','피처 둘씩의 상호작용을 잠재 벡터 내적으로 학습해, 다른 위원이 못 보는 조합(예: 약세 국면 × 과매도)을 잡는다. 위원회 결합의 기준점이자 다른 위원이 없을 때의 대체 판단.','위원회 결합 → 백분위 진입 문턱 → AI_PRIMARY 진입 · 보유 재평가(AI_EXIT)'],
+    ['gbdt','GBDT · 부스팅 나무','MIND 와 같은 피처','같은 질문의 확률','"RSI ≤ 32 이고 거래량 ≥ 1.8배면 +" 같은 문턱 규칙 수백 개를 쌓는다. 비선형 경계·결측에 강하다.','위원회 한 표(신뢰 가중)'],
+    ['xgb','XGB · LGB · CAT (외부 부스터 3종)','같은 피처(학습기는 GitHub Actions)','같은 질문의 확률 — 셋이 한 자리','라이브러리별 나무 만드는 방식(깊이 우선·잎 우선·순서형 부스팅)이 달라 서로의 실수를 상쇄한다. 셋이 묶여 위원회의 "boost" 한 자리로 투표.','위원회 한 표 · AI 가동 판정(MIND + 트리 위원 하나 이상)'],
+    ['seq','SEQ · 시퀀스 Transformer','최근 L일의 피처를 날짜 순서대로 쌓은 행렬','같은 질문의 확률','셀프 어텐션이 "며칠 전의 어떤 날을 볼지" 고른다 — 눌림 뒤 반등, 거래량 선행 같은 ★순서가 있는★ 패턴용. 다른 위원은 오늘 하루치만 본다.','위원회 한 표(검증 통과분만큼 잠정 가중)'],
+    ['memo','MEMO · 원형 기억','오늘 피처','과거에 가장 닮았던 장면들의 실제 결과','비슷한 과거 사례(최근접 원형)를 찾아 그때 어떻게 됐는지를 그대로 가져온다 — 학습식이 아니라 기억식이라 드문 장면에서 다른 위원과 다른 말을 한다.','위원회 한 표(전진검증을 넘을 때만)'],
+    ['rule','RULE · 규칙엔진 사전확률','규칙 신호(눌림·돌파·하이킨아시 등)의 과거 성적','신호별 기본 승률','위원회가 판단을 시작하는 출발점(사전확률). 규칙 신호 자체는 AI 모드에서 직접 사지 않고 AI_PRIMARY 후보를 고르는 재료로만 쓰인다.','사전확률 · AI_PRIMARY 후보 선정'],
+    ['dual','이중헤드(강세/약세 사분면)','시장 국면(강세·약세) × 종목 방향','국면별로 따로 맞춘 보정 로짓','같은 신호도 강세장과 약세장에서 뜻이 반대일 수 있다 — 국면마다 따로 학습한 두 머리가 위원회 확률을 국면에 맞게 민다.','결합 뒤 방향 보정(표결 아님)'],
+    ['omni','OMNI · 복합모델(OMNI-Q 순위 머리 + 분봉 머리)','OMNI-Q: 동물원 피처 166개(Alpha158/101·학계 팩터, 일봉) · 분봉 머리: 5분봉·60분봉·일봉·피어 피처','OMNI-Q: 그날 유니버스 안 순위(0~1, 5일·20일) · 분봉 머리: 지평별(30분~20일) 동료 대비 승률','OMNI-Q 는 "누가 남보다 나을까" 를 순위로 매긴다. 실력 증명 관문 ①②를 통과해 잠정 발언 중 — 상위 10% 를 직접 사고(반 크기) 상위 25% 밖이면 판다 · 하위 절반은 신규진입을 막는다. 분봉 머리는 아직 섀도우(성적만 잰다).','독립 진입 경로 [AI-Q] · OMNIQ_LOW 차단 · OMNIQ-DROP 청산 — 위원회 투표선은 없다']
+  ];
+  function NNV_modelRoles(){
+    var esc2=function(v){ return String(v==null?'':v).replace(/[<>&"]/g,function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c];}); };
+    return '<div class="nnv-mroles"><div class="nnv-mroles-h">모델별 역할 — 입력 → 출력 → 하는 일 → 매매에 쓰이는 곳</div>'
+      + LUX_MODEL_ROLES.map(function(r){
+          var st = (typeof window!=='undefined' && window.LUXR && LUXR.ready()) ? LUXR.tag(r[0]==='xgb'?'boost':r[0]) : '';
+          return '<details class="nnv-mrole"><summary><b>'+esc2(r[1])+'</b>'+(st?' <span class="nnv-mrole-st">'+esc2(st)+'</span>':'')+'</summary>'
+            +'<div><span>입력</span>'+esc2(r[2])+'</div><div><span>출력</span>'+esc2(r[3])+'</div>'
+            +'<div><span>하는 일</span>'+esc2(r[4])+'</div><div><span>쓰이는 곳</span>'+esc2(r[5])+'</div></details>';
+        }).join('')
+      + '<div class="nnv-mroles-f">구조도 아래 관측창에서 노드(입력 칸·은닉 뉴런·출력·나무·시점)를 고르면 그 칸 하나의 역할도 적습니다.</div></div>';
+  }
+  if(typeof window!=='undefined') window.NNV_modelRoles = NNV_modelRoles;
+  function NNV_modelRoleOne(kind){
+    var k=String(kind||'').toLowerCase(), key=(k==='lgb'||k==='cat'||k==='xgb')?'xgb':(k==='dualbull'||k==='dualbear')?'dual':k;
+    var r=null; for(var i=0;i<LUX_MODEL_ROLES.length;i++) if(LUX_MODEL_ROLES[i][0]===key){ r=LUX_MODEL_ROLES[i]; break; }
+    if(!r) return '';
+    var esc2=function(v){ return String(v==null?'':v).replace(/[<>&"]/g,function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c];}); };
+    return '<div class="nnv-mroles one"><div class="nnv-mroles-h">이 모델의 역할 — '+esc2(r[1])+'</div>'
+      +'<div class="nnv-mrole open"><div><span>입력</span>'+esc2(r[2])+'</div><div><span>출력</span>'+esc2(r[3])+'</div>'
+      +'<div><span>하는 일</span>'+esc2(r[4])+'</div><div><span>쓰이는 곳</span>'+esc2(r[5])+'</div></div>'
+      +'<div class="nnv-mroles-f">아래 관측창에서 노드를 고르면 그 칸 하나(입력 피처·은닉 뉴런·출력·나무·시점)의 역할을 적습니다.</div></div>';
+  }
+  if(typeof window!=='undefined') window.NNV_modelRoleOne = NNV_modelRoleOne;
+
   function NNV_renderOverview(d){
     var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
         comm=document.getElementById('nnvComm'), legend=document.getElementById('nnvLegend'),
@@ -15679,6 +15725,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     var _tl = LUXR.tally(), nv = _tl.live, nseat = _tl.seats;
     NNV_paintDots(d);   // [V33.215] 탭의 상태 점 — 전체 구조를 불러온 순간의 사실로 칠한다
     NNV_paintGlance(d); // [V33.219] 사이드바 한눈 요약도 같은 응답으로 채운다
+    try { if(roles) roles.innerHTML = NNV_modelRoles(); } catch(e){}   // [V33.578] 모델별 역할(명부 상태와 함께)
     /* [V33.422] STACK 퇴역 — 결합 경로에서 뺐다. 그리고 OMNI(섀도우)를 ★투표선 밖★ 에 적는다. */
     var _omOk = (om && om.headsOk) ? om.headsOk.length : 0;
     /* [V33.562] OMNI-Q 상태 글자(서버 omniqView.state 그대로) */
@@ -15686,7 +15733,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     var _oqTxt = '美 '+(_oq.us?_oqNm[_oq.us.state]||'섀도우':'없음')+' · 韓 '+(_oq.kr?_oqNm[_oq.kr.state]||'섀도우':'없음');
     var _oqLive = ['us','kr'].some(function(k){ return _oq[k] && (_oq[k].state==='speak'||_oq[k].state==='prov'); });
     sub.textContent = '전체 구조 — 전문가 '+nseat+'명 중 ★'+nv+'명 투표 중★ → IC가중 결합 → 보정 → 로그오즈 층'
-      + ' · OMNI-Q(진입 좁히기): '+_oqTxt
+      + ' · OMNI-Q(상위 10% 진입 · 하위 절반 차단): '+_oqTxt
       + ' · 섀도우 OMNI(표 없음): 쓸 수 있는 지평 '+_omOk+'/'+((om&&om.heads)?om.heads.length:5);
 
     chips.innerHTML =
@@ -15828,6 +15875,8 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     NNV.roles={}; try{ ((d&&(d.inputFeatures||d.topFeatures))||[]).forEach(function(f){ if(f&&f.name) NNV.roles[f.name]={role:f.role||''}; }); }catch(e){}
     var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
         comm=document.getElementById('nnvComm'), legend=document.getElementById('nnvLegend'), sub=document.getElementById('nnvSub');
+    /* [V33.578] 모델 탭마다 그 모델의 역할 카드(입력→출력→하는 일→쓰이는 곳)를 맨 위에 — 렌더러가 건드리지 않는 칸이라 지워지지 않는다. */
+    try { var _mr=document.getElementById('nnvMRole'); if(_mr) _mr.innerHTML = (d && d.kind && d.kind!=='overview') ? NNV_modelRoleOne(d.kind) : ''; } catch(e){}
     // [V33.206] 전체 구조는 모델 하나가 아니라 ★결합 순서★ 를 그린다 — 전용 렌더러로 보낸다.
     if(d && d.kind === 'overview'){ NNV_renderOverview(d); return; }
     // [V33.150] 구조가 다른 위원은 다른 렌더러로 — 트리 렌더러에 넣으면 GBDT 로 오표기된다.
@@ -16021,7 +16070,10 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       var pctW=Math.round((f.strength||0)*100);
       if(f.liveOnly) anyLive=true;
       var lo=f.liveOnly?' <span style="font-size:8px;color:#ffb060;border:1px solid #ffb06066;border-radius:2px;padding:0 3px;">라이브 전용</span>':'';
-      return '<div class="nnv-role"><div class="nnv-role-n">'+f.name+lo+'<small>'+(f.role||'')+'</small></div>'
+      /* [V33.578] 짧은 이름표 옆에 ★무엇을 재고 높고 낮음이 무슨 뜻인지★ — 관측창 노드 설명과 같은 사전(NODE_ROLE) */
+      var _NR=(typeof window!=='undefined'&&window.NeuralObservatory&&window.NeuralObservatory.NODE_ROLE)||null, _long='';
+      try{ if(_NR){ var _pf=_NR.PREFIX.filter(function(x){return String(f.name).indexOf(x[0])===0;})[0]; _long=_NR.FEAT_TXT[f.name]||(_pf?_pf[1]:''); } }catch(e){}
+      return '<div class="nnv-role"><div class="nnv-role-n">'+f.name+lo+'<small>'+(f.role||'')+(_long&&_long!==f.role?' — '+_long:'')+'</small></div>'
         +'<div class="nnv-role-bar"><span style="width:'+pctW+'%"></span></div>'
         +'<div class="nnv-role-v">'+(trained?pctW+'%':'—')+'</div></div>';
     }).join('');
@@ -20837,13 +20889,13 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.578">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.578">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.578">
-<link rel="stylesheet" href="/model-evidence.css?v=33.578">
+<link rel="stylesheet" href="/brain-console.css?v=33.579">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.579">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.579">
+<link rel="stylesheet" href="/model-evidence.css?v=33.579">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.578">
-<script src="/model-evidence.js?v=33.578"></script>
-<script src="/workspace-ui.js?v=33.578"></script>
+<link rel="stylesheet" href="/liquid-metal.css?v=33.579">
+<script src="/model-evidence.js?v=33.579"></script>
+<script src="/workspace-ui.js?v=33.579"></script>
 </body>
 </html>
