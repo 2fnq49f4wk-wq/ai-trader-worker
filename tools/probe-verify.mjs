@@ -55,4 +55,15 @@ for (const p of ["/api/kr-halt", "/api/earnings", "/api/chart?symbol=AAPL", "/ap
     ok(s === 200 && !/없음/.test(shape) && ms < 15000, p + " " + ms + "ms · " + shape);
   } catch (e) { ok(false, p + " 예외", String(e)); }
 }
+// [V33.561] 금융 지표 — 갱신을 한 번 걸고(공식 원천) 값·기준일·원천을 찍는다
+try {
+  await fetch(BASE + "/api/macro/run", { method: "POST" }).then((r) => r.text()).catch(() => null);
+  const { j } = await get("/api/macro");
+  for (const mk of ["us", "kr"]) for (const [k, v] of Object.entries((j && j[mk]) || {})) {
+    if (k.startsWith("_")) continue;
+    out("macro " + mk + "." + k, { value: v.value, asOf: v.asOf, obs: v.obsDate || null, released: v.released || null, src: (v.source || "").slice(0, 40), fetchedAgoH: v.fetchedAt ? +((Date.now() - v.fetchedAt) / 3600000).toFixed(1) : null });
+  }
+  const live = ["us", "kr"].reduce((n, mk) => n + Object.values((j && j[mk]) || {}).filter((v) => v && v.fetchedAt && Date.now() - v.fetchedAt < 86400000).length, 0);
+  ok(live >= 9, "금융 지표: 하루 안에 공식 원천에서 받은 값 ≥ 9개(미 7 · 한 4 중)", live);
+} catch (e) { ok(false, "macro 예외", String(e)); }
 out("result", bad ? bad + "건 실패" : "전부 통과");

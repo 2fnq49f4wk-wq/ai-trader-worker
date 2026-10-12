@@ -188,8 +188,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.560">
-<script src="/neural-observatory.js?v=33.560" defer></script>
+<meta name="lux-build" content="V33.561">
+<script src="/neural-observatory.js?v=33.561" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4713,14 +4713,14 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     <div class="macro-mkt-head"><span class="flag">🇺🇸</span> 미국 (US)</div>
     <div class="macro-table-wrap">
       <table class="macro-table">
-        <thead><tr><th>지표</th><th class="r">최근치</th><th>최근 발표일</th><th>다음 발표일</th><th class="r">D-day</th></tr></thead>
+        <thead><tr><th>지표</th><th class="r">최근치</th><th>기준일(관측)</th><th>다음 발표일</th><th class="r">D-day</th></tr></thead>
         <tbody id="macroUsBody"></tbody>
       </table>
     </div>
     <div class="macro-mkt-head"><span class="flag">🇰🇷</span> 한국 (KR)</div>
     <div class="macro-table-wrap">
       <table class="macro-table">
-        <thead><tr><th>지표</th><th class="r">최근치</th><th>최근 발표일</th><th>다음 발표일</th><th class="r">D-day</th></tr></thead>
+        <thead><tr><th>지표</th><th class="r">최근치</th><th>기준일(관측)</th><th>다음 발표일</th><th class="r">D-day</th></tr></thead>
         <tbody id="macroKrBody"></tbody>
       </table>
     </div>
@@ -11335,6 +11335,11 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
           if (a.asOf) row.asOf = a.asOf;
           if (a.released) row.released = a.released;
           if (a.source_url) row.source_url = a.source_url;
+          // [V33.561] 관측일·확인 시각·원천 — 화면이 "언제 기준 값인지" 를 말한다
+          row.obsDate = a.obsDate || (/^\d{4}-\d{2}-\d{2}$/.test(String(a.asOf || '')) ? a.asOf : (row.obsDate || null));
+          row.fetchedAt = a.fetchedAt || null;
+          if (a.source) row.srcName = a.source;
+          row.live = !!(a.fetchedAt && (Date.now() - a.fetchedAt) < 7 * 86400000);
         }
       });
     });
@@ -11373,25 +11378,38 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     return dd + '일 후';
   }
 
+  /* [V33.561] 다음 발표일 — 손으로 적은 날짜가 이미 지났으면 지운다('발표완료' 로 남기지 않는다). 연준만 공식 2026 FOMC 일정(결정일)으로 계산. */
+  var FOMC_DATES = ['2026-01-28','2026-03-18','2026-04-29','2026-06-17','2026-07-29','2026-09-16','2026-10-28','2026-12-09'];
+  function macroNextOf(r, mkt) {
+    if (mkt === 'us' && r.key === 'fed_rate') { for (var i = 0; i < FOMC_DATES.length; i++) { var d0 = macroDaysUntil(FOMC_DATES[i]); if (d0 !== null && d0 >= 0) return FOMC_DATES[i]; } return null; }
+    var d = macroDaysUntil(r.next);
+    return (d !== null && d >= 0) ? r.next : null;
+  }
   function macroRenderTable(tbodyId, rows) {
     var tb = $(tbodyId);
     var html = '';
+    var mkt = (tbodyId === 'macroUsBody') ? 'us' : 'kr';
     rows.forEach(function(r) {
+      r.next = macroNextOf(r, mkt);
       var dd = macroDaysUntil(r.next);
       var lab = macroDdayLabel(dd);
       var nextTxt = r.next ? macroFmtDate(r.next) : '<span style="color:var(--faint)">상시</span>';
-      var relReleased = r.released ? '<span class="relday">(' + macroRelDay(r.released) + ')</span>' : '';
+      // [V33.561] 셋째 칸 = 실제 관측일(값이 가리키는 날·달). 자동 원천이 없는 지표는 '옛 기준값' 으로 표시한다.
+      var obs = r.obsDate || r.released || null;
+      var relReleased = obs ? '<span class="relday">(' + macroRelDay(obs) + ')</span>' : '';
       var asOf = r.asOf ? '<span style="color:var(--blue);font-size:10px;"> · ' + escapeHtml(r.asOf) + '</span>' : '';
+      var stale = !r.live ? '<small style="color:var(--amber,#fbbf24)">⚠ 옛 기준값 — 자동 원천 없음(확인 필요)</small>' : '';
+      var fetched = (r.live && r.fetchedAt) ? (function(){ var f = new Date(r.fetchedAt); return '<small style="color:var(--dim)">확인 ' + (f.getMonth()+1) + '/' + f.getDate() + ' ' + ('0'+f.getHours()).slice(-2) + ':' + ('0'+f.getMinutes()).slice(-2) + (r.srcName ? ' · ' + escapeHtml(String(r.srcName).split(' · ')[0]) : '') + '</small>'; })() : '';
       var srcLink = r.source_url
         ? ' <a href="' + escapeHtml(r.source_url) + '" target="_blank" rel="noopener" title="출처" style="color:var(--faint);text-decoration:none;font-size:10px;">↗</a>'
         : '';
       html += '<tr>' +
         '<td class="ind-name">' + escapeHtml(r.name) + asOf +
           (r.sub ? '<small>' + escapeHtml(r.sub) + '</small>' : '') +
-          (r.note ? '<small style="color:var(--dim)">' + escapeHtml(r.note) + '</small>' : '') + '</td>' +
+          (r.note ? '<small style="color:var(--dim)">' + escapeHtml(r.note) + '</small>' : '') + stale + fetched + '</td>' +
         '<td class="r"><span class="val">' + escapeHtml(r.value) +
           (r.unit ? '<span class="unit">' + escapeHtml(r.unit) + '</span>' : '') + '</span>' + srcLink + '</td>' +
-        '<td>' + macroFmtDate(r.released) + ' ' + relReleased + '</td>' +
+        '<td>' + macroFmtDate(obs) + ' ' + relReleased + '</td>' +
         '<td class="nextday">' + nextTxt + '</td>' +
         '<td class="r"><span class="dd ' + lab.cls + '">' + lab.txt + '</span></td>' +
         '</tr>';
@@ -11443,6 +11461,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         stamp.style.color = 'var(--dim)';
       }
     }
+    ['us', 'kr'].forEach(function (m) { MACRO_DATA[m].forEach(function (r) { r.next = macroNextOf(r, m); }); });   // [V33.561] 지난 날짜는 카드에도 안 띄운다
     macroRenderNext();
     macroRenderTable('macroUsBody', MACRO_DATA.us);
     macroRenderTable('macroKrBody', MACRO_DATA.kr);
@@ -20707,13 +20726,13 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.560">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.560">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.560">
-<link rel="stylesheet" href="/model-evidence.css?v=33.560">
+<link rel="stylesheet" href="/brain-console.css?v=33.561">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.561">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.561">
+<link rel="stylesheet" href="/model-evidence.css?v=33.561">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.560">
-<script src="/model-evidence.js?v=33.560"></script>
-<script src="/workspace-ui.js?v=33.560"></script>
+<link rel="stylesheet" href="/liquid-metal.css?v=33.561">
+<script src="/model-evidence.js?v=33.561"></script>
+<script src="/workspace-ui.js?v=33.561"></script>
 </body>
 </html>

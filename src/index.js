@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.560";
+const _BUILD_VER = "V33.561";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -6878,9 +6878,129 @@ function sanitizeMacroValue(rawVal, range) {
 // [V32.23] ★내부 거시/금리 엔진 — 외부 web_search 대체★ 무료 야후 금리·상품 심볼로 시중금리·수익률곡선·
 //   인플레 압력 프록시를 실시간 산출한다. 공식 CPI/실업률은 시세로 못 구하므로(외부발표) 기존 캐시 보존.
 //   대신 ^IRX(13주 T-bill)=정책금리 근사, ^FVX/^TNX/^TYX=수익률곡선, 곡선역전=침체신호를 제공한다.
+/* ══ [V33.561] ★공식 지표를 공식 원천에서 — 날짜까지★ ═══════════════════════════════════════════
+   사용자 10/12: "금융 지표가 날짜 업데이트를 안 하는 것 같다 · 최신 데이터·정확한 수치·날짜". 원인: 외부 LLM 검색을 끈 뒤(V32.23) 내부 갱신은
+   시장금리 4개만 새로 받고, CPI·실업률·PPI·PCE·기준금리는 ★마지막 LLM 값과 그 날짜★ 에 멈춰 있었다. 화면은 5월에 손으로 적은 기본값
+   (연준 3.50–3.75 · 10년 4.5 · 'CPI 4월분')과 이미 지난 '다음 발표일' 을 보여 줬다(실제: 연준 3.75–4.00 · 10년 5.22 · CPI 8월분).
+   FRED(세인트루이스 연준) 그래프 CSV 는 키 없이 무료이고 ★관측일★ 이 함께 온다 — BLS·BEA·연준 원자료를 그대로 옮긴 공식 시계열.
+   물가(CPI·근원 CPI·PPI 최종수요·근원 PCE)는 지수에서 ★전년동월비를 우리가 계산★ 한다(같은 달 12개월 전과). asOf = 기준월, obsDate = 관측일. */
+const FRED_MACRO = {
+  us: {
+    fed_rate:     { ids: ["DFEDTARL", "DFEDTARU"], kind: "range", label: "연준 목표범위(일별)" },
+    cpi:          { id: "CPIAUCSL", kind: "yoy",   label: "BLS CPI-U(계절조정) 전년동월비" },
+    core_cpi:     { id: "CPILFESL", kind: "yoy",   label: "BLS 근원 CPI 전년동월비" },
+    ppi:          { id: "PPIFIS",   kind: "yoy",   label: "BLS PPI 최종수요 전년동월비" },
+    core_pce:     { id: "PCEPILFE", kind: "yoy",   label: "BEA 근원 PCE 전년동월비" },
+    unemployment: { id: "UNRATE",   kind: "level", label: "BLS 실업률" },
+    ust10y:       { id: "DGS10",    kind: "level", label: "미 재무부 10년 만기 수익률(일별)" }
+  },
+  kr: {}   // 한국은 아래 _krMacroFetch(네이버 국채 실시간 · 한국은행 기준금리 표 · 한은 물가점검 보도자료)
+};
+const _MAC_UA = { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15" };
+/* 순수 파서들(게이트가 잰다) — 모양이 바뀌면 null(이전 값 유지 · 지어내지 않는다) */
+function _bokBaseParse(html) {
+  const m = /<td[^>]*>\s*(\d{4})\s*<\/td>\s*<td[^>]*>\s*(\d{1,2})월\s*(\d{1,2})일\s*<\/td>\s*<td[^>]*>\s*([\d.]+)\s*<\/td>/.exec(String(html || ""));
+  if (!m) return null;
+  const v = Number(m[4]); if (!(v >= 0 && v <= 20)) return null;
+  const d = m[1] + "-" + String(m[2]).padStart(2, "0") + "-" + String(m[3]).padStart(2, "0");
+  return { value: v.toFixed(2), asOf: d + " 결정", obsDate: d };
+}
+function _bokCpiParse(html) {
+  const t = String(html || "");
+  const m = /(\d{4})년\s*(\d{1,2})월\s*「물가상황점검회의」[\s\S]{0,600}?소비자물가\s*상승률은[\s\S]{0,240}?(-?[\d.]+)%를\s*나타내었습니다[\s\S]{0,200}?(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})/.exec(t);
+  if (!m) return null;
+  const v = Number(m[3]); if (!(v >= -5 && v <= 25)) return null;
+  const rel = m[4] + "-" + String(m[5]).padStart(2, "0") + "-" + String(m[6]).padStart(2, "0");
+  return { value: v.toFixed(1), asOf: m[1] + "-" + String(m[2]).padStart(2, "0") + " (" + Number(m[2]) + "월분)", obsDate: m[1] + "-" + String(m[2]).padStart(2, "0") + "-01", released: rel };
+}
+function _naverBondParse(j) {
+  const r = j && j.result; if (!r) return null;
+  const v = Number(String(r.closePrice || "").replace(/,/g, "")); if (!(v > 0 && v < 20)) return null;
+  const at = String(r.localTradedAt || ""); const d = at.slice(0, 10);
+  return { value: v.toFixed(3), asOf: at ? (d + " " + at.slice(11, 16) + " KST") : "", obsDate: d || null };
+}
+async function _krMacroFetch() {
+  const out = {};
+  const get = async function (u) { const r = await fetch(u, { headers: _MAC_UA, signal: AbortSignal.timeout(12000) }); if (!r.ok) throw new Error("HTTP " + r.status); return r; };
+  for (const [key, rc] of [["ktb3y", "KR3YT%3DRR"], ["ktb10y", "KR10YT%3DRR"]]) {
+    try { const v = _naverBondParse(await (await get("https://m.stock.naver.com/front-api/marketIndex/productDetail?category=bond&reutersCode=" + rc)).json());
+      if (v) out[key] = Object.assign(v, { source: "네이버 증권(레피니티브) 국채 " + (key === "ktb3y" ? "3년" : "10년") + " 실시간", source_url: "https://m.stock.naver.com/marketindex/bond/" + rc.replace("%3D", "=") }); } catch (e) {}
+  }
+  try { const v = _bokBaseParse(await (await get("https://www.bok.or.kr/portal/singl/baseRate/list.do?dataSeCd=01&menuNo=200643")).text());
+    if (v) out.base_rate = Object.assign(v, { source: "한국은행 기준금리 추이", source_url: "https://www.bok.or.kr/portal/singl/baseRate/list.do?dataSeCd=01&menuNo=200643" }); } catch (e) {}
+  try { const v = _bokCpiParse(await (await get("https://www.bok.or.kr/portal/main/main.do")).text());
+    if (v) out.cpi = Object.assign(v, { source: "한국은행 「물가상황점검회의」 보도참고자료(통계청 CPI)", source_url: "https://www.bok.or.kr/portal/main/main.do" }); } catch (e) {}
+  return out;
+}
+async function _fredSeries(id) {
+  const r = await fetch("https://fred.stlouisfed.org/graph/fredgraph.csv?id=" + encodeURIComponent(id), {
+    headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15" },
+    signal: AbortSignal.timeout(10000) });
+  if (!r.ok) throw new Error("FRED " + id + " HTTP " + r.status);
+  const out = [];
+  for (const line of (await r.text()).split("\n")) {
+    const m = /^(\d{4}-\d{2}-\d{2}),\s*(-?[\d.]+)\s*$/.exec(line.trim());
+    if (m) out.push({ d: m[1], v: Number(m[2]) });
+  }
+  return out;
+}
+// 순수 계산(게이트가 잰다): 시계열 → { value, asOf, obsDate }
+function _fredValue(kind, rows, rows2) {
+  if (!Array.isArray(rows) || !rows.length) return null;
+  const last = rows[rows.length - 1];
+  if (kind === "range") {
+    const hi = Array.isArray(rows2) && rows2.length ? rows2[rows2.length - 1] : null;
+    if (!hi || hi.d !== last.d) return null;
+    return { value: last.v.toFixed(2) + "-" + hi.v.toFixed(2), asOf: last.d, obsDate: last.d };
+  }
+  const ym = last.d.slice(0, 7), mon = Number(last.d.slice(5, 7));
+  if (kind === "yoy") {
+    const prevKey = (Number(last.d.slice(0, 4)) - 1) + last.d.slice(4, 7);
+    const prev = rows.find(function (x) { return x.d.slice(0, 7) === prevKey; });
+    if (!prev || !(prev.v > 0)) return null;
+    return { value: ((last.v / prev.v - 1) * 100).toFixed(1), asOf: ym + " (" + mon + "월분)", obsDate: last.d };
+  }
+  const daily = rows.length >= 2 && rows[rows.length - 2].d.slice(0, 7) === ym;   // 같은 달 관측이 둘 이상 = 일별
+  return { value: daily ? last.v.toFixed(2) : String(+last.v.toFixed(3)), asOf: daily ? last.d : (ym + " (" + mon + "월분)"), obsDate: last.d };
+}
+async function runFredMacroUpdate(DB, force) {
+  if (!force) { try { const at = await getState(DB, "macro_fred_at", 0); if (Date.now() - _num(at, 0) < 6 * 3600000) return { ok: true, cached: true }; } catch (e) {} }
+  const prev = await getState(DB, "macro_data", { us: {}, kr: {}, updatedAt: null });
+  const next = Object.assign({}, prev, { us: Object.assign({}, prev.us || {}), kr: Object.assign({}, prev.kr || {}) });
+  let got = 0, fail = [];
+  for (const mk of ["us", "kr"]) {
+    for (const key of Object.keys(FRED_MACRO[mk])) {
+      const spec = FRED_MACRO[mk][key];
+      try {
+        const ids = spec.ids || [spec.id];
+        const series = [];
+        for (const id of ids) series.push(await _fredSeries(id));
+        const v = _fredValue(spec.kind, series[0], series[1]);
+        if (!v) { fail.push(key); continue; }
+        next[mk][key] = { value: v.value, asOf: v.asOf, obsDate: v.obsDate, released: "", fetchedAt: Date.now(),
+          source: "FRED " + ids.join("/") + " · " + spec.label, source_url: "https://fred.stlouisfed.org/series/" + ids[0] };
+        got++;
+      } catch (e) { fail.push(key); }
+    }
+  }
+  // [V33.561] 한국 — 네이버 국채(실시간) · 한국은행 기준금리 · 한은 물가점검 보도자료. 못 받은 지표는 이전 값 유지
+  try {
+    const kr = await _krMacroFetch();
+    for (const k of Object.keys(kr)) { next.kr[k] = Object.assign({ released: "", fetchedAt: Date.now() }, kr[k]); got++; }
+    for (const k of ["base_rate", "cpi", "ktb3y", "ktb10y"]) if (!kr[k]) fail.push("kr." + k);
+  } catch (e) { fail.push("kr"); }
+  next.updatedAt = Date.now(); next.fredAt = Date.now();
+  await setState(DB, "macro_data", next);
+  try { await setState(DB, "macro_fred_at", Date.now()); } catch (e) {}
+  try { await log(DB, "INFO", null, "[거시·FRED] 공식 지표 " + got + "개 갱신" + (fail.length ? " · 실패 " + fail.join(",") : "")); } catch (e) {}
+  return { ok: true, got: got, fail: fail };
+}
+
 async function runInternalMacroUpdate(env, forceRun) {
   const DB = env.DB;
   try {
+    // [V33.561] 공식 지표(FRED) — 6시간마다(자체 가드). 실패해도 아래 시장금리 갱신은 그대로
+    try { await runFredMacroUpdate(DB, forceRun); } catch (e) { try { await log(DB, "WARN", null, "[거시·FRED] 실패: " + (e && e.message)); } catch (e2) {} }
     // 신선도 게이트 — 60분 이내 내부갱신본 있으면 스킵(매 사이클 batch quote 낭비 방지)
     if (!forceRun) { try { const _p = await getState(DB, "macro_data", null); if (_p && _p.source === "internal_yahoo_rates" && _p.updatedAt && (Date.now() - _p.updatedAt) < 60 * 60000) return { ok: true, cached: true }; } catch (e) {} }
     try { if (typeof fetchBudgetLeft === "function" && fetchBudgetLeft() < 4) return { ok: false, reason: "budget" }; } catch (e) {}
@@ -6895,8 +7015,10 @@ async function runInternalMacroUpdate(env, forceRun) {
     const today = new Date().toISOString().slice(0, 10);
     const setRate = function (key, v, suffix) { if (v != null) next.us[key] = { value: v.toFixed(2) + (suffix || ""), asOf: today, released: "", source_url: "", fetchedAt: Date.now(), proxy: true }; };
     // 정책금리 근사 = 13주 T-bill(^IRX) — 연준금리와 통상 ±0.2%p
-    setRate("fed_rate", irx, "% (시장금리 프록시·^IRX)");
-    setRate("ust5y", y5); setRate("ust10y", y10); setRate("ust30y", y30);
+    // [V33.561] 공식 값(FRED: 연준 목표범위 · 10년 일별)이 있으면 프록시로 덮지 않는다 — 프록시는 공식 값이 없을 때만
+    const _hasFred = function (k) { return !!(prev.us && prev.us[k] && /^FRED/.test(String(prev.us[k].source || ""))); };
+    if (!_hasFred("fed_rate")) setRate("fed_rate", irx, "% (시장금리 프록시·^IRX)");
+    setRate("ust5y", y5); if (!_hasFred("ust10y")) setRate("ust10y", y10); setRate("ust30y", y30);
     // 수익률곡선(10년-3개월) — 음수면 역전(침체 선행신호)
     const curve = (y10 != null && irx != null) ? (y10 - irx) : null;
     next.us._rates = { short3mo: irx, y5: y5, y10: y10, y30: y30, curve10_3mo: curve != null ? +curve.toFixed(2) : null, inverted: curve != null ? curve < 0 : null, ts: Date.now() };
@@ -54068,7 +54190,9 @@ export default {
       //    엔진 disabled 상태에서도 매크로는 갱신되도록 여기서도 안전하게 한 번 더 보장.
       // [V33.34] 정규 창(07:00~08:59) 또는 26시간 넘게 묵었으면 갱신 시도.
       //   중복은 runMacroUpdate 내부의 macro_last_run 일일 가드가 막는다.
-      if (isMacroTriggerTime() || await isMacroStale(env.DB)) {
+      // [V33.561] 공식 지표(FRED·한국은행·네이버 국채)는 6시간마다 — 국채금리는 일중 바뀐다(자체 가드 macro_fred_at)
+      let _fredStale = false; try { _fredStale = (Date.now() - _num(await getState(env.DB, "macro_fred_at", 0), 0)) > 6 * 3600000; } catch (e) {}
+      if (isMacroTriggerTime() || _fredStale || await isMacroStale(env.DB)) {
         try { await runMacroUpdate(env); }
         catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] macro fail: " + e.message); } catch (e2) {} }
       }
@@ -54735,7 +54859,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { getStates, _STATE_LITE, getADX, _getADXCore, getHolidaySet, _indexFreshOpen, isMarketTradingDay, KR_LUNAR_HOLIDAYS, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
