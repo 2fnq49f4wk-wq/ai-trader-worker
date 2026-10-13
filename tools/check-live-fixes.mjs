@@ -47,5 +47,7 @@ const iSell = fw.indexOf("await executeSell(DB, market, held.symbol, held, sellD
 chk(iRe > 0 && iSell > iRe && /if \(!_live \|\| !\(Number\(_live\.qty\) > 0\)\) \{ delete c\.positions\[posKey\]; continue; \}/.test(fw),
     "빠른 감시는 팔기 직전 저장된 포지션을 다시 읽고 · 이미 팔렸으면 건너뛴다");
 
+// ④ [V33.587] 한국 장전 시세 — 둘 다 시간외면 한국을 먼저(미국 애프터 평가가 사이클을 다 써 한국 차례가 안 오던 것)
+chk(/if \(marketsForQuotes\.length === 2 && !usMarketHours && !krMarketHours\) marketsForQuotes\.reverse\(\);/.test(S), "미국 애프터 · 한국 장전이 겹치면 한국 시세를 먼저 받는다");
 if (fails) { console.log("\n✗ 라이브 점검 결함 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 라이브 점검 결함(반사실 칸 · 엔진 지연 경보 · 겹친 크론 매도) 통과");

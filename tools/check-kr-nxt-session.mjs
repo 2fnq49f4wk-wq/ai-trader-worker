@@ -77,9 +77,12 @@ console.log("③ 한국 시간외는 청산만(진입은 측정 전까지 닫힘
     at("2026-10-07T08:44:00Z");   // 17:44 KST 장후
     const cfg = { extTrade: { enabled: true, entries: true, us: { pre: true, post: true }, kr: { pre: true, post: true } } };   // kr.entries 가 빠진 저장 cfg
     const g = await M.extBuyGuard(DB, "kr", 10, 270000, { p: 0.9 }, cfg, { quote: { post: 270000, extTs: Date.now(), postPct: -0.7 } }, Date.now());
-    chk(g && g.ok === false && g.why === "entries_disabled", "kr.entries 가 없으면(저장 cfg 가 기본값을 덮어도) 한국 시간외 진입은 막힌다", JSON.stringify(g));
+    /* [V33.587] 사용자 결정(10/14): 한국도 시간외 진입을 연다 — 미국과 같은 규칙. 진입 관문을 지나 다음 관문(확률 하한)에서 판정된다. */
+    chk(g && g.why !== "entries_disabled", "kr.entries 가 없어도 한국 시간외 진입은 미국과 같은 규칙으로 열린다(다음 관문으로 넘어감)", JSON.stringify(g));
+    const g0 = await M.extBuyGuard(DB, "kr", 10, 270000, { p: 0.9 }, { extTrade: { enabled: true, entries: true, kr: { pre: true, post: true, entries: false } } }, { quote: { post: 270000, extTs: Date.now(), postPct: -0.7 } }, Date.now());
+    chk(g0 && g0.ok === false && g0.why === "entries_disabled", "kr.entries:false 로 명시하면 청산만", JSON.stringify(g0));
     const g2 = await M.extBuyGuard(DB, "kr", 10, 270000, { p: 0.9 }, M.DEFAULT_CFG || { extTrade: { enabled: true, kr: { post: true, entries: false } } }, { quote: { post: 270000, extTs: Date.now() } }, Date.now());
-    chk(g2 && g2.ok === false && g2.why === "entries_disabled", "기본 설정: 한국 시간외 진입 닫힘", JSON.stringify(g2));
+    chk(g2 && g2.why !== "entries_disabled" && M.DEFAULT_CFG.extTrade.kr.entries === true, "기본 설정: 한국 시간외 진입 열림(V33.587)", JSON.stringify(g2));
   } finally { restore(); }
 }
 if (fails) { console.log("\n✗ 한국 장후 · 넥스트레이드 세션 " + fails + "건 실패"); process.exit(1); }

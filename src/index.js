@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.586";
+const _BUILD_VER = "V33.587";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -3803,7 +3803,9 @@ const DEFAULT_CFG = {
     /* [V33.512] 한국은 시간외 ★청산만★(entries:false) — 네이버가 장후에도 ms "OPEN" 을 주면서 post 가 비어
        한국 시간외 진입은 사실상 꺼져 있었다(전부 '체결없음'). 시세를 고치면 진입이 ★근거 없이★ 다시 켜진다.
        한국 성과가 약하고(실적 관문 차단 중) 넥스트레이드 호가는 더 얇다 — 측정 전엔 열지 않는다. 손절·익절(청산)은 연다. */
-    kr: { pre: true, post: true, entries: false },   // 한국 장전 08:00~09:00 · 장후 15:30~20:00 KST
+    /* [V33.587] 사용자(10/14): "미국장 한국장 둘 다 pre·after 에도 거래하게" — 한국 시간외 진입을 연다(미국과 같은 안전장치:
+       크기 ×0.5 · 세션당 신규 2종목 · 그날 위원회 픽 p≥0.62 · 체결시각 검증된 시간외 가격만). */
+    kr: { pre: true, post: true, entries: true },    // 한국 장전 08:00~08:50 · 장후 15:40~20:00 KST(넥스트레이드 체결 창)
     entries: true,                      // false = 청산만(신규 진입 금지)
     /* [V33.332] fastWatch 안의 '그날 픽' 진입은 ★기본으로 끈다.★
        V33.332 부터 메인 사이클이 시간외에도 유니버스 전체를 평가·진입한다 — 훨씬 넓고,
@@ -19509,7 +19511,7 @@ async function extBuyGuard(DB, market, qty, price, signal, cfg, opts, now) {
     return { ok: false, why: "entries_disabled" };
   /* [V33.512] 시장별 청산만 — 한국은 ★명시적으로 entries:true 일 때만★ 시간외 진입(저장된 cfg 가 extTrade 를 통째로 덮어 기본값이 빠져도 닫힌 쪽으로) */
   const _mkx = et[market] || {};
-  if (market === "kr" ? _mkx.entries !== true : _mkx.entries === false) return { ok: false, why: "entries_disabled" };
+  if (_mkx.entries === false) return { ok: false, why: "entries_disabled" };   // [V33.587] 한국도 미국과 같은 규칙(명시적으로 끈 시장만 청산만)
   const px = extTradePrice(opts && opts.quote, session, cfg);
   if (px == null || Math.abs(px - price) > Math.max(1e-8, price * 1e-8)) return { ok: false, why: "quote_unverified" };
   const p = signal && signal.mlMindP;
@@ -23313,6 +23315,13 @@ async function runTradingCycle(env) {
     const marketsForQuotes = [];
     if (usOpen) marketsForQuotes.push("us");
     if (krOpen) marketsForQuotes.push("kr");
+    /* [V33.587] ★한국 프리마켓 시세가 안 들어오던 것★(사용자 10/14 08:16 KST: "장전 가격이 안 들어온다 · 장후는 나온다").
+       실측: 네이버는 PRE_MARKET 체결(삼성 235,500 +1.51%)을 주는데 우리 quote 는 전날 19:57 KST 그대로였다.
+       23:00~00:00Z 는 한국 장전(08:00~09:00 KST)과 미국 애프터마켓(거래창)이 겹친다 — 시장 루프가 미국을 먼저 돌며
+       미국 시간외 평가(500여 종목)로 사이클 시간을 다 써서 한국 차례가 오지 않았다. 장후(15:30~20:00 KST)는 미국 장전
+       관측 구간이라 가볍게 끝나 한국까지 닿았다(그래서 장후만 나왔다).
+       → 둘 다 정규장이 아니면 ★창이 짧은 한국(50분)을 먼저★. 미국 보유는 빠른 감시(runFastWatch)가 따로 지킨다. */
+    if (marketsForQuotes.length === 2 && !usMarketHours && !krMarketHours) marketsForQuotes.reverse();
     const marketsToTrade = [];
     // [FIX V8.8] 엔진이 꺼져 있으면 거래 대상에서 제외(가격 갱신은 marketsForQuotes로 계속).
     if (engineEnabled && usCanTrade) marketsToTrade.push("us");

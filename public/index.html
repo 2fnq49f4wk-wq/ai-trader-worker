@@ -188,8 +188,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.586">
-<script src="/neural-observatory.js?v=33.586" defer></script>
+<meta name="lux-build" content="V33.587">
+<script src="/neural-observatory.js?v=33.587" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -17702,12 +17702,20 @@ html:root .page > *{ flex-shrink:0; }
            (위원회가 몇 자리 살아 있나 · 결합기가 무엇인가 · 봉 날짜 재구축이 어디까지 왔나)을
            읽으려면 표를 훑어야 했다. 그 셋만 도형으로 위에 올린다. 표는 드릴다운으로 남는다. */
         +'<div class="rail-sec rail-glance" id="railGlance"><div class="rg-skel">확인 중…</div></div>'
-        +'<div class="rail-sec"><div class="rail-sec-h">AI 운용 상태</div><div id="railAiMode" class="rail-ai">확인 중…</div></div>'
-        +'<div class="rail-sec"><div class="rail-sec-h">바로가기</div>'
+        /* [V33.587] ★우측 사이드바 탭(개요·모델·성과·시스템)★ — 사용자: "정보가 너무 지저분하게 나열 · 깔끔하고 보기 편하게"(시안 적용).
+           내용은 한 글자도 지우지 않는다 — renderRailAiMode 가 그린 섹션을 제목으로 묶어 탭에 나눠 담을 뿐(railTabsGroup). */
+        +'<div class="rail-tabs" id="railTabs" role="tablist" aria-label="사이드바 구역">'
+          +'<button type="button" role="tab" data-rt="overview">개요</button>'
+          +'<button type="button" role="tab" data-rt="models">모델</button>'
+          +'<button type="button" role="tab" data-rt="perf">성과</button>'
+          +'<button type="button" role="tab" data-rt="sys">시스템</button>'
+        +'</div>'
+        +'<div class="rail-sec rail-aisec"><div id="railAiMode" class="rail-ai">확인 중…</div></div>'
+        +'<div class="rail-sec" data-rt="overview"><div class="rail-sec-h">바로가기</div>'
           +'<div class="rail-links"><button type="button" class="rail-link" data-page="report">📋 AI 리포트</button>'
           +'<button type="button" class="rail-link" data-page="whatif">🧪 WHAT-IF</button></div></div>'
-        +'<div class="rail-sec rail-slot" id="railSlotAlt"></div>'
-        +'<div class="rail-sec rail-slot" id="railSlotBudget"></div>'
+        +'<div class="rail-sec rail-slot" id="railSlotAlt" data-rt="overview"></div>'
+        +'<div class="rail-sec rail-slot" id="railSlotBudget" data-rt="perf"></div>'
         +'<div class="rail-sec"><div class="rail-sec-h">열린 종목창 <span class="rail-cnt" id="railCnt">0</span></div>'
           +'<div id="railStocks"></div></div>'
       +'</div>'
@@ -17717,6 +17725,16 @@ html:root .page > *{ flex-shrink:0; }
       +'</div>';
     shell.appendChild(el);
     RAIL.el = el; RAIL.body = $id('railStocks'); RAIL.cnt = $id('railCnt');
+    /* [V33.587] 아이패드 폭에서 사이드바를 여는 버튼(시안: 'AI 상태 패널') — CSS 가 768~999px · 두뇌 화면에서만 보인다 */
+    var fab = document.createElement('button');
+    fab.type = 'button'; fab.className = 'rail-fab'; fab.setAttribute('aria-controls', 'luxRail');
+    fab.innerHTML = '<i></i>AI 상태 패널';
+    fab.addEventListener('click', function(){
+      var on = document.body.classList.toggle('rail-sheet-open');
+      fab.setAttribute('aria-expanded', on ? 'true' : 'false');
+      fab.lastChild.textContent = on ? '패널 닫기' : 'AI 상태 패널';
+    });
+    document.body.appendChild(fab);
 
     // 바로가기(AI 리포트·WHAT-IF)
     el.addEventListener('click', function(e){
@@ -17733,6 +17751,13 @@ html:root .page > *{ flex-shrink:0; }
     railWidthVar();
     window.addEventListener('resize', railWidthVar);
     $id('railDensity').addEventListener('click', function(){ toggleDensity(); });
+    $id('railTabs').addEventListener('click', function(e){
+      var b = e.target.closest ? e.target.closest('[data-rt]') : null; if(!b) return;
+      RAILTAB = b.getAttribute('data-rt');
+      try{ localStorage.setItem('luxRailTab', RAILTAB); }catch(e2){}
+      railTabsApply();
+    });
+    railTabsApply();
     $id('railBack').addEventListener('click', function(){ go('nnviz'); });
     $id('railAdd').addEventListener('click', function(){
       var fab = $id('cmdkFab'); if(fab) fab.click();
@@ -18222,6 +18247,7 @@ html:root .page > *{ flex-shrink:0; }
     if(!aiModeTargets().length) return false;      /* DOM 아직 없음 — 실패로 보고해 재시도시킨다 */
     try{
       renderRailAiMode(mode, (LIVE.data && LIVE.data.picks) || []);
+      try{ railTabsGroup(); }catch(e2){}
       AIM.painted = true; return true;
     }catch(e){
       /* ★예외를 삼키지 않는다.★ 삼키면 초기 문구("확인 중…")가 그대로 남아
@@ -18284,6 +18310,39 @@ html:root .page > *{ flex-shrink:0; }
      내용은 ★한 글자도 지우지 않는다★ — 접기만 한다. renderRailAiMode 는 손대지 않고
      (레일과 공용 코드다) 폰 전용 요소인 #mobAiMode 안에서만 다시 묶는다.
      다시 그릴 때마다(2분 폴링) 구조가 날아가므로, 열림 상태는 ★섹션 제목★ 으로 기억한다. */
+  /* [V33.587] 우측 사이드바 탭 — 섹션 제목(.k) → 탭. 모르는 제목은 '시스템' 으로(지우지 않는다). */
+  var RAILTAB = (function(){ try{ return localStorage.getItem('luxRailTab') || 'overview'; }catch(e){ return 'overview'; } })();
+  function railTabOf(title){
+    var t = String(title || '');
+    if(/^(시장 국면|섹터 온도|AI 픽)/.test(t)) return 'overview';
+    if(/^(위원회|OMNI|확률 체인|폭등 레버리지|단타 레버리지)/.test(t)) return 'models';
+    if(/^(진입 문턱|실적|게이트 감사|성과)/.test(t)) return 'perf';
+    return 'sys';
+  }
+  function railTabsGroup(){
+    var host = $id('railAiMode'); if(!host) return;
+    var kids = [].slice.call(host.children), card = null, frag = document.createDocumentFragment(), lead = null;
+    if(!kids.some(function(k){ return k.className === 'k'; })) return;
+    for(var i=0;i<kids.length;i++){
+      var el = kids[i];
+      if(el.className === 'k'){
+        card = document.createElement('div');
+        card.className = 'rail-card';
+        card.setAttribute('data-rt', railTabOf((el.textContent || '').trim()));
+        frag.appendChild(card); card.appendChild(el);
+      } else if(card){ card.appendChild(el); }
+      else { if(!lead){ lead = document.createElement('div'); lead.className = 'rail-lead'; frag.appendChild(lead); } lead.appendChild(el); }
+    }
+    host.innerHTML = ''; host.appendChild(frag);
+    railTabsApply();
+  }
+  function railTabsApply(){
+    var rail = $id('luxRail'); if(!rail) return;
+    var bs = rail.querySelectorAll('#railTabs [data-rt]');
+    for(var i=0;i<bs.length;i++){ var on = bs[i].getAttribute('data-rt') === RAILTAB; bs[i].classList.toggle('on', on); bs[i].setAttribute('aria-selected', on ? 'true' : 'false'); }
+    var xs = rail.querySelectorAll('.rail-body [data-rt]:not(button)');
+    for(var j=0;j<xs.length;j++) xs[j].style.display = (xs[j].getAttribute('data-rt') === RAILTAB) ? '' : 'none';
+  }
   var MACC = null;                 /* 제목 → 열림여부. null = 아직 초기화 전 */
   function mobAiAccordion(){
     var host = $id('mobAiMode'); if(!host) return;
@@ -18961,7 +19020,7 @@ html:root .page > *{ flex-shrink:0; }
     /* [V33.301] 이 레일이 사용자가 "불이 안 들어와 있다" 고 가리킨 그 화면이다.
        아래 모든 불은 ★서버 명부★ 에서 나온다 — 여기서 admit/trusted 를 다시 읽지 않는다. */
     try { if (mode && mode.alt && mode.alt.roster) LUXR.set(mode.alt.roster, 'rail'); } catch(e){}
-    var put = function(html){ if(el) el.innerHTML = html; if(mob) mob.innerHTML = html; };
+    var put = function(html){ if(el) el.innerHTML = html; if(mob) mob.innerHTML = html; try{ railTabsGroup(); }catch(e){} };   // [V33.587] 레일은 탭으로 묶는다
     // ═══ [V33.56] AI 운용 상태 — 표 레이아웃 ═══
     //   원칙: 값이 없어도 행은 항상 그린다(빈칸 "—"). 있다/없다가 아니라 '무엇이 비었는가'가 보여야
     //   지금 무엇을 기다리는 중인지 판단할 수 있다. 항목 유무에 따라 레이아웃이 흔들리지도 않는다.
@@ -20897,19 +20956,84 @@ body:has(#page-nnviz.active) .rail{
   #page-nnviz .nnv-tab{transition:none;}
 }
 
+/* ══ [V33.587] ★AI 두뇌 작동화면 리디자인 적용★ — 사용자 시안 승인("로고는 건들지 말고 나머지는 모두 적용").
+   그래파이트 바탕 · 한 가지 카드 문법(1px 선 · 14~16px 모서리 · 그림자·모서리 장식 없음) · 숫자는 고정폭.
+   혼자 하얗게 튀던 NOW·DECISION 카드를 어두운 카드로. 우측 사이드바는 요약 4칸 + 탭(개요·모델·성과·시스템) + 카드.
+   좌측 맨 위 로고(.sb-brand)는 손대지 않는다. 밝은 테마는 종전 그대로(어두운 테마에만 적용). */
+html:not([data-theme="light"]){
+  --bx-bg:#07090C; --bx-p0:#0B0E13; --bx-p1:#0F1318; --bx-p2:#161B22; --bx-p3:#1E242E;
+  --bx-line:#1C222C; --bx-line2:#262D38; --bx-ink:#E8ECF2; --bx-ink2:#A3ADBD; --bx-ink3:#7D8799;
+  --bx-cyan:#5BC6F5; --bx-cyan2:#7DD3FC; --bx-up:#34D399; --bx-dn:#F87171; --bx-amb:#F5B451;
+}
+/* 좌측 메뉴 항목(로고 제외) */
+html:not([data-theme="light"]) .sidebar .nav-item{min-height:44px;border-radius:10px;}
+/* 본문 */
+html:not([data-theme="light"]) #page-nnviz{background:var(--bx-bg);}
+html:not([data-theme="light"]) #page-nnviz [data-brain-tab]{min-height:44px;border-radius:9px !important;}
+html:not([data-theme="light"]) #page-nnviz [data-brain-tab][aria-pressed="true"]{background:#E6E9EE !important;color:#0B0E13 !important;box-shadow:none !important;}
+html:not([data-theme="light"]) #page-nnviz .nnv-healthbar{background:var(--bx-p1) !important;border-color:var(--bx-line) !important;border-radius:12px;}
+html:not([data-theme="light"]) #page-nnviz .ops-brief{display:grid !important;grid-template-columns:minmax(0,1.6fr) minmax(0,2fr) !important;gap:0 !important;border:1px solid var(--bx-line2);border-radius:16px;background:var(--bx-p1);overflow:hidden;}
+html:not([data-theme="light"]) #page-nnviz .ops-brief-main,
+html:not([data-theme="light"]) #page-nnviz .ops-metrics>div{background:transparent !important;border:0 !important;border-radius:0 !important;box-shadow:none !important;color:var(--bx-ink) !important;}
+html:not([data-theme="light"]) #page-nnviz .ops-brief-main{border-right:1px solid var(--bx-line) !important;}
+html:not([data-theme="light"]) body #page-nnviz section.ops-brief .ops-brief-main{background:var(--bx-p1) !important;background-image:none !important;color:var(--bx-ink) !important;}
+html:not([data-theme="light"]) body #page-nnviz section.ops-brief .ops-brief-main *{color:inherit;}
+html:not([data-theme="light"]) #page-nnviz .ops-brief-main::before,html:not([data-theme="light"]) #page-nnviz .ops-brief-main::after,
+html:not([data-theme="light"]) #page-nnviz .ops-metrics>div::before,html:not([data-theme="light"]) #page-nnviz .ops-metrics>div::after{display:none !important;}
+html:not([data-theme="light"]) #page-nnviz .ops-brief-main strong{color:var(--bx-ink) !important;}
+html:not([data-theme="light"]) #page-nnviz .ops-brief-main p,html:not([data-theme="light"]) #page-nnviz .ops-metrics small{color:var(--bx-ink2) !important;}
+html:not([data-theme="light"]) #page-nnviz .ops-label,html:not([data-theme="light"]) #page-nnviz .ops-metrics dt{color:var(--bx-ink3) !important;}
+html:not([data-theme="light"]) #page-nnviz .ops-metrics{display:grid !important;grid-template-columns:repeat(3,minmax(0,1fr)) !important;gap:0 !important;margin:0 !important;}
+html:not([data-theme="light"]) #page-nnviz .ops-metrics>div+div{border-left:1px solid var(--bx-line) !important;}
+html:not([data-theme="light"]) #page-nnviz .ops-metrics dd{color:var(--bx-ink) !important;font-family:var(--ops-mono);}
+html:not([data-theme="light"]) #page-nnviz .nlv-scanwrap,
+html:not([data-theme="light"]) #page-nnviz .nlv-hero>*,
+html:not([data-theme="light"]) #page-nnviz .nlv-lower>*{background:var(--bx-p0) !important;border:1px solid var(--bx-line) !important;border-radius:16px !important;box-shadow:none !important;}
+html:not([data-theme="light"]) #page-nnviz .nlv-scancard{background:var(--bx-p1) !important;border:1px solid var(--bx-line) !important;border-radius:12px !important;box-shadow:none !important;}
+html:not([data-theme="light"]) #page-nnviz .nlv-scancard.is-now{border-color:var(--bx-cyan) !important;background:#0F1620 !important;}
+html:not([data-theme="light"]) #page-nnviz .nlv-strip-tags>*{border-radius:999px !important;border-color:var(--bx-line2) !important;}
+@media(max-width:999px){
+  html:not([data-theme="light"]) #page-nnviz .ops-brief{grid-template-columns:1fr !important;}
+  html:not([data-theme="light"]) #page-nnviz .ops-brief-main{border-right:0 !important;border-bottom:1px solid var(--bx-line) !important;}
+}
+
+/* 우측 사이드바 */
+html:not([data-theme="light"]) .rail{background:var(--bx-p0) !important;border-left-color:var(--bx-line) !important;}
+.rail-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px;margin:10px 10px 4px;padding:3px;border-radius:10px;border:1px solid var(--bx-line,var(--bd));background:var(--bx-p1,var(--s1));}
+.rail-tabs button{min-height:34px;border:0;border-radius:8px;background:transparent;color:var(--bx-ink2,var(--t2));font:inherit;font-size:12px;cursor:pointer;}
+.rail-tabs button.on{background:var(--bx-p3,var(--s2));color:var(--bx-ink,var(--t1));font-weight:600;}
+.rail-aisec{border-bottom:none !important;background:transparent !important;}
+.rail-ai .rail-lead{padding:2px 4px 8px;}
+.rail-ai .rail-card{border:1px solid var(--bx-line,var(--bd));border-radius:14px;padding:10px 12px;margin:0 0 10px;background:var(--bx-p1,transparent);}
+.rail-ai .rail-card>.k:first-child{display:block;margin:0 0 6px;font-size:11.5px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--bx-ink2,var(--t2));}
+.rail-ai .rail-card .tbl td{padding:4px 0;border-bottom:1px solid var(--bx-p2,var(--bd2));}
+.rail-ai .rail-card .tbl tr:last-child td{border-bottom:0;}
+html:not([data-theme="light"]) .rail .rail-sec{border-bottom:none !important;}
+html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid var(--bx-line);border-radius:14px;background:var(--bx-p1);}
+
+/* 아이패드(768~999px): 사이드바 → 오른쪽 상태 시트(버튼으로 연다) */
+.rail-fab{display:none;}
+@media(min-width:768px) and (max-width:999px){
+  body:has(#page-nnviz.active) .rail-fab{display:flex;position:fixed;right:20px;bottom:24px;z-index:60;align-items:center;gap:10px;min-height:52px;padding:0 20px;border-radius:26px;border:1px solid #2E3643;background:#11161D;color:#E8ECF2;font:600 13px/1 inherit;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.45);}
+  .rail-fab i{width:8px;height:8px;border-radius:50%;background:#34D399;}
+  body.rail-sheet-open:has(#page-nnviz.active) .rail{display:flex !important;position:fixed;top:0;right:0;bottom:0;width:min(380px,86vw);z-index:70;box-shadow:-12px 0 40px rgba(0,0,0,.55);}
+  body.rail-sheet-open:has(#page-nnviz.active) .rail-fab{right:calc(min(380px,86vw) + 16px);}
+}
+
+
 /* [V33.312] 좁은 화면 전용 @media 는 두지 않는다 — check-mobile.mjs 가 "폰 블록 뒤
    좁은폭 규칙 금지"를 강제한다(순서로 이겨 기존 폰 레이아웃을 조용히 덮을 수 있어서).
    히어로·위원회·후보 그리드는 전부 grid auto-fit(minmax)로 폭에 맞춰 재배치된다. */
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.586">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.586">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.586">
-<link rel="stylesheet" href="/model-evidence.css?v=33.586">
+<link rel="stylesheet" href="/brain-console.css?v=33.587">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.587">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.587">
+<link rel="stylesheet" href="/model-evidence.css?v=33.587">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.586">
-<script src="/model-evidence.js?v=33.586"></script>
-<script src="/workspace-ui.js?v=33.586"></script>
+<link rel="stylesheet" href="/liquid-metal.css?v=33.587">
+<script src="/model-evidence.js?v=33.587"></script>
+<script src="/workspace-ui.js?v=33.587"></script>
 </body>
 </html>
