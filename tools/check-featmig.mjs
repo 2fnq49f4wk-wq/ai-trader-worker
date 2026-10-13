@@ -131,6 +131,7 @@ const names = M.LUXML.featNames, D = names.length, SN = M.DS_FEATS.length;
     const ctx = vm.createContext({
       env, Date, Math, JSON, String,
       _aiDay: "2026-09-10", _STG_COST_MIN_MS: 1e9, _stgCost: { ms: {}, ts: 0 },
+      TRAIN_STAGES: new Set(), _trainKey: null,   // [V33.584] 이 검사의 t1 은 매일 단계(학습 주 키는 check-train-weekly 가 본다)
       _num: (v, d) => { const x = Number(v); return Number.isFinite(x) ? x : d; },
       getState: async (_db, k) => (store[k] === undefined ? null : store[k]),
       setState: async (_db, k, v) => { store[k] = v; },

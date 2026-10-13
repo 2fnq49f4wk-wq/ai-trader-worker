@@ -27,7 +27,7 @@ const bad = (m) => { fails++; console.error("  FAIL " + m); };
   if (/const _partial = await getState\(env\.DB, "ai_pipe_partial", null\);/.test(S))
     ok("진입 게이트가 부분 완주 상태를 읽는다");
   else bad("★진입 게이트가 부분 완주를 모른다★ — 도장이 찍히면 그날은 영영 닫힌다");
-  if (/if \(\(_aiLast !== _aiDay \|\| _resume\) && !_aiLockFresh\)/.test(S))
+  if (/if \(\(_aiLast !== _aiDay \|\| _resume( \|\| _trainDue)?\) && !_aiLockFresh\)/.test(S))   // [V33.584] 학습 주(_trainDue)도 문을 연다
     ok("대기 단계가 있으면 도장이 있어도 다시 들어온다");
   else bad("★진입 조건이 아직 도장만 본다★");
   if (/_v\.indexOf\(_aiDay \+ "\|wait\|"\) === 0/.test(S))
@@ -58,9 +58,9 @@ const bad = (m) => { fails++; console.error("  FAIL " + m); };
   if (eToday && eCool && eBase && eResume && eEnter) {
     const day = "2026-09-10";
     /* openStages = 스캔이 찾아낸 '진짜로 안 끝난 단계'. V33.343 이 여는 두 번째 문이다. */
-    const enter = (partial, aiLast, lockFresh, now, openStages) => {
+    const enter = (partial, aiLast, lockFresh, now, openStages, trainDue) => {
       const ctx = {
-        _partial: partial, _aiDay: day, _aiLast: aiLast, _aiLockFresh: lockFresh,
+        _partial: partial, _aiDay: day, _aiLast: aiLast, _aiLockFresh: lockFresh, _trainDue: !!trainDue,
         _openStages: openStages || [],
         _num: (v, d) => (typeof v === "number" && isFinite(v)) ? v : d,
         Date: { now: () => now }, isFinite
@@ -90,7 +90,10 @@ const bad = (m) => { fails++; console.error("  FAIL " + m); };
       [enter(null, day, false, T0, ["calibrate"]), true,
        "★부분완주 기록이 없어도 안 끝난 단계를 찾아내면 닫힌 날을 다시 연다★"],
       [enter(null, day, false, T0, []), false,
-       "찾아낸 게 없으면 열지 않는다 — 스캔이 무조건 문을 열어 주지는 않는다"]
+       "찾아낸 게 없으면 열지 않는다 — 스캔이 무조건 문을 열어 주지는 않는다"],
+      /* [V33.584] 금요일 07시Z — 그날 수집은 이미 완주했어도 학습 창이 열리면 들어온다(락은 그대로 존중) */
+      [enter(null, day, false, T0, [], true), true, "학습 주가 열렸으면(_trainDue) 닫힌 날도 다시 들어온다"],
+      [enter(null, day, true, T0, [], true), false, "학습 주라도 락이 살아 있으면 겹쳐 돌지 않는다"]
     ];
     for (const [got, want, label] of cases) {
       if (got === want) ok(label);
@@ -161,7 +164,7 @@ const bad = (m) => { fails++; console.error("  FAIL " + m); };
      실측: 워커 로그 12시간치(2498줄)에 [SCHED] 도 [CAL] 도 0줄이었다. */
   const bi = S.indexOf('if (typeof LUXML !== "undefined" && LUXML.enabled) {', S.indexOf("async scheduled("));
   const head = bi >= 0 ? S.slice(bi, bi + 1600) : "";
-  if (/_pipeOpenStages\(env, _dayNow\)/.test(head))
+  if (/_pipeOpenStages\(env, _dayNow[,)]/.test(head))
     ok("스캔이 야간 블록 ★맨 앞★ 에서 돈다 — 뒤쪽이 굶어도 다음 틱의 게이트가 열린다");
   else bad("★스캔이 블록 뒤쪽에만 있다★ — 무거운 일이 예산을 먹으면 영영 도달하지 못한다");
   if (/_lastDone === _dayNow && !\(_pp && _pp\.day === _dayNow\)/.test(head))

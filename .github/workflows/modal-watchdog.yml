@@ -106,7 +106,8 @@ jobs:
               echo "Settings → Secrets and variables → Actions → **Variables** 에"
               echo "\`WORKER_URL\` 을 직접 등록하면 신선할 때 학습을 건너뛴다."
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "stale=true" >> "$GITHUB_OUTPUT"
+            # [V33.584] 모르면 돌리되 금요일(UTC)만 — 평일에 GPU 학습을 걸면 "학습은 금요일 한 번" 이 깨진다
+            if [ "$(date -u +%u)" = "5" ]; then echo "stale=true" >> "$GITHUB_OUTPUT"; else echo "stale=false" >> "$GITHUB_OUTPUT"; fi
             echo "age=unknown" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -137,7 +138,8 @@ jobs:
               echo ""
               echo "주소는 찾았으나 응답이 없다 — 워커 배포 상태를 확인할 것."
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "stale=true" >> "$GITHUB_OUTPUT"
+            # [V33.584] 모르면 돌리되 금요일(UTC)만 — 평일에 GPU 학습을 걸면 "학습은 금요일 한 번" 이 깨진다
+            if [ "$(date -u +%u)" = "5" ]; then echo "stale=true" >> "$GITHUB_OUTPUT"; else echo "stale=false" >> "$GITHUB_OUTPUT"; fi
             echo "age=unknown" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -155,15 +157,16 @@ jobs:
               echo "V33.175 에서 고쳤으므로, ★다음 학습이 한 번 성공하면★ 이 경고는 사라지고"
               echo "그때부터 신선할 때는 학습을 건너뛴다."
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "stale=true" >> "$GITHUB_OUTPUT"
+            if [ "$(date -u +%u)" = "5" ]; then echo "stale=true" >> "$GITHUB_OUTPUT"; else echo "stale=false" >> "$GITHUB_OUTPUT"; fi
             echo "age=미기록" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           [ -z "$AGE" ] && AGE=9999
           echo "필수 외부모델 최대 지연: ${AGE}h (9999=누락·판불일치·시각미상)"
           echo "age=$AGE" >> "$GITHUB_OUTPUT"
-          # 6시간 주기이므로 14시간을 넘으면 확실히 밀린 것이다(워커의 자동 재트리거와 같은 문턱).
-          STALE=$(python3 -c "print('true' if float('$AGE') > 14 else 'false')")
+          # [V33.584] 학습은 금요일 주 1회(Modal 크론 금 08:10·14:10Z) — 정상 주기에서 최대 ≈162h 묵는다.
+          #   180h 를 넘으면 금요일을 놓친 것이다(워커의 자동 재트리거 MODALAUTO.staleH 와 같은 문턱).
+          STALE=$(python3 -c "print('true' if float('$AGE') > 180 else 'false')")
           echo "stale=$STALE" >> "$GITHUB_OUTPUT"
 
       - name: 시크릿 확인
@@ -230,5 +233,5 @@ jobs:
             echo "학습 진행·결과는 Modal 대시보드와" >> "$GITHUB_STEP_SUMMARY"
             echo "대시보드의 외부모델 나이를 함께 확인할 것. 다음 실행에서도 나이가 안 줄면 트레이너 자체 문제다." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "### ✅ 외부모델 신선함 (${{ steps.fresh.outputs.age }}h ≤ 14h) — 학습 생략" >> "$GITHUB_STEP_SUMMARY"
+            echo "### ✅ 외부모델 신선함 (${{ steps.fresh.outputs.age }}h ≤ 180h · 학습은 금요일 주 1회) — 학습 생략" >> "$GITHUB_STEP_SUMMARY"
           fi

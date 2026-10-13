@@ -12,6 +12,19 @@
 
 ## Current handoff
 
+- V33.584 (10/13) ★AI 모델 학습은 금요일 한 번 — 평일은 수집만★ + CPU 절감 — 사용자: "ai모델 학습을 금요일 한번만 · 그 전까지는 수집만 · Omni 수집은 이어서 · cpu 낭비 줄이고".
+  - 워커 야간 파이프라인: TRAIN_STAGES(l1·bandit·brain·mind·gbdt·memo·dual·calibrate·finalcal·expepoch·pooluniq·각종 계수 적합 등 23단계)는
+    trainWeekKey — 금요일 07시Z(한국장 마감 뒤)에 열리고 그 금요일 날짜로 도장(주 1회) · 토·일은 끊긴 단계만 이어 끝냄 · 월~목 닫힘.
+    수집 단계(수확·OMNI 봉/수급/뉴스/실적·반사실 라벨·딥이력·감성·소셜 관측·전 종목 스캔·장부 감사·포트 통계)는 매일.
+    예외: 피처 판(_PIPE_VER) 바뀐 날은 ai_train_force 로 그날 학습(옛 모델은 못 읽는다 — V33.245). 진단: selfcheck pipe.trainWeekly.
+  - Modal 크론 매 12시간 → 금요일 08:10·14:10Z(한 바퀴 = 2회차) · MODALAUTO.staleH 14 → 180h · 워치독 14 → 180h(나이 모르면 금요일만) · train-gha(ablate) 일 → 금 22:10Z.
+  - OMNI-Q(GHA): 금요일 07:20Z 회차만 학습(퍼지 전진 + 최종 적합) → actions/cache 저장 · 나머지 회차는 캐시 모델로 그날 피처만 채점(scoreOnly)
+    · 관문 ①② 금요일 결과 · ③ 매번 다시 잼 · 캐시 없음/피처 변경/7.5일 넘음 → 그 회차가 학습(자가 복구). 워커 신선도 omniqFresh = 채점 5일 + 모델 10일.
+    ★오늘(화) 21:20Z 회차는 캐시가 없어 한 번 학습하고 캐시를 만든다(정상)★ — 수요일부터 채점만 · 다음 학습 10/16(금) 07:20Z.
+  - CPU: 반사실 라벨 틱 30분 → 4시간 · OMNI 섀도우 채점 10/30분 → 60/180분(분봉 머리 AUC 0.50) · 원자재·국채 슬리브 매분 → 체결 창 3분/시세만 15분.
+    OMNI 봉 수집(ai.omniBars)은 그대로. 게이트 check-train-weekly(실제 _stg · 실제 파이썬 should_train · _score_only 연기 확인).
+  - ★확인할 것★: 10/14 사용량 단계표에서 altSleeve·ai.cflabel·ai.omniShadow 몫 감소 · 10/16(금) 07시Z 이후 [SCHED] "학습 포함(주 2026-10-16)" · Modal 금 08:10Z 회차.
+
 - V33.583 (10/13) ★폭등날 롱 레버리지 단타(SC_SURGE_LEV)★ — 사용자: "비슷한 원리로 폭등했을 때 롱 레버리지 사는 거 작동되는지 확인하고 수정".
   - 확인 결과 작동 안 함: 폭등날 레버리지 롱 진입 경로가 없었다 — 규칙 추세는 CHASE(추격 금지)가 급등 진입을 막고 · AI·단타의 레버리지 ETF 진입은
     V33.506 으로 금지 · leverageDecide(ceilMeltup 1.6)는 크기 배수일 뿐 레버리지 상품을 사지 않는다 · 한국은 usOnly 로 규칙 단타 자체가 안 돈다.

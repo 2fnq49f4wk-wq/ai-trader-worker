@@ -42,6 +42,68 @@ DE_SR_BINS, DE_FS_BINS = 10, 5
 DE_FS_RATIO = (0.8, 0.7, 0.6, 0.5, 0.4)
 COST_RT = {"us": 0.0005 + 0.0005, "kr": (0.00015 + 0.001) + (0.00015 + 0.001 + 0.002)}   # 왕복(실험실 COST 와 같다)
 
+# ── [V33.584] ★학습은 금요일 한 번 · 평일은 채점만★ — 사용자(10/13): "ai 모델 학습을 금요일 한번만 · 그 전까지는 수집만".
+#   워커 매매 경로(OMNIQ_ROUTE)는 ★그날 피처★ 로 매긴 점수가 필요하다(점수 5일 넘으면 낡음). 그래서 평일 회차는 학습(퍼지 전진 5구간 ·
+#   최종 적합)을 건너뛰고 ★금요일 모델로 그날 피처만 다시 채점★ 해 올린다. 관문 ①② 는 금요일 학습 결과 그대로, ③(라이브 장부)은 매번 다시 잰다
+#   (장부 채점은 학습이 아니다 — 지난 픽을 실제 가격으로 맞춰 보는 것뿐). 모델은 GHA 캐시(actions/cache)에 둔다.
+TRAIN_DOW = 4                    # 금요일(파이썬 월=0)
+TRAIN_FROM_HOUR = 7              # 07시Z(한국장 마감 뒤) 이후 첫 회차가 학습한다
+MODEL_MAX_AGE_S = 7.5 * 86400    # 금요일 학습이 빠졌으면(캐시 만료·실패) 다음 회차가 학습한다 — 자가 복구
+
+
+def should_train(mode, cached, names, now_ts=None):
+    """이번 회차가 학습할지와 그 이유. mode: auto(기본) · train(강제) · score(채점만 — 캐시가 맞을 때만)."""
+    import datetime as _dt
+    now_ts = time.time() if now_ts is None else now_ts
+    if mode == "train":
+        return True, "강제 학습"
+    if not cached or list(cached.get("names") or []) != list(names):
+        return True, "캐시 없음 또는 피처 목록이 바뀜"
+    t_at = float(cached.get("trainedAt") or 0) / 1000.0
+    if now_ts - t_at > MODEL_MAX_AGE_S:
+        return True, "모델 %.1f일 — 금요일 학습이 빠졌다" % ((now_ts - t_at) / 86400)
+    if mode == "score":
+        return False, "강제 채점"
+    now = _dt.datetime.utcfromtimestamp(now_ts)
+    if now.weekday() == TRAIN_DOW and now.hour >= TRAIN_FROM_HOUR:
+        t = _dt.datetime.utcfromtimestamp(t_at)
+        if t.date() != now.date() or t.hour < TRAIN_FROM_HOUR:
+            return True, "금요일 학습"
+    return False, "금요일 모델로 채점만"
+
+
+def load_cache(path):
+    import pickle
+    try:
+        with open(path, "rb") as f:
+            c = pickle.load(f)
+        return c if isinstance(c, dict) else {}
+    except Exception:  # noqa: BLE001 — 캐시가 없거나 깨졌으면 학습한다
+        return {}
+
+
+def save_cache(path, cache):
+    import os
+    import pickle
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "wb") as f:
+        pickle.dump(cache, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def _last_row(mk, C, D):
+    """채점할 마지막 날 — 한국 장중(00:00~06:30Z)에 돌면 오늘 일봉이 덜 찼다 → 어제까지."""
+    last = D - 1
+    if mk == "kr":
+        import datetime as _dt
+        now = _dt.datetime.utcnow()
+        kst_today = int((now + _dt.timedelta(hours=9)).strftime("%Y%m%d"))
+        try:
+            if now.hour < 7 and int(C.index[last]) >= kst_today and last > 0:
+                last -= 1
+        except (TypeError, ValueError):
+            pass
+    return last
+
 
 def _lgb_params(seed=7, reg=False):
     import os
@@ -239,7 +301,76 @@ def _features_q(P, log):
     return (np.stack(out, axis=2) if out else None), names
 
 
-def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=print):
+def _ledger(req, BASE, HDR, mk, C, ylab, h, log):
+    """③ 라이브 장부 채점(학습 아님) — 워커가 보관한 과거 '그날 상위 10%' 를 실제 가격으로 맞춰 본다."""
+    g = {"days": 0, "mu": None, "lb": None, "ok": False}
+    if req is None:
+        return g
+    try:
+        params = {"mkt": mk} if h == H else {"mkt": mk, "h": str(h)}
+        r = req.get(BASE + "/api/omni-q-picks", params=params, headers=HDR, timeout=60)
+        r.raise_for_status()
+        g = gate3(r.json().get("picks") or [], C, ylab, {str(k2): i for i, k2 in enumerate(C.index)})
+    except Exception as e:  # noqa: BLE001
+        log("      ⚠️ [OMNI-Q %s] %d일 장부 읽기 실패: %r — ③ 미달로 둔다" % (mk, h, e))
+    return g
+
+
+def _score_only(mk, cached, C, X, y, req, BASE, HDR, log):
+    """[V33.584] 금요일 모델(cached)로 그날 피처만 채점한다 — 학습 없음. 관문 ①② 는 금요일 결과 · ③ 은 다시 잰다."""
+    try:
+        D, S = C.shape
+        last = _last_row(mk, C, D)
+        xl = X[last]
+        s_last = cached["bst"].predict(xl).astype(np.float64)
+        ok = np.isfinite(s_last) & np.isfinite(xl).any(axis=1)
+        syms = [C.columns[j] for j in range(S) if ok[j]]
+        sv = s_last[ok]
+        if len(sv) < 20:
+            return None
+        pct = (np.argsort(np.argsort(sv)) + 0.5) / len(sv)
+        sc = {s_: round(float(p_), 4) for s_, p_ in zip(syms, pct)}
+        k = max(1, int(round(len(syms) * Q)))
+        top = [syms[j] for j in np.argsort(-sv)[:k]]
+        extra = {}
+        for hk, mdl in (cached.get("heads") or {}).items():
+            try:
+                v = mdl.predict(xl)[ok]
+                if hk == "pUp":
+                    extra[hk] = {s_: round(float(p_), 4) for s_, p_ in zip(syms, v)}
+                else:
+                    pv = (np.argsort(np.argsort(v)) + 0.5) / len(v)
+                    extra[hk] = {s_: round(float(p_), 4) for s_, p_ in zip(syms, pv)}
+            except Exception as e:  # noqa: BLE001
+                log("      ⚠️ [OMNI-Q %s] 머리 %s 채점 실패: %r" % (mk, hk, e))
+        f20 = (C.shift(-(H20 + 1)) / C.shift(-1) - 1.0)
+        y20 = f20.rank(axis=1, pct=True).values
+        g3 = _ledger(req, BASE, HDR, mk, C, y, H, log)
+        g3_20 = _ledger(req, BASE, HDR, mk, C, y20, H20, log)
+        gate = dict(cached.get("gate") or {})
+        gate["g3"] = dict(g3, needDays=G3_MIN_DAYS)
+        gate["speak"] = bool((gate.get("g1") or {}).get("ok") and (gate.get("g2") or {}).get("ok") and g3["ok"])
+        gate20 = dict(cached.get("gate20") or {})
+        if gate20:
+            gate20["g3"] = dict(g3_20, needDays=G3_MIN_DAYS)
+            gate20["speak"] = bool((gate20.get("g1") or {}).get("ok") and (gate20.get("g2") or {}).get("ok") and g3_20["ok"])
+        top20 = []
+        r20 = extra.get("r20") or {}
+        if r20:
+            k20 = max(1, int(round(len(r20) * Q)))
+            top20 = [s_ for s_, _ in sorted(r20.items(), key=lambda kv: -kv[1])[:k20]]
+        log("      [OMNI-Q %s] ③ 라이브 장부 날 %d · 하한 %s → %s · 20일 ③ 날 %d → %s" % (
+            mk, g3["days"], g3["lb"], "통과" if g3["ok"] else "미달", g3_20["days"], "통과" if g3_20["ok"] else "미달"))
+        return {"mkt": mk, "day": str(C.index[last]), "h": H, "q": Q, "trainedAt": int(cached["trainedAt"]),
+                "scoredAt": int(time.time() * 1000), "scoreOnly": True, "nFeat": int(cached.get("nFeat") or xl.shape[1]), "n": len(sc),
+                "scores": sc, "top": top, "heads": extra, "learner": cached.get("learner") or LEARNER_5D, "lab": cached.get("lab"),
+                "gate": gate, "top20": top20, "gate20": gate20 or None}
+    except Exception as e:  # noqa: BLE001
+        log("      ⚠️ [OMNI-Q %s] 채점만 예외: %r" % (mk, e))
+        return None
+
+
+def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=print, cache=None, mode="auto"):
     import lightgbm as lgb
     import factor_screen as fs
     import portfolio_lab as pl
@@ -268,6 +399,25 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         if len(days) < 200:
             log("   · %s 표본일 부족" % mk)
             continue
+        # [V33.584] 학습 회차인가(금요일) — 아니면 금요일 모델로 그날 피처만 채점해 올리고 다음 시장으로
+        cached = cache.get(mk) if isinstance(cache, dict) else None
+        do_train, why_train = should_train(mode, cached, names)
+        log("   · [OMNI-Q %s] %s — %s" % (mk, "학습" if do_train else "채점만(학습 없음)", why_train))
+        if not do_train:
+            body = _score_only(mk, cached, C, X, y, req, BASE, HDR, log)
+            if body is not None:
+                out[mk] = body["gate"]
+                log("      [OMNI-Q %s] 오늘(%s) %d종목 채점(금요일 모델 · 학습 %s) · 발언 %s (%.0fs)" % (
+                    mk, body["day"], body["n"], time.strftime("%m-%d %H:%MZ", time.gmtime(body["trainedAt"] / 1000.0)),
+                    "가능" if body["gate"]["speak"] else "불가(섀도우)", time.time() - t0))
+                if req is not None:
+                    try:
+                        r = req.post(BASE + "/api/omni-q", headers=HDR, json=body, timeout=120)
+                        log("      [OMNI-Q %s] 업로드 %s %s" % (mk, r.status_code, r.text[:200]))
+                    except Exception as e:  # noqa: BLE001
+                        log("      ⚠️ [OMNI-Q %s] 업로드 실패: %r" % (mk, e))
+                continue
+            log("      ⚠️ [OMNI-Q %s] 채점만 실패 — 이번 회차는 학습한다" % mk)
         lab_end = np.arange(len(days)) + H + 1
         splits = list(purged_walk_forward_splits(len(days), label_end_times=lab_end, n_folds=FOLDS, embargo_fraction=0.02, expanding=True))
         F = X.shape[2]
@@ -411,17 +561,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         m = np.isfinite(ya)
         bst = (DoubleEnsemble().fit(Xa[m], ya[m]) if LEARNER_5D == "de" else
                _fit_lgb(Xa[m], ya[m], rounds=(150 if LEARNER_5D == "lgb_reg" else 300), reg=(LEARNER_5D == "lgb_reg")))
-        last = D - 1
-        # 미완성 봉 금지: 한국 장중(00:00~06:30Z)에 돌면 오늘 일봉이 덜 찼다 → 어제까지(미국은 이 학습기 시각(00:10·12:10Z)에 장이 닫혀 있다)
-        if mk == "kr":
-            import datetime as _dt
-            now = _dt.datetime.utcnow()
-            kst_today = int((now + _dt.timedelta(hours=9)).strftime("%Y%m%d"))
-            try:
-                if now.hour < 7 and int(C.index[last]) >= kst_today and last > 0:
-                    last -= 1
-            except (TypeError, ValueError):
-                pass
+        # 미완성 봉 금지: 한국 장중(00:00~06:30Z)에 돌면 오늘 일봉이 덜 찼다 → 어제까지(미국은 이 학습기 시각에 장이 닫혀 있다)
+        last = _last_row(mk, C, D)
         s_last = bst.predict(X[last]).astype(np.float64)
         ok = np.isfinite(s_last) & np.isfinite(X[last]).any(axis=1)
         syms = [C.columns[j] for j in range(S) if ok[j]]
@@ -433,21 +574,25 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         day = str(C.index[last])
         # [V33.539] 복합 머리 — 오늘 점수(같은 피처 · 각자 라벨로 전체 학습). 발언은 5일 머리만(관문 ①②③). 나머지는 기록·관측용.
         extra = {}
+        head_models = {}   # [V33.584] 평일 채점용으로 보관(캐시)
         try:
-            def _final(lab, objective="regression"):
+            def _final(lab, objective="regression", key=None):
                 la = lab[days].reshape(-1)
                 mm = np.isfinite(la)
-                return _fit_lgb(Xa[mm], la[mm], objective).predict(X[last])[ok]
+                mdl_ = _fit_lgb(Xa[mm], la[mm], objective)
+                if key:
+                    head_models[key] = mdl_
+                return mdl_.predict(X[last])[ok]
             def _pctmap(v):
                 pv = (np.argsort(np.argsort(v)) + 0.5) / len(v)
                 return {s_: round(float(p_), 4) for s_, p_ in zip(syms, pv)}
             for Hh in (1, 20):
                 fh = (C.shift(-(Hh + 1)) / C.shift(-1) - 1.0)
-                extra["r%d" % Hh] = _pctmap(_final(fh.rank(axis=1, pct=True).values))
+                extra["r%d" % Hh] = _pctmap(_final(fh.rank(axis=1, pct=True).values, key="r%d" % Hh))
             ydir = np.where(np.isfinite(fwdv), (fwdv > 0).astype(np.float32), np.nan)
-            extra["pUp"] = {s_: round(float(p_), 4) for s_, p_ in zip(syms, _final(ydir, "binary"))}
+            extra["pUp"] = {s_: round(float(p_), 4) for s_, p_ in zip(syms, _final(ydir, "binary", key="pUp"))}
             vol = P["close"].pct_change(fill_method=None).rolling(5).std().shift(-5)
-            extra["risk"] = _pctmap(_final(vol.rank(axis=1, pct=True).values))
+            extra["risk"] = _pctmap(_final(vol.rank(axis=1, pct=True).values, key="risk"))
         except Exception as e:  # noqa: BLE001
             log("      ⚠️ [OMNI-Q %s] 복합 머리 채점 실패: %r — 5일 머리만 올린다" % (mk, e))
         # ③ 라이브 장부 채점(워커가 보관한 과거 '그날 상위 10%')
@@ -477,7 +622,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 log("      ⚠️ [OMNI-Q %s] 20일 장부 읽기 실패: %r — ③ 미달로 둔다" % (mk, e))
         speak20 = bool(g1_20 and g2_20 and g3_20["ok"])
         log("      [OMNI-Q %s · 20일] ③ 장부 채점 날 %d · 하한 %s → %s · 발언 %s" % (mk, g3_20["days"], g3_20["lb"], "통과" if g3_20["ok"] else "미달", "가능" if speak20 else "불가(섀도우)"))
-        body = {"mkt": mk, "day": day, "h": H, "q": Q, "trainedAt": int(time.time() * 1000), "nFeat": len(names), "n": len(sc),
+        t_ms = int(time.time() * 1000)
+        body = {"mkt": mk, "day": day, "h": H, "q": Q, "trainedAt": t_ms, "scoredAt": t_ms, "scoreOnly": False, "nFeat": len(names), "n": len(sc),
                 "scores": sc, "top": top, "heads": extra, "learner": LEARNER_5D, "lab": lab_rep or None,
                 "gate": {"g1": dict(br, ok=g1, needT=G1_T), "g2": {"folds": fold_x, "foldsFullSwap": fold_x0, "band": BAND, "pos": pos, "need": need, "ok": g2},
                          "g3": dict(g3, needDays=G3_MIN_DAYS), "speak": speak, "fit": fitdiag.get("5일")},
@@ -485,6 +631,10 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 "gate20": {"g1": dict(br20, ok=g1_20, needT=G1_T), "g2": {"folds": fx20, "band": BAND, "step": H20, "pos": pos20, "need": need20, "ok": g2_20},
                            "g3": dict(g3_20, needDays=G3_MIN_DAYS), "speak": speak20, "fit": fitdiag.get("20일")}}
         out[mk] = body["gate"]
+        if isinstance(cache, dict):   # [V33.584] 다음 금요일까지 평일 회차가 이 모델로 채점한다
+            cache[mk] = {"names": list(names), "trainedAt": t_ms, "learner": LEARNER_5D, "bst": bst, "heads": head_models,
+                         "gate": body["gate"], "gate20": body["gate20"], "lab": body["lab"], "nFeat": len(names)}
+            cache["_trained"] = True
         log("      [OMNI-Q %s] 오늘(%s) %d종목 채점 · 상위 %d · 발언 %s (%.0fs)" % (mk, day, len(sc), len(top), "가능" if speak else "불가(섀도우)", time.time() - t0))
         if req is not None:
             try:

@@ -1,5 +1,8 @@
 # [V33.542] OMNI-Q 학습 — GitHub Actions(공개 저장소: 무료 · 분 무제한). Modal(월 크레딧 한도) 대신.
 #   하루 두 번(한국 장 마감 뒤 07:20Z · 미국 장 마감 뒤 21:20Z) — 라이브 장부(관문 ③)가 매일 쌓인다.
+# [V33.584] ★학습은 금요일 07:20Z 회차 한 번★(사용자 10/13: "ai 모델 학습을 금요일 한번만"). 나머지 회차는 학습 없이
+#   캐시(actions/cache)의 금요일 모델로 그날 피처만 채점해 올린다 — 매매 경로는 그날 점수가 필요하다(워커 OMNIQ.maxAgeMs).
+#   캐시가 없거나 7.5일 넘으면 그 회차가 학습한다(자가 복구 · omni_q.should_train).
 name: OMNI-Q 학습 (GitHub Actions · 무료)
 on:
   schedule:
@@ -11,6 +14,11 @@ on:
         description: '연구 회차(DoubleEnsemble vs LightGBM · 순위 1·20일 · 상승확률 · 위험 전진평가)'
         type: boolean
         default: false
+      mode:
+        description: 'auto=금요일만 학습 · train=지금 학습 · score=캐시 모델로 채점만'
+        type: choice
+        default: auto
+        options: [auto, train, score]
 concurrency: { group: omniq-gha, cancel-in-progress: false }
 jobs:
   train:
@@ -34,11 +42,27 @@ jobs:
           NAME=$(grep -m1 '^name' wrangler.toml | sed 's/.*= *"//; s/"//')
           SUB=$(curl -sS --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" | python3 -c 'import sys,json;print((json.load(sys.stdin).get("result") or {}).get("subdomain") or "")')
           echo "url=https://$NAME.$SUB.workers.dev" >> "$GITHUB_OUTPUT"
-      - name: OMNI-Q 학습·관문·업로드
+      - name: 금요일 모델 캐시 복원
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.omniq
+          key: omniq-model-${{ github.run_id }}
+          restore-keys: omniq-model-
+      - name: OMNI-Q 학습(금)·채점·관문·업로드
+        id: omq
         env:
           BASE_URL: ${{ steps.url.outputs.url }}
           TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
           OMNIQ_LAB: ${{ inputs.lab && '1' || '0' }}
-        run: python trainer/modal/omniq_gha.py 2>&1 | grep -v RuntimeWarning | tee omniq.log
+          OMNIQ_MODE: ${{ inputs.mode || 'auto' }}
+        run: |
+          set -o pipefail
+          python trainer/modal/omniq_gha.py 2>&1 | grep -v RuntimeWarning | tee omniq.log
+      - name: 금요일 모델 캐시 저장
+        if: steps.omq.outputs.trained == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.omniq
+          key: omniq-model-${{ github.run_id }}
       - if: always()
-        run: '{ echo "### OMNI-Q"; echo; echo "\`\`\`"; grep -E "OMNI-Q|피처|일봉|끝" omniq.log | head -60; echo "\`\`\`"; } >> "$GITHUB_STEP_SUMMARY"'
+        run: '{ echo "### OMNI-Q"; echo; echo "\`\`\`"; grep -E "OMNI-Q|피처|일봉|끝|캐시" omniq.log | head -60; echo "\`\`\`"; } >> "$GITHUB_STEP_SUMMARY"'

@@ -38,8 +38,8 @@ console.log("① 단계마다 시간을 재고, 느린 것만 기록하는가");
   chk(/const _STG_COST_MIN_MS = 500;/.test(S), "문턱이 상수로 드러나 있다(500ms)", "문턱이 숨어 있다");
   /* 이미 완료된 단계는 fn 을 안 부르고 return 한다 — 그때 0ms 로 기록하면 표가 거짓말을 한다. */
   const i = S.indexOf("const _stg = async function (nm, fn)");
-  const body = S.slice(i, i + 1400);
-  const early = body.indexOf('=== _aiDay) return;');
+  const body = S.slice(i, i + 2200);
+  const early = body.indexOf('=== _day) return;');   // [V33.584] 학습 단계는 주 키(_day = _trainKey) · 수집 단계는 _aiDay
   const meas = body.indexOf("const _t0 = Date.now();");
   chk(early > 0 && meas > early,
     "이미 끝난 단계는 재기 전에 빠져나간다 — 0ms 가 표에 섞이지 않는다",

@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.583";
+const _BUILD_VER = "V33.584";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -11952,7 +11952,9 @@ const OMNI_SHADOW = {
   batchGroups: 12,           // 사후채점 한 번에 보는 묶음 수
   maxRows: 4000,
   /* ★매 틱(잠금 뒤)★ 에 돈다 — 야간 _stg 는 하루 1회라 섀도우 채점이 하루 7종목에 그쳤다. */
-  gapOffMs: 10 * 60000, gapInMs: 30 * 60000,
+  /* [V33.584] 10분/30분 → 60분/180분. 실측(10/13 omni-status): 분봉 머리 홀드아웃 AUC 0.50(실력 0) · 사용량 단계 ai.omniShadow 7%.
+     섀도우 채점은 '수집' 이 아니라 실력 없는 머리의 전진 기록이다 — 봉 수집(ai.omniBars)은 그대로 두고 채점 빈도만 줄인다(사용자: "Omni 수집은 이어서"). */
+  gapOffMs: 60 * 60000, gapInMs: 180 * 60000,
   budgetOffMs: 25000, budgetInMs: 8000, perRun: 400,
   /* 지평이 지나고도 이만큼 지나도록 못 잰 행은 '못 잼(-1)' 으로 닫는다 — 대기열을 막지 않게. */
   graceSec: 4 * 86400,
@@ -13223,7 +13225,14 @@ async function omniVizData(DB) {
    ③ 라이브 장부(학습기가 올린 '그날 상위 10%', 같은 날 덮어쓰기 금지)를 H일 뒤 실제 가격으로 채점 — 30일 이상 · 95% 하한 > 50%.
    셋 다일 때만 발언하고, 발언은 ★좁히기만★ 한다: 신규 추세·스냅 진입 중 OMNI-Q 하위 절반(점수 < 0.5)을 막는다. 점수는 학습기가 매긴다
    (워커 CPU ≈ 0 — 피처 166개를 JS 로 옮기지 않는다). 학습기 trainer/modal/omni_q.py · 게이트 tools/check-omni-q.mjs. */
-const OMNIQ = { maxPicks: 260, maxAgeMs: 5 * 86400000, lowPct: 0.5, minScores: 20 };
+/* [V33.584] maxAgeMs 는 ★채점★ 나이(scoredAt) · maxModelAgeMs 는 ★모델★ 나이(trainedAt). 학습은 금요일 한 번(TRAIN_WEEKLY) — 평일에는
+   GHA 가 금요일 모델로 그날 피처만 다시 채점해 올린다(omni_q.run score-only). 금요일 학습이 한 번 빠져도 10일 안이면 쓰고, 넘으면 낡음. */
+const OMNIQ = { maxPicks: 260, maxAgeMs: 5 * 86400000, maxModelAgeMs: 10 * 86400000, lowPct: 0.5, minScores: 20 };
+function omniqFresh(st, nowMs) {
+  if (!st || typeof st !== "object") return false;
+  const now = _num(nowMs, Date.now()), tAt = _num(st.trainedAt, 0), sAt = _num(st.scoredAt, 0) || tAt;
+  return (now - sAt) <= OMNIQ.maxAgeMs && (now - tAt) <= OMNIQ.maxModelAgeMs;
+}
 function omniqSpeakOf(g) {
   return !!(g && g.g1 && g.g1.ok === true && g.g2 && g.g2.ok === true && g.g3 && g.g3.ok === true);
 }
@@ -13267,7 +13276,7 @@ function omniqView(q, nowMs) {
   const now = _num(nowMs, Date.now());
   const st = function (speak, g) { return (speak === true && omniqSpeakOf(g)) ? "speak" : (omniqProvOf(g) ? "prov" : "shadow"); };
   return { day: q.day || null, trainedAt: _num(q.trainedAt, null), n: _num(q.n, null), nFeat: _num(q.nFeat, null),
-           learner: q.learner || "lgb", fresh: (now - _num(q.trainedAt, 0)) <= OMNIQ.maxAgeMs,
+           learner: q.learner || "lgb", fresh: omniqFresh(q, now), scoredAt: _num(q.scoredAt, null) || _num(q.trainedAt, null),
            state: st(q.speak, q.gate), state20: q.gate20 ? st(q.speak20, q.gate20) : null,
            gate: _omqGateView(q.gate), gate20: _omqGateView(q.gate20) };
 }
@@ -13300,7 +13309,7 @@ async function omniqViewAll(DB) {
 }
 function omniqBlocks(st, symbol, nowMs) {
   if (!st) return false;
-  if (!(nowMs - _num(st.trainedAt, 0) <= OMNIQ.maxAgeMs)) return false;   // 낡은 점수로 막지 않는다
+  if (!omniqFresh(st, nowMs)) return false;   // 낡은 점수로 막지 않는다
   const low = function (map) { const v = map ? map[symbol] : undefined; return typeof v === "number" && isFinite(v) && v < OMNIQ.lowPct; };
   // 5일 머리 — 관문 ①②③ 통과로 발언 중이거나 · [V33.558] 잠정 발언 조건(저장된 관문으로 매번 다시 판정)
   if (((st.speak === true && omniqSpeakOf(st.gate)) || omniqProvOf(st.gate)) && low(st.scores)) return true;
@@ -13346,7 +13355,7 @@ function _omqScore(st, h, symbol) {
 // 진입 판정(순수 함수) — 고르면 { h, s, mode, mult, day } · 아니면 null
 function omniqRoutePick(st, symbol, nowMs) {
   if (!OMNIQ_ROUTE.enabled || !st || !symbol) return null;
-  if (!(nowMs - _num(st.trainedAt, 0) <= OMNIQ.maxAgeMs)) return null;
+  if (!omniqFresh(st, nowMs)) return null;
   const on5 = _omqHeadOn(st, 5), on20 = _omqHeadOn(st, 20);
   if (!on5 && !on20) return null;
   const s5 = on5 ? _omqScore(st, 5, symbol) : null, s20 = on20 ? _omqScore(st, 20, symbol) : null;
@@ -13361,7 +13370,7 @@ function omniqRoutePick(st, symbol, nowMs) {
 function omniqHoldOf(st, symbol, om, openedTs, nowMs) {
   if (!om || typeof om !== "object") return { mode: "none" };
   const h = _num(om.h, 5) === 20 ? 20 : 5;
-  if (!st || !(nowMs - _num(st.trainedAt, 0) <= OMNIQ.maxAgeMs)) return { mode: "release", why: "OMNI-Q 점수 낡음" };
+  if (!omniqFresh(st, nowMs)) return { mode: "release", why: "OMNI-Q 점수 낡음" };
   if (!_omqHeadOn(st, h)) return { mode: "release", why: h + "일 머리 회수(섀도우)" };
   const v = _omqScore(st, h, symbol);
   if (v == null) return { mode: "release", why: "오늘 점수표에 없음" };
@@ -22695,6 +22704,8 @@ function _altWeek24Open() {
 }
 // 시세 갱신(=사이클 진입) 창 — 원자재·채권 모두 평일 24시간.
 function _altQuoteWindow(sleeve) { return _altWeek24Open(); }
+// [V33.584] 슬리브 사이클 간격 — 체결 창 안 3분 · 밖(시세만) 15분(스케줄러 altSleeve 주석)
+const ALT_CADENCE = { tradeMs: 3 * 60000, quoteMs: 15 * 60000 };
 // ★체결 창★ — 실제로 그 상품이 거래되는 시간에만 주문을 낸다.
 //   채권 ETF 를 정규장 밖에 체결시키면 오래된 종가로 가짜 체결이 원장에 남아 손익이 왜곡된다.
 //   그래서 "가격 24시간 / 체결은 실거래 시간" 으로 분리한다.
@@ -29935,6 +29946,8 @@ async function handleRequest(request, env, ctx, _inner) {
       if (!mk || !body.day || nS < OMNIQ.minScores) return Response.json({ error: "mkt·day·scores(≥" + OMNIQ.minScores + ") 필요" }, { status: 400, headers: cors });
       const g = (body.gate && typeof body.gate === "object") ? body.gate : {};
       const st = { day: String(body.day), h: _num(body.h, 5), q: _num(body.q, 0.1), trainedAt: _num(body.trainedAt, Date.now()),
+                   scoredAt: _num(body.scoredAt, Date.now()),   // [V33.584] 금요일 모델로 평일 채점 — 신선도는 채점 시각(omniqFresh)
+                   scoreOnly: body.scoreOnly === true,
                    nFeat: _num(body.nFeat, 0), n: nS, scores: body.scores, gate: g, speak: omniqSpeakOf(g), ts: Date.now(),
                    /* [V33.539] 복합 머리(순위 1·20일 · 상승확률 · 위험) — 기록·관측용. 발언(매매 영향)은 5일 머리(scores)만 */
                    heads: (body.heads && typeof body.heads === "object") ? body.heads : null,
@@ -39716,7 +39729,28 @@ const _STAGE_OUT_VER = [
      이번 판에서 완주한 적이 없다. 같은 성질의 단계가 생기면 여기 한 줄을 더한다. */
   { stage: "calibrate", key: "committee_cal", want: function () { return LUXML.featVer; } }
 ];
-async function _pipeOpenStages(env, aiDay) {
+/* ══ [V33.584] ★AI 모델 학습은 금요일 한 번 — 나머지 날은 수집만★ ══════════════════════
+   사용자(10/13): "ai모델 학습을 금요일 한번만 하는걸로 해 · 그 전까지는 수집만 하고 · 그러면 cpu 사용량 줄일 수 있잖아".
+   야간 파이프라인의 ★학습·적합 단계(TRAIN_STAGES)★ 는 주 1회만 돈다 — 금요일 07시Z(한국장 마감 뒤)에 열리고,
+   그 금요일 날짜로 도장을 찍는다. 주말(토·일)에는 끊긴 단계만 이어서 끝낸다(처음부터 다시 돌지 않는다 — 주 1회 그대로).
+   월~목(그리고 금요일 07시Z 전)에는 수집·라벨·채점·감사·스캔만 돈다(수확 · OMNI 봉/수급/뉴스/실적 · 반사실 라벨 · 장부 감사 · 전 종목 스캔).
+   ★예외 하나★ — 피처 판(featVer)이 바뀌면 옛 모델은 아무도 못 읽는다(V33.245: 위원회 전원 낙마). 그날은 강제로 학습한다(ai_train_force). */
+const TRAIN_WEEKLY = { dow: 5, fromHourUtc: 7, catchUpDays: 2 };
+const TRAIN_STAGES = new Set([
+  "expepoch", "retirefv", "pooluniq", "l1", "icfamily", "bandit", "brain", "mind", "gbdt", "memo",
+  "expreg", "techk", "anlrevk", "finalcal", "gateaudit", "blendk", "socialk", "scalpmae", "confk", "shockk",
+  "mindshadow", "dual", "calibrate"
+]);
+/* 학습 주 키(순수) — 학습 창 안이면 그 주 금요일 날짜(강제일이면 "force:날짜"), 밖이면 null */
+function trainWeekKey(nowMs, forceDay) {
+  const d = new Date(nowMs), day = d.toISOString().slice(0, 10);
+  if (forceDay && forceDay === day) return "force:" + day;
+  const back = (d.getUTCDay() - TRAIN_WEEKLY.dow + 7) % 7;   // 금 0 · 토 1 · 일 2 · 월 3 …
+  if (back > TRAIN_WEEKLY.catchUpDays) return null;
+  if (back === 0 && d.getUTCHours() < TRAIN_WEEKLY.fromHourUtc) return null;
+  return new Date(nowMs - back * 86400000).toISOString().slice(0, 10);
+}
+async function _pipeOpenStages(env, aiDay, trainKey) {
   const out = [];
   try {
     const _scanAt = _num(await getState(env.DB, "ai_wait_scan", 0), 0);
@@ -39728,7 +39762,7 @@ async function _pipeOpenStages(env, aiDay) {
         "SELECT k, v FROM state WHERE k >= 'ai_stage:' AND k < 'ai_stage;'").all();
       for (const _r of ((_wr && _wr.results) || [])) {
         let _v = _r.v; try { _v = JSON.parse(_r.v); } catch (e) {}
-        if (typeof _v === "string" && _v.indexOf(aiDay + "|wait|") === 0) out.push(String(_r.k).slice(9));
+        if (typeof _v === "string" && (_v.indexOf(aiDay + "|wait|") === 0 || (trainKey && _v.indexOf(trainKey + "|wait|") === 0))) out.push(String(_r.k).slice(9));
       }
     } catch (e) {}
     // (B) 산출물이 옛 판인 단계 — 완료 도장을 무효화한다
@@ -51614,7 +51648,9 @@ async function _luxSelfCheck(DB) {
         stagesToday: _pStage.done, stagesOld: _pStage.old,
         waiting: _pStage.wait.slice(0, 12), waitingN: _pStage.wait.length,
         partial: _pPart ? { day: _pPart.day, n: _pPart.n, ageMin: +((Date.now() - _num(_pPart.ts, 0)) / 60000).toFixed(1) } : null,
-        lastScanMin: _pScan > 0 ? +((Date.now() - _pScan) / 60000).toFixed(1) : null
+        lastScanMin: _pScan > 0 ? +((Date.now() - _pScan) / 60000).toFixed(1) : null,
+        // [V33.584] 학습은 주 1회(금) — 학습 단계는 '이번 주' 도장이라 stagesOld 에 잡힌다(정상)
+        trainWeekly: { trainedWeek: (await getState(DB, "ai_trained_week", null)) || null, window: trainWeekKey(Date.now(), null), dowUtc: TRAIN_WEEKLY.dow, fromHourUtc: TRAIN_WEEKLY.fromHourUtc }
       };
       /* ★닫혔는데 안 끝난 게 있다★ 는 조합이 바로 오늘의 사고다 — 그 조합을 소리 내게 한다. */
       if (pipe.closed && (pipe.waitingN > 0 || pipe.stagesOld > 0))
@@ -51923,7 +51959,9 @@ const MODALAUTO = {
   //   (가장 ★오래된★ 모델을 보면 회전 때문에 영구 참이 된다 — 아래 판정식 주석 참조.)
   //   쿨다운 상수는 여기 두지 않는다 — 실제 쿨다운은 fvDispatched/checkTs 로 아래에서
   //   집행된다. 여기 적어 두면 아무도 안 읽는 죽은 손잡이가 된다(check-dead-knobs 가 잡았다).
-  staleH: 14
+  /* [V33.584] 14 → 180. 학습이 금요일 주 1회(Modal 크론 금 08:10·14:10Z)가 됐다 — 정상 주기에서 가장 신선한 모델이 최대 ≈162h 묵는다.
+     14h 로 두면 토요일부터 매 8시간 '사고' 로 읽혀 GPU 회차를 부른다(사용자 결정을 거꾸로 뒤집는다). 판 불일치·누락은 종전대로 즉시 트리거. */
+  staleH: 180
 };
 
 async function _luxAutoRetrainModal(env) {
@@ -54914,6 +54952,17 @@ export default {
             }
           } catch (e) {}
         }
+        /* [V33.584] ★매분 → 체결 창 3분 · 시세만 15분★ — 사용량 단계 altSleeve 17~18%(10/08·10/12) · 사용자: "cpu 다른 곳에서 낭비되는 곳 줄이고".
+           원자재·국채 슬리브는 ★일봉 지표★(RSI·MA·ATR·볼린저)로 사고판다 — 1분마다 다시 볼 이유가 없다. 손절·트레일도 3분이면 충분하다
+           (국채·원자재 ETF 의 3분 변동은 손절폭(≥5%)에 비해 작다). 체결 창 밖에서는 시세 표시만 갱신하므로 15분. */
+        if (_altOk) {
+          try {
+            const _altTs = _num(await getState(env.DB, "alt_sleeve_ts", 0), 0);
+            const _altExec = ["cm", "bdus", "bdkr"].some(function (k) { const sl = _altSleeve(k, _acfg); return !!(sl && _altTradeWindow(sl)); });
+            if (Date.now() - _altTs < (_altExec ? ALT_CADENCE.tradeMs : ALT_CADENCE.quoteMs)) _altOk = false;
+            else await setState(env.DB, "alt_sleeve_ts", Date.now());
+          } catch (e) {}
+        }
         if (_altOk) {
           /* [V33.533] 세 슬리브가 매분 ★각자★ 설정·현금(5시장 × 원장 조회)·AI 준비를 다시 읽었다(단계 측정: 크론 활성시간의 17%).
              한 번 읽어 나눠 쓴다 — 현금 객체는 같은 것을 넘겨 슬리브가 쓴 결과가 다음 슬리브에 그대로 보인다(종전과 같은 값). */
@@ -54979,7 +55028,7 @@ export default {
             const _lastDone = await getState(env.DB, "ai_trained_day", null);
             const _pp = await getState(env.DB, "ai_pipe_partial", null);
             if (_lastDone === _dayNow && !(_pp && _pp.day === _dayNow)) {
-              await _pipeOpenStages(env, _dayNow);
+              await _pipeOpenStages(env, _dayNow, trainWeekKey(Date.now(), null));
             }
           } catch (e) {}
           // [V12.103] ★재수확 캐치업★ featVer 상향 후 표본 풀은 0부터 다시 채워야 하는데(구 featVer는
@@ -55085,7 +55134,9 @@ export default {
             const _cfLock = _num(await getState(env.DB, "cf_label_lock", 0), 0);
             /* [V33.533] 10분 → 30분. 단계 측정(_cronProf, 10/08): 이 단계가 크론 활성시간의 17%(1회 ≈3분).
                라벨은 학습(하루 2회)에만 쓰인다 — 30분이면 학습 전에 충분히 다 편입된다(매매 판단 영향 0). */
-            if (Date.now() - _cfLock > 1800000) {
+            /* [V33.584] 30분 → 4시간. 학습이 주 1회(금 — TRAIN_WEEKLY)가 됐다 — 라벨은 학습 때만 읽힌다. 사용량 단계 ai.cflabel 11~20%(10/11~12).
+               성숙 후보는 사라지지 않고 쌓여 있다가 다음 회차에 한꺼번에 편입된다(결과 동일 · 회차 고정비만 1/8). */
+            if (Date.now() - _cfLock > 4 * 3600000) {
               await setState(env.DB, "cf_label_lock", Date.now());
               // [V33.348] 야간 경로와 ★같은 공급자★ 를 쓴다 — 한쪽만 고치면 라벨이 갈린다(B-7).
               const _cfr = await mlLabelCandidates(env.DB, _cfPriceLookup(env.DB), {});
@@ -55253,7 +55304,11 @@ export default {
             }
           } catch (e) {}
           const _aiDay = new Date().toISOString().slice(0, 10);
-          let _aiLast = await getState(env.DB, "ai_trained_day", null);
+          // [V33.584] 학습 주(金) 상태를 한 번에 읽는다 — TRAIN_WEEKLY 주석
+          const _aiSt = await getStates(env.DB, ["ai_trained_day", "ai_train_force", "ai_trained_week"]);
+          let _aiLast = _aiSt.ai_trained_day != null ? _aiSt.ai_trained_day : null;
+          let _trainKey = trainWeekKey(Date.now(), _aiSt.ai_train_force);
+          const _trainDue = !!_trainKey && _aiSt.ai_trained_week !== _trainKey;
           // [V12.99] ★재배포 후 1회 강제 재실행★ 새 코드가 배포되면(_PIPE_VER 변경) 그날 이미 학습했어도
           //   전체 파이프라인(수확→L1→BRAIN→MIND→DNN→GBDT→보정)을 한 번 더 돌려 수정을 즉시 반영한다.
           //   단계별 체크포인트가 300s 한도를 여러 cron에 걸쳐 처리하므로 안전하게 완주. 무한루프 방지:
@@ -55302,6 +55357,8 @@ export default {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
               await setState(env.DB, "ai_pipeline_ver", _PIPE_VER);
+              // [V33.584] 판이 바뀌면 옛 모델은 못 읽는다 — 금요일을 기다리지 않고 오늘 학습한다(TRAIN_WEEKLY 의 유일한 예외)
+              try { await setState(env.DB, "ai_train_force", _aiDay); _trainKey = "force:" + _aiDay; } catch (e) {}
               try { await env.DB.prepare("DELETE FROM state WHERE k = 'ai_trained_day'").run(); } catch (e) {}
               try { await env.DB.prepare("DELETE FROM state WHERE k >= 'ai_stage:' AND k < 'ai_stage;'").run(); } catch (e) {}
               try { await env.DB.prepare("DELETE FROM state WHERE k = 'ai_train_lock'").run(); } catch (e) {}
@@ -55338,9 +55395,10 @@ export default {
           /* [V33.343] 부분완주 기록이 없어도 ★진짜로 안 끝난 단계★ 를 직접 찾는다.
              (근거는 _pipeOpenStages 주석 — 이미 닫힌 날은 기록이 없어 영영 안 열렸다) */
           const _openStages = (_resumeBase || _aiLast !== _aiDay || _partialToday)
-            ? [] : await _pipeOpenStages(env, _aiDay);
+            ? [] : await _pipeOpenStages(env, _aiDay, _trainKey);
           const _resume = _resumeBase || _openStages.length > 0;
-          if ((_aiLast !== _aiDay || _resume) && !_aiLockFresh) {
+          // [V33.584] 금요일 07시Z 에 학습 창이 열리면 그날 이미 수집을 마쳤어도 다시 들어온다(수집 단계는 오늘 도장으로 즉시 빠진다)
+          if ((_aiLast !== _aiDay || _resume || _trainDue) && !_aiLockFresh) {
             await setState(env.DB, "ai_train_lock", Date.now());
             // [V12.40 단계별 체크포인트] trainWindow 확대 후 전체 파이프라인 CPU가 300s 한도를 넘겨
             //   invocation이 중간에 죽고, 완료플래그를 못 찍어 15분마다 "처음부터" 무한 재시도하며
@@ -55377,9 +55435,13 @@ export default {
             const _STG_RETRY_MS = 12 * 60000;
             const _stg = async function (nm, fn) {
               try {
+                /* [V33.584] 학습 단계는 학습 창(금요일 07시Z~일요일 · 판 변경일)에서만 돌고, 그 주 키로 도장을 찍는다(주 1회) — TRAIN_WEEKLY 주석 */
+                const _isTrain = TRAIN_STAGES.has(nm);
+                if (_isTrain && !_trainKey) return;
+                const _day = _isTrain ? _trainKey : _aiDay;
                 const _mark = await getState(env.DB, "ai_stage:" + nm, null);
-                if (_mark === _aiDay) return;                                   // 오늘 이미 완료
-                if (typeof _mark === "string" && _mark.indexOf(_aiDay + "|wait|") === 0) {
+                if (_mark === _day) return;                                     // 이번 날(학습 단계는 이번 주) 이미 완료
+                if (typeof _mark === "string" && _mark.indexOf(_day + "|wait|") === 0) {
                   const _at = _num(_mark.split("|wait|")[1], 0);
                   if (Date.now() - _at < _STG_RETRY_MS) return;                 // 방금 "아직" 이라고 했다 — 잠시 뒤 다시
                 }
@@ -55389,10 +55451,10 @@ export default {
                 if (_r) await log(env.DB, "INFO", null, _r);
                 if (typeof _r === "string" && _r.charAt(0) === "\u27F3") {
                   // 아직 준비 안 됨 — 완료 도장을 찍지 않는다. 그래야 같은 날 다시 온다.
-                  await setState(env.DB, "ai_stage:" + nm, _aiDay + "|wait|" + Date.now());
+                  await setState(env.DB, "ai_stage:" + nm, _day + "|wait|" + Date.now());
                   return;
                 }
-                await setState(env.DB, "ai_stage:" + nm, _aiDay);
+                await setState(env.DB, "ai_stage:" + nm, _day);
                 if (_ms >= _STG_COST_MIN_MS) {
                   _stgCost.ms[nm] = _ms; _stgCost.ts = Date.now();
                   try { await setState(env.DB, "ai_stage_cost", _stgCost); } catch (e2) {}
@@ -55442,6 +55504,7 @@ export default {
             //   안에 한 번 더 학습시킨다(과도 재학습 방지로 25% 문턱). MIND는 trainWindow가 의도적으로
             //   작아(25000, V12.38 이력) 풀 전체와 비교하면 항상 "늘었다"고 오판하므로 이 체크 대상에서 제외.
             try {
+              if (!_trainKey) throw 0;   // [V33.584] 학습 창 밖에선 재학습 트리거도 없다(풀 COUNT 도 안 돈다)
               const _poolChk = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first();
               const _poolNow = (_poolChk && _poolChk.c) || 0;
               if (_poolNow > 0 && _poolNow < (HARVEST.rebuildTarget || 700000)) {
@@ -55546,7 +55609,7 @@ export default {
             //   → 한번 열화 뜨면 재학습 후에도 영원히 "열화" 표시(retrainOnDrift가 사실상 무동작).
             //   전체 재학습을 완주했으니 플래그를 해제 → 다음 거래 사이클의 mlDriftCheck가 새 모델
             //   기준으로 재평가(여전히 미달이면 다시 셋). 이로써 "열화→재학습→해소" 루프가 실제로 닫힌다.
-            try { await env.DB.prepare("DELETE FROM state WHERE k = 'model_drift'").run(); } catch (e) {}
+            if (_trainKey) { try { await env.DB.prepare("DELETE FROM state WHERE k = 'model_drift'").run(); } catch (e) {} }   // [V33.584] 재학습한 회차만 열화 플래그를 푼다
             /* [V33.342] ★대기 중인 단계가 있으면 그날을 닫지 않는다.★
                (근거는 위 진입 게이트 주석 — 보정 단계가 5.5시간 동안 재시도를 못 받았다) */
             let _waitStages = [];
@@ -55555,7 +55618,7 @@ export default {
                 "SELECT k, v FROM state WHERE k >= 'ai_stage:' AND k < 'ai_stage;'").all();
               for (const _r of ((_wr && _wr.results) || [])) {
                 let _v = _r.v; try { _v = JSON.parse(_r.v); } catch (e2) {}
-                if (typeof _v === "string" && _v.indexOf(_aiDay + "|wait|") === 0) _waitStages.push(String(_r.k).slice(9));
+                if (typeof _v === "string" && (_v.indexOf(_aiDay + "|wait|") === 0 || (_trainKey && _v.indexOf(_trainKey + "|wait|") === 0))) _waitStages.push(String(_r.k).slice(9));
               }
             } catch (e2) {}
             /* 상한 — 하루 종일 열어 두면 하루 단위로 도는 것들이 밀린다. 6시간 뒤엔 닫되
@@ -55577,8 +55640,11 @@ export default {
               }
               try { await env.DB.prepare("DELETE FROM state WHERE k = 'ai_pipe_partial'").run(); } catch (e2) {}
               await setState(env.DB, "ai_trained_day", _aiDay);
+              // [V33.584] 학습 창에서 완주했으면 이번 주 학습을 닫는다(다음 금요일까지 학습 단계 없음)
+              if (_trainKey) { try { await setState(env.DB, "ai_trained_week", _trainKey); } catch (e2) {} }
               try { await env.DB.prepare("DELETE FROM state WHERE k = 'ai_train_lock'").run(); } catch (e2) {}
-              try { await log(env.DB, "INFO", null, "[SCHED] 야간 AI 파이프라인 완주(" + _aiDay + ")"); } catch (e2) {}
+              try { await log(env.DB, "INFO", null, "[SCHED] 야간 AI 파이프라인 완주(" + _aiDay + ") — " +
+                (_trainKey ? "학습 포함(주 " + _trainKey + ")" : "수집만(학습은 금요일 — TRAIN_WEEKLY)")); } catch (e2) {}
             }
             /* [V33.307] 완주한 날의 비용표를 한 줄로 남긴다 — 다음에 "뭘 옮길까" 를
                코드를 읽어 추측하지 않고 이 줄을 읽고 정한다. */
@@ -55616,7 +55682,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { surgeScalpOn, _regimeScalp, evaluateScalpEntry, runTailRiskHedge, externalTrainAges, externalTrainRow, EXT_TRAIN_KEYS, OMNIQ_ROUTE, omniqRoutePick, omniqHoldOf, omniqRouteToday, _entryTag, negExpDefersToPerfGate, evaluateBuyBlocks, setStatesBatch, _ioTag, _setYAuthDB, yahooFetch, _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { trainWeekKey, TRAIN_STAGES, TRAIN_WEEKLY, omniqFresh, ALT_CADENCE, surgeScalpOn, _regimeScalp, evaluateScalpEntry, runTailRiskHedge, externalTrainAges, externalTrainRow, EXT_TRAIN_KEYS, OMNIQ_ROUTE, omniqRoutePick, omniqHoldOf, omniqRouteToday, _entryTag, negExpDefersToPerfGate, evaluateBuyBlocks, setStatesBatch, _ioTag, _setYAuthDB, yahooFetch, _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { getStates, _STATE_LITE, getADX, _getADXCore, getHolidaySet, _indexFreshOpen, isMarketTradingDay, KR_LUNAR_HOLIDAYS, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가

@@ -26,6 +26,16 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(root, "trainer/modal/modal_train.py");
 const PY = readFileSync(SRC, "utf8");
+/* [V33.584] 크론 간격 — "M 매N시 * * *"(N시간마다) 또는 "M H1,H2 * * DOW"(주 1일 · 그날 여러 번) 둘 다 읽는다. 168시간 고리에서 회차 사이 최소·최대 간격 */
+function cronGaps(src) {
+  let m = /modal\.Cron\("(\d+) \*\/(\d+) \* \* \*"\)/.exec(src);
+  if (m) { const e = Number(m[2]); return { minGapH: e, maxGapH: e, desc: e + "시간마다" }; }
+  m = /modal\.Cron\("(\d+) ([\d,]+) \* \* (\d)"\)/.exec(src);
+  if (!m) return null;
+  const t = m[2].split(",").map(Number).sort((a, b) => a - b).map((h) => Number(m[3]) * 24 + h);
+  const g = t.map((x, i) => (i + 1 < t.length ? t[i + 1] - x : 168 - x + t[0]));
+  return { minGapH: Math.min(...g), maxGapH: Math.max(...g), desc: "주 1일(요일 " + m[3] + ") " + m[2] + "시" };
+}
 let fail = 0, n = 0;
 const ok = (c, m) => { n++; if (c) console.log("  ok   " + m); else { fail++; console.error("  ✗ FAIL " + m); } };
 
@@ -104,13 +114,13 @@ ok(/12h 가 아니라 ★6h★/.test(PY), "크론 주기가 주석과 어긋났�
 
 // ── ⑥ 크론과 타임아웃이 서로 말이 되는가 ─────────────────────────────────────
 {
-  const cron = /modal\.Cron\("(\d+) \*\/(\d+) \* \* \*"\)/.exec(PY);
+  const cron = cronGaps(PY);
   const to = /JOB_TIMEOUT_S = (\d+)/.exec(PY);
   const mg = /JOB_MARGIN_S = (\d+)/.exec(PY);
   ok(!!cron && !!to && !!mg, "크론·타임아웃·여유를 소스에서 읽었다");
   if (cron && to && mg) {
-    const everyH = Number(cron[2]), T = Number(to[1]), M = Number(mg[1]);
-    console.log(`\n     크론 ${everyH}시간마다 · 타임아웃 ${T / 60}분 · 여유 ${M / 60}분\n`);
+    const everyH = cron.minGapH, T = Number(to[1]), M = Number(mg[1]);
+    console.log(`\n     크론 ${cron.desc}(회차 간 최소 ${everyH}시간) · 타임아웃 ${T / 60}분 · 여유 ${M / 60}분\n`);
     ok(T + M < everyH * 3600,
        `★한 회차가 다음 회차를 밀지 않는다★ (타임아웃 ${T / 60}분 < 주기 ${everyH * 60}분)`);
     ok(M > 0 && M < T / 2, `마무리 여유 ${M}s 가 타임아웃의 절반 미만이다`);
