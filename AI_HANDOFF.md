@@ -12,6 +12,17 @@
 
 ## Current handoff
 
+- V33.588 (10/14) ★코드 감사 — '존재만 하고 작동 안 하던 것' 정리★(사용자 결정 4건)
+  - 원자재·채권 슬리브 매수 재개: V33.407 ruleEntryAllowed 가 AI 가동 중 규칙 진입을 막아 9/21 부터 영구 '청산만'(마지막 매수 원자재 9/17 · 채권 8/24~25).
+    슬리브는 AI 위원회가 대신 사지 않는 규칙 전용이라 CM·대체시장 두 경로 모두 cfg.altEntries 스위치만 본다. 원자재 SW_GOLDEN 44건 평균 +5.1% · 승률 77%.
+  - 소셜 크론 수집 끔(SOCIAL.collect=false · 모듈은 유지): Reddit 403 상시 · StockTwits 신선글 0 · 소셜 계수 미측정(개입 0) · CPU ≈4%.
+  - MEMO(홀드아웃 t 0.46 · 합류 거절): Modal 회차에서 금요일만 학습(워커 단계는 V33.584 부터 이미 주 1회).
+  - 페어트레이딩: statArbSignal(호출 0)은 옛 중복 — 실제 페어는 PR_OU(공매도 없는 엔진이라 '싼 다리만 롱')로 이미 평가에 연결돼 있으나
+    원장에 PR_OU 체결 0건. 다음 할 일: rv_panel 이 만들어지는지 · 페어 후보가 나오는지 · AI_PRIMARY 셋업으로 올라가는지 실측 후 연결 수리.
+  - 감사 목록(미수리): 충격 프라이어 사건 0/60 · 뉴스 블렌드 계수 0.00 · 단타 레버리지 25/30 — 표본이 차면 스스로 풀림.
+    호출 0 함수: statArbSignal · marketNeutralityCheck · mlBanditChoose · nlpTagHeadlinesV2 · labelTarget · xalphaBuildFeat/Panel · refreshShard · isLLMTriggerTime · _oeIso.
+  - 포지션·거래 화면 리디자인 시안(적용 전): https://claude.ai/artifact/SxiWUyfmLppT8Ndi8HcJ5N
+
 - V33.587 (10/14 08:20 KST) ★한국 장전 시세 0 · 시간외 거래 · AI 두뇌 리디자인 적용★
   - 한국 장전 시세가 전날 19:57 KST 값 그대로(741분 묵음) — 네이버는 PRE_MARKET 체결(삼성 235,500 +1.51%)을 주고 있었다.
     원인: 23:00~00:00Z 한국 장전 ↔ 미국 애프터(거래창) 겹침 — 시장 루프가 미국 시간외 평가로 사이클을 다 써 한국 차례가 안 옴

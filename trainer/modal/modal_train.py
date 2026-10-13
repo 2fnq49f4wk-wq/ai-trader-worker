@@ -734,6 +734,13 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         #   모델인지 라벨인지를 같은 분할·같은 학습기로 재서 숫자로 답한다(_label_ablation 주석).
         ("ablate", lambda: _ablate_stage()),
     ]
+    # [V33.588] ★MEMO 는 금요일만 학습★(코드 감사 10/14 · 사용자 결정 "학습만 금요일 1회로") — 홀드아웃 t 0.46 으로 위원회 합류 거절 중인데
+    #   하루 2회 회차마다 600s 를 썼다. 수동 지정(target="memo")은 그대로 돈다.
+    if target == "all":
+        import datetime as _dtm
+        if _dtm.datetime.utcnow().weekday() != 4:
+            _PLAN = [p for p in _PLAN if p[0] != "memo"]
+            print("   [MEMO] 금요일만 학습(V33.588) — 이번 회차 제외")
     _PLAN_BY = dict(_PLAN)
     # Codex V33.349: recover a timed-out tail stage without paying for DNN again.
     # Keep the existing one-hour resource limit and native schedule unchanged.

@@ -43,10 +43,11 @@ console.log("\n② ★판정이 한 곳에만 사는가★ (세 경로가 각자
   chk(typeof M.ruleEntryAllowed === "function", "ruleEntryAllowed 로 분리돼 있다(게이트가 돌려 볼 수 있다)",
     "★판정이 인라인이다 — 게이트는 '있는가' 만 보게 된다★");
   const uses = (S.match(/ruleEntryAllowed\(/g) || []).length;
-  chk(uses >= 4, "정의 1 + 세 경로(메인·CM·대체시장) = " + uses + "곳이 같은 함수를 쓴다",
-    "★" + uses + "곳뿐 — 어느 경로가 자기 판단을 하고 있다★");
-  chk(/if \(!ruleEntryAllowed\(_aiReadyCM\)\) continue;/.test(S), "CM 경로가 그 함수를 쓴다", "★CM 경로가 종전 판정이다★");
-  chk(/if \(!ruleEntryAllowed\(_aiReadyAlt\)\) continue;/.test(S), "대체시장 경로가 그 함수를 쓴다", "★대체시장 경로가 종전 판정이다★");
+  /* [V33.588] 원자재·채권 슬리브는 규칙 전용(AI 위원회가 대신 사지 않는다) — V33.407 차단을 걸면 영구 '청산만' 이 됐다(9/21~).
+     사용자 결정(10/14)으로 슬리브는 자기 스위치(cfg.altEntries)만 본다. 주식(메인) 경로는 그대로 ruleEntryAllowed. */
+  chk(uses >= 2, "정의 1 + 메인 경로 = " + uses + "곳이 같은 함수를 쓴다", "★" + uses + "곳뿐★");
+  chk(/if \(cfg\.altEntries === false\) continue; void _aiReadyCM;/.test(S), "CM 경로는 슬리브 스위치만 본다(V33.588)", "★CM 경로가 다시 AI 준비 여부로 막힌다★");
+  chk(/if \(cfg\.altEntries === false\) continue;\s*\n\s*void _aiReadyAlt;/.test(S), "대체시장 경로는 슬리브 스위치만 본다(V33.588)", "★대체시장 경로가 다시 AI 준비 여부로 막힌다★");
 }
 
 console.log("\n③ ★판정이 실제로 그렇게 도는가 — 실행해서 확인★");
@@ -79,7 +80,7 @@ console.log("\n④ ★청산은 한 톨도 안 건드렸는가★ — 이 경계
     "★진입 차단이 청산보다 앞에 있다 — 매도 경로를 건드릴 수 있다★");
   // CM·대체시장: continue 가 STEP 1(매도) 뒤에 있어야 한다
   const iCmSell = S.indexOf("=== STEP 2: swing 매수 신호 평가 ===");
-  const iCmGate = S.indexOf("if (!ruleEntryAllowed(_aiReadyCM)) continue;");
+  const iCmGate = S.indexOf("if (cfg.altEntries === false) continue; void _aiReadyCM;");   // [V33.588] 슬리브 스위치
   chk(iCmSell > 0 && iCmGate > iCmSell,
     "CM: 매수 차단이 ★매도 단계(STEP 1) 뒤★ 다 — 보유분 매도는 그대로 돈다",
     "★CM 매수 차단이 매도보다 앞이다 — 팔아야 할 때 못 판다★");

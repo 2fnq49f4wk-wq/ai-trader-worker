@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.587";
+const _BUILD_VER = "V33.588";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -22611,7 +22611,7 @@ async function runCommodityCycle(env, forceTrade) {
       if (positions[posKey]) continue;   // 이미 보유 중이면 추가 매수 안 함
       /* [V33.407] AI 가동중이면 종전대로 스킵. ★AI 미가동이어도 비상폴백이 꺼져 있으면 스킵★ —
          청산(위 STEP 1)은 이미 지났으므로 폭락·폭등 매도는 그대로 돈다. */
-      if (!ruleEntryAllowed(_aiReadyCM)) continue;
+      if (cfg.altEntries === false) continue; void _aiReadyCM;   // [V33.588] 원자재는 규칙 전용 슬리브 — AI 가 대신 사지 않으므로 V33.407 차단을 걸지 않는다(대체시장 경로 주석)
       const signals = evaluateBuySignals_swing(price, dayPct, daily, cfg);
       if (!signals || signals.length === 0) continue;
 
@@ -22900,7 +22900,12 @@ async function runAltSleeveCycle(env, key, shared) {
       }
       if (positions[posKey]) continue;
       if (!_canExec) continue;     // [V33.10] 체결 불가 시간 — 시세만 갱신하고 주문은 내지 않는다
-      if (!ruleEntryAllowed(_aiReadyAlt)) continue;   // [V33.407] 위와 같은 규칙(청산은 이미 지났다)
+      /* [V33.588] ★원자재·채권 슬리브 매수가 9/21 부터 원천 차단돼 있던 것★(코드 감사 10/14 · 사용자 결정: "원자재·채권 둘 다 열기").
+         V33.407 의 '규칙 진입 금지' 는 주식 AI 가 대신 사는 시장(us·kr)을 위한 것이다 — 원자재·채권은 AI 위원회가 보지 않는
+         규칙 전용 슬리브라, 같은 규칙을 걸면 대신 살 주체가 없어 영구 '청산만' 이 된다(마지막 매수: 원자재 9/17 · 채권 8/24~25).
+         실적: 원자재 SW_GOLDEN 44건 평균 +5.1% · 승률 77%. 슬리브 스위치(cfg.altEntries === false)로만 끈다. */
+      if (cfg.altEntries === false) continue;
+      void _aiReadyAlt;
       const signals = evaluateBuySignals_swing(price, dayPct, dd, cfg);
       if (!signals || signals.length === 0) continue;
       let best = signals[0];
@@ -49356,6 +49361,9 @@ function _luxPickTech(dd, sym, market) {
 //   장중 소셜 감정은 몇 시간이면 낡는다. 24시간 평균은 '어제 뉴스'를 오늘 신호로 쓰는 셈이다.
 const SOCIAL = {
   enabled: true,
+  /* [V33.588] ★크론 수집만 끔★(코드 감사 10/14 · 사용자 결정) — Reddit 403 상시(데이터센터 IP) · StockTwits 신선글 0 · 소셜 계수 미측정이라 개입 0.
+     사용량 단계 social ≈4%. 모듈(백오프·채점)은 그대로 — collect:true 로 바꾸면 다시 돈다. */
+  collect: false,
   /* [V33.565] ★현실적인 양으로★(사용자: "실제로 불가능한 걸 하지 마라") — 운영 24h(10/11~12): StockTwits 가 회차마다
      ~12건 성공 뒤 HTTP 429(rate limit · 실측 12성공/18실패 그대로) → 30종목×3쪽(회차당 최대 90요청)은 상대 한도를 넘는 양이었다.
      회차당 최대 8종목×2쪽=16요청(대개 ~10)으로 줄인다 — 실패로 태우던 요청이 사라지고, 회전은 느려도 받은 값은 온전하다. */
@@ -54733,7 +54741,7 @@ export default {
       //   전용 예산·간격을 쓰고 실패해도 매매엔 영향이 없다. 실패는 social_health 에 남는다
       //   — '0건' 이 수집실패인지 진짜 0인지 구분할 수 없으면 원인을 영영 못 찾는다.
       try {
-        if (SOCIAL.enabled) {
+        if (SOCIAL.enabled && SOCIAL.collect !== false) {   // [V33.588] 수집 스위치
           const _slk = _num(await getState(env.DB, "social_lock", 0), 0);
           if (Date.now() - _slk > SOCIAL.gapMin * 60000) {
             await setState(env.DB, "social_lock", Date.now());
