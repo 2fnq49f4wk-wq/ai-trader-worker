@@ -188,8 +188,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.585">
-<script src="/neural-observatory.js?v=33.585" defer></script>
+<meta name="lux-build" content="V33.586">
+<script src="/neural-observatory.js?v=33.586" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -5874,7 +5874,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     });
   } catch (e) {}
 
-  function renderEngine(lastTick, lastHeartbeat) {
+  function renderEngine(lastTick, lastHeartbeat, serverTime) {
     var dot = $('engineDot'), txt = $('engineText');
     var tbEng = $('topbarEngineStatus');
     var status = getMarketStatus();
@@ -5901,6 +5901,13 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       return;
     }
     var age = Date.now() - ref;
+    /* [V33.586] ★'엔진 지연' 거짓 경보★(라이브 점검 10/13) — 화면이 받은 상태는 캐시 사본(엣지·R2, 수 분)일 수 있다.
+       그 안의 lastTick 을 지금 시계와 빼면 사본의 나이만큼 지연으로 보인다(실측: 서버 기준 6.8초 전인데 화면은 '3분 전 · 엔진 지연').
+       사본이 만들어진 시각(serverTime) 기준으로 엔진 지연을 재고, 표시 시각도 그만큼 당긴다. 사본 자체가 15분 넘게 묵었으면 종전대로 지금 시계로 잰다. */
+    if (serverTime && serverTime >= ref && (Date.now() - serverTime) < 15 * 60 * 1000) {
+      age = serverTime - ref;
+      ref = Date.now() - age;
+    }
     // cron 1분 주기 + 여유 → 150초까지는 정상으로 본다.
     if (age < 150*1000) {
       dot.className='dot alive';
@@ -11867,6 +11874,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         // [V33] 데이터 수신 성공 — 라이브 인디케이터용 시각 기록
         if (!fromCache) window.__lastDataReceived = Date.now();
         window.__serverLastTick = state.lastTick || null;
+        window.__serverTime = state.serverTime || null;   // [V33.586] 사본이 만들어진 서버 시각 — 지연 판정은 이 기준(renderEngine 주석)
         // [V33.6] 하트비트 = "cron이 사이클에 진입했다"는 증거(장외 스킵 시에도 기록된다).
         //   좌측 "자동 운용 중" 배지가 장외를 '지연'으로 오판하지 않도록 함께 노출.
         window.__serverLastHeartbeat = state.lastHeartbeat || null;
@@ -11928,7 +11936,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
           // [V96] 조회 전 전체목록 — 전 종목 재빌드는 무거워 20초 스로틀
           else if (Date.now() - (window.__detailBrowseTs || 0) > 20000) { try { renderDetailBrowse(); } catch(e){} }
         }
-        safeRun('engine', function(){ renderEngine(state.lastTick, state.lastHeartbeat); });
+        safeRun('engine', function(){ renderEngine(state.lastTick, state.lastHeartbeat, state.serverTime); });
         safeRun('extTrain', function(){ renderExtTrain(state.extTrain); });   // [V33.172] 외부학습 커밋 상태칩
         safeRun('trades', function(){ renderTrades(trades); });
         // [V63] 전략별 성과 — [V88] 새 거래데이터(60초마다)일 때만 (10000건 처리 매 폴링 제거)
@@ -18074,6 +18082,9 @@ html:root .page > *{ flex-shrink:0; }
     if(window.__stateFromCache){ sub.textContent = '서버 확인 중…'; if(box) box.classList.remove('stale'); return; }
     var t = Math.max(window.__serverLastTick || 0, window.__serverLastHeartbeat || 0);
     if(!t){ sub.textContent = '첫 사이클 대기 중'; if(box) box.classList.remove('stale'); return; }
+    // [V33.586] 캐시 사본의 나이를 사이클 지연으로 세지 않는다(renderEngine 주석과 같은 이유)
+    var _st = window.__serverTime || 0;
+    if(_st && _st >= t && (Date.now() - _st) < 15 * 60000) t = Date.now() - (_st - t);
     var age = Date.now() - t;
     var idle = age > 5 * 60000;
     // 장외(거래·시세 창이 모두 닫힘)면 사이클이 없는 게 정상 — 경고로 표시하지 않는다.
@@ -20145,7 +20156,7 @@ html:root .page > *{ flex-shrink:0; }
     CF.wait = fetch('/api/cf-candidates').then(function(r){
       if(!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
-    }).then(function(d){ CF.wait = null; renderCfCandidates(d); return d; })
+    }).then(function(d){ CF.wait = null; CF.ts = Date.now(); renderCfCandidates(d); return d; })
       ['catch'](function(e){
         CF.wait = null;
         var el = $id('nlvCfGrid');
@@ -20390,6 +20401,9 @@ html:root .page > *{ flex-shrink:0; }
     // [V33.144] liveStop 은 두뇌 화면의 무거운 렌더(코어 SVG·판정 스트림)만 멈춘다.
     //   AI 운용상태 로더는 ★멈추지 않는다★ — 그게 멈춰서 "계속 로딩중" 이 됐다.
     try{ aiModeStart(); }catch(e){}
+    /* [V33.586] ★반사실 후보 칸이 '불러오는 중…' 에서 영영 멈춰 있던 것★(라이브 점검 10/13 · 데스크톱·아이패드·아이폰 공통) —
+       부팅 때(setBrainView)만 불렀는데 부팅 시점엔 두뇌 화면이 안 열려 있어 그 함수가 일찍 빠졌다. 화면을 열 때마다(1분에 한 번까지) 부른다. */
+    try{ if(id === 'nnviz' && (!CF.ts || Date.now() - CF.ts > 60000)) loadCfCandidates(); }catch(e){}
     // [V33.33] 지표·환율 페이지의 실시간 폴링을 페이지 전환에 맞춰 켜고 끈다
     //   (다른 페이지에 있을 때 헛호출하지 않도록).
     try{
@@ -20889,13 +20903,13 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.585">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.585">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.585">
-<link rel="stylesheet" href="/model-evidence.css?v=33.585">
+<link rel="stylesheet" href="/brain-console.css?v=33.586">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.586">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.586">
+<link rel="stylesheet" href="/model-evidence.css?v=33.586">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.585">
-<script src="/model-evidence.js?v=33.585"></script>
-<script src="/workspace-ui.js?v=33.585"></script>
+<link rel="stylesheet" href="/liquid-metal.css?v=33.586">
+<script src="/model-evidence.js?v=33.586"></script>
+<script src="/workspace-ui.js?v=33.586"></script>
 </body>
 </html>

@@ -805,6 +805,9 @@ jobs:
       # [V33.584] AI 모델 학습은 금요일 한 번 · 평일은 수집만(워커 파이프라인 · Modal · 워치독 · OMNI-Q 채점만) + CPU 절감
       - name: 금요일 주 1회 학습 검사
         run: node tools/check-train-weekly.mjs
+      # [V33.586] 라이브 점검 결함 — 반사실 칸 멈춤 · '엔진 지연' 거짓 경보 · 겹친 크론의 유령 매도 시도
+      - name: 라이브 점검 결함 검사
+        run: node tools/check-live-fixes.mjs
       # [V33.531] 포트폴리오 실험실 — Qlib TopK-Dropout + Vibe 부품(퍼지 전진·DSR·최적화기) · 귀무 0 · 양성 대조 통과
       - name: 포트폴리오 실험실 검사
         run: node tools/check-portfolio-lab.mjs

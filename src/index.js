@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.585";
+const _BUILD_VER = "V33.586";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -27105,6 +27105,12 @@ async function runFastWatch(env, cronStart) {
             await applyRatchet(DB, market, held.symbol, stratName, held, sellDecision);
           } else if (sellDecision.sell) {
             try {
+              /* [V33.586] ★겹친 크론의 유령 매도 시도★(라이브 10/13 13:33 SOXX: 13:33:20 매도 → 13:33:45 "[정합성] 포지션 4 vs 원장 0").
+                 이 감시는 서브틱 시작 때 읽은 포지션을 1분 가까이 들고 돈다 — 그 사이 다음 크론의 매매 사이클이 같은 포지션을 팔 수 있다.
+                 더블체크(sellQtyDoubleCheck)가 0주로 잘라 사고는 없었지만, 팔기 직전에 ★저장된 포지션을 다시 읽어★ 없으면 조용히 건너뛴다. */
+              const _live = await DB.prepare("SELECT qty FROM positions WHERE market = ? AND symbol = ? AND strategy = ?").bind(market, held.symbol, stratName).first();
+              if (!_live || !(Number(_live.qty) > 0)) { delete c.positions[posKey]; continue; }
+              if (Number(_live.qty) < held.qty) held.qty = Number(_live.qty);
               // 원본 reason 그대로 전달 — executeSell의 STOP·쿨다운 판정이 reason 접두에 의존.
               const wasFull = sellDecision.sellQty >= held.qty;
               await executeSell(DB, market, held.symbol, held, sellDecision.sellQty, price, sellDecision.reason, mcfg, cash);
