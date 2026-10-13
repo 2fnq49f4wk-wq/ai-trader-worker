@@ -12,6 +12,15 @@
 
 ## Current handoff
 
+- V33.583 (10/13) ★폭등날 롱 레버리지 단타(SC_SURGE_LEV)★ — 사용자: "비슷한 원리로 폭등했을 때 롱 레버리지 사는 거 작동되는지 확인하고 수정".
+  - 확인 결과 작동 안 함: 폭등날 레버리지 롱 진입 경로가 없었다 — 규칙 추세는 CHASE(추격 금지)가 급등 진입을 막고 · AI·단타의 레버리지 ETF 진입은
+    V33.506 으로 금지 · leverageDecide(ceilMeltup 1.6)는 크기 배수일 뿐 레버리지 상품을 사지 않는다 · 한국은 usOnly 로 규칙 단타 자체가 안 돈다.
+  - 고침(패닉 인버스의 거울): scalpPanicRules.surge{surgeDayPct 1.5 · momEntry 0.25 · vwapBand 1.5(2배 상품 ×2)} · surgeScalpOn(지수 평균 당일 ≥ +1.5% 이고
+    BULL 또는 MELTUP/TREND_UP) 이면 레버리지 롱 ETF(getEtfType=leverage)를 스캔 우선(_invPri) · 사전필터 면제 · VWAP 위(−0.2%~밴드) · 분봉 모멘텀 ≥ 0.25% 이면
+    SC_SURGE_LEV. 패닉 단타와 같은 예외(_regimeScalp): 레버리지 금지 예외(당일 청산) · 위원회/AI 단타 거부권/CTX/변동성 차단 비적용 · 실적 관문 SURGE:SCALP 따로.
+    청산은 표준 단타 규칙(손절·트레일·타임스톱 — 밤 안 넘김). 진단 카운터 surge_sig.
+  - 게이트 check-panic-inverse 에 폭등 단언(+2% 강세 → SC_SURGE_LEV · +0.4% → 없음 · VWAP 아래 → 없음 · surgeScalpOn 진리표). ★다음 폭등날 [심사완료] surge_sig 로 실측★.
+
 - 10/13 06:30Z ★OMNI 분봉 머리 실측(사용자: "omni 지평 실력 아직 미달")★ — 코드 변경 없음 · 사용자 결정 대기.
   /api/omni-status(학습 10/13): 홀드아웃 79만 행 가중 AUC 0.5016(문턱 +0.005 미달) · 나무 30m 0.503 · 60m 0.503 · 1d 0.493 · 5d 0.485 · 20d 0.515 ·
   신경망 0.461~0.511 · 섞기 이득 0 — ★문턱 문제가 아니라 실력이 0 이다★(60% 대신 사용자 결정 관문(①②)을 적용해도 AUC≈0.5 면 통과 못 한다).

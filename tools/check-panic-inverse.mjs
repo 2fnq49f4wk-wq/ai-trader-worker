@@ -29,18 +29,34 @@ const mbBelow = Object.assign({}, mb, { vwap: mb.price * 1.01 });
 const sig3 = M.evaluateScalpEntry(mbBelow, daily, {}, "kr", crash, null);
 chk(!(sig3 && sig3.name === "SC_PANIC_INV"), "폭락날이라도 인버스가 VWAP 아래(장중 꺾임)면 사지 않는다");
 
+// [V33.583] 폭등날 롱 레버리지(KODEX 레버리지): 지수 +2.1% · BULL · 장중 VWAP 위 · 모멘텀 → SC_SURGE_LEV
+{
+  const lc = Array.from({ length: 120 }, (_, i) => 15000 + i * 20);
+  const ld = { symbol: "122630.KS", closes: lc, highs: lc.map((c) => c * 1.01), lows: lc.map((c) => c * 0.99), volumes: lc.map(() => 1e6), prevClose: lc[lc.length - 1] };
+  const lp = lc[lc.length - 1] * 1.04, lm = Array.from({ length: 30 }, (_, i) => lp * (0.98 + i * 0.0007));
+  const lmb = { price: lm[lm.length - 1], vwap: lm[lm.length - 1] / 1.01, closes: lm, volumes: lm.map(() => 5e5), recentMom: 0.5, highs: lm, lows: lm };
+  const surge = { regime: "BULL", phase: "MELTUP", avgDayPct: 2.1, worstDayPct: 1.4, idxReturn20: 6 };
+  const quiet = { regime: "BULL", phase: "TREND_UP", avgDayPct: 0.4, worstDayPct: 0.1, idxReturn20: 3 };
+  const s1 = M.evaluateScalpEntry(lmb, ld, {}, "kr", surge, null);
+  chk(s1 && s1.name === "SC_SURGE_LEV" && s1.isSurgeScalp && M._entryTag(s1) === "SURGE" && M._regimeScalp(s1), "폭등날 레버리지 롱 → SC_SURGE_LEV(꼬리표 SURGE · 국면 단타 예외 공유)", JSON.stringify(s1));
+  const s2 = M.evaluateScalpEntry(lmb, ld, {}, "kr", quiet, null);
+  chk(!(s2 && s2.name === "SC_SURGE_LEV"), "지수 상승이 문턱(+1.5%) 미만이면 폭등 레버리지는 안 켜진다");
+  const s3 = M.evaluateScalpEntry(Object.assign({}, lmb, { vwap: lmb.price * 1.01 }), ld, {}, "kr", surge, null);
+  chk(!(s3 && s3.name === "SC_SURGE_LEV"), "폭등날이라도 장중 VWAP 아래(꺾임)면 사지 않는다");
+  chk(M.surgeScalpOn(surge, {}) && !M.surgeScalpOn(quiet, {}) && !M.surgeScalpOn({ regime: "BEAR", avgDayPct: 2 }, {}), "폭등 판정: 강세 국면 + 지수 평균 ≥ +1.5%");
+}
 globalThis.Date = RealDate;
 // 배선
-chk(/scalpVolBlocked = true;/.test(S) && /const _scVolOnly = scalpDailyBlocked && scalpVolBlocked;/.test(S) && /\(!scalpDailyBlocked \|\| \(_scVolOnly && _panicScalpOn\)\)/.test(S),
+chk(/scalpVolBlocked = true;/.test(S) && /const _scVolOnly = scalpDailyBlocked && scalpVolBlocked;/.test(S) && /\(!scalpDailyBlocked \|\| \(_scVolOnly && _regimeScalpOn\)\)/.test(S),
     "① 변동성 차단 중에도 패닉 단타는 진입 가능(당일 손실한도 차단은 그대로)");
-chk(/if \(_scalpSig && _scVolOnly && !_scalpSig\.isPanicScalp\)/.test(S), "① 변동성 차단 중 평시·AI 롱 단타는 그대로 막힌다");
-chk(/\(_ruleScalpOk \|\| _panicScalpOn\) && _scAligned\)/.test(S) && /if \(_scalpSig && !_ruleScalpOk && _scalpSig\.name !== "SC_PANIC_INV"\) _scalpSig = null;/.test(S),
+chk(/if \(_scalpSig && _scVolOnly && !_regimeScalp\(_scalpSig\)\)/.test(S), "① 변동성 차단 중 평시·AI 롱 단타는 그대로 막힌다");
+chk(/\(_ruleScalpOk \|\| _regimeScalpOn\) && _scAligned\)/.test(S) && /if \(_scalpSig && !_ruleScalpOk && _scalpSig\.name !== "SC_PANIC_INV" && _scalpSig\.name !== "SC_SURGE_LEV"\) _scalpSig = null;/.test(S),
     "② usOnly 시장(한국)은 패닉 인버스만 허용(투매 반등·평시 규칙 단타는 종전대로 금지)");
-chk(/const _invPri = _panicScalpOn && _entryAllowed && INVERSE_ETF\.has\(symbol\);/.test(S) && /\(scalpScanUsed < _scanMax \|\| _invPri\)/.test(S), "③ 패닉 중 인버스 ETF 는 스캔 예산과 무관하게 본다");
+chk(/const _invPri = _entryAllowed && \(\(_panicScalpOn && INVERSE_ETF\.has\(symbol\)\)/.test(S) && /\(scalpScanUsed < _scanMax \|\| _invPri\)/.test(S), "③ 패닉 중 인버스 ETF 는 스캔 예산과 무관하게 본다");
 const eb = S.slice(S.indexOf("async function executeBuy("), S.indexOf("// === [V8] 전략 룰 헬퍼 ==="));
-chk(/!\(signal && signal\.isPanicScalp\)/.test(eb) && M._entryTag({ isPanicScalp: true }) === "PANIC" && M._pgTag("[PANIC][SCALP] SC_PANIC_INV x") === "PANIC:SCALP",
+chk(/!_regimeScalp\(signal\)/.test(eb) && M._entryTag({ isPanicScalp: true }) === "PANIC" && M._pgTag("[PANIC][SCALP] SC_PANIC_INV x") === "PANIC:SCALP",
     "⑤ 패닉 단타는 레버리지·인버스 금지 예외 · 실적 관문 PANIC:SCALP 로 따로(kr:RULE:SCALP 막힘과 무관)");
-chk(/if \(_scalpSig && _scalpSig\.isPanicScalp\) \{/.test(S) && /if \(signal\.isOmniQ \|\| signal\.isPanicScalp\) \{/.test(S) && /ctxScore < 0 && !\(_sr\.signal && _sr\.signal\.isPanicScalp\)/.test(S),
+chk(/if \(_scalpSig && _regimeScalp\(_scalpSig\)\) \{/.test(S) && /if \(signal\.isOmniQ \|\| _regimeScalp\(signal\)\) \{/.test(S) && /ctxScore < 0 && !_regimeScalp\(_sr\.signal\)/.test(S),
     "AI 단타 거부권·위원회 게이트·CTX 단타 차단은 패닉 인버스에 안 걸린다(학습 분포 밖 · 순풍)");
 // ⑥ 헤지
 chk(/const tr = \(mcfg && mcfg\.tailRisk\) \|\| \(\(typeof AI_PARAMS !== "undefined"\) \? AI_PARAMS\.tailRisk : null\);/.test(S) && /crashGate\.panic = true;/.test(S) && /\{ panic: !!crashGate\.panic \}/.test(S),

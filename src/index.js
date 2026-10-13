@@ -2677,7 +2677,7 @@ async function applySectorGroupWeights(DB, cfg) {
 const SIGNAL_TYPES = [
   "TR_PULLBACK", "TR_BREAKOUT", "TR_SQUEEZE", "TR_RS_LEADER",
   "SN_RSI2",
-  "SC_VWAP", "SC_MOMENTUM", "SC_PULLBACK", "SC_PANIC_INV", "SC_PANIC_BOUNCE", "SC_VBURST",
+  "SC_VWAP", "SC_MOMENTUM", "SC_PULLBACK", "SC_PANIC_INV", "SC_PANIC_BOUNCE", "SC_VBURST", "SC_SURGE_LEV",   // [V33.583] 폭등날 레버리지 롱
   // [V33.255] ★신규 6종이 여기 없어서 학습층이 통째로 죽어 있었다.★
   //   executeSell 의 성과 누적은 `SIGNAL_TYPES.indexOf(entrySignalName) >= 0` 로 잠겨 있다.
   //   목록에 없으면 signal_type_stats 에 단 한 건도 쌓이지 않고, 그러면
@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.582";
+const _BUILD_VER = "V33.583";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -4263,6 +4263,10 @@ const DEFAULT_CFG = {
   //   청산은 표준 scalpRules(빠른 손절·TP1 본전락·트레일·타임스톱)를 그대로 재사용한다.
   scalpPanicRules: {
     enabled: true,
+    /* [V33.583] ★폭등날 롱 레버리지 단타(SC_SURGE_LEV)★ — 패닉 인버스의 거울. 사용자(10/13): "비슷한 원리로 폭등했을 때 롱 레버리지 사는 거".
+       지수 평균 당일 상승 ≥ surgeDayPct 이고 국면이 강세(BULL 또는 MELTUP·TREND_UP)이면, 레버리지 롱 ETF(KODEX 레버리지 · 코스닥150레버리지 ·
+       TQQQ · SOXL)를 장중 방향(VWAP 위 · 분봉 모멘텀)으로 당일 단타한다. 청산은 표준 단타 규칙(빠른 손절 · 트레일 · 타임스톱 — 밤을 넘기지 않는다). */
+    surge: { enabled: true, surgeDayPct: 1.5, momEntry: 0.25, vwapBand: 1.5, confidence: 0.75 },
     // 패닉 중 scalp 사이즈가 crashGate(×0.4)에 과도히 눌리지 않게 하한을 둔다(리스크 자체가 작음).
     sizeScaleFloor: 0.6,
     // (A) 인버스 ETF — 하락장 추세추종 단타
@@ -4498,7 +4502,7 @@ const DEFAULT_CFG = {
     minTradesToWeight: 10,             // 신호 거래가 이 미만이면 가중치 1.0
     // [V63] 전 신호 학습 — applySignalTypeWeights가 SIGNAL_TYPES 전체를 갱신
     weights: { TR_PULLBACK: 1.0, TR_BREAKOUT: 1.0, TR_SQUEEZE: 1.0, TR_RS_LEADER: 1.0,
-               SN_RSI2: 1.0, SC_VWAP: 1.0, SC_MOMENTUM: 1.0, SC_PULLBACK: 1.0, SC_PANIC_INV: 1.0, SC_PANIC_BOUNCE: 1.0, SC_VBURST: 1.0 }
+               SN_RSI2: 1.0, SC_VWAP: 1.0, SC_MOMENTUM: 1.0, SC_PULLBACK: 1.0, SC_PANIC_INV: 1.0, SC_PANIC_BOUNCE: 1.0, SC_VBURST: 1.0, SC_SURGE_LEV: 1.0 }
   },
   // 다층 가중치(confidence×그룹×신호) 곱이 너무 작아져 거래 누락되는 것 방지 — 전체 하한
   weightFloor: 0.3,
@@ -16005,6 +16009,15 @@ async function checkLossStreak(DB, market, lsCfg) {
 }
 
 // 패닉(지수 동시 급락) 판정.
+/* [V33.583] 폭등 단타 켜짐(순수 함수) — 지수 평균 당일 상승 ≥ surgeDayPct · 국면 강세(BULL 또는 MELTUP/TREND_UP) */
+function surgeScalpOn(regime, cfg) {
+  const sg = ((cfg && cfg.scalpPanicRules) || DEFAULT_CFG.scalpPanicRules || {}).surge || {};
+  if (sg.enabled === false || !regime) return false;
+  const up = regime.regime === "BULL" || regime.phase === "MELTUP" || regime.phase === "TREND_UP";
+  return up && typeof regime.avgDayPct === "number" && regime.avgDayPct >= (sg.surgeDayPct != null ? sg.surgeDayPct : 1.5);
+}
+/* [V33.583] 국면 단타(폭락 인버스 · 폭등 레버리지) — 평시 단타용 차단·학습 분포 밖이라 같은 예외를 받는다 */
+function _regimeScalp(sig) { return !!(sig && (sig.isPanicScalp || sig.isSurgeScalp)); }
 function isPanic(regime, panicCfg) {
   if (!panicCfg || !panicCfg.enabled || !regime) return false;
   if (panicCfg.requireBear && regime.regime !== "BEAR") return false;
@@ -16315,6 +16328,22 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime, signalStats) {
 
   // ══ [SCALP-PANIC] 패닉/베어장 전용 진입 — 평시 게이트가 다 막는 구간에서 수익 포착 ══
   //   여기서 신호가 잡히면 즉시 return(평시 게이트로 내려가지 않음). 안 잡히면 평시 로직 계속.
+  /* [V33.583] ★폭등날 롱 레버리지 단타★ — DEFAULT_CFG.scalpPanicRules.surge 주석. 패닉 경로처럼 신호가 잡히면 즉시 return. */
+  {
+    const _sg = Object.assign({}, ((cfg && cfg.scalpPanicRules) || DEFAULT_CFG.scalpPanicRules || {}).surge || {});
+    const _sym = dailyData && dailyData.symbol;
+    if (_sg.enabled !== false && _sym && typeof getEtfType === "function" && getEtfType(_sym) === "leverage" && surgeScalpOn(regime, cfg)) {
+      const _p = mb.price, _vw = mb.vwap, _av = _vw > 0 ? ((_p - _vw) / _vw) * 100 : 0, _m = mb.recentMom || 0;
+      const _lk = (typeof LEVERAGED_ETF !== "undefined" && LEVERAGED_ETF.has(_sym)) ? 2 : 1;
+      const _bd = (_sg.vwapBand != null ? _sg.vwapBand : 1.5) * _lk;
+      if (_av >= -0.2 && _av <= _bd && _m >= (_sg.momEntry != null ? _sg.momEntry : 0.25)) {
+        return { name: "SC_SURGE_LEV", weight: 0.8, type: "SCALP", confidence: _sg.confidence != null ? _sg.confidence : 0.75,
+                 detail: "LEV mom " + _m.toFixed(2) + "% vwap" + _av.toFixed(2) + "% · 지수 +" + _num(regime && regime.avgDayPct, 0).toFixed(1) + "% · 레버리지×" + _lk,
+                 members: ["SC_SURGE_LEV"], isSurgeScalp: true };
+      }
+      _no("surge_lev_wait");
+    }
+  }
   const _csPanic = cfg && cfg.crashSurvival && cfg.crashSurvival.panic;
   const _panicOn = (typeof isPanic === "function") ? isPanic(regime, _csPanic) : false;
   // [V51] BEAR 추세면 당일 등락 무관하게 패닉 단타 경로 활성화.
@@ -19521,7 +19550,7 @@ const PERF_GATE = { windowDays: 180, maxN: 40, minN: 15, blockPf: 0.8, coolDays:
    실적 관문 구역 안에 둔다 — 관문 검사(tools/check-perf-gate)가 이 구역만 떼어 돌리므로, 밖에 두면 참조 오류가 catch 에 삼켜져 '막지 않음' 으로 샌다. */
 function _entryTag(signal) {
   // [V33.582] 패닉 단타는 PANIC 으로 따로 센다 — 평시 규칙 단타(kr:RULE:SCALP 막힘)의 성적으로 폭락날 인버스 단타를 막지 않는다(자기 성적으로 판정)
-  return (signal && signal.isPanicScalp) ? "PANIC" : (signal && signal.isAiScalp) ? "AI-SCALP" : (signal && signal.isOmniQ) ? "AI-Q" : (signal && signal.isAiPrimary) ? "AI" : "RULE";
+  return (signal && signal.isPanicScalp) ? "PANIC" : (signal && signal.isSurgeScalp) ? "SURGE" : (signal && signal.isAiScalp) ? "AI-SCALP" : (signal && signal.isOmniQ) ? "AI-Q" : (signal && signal.isAiPrimary) ? "AI" : "RULE";
 }
 function _pgTag(reason) {
   const s = String(reason || "");
@@ -19678,7 +19707,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
      252670(인버스2X) AI 진입 하나가 −19.6% · −287만. 위원회는 개별주 피처로 학습했고, 손절(5%)·수량 산정은 1배 변동을 가정한다
      (2배 상품의 밤사이 갭이 손절을 뛰어넘는다). 스냅은 이미 제외 · 규칙 추세는 ADX 로 축소 중 · 꼬리위험 헤지(hedge)는 그대로. */
   if (strategy !== "hedge" && ((typeof LEVERAGED_ETF !== "undefined" && LEVERAGED_ETF.has(symbol)) || (typeof INVERSE_ETF !== "undefined" && INVERSE_ETF.has(symbol)))
-      && !(signal && signal.isPanicScalp)   // [V33.582] 폭락날 인버스 단타(SC_PANIC_INV)는 설계상 이 ETF 를 쓴다 — 당일 청산 단타라 밤사이 갭(V33.506 의 근거)이 없다
+      && !_regimeScalp(signal)   // [V33.582·583 폭등 레버리지 롱 포함] 폭락날 인버스 단타(SC_PANIC_INV)는 설계상 이 ETF 를 쓴다 — 당일 청산 단타라 밤사이 갭(V33.506 의 근거)이 없다
       && (strategy === "scalp" || (signal && (signal.isAiPrimary || signal.isAiScalp || signal.isOmniQ))) && !(cfg && cfg.levEtfAiEntries === true)) {
     await log(DB, "INFO", symbol, "BUY 레버리지·인버스 ETF — AI·단타 진입 제외(" + strategy + ")");
     return cash;
@@ -24987,6 +25016,8 @@ async function runTradingCycle(env) {
             const bear = regime && regime.regime === "BEAR" && typeof regime.worstDayPct === "number" && regime.worstDayPct <= -1.0;
             return ((typeof isPanic === "function") ? isPanic(regime, cp) : false) || bear;
           })();
+          const _surgeScalpOn = surgeScalpOn(regime, mcfg);   // [V33.583] 폭등날 롱 레버리지 단타
+          const _regimeScalpOn = _panicScalpOn || _surgeScalpOn;
           // [V58] KR 단타 가능 — 네이버 분봉 실시간. (단, 거래세·스프레드 고려해 US보다 보수적)
           //   (일봉/스윙은 거래윈도우 시프트로 데이터-가격 일치가 보장되지만, 분봉 단타는 시프트로도 못 고침)
           // [V33.48] ★한국장 단타가 아예 안 돌던 이유★ usOnly=true 로 KR 이 통째로 차단돼 있었다.
@@ -25012,7 +25043,7 @@ async function runTradingCycle(env) {
              (DEFAULT_CFG.scalpPanicRules 주석). 10/13 한국 BEAR/CRASH(지수 최악 −7%) 내내 scalp sig=0. 변동성 차단은 평시 단타(VWAP·눌림)의
              근거(고변동장 승률 24~35%)로 만든 것이라 그 대상만 막는다 — 당일 손실한도 차단은 패닉 단타에도 그대로 걸린다. */
           const _scVolOnly = scalpDailyBlocked && scalpVolBlocked;
-          const _scEntryOk = _scalpMarketOk && (_scalpOn || _panicScalpOn) && (!scalpDailyBlocked || (_scVolOnly && _panicScalpOn))
+          const _scEntryOk = _scalpMarketOk && (_scalpOn || _regimeScalpOn) && (!scalpDailyBlocked || (_scVolOnly && _regimeScalpOn))
                              && stratResults.length === 0 && !strategiesHeldNow.has("scalp");
           const _scObsOk = !!__stinPend && stratResults.length === 0;   // 관측은 차단 플래그와 무관
           if (_scEntryOk || _scObsOk) {
@@ -25029,7 +25060,7 @@ async function runTradingCycle(env) {
             //   분봉 스캔을 낭비하던 것을 차단. 50회 스캔을 전부 유효 후보(상승추세)에 집중 → 단타 신호 발생률 급증.
             //   패닉 단타(_panicScalpOn)는 급락 종목을 노리므로 이 사전필터 면제(evaluateScalpEntry가 자체 판정).
             let _scAligned = true;
-            if (!_panicScalpOn) {
+            if (!_panicScalpOn && !(_surgeScalpOn && getEtfType(symbol) === "leverage")) {   // [V33.583] 폭등날 레버리지 롱은 evaluateScalpEntry 가 자체 판정
               const _ma20s = getMA(closes, (mcfg.scalpRules && mcfg.scalpRules.maFastPeriod) || 20);
               const _ma50s = getMA(closes, (mcfg.scalpRules && mcfg.scalpRules.maSlowPeriod) || 50);
               const _rMin = (mcfg.scalpRules && mcfg.scalpRules.rsiMin != null) ? mcfg.scalpRules.rsiMin : 38;
@@ -25087,7 +25118,7 @@ async function runTradingCycle(env) {
               ? mcfg.scalpRules.obsFloorPerCycle : 4;
             const _obsGuaranteed = _obsWanted && __stinObsScan < _obsFloor;
             // [V33.582] 패닉 중 인버스 ETF 는 스캔 예산·시간과 무관하게 반드시 본다(시장당 2~11종목) — 80칸 순서에 밀려 못 보면 폭락 단타가 0 이 된다
-            const _invPri = _panicScalpOn && _entryAllowed && INVERSE_ETF.has(symbol);
+            const _invPri = _entryAllowed && ((_panicScalpOn && INVERSE_ETF.has(symbol)) || (_surgeScalpOn && getEtfType(symbol) === "leverage"));   // [V33.583] 폭등날 레버리지 롱도
             if ((_scAligned || __scalpLive || _obsWanted) && (scalpScanUsed < _scanMax || _invPri) &&
                 (_scalpTimeLeft || _obsGuaranteed || _invPri) && fetchBudgetLeft() > 5) {
               if (!_scAligned && !__scalpLive) __stinObsScan++;   // 관측 전용 소비분 계측
@@ -25141,10 +25172,11 @@ async function runTradingCycle(env) {
                 /* [V33.582] ★두 번째 벽★ — 한국은 usOnly(규칙 단타 금지 · 근거: SC_VWAP 등 평시 규칙 단타의 손실)라 evaluateScalpEntry 를
                    아예 부르지 않아 패닉 인버스 신호가 생길 수 없었다. 패닉 중엔 부르되, 규칙 단타가 금지된 시장에서는 ★패닉 인버스(SC_PANIC_INV)만★
                    남긴다(투매 반등 SC_PANIC_BOUNCE 와 평시 규칙 단타는 종전대로 금지). */
-                let _scalpSig = (_scalpMb && _entryAllowed && (_ruleScalpOk || _panicScalpOn) && _scAligned)
+                let _scalpSig = (_scalpMb && _entryAllowed && (_ruleScalpOk || _regimeScalpOn) && _scAligned)
                   ? evaluateScalpEntry(_scalpMb, daily, mcfg, market, regime, _sigTypeStats) : null;
-                if (_scalpSig && !_ruleScalpOk && _scalpSig.name !== "SC_PANIC_INV") _scalpSig = null;
+                if (_scalpSig && !_ruleScalpOk && _scalpSig.name !== "SC_PANIC_INV" && _scalpSig.name !== "SC_SURGE_LEV") _scalpSig = null;
                 if (_scalpSig && _scalpSig.isPanicScalp) __scalpDiag.panic_sig = (__scalpDiag.panic_sig || 0) + 1;
+                if (_scalpSig && _scalpSig.isSurgeScalp) __scalpDiag.surge_sig = (__scalpDiag.surge_sig || 0) + 1;
                 if (_scalpSig) scalpSig++;  // [진단] 게이트 통과해 신호 발생
                 // [V9.10 합성함수] SCALP 일봉 컨텍스트 직교 강화 — 분봉 진입을 일봉 추세/매집/실적/애널리스트로 사이즈 차등.
                 //   곱셈 아닌 가중평균. 패닉·인버스 진입은 추세역행이 정상이라 추세정렬 팩터 제외.
@@ -25192,7 +25224,7 @@ async function runTradingCycle(env) {
                   //   다른 모양의 벡터로 추론하면 조용히 틀린 확률이 나오기 때문.
                   const _sfNow = (_sf && _sfi) ? _sf.concat(_sfi) : null;
                   if (_scp && _sfNow) {
-                    if (_scalpSig && _scalpSig.isPanicScalp) {
+                    if (_scalpSig && _regimeScalp(_scalpSig)) {
                       // [V33.582] 패닉 단타는 AI 단타 모델이 거부하지 않는다 — 그 모델은 평시 롱 단타 표본으로 학습됐다(폭락날 인버스는 학습 밖).
                     } else if (_scalpSig) {
                       const _sd = await mlScalpDecide(DB, _sfNow, { forVeto: true });
@@ -25213,7 +25245,7 @@ async function runTradingCycle(env) {
                     }
                   }
                 } catch (e) {}
-                if (_scalpSig && _scVolOnly && !_scalpSig.isPanicScalp) { __scalpDiag.vol_block = (__scalpDiag.vol_block || 0) + 1; _scalpSig = null; }   // [V33.582] 변동성 차단 중엔 패닉 단타만
+                if (_scalpSig && _scVolOnly && !_regimeScalp(_scalpSig)) { __scalpDiag.vol_block = (__scalpDiag.vol_block || 0) + 1; _scalpSig = null; }   // [V33.582] 변동성 차단 중엔 패닉 단타만
                 if (_scalpSig && !strategiesHeldNow.has("scalp") && !heldSymbols.has(symbol)) {
                   stratResults = [{ strategy: "scalp", signal: _scalpSig, rawCount: 1 }];
                 }
@@ -25495,7 +25527,7 @@ async function runTradingCycle(env) {
             const _ctxMult = ctxScore >= 3 ? 1.25 : ctxScore >= 1 ? 1.1 : ctxScore <= -1 ? 0.7 : 1.0;
             const _kept = [];
             for (const _sr of stratResults) {
-              if (_sr.strategy === "scalp" && ctxScore < 0 && !(_sr.signal && _sr.signal.isPanicScalp)) {   // [V33.582] 패닉 인버스는 역풍이 아니라 순풍이다
+              if (_sr.strategy === "scalp" && ctxScore < 0 && !_regimeScalp(_sr.signal)) {   // [V33.582] 패닉 인버스는 역풍이 아니라 순풍이다
                 incBlock("CTX_SCALP_NEG");
                 await log(DB, "INFO", symbol, "[V64 CTX] scalp 차단 score=" + ctxScore + _ctxStr);
                 continue;
@@ -26343,7 +26375,7 @@ async function runTradingCycle(env) {
                 //     기권·관망 건은 제외한다(그건 확률 판단 자체를 안 한 것이다).
                 try {
                   // [V33.578] OMNI-Q 후보는 넣지 않는다 — 다른 모델이 고른 집합이라 AI_PRIMARY 백분위 문턱의 분포를 비튼다.
-                  if (_md && typeof _md.p === "number" && isFinite(_md.p) && !_md.observe && !_md.abstain && !signal.isOmniQ && !signal.isPanicScalp
+                  if (_md && typeof _md.p === "number" && isFinite(_md.p) && !_md.observe && !_md.abstain && !signal.isOmniQ && !_regimeScalp(signal)
                       && !__candSyms.has(symbol + ":pdist")) {
                     __candSyms.add(symbol + ":pdist");
                     __pDistNew.push(+_md.p.toFixed(4));
@@ -26421,7 +26453,7 @@ async function runTradingCycle(env) {
                     continue;
                   }
                 }
-                if (signal.isOmniQ || signal.isPanicScalp) {
+                if (signal.isOmniQ || _regimeScalp(signal)) {
                   /* [V33.582] 패닉 인버스 단타도 같다 — 위원회는 평시 롱 진입 표본으로 학습됐다(폭락날 인버스 ETF 는 학습 분포 밖). 기록만 한다.
                      [V33.578] ★OMNI-Q 경로는 위원회가 막지도 키우지도 않는다★(OMNIQ_ROUTE 주석) — 기록만 남긴다.
                      (ml_gate · 메타컷 · 열화 halt · 저확신 · 위원회 크기 배수 전부 미적용 · 크기는 잠정 ×0.5 가 정한다) */
@@ -55584,7 +55616,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { evaluateScalpEntry, runTailRiskHedge, externalTrainAges, externalTrainRow, EXT_TRAIN_KEYS, OMNIQ_ROUTE, omniqRoutePick, omniqHoldOf, omniqRouteToday, _entryTag, negExpDefersToPerfGate, evaluateBuyBlocks, setStatesBatch, _ioTag, _setYAuthDB, yahooFetch, _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { surgeScalpOn, _regimeScalp, evaluateScalpEntry, runTailRiskHedge, externalTrainAges, externalTrainRow, EXT_TRAIN_KEYS, OMNIQ_ROUTE, omniqRoutePick, omniqHoldOf, omniqRouteToday, _entryTag, negExpDefersToPerfGate, evaluateBuyBlocks, setStatesBatch, _ioTag, _setYAuthDB, yahooFetch, _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { getStates, _STATE_LITE, getADX, _getADXCore, getHolidaySet, _indexFreshOpen, isMarketTradingDay, KR_LUNAR_HOLIDAYS, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
