@@ -91,11 +91,8 @@ assert.equal(await run(),0);assert.equal(await run(m=>m.xgb_trust.featVer=15),1)
      ※ 안전망은 그대로다 — '모델 없음'·'판 불일치'·'전부 낡음' 은 여전히 즉시 디스패치다. */
 assert.equal(await run(m=>m.cat_trust.trainedAt=now-30*3600000),0,
  '한 모델만 묵은 것은 회전이다 — 디스패치하면 회전이 비용을 부른다');
-/* [V33.584] 학습이 금요일 주 1회가 됐다 — 30h 는 정상 범위다(트리거 안 함). 문턱(staleH 180h)을 넘어야 '안 돈다' 다. */
-assert.equal(await run(m=>{for(const k of keys) if(m[k]) m[k].trainedAt=now-30*3600000;}),0,
- '주 1회 학습에서 전부 30h 는 정상이다 — 디스패치하면 평일 GPU 학습이 된다');
-assert.equal(await run(m=>{for(const k of keys) if(m[k]) m[k].trainedAt=now-200*3600000;}),1,
- '전부 문턱(180h)을 넘겨 묵었으면 학습 자체가 안 도는 것이다 — 그때는 디스패치한다');
+assert.equal(await run(m=>{for(const k of keys) if(m[k]) m[k].trainedAt=now-30*3600000;}),1,
+ '전부 묵었으면 학습 자체가 안 도는 것이다 — 그때는 디스패치한다');
 assert.equal(await run(m=>delete m.lgb_trust),1);
 assert.equal(await run(m=>{m.xgb_trust.featVer=15;m.xgb_trust_ext={source:'external',trainedAt:now,featVer:17,trusted:false};}),0,
  'fresh rejected shadow proves training receipt, not admission');

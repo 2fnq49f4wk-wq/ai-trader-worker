@@ -1,8 +1,7 @@
 # [V33.542] OMNI-Q 학습 — GitHub Actions(공개 저장소: 무료 · 분 무제한). Modal(월 크레딧 한도) 대신.
 #   하루 두 번(한국 장 마감 뒤 07:20Z · 미국 장 마감 뒤 21:20Z) — 라이브 장부(관문 ③)가 매일 쌓인다.
-# [V33.584] ★학습은 금요일 07:20Z 회차 한 번★(사용자 10/13: "ai 모델 학습을 금요일 한번만"). 나머지 회차는 학습 없이
-#   캐시(actions/cache)의 금요일 모델로 그날 피처만 채점해 올린다 — 매매 경로는 그날 점수가 필요하다(워커 OMNIQ.maxAgeMs).
-#   캐시가 없거나 7.5일 넘으면 그 회차가 학습한다(자가 복구 · omni_q.should_train).
+# [V33.585] ★회차마다 학습(하루 2회) 유지★ — 사용자(10/13): "내부 cpu 사용 안 하는 학습은 일일 2회로 유지". GHA 러너는 워커 CPU 를 쓰지 않는다.
+#   V33.584 의 '채점만' 방식(mode=score/auto · 캐시 모델)은 수동 선택지로만 남긴다. 학습한 모델은 캐시에 저장(채점만 회차의 재료).
 name: OMNI-Q 학습 (GitHub Actions · 무료)
 on:
   schedule:
@@ -15,9 +14,9 @@ on:
         type: boolean
         default: false
       mode:
-        description: 'auto=금요일만 학습 · train=지금 학습 · score=캐시 모델로 채점만'
+        description: 'train=학습(기본 · 하루 2회) · auto=금요일만 학습 · score=캐시 모델로 채점만'
         type: choice
-        default: auto
+        default: train
         options: [auto, train, score]
 concurrency: { group: omniq-gha, cancel-in-progress: false }
 jobs:
@@ -48,13 +47,13 @@ jobs:
           path: ~/.omniq
           key: omniq-model-${{ github.run_id }}
           restore-keys: omniq-model-
-      - name: OMNI-Q 학습(금)·채점·관문·업로드
+      - name: OMNI-Q 학습·채점·관문·업로드
         id: omq
         env:
           BASE_URL: ${{ steps.url.outputs.url }}
           TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
           OMNIQ_LAB: ${{ inputs.lab && '1' || '0' }}
-          OMNIQ_MODE: ${{ inputs.mode || 'auto' }}
+          OMNIQ_MODE: ${{ inputs.mode || 'train' }}
         run: |
           set -o pipefail
           python trainer/modal/omniq_gha.py 2>&1 | grep -v RuntimeWarning | tee omniq.log

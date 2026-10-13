@@ -2,8 +2,9 @@
  *   사용자(10/13): "ai모델 학습을 금요일 한번만 하는걸로 해 · 그 전까지는 수집만 · cpu 사용량 줄이고 · Omni 수집은 이어서".
  *   ① 워커 야간 파이프라인 — 학습 단계(TRAIN_STAGES)는 금요일 07시Z~일요일(이어 끝내기)에만 · 주 1회 도장 · 수집 단계는 매일
  *      · 피처 판이 바뀐 날만 예외(강제 학습) — trainWeekKey 진리표 + 배선
- *   ② Modal 크론 금요일만 · 자동 재트리거·워치독 문턱이 주 1회 주기와 맞다(평일에 GPU 를 부르지 않는다)
- *   ③ OMNI-Q — 금요일 학습 · 평일은 캐시 모델로 채점만(실제 파이썬 should_train) · 워커 신선도는 채점 시각 + 모델 나이 한도
+ *   ② [V33.585] 사용자(10/13): "내부 cpu 사용 안 하는 학습은 일일 2회로 유지" — 외부 학습(Modal · OMNI-Q GHA)은 하루 2회 그대로,
+ *      주 1회는 ★워커 안 학습★ 에만. Modal 크론 12시간 · 자동 재트리거·워치독 14h · 위원회 전진평가 일요일 그대로
+ *   ③ OMNI-Q — 기본은 회차마다 학습(하루 2회) · 채점만(캐시 모델) 방식은 선택지(실제 파이썬 should_train) · 워커 신선도는 채점 시각 + 모델 나이 한도
  *   ④ CPU 절감 — 반사실 라벨 4시간 · OMNI 섀도우 채점 60/180분 · 원자재·국채 슬리브 3/15분 · OMNI 봉 수집은 그대로 */
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -76,10 +77,11 @@ chk(/if \(!_trainKey\) throw 0;/.test(S) && /if \(_trainKey\) \{ try \{ await en
 }
 
 // ② Modal · 자동 재트리거 · 워치독 · GHA
-chk(/^CRON = modal\.Cron\("10 8,14 \* \* 5"\)/m.test(PY), "Modal 크론: 금요일 08:10·14:10Z 만(한 바퀴 = 2회차)");
-chk(M.MODALAUTO.staleH >= 162 && M.MODALAUTO.staleH <= 192, "워커 자동 재트리거 문턱 " + M.MODALAUTO.staleH + "h — 정상 주기(≤162h)에선 안 부르고 금요일을 놓치면 부른다");
-chk(/float\('\$AGE'\) > 180/.test(WD) && (WD.match(/date -u \+%u\)" = "5"/g) || []).length >= 2, "워치독: 180h 문턱 · 나이를 모르면 금요일만 학습");
-chk(/cron: "10 22 \* \* 5"/.test(TG) && !/cron: "10 22 \* \* 0"/.test(TG), "위원회 전진평가(GHA)도 금요일로");
+chk(/^CRON = modal\.Cron\("10 \*\/12 \* \* \*"\)/m.test(PY), "외부 Modal 학습은 하루 2회 유지(워커 CPU 안 씀)");
+chk(M.MODALAUTO.staleH === 14, "워커 자동 재트리거 문턱 14h 그대로(외부 학습 하루 2회)");
+chk(/float\('\$AGE'\) > 14 /.test(WD) && !/date -u \+%u/.test(WD), "워치독: 14h 문턱 · 금요일 제한 없음");
+chk(/cron: "10 22 \* \* 0"/.test(TG), "위원회 전진평가(GHA)는 종전 일요일 그대로");
+chk(/cron: "20 7 \* \* 1-5"/.test(QG) && /cron: "20 21 \* \* 1-5"/.test(QG), "OMNI-Q GHA 하루 2회 그대로");
 
 // ③ OMNI-Q
 const D = 86400000, now = at("2026-10-14T03:00:00Z");
@@ -110,8 +112,8 @@ print(",".join("1" if x else "0" for x in r))
 let got = "";
 try { got = execFileSync("python3", ["-c", py], { encoding: "utf8" }).trim(); } catch (e) { got = "ERR " + String(e.stderr || e).slice(0, 300); }
 chk(got === "1,0,0,1,1,1,1,0,0", "OMNI-Q should_train(실제 파이썬): 금 07:25 학습 · 같은 금요일 21:25 채점만 · 평일 채점만 · 캐시 없음/피처 변경/8일 넘음 → 학습 · 강제 · 금 07시 전 채점만", got);
-chk(/actions\/cache\/restore@v4/.test(QG) && /if: steps\.omq\.outputs\.trained == 'true'/.test(QG) && /actions\/cache\/save@v4/.test(QG) && /OMNIQ_MODE: \$\{\{ inputs\.mode \|\| 'auto' \}\}/.test(QG)
-    && /cache=cache, mode=MODE/.test(QGP) && /trained=%s/.test(QGP), "GHA: 캐시 복원 → 실행 → 학습한 회차만 캐시 저장 · 방식 입력");
+chk(/actions\/cache\/restore@v4/.test(QG) && /if: steps\.omq\.outputs\.trained == 'true'/.test(QG) && /actions\/cache\/save@v4/.test(QG) && /OMNIQ_MODE: \$\{\{ inputs\.mode \|\| 'train' \}\}/.test(QG) && /OMNIQ_MODE"\) or "train"\)/.test(QGP)
+    && /cache=cache, mode=MODE/.test(QGP) && /trained=%s/.test(QGP), "GHA: 기본은 회차마다 학습 · 캐시 복원 → 실행 → 학습한 회차는 캐시 저장(채점만 선택지의 재료)");
 
 // ④ CPU
 chk(/if \(Date\.now\(\) - _cfLock > 4 \* 3600000\)/.test(S), "반사실 라벨 틱 30분 → 4시간(라벨은 주 1회 학습 때만 읽힌다)");

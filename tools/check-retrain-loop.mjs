@@ -52,7 +52,7 @@ const P = M.MODALAUTO;
 
 const cases = [
   // [이름, anyExt, missingExt, staleFV, freshest, oldest, 트리거해야 하나]
-  ["학습이 아예 안 돈다(신선한 것도 낡음 — 금요일을 놓침)", true, false, 0, P.staleH + 20, P.staleH + 40, true],   // [V33.584] 주 1회 학습 — 40h 는 이제 정상 범위
+  ["학습이 아예 안 돈다(신선한 것도 낡음)", true, false, 0, 40, 60, true],
   ["회전 중 — 신선한 건 최근, 오래된 건 묵음", true, false, 0, 6, 31, false],
   ["회전 중 — 오래된 것이 아주 묵음(48h)", true, false, 0, 6, 48, false],
   ["모델이 아예 없다", false, false, 0, 0, 0, true],
@@ -83,9 +83,8 @@ ok(/freshestAge <= MODALAUTO\.staleH/.test(S), "판정이 ★가장 신선한 �
 ok(!/oldestAge <= 14/.test(S), "옛 조건(oldestAge <= 14)이 남아 있지 않다");
 ok(/meta\.oldestAgeH = \+oldestAge\.toFixed\(1\)/.test(S), "oldestAge 는 ★기록은 계속한다★(회전이 느려진 것은 따로 봐야 한다)");
 ok(/inputs: \{ run_now: "true" \}/.test(S), "트리거는 여전히 실제 학습 1회를 건다(안전망이 무뎌지지 않았다)");
-/* [V33.584] 사용자 결정(10/13): 학습은 금요일 주 1회 — 문턱 상한 24h → 192h(8일). 정상 주기(최대 ≈162h)보다 길고, 금요일을 한 번 놓치면 하루 안에 안다. */
-ok(typeof P.staleH === "number" && P.staleH > 0 && P.staleH <= 192,
-   `문턱 ${P.staleH}h 가 1~192h 안이다 — 너무 길면 진짜 사고를 늦게 안다`);
+ok(typeof P.staleH === "number" && P.staleH > 0 && P.staleH <= 24,
+   `문턱 ${P.staleH}h 가 1~24h 안이다 — 너무 길면 진짜 사고를 늦게 안다`);
 
 /* ★크론과 문턱이 서로 말이 되는가.★ 학습 주기보다 문턱이 짧으면 정상 동작이 사고로 읽힌다. */
 {

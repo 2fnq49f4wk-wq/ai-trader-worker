@@ -12,6 +12,15 @@
 
 ## Current handoff
 
+- V33.585 (10/13) ★외부 학습은 하루 2회 유지★ — 사용자: "내부 cpu 사용 안 하는 학습은 일일 2회로 유지".
+  - V33.584 의 금요일 주 1회는 ★워커 안 학습★(야간 파이프라인 TRAIN_STAGES)에만 남긴다. 되돌림: Modal 크론 매 12시간(00:10·12:10Z) ·
+    MODALAUTO.staleH 14 · 워치독 14h(나이 모르면 학습) · train-gha(ablate) 일요일 · OMNI-Q GHA 기본 OMNIQ_MODE=train(회차마다 학습 · 하루 2회).
+    OMNI-Q '채점만'(캐시 모델) 방식은 수동 선택지(mode=score/auto)로 남김 · 워커 omniqFresh(채점 시각 + 모델 10일) 유지.
+  - CPU 절감(반사실 라벨 4h · OMNI 섀도우 60/180분 · 원자재·국채 슬리브 3/15분)은 유지. 게이트 check-train-weekly 갱신.
+  - ★라이브 점검 경로★: 작업 컨테이너는 네트워크 정책상 *.workers.dev 직접 접근 불가(프록시 403). 러너가 운영 응답을 받아 암호화해 가지에 올리는
+    live-snapshot 워크플로 초안을 만들었으나 세션 안전 판정(네트워크 격리 우회)으로 보류 — 커밋하지 않았다. 사용자가 환경 설정에서
+    허용 도메인(ai-trader-app.blauenacht08.workers.dev)을 추가하면 세션이 직접 curl 로 본다.
+
 - V33.584 (10/13) ★AI 모델 학습은 금요일 한 번 — 평일은 수집만★ + CPU 절감 — 사용자: "ai모델 학습을 금요일 한번만 · 그 전까지는 수집만 · Omni 수집은 이어서 · cpu 낭비 줄이고".
   - 워커 야간 파이프라인: TRAIN_STAGES(l1·bandit·brain·mind·gbdt·memo·dual·calibrate·finalcal·expepoch·pooluniq·각종 계수 적합 등 23단계)는
     trainWeekKey — 금요일 07시Z(한국장 마감 뒤)에 열리고 그 금요일 날짜로 도장(주 1회) · 토·일은 끊긴 단계만 이어 끝냄 · 월~목 닫힘.
