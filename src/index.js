@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.580";
+const _BUILD_VER = "V33.581";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -7892,7 +7892,8 @@ function _dailyBulkLazy(rows) {
     memo.set(sym, v); return v;
   };
   return new Proxy({}, {
-    get: function (_t, k) { return (typeof k === "string" && raw.has(k)) ? val(k) : undefined; },
+    // [V33.581] 원문 지도를 꺼내 갈 열쇠 — flowDailyCacheLoad 가 같은 원문을 다시 D1 에서 받지 않고 이것을 읽는다(메모리 한 벌)
+    get: function (_t, k) { if (k === "__rawMap") return raw; return (typeof k === "string" && raw.has(k)) ? val(k) : undefined; },
     has: function (_t, k) { return typeof k === "string" && raw.has(k) && val(k) !== undefined; },
     ownKeys: function () { return Array.from(raw.keys()).filter(function (k) { return val(k) !== undefined; }); },
     getOwnPropertyDescriptor: function (_t, k) {
@@ -38242,7 +38243,17 @@ async function flowDailyCacheLoad(DB, nowTs) {
   const c = globalThis.__flowDailyCache;
   if (c && c.map && (now - _num(c.ts, 0)) < FLOW_DAILY_TTL_MS) return c.map;
   const map = {};
-  const _dr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
+  /* [V33.581] ★한국 개장 시간 exceededMemory(10/12 8건 · 10/13 3건)★ — 같은 사이클에서 매매 루프가 이미 전 종목 일봉 원문(~12.5MB)을
+     __allDailyCache 로 들고 있는데, 여기서 ★같은 쿼리를 또★ 날려 원문이 두 벌(+D1 응답 버퍼) 올라갔다(사용량 파싱 dailyBulk 10/12 606MB).
+     공유 원문이 신선하면 그것을 읽고 D1 은 부르지 않는다 — 결과(마지막 70봉)는 종전과 같다. */
+  const _sh = globalThis.__allDailyCache;
+  const _shRaw = (_sh && _sh.map && (now - _num(_sh.ts, 0)) < 600000) ? _sh.map.__rawMap : null;
+  let _dr = null;
+  if (_shRaw && typeof _shRaw.forEach === "function") {
+    const _rs = [];
+    _shRaw.forEach(function (v, sym) { _rs.push({ k: "daily:" + sym, v: v }); });
+    _dr = { results: _rs };
+  } else _dr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
   let _n = 0;
   for (const _r of ((_dr && _dr.results) || [])) {
     if (_n >= 900) break;

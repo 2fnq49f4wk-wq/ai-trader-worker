@@ -57,6 +57,16 @@ globalThis.__flowDailyCache.ts = Date.now() - FLOW_DAILY_TTL_MS - 1;
 await flowDailyCacheLoad(DB);
 ok(trips === 2, `TTL(${FLOW_DAILY_TTL_MS / 60000}분) 경과 후에는 다시 읽는다 → 왕복 ${trips}회`);
 
+// [V33.581] 매매 루프가 이미 들고 있는 전 종목 원문(__allDailyCache)이 신선하면 그것을 읽는다 — D1 0회 · 메모리 한 벌
+{
+  const { _dailyBulkLazy } = await import("../src/index.js");
+  const t0 = trips;
+  globalThis.__flowDailyCache = null;
+  globalThis.__allDailyCache = { ts: Date.now(), map: _dailyBulkLazy(rows) };
+  const m3 = await flowDailyCacheLoad(DB);
+  ok(trips === t0 && Object.keys(m3).length === 800 && m3["S5"].closes.length === 70 && !m3["^GSPC"], `공유 원문 재사용: D1 왕복 ${trips - t0}회(기대 0) · 같은 결과`);
+  globalThis.__allDailyCache = null; globalThis.__flowDailyCache = null;
+}
 // ── ② export total: 같은 (featVer, anchorTs) 면 한 번만 센다 ──
 let counts = 0;
 const DB2 = { prepare: () => ({ bind: () => ({ first: async () => { counts++; return { c: 988239 }; } }) }) };

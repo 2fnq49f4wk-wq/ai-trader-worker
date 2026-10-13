@@ -12,6 +12,16 @@
 
 ## Current handoff
 
+- V33.581 (10/13 01:20Z) ★한국 개장 exceededMemory — 전 종목 일봉 원문이 한 사이클에 두 벌★ + 한국장 OMNI-Q 실측.
+  - exceededMemory 재발(10/13 00Z 3건 · 10/12 00~01Z 8건 · 한국 개장 시각) · 사용량 파싱 dailyBulk 10/12 606MB(10/11 166MB).
+    원인: 매매 루프(missingDaily)가 전 종목 일봉 원문(~12.5MB)을 __allDailyCache 로 들고 있는데 flowDailyCacheLoad(HRP·상관용 70봉)가
+    같은 범위 쿼리를 ★또★ 날려 원문 두 벌 + D1 응답 버퍼. 고침: _dailyBulkLazy 가 원문 지도(__rawMap)를 내주고 flowDailyCacheLoad 는
+    공유 원문이 신선하면 그것을 읽는다(D1 0회 · 결과 동일). check-daily-bulk-cache 에 실측 단언 추가. ★다음 한국 개장(10/14 00Z)에 재발 여부 확인★.
+  - 한국 OMNI-Q 실측(10/13 00:02~00:54Z): 경로 정상 — 사이클마다 "OMNI-Q 후보 49~62 체결 0 (오늘 0/3)". 막은 것은 위험 관문
+    MARKET_CRASH[trend](지수 최근 −4% 이하 날) · BEAR_WEAK(약세장) — 기존 위험 관문이 설계대로 작동(결함 아님 · 완화 안 함).
+    kr:AI:TREND 시험(반 크기) 상태 그대로 · NEGEXP→실적관문 교착은 풀렸지만 같은 위험 관문에 막혀 체결 0. 미국 보유 12.
+  - 월 CPU 실측 56.1%(10/13) · 01Z 시간당 23s.
+
 - V33.580 (10/12 23:40Z) ★Modal 워치독이 신선한데도 GPU 학습을 걸던 것★ + 야간 상태 점검.
   - 원인: 워치독이 /api/ai/selfcheck(워커에서 가장 비싼 조회)를 30초 제한으로 불러 장중 타임아웃(10/12 16:01Z rc=28) → '나이 모름' →
     10/12 06:27Z·16:01Z 두 번 다 학습 실행. 고침: /api/ai/train-age(학습키 · json_extract 로 나이 칸만 · selfcheck 와 같은 표 EXT_TRAIN_KEYS ·
