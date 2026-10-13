@@ -799,6 +799,9 @@ jobs:
       # [V33.580] 워치독 나이 조회 — 가벼운 /api/ai/train-age · selfcheck 타임아웃으로 신선한데 GPU 학습 걸던 것
       - name: 워치독 나이 조회 검사
         run: node tools/check-train-age.mjs
+      # [V33.582] 폭락날 숏(인버스) 레버리지 단타 — 변동성 차단·usOnly·스캔·일봉추세·ETF 금지·실적 관문 벽 해제 + 꼬리위험 헤지 설정 결함
+      - name: 폭락 인버스 단타 검사
+        run: node tools/check-panic-inverse.mjs
       # [V33.531] 포트폴리오 실험실 — Qlib TopK-Dropout + Vibe 부품(퍼지 전진·DSR·최적화기) · 귀무 0 · 양성 대조 통과
       - name: 포트폴리오 실험실 검사
         run: node tools/check-portfolio-lab.mjs

@@ -12,6 +12,16 @@
 
 ## Current handoff
 
+- V33.582 (10/13) ★폭락날 숏(인버스) 레버리지 단타가 0건이던 것★ — 사용자: "오늘 한국장 폭락했는데 폭락 레버리지 매매를 안 했다 · 설계상 숏 레버리지 단타".
+  - 운영 실측(10/13 KR): Regime KR:BEAR/CRASH(지수 worst −6.1~−7.4% · idx20 −8~−9.7%) · CRASH-GATE PANIC avg −4.8~−6.1% · DE-RISK · 매 사이클 scalp scan 80 · sig 0.
+  - 막은 벽: ① V9.8 변동성 차단(crashGate.deRisk → 단타 전면 중단)이 패닉 단타까지 끔 ② 한국 usOnly 로 evaluateScalpEntry 미호출
+    ③ 인버스 ETF 가 스캔 80칸 순서에 밀림 ④ 폭락 첫날 인버스 일봉 MA20<MA50 요구 ⑤ 매수 직전 레버리지·인버스 ETF 단타 금지(V33.506) ·
+    kr:RULE:SCALP 실적 관문 막힘 · AI 단타 거부권·위원회 게이트·CTX 단타 차단. ⑥ 꼬리위험 헤지는 mcfg.tailRisk(존재 안 함)를 읽어 V12.60 이후 한 번도 안 돎.
+  - 고침: 변동성 차단은 평시·AI 롱 단타만(당일 손실한도는 패닉에도) · 한국은 패닉 인버스(SC_PANIC_INV)만 허용 · 패닉 중 인버스 ETF 스캔 보장 ·
+    지수 오늘 ≤ −1.5% 면 장중 방향(VWAP 위 · 분봉 모멘텀 · 레버리지 2배 허용폭) · 레버리지 금지 예외(당일 청산 단타) · 실적 관문 PANIC:SCALP 따로 ·
+    위원회·AI 단타 거부권·CTX 비적용(학습 분포 밖) · 헤지: AI_PARAMS.tailRisk 읽기 + 그 시장 패닉(crashGate.panic)으로도 켬(자본 1.5%).
+  - 게이트 check-panic-inverse(실제 evaluateScalpEntry · 실제 runTailRiskHedge). ★다음 폭락/약세 날 [심사완료]·Done 줄 scalp sig·panic_sig 로 실측★.
+
 - V33.581 (10/13 01:20Z) ★한국 개장 exceededMemory — 전 종목 일봉 원문이 한 사이클에 두 벌★ + 한국장 OMNI-Q 실측.
   - exceededMemory 재발(10/13 00Z 3건 · 10/12 00~01Z 8건 · 한국 개장 시각) · 사용량 파싱 dailyBulk 10/12 606MB(10/11 166MB).
     원인: 매매 루프(missingDaily)가 전 종목 일봉 원문(~12.5MB)을 __allDailyCache 로 들고 있는데 flowDailyCacheLoad(HRP·상관용 70봉)가

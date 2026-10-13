@@ -61,9 +61,9 @@ chk(M._entryTag({ isOmniQ: true, isAiPrimary: true }) === "AI-Q" && M._entryTag(
     "꼬리표: AI-Q · AI · AI-SCALP · RULE");
 chk(/reason: "\[" \+ _entryTag\(signal\) \+ "\]\["/.test(S) && /const tag = _entryTag\(signal\) \+ ":"/.test(S) && M._pgTag("[AI-Q][TREND] OMNI_Q x") === "AI-Q:TREND",
     "원장 사유와 실적 관문이 같은 꼬리표 함수를 쓴다 · AI-Q:TREND 로 따로 센다");
-const com = S.slice(S.indexOf("if (signal.isOmniQ) {\n                  /* [V33.578] ★OMNI-Q 경로는 위원회가 막지도 키우지도 않는다★"), S.indexOf("} else if (_md && (_md.observe || _md.abstain)) {"));
+const com = S.slice(S.indexOf("if (signal.isOmniQ || signal.isPanicScalp) {"), S.indexOf("} else if (_md && (_md.observe || _md.abstain)) {"));   // [V33.582] 패닉 단타와 같은 갈래
 chk(com.length > 50 && !/continue/.test(com) && !/qty/.test(com) && /signal\.mlMindP = _md\.p/.test(com), "위원회: OMNI-Q 는 막지도(continue 없음) 키우지도(qty 없음) 않고 p 만 기록");
-chk(/&& !signal\.isOmniQ\s*\n\s*&& !__candSyms\.has\(symbol \+ ":pdist"\)/.test(S), "OMNI-Q 후보는 AI_PRIMARY 백분위 분포에 안 들어간다");
+chk(/&& !signal\.isOmniQ( && !signal\.isPanicScalp)?\s*\n\s*&& !__candSyms\.has\(symbol \+ ":pdist"\)/.test(S), "OMNI-Q 후보는 AI_PRIMARY 백분위 분포에 안 들어간다");
 chk(/signal\.mlMindP === "number" && !signal\.isOmniQ\) \? signal\.mlMindP : null/.test(S), "켈리는 OMNI-Q 크기를 정하지 않는다");
 const eb = S.slice(S.indexOf("async function executeBuy("), S.indexOf("// === [V8] 전략 룰 헬퍼 ==="));
 const iPg = eb.indexOf("if (_pg.mult < 1)"), iOq = eb.indexOf("signal.isOmniQ && typeof signal.omqMult === \"number\"");
