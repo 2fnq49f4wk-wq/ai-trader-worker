@@ -32,6 +32,6 @@ const tr = M._treasuryParse(tcsv);
 chk(tr && tr.obsDate === "2026-10-09" && tr.y10 === 5.24 && tr.y5 === 5.02 && tr.y30 === 5.6 && tr.m3 === 4.25 && M._treasuryParse("x") === null, "재무부 CSV → 가장 늦은 관측일(순서에 기대지 않음) · 5/10/30년", JSON.stringify(tr));
 chk(/markets\.newyorkfed\.org\/api\/rates\/unsecured\/effr/.test(S) && /daily-treasury-rates\.csv/.test(S), "대체 사슬 배선: 연준 목표범위(뉴욕연은) · 국채(재무부)");
 chk(/_fredStale/.test(S) && /runFredMacroUpdate\(DB, forceRun\)/.test(S), "공식 지표 6시간마다 갱신(스케줄 · 내부 갱신에서)");
-chk(/기준일\(관측\)/.test(H) && /옛 기준값 — 자동 원천 없음/.test(H) && /function macroNextOf\(r, mkt\)/.test(H) && /FOMC_DATES/.test(H), "화면: 관측일 칸 · 자동 원천 없는 값은 '옛 기준값' · 지난 발표일은 숨김 · FOMC 일정");
+chk(/<th>발표일<\/th>/.test(H) && /옛 기준값 — 자동 원천 없음/.test(H) && /function macroNextOf\(r, mkt\)/.test(H) && /FOMC_DATES/.test(H), "화면: 발표일 칸(V33.598) · 자동 원천 없는 값은 '옛 기준값' · 지난 발표일은 숨김 · FOMC 일정");
 if (fails) { console.log("\n✗ 금융 지표 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ 금융 지표 통과");

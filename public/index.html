@@ -188,8 +188,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.597">
-<script src="/neural-observatory.js?v=33.597" defer></script>
+<meta name="lux-build" content="V33.598">
+<script src="/neural-observatory.js?v=33.598" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -3774,6 +3774,12 @@ html[data-theme="light"] .pz-tabs button[aria-selected="true"]{background:#fff;c
   .tc-cell{min-height:44px !important;height:auto !important;aspect-ratio:auto !important;padding:3px 4px !important;}
   .tc-cell.empty{min-height:36px !important;}
 }
+.market-status-ext{color:#F5B451 !important;}   /* [V33.598] 시간외 세션 */
+/* [V33.598] 상세 차트 그림은 상자를 채운다(상자 높이는 레이아웃이 정하고 그림이 키우지 않는다 — 되먹임 방지) */
+@media (min-width:901px){
+  #detailChart{position:relative;}
+  #detailChart > svg{position:absolute;left:4px;top:4px;width:calc(100% - 8px);height:calc(100% - 8px);}
+}
 </style>
 <script>
 /* [V33.156] 서비스워커 등록 — ★메인 스크립트와 분리★ 한다.
@@ -4836,14 +4842,14 @@ window.LUX_NV = {
     <div class="macro-mkt-head"><span class="flag">🇺🇸</span> 미국 (US)</div>
     <div class="macro-table-wrap">
       <table class="macro-table">
-        <thead><tr><th>지표</th><th class="r">최근치</th><th>기준일(관측)</th><th>다음 발표일</th><th class="r">D-day</th></tr></thead>
+        <thead><tr><th>지표</th><th class="r">최근치</th><th>발표일</th><th>다음 발표일</th><th class="r">D-day</th></tr></thead>
         <tbody id="macroUsBody"></tbody>
       </table>
     </div>
     <div class="macro-mkt-head"><span class="flag">🇰🇷</span> 한국 (KR)</div>
     <div class="macro-table-wrap">
       <table class="macro-table">
-        <thead><tr><th>지표</th><th class="r">최근치</th><th>기준일(관측)</th><th>다음 발표일</th><th class="r">D-day</th></tr></thead>
+        <thead><tr><th>지표</th><th class="r">최근치</th><th>발표일</th><th>다음 발표일</th><th class="r">D-day</th></tr></thead>
         <tbody id="macroKrBody"></tbody>
       </table>
     </div>
@@ -5756,12 +5762,25 @@ window.LUX_NV = {
     var usEl = $('usMarketStatus'), krEl = $('krMarketStatus');
     // US: 정규장 + DST 표시
     var dstLabel = status.usEtOffset === -4 ? ' (EDT)' : ' (EST)';
+    /* [V33.598] ★시간외도 말한다★ — 미국 애프터마켓(16:00~20:00 ET)·한국 NXT 프리마켓(08:00~08:50)에도 '장 종료' 로 떠서
+       시간외 시세가 안 들어오는 것처럼 보였다(사용자 10/15). 시각 창 + 실제로 최근 15분 안에 들어온 시간외 시세가 있을 때만. */
+    var _ext = (function(){
+      var out = { us: null, kr: null }, now = Date.now(), arr = window.__lastQuotesArr || [];
+      var seen = { us: {}, kr: {} };
+      arr.forEach(function(q){ var m = q && q.market; if (!m || !seen[m] || !q.mstate) return; var t = q.extTs || q.ts || 0; if (now - t < 15 * 60000) seen[m][q.mstate] = (seen[m][q.mstate] || 0) + 1; });
+      var et = new Date(now + (status.usEtOffset || -4) * 3600000), etH = et.getUTCHours() + et.getUTCMinutes() / 60, etD = et.getUTCDay();
+      var kt = new Date(now + 9 * 3600000), ktH = kt.getUTCHours() + kt.getUTCMinutes() / 60, ktD = kt.getUTCDay();
+      if (etD >= 1 && etD <= 5) { if (etH >= 16 && etH < 20 && seen.us.POST) out.us = 'post'; else if (etH >= 4 && etH < 9.5 && seen.us.PRE) out.us = 'pre'; }
+      if (ktD >= 1 && ktD <= 5) { if (ktH >= 15.66 && ktH < 20 && seen.kr.POST) out.kr = 'post'; else if (ktH >= 8 && ktH < 8.84 && seen.kr.PRE) out.kr = 'pre'; }
+      return out;
+    })();
     if (usHoliday) {
       usEl.textContent = '🔴 휴장일' + dstLabel;
       usEl.className = 'market-status-closed';
     } else {
-      usEl.textContent = status.us ? ('🟢 정규장 OPEN' + dstLabel) : ('🔴 장 종료' + dstLabel);
-      usEl.className = status.us ? 'market-status-open' : 'market-status-closed';
+      usEl.textContent = status.us ? ('🟢 정규장 OPEN' + dstLabel)
+        : (_ext.us === 'post' ? ('🟡 애프터마켓' + dstLabel) : _ext.us === 'pre' ? ('🟡 프리마켓' + dstLabel) : ('🔴 장 종료' + dstLabel));
+      usEl.className = status.us ? 'market-status-open' : (_ext.us ? 'market-status-ext' : 'market-status-closed');
     }
     // KR: 휴장일 / 정규장 / 엔진 대기 / 엔진 청산 / 종료
     var krText;
@@ -5774,10 +5793,10 @@ window.LUX_NV = {
     if (status.kr) {
       krText = '🟢 정규장 OPEN (실시간)';
     } else {
-      krText = '🔴 장 종료';
+      krText = _ext.kr === 'post' ? '🟡 NXT 애프터마켓' : _ext.kr === 'pre' ? '🟡 NXT 프리마켓' : '🔴 장 종료';
     }
     krEl.textContent = krText;
-    krEl.className = (status.kr || status.krTrading) ? 'market-status-open' : 'market-status-closed';
+    krEl.className = (status.kr || status.krTrading) ? 'market-status-open' : (_ext.kr ? 'market-status-ext' : 'market-status-closed');
     // 상단 바 시장 상태 업데이트
     var tbUS = $('topbarMarketUS'), tbKR = $('topbarMarketKR');
     if (tbUS) {
@@ -5802,6 +5821,8 @@ window.LUX_NV = {
     var f = _nfCache[ck] || (_nfCache[ck] = new Intl.NumberFormat(undefined, dec != null ? { minimumFractionDigits: k, maximumFractionDigits: k } : { maximumFractionDigits: k }));
     return f.format(n);
   }
+  /* [V33.598] 가격 표기 — 미국은 소수 둘째까지 고정(221.3 → 221.30) · 한국은 정수 */
+  function fmtPx(n, market) { return (market === 'kr') ? fmtNum(n, 0) : fmtNum(n, 2); }
 
   /* [V33.351 · A-7] 시간외 값의 ★나이★ — 휴장 중에 남아 있는 마지막 체결가에 붙인다.
      extKeepMask 는 CLOSED 동안 장후 값을 일부러 유지한다(야후와 같은 규칙). 그래서
@@ -9004,6 +9025,7 @@ window.LUX_NV = {
     if (ind.stoch) panels.push('stoch');
     if (ind.macd) panels.push('macd');
     var subH = 48;
+    if (opts.fitH && opts.fitH > 0) priceH = Math.max(236, Math.min(1400, Math.round(opts.fitH - (legendH + panels.length * (gap + subH) + axisH) - 6)));   // [V33.598]
     var H = legendH + priceH + panels.length * (gap + subH) + axisH;
     var iw = (W - padL - padR) / n;
     var cw = Math.max(1, Math.min(11, iw * 0.66));
@@ -10107,7 +10129,7 @@ window.LUX_NV = {
     //   종목상세의 "현재가/당일등락(장중)"은 정규장 값이어야 하므로 보존된 regPrice/regPct를 우선 사용.
     var regPx  = (typeof q.regPrice === 'number' && q.regPrice > 0) ? q.regPrice : q.price;
     var regPct = (typeof q.regPct === 'number') ? q.regPct : q.dayPct;
-    if ($('detailPrice')) $('detailPrice').textContent = (regPx != null) ? fmtNum(regPx) : '—';
+    if ($('detailPrice')) $('detailPrice').textContent = (regPx != null) ? fmtPx(regPx, st.market === 'kr' || /\.(KS|KQ)$/.test(st.symbol) ? 'kr' : 'us') : '—';
     var chEl = $('detailChange');
     if (chEl) {
       if (typeof regPct === 'number') {
@@ -10220,7 +10242,23 @@ window.LUX_NV = {
     var box = $('detailChart');
     if (!box || !detailState.lastCandles) return;
     _detailClampView();
+    /* [V33.598] 상자 비율에 맞춰 그린다 — 상자는 우측 패널 높이만큼 늘어나는데(V33.164) 그림은 820×376 고정이라
+       가운데 정렬돼 위아래가 텅 비었다(라이브 점검 10/15 · 1213px 상자에 그림 423px). 가격 영역 높이를 상자 비율로 키운다. */
+    var _fitH = (box.clientWidth > 50 && box.clientHeight > 50) ? Math.round(box.clientHeight / box.clientWidth * 820) : null;
+    box.__fitWH = box.clientWidth + 'x' + box.clientHeight;
+    // 우측 패널이 나중에 차서 상자가 커지면 다시 그린다(한 번만 붙인다 · 30px 넘게 바뀔 때만)
+    if (!box.__ro && typeof ResizeObserver === 'function') {
+      box.__ro = new ResizeObserver(function(){
+        if (box.__roT) clearTimeout(box.__roT);
+        box.__roT = setTimeout(function(){
+          var wh = box.__fitWH ? box.__fitWH.split('x') : null;
+          if (!wh || Math.abs(+wh[1] - box.clientHeight) > 30 || Math.abs(+wh[0] - box.clientWidth) > 30) { try { renderDetailChartFromCache(); } catch (e) {} }
+        }, 150);
+      });
+      box.__ro.observe(box);
+    }
     box.innerHTML = buildProChart(detailState.lastCandles, {
+      fitH: _fitH,
       ind: detailState.ind, interval: detailState.interval,
       dec: detailState.market === 'kr' ? 0 : 2,
       count: detailState.view.count, off: detailState.view.off,
@@ -10301,7 +10339,7 @@ window.LUX_NV = {
       '<span class="oh">시가<b>' + f(last.o) + '</b></span>' +
       '<span class="oh">고가<b class="pos">' + f(last.h) + '</b></span>' +
       '<span class="oh">저가<b class="neg">' + f(last.l) + '</b></span>' +
-      '<span class="oh">종가<b>' + f(last.c) + '</b></span>' +
+      '<span class="oh">' + ((detailState.market === 'kr' && ['1d','1wk','1mo'].indexOf(detailState.interval) >= 0) ? '종가<small title="네이버 일봉은 NXT 시간외까지 포함한 마지막 체결가 — 위 현재가는 KRX 정규장 종가">(NXT 포함)</small>' : '종가') + '<b>' + f(last.c) + '</b></span>' +
       '<span class="oh">변동<b class="' + (chg >= 0 ? 'pos' : 'neg') + '">' + (chg != null ? (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%' : '—') + '</b></span>' +
       '<span class="oh">거래량<b>' + fvFmtVol(last.v || 0) + '</b></span>';
     var clr = el.querySelector('.oh-clear');
@@ -10413,8 +10451,8 @@ window.LUX_NV = {
     // [V33.351 · A-7] 시간외 값에 나이를 붙인다 — 신선하면 안 붙는다(extAgeTxt 주석 참조).
     var _age = extAgeTxt(q.extTs);
     var _ageTag = _age ? ' <span class="wl-ext-age">'+escapeHtml(_age)+'</span>' : '';
-    if (q.mstate === 'PRE' && q.pre > 0) { var _p=q.prePct||(q.prevClose>0?(q.pre-q.prevClose)/q.prevClose*100:0); extLine='<div class="wl-ext"><span class="wl-ext-tag pre">'+extSessLabel(market,'pre')+'</span> '+fmtNum(q.pre)+' <span class="'+((_p>=0)?'pos':'neg')+'">'+((_p>=0)?'+':'')+fmtNum(_p,2)+'%</span>'+_ageTag+'</div>'; }
-    else if ((q.mstate==='POST'||q.mstate==='POSTPOST'||q.mstate==='CLOSED') && q.post > 0) { var _p=(typeof q.postPct==='number')?q.postPct:(mainPx>0?(q.post-mainPx)/mainPx*100:0); extLine='<div class="wl-ext"><span class="wl-ext-tag post">'+extSessLabel(market,'post')+'</span> '+fmtNum(q.post)+' <span class="'+((_p>=0)?'pos':'neg')+'">'+((_p>=0)?'+':'')+fmtNum(_p,2)+'%</span>'+_ageTag+'</div>'; }
+    if (q.mstate === 'PRE' && q.pre > 0) { var _p=q.prePct||(q.prevClose>0?(q.pre-q.prevClose)/q.prevClose*100:0); extLine='<div class="wl-ext"><span class="wl-ext-tag pre">'+extSessLabel(market,'pre')+'</span> '+fmtPx(q.pre, market)+' <span class="'+((_p>=0)?'pos':'neg')+'">'+((_p>=0)?'+':'')+fmtNum(_p,2)+'%</span>'+_ageTag+'</div>'; }
+    else if ((q.mstate==='POST'||q.mstate==='POSTPOST'||q.mstate==='CLOSED') && q.post > 0) { var _p=(typeof q.postPct==='number')?q.postPct:(mainPx>0?(q.post-mainPx)/mainPx*100:0); extLine='<div class="wl-ext"><span class="wl-ext-tag post">'+extSessLabel(market,'post')+'</span> '+fmtPx(q.post, market)+' <span class="'+((_p>=0)?'pos':'neg')+'">'+((_p>=0)?'+':'')+fmtNum(_p,2)+'%</span>'+_ageTag+'</div>'; }
     return '<div class="wl-card'+(held?' held':'')+'" data-symbol="'+escapeHtml(q.symbol)+'" data-market="'+market+'">'+
       '<span class="wl-fav '+(isFav?'active':'')+'" data-symbol="'+escapeHtml(q.symbol)+'" data-market="'+market+'">'+(isFav?'\u2605':'\u2606')+'</span>'+
       // [V10.5] 종목명을 위, 티커를 아래로 — 이름 없으면 티커가 이름 자리 차지
@@ -10422,7 +10460,7 @@ window.LUX_NV = {
         ? '<div class="wl-name">'+escapeHtml(name)+heldBadge+etfBadge+'</div><div class="wl-sym">'+escapeHtml(q.symbol)+'</div>'
         : '<div class="wl-name">'+escapeHtml(q.symbol)+heldBadge+etfBadge+'</div>')+
       buildWlSpark(liveSpark(q), mainPct)+
-      '<div class="wl-price">'+fmtNum(mainPx)+'</div>'+
+      '<div class="wl-price">'+fmtPx(mainPx, market)+'</div>'+
       '<div class="wl-day '+dayClass+'">'+sign+fmtNum(mainPct,2)+'%</div>'+
       pnlLine+extLine+
       '<div class="wl-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+' \u00b7 '+fmtAgo(q.ts)+'</div>'+
@@ -11464,6 +11502,10 @@ window.LUX_NV = {
           row.fetchedAt = a.fetchedAt || null;
           if (a.source) row.srcName = a.source;
           row.live = !!(a.fetchedAt && (Date.now() - a.fetchedAt) < 7 * 86400000);
+          // [V33.598] 공식 일정표의 발표일·다음 발표일 · 발표됐는데 아직 못 받음(lagging) · 예상일(nextEst)
+          row.autoSched = ('next' in a);
+          row.nextAuto = a.next || null; row.lagging = !!a.lagging; row.nextEst = !!a.nextEst;
+          row.released = a.released || null;
         }
       });
     });
@@ -11505,6 +11547,7 @@ window.LUX_NV = {
   /* [V33.561] 다음 발표일 — 손으로 적은 날짜가 이미 지났으면 지운다('발표완료' 로 남기지 않는다). 연준만 공식 2026 FOMC 일정(결정일)으로 계산. */
   var FOMC_DATES = ['2026-01-28','2026-03-18','2026-04-29','2026-06-17','2026-07-29','2026-09-16','2026-10-28','2026-12-09'];
   function macroNextOf(r, mkt) {
+    if (r.autoSched) { var dA = macroDaysUntil(r.nextAuto); return (dA !== null && dA >= 0) ? r.nextAuto : null; }   // [V33.598] 서버 공식 일정표
     if (mkt === 'us' && r.key === 'fed_rate') { for (var i = 0; i < FOMC_DATES.length; i++) { var d0 = macroDaysUntil(FOMC_DATES[i]); if (d0 !== null && d0 >= 0) return FOMC_DATES[i]; } return null; }
     var d = macroDaysUntil(r.next);
     return (d !== null && d >= 0) ? r.next : null;
@@ -11513,16 +11556,21 @@ window.LUX_NV = {
     var tb = $(tbodyId);
     var html = '';
     var mkt = (tbodyId === 'macroUsBody') ? 'us' : 'kr';
+    // [V33.598] 자동 원천이 한 번도 없는 행(예: 한국 PPI — 5월에 손으로 적은 값)은 실시간 행이 있으면 숨긴다(옛 값을 최신처럼 보이지 않게)
+    if (rows.some(function(r){ return r.live; })) rows = rows.filter(function(r){ return r.live; });
     rows.forEach(function(r) {
       r.next = macroNextOf(r, mkt);
       var dd = macroDaysUntil(r.next);
       var lab = macroDdayLabel(dd);
-      var nextTxt = r.next ? macroFmtDate(r.next) : '<span style="color:var(--faint)">상시</span>';
+      var nextTxt = r.next ? (macroFmtDate(r.next) + (r.nextEst ? ' <small style="color:var(--dim)">예상</small>' : '')) : '<span style="color:var(--faint)">' + (r.autoSched ? '일정 미정' : '상시') + '</span>';
       // [V33.561] 셋째 칸 = 실제 관측일(값이 가리키는 날·달). 자동 원천이 없는 지표는 '옛 기준값' 으로 표시한다.
-      var obs = r.obsDate || r.released || null;
+      /* [V33.598] 셋째 칸 = ★발표일★(공식 일정표) — 종전엔 관측월 첫날(8/1)이라 어제 나온 CPI 가 '75일 전' 으로 보였다.
+         일별 시장금리(국채·EFFR)는 발표일이 없으니 관측일 그대로. */
+      var obs = r.released || r.obsDate || null;
       var relReleased = obs ? '<span class="relday">(' + macroRelDay(obs) + ')</span>' : '';
       var asOf = r.asOf ? '<span style="color:var(--blue);font-size:10px;"> · ' + escapeHtml(r.asOf) + '</span>' : '';
       var stale = !r.live ? '<small style="color:var(--amber,#fbbf24)">⚠ 옛 기준값 — 자동 원천 없음(확인 필요)</small>' : '';
+      if (r.lagging) stale = '<small style="color:var(--amber,#fbbf24)">⚠ 새 발표분 수신 대기 — 공식 원천 재시도 중</small>';
       var fetched = (r.live && r.fetchedAt) ? (function(){ var f = new Date(r.fetchedAt); return '<small style="color:var(--dim)">확인 ' + (f.getMonth()+1) + '/' + f.getDate() + ' ' + ('0'+f.getHours()).slice(-2) + ':' + ('0'+f.getMinutes()).slice(-2) + (r.srcName ? ' · ' + escapeHtml(String(r.srcName).split(' · ')[0]) : '') + '</small>'; })() : '';
       var srcLink = r.source_url
         ? ' <a href="' + escapeHtml(r.source_url) + '" target="_blank" rel="noopener" title="출처" style="color:var(--faint);text-decoration:none;font-size:10px;">↗</a>'
@@ -12016,6 +12064,7 @@ window.LUX_NV = {
         lastQuotes = {};
         quotes.forEach(function(q){ lastQuotes[q.symbol] = q; });
         window.__lastQuotesArr = quotes;
+        try { renderMarketStatus(); } catch (e) {}   // [V33.598] 시간외 세션 판정은 시세가 있어야 한다
         // [V8] positions는 array — 하위호환으로 object도 허용
         var posUS = (state.positions && state.positions.us) || [];
         var posKR = (state.positions && state.positions.kr) || [];
@@ -21148,13 +21197,13 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.597">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.597">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.597">
-<link rel="stylesheet" href="/model-evidence.css?v=33.597">
+<link rel="stylesheet" href="/brain-console.css?v=33.598">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.598">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.598">
+<link rel="stylesheet" href="/model-evidence.css?v=33.598">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.597">
-<script src="/model-evidence.js?v=33.597"></script>
-<script src="/workspace-ui.js?v=33.597"></script>
+<link rel="stylesheet" href="/liquid-metal.css?v=33.598">
+<script src="/model-evidence.js?v=33.598"></script>
+<script src="/workspace-ui.js?v=33.598"></script>
 </body>
 </html>

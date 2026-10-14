@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.597";
+const _BUILD_VER = "V33.598";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -6959,8 +6959,8 @@ function sanitizeMacroValue(rawVal, range) {
 const FRED_MACRO = {
   us: {
     fed_rate:     { ids: ["DFEDTARL", "DFEDTARU"], kind: "range", label: "연준 목표범위(일별)" },
-    cpi:          { id: "CPIAUCSL", kind: "yoy",   label: "BLS CPI-U(계절조정) 전년동월비" },
-    core_cpi:     { id: "CPILFESL", kind: "yoy",   label: "BLS 근원 CPI 전년동월비" },
+    cpi:          { id: "CPIAUCNS", kind: "yoy",   label: "BLS CPI-U 전년동월비(헤드라인 · 비계절조정)" },   // [V33.598] 헤드라인과 같은 비계절조정
+    core_cpi:     { id: "CPILFENS", kind: "yoy",   label: "BLS 근원 CPI 전년동월비" },
     ppi:          { id: "PPIFIS",   kind: "yoy",   label: "BLS PPI 최종수요 전년동월비" },
     core_pce:     { id: "PCEPILFE", kind: "yoy",   label: "BEA 근원 PCE 전년동월비" },
     unemployment: { id: "UNRATE",   kind: "level", label: "BLS 실업률" },
@@ -7064,13 +7064,107 @@ function _fredValue(kind, rows, rows2) {
   const daily = rows.length >= 2 && rows[rows.length - 2].d.slice(0, 7) === ym;   // 같은 달 관측이 둘 이상 = 일별
   return { value: daily ? last.v.toFixed(2) : String(+last.v.toFixed(3)), asOf: daily ? last.d : (ym + " (" + mon + "월분)"), obsDate: last.d };
 }
+/* ══ [V33.598] ★발표 일정 · BLS 공식 API · 발표일 즉시 갱신★ ══════════════════════════════════════════
+   사용자(10/15): "CPI 어제 발표했는데 최신께 75일 전이라고 뜨고 데이터도 옛날 · 다음 발표일도 안 맞는다". 원인 셋:
+     ① FRED CSV 가 워커에서 실패(10/14 22:42Z "실패 cpi,core_cpi,ppi,core_pce,unemployment") → 8월분에 멈춤.
+        마지막 성공은 12:19Z — 9월 CPI 발표(12:30Z) 11분 전이었다. 그리고 6시간 가드라 발표 직후 받을 길이 없었다.
+     ② 화면 '기준일' 칸이 관측월 첫날(8/1)을 보여 '75일 전' 이 됐다 — 사람이 묻는 건 ★발표일★ 이다.
+     ③ '다음 발표일' 은 5월에 손으로 적은 6월 날짜 — 지나자 '상시' 로 바뀌었다.
+   → BLS 공식 API(키 없이 · 하루 25회 · 6시간마다 1회 + 발표일 재시도)를 1순위, FRED 를 2순위로.
+     발표일·다음 발표일은 공식 일정표(BLS 2026 · BEA · FOMC · 한국은행 금통위)에서 — 값이 그 발표분과 맞을 때만 '발표일' 을 붙이고,
+     안 맞으면(발표됐는데 아직 못 받음) lagging 으로 표시한다(지어내지 않는다). 한국 CPI 는 '다음 달 초' 관례라 est(예상) 표시. */
+const MACRO_SCHED = {
+  us: {
+    cpi:          ["2026-08-12", "2026-09-11", "2026-10-14", "2026-11-10", "2026-12-10", "2027-01-13"],
+    core_cpi:     ["2026-08-12", "2026-09-11", "2026-10-14", "2026-11-10", "2026-12-10", "2027-01-13"],
+    ppi:          ["2026-08-14", "2026-09-10", "2026-10-15", "2026-11-13", "2026-12-15"],
+    unemployment: ["2026-08-07", "2026-09-04", "2026-10-02", "2026-11-06", "2026-12-04"],
+    core_pce:     ["2026-08-26", "2026-09-30", "2026-10-29", "2026-11-25", "2026-12-23"],
+    fed_rate:     ["2026-07-29", "2026-09-16", "2026-10-28", "2026-12-09"]
+  },
+  kr: {
+    base_rate:    ["2026-07-16", "2026-08-27", "2026-10-22", "2026-11-26"],
+    cpi:          { est: true, rule: "firstWeekdayNextMonth" }
+  }
+};
+const MACRO_LAG_M = { cpi: 1, core_cpi: 1, ppi: 1, unemployment: 1, core_pce: 1 };   // 발표월 − 관측월
+function _ymAdd(ym, k) { let y = +ym.slice(0, 4), m = +ym.slice(5, 7) + k; while (m <= 0) { m += 12; y--; } while (m > 12) { m -= 12; y++; } return y + "-" + String(m).padStart(2, "0"); }
+// 순수 함수(게이트가 잰다) — { released, next, lagging, est }
+function macroSchedOf(mk, key, item, nowMs) {
+  const sc = MACRO_SCHED[mk] && MACRO_SCHED[mk][key];
+  if (!sc) return null;
+  const today = new Date(nowMs + (mk === "kr" ? 9 : -4) * 3600000).toISOString().slice(0, 10);   // 그 나라 날짜(미국은 동부)
+  if (!Array.isArray(sc)) {
+    if (sc.rule !== "firstWeekdayNextMonth") return null;
+    const obs = String((item && item.obsDate) || "").slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(obs)) return null;
+    let nx = _ymAdd(obs, 2) + "-01";   // 관측월 다음다음 달 초 = 다음 발표(관측월 +1 의 발표)
+    let d = new Date(nx + "T00:00:00Z"); while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d = new Date(d.getTime() + 86400000);
+    nx = d.toISOString().slice(0, 10);
+    return { released: (item && item.released) || null, next: nx > today ? nx : null, est: true, lagging: false };
+  }
+  let rel = null, nxt = null;
+  for (const d of sc) { if (d <= today) rel = d; else if (!nxt) nxt = d; }
+  let lagging = false, released = rel;
+  const lag = MACRO_LAG_M[key];
+  if (rel && lag && item && item.obsDate) {
+    const want = _ymAdd(rel.slice(0, 7), -lag);
+    if (String(item.obsDate).slice(0, 7) < want) { lagging = true; released = null; }
+  }
+  if (key === "fed_rate") released = rel;
+  return { released: released, next: nxt, lagging: lagging, est: false };
+}
+/* BLS 공식 API(v2 · 키 없이) — 시리즈 여러 개를 한 번에. 행: [{ d: "YYYY-MM-01", v }] 오름차순 */
+async function _blsSeries(ids) {
+  const y = new Date().getUTCFullYear();
+  const r = await fetch("https://api.bls.gov/publicAPI/v2/timeseries/data/", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ seriesid: ids, startyear: String(y - 1), endyear: String(y) }), signal: AbortSignal.timeout(15000) });
+  if (!r.ok) throw new Error("BLS HTTP " + r.status);
+  const j = await r.json();
+  if (!j || j.status !== "REQUEST_SUCCEEDED") throw new Error("BLS " + ((j && j.status) || "?") + " " + String((j && j.message) || "").slice(0, 120));
+  return _blsParse(j);
+}
+function _blsParse(j) {
+  const out = {};
+  for (const s of ((j && j.Results && j.Results.series) || [])) {
+    const rows = [];
+    for (const x of (s.data || [])) {
+      const m = /^M(\d{2})$/.exec(String(x.period || "")); const v = Number(x.value);
+      if (!m || m[1] === "13" || !isFinite(v)) continue;
+      rows.push({ d: x.year + "-" + m[1] + "-01", v: v });
+    }
+    rows.sort(function (a, b) { return a.d < b.d ? -1 : 1; });
+    out[s.seriesID] = rows;
+  }
+  return out;
+}
+// 발표 공식 헤드라인과 같은 시리즈 — 전년동월비는 비계절조정(BLS 헤드라인), 실업률은 계절조정
+const BLS_MACRO = {
+  cpi:          { id: "CUUR0000SA0",    kind: "yoy",   label: "BLS CPI-U 전년동월비(헤드라인 · 비계절조정)" },
+  core_cpi:     { id: "CUUR0000SA0L1E", kind: "yoy",   label: "BLS 근원 CPI 전년동월비" },
+  ppi:          { id: "WPUFD4",         kind: "yoy",   label: "BLS PPI 최종수요 전년동월비" },
+  unemployment: { id: "LNS14000000",    kind: "level", label: "BLS 실업률(계절조정)" }
+};
 async function runFredMacroUpdate(DB, force) {
   if (!force) { try { const at = await getState(DB, "macro_fred_at", 0); if (Date.now() - _num(at, 0) < 6 * 3600000) return { ok: true, cached: true }; } catch (e) {} }
   const prev = await getState(DB, "macro_data", { us: {}, kr: {}, updatedAt: null });
   const next = Object.assign({}, prev, { us: Object.assign({}, prev.us || {}), kr: Object.assign({}, prev.kr || {}) });
   let got = 0, fail = [];
+  // [V33.598] BLS 공식 API 1순위 — 한 번 호출로 4개
+  const _blsOk = {};
+  try {
+    const B = await _blsSeries(Object.keys(BLS_MACRO).map(function (k) { return BLS_MACRO[k].id; }));
+    for (const key of Object.keys(BLS_MACRO)) {
+      const sp = BLS_MACRO[key], v = _fredValue(sp.kind, B[sp.id] || []);
+      if (!v) continue;
+      next.us[key] = { value: v.value, asOf: v.asOf, obsDate: v.obsDate, released: "", fetchedAt: Date.now(),
+        source: sp.label, source_url: "https://data.bls.gov/timeseries/" + sp.id };
+      _blsOk[key] = true; got++;
+    }
+  } catch (e) { fail.push("bls:" + String(e && e.message || e).slice(0, 60)); }
   for (const mk of ["us", "kr"]) {
     for (const key of Object.keys(FRED_MACRO[mk])) {
+      if (mk === "us" && _blsOk[key]) continue;   // BLS 로 받았으면 FRED 는 건너뛴다
       const spec = FRED_MACRO[mk][key];
       try {
         const ids = spec.ids || [spec.id];
@@ -7116,6 +7210,15 @@ async function runFredMacroUpdate(DB, force) {
     for (const k of Object.keys(kr)) { next.kr[k] = Object.assign({ released: "", fetchedAt: Date.now() }, kr[k]); got++; }
     for (const k of ["base_rate", "cpi", "ktb3y", "ktb10y"]) if (!kr[k]) fail.push("kr." + k);
   } catch (e) { fail.push("kr"); }
+  // [V33.598] 발표일 · 다음 발표일 · 못 받은 최신 발표분(lagging) — 공식 일정표
+  for (const mk of ["us", "kr"]) for (const key of Object.keys(next[mk] || {})) {
+    if (key.charAt(0) === "_") continue;
+    const it = next[mk][key]; if (!it || typeof it !== "object") continue;
+    const sc = macroSchedOf(mk, key, it, Date.now());
+    if (!sc) continue;
+    if (sc.released) it.released = sc.released;
+    it.next = sc.next || null; it.lagging = !!sc.lagging; it.nextEst = !!sc.est;
+  }
   next.updatedAt = Date.now(); next.fredAt = Date.now();
   await setState(DB, "macro_data", next);
   try { await setState(DB, "macro_fred_at", Date.now()); } catch (e) {}
@@ -32937,7 +33040,14 @@ async function handleRequest(request, env, ctx, _inner) {
           if (intraday) {
             // 분봉 — /minute{N} (timeframe 쿼리 아님, 경로에 분 단위 포함)
             const tfMin = interval === "1m" ? "" : interval === "5m" ? "5" : interval === "15m" ? "15" : interval === "30m" ? "30" : "60";
-            const rq = await fetch(naverBase + "minute" + tfMin, { headers: naverHdr, signal: AbortSignal.timeout(6000) });
+            /* [V33.598] ★기간을 지정해 받는다★ — 기간 없이 부르면 네이버가 'KRX 정규장 오늘' 만 줬다:
+                 · NXT 시간외(08:00~08:50 · 15:40~20:00) 봉이 빠져 차트 끝이 시간외 가격과 안 맞았다("장중이랑 1d 가격이 같다")
+                 · 15:00 이후 봉도 비고 · 날이 바뀐 직후(프리마켓)엔 빈 배열 → 차트가 통째로 사라졌다.
+               기간을 주면 NXT 를 포함한 통합 분봉이 온다(실측 10/14 19:59 봉까지). 1일 = 가장 최근 거래일 · 5일 = 최근 5거래일. */
+            const _kst = function (ms) { const d = new Date(ms + 9 * 3600000); return d.getUTCFullYear() + String(d.getUTCMonth() + 1).padStart(2, "0") + String(d.getUTCDate()).padStart(2, "0") + String(d.getUTCHours()).padStart(2, "0") + String(d.getUTCMinutes()).padStart(2, "0"); };
+            const _nowK = Date.now(), _back = (range === "1d" ? 5 : range === "5d" ? 10 : 35) * 86400000;
+            const rq = await fetch(naverBase + "minute" + tfMin + "?startDateTime=" + _kst(_nowK - _back).slice(0, 8) + "0000&endDateTime=" + _kst(_nowK + 60000),
+              { headers: naverHdr, signal: AbortSignal.timeout(6000) });
             if (!rq.ok) throw new Error("naver minute " + rq.status);
             const rows2 = await rq.json();
             if (!Array.isArray(rows2)) throw new Error("naver minute bad format");
@@ -32955,6 +33065,27 @@ async function handleRequest(request, env, ctx, _inner) {
               const v2 = Number(row.volume != null ? row.volume : row.accumulatedTradingVolume);
               candles.push({ t: ts, o: Number(row.openPrice)||c2, h: Number(row.highPrice)||c2, l: Number(row.lowPrice)||c2, c: c2, v: v2>=0?v2:0 });
             }
+            candles.sort(function (a, b) { return a.t - b.t; });
+            // [V33.598] 1일/5일 = 최근 N 거래일(KST 날짜 기준)만 남긴다
+            {
+              const _keep = range === "1d" ? 1 : range === "5d" ? 5 : 0;
+              if (_keep > 0 && candles.length) {
+                const _dk = function (t) { return new Date(t * 1000 + 9 * 3600000).toISOString().slice(0, 10); };
+                const _days = []; for (const c3 of candles) { const k3 = _dk(c3.t); if (_days[_days.length - 1] !== k3) _days.push(k3); }
+                const _from = _days[Math.max(0, _days.length - _keep)];
+                candles = candles.filter(function (c3) { return _dk(c3.t) >= _from; });
+              }
+            }
+            /* [V33.598] 지금 시간외(장전 NXT 등) 체결이 봉보다 새로우면 마지막 점으로 잇는다 — 분봉 API 에 아직 없는 오늘 프리마켓 가격 */
+            try {
+              if (!isIdx) {
+                const _q = await getState(env.DB, "quote:" + sym, null);
+                const _xp = _q && (_q.mstate === "PRE" ? _q.pre : _q.mstate === "POST" ? _q.post : null), _xt = _q ? _num(_q.extTs, 0) : 0;
+                const _lt = candles.length ? candles[candles.length - 1].t : 0;
+                if (_xp > 0 && _xt > 0 && Date.now() - _xt < 30 * 60000 && _xt / 1000 > _lt + 60)
+                  candles.push({ t: Math.floor(_xt / 1000), o: _xp, h: _xp, l: _xp, c: _xp, v: 0, ext: _q.mstate === "PRE" ? "pre" : "post" });
+              }
+            } catch (e) {}
             price = candles.length ? candles[candles.length-1].c : null;
           } else {
             // 일봉/주봉/월봉 — /day · /week · /month, startDateTime/endDateTime(YYYYMMDDHHmm)
@@ -33956,9 +34087,43 @@ async function handleRequest(request, env, ctx, _inner) {
 
     if (path === "/api/macro" && request.method === "GET") {
       const data = await getState(env.DB, "macro_data", null);
+      // [V33.598] 발표일·다음 발표일은 읽을 때마다 일정표로 다시 정한다(갱신 사이에 날짜가 지나도 맞게)
+      try {
+        if (data) for (const mk of ["us", "kr"]) for (const key of Object.keys(data[mk] || {})) {
+          const it = data[mk][key]; if (!it || typeof it !== "object" || key.charAt(0) === "_") continue;
+          const sc = macroSchedOf(mk, key, it, Date.now()); if (!sc) continue;
+          if (sc.released) it.released = sc.released;
+          it.next = sc.next || null; it.lagging = !!sc.lagging; it.nextEst = !!sc.est;
+        }
+      } catch (e) {}
       return Response.json(data || { us: {}, kr: {}, updatedAt: null, empty: true }, { headers: cors });
     }
     // [V9 매크로] 경제지표 수동 갱신 트리거 (테스트/즉시갱신용)
+    /* [V33.598] GHA(tools/gha/macro_push.py)가 받은 미국 지표 — 관측월이 지금보다 새로울 때만 덮는다(되돌리지 않는다) */
+    if (path === "/api/macro-push" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      let body = null; try { body = await request.json(); } catch (e) {}
+      const inc = body && body.us && typeof body.us === "object" ? body.us : null;
+      if (!inc) return Response.json({ error: "us 필요" }, { status: 400, headers: cors });
+      let cur = null;
+      try { cur = await getState(env.DB, "macro_data", null, true); } catch (e) { return Response.json({ error: "macro_data 읽기 실패 — 덮지 않음" }, { status: 503, headers: cors }); }
+      cur = cur || { us: {}, kr: {}, updatedAt: null };
+      cur.us = cur.us || {};
+      const took = [];
+      for (const k of ["cpi", "core_cpi", "ppi", "unemployment", "core_pce"]) {
+        const v = inc[k]; if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(String(v.obsDate || "")) || !isFinite(Number(v.value))) continue;
+        const old = cur.us[k];
+        if (old && old.obsDate && String(old.obsDate) >= String(v.obsDate)) continue;
+        cur.us[k] = { value: String(v.value), asOf: String(v.asOf || ""), obsDate: String(v.obsDate), released: "", fetchedAt: Date.now(),
+                      source: String(v.source || "GHA") + " (GitHub Actions 동기화)", source_url: String(v.source_url || "") };
+        const sc = macroSchedOf("us", k, cur.us[k], Date.now());
+        if (sc) { if (sc.released) cur.us[k].released = sc.released; cur.us[k].next = sc.next || null; cur.us[k].lagging = !!sc.lagging; }
+        took.push(k + " " + cur.us[k].asOf + " " + cur.us[k].value);
+      }
+      if (took.length) { cur.updatedAt = Date.now(); await setState(env.DB, "macro_data", cur);
+        try { await log(env.DB, "INFO", null, "[거시·GHA] 새 발표분 " + took.join(" · ")); } catch (e) {} }
+      return Response.json({ ok: true, took: took }, { headers: cors });
+    }
     if (path === "/api/macro/run" && request.method === "POST") {
       const result = await runMacroUpdate(env, true);
       return Response.json(result, { headers: cors });
@@ -55193,6 +55358,19 @@ export default {
       //   중복은 runMacroUpdate 내부의 macro_last_run 일일 가드가 막는다.
       // [V33.561] 공식 지표(FRED·한국은행·네이버 국채)는 6시간마다 — 국채금리는 일중 바뀐다(자체 가드 macro_fred_at)
       let _fredStale = false; try { _fredStale = (Date.now() - _num(await getState(env.DB, "macro_fred_at", 0), 0)) > 6 * 3600000; } catch (e) {}
+      /* [V33.598] 미국 발표일(8:30 ET = 12:30Z 여름 · 13:30Z 겨울) — 발표 5분 뒤부터 '아직 그 발표분을 못 받았으면' 20분마다 다시 받는다 */
+      try {
+        if (!_fredStale) {
+          const _nowM = Date.now(), _dUs = new Date(_nowM - 4 * 3600000).toISOString().slice(0, 10), _hUtc = new Date(_nowM).getUTCHours() + new Date(_nowM).getUTCMinutes() / 60;
+          const _relToday = Object.keys(MACRO_SCHED.us).some(function (k) { return k !== "fed_rate" && Array.isArray(MACRO_SCHED.us[k]) && MACRO_SCHED.us[k].indexOf(_dUs) >= 0; });
+          if (_relToday && _hUtc >= 12.58) {
+            const _md = await getState(env.DB, "macro_data", null), _at = _num(await getState(env.DB, "macro_fred_at", 0), 0);
+            const _lag = _md && _md.us && Object.keys(_md.us).some(function (k) { const it = _md.us[k]; return it && it.lagging; });
+            const _relAt = Date.parse(_dUs + "T12:35:00Z");
+            if ((_at < _relAt || _lag) && _nowM - _at > 20 * 60000) { await runFredMacroUpdate(env.DB, true); }
+          }
+        }
+      } catch (e) {}
       if (isMacroTriggerTime() || _fredStale || await isMacroStale(env.DB)) {
         try { await runMacroUpdate(env); }
         catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] macro fail: " + e.message); } catch (e2) {} }
@@ -55880,7 +56058,7 @@ export default {
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
 export { trainWeekKey, TRAIN_STAGES, TRAIN_WEEKLY, omniqFresh, ALT_CADENCE, surgeScalpOn, _regimeScalp, evaluateScalpEntry, runTailRiskHedge, externalTrainAges, externalTrainRow, EXT_TRAIN_KEYS, OMNIQ_ROUTE, omniqRoutePick, omniqHoldOf, omniqRouteToday, _entryTag, negExpDefersToPerfGate, evaluateBuyBlocks, setStatesBatch, _ioTag, _setYAuthDB, yahooFetch, _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
-export { getStates, _STATE_LITE, getADX, _getADXCore, getHolidaySet, _indexFreshOpen, isMarketTradingDay, KR_LUNAR_HOLIDAYS, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
+export { macroSchedOf, _blsParse, MACRO_SCHED, getStates, _STATE_LITE, getADX, _getADXCore, getHolidaySet, _indexFreshOpen, isMarketTradingDay, KR_LUNAR_HOLIDAYS, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
      실제로 돌린다. 두 고침 다 "성적으로만 드러나는" 종류라 문장으로는 못 지킨다. */

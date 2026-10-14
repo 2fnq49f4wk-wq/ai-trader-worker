@@ -817,6 +817,9 @@ jobs:
       # [V33.596] AI_PRIMARY 시장별 검증 셋업 · 규칙 전략을 OMNI-Q 피처로
       - name: AI 셋업 검사
         run: node tools/check-ai-setup.mjs
+      # [V33.598] 경제지표 — 공식 일정표(발표일·다음 발표일) · BLS 1순위 · 발표일 재시도 · GHA 동기화
+      - name: 경제지표 일정 검사
+        run: node tools/check-macro-sched.mjs
       # [V33.531] 포트폴리오 실험실 — Qlib TopK-Dropout + Vibe 부품(퍼지 전진·DSR·최적화기) · 귀무 0 · 양성 대조 통과
       - name: 포트폴리오 실험실 검사
         run: node tools/check-portfolio-lab.mjs
