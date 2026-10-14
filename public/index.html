@@ -188,8 +188,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.590">
-<script src="/neural-observatory.js?v=33.590" defer></script>
+<meta name="lux-build" content="V33.591">
+<script src="/neural-observatory.js?v=33.591" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -3677,6 +3677,27 @@ html[data-theme="light"] .m-aimode{background:linear-gradient(180deg,#eef3fb,#e6
 html[data-theme="light"] .m-aimode .pick{color:#12233f;}
 html[data-theme="light"] .m-brainbar button{background:#eef3fb;border-color:#ccd6e6;color:#3a4b66;}
 html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba(11,108,212,.12);border-color:#0b6cd4;}
+
+/* [V33.591] 왼쪽 메뉴 아이콘 — 이모지 → 선 아이콘(24 격자 · 1.6 굵기 · 글자색) · 선택 항목은 밝은 둥근 칩(사용자 시안) */
+.sb-nav .nav-item-icon{width:32px;height:32px;min-width:32px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;font-size:0;color:#A3ADBD;transition:background .15s,color .15s;}
+.sb-nav .nav-item-icon .nv-ico{width:18px;height:18px;display:block;}
+.sb-nav .nav-item:hover .nav-item-icon{color:#E8ECF2;}
+.sb-nav .nav-item.active .nav-item-icon{background:#E6E9EE;color:#0B0E13;box-shadow:0 1px 2px rgba(0,0,0,.28);}
+html[data-theme="light"] .sb-nav .nav-item-icon{color:var(--lt-dim,#5b6472);}
+html[data-theme="light"] .sb-nav .nav-item.active .nav-item-icon{background:#1C222C;color:#F4F6F9;}
+@media (max-width:1100px){.sb-nav .nav-item-icon{width:30px;height:30px;min-width:30px;}}
+/* [V33.591] 폰 하단 탭·드로어 — 선 아이콘 · 선택 탭은 밝은 둥근 칩(왼쪽 사이드바와 같은 모양) */
+.m-tab .ic .nv-ico{width:20px;height:20px;display:block;}
+.m-tab .ic{color:#A3ADBD;}
+.m-tab.active .ic{background:#E6E9EE !important;color:#0B0E13;filter:none;}
+html[data-theme="light"] .m-tab.active .ic{background:#1C222C !important;color:#F4F6F9;}
+.m-dr-item .nv-ico{width:16px;height:16px;display:inline-block;vertical-align:-3px;}
+/* [V33.591] 우측 사이드바·두뇌 바로가기 선 아이콘(아이콘 시안) */
+.rail-link .nv-ico,.m-brainbar button .nv-ico,#page-nnviz .m-brainbar button .nv-ico{width:16px;height:16px;display:inline-block;vertical-align:-3px;margin-right:7px;color:#7DD3FC;flex-shrink:0;}
+html[data-theme="light"] .rail-link .nv-ico,html[data-theme="light"] .m-brainbar button .nv-ico{color:#0b6cd4;}
+.alt-asset-label .nv-i{display:inline-flex;vertical-align:-3px;margin-right:6px;color:#8FA3BF;}
+.alt-asset-label .nv-i .nv-ico{width:14px;height:14px;}
+.alt-asset-label .nv-i.nv-amber{color:#F5B451;}
 </style>
 <script>
 /* [V33.156] 서비스워커 등록 — ★메인 스크립트와 분리★ 한다.
@@ -3795,6 +3816,23 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 <!-- [V12.43] AI 이모지 대체용 재사용 로고 심볼 — 인트로 오버레이 "밖"에 정의(오버레이는 애니메이션 후
      DOM에서 제거되므로 안에 두면 <use> 참조가 끊겨 아이콘이 빈 칸이 됨) -->
 <svg style="display:none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><symbol id="luxStarSym" viewBox="0 0 100 100"><path class="lux-star-base" style="fill:var(--lux-star-b,#ffffff)" d="M50 2 L53.44 41.68 L73.33 26.67 L58.32 46.56 L98 50 L58.32 53.44 L73.33 73.33 L53.44 58.32 L50 98 L46.56 58.32 L26.67 73.33 L41.68 53.44 L2 50 L41.68 46.56 L26.67 26.67 L46.56 41.68 Z"/><path class="lux-star-facet" style="fill:var(--lux-star-f,#b6bcc6)" d="M50 50 L50 2 L53.44 41.68 Z M50 50 L73.33 26.67 L58.32 46.56 Z M50 50 L98 50 L58.32 53.44 Z M50 50 L73.33 73.33 L53.44 58.32 Z M50 50 L50 98 L46.56 58.32 Z M50 50 L26.67 73.33 L41.68 53.44 Z M50 50 L2 50 L41.68 46.56 Z M50 50 L26.67 26.67 L46.56 41.68 Z"/></symbol></svg>
+<script>/* [V33.591] 선 아이콘 한 벌(24 격자 · 1.6 굵기 · 글자색) — 왼쪽 메뉴·폰 탭·우측 사이드바가 같이 쓴다(사용자 시안) */
+(function(){ var I=function(b,w){ return '<svg class="nv-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="'+(w||'1.6')+'" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+b+'</svg>'; };
+window.LUX_NV = {
+  grid: I('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'),
+  trend: I('<polyline points="3,17 9,11 13,15 21,7"/>'),
+  target: I('<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/>'),
+  news: I('<rect x="4" y="4" width="16" height="16" rx="2"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/>'),
+  doc: I('<rect x="5" y="3" width="14" height="18" rx="2"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/>'),
+  spark: I('<path d="M12 3l2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2z"/>', '1.8'),
+  flask: I('<path d="M9 3h6"/><path d="M10 3v6L5 18a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3L14 9V3"/><line x1="7.5" y1="14" x2="16.5" y2="14"/>'),
+  clock: I('<circle cx="12" cy="12" r="8"/><polyline points="12,7 12,12 15,14"/>'),
+  eye: I('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
+  menu: I('<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>'),
+  gold: I('<path d="M4 16l4-8h8l4 8z"/><line x1="4" y1="16" x2="20" y2="16"/><line x1="12" y1="8" x2="12" y2="16"/>'),
+  bank: I('<path d="M3 10l9-6 9 6"/><line x1="5" y1="10" x2="5" y2="18"/><line x1="10" y1="10" x2="10" y2="18"/><line x1="14" y1="10" x2="14" y2="18"/><line x1="19" y1="10" x2="19" y2="18"/><line x1="3" y1="20" x2="21" y2="20"/>'),
+  gear: I('<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>')
+}; })();</script>
 <script>window.LUX_ICO='<svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg>';</script>
 
 <!-- ══ 인트로 (유지) ══ -->
@@ -3906,15 +3944,15 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     <!-- 네비게이션 -->
     <div class="sb-nav">
       <div class="nav-item" data-page="dashboard">
-        <span class="nav-item-icon">◈</span>
+        <span class="nav-item-icon"><svg class="nv-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span>
         <span class="nav-item-label">DASHBOARD</span>
       </div>
       <div class="nav-item" data-page="detail">
-        <span class="nav-item-icon">📈</span>
+        <span class="nav-item-icon"><svg class="nv-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3,17 9,11 13,15 21,7"/></svg></span>
         <span class="nav-item-label">종목 상세</span>
       </div>
       <div class="nav-item" data-page="positions">
-        <span class="nav-item-icon">◉</span>
+        <span class="nav-item-icon"><svg class="nv-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg></span>
         <span class="nav-item-label">POSITIONS</span>
       </div>
       <!-- [V9.10/9.12] 액션바·AI픽 바에서 이동 — 대시보드·종목상세와 동일하게 일반 페이지로 표시 -->
@@ -3922,23 +3960,23 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
            [V33.318] 이름을 "뉴스·환율"로 바꾼다(사용자 요청). V33.315에서 뉴스가 이 화면으로
            흡수됐는데 이름만 "지표&환율"이라, 뉴스를 찾는 사람이 이 항목을 그냥 지나쳤다. -->
       <div class="nav-item" data-page="macro">
-        <span class="nav-item-icon">📰</span>
+        <span class="nav-item-icon"><svg class="nv-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg></span>
         <span class="nav-item-label">뉴스&middot;환율</span>
       </div>
       <!-- [V33.3] AI 리포트는 좌측 네비에서 내리고 "AI 두뇌" 우측 사이드바 바로가기로 이동(사용자 요청).
            요소는 숨겨서 남긴다 — showPage('report')·모바일 드로어가 data-page를 참조한다. -->
       <div class="nav-item" data-page="report" style="display:none;">
-        <span class="nav-item-icon">📊</span>
+        <span class="nav-item-icon"><svg class="nv-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg></span>
         <span class="nav-item-label">AI 리포트</span>
       </div>
       <div class="nav-item" data-page="nnviz">
-        <span class="nav-item-icon"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg></span>
+        <span class="nav-item-icon"><svg class="nv-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2z"/></svg></span>
         <span class="nav-item-label">AI 두뇌</span>
       </div>
       <!-- [V33.4] WHAT-IF는 좌측 네비에서 내리고 "AI 두뇌" 우측 사이드바 버튼으로만 연다(사용자 요청).
            요소는 숨겨서 남긴다 — showPage('whatif')·모바일 드로어가 data-page를 참조한다. -->
       <div class="nav-item" data-page="whatif" style="display:none;">
-        <span class="nav-item-icon">🧪</span>
+        <span class="nav-item-icon"><svg class="nv-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6"/><path d="M10 3v6L5 18a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3L14 9V3"/><line x1="7.5" y1="14" x2="16.5" y2="14"/></svg></span>
         <span class="nav-item-label">WHAT-IF</span>
       </div>
       <!-- [V33.316] NEWS는 이제 별도 화면이 아니다 — showPage('news')가 지표&환율(#page-macro)의
@@ -3946,11 +3984,11 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
            "지표&환율" 쪽만 활성 표시돼 사용자가 "제대로 안 됐다"고 느낀 그 지점이다.
            report/whatif 와 같은 규약으로 감춘다 — showPage·즐겨찾기 링크가 이 id를 계속 쓴다. -->
       <div class="nav-item" data-page="news" style="display:none;">
-        <span class="nav-item-icon">📰</span>
+        <span class="nav-item-icon"><svg class="nv-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg></span>
         <span class="nav-item-label">NEWS</span>
       </div>
       <div class="nav-item" data-page="trades">
-        <span class="nav-item-icon">◷</span>
+        <span class="nav-item-icon"><svg class="nv-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><polyline points="12,7 12,12 15,14"/></svg></span>
         <span class="nav-item-label">TRADES</span>
       </div>
     </div>
@@ -4208,18 +4246,18 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
              [V33.3] 이 블록과 BUDGET ALLOCATION은 "AI 두뇌" 우측 사이드바로 옮겨진다(사용자 요청).
              DOM 노드를 통째로 이동시키므로 기존 렌더 함수(altCMVal 등 id 참조)는 그대로 동작한다. -->
         <div class="dash-block" id="blkAltAssets">
-          <div class="dash-block-label">⬡ ALT ASSETS</div>
+          <div class="dash-block-label">ALT ASSETS</div>
           <div class="alt-asset-row">
             <div class="alt-asset-item" id="altCM">
-              <span class="alt-asset-label">⛏ COMMODITIES</span>
+              <span class="alt-asset-label"><span class="nv-i nv-amber"><svg class="nv-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 16l4-8h8l4 8z"/><line x1="4" y1="16" x2="20" y2="16"/><line x1="12" y1="8" x2="12" y2="16"/></svg></span>COMMODITIES</span>
               <span class="alt-asset-value" id="altCMVal">—</span>
             </div>
             <div class="alt-asset-item" id="altBDUS">
-              <span class="alt-asset-label">🇺🇸 US BONDS</span>
+              <span class="alt-asset-label"><span class="nv-i"><svg class="nv-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10l9-6 9 6"/><line x1="5" y1="10" x2="5" y2="18"/><line x1="10" y1="10" x2="10" y2="18"/><line x1="14" y1="10" x2="14" y2="18"/><line x1="19" y1="10" x2="19" y2="18"/><line x1="3" y1="20" x2="21" y2="20"/></svg></span>US BONDS</span>
               <span class="alt-asset-value" id="altBDUSVal">—</span>
             </div>
             <div class="alt-asset-item" id="altBDKR">
-              <span class="alt-asset-label">🇰🇷 KR BONDS</span>
+              <span class="alt-asset-label"><span class="nv-i"><svg class="nv-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10l9-6 9 6"/><line x1="5" y1="10" x2="5" y2="18"/><line x1="10" y1="10" x2="10" y2="18"/><line x1="14" y1="10" x2="14" y2="18"/><line x1="19" y1="10" x2="19" y2="18"/><line x1="3" y1="20" x2="21" y2="20"/></svg></span>KR BONDS</span>
               <span class="alt-asset-value" id="altBDKRVal">—</span>
             </div>
           </div>
@@ -4233,7 +4271,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 
         <!-- [V63] BUDGET ALLOCATION — 레짐 적응형 전략 예산 -->
         <div class="dash-block" id="blkBudget">
-          <div class="dash-block-label">◎ BUDGET ALLOCATION <span style="font-weight:400;letter-spacing:0;color:var(--t3);">· 레짐 적응형</span></div>
+          <div class="dash-block-label">BUDGET ALLOCATION <span style="font-weight:400;letter-spacing:0;color:var(--t3);">· 레짐 적응형</span></div>
           <div id="budgetSplitBox" style="font-size:10px;"><div style="color:var(--t3);">다음 거래 사이클부터 집계됩니다</div></div>
         </div>
 
@@ -17712,8 +17750,8 @@ html:root .page > *{ flex-shrink:0; }
         +'</div>'
         +'<div class="rail-sec rail-aisec"><div id="railAiMode" class="rail-ai">확인 중…</div></div>'
         +'<div class="rail-sec" data-rt="overview"><div class="rail-sec-h">바로가기</div>'
-          +'<div class="rail-links"><button type="button" class="rail-link" data-page="report">📋 AI 리포트</button>'
-          +'<button type="button" class="rail-link" data-page="whatif">🧪 WHAT-IF</button></div></div>'
+          +'<div class="rail-links"><button type="button" class="rail-link" data-page="report">'+window.LUX_NV.doc+'AI 리포트</button>'
+          +'<button type="button" class="rail-link" data-page="whatif">'+window.LUX_NV.flask+'WHAT-IF</button></div></div>'
         +'<div class="rail-sec rail-slot" id="railSlotAlt" data-rt="overview"></div>'
         +'<div class="rail-sec rail-slot" id="railSlotBudget" data-rt="perf"></div>'
         +'<div class="rail-sec"><div class="rail-sec-h">열린 종목창 <span class="rail-cnt" id="railCnt">0</span></div>'
@@ -17852,12 +17890,14 @@ html:root .page > *{ flex-shrink:0; }
          → 로직 중복 0, PC/태블릿 동작에 영향 0(요소가 CSS로 완전히 숨겨짐).
      ═════════════════════════════════════════════════════════════ */
   //  brain:true = "AI 두뇌"에 속한 화면. 좌측 네비/모바일 드로어에서 빼고 두뇌 화면에서만 연다.
+  /* [V33.591] 이모지 → 선 아이콘(왼쪽 사이드바와 같은 24 격자 · 글자색) — 사용자 시안 */
+  var NV = window.LUX_NV;   // [V33.591] 머리말의 공용 선 아이콘
   var NAVS = [
-    { id:'dashboard', ic:'◈', tx:'대시보드' }, { id:'detail', ic:'📈', tx:'종목' },
-    { id:'positions', ic:'◉', tx:'포지션' },   { id:'macro', ic:'📰', tx:'뉴스·환율' },
-    { id:'report', ic:'📋', tx:'AI 리포트', brain:true },  { id:'nnviz', ic:'✦', tx:'AI 두뇌' },
-    { id:'whatif', ic:'🧪', tx:'WHAT-IF', brain:true },
-    { id:'trades', ic:'◷', tx:'TRADES' },      { id:'vision', ic:'◑', tx:'AI VISION' }
+    { id:'dashboard', ic:NV.grid, tx:'대시보드' }, { id:'detail', ic:NV.trend, tx:'종목' },
+    { id:'positions', ic:NV.target, tx:'포지션' },   { id:'macro', ic:NV.news, tx:'뉴스·환율' },
+    { id:'report', ic:NV.doc, tx:'AI 리포트', brain:true },  { id:'nnviz', ic:NV.spark, tx:'AI 두뇌' },
+    { id:'whatif', ic:NV.flask, tx:'WHAT-IF', brain:true },
+    { id:'trades', ic:NV.clock, tx:'TRADES' },      { id:'vision', ic:NV.eye, tx:'AI VISION' }
     // [V33.316] NEWS 항목은 뺐다 — showPage('news')가 지표&환율의 뉴스 탭으로 아예 넘어간다
     // (Codex V33.315). 드로어에 둘 다 두면 뉴스를 눌러도 지표&환율만 켜진 채 보였다.
   ];
@@ -17939,7 +17979,7 @@ html:root .page > *{ flex-shrink:0; }
     tabs.innerHTML = TABS.map(function(id){
       var n = NAVS.filter(function(x){ return x.id === id; })[0];
       return '<button type="button" class="m-tab" data-page="'+id+'"><span class="ic">'+n.ic+'</span><span class="tx">'+esc(n.tx)+'</span></button>';
-    }).join('') + '<button type="button" class="m-tab" data-more="1"><span class="ic">☰</span><span class="tx">메뉴</span></button>';
+    }).join('') + '<button type="button" class="m-tab" data-more="1"><span class="ic">'+NV.menu+'</span><span class="tx">메뉴</span></button>';
     document.body.appendChild(tabs);
 
     var scrim = document.createElement('div'); scrim.className = 'm-drawer-scrim';
@@ -17993,9 +18033,9 @@ html:root .page > *{ flex-shrink:0; }
     if(host && liveEl){
       var bb = document.createElement('div');
       bb.className = 'm-brainbar';
-      bb.innerHTML = '<button type="button" data-goto="report">📋 AI 리포트</button>'
-        + '<button type="button" data-goto="whatif">🧪 WHAT-IF</button>'
-        + '<button type="button" data-tools="1">⚙ 관리 도구</button>';
+      bb.innerHTML = '<button type="button" data-goto="report">'+window.LUX_NV.doc+'AI 리포트</button>'
+        + '<button type="button" data-goto="whatif">'+window.LUX_NV.flask+'WHAT-IF</button>'
+        + '<button type="button" data-tools="1">'+window.LUX_NV.gear+'<span>관리 도구</span></button>';
       bb.addEventListener('click', function(e){
         var b = e.target.closest ? e.target.closest('button') : null;
         if(!b) return;
@@ -18004,7 +18044,7 @@ html:root .page > *{ flex-shrink:0; }
           if(head){
             var open = head.classList.toggle('tools-open');
             b.classList.toggle('on', open);
-            b.textContent = open ? '⚙ 관리 도구 닫기' : '⚙ 관리 도구';
+            b.lastChild.textContent = open ? '관리 도구 닫기' : '관리 도구';
           }
           return;
         }
@@ -21027,13 +21067,13 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.590">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.590">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.590">
-<link rel="stylesheet" href="/model-evidence.css?v=33.590">
+<link rel="stylesheet" href="/brain-console.css?v=33.591">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.591">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.591">
+<link rel="stylesheet" href="/model-evidence.css?v=33.591">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.590">
-<script src="/model-evidence.js?v=33.590"></script>
-<script src="/workspace-ui.js?v=33.590"></script>
+<link rel="stylesheet" href="/liquid-metal.css?v=33.591">
+<script src="/model-evidence.js?v=33.591"></script>
+<script src="/workspace-ui.js?v=33.591"></script>
 </body>
 </html>
