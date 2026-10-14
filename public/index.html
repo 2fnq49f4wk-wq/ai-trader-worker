@@ -188,8 +188,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.592">
-<script src="/neural-observatory.js?v=33.592" defer></script>
+<meta name="lux-build" content="V33.593">
+<script src="/neural-observatory.js?v=33.593" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -3707,6 +3707,50 @@ html[data-theme="light"] .rail-link .nv-ico,html[data-theme="light"] .m-brainbar
 .pc2-v{font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:600;}
 .pc2-s{font-size:11px;color:var(--t3,#7D8799);flex-basis:100%;}
 .pnl-svg2{width:100%;height:auto;display:block;font-family:'IBM Plex Mono',monospace;}
+/* [V33.593] 포지션 재설계 */
+#page-positions .page-header{flex-wrap:wrap;gap:10px;}
+.pz-tabs{display:flex;gap:2px;padding:3px;border-radius:10px;background:var(--s2,#0F1318);border:1px solid var(--bd,#1C222C);margin-left:auto;}
+.pz-tabs button{height:34px;padding:0 14px;border:0;border-radius:8px;background:transparent;color:var(--t2,#A3ADBD);font:inherit;font-size:12px;cursor:pointer;}
+.pz-tabs button[aria-selected="true"]{background:#1E242E;color:#E8ECF2;font-weight:600;}
+html[data-theme="light"] .pz-tabs button[aria-selected="true"]{background:#fff;color:#111;}
+#page-positions .pz-grid{grid-template-columns:1fr !important;}
+#page-positions[data-pz="us"] #portCardKR,#page-positions[data-pz="kr"] #portCardUS,#page-positions[data-pz="alt"] .pz-grid,#page-positions[data-pz="alt"] #posPnlSummary,
+#page-positions[data-pz="us"] .pz-alt,#page-positions[data-pz="kr"] .pz-alt{display:none !important;}
+.pz-hold{padding:0 16px 14px;}
+.pz-btn{width:100%;min-height:46px;border-radius:12px;border:1px solid var(--bd2,#2E3643);background:var(--s2,#1E242E);color:inherit;font:inherit;font-weight:600;display:flex;align-items:center;gap:10px;padding:0 14px;cursor:pointer;}
+.pz-btn .pz-n{font-family:'IBM Plex Mono',monospace;color:#7DD3FC;font-weight:500;}
+.pz-btn .pos,.pz-btn .neg{font-family:'IBM Plex Mono',monospace;font-weight:500;font-size:12px;}
+.pz-car{margin-left:auto;color:var(--t3,#7D8799);}
+.pz-empty{padding:22px 8px;text-align:center;color:var(--t2,#A3ADBD);font-size:12px;}
+.pz-list{margin-top:10px;border:1px solid var(--bd,#1C222C);border-radius:12px;overflow:hidden;}
+.pz-row{display:grid;grid-template-columns:minmax(0,2.2fr) 78px minmax(0,1.5fr) minmax(0,1fr) minmax(0,1.6fr) 48px 64px;gap:12px;align-items:center;min-height:52px;padding:6px 14px;border-bottom:1px solid var(--bd,#12161C);font-size:12px;}
+.pz-row:last-child{border-bottom:0;}
+.pz-hd{min-height:34px;font-size:11px;color:var(--t3,#7D8799);background:var(--s2,#0F1318);}
+.pz-row .r{text-align:right;}
+.pz-sym{min-width:0;cursor:pointer;overflow:hidden;}
+.pz-sym b{font-family:'IBM Plex Mono',monospace;}
+.pz-nm{color:var(--t2,#A3ADBD);}
+.pz-src{display:block;font-size:10.5px;color:var(--t3,#7D8799);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pz-q,.pz-v,.pz-p{font-family:'IBM Plex Mono',monospace;}
+.pz-q{color:var(--t2,#A3ADBD);}
+.pz-p{display:grid;grid-template-columns:auto auto minmax(30px,1fr);gap:8px;align-items:center;}
+.pz-bar{position:relative;height:6px;border-radius:3px;background:var(--bd,#161B22);}
+.pz-bar i{position:absolute;top:0;height:6px;border-radius:3px;}
+.pz-bar i.pos{background:#34D399;}.pz-bar i.neg{background:#F87171;}
+.pz-h{color:var(--t2,#A3ADBD);}
+@media (max-width:1100px){.pz-row{grid-template-columns:minmax(0,1.8fr) minmax(0,1fr) minmax(0,1.4fr) 44px 60px;}.pz-row>.pz-st,.pz-row>.pz-q{display:none;}}
+@media (max-width:640px){
+  .pz-tabs{margin-left:0;width:100%;}.pz-tabs button{flex:1;height:40px;}
+  .pz-hold{padding:0 10px 12px;}
+  .pz-list{border:0;display:flex;flex-direction:column;gap:8px;}
+  .pz-hd{display:none;}
+  .pz-row{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"s p" "q x";border:1px solid var(--bd,#1C222C);border-radius:12px;background:var(--s2,#0F1318);gap:4px 10px;padding:10px 12px;}
+  .pz-row>.pz-sym{grid-area:s;}.pz-row>.pz-p{grid-area:p;grid-template-columns:auto;justify-items:end;gap:0;}
+  .pz-row>.pz-p .pz-bar{display:none;}
+  .pz-row>.pz-q{display:block;grid-area:q;font-size:11px;}
+  .pz-row>.pz-x{grid-area:x;}
+  .pz-row>.pz-st,.pz-row>.pz-v,.pz-row>.pz-h{display:none;}
+}
 </style>
 <script>
 /* [V33.156] 서비스워커 등록 — ★메인 스크립트와 분리★ 한다.
@@ -4392,12 +4436,19 @@ window.LUX_NV = {
     <!-- ══ PAGE: POSITIONS ══ -->
     <div class="page" id="page-positions">
       <div class="page-header">
-        <span class="page-title">CURRENT POSITIONS</span>
-        <button type="button" class="btn watchlist-toggle-btn" id="positionsToggleBtn">펼치기</button>
+        <span class="page-title">포지션</span>
+        <!-- [V33.593] 위 '펼치기' 하나 → 미국·한국 카드마다 '보유 종목' 버튼(사용자 시안). 요소는 리스너 호환용으로 숨겨 둔다 -->
+        <button type="button" class="btn watchlist-toggle-btn" id="positionsToggleBtn" style="display:none;">펼치기</button>
+        <div class="pz-tabs" id="pzTabs" role="tablist" aria-label="보기">
+          <button type="button" role="tab" data-pz="all" aria-selected="true">전체</button>
+          <button type="button" role="tab" data-pz="us" aria-selected="false">미국</button>
+          <button type="button" role="tab" data-pz="kr" aria-selected="false">한국</button>
+          <button type="button" role="tab" data-pz="alt" aria-selected="false">대체</button>
+        </div>
       </div>
 
       <!-- [V62] US/KR 포트폴리오 카드 리디자인 — 플래그 헤더 + 빅넘버 + 투자/현금 배분 바 -->
-      <div class="dash-grid">
+      <div class="dash-grid pz-grid">
         <div class="port-card" id="portCardUS">
           <div class="port-card-head">
             <span class="port-card-flag">🇺🇸</span>
@@ -4425,6 +4476,7 @@ window.LUX_NV = {
             <div class="port-budget" id="budgetRowUS" style="margin-top:6px;"></div>
             <div class="cfg-display" id="cfgDisplayUS"></div>
           </div>
+          <div class="pz-hold" id="posHoldUS"></div>
         </div>
         <div class="port-card" id="portCardKR">
           <div class="port-card-head">
@@ -4453,27 +4505,28 @@ window.LUX_NV = {
             <div class="port-budget" id="budgetRowKR" style="margin-top:6px;"></div>
             <div class="cfg-display" id="cfgDisplayKR"></div>
           </div>
+          <div class="pz-hold" id="posHoldKR"></div>
         </div>
       </div>
 
       <div class="pos-pnl-summary" id="posPnlSummary"></div>
-      <div id="positionsBox" class="positions-collapsed">
+      <div id="positionsBox" class="positions-collapsed" style="display:none;">
         <div class="empty">No positions yet</div>
       </div>
 
       <!-- [V10.5] 원자재 포트폴리오 + 보유 — 포지션 페이지로 이동 -->
-      <div class="page-header" style="border-top:1px solid var(--bd);">
-        <span class="page-title">⛏ COMMODITY PORTFOLIO</span>
+      <div class="page-header pz-alt" style="border-top:1px solid var(--bd);">
+        <span class="page-title">원자재 포트폴리오</span>
       </div>
-      <div id="cmSummaryBar" style="display:flex;gap:0;border-bottom:1px solid var(--bd);"></div>
-      <div class="cm-section-label">POSITIONS</div>
-      <div id="cmPositionsBox2"><div class="empty">No commodity positions yet</div></div>
+      <div id="cmSummaryBar" class="pz-alt" style="display:flex;gap:0;border-bottom:1px solid var(--bd);"></div>
+      <div class="cm-section-label pz-alt">POSITIONS</div>
+      <div id="cmPositionsBox2" class="pz-alt"><div class="empty">No commodity positions yet</div></div>
 
       <!-- [V10.5] 채권 포트폴리오(US/KR 슬리브 + 보유) — 포지션 페이지로 이동 -->
-      <div class="page-header" style="border-top:1px solid var(--bd);">
-        <span class="page-title">◈ BOND PORTFOLIO</span>
+      <div class="page-header pz-alt" style="border-top:1px solid var(--bd);">
+        <span class="page-title">채권 포트폴리오</span>
       </div>
-      <div class="alt-grid">
+      <div class="alt-grid pz-alt">
         <div class="alt-panel" id="bdusPanel"><div class="alt-empty">대기 중...</div></div>
         <div class="alt-panel" id="bdkrPanel"><div class="alt-empty">대기 중...</div></div>
       </div>
@@ -7619,91 +7672,65 @@ window.LUX_NV = {
     }
 
     // [카드분리] 미국/한국을 각각 별도 카드로 렌더 (aggUS/aggKR는 위에서 계산됨)
-    function buildPosTable(list, market) {
-      if (!list || list.length === 0) return '';
-      var withPnl = list.map(function(p){
-        var q = lastQuotes[p.symbol];
-        var curPrice = q ? q.price : null;
-        var pnlPct = curPrice != null ? ((curPrice - p.avg) / p.avg * 100) : -999;
-        return { p: p, pnlPct: pnlPct };
-      });
-      withPnl.sort(function(a, b){ return b.pnlPct - a.pnlPct; });
-      var sym = market === 'US' ? '$' : '₩';
+    /* [V33.593] ★포지션 재설계(사용자 시안)★ — 미국·한국 카드마다 '보유 종목 N · 평가손익 ▾' 버튼이 그 시장 목록을 연다.
+       PC·패드는 열 맞춘 줄, 폰은 카드(CSS 가 같은 마크업을 바꾼다). 열림 상태는 시장별로 기억한다. */
+    var PZO = window.__pzOpen || (window.__pzOpen = (function(){ try { return JSON.parse(localStorage.getItem('luxPzOpen') || '{"us":true,"kr":true}'); } catch(e) { return { us: true, kr: true }; } })());
+    function buildHold(list, market) {
+      var mk = market.toLowerCase(), sym = market === 'US' ? '$' : '₩';
       var fmtMoney = market === 'KR' ? fmtCompact : function(n){ return fmtNum(n, 2); };
-      var agg = market === 'US' ? aggUS : aggKR;
-      var flag = market === 'US' ? '🇺🇸' : '🇰🇷';
-      var aggHtml = agg ? ' <span class="'+agg.cls+'" style="font-size:12px;font-weight:700;margin-left:8px;">'+agg.pnlText+' ('+agg.pctText+')</span>' : '';
-      // [V53] 전략별 보유 카운트 칩
-      var stratCnt = {};
-      list.forEach(function(p){ var s=(p.strategy||'other').toLowerCase(); stratCnt[s]=(stratCnt[s]||0)+1; });
-      var stratColors = { trend:'var(--strat-trend)', scalp:'var(--strat-scalp)', snap:'var(--strat-snap)' };
-      var chips = Object.keys(stratCnt).map(function(s){
-        var c = stratColors[s] || 'var(--t3)';
-        return '<span class="pos-strat-chip" style="border-color:'+c+';color:'+c+';">'+s.toUpperCase()+' '+stratCnt[s]+'</span>';
-      }).join(' ');
-      var html = '<div class="pos-market-card">';
-      html += '<div class="pos-market-head">'+flag+' '+market+' POSITIONS <span class="pos-market-count">'+list.length+'</span>'+chips+aggHtml+'</div>';
-      html += '<div class="table-wrap"><table class="table"><thead><tr>'+
-        '<th>SYMBOL</th><th>STRATEGY</th><th>REASON</th>'+
-        '<th class="right">QTY</th><th class="right">AVG</th><th class="right">CUR</th>'+
-        '<th class="right">VALUE</th><th class="right">PnL</th><th class="right">PnL%</th>'+
-        '<th class="right">HELD</th><th class="right">ACT</th></tr></thead><tbody>';
-      withPnl.forEach(function(item){
-        var p = item.p;
-        var q = lastQuotes[p.symbol];
-        var curPrice = q ? q.price : null;
-        var cost = p.qty * p.avg;
-        var value = curPrice != null ? p.qty * curPrice : null;
-        var pnl = value != null ? value - cost : null;
-        var pnlPct = curPrice != null ? ((curPrice - p.avg) / p.avg * 100) : null;
-        var pnlClass = pnlPct == null ? '' : (pnlPct >= 0 ? 'pos' : 'neg');
-        var signp = pnlPct != null && pnlPct >= 0 ? '+' : '';
-        var pnlPctText = pnlPct != null ? signp + pnlPct.toFixed(2) + '%' : '-';
-        var curText = curPrice != null ? fmtNum(curPrice) : '-';
-        var valueText = value != null ? sym + fmtMoney(value) : '-';
-        var pnlText = pnl != null ? (pnl >= 0 ? '+' : '-') + sym + fmtMoney(Math.abs(pnl)) : '-';
+      var agg = market === 'US' ? aggUS : aggKR, open = PZO[mk] !== false;
+      var rows = (list || []).map(function(p){
+        var q = lastQuotes[p.symbol], cur = (q && isFinite(q.price) && q.price > 0) ? q.price : null;
+        return { p: p, cur: cur, pct: cur != null ? (cur - p.avg) / p.avg * 100 : null };
+      }).sort(function(a, b){ return (b.pct == null ? -999 : b.pct) - (a.pct == null ? -999 : a.pct); });
+      var btn = '<button type="button" class="pz-btn" data-pzm="' + mk + '" aria-expanded="' + open + '">보유 종목 <b class="pz-n">' + rows.length + '</b>' +
+        (agg ? ' <span class="' + agg.cls + '">' + agg.pnlText + ' (' + agg.pctText + ')</span>' : '') + '<span class="pz-car">' + (open ? '▴' : '▾') + '</span></button>';
+      if (!open) return btn;
+      if (!rows.length) return btn + '<div class="pz-empty">보유 종목이 없습니다</div>';
+      var html = btn + '<div class="pz-list"><div class="pz-row pz-hd"><span>종목</span><span>전략</span><span>수량 · 평단 → 현재</span><span class="r">평가액</span><span>평가손익</span><span>보유</span><span></span></div>';
+      rows.forEach(function(it){
+        var p = it.p, pct = it.pct, c = pct == null ? '' : (pct >= 0 ? 'pos' : 'neg');
+        var val = it.cur != null ? p.qty * it.cur : null, pnl = val != null ? val - p.qty * p.avg : null;
         var name = p.name || (market === 'KR' ? krLabel(p.symbol) : usLabel(p.symbol));
         var ticker = String(p.symbol).replace(/\.(KS|KQ)$/, '');
-        var label = name ? '<b>'+escapeHtml(name)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(ticker)+'</span>' : '<b>'+escapeHtml(ticker)+'</b>';
-        var strat = (p.strategy || 'other').toLowerCase();
-        var rowCls = (strat === 'trend' || strat === 'scalp' || strat === 'snap') ? 'pos-row-' + strat : 'pos-row-other';
-        var stratCell = strategyBadge(p.strategy || 'swing');
-        var reason = p.entrySignal || (p.meta && p.meta.signal) || '-';
-        var reasonCell = '<span class="trade-reason" style="font-size:10px;color:var(--dim);" title="'+escapeHtml(reason)+'">'+escapeHtml(reason)+'</span>';
-        // [V53] PnL 게이지 — ±10% 풀스케일 시각화
-        var barHtml = '';
-        if (pnlPct != null) {
-          var mag = Math.min(100, Math.abs(pnlPct) / 10 * 100);
-          var bc = pnlPct >= 0 ? 'var(--pos)' : 'var(--neg)';
-          var side = pnlPct >= 0 ? 'left:50%;' : 'right:50%;';
-          barHtml = '<span class="pos-pnl-bar"><i style="'+side+'width:'+(mag/2)+'%;background:'+bc+';"></i></span>';
-        }
-        // [V53] 보유일 칩
-        var heldDays = p.opened_ts ? Math.floor((Date.now() - p.opened_ts) / 86400000) : null;
-        var heldText = heldDays == null ? fmtAgo(p.opened_ts)
-          : heldDays === 0 ? '<span class="pos-days-chip">오늘</span>'
-          : '<span class="pos-days-chip">' + heldDays + '일</span>';
-        html += '<tr class="'+rowCls+'">'+
-          '<td>'+label+'</td>'+
-          '<td>'+stratCell+'</td>'+
-          '<td>'+reasonCell+'</td>'+
-          '<td class="right">'+fmtNum(p.qty)+'</td>'+
-          '<td class="right">'+fmtNum(p.avg)+'</td>'+
-          '<td class="right">'+curText+'</td>'+
-          '<td class="right">'+valueText+'</td>'+
-          '<td class="right '+pnlClass+'">'+pnlText+'</td>'+
-          '<td class="right '+pnlClass+'">'+pnlPctText+barHtml+'</td>'+
-          '<td class="right">'+heldText+'</td>'+
-          '<td class="right"><button type="button" class="pos-close-btn" onclick="manualClose(\''+market.toLowerCase()+'\',\''+escapeHtml(p.symbol)+'\',\''+escapeHtml(p.strategy||'')+'\',this)">청산</button></td>'+
-        '</tr>';
+        var reason = p.entrySignal || (p.meta && p.meta.signal) || '';
+        var w = pct == null ? 0 : Math.min(50, Math.abs(pct) / 5 * 50);
+        var bar = '<span class="pz-bar"><i class="' + c + '" style="' + (pct >= 0 ? 'left:50%;' : 'right:50%;') + 'width:' + w + '%"></i></span>';
+        var hd = p.opened_ts ? Math.floor((Date.now() - p.opened_ts) / 86400000) : null;
+        html += '<div class="pz-row">' +
+          '<span class="pz-sym" onclick="window.openStockDetail&&openStockDetail(\'' + escapeHtml(p.symbol) + '\',\'' + mk + '\')"><b>' + escapeHtml(market === 'KR' && name ? name : ticker) + '</b> <span class="pz-nm">' + escapeHtml(market === 'KR' ? ticker : (name || '')) + '</span>' +
+            (reason ? '<span class="pz-src" title="' + escapeHtml(reason) + '">' + escapeHtml(reason) + '</span>' : '') + '</span>' +
+          '<span class="pz-st">' + strategyBadge(p.strategy || 'swing') + '</span>' +
+          '<span class="pz-q">' + fmtNum(p.qty) + ' × ' + fmtNum(p.avg) + ' → <b>' + (it.cur != null ? fmtNum(it.cur) : '-') + '</b></span>' +
+          '<span class="pz-v r">' + (val != null ? sym + fmtMoney(val) : '-') + '</span>' +
+          '<span class="pz-p ' + c + '"><span>' + (pnl != null ? (pnl >= 0 ? '+' : '-') + sym + fmtMoney(Math.abs(pnl)) : '-') + '</span><span>' + (pct != null ? (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%' : '-') + '</span>' + bar + '</span>' +
+          '<span class="pz-h">' + (hd == null ? '-' : hd === 0 ? '오늘' : hd + '일') + '</span>' +
+          '<span class="pz-x"><button type="button" class="pos-close-btn" onclick="manualClose(\'' + mk + '\',\'' + escapeHtml(p.symbol) + '\',\'' + escapeHtml(p.strategy || '') + '\',this)">청산</button></span></div>';
       });
-      html += '</tbody></table></div></div>';
-      return html;
+      return html + '</div>';
     }
-    var htmlUS = buildPosTable(listUS, 'US');
-    var htmlKR = buildPosTable(listKR, 'KR');
-    if (!htmlUS && !htmlKR) { box.innerHTML = '<div class="empty">No positions yet</div>'; return; }
-    box.innerHTML = htmlUS + htmlKR;
+    window.__pzArgs = [positionsUS, positionsKR];
+    var hU = $('posHoldUS'), hK = $('posHoldKR');
+    if (hU) hU.innerHTML = buildHold(listUS, 'US');
+    if (hK) hK.innerHTML = buildHold(listKR, 'KR');
+    if (!window.__pzWired) {
+      window.__pzWired = true;
+      document.addEventListener('click', function(e){
+        var b = e.target.closest ? e.target.closest('.pz-btn') : null;
+        if (b) {
+          var m = b.getAttribute('data-pzm'); PZO[m] = !(PZO[m] !== false);
+          try { localStorage.setItem('luxPzOpen', JSON.stringify(PZO)); } catch(e2) {}
+          renderPositions(window.__pzArgs[0], window.__pzArgs[1]); return;
+        }
+        var t = e.target.closest ? e.target.closest('#pzTabs [data-pz]') : null;
+        if (t) {
+          var v = t.getAttribute('data-pz'), pg = $('page-positions');
+          pg.setAttribute('data-pz', v);
+          [].forEach.call(document.querySelectorAll('#pzTabs [data-pz]'), function(x){ x.setAttribute('aria-selected', x === t ? 'true' : 'false'); });
+        }
+      });
+    }
+    box.innerHTML = '';
   }
 
   // [V11] 수동 청산 — 포지션 행의 '청산' 버튼 → POST /api/close (현재가 전량 시장가 청산)
@@ -21092,13 +21119,13 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.592">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.592">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.592">
-<link rel="stylesheet" href="/model-evidence.css?v=33.592">
+<link rel="stylesheet" href="/brain-console.css?v=33.593">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.593">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.593">
+<link rel="stylesheet" href="/model-evidence.css?v=33.593">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.592">
-<script src="/model-evidence.js?v=33.592"></script>
-<script src="/workspace-ui.js?v=33.592"></script>
+<link rel="stylesheet" href="/liquid-metal.css?v=33.593">
+<script src="/model-evidence.js?v=33.593"></script>
+<script src="/workspace-ui.js?v=33.593"></script>
 </body>
 </html>
