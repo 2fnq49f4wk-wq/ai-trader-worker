@@ -12,6 +12,11 @@
 
 ## Current handoff
 
+- V33.596 (10/14) ★AI_PRIMARY 수리 · 규칙 전략을 AI 가 배운다(사용자 결정)★
+  - AI_PARAMS.aiPrimary.setupByMarket = { kr: ["TR_PULLBACK"] } — 한국 AI 는 셋업 없는 강세 추종(TREND_ALIGNMENT, −1.02%/포지션)을 안 하고
+    추세 안 눌림(TR_PULLBACK +0.91%) 규칙 셋업이 뜬 종목만 위원회에 올린다(스냅 셋업 우선은 그대로). 막힌 수는 nobuy 'ai_setup_kr'.
+  - OMNI-Q 피처에 규칙 조건 5종(rule_rsi2 · rule_sn_rsi2 · rule_tr_pullback · rule_pb_depth · rule_off_hi20) — 쓸모는 관문이 판정.
+  - 미국 SN_RSI2 규칙 직접 진입은 열지 않았다(사용자: 규칙 대신 AI 가 배우게). 미국 AI 는 셋업 제한 없음(최근 40포지션 +1.30%).
 - V33.595 (10/14) ★라이브 화면 점검(PC·아이패드·아이폰) — 수치·비율★
   - fmtNum(n, 자릿수) 를 명시하면 그 자리까지 채움("+1%"·"-6.8%" → "+1.00%"·"-6.80%") · 지수 가격 소수 둘째 고정 · TOP MOVERS 달러 2자리/원화 정수.
   - 종목상세 지수 줄이 /api/indices(SWR 10분)로 대시보드(/api/state)와 값이 갈렸다(같은 시각 코스닥 −0.72% ↔ +0.45%) → 대시보드 최신값 공유.

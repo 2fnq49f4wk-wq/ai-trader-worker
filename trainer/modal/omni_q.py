@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import math
+import os
 import time
 
 import numpy as np
@@ -297,8 +298,41 @@ def _features_q(P, log):
         F = F.replace([np.inf, -np.inf], np.nan).reindex_like(P["close"])
         out.append(F.rank(axis=1, pct=True).values.astype(np.float32))
         names.append(fid)
+    # [V33.596] ★원장에서 번 규칙 전략을 AI 가 배운다★(사용자 10/14: "승률 높던 규칙 매수 전략을 전략 중 하나로 학습시켜")
+    #   미국 SN_RSI2(상승추세 단기 과매도 · 20포지션 +0.70% t 2.3) · 한국 TR_PULLBACK(추세 안 눌림 · 34포지션 +0.91%) 의 조건을
+    #   피처로 넣는다(워커 evaluateSnapEntry · evaluateTrendEntry 와 같은 정의). 다른 피처처럼 날짜별 횡단면 순위로 바꾸며,
+    #   쓸모는 OMNI-Q 관문(표본 밖 걷기)이 판정한다 — 피처를 넣는다고 발언이 열리지 않는다. 끄려면 OMNIQ_RULEFEAT=0.
+    if os.environ.get("OMNIQ_RULEFEAT", "1") != "0":
+        try:
+            for nm, F in _rule_feats(P):
+                F = F.replace([np.inf, -np.inf], np.nan).reindex_like(P["close"])
+                out.append(F.rank(axis=1, pct=True).values.astype(np.float32))
+                names.append(nm)
+        except Exception as e:  # noqa: BLE001
+            log("      ⚠️ 규칙 피처 실패: %s" % e)
     log("      피처 %d개 (%s · %.0fs)" % (len(names), "+".join(ZOOS_Q), time.time() - t0))
     return (np.stack(out, axis=2) if out else None), names
+
+
+def _rule_feats(P):
+    """[V33.596] 규칙 전략 조건 → 피처(이름 rule_*). P: 날짜×종목 넓은 표."""
+    c = P["close"]
+    ma5, ma20, ma50, ma200 = (c.rolling(n, min_periods=n).mean() for n in (5, 20, 50, 200))
+    d = c.diff()
+    up2 = d.clip(lower=0).rolling(2).mean()
+    dn2 = (-d.clip(upper=0)).rolling(2).mean()
+    rsi2 = 100 - 100 / (1 + up2 / dn2.replace(0, np.nan))
+    rsi2 = rsi2.where(dn2 > 0, 100.0)
+    hi20 = c.rolling(20, min_periods=20).max()
+    up = (c > ma200) & (ma50 > ma200)
+    sn = (up & (rsi2 <= 12) & (c < ma5)).astype(float)
+    gap20 = c / ma20 - 1
+    trpb = ((ma20 > ma50) & (gap20.abs() <= 0.04) & (d > 0)).astype(float)
+    return [("rule_rsi2", -rsi2),                        # 낮을수록(과매도) 높은 순위
+            ("rule_sn_rsi2", sn.where(ma200.notna())),
+            ("rule_tr_pullback", trpb.where(ma50.notna())),
+            ("rule_pb_depth", (-(gap20)).where(ma20 > ma50)),   # 추세 안에서 MA20 아래로 깊을수록
+            ("rule_off_hi20", -(c / hi20 - 1))]
 
 
 def _ledger(req, BASE, HDR, mk, C, ylab, h, log):

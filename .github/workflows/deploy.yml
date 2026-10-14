@@ -814,6 +814,9 @@ jobs:
       # [V33.594] 페어(PR_OU) 진입 경로 — 외부 전 종목 페어 + 걷기 검증 통과 시장만 · [PAIR] 꼬리표 · z≥0 청산
       - name: 페어 진입 경로 검사
         run: node tools/check-pair-route.mjs
+      # [V33.596] AI_PRIMARY 시장별 검증 셋업 · 규칙 전략을 OMNI-Q 피처로
+      - name: AI 셋업 검사
+        run: node tools/check-ai-setup.mjs
       # [V33.531] 포트폴리오 실험실 — Qlib TopK-Dropout + Vibe 부품(퍼지 전진·DSR·최적화기) · 귀무 0 · 양성 대조 통과
       - name: 포트폴리오 실험실 검사
         run: node tools/check-portfolio-lab.mjs

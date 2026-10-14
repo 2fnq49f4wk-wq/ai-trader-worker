@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.595";
+const _BUILD_VER = "V33.596";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -3519,6 +3519,14 @@ const AI_PARAMS = {
 
   aiPrimary: {
     enabled: true,          // AI 주도 진입 활성(끄려면 false → 규칙엔진 전용으로 복귀)
+    /* [V33.596] ★AI_PRIMARY 를 고친다 — 시장별 '검증된 셋업' 위에서만 산다★(사용자 10/14: "ai_primary 자체를 뜯어고치고 ·
+       승률 높던 규칙 전략을 AI 가 전략으로 쓰게"). 원장 포지션 단위(10/14):
+         한국 AI_PRIMARY 90포지션 −1.02%/포지션(t −1.88) — 대부분 셋업 없는 'TREND_ALIGNMENT'(이미 이평 위로 올라선 강세를 산다)
+         한국 TR_PULLBACK(상승추세 안의 눌림) 34포지션 +0.91% · 미국 SN_RSI2(상승추세 단기 과매도) 20포지션 +0.70%(t 2.3)
+         미국 AI_PRIMARY 는 최근 40포지션 +1.30% — 미국은 종전대로.
+       → 그 시장의 허용 셋업이 정해져 있으면 AI 는 그 규칙 셋업이 뜬 종목만 후보로 삼고(위원회가 최종 승인 · 크기 결정),
+         셋업 없는 강세 추종(TREND_ALIGNMENT)은 하지 않는다. 스냅(SN_RSI2 등) 셋업은 종전대로 우선. 되돌리려면 kr 항목 삭제. */
+    setupByMarket: { kr: ["TR_PULLBACK"] },
     threshold: 0.55,        // [V12.89] 0.60→0.55 — 블렌드확률 기준 0.60은 과도(매수 정체). 기술 드라이버와 함께 완화(규칙신호 없는 종목이라 보수적)
     // [V33.80] 횡단면 백분위 문턱 — 고정 확률문턱의 '모델이 좋아질수록 거래가 마르는' 역설을 없앤다.
     //   topPct: 최근 후보 p 분포에서 상위 몇 %를 진입 후보로 볼 것인가.
@@ -25451,7 +25459,12 @@ async function runTradingCycle(env) {
               const _snapCandidate = _aiSetups.find(function(sr){return sr.strategy === "snap";});
               const _trendCandidate = _aiSetups.find(function(sr){return sr.strategy === "trend";});
               const _snapEntry = _snapCandidate && _snapCandidate.signal;
-              const _aiStrat = selectAiEntryRoute(_picked || _uptrend || _techBuy || !!_trendCandidate, _snapEntry, cfg, strategiesHeldNow);
+              // [V33.596] 시장별 허용 셋업(setupByMarket) — 있으면 그 규칙 셋업이 뜬 경우만 추세 경로 후보
+              const _setOk = (_ap.setupByMarket && Array.isArray(_ap.setupByMarket[market])) ? _ap.setupByMarket[market] : null;
+              const _trendEl = _setOk ? !!(_trendCandidate && _trendCandidate.signal && _setOk.indexOf(_trendCandidate.signal.name) >= 0)
+                                      : (_picked || _uptrend || _techBuy || !!_trendCandidate);
+              if (_setOk && !_trendEl && !_snapEntry && (_picked || _uptrend || _techBuy || _trendCandidate)) incNobuy("ai_setup_" + market);
+              const _aiStrat = selectAiEntryRoute(_trendEl, _snapEntry, cfg, strategiesHeldNow);
               if (_aiStrat) {
                 aiPrimaryUsed++;
                 // [V33.39] ★AI 가 전략을 하나만 쓰던 문제★ 종전엔 무조건 strategy:"trend" 로 넣었다.
