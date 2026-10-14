@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.588";
+const _BUILD_VER = "V33.589";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -3728,7 +3728,16 @@ const AI_PARAMS = {
     //   위원회 성공확률 p가 committeeExitProb 미만이면 청산(약세 전환). 하드손절은 안전망으로 항상 유지되고
     //   minPnlForExit보다 큰 손실은 하드손절에 위임(저점 투매 방지). AI가 진입뿐 아니라 청산까지 판단.
     committeeExit: true,
-    committeeExitProb: 0.42    // 위원회 성공확률 이 미만이면 AI 청산(약세전환)
+    committeeExitProb: 0.42,   // 위원회 성공확률 이 미만이면 AI 청산(약세전환)
+    /* [V33.589] ★산 지 몇 분 만에 같은 AI 가 판다 — 진입·청산 확률이 서로 다른 입력으로 계산됐다★
+       원장(10/14 · 전 기간 AI_EXIT 41건): 17건이 진입 2시간 안 · 그중 10건이 ★1~3분 만★(평균 +0.08% · 세금 전).
+       9/11 한국 120110.KS 는 20분 동안 사고 팔기를 네 번 했다(AI_PRIMARY → AI_EXIT p39~41% → 재매수).
+       미국 IQV(9/22 이후 단 두 건의 AI 진입 중 하나)도 3분 만에 AI_EXIT. 2시간 넘게 들고 판 24건은 평균 +2.0%.
+       원인: 청산 판정이 진입과 다른 입력을 쓴다 — 사건 피처(ev)를 비우고 · 결정 블렌드 실측 계수(__blendK)를 안 넘겼다.
+       10거래일 지평 모델이라 같은 날 일봉 피처는 거의 안 바뀐다 → 몇 분 사이의 '약세전환' 은 입력 차이지 시장 변화가 아니다.
+       ★미리 고정★ 진입 후 minHoldHours 안에는 위원회 청산(AI_EXIT · AI_ROTATE)을 판정하지 않는다(손절·트레일·EOD 갭·
+       급락·치명 악재 청산은 그대로). 위원회 청산 뒤 같은 종목은 추세 재진입 쿨다운(24h) 동안 다시 사지 않는다. 되돌리려면 0. */
+    minHoldHours: 24
   },
 
   // ── 옵션/파생 신호(Options) ── 풋/콜 비율·IV로 스마트머니 방향 교차검증(US 라이브 오버레이).
@@ -20175,7 +20184,9 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   // [재진입 쿨다운] 손절 손실 전량청산 → 설정된 시간 동안 재진입 차단
   // [V52] 전략별 분기 — scalp는 분 단위(60분), snap은 시간 단위(12h), trend는 기존 24h.
   //   (기존엔 "SCALP-STOP"이 startsWith("STOP")에 안 걸려 단타 손절 후 같은 종목 즉시 재진입이 가능했음 — 수정)
-  if (fullClose && reason && pnlPct < 0 && (reason.startsWith("STOP") || reason.startsWith("SCALP-STOP") || reason.startsWith("SNAP-STOP"))) {
+  // [V33.589] 위원회 청산(AI_EXIT · AI_ROTATE)도 — 손익과 무관하게 — 재진입 쿨다운. 모델이 약세라 판 종목을 같은 날 다시 사는 왕복을 끊는다.
+  const _aiExitCd = !!(reason && (reason.startsWith("AI_EXIT") || reason.startsWith("AI_ROTATE")));
+  if (fullClose && reason && (_aiExitCd || (pnlPct < 0 && (reason.startsWith("STOP") || reason.startsWith("SCALP-STOP") || reason.startsWith("SNAP-STOP"))))) {
     try {
       let cdMs = 0;
       if (strategy === "scalp") {
@@ -24865,7 +24876,8 @@ async function runTradingCycle(env) {
             //   minPnlForExit로 하드손절에 위임(저점 투매 방지). __aiReady(AI 운용 준비완료)일 때만 개입.
             {
               const _xc = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.exit : null;
-              if (_xc && _xc.committeeExit && __aiReady && !_omqHeld && daily && Array.isArray(daily.closes) && daily.closes.length >= 60) {   // [V33.578] OMNI-Q 관리 보유 제외
+              if (_xc && _xc.committeeExit && __aiReady && !_omqHeld && daily && Array.isArray(daily.closes) && daily.closes.length >= 60
+                  && !(_num(_xc.minHoldHours, 0) > 0 && held.opened_ts && (Date.now() - held.opened_ts) < _num(_xc.minHoldHours, 0) * 3600000)) {   // [V33.578] OMNI-Q 관리 보유 제외 · [V33.589] 최소 보유
                 try {
                   const _pnlY = held.avg > 0 ? ((price - held.avg) / held.avg) * 100 : 0;
                   if (_pnlY > (_xc.minPnlForExit != null ? _xc.minPnlForExit : -3.0)) {   // 큰 손실은 하드손절에 위임
@@ -24919,7 +24931,16 @@ async function runTradingCycle(env) {
                     //   확률만 쓰면 기술적으로 강한 종목을 노이즈로 파는 모순. 진입과 동일 기준으로 통합확률 산출.
                     let _exitP = (_mdx && typeof _mdx.p === "number") ? _mdx.p : null;
                     if (_exitP != null && !_mdx.observe && !_mdx.abstain && (AI_PARAMS.decisionCore || {}).enabled !== false) {
-                      try { const _tkx = _luxPickTech(daily, symbol, market); let _nsx = null; try { _nsx = await _luxSymNewsScore(DB, symbol); } catch (e) {} _exitP = _luxDecisionBlend(_mdx.p, _tkx.tech, _nsx, AI_PARAMS.decisionCore); } catch (e) {}
+                      try {
+                        const _tkx = _luxPickTech(daily, symbol, market); let _nsx = null; try { _nsx = await _luxSymNewsScore(DB, symbol); } catch (e) {}
+                        // [V33.589] 진입과 같은 블렌드 계수(실측 __blendK · 소셜)로 — 종전엔 기본 계수라 같은 종목이 진입 직후 더 낮게 나왔다.
+                        let _kbx = __blendK;
+                        try {
+                          const _skx = _num(__socialK && __socialK.k, 0);
+                          if (_skx !== 0) { const _sscx = socialScoreOf(await getState(DB, "social:" + symbol, null)); if (_sscx != null) _kbx = Object.assign({}, __blendK || {}, { kSocial: _skx, socialScore: _sscx }); }
+                        } catch (e) {}
+                        _exitP = _luxDecisionBlend(_mdx.p, _tkx.tech, _nsx, AI_PARAMS.decisionCore, _kbx);
+                      } catch (e) {}
                     }
                     if (_mdx && _exitP != null && !_mdx.observe && !_mdx.abstain
                         && _exitP <= (_xc.committeeExitProb != null ? _xc.committeeExitProb : 0.42)) {
