@@ -28,7 +28,7 @@
     원인 ① 한국 AI_PRIMARY NEGEXP_SIG 영구 차단(9/12~ · V33.578 에서 실적 관문으로 이관) ② 한국 AI 단타 자체진입 끔(V33.484 · 비용 근거 · 유지)
     ③ 10/7~10/13 한국 폭락 — MARKET_CRASH·BEAR_WEAK(설계대로). 규칙 신호는 AI 가동 중 V12.71 로 버려져 AI 경로가 막히면 전부 0.
   - AI 모델 결함 수리: AI_EXIT 41건 중 10건이 진입 1~3분 뒤(9/11 120110.KS 20분 4회 왕복 · 미국 IQV 3분). 청산 판정이 진입과 다른 입력
-    (ev 피처 비움 · __blendK 미전달)이라 같은 순간 p 가 문턱 아래로 나왔다. → AI_PARAMS.exit.minHoldHours 24(그 안엔 AI_EXIT·AI_ROTATE 판정 생략,
+    (ev 피처 비움 · __blendK 미전달)이라 같은 순간 p 가 문턱 아래로 나왔다. → AI_PARAMS.exit.aiExitMinHoldH 24(그 안엔 AI_EXIT·AI_ROTATE 판정 생략,
     손절·트레일·EOD 갭 그대로) · 청산 블렌드에 __blendK·소셜 계수 · 위원회 청산 뒤 재진입 쿨다운(추세 24h). 게이트 check-ai-exit-churn.
   - DDRISK · LOSS_STREAK 는 V33.590 에서 수리(사용자 결정).
 - V33.588 (10/14) ★코드 감사 — '존재만 하고 작동 안 하던 것' 정리★(사용자 결정 4건)

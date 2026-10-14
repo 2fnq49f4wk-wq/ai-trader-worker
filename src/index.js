@@ -3735,9 +3735,9 @@ const AI_PARAMS = {
        미국 IQV(9/22 이후 단 두 건의 AI 진입 중 하나)도 3분 만에 AI_EXIT. 2시간 넘게 들고 판 24건은 평균 +2.0%.
        원인: 청산 판정이 진입과 다른 입력을 쓴다 — 사건 피처(ev)를 비우고 · 결정 블렌드 실측 계수(__blendK)를 안 넘겼다.
        10거래일 지평 모델이라 같은 날 일봉 피처는 거의 안 바뀐다 → 몇 분 사이의 '약세전환' 은 입력 차이지 시장 변화가 아니다.
-       ★미리 고정★ 진입 후 minHoldHours 안에는 위원회 청산(AI_EXIT · AI_ROTATE)을 판정하지 않는다(손절·트레일·EOD 갭·
+       ★미리 고정★ 진입 후 aiExitMinHoldH 시간 안에는 위원회 청산(AI_EXIT · AI_ROTATE)을 판정하지 않는다(손절·트레일·EOD 갭·
        급락·치명 악재 청산은 그대로). 위원회 청산 뒤 같은 종목은 추세 재진입 쿨다운(24h) 동안 다시 사지 않는다. 되돌리려면 0. */
-    minHoldHours: 24
+    aiExitMinHoldH: 24
   },
 
   // ── 옵션/파생 신호(Options) ── 풋/콜 비율·IV로 스마트머니 방향 교차검증(US 라이브 오버레이).
@@ -24893,7 +24893,7 @@ async function runTradingCycle(env) {
             {
               const _xc = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.exit : null;
               if (_xc && _xc.committeeExit && __aiReady && !_omqHeld && daily && Array.isArray(daily.closes) && daily.closes.length >= 60
-                  && !(_num(_xc.minHoldHours, 0) > 0 && held.opened_ts && (Date.now() - held.opened_ts) < _num(_xc.minHoldHours, 0) * 3600000)) {   // [V33.578] OMNI-Q 관리 보유 제외 · [V33.589] 최소 보유
+                  && !(_num(_xc.aiExitMinHoldH, 0) > 0 && held.opened_ts && (Date.now() - held.opened_ts) < _num(_xc.aiExitMinHoldH, 0) * 3600000)) {   // [V33.578] OMNI-Q 관리 보유 제외 · [V33.589] 최소 보유
                 try {
                   const _pnlY = held.avg > 0 ? ((price - held.avg) / held.avg) * 100 : 0;
                   if (_pnlY > (_xc.minPnlForExit != null ? _xc.minPnlForExit : -3.0)) {   // 큰 손실은 하드손절에 위임
