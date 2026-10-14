@@ -167,7 +167,7 @@ console.log("\n⑥ ★정규장 등락으로만 줄 세우는가★  [V33.422 ·
   // 가격도 정규장 값이어야 한다
   const rowI = H.indexOf("function moverRow(");
   const rowBody = rowI > 0 ? H.slice(rowI, H.indexOf("}", H.indexOf("return '<tr", rowI)) + 1) : "";
-  chk(/fmtNum\(px\)/.test(rowBody) && !/it\.q\.price/.test(rowBody),
+  chk(/fmtNum\(px(, [02])?\)/.test(rowBody) && !/it\.q\.price/.test(rowBody),
     "가격 칸도 ★정규장 가격★ 이다(시간외 가격과 정규장 등락을 한 줄에 섞지 않는다)",
     "★가격은 시간외인데 등락은 정규장이다 — 한 줄이 두 시점을 섞는다★");
   chk(!/it\.q\.dayPct/.test(rowBody), "행이 덮어쓴 dayPct 를 직접 읽지 않는다",
