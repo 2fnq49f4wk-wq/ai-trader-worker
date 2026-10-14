@@ -56,6 +56,18 @@ clock += 8 * D; M = mk(rowsLose, store); pg = await M.perfGateLoad(M.DB, true);
 const rowsWin = { rows: rowsLose.rows.concat(trades(9, "[AI-SCALP][SCALP]", "us", 1.5, clock + 3600000, "Q")) };
 clock += 2 * D; M = mk(rowsWin, store); pg = await M.perfGateLoad(M.DB, true);
 chk(pg.keys["us:AI-SCALP:SCALP"].mode === "open", "시험에서 이기면 풀린다", "★시험 성공인데 안 풀렸다★ " + JSON.stringify(pg.keys["us:AI-SCALP:SCALP"]));
+console.log("②b [V33.594] 분할 익절은 포지션 하나로 센다");
+{
+  const rr = { rows: [] }, st = { m: {}, writes: 0 };
+  // 16 포지션: 각자 TP1(1/4 · +8%) → TP2(1/4 · +6%) 를 작게 판 뒤 나머지 1/2 를 −7% 손절 → 포지션 수익률 = (2+1.5−3.5)/1 = 0%… 손실 쪽으로 −0.25%
+  for (let i = 0; i < 16; i++) { const ts = clock - 30 * D + i * 3600000, sy = "PT" + i;
+    rr.rows.push({ ts, market: "kr", symbol: sy, side: "BUY", qty: 40, pnl_pct: null, reason: "[RULE][TREND] TR_X" });
+    rr.rows.push({ ts: ts + 60000, market: "kr", symbol: sy, side: "SELL", qty: 10, pnl_pct: 8, reason: "TP1" });
+    rr.rows.push({ ts: ts + 120000, market: "kr", symbol: sy, side: "SELL", qty: 10, pnl_pct: 6, reason: "TP2" });
+    rr.rows.push({ ts: ts + 180000, market: "kr", symbol: sy, side: "SELL", qty: 20, pnl_pct: -7.5, reason: "STOP" }); }
+  const M2 = mk(rr, st); const p2 = await M2.perfGateLoad(M2.DB, true); const e = p2.keys["kr:RULE:TREND"];
+  chk(e && e.n === 16 && Math.abs(e.mean - (-0.25)) < 1e-6 && e.win === 0, "표본은 포지션 16개 · 평균은 수량 가중(−0.25%) · 승률 0%(매도 줄로 셌으면 48건 · 승률 67%)", "★분할 매도가 따로 셌다★ " + JSON.stringify(e));
+}
 console.log("④ 못 읽으면");
 const st2 = { m: {}, writes: 0 }; M = mk({ rows: [], fail: true }, st2);
 const c3 = await M.perfGateCheck(M.DB, "us", { isAiScalp: true }, "scalp");

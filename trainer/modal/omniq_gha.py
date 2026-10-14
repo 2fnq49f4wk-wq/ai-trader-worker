@@ -35,6 +35,12 @@ cache = omni_q.load_cache(CACHE)
 cache.pop("_trained", None)
 print("   · 모델 캐시 %s · 방식 %s" % ("있음(" + ",".join(k for k in cache if not k.startswith("_")) + ")" if cache else "없음", MODE))
 omni_q.run(daily, mkt, omni.day_key_of_daily, BASE=BASE, HDR=HDR, upload=True, log=print, cache=cache, mode=MODE)
+# [V33.594] 페어(PR_OU) — 같은 일봉으로 전 종목 공적분 페어 + 표본 밖 걷기 검증(워커 CPU 0). 실패해도 OMNI-Q 는 살린다.
+try:
+    import pairs_ext  # noqa: E402
+    pairs_ext.run(daily, mkt, omni.day_key_of_daily, BASE=BASE, HDR=HDR, upload=True, log=print)
+except Exception as e:  # noqa: BLE001
+    print("   ⚠️ [페어] 실패: %s" % e)
 trained = bool(cache.pop("_trained", False))
 if trained:
     omni_q.save_cache(CACHE, cache)

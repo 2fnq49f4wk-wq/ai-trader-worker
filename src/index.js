@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.593";
+const _BUILD_VER = "V33.594";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13355,6 +13355,32 @@ function omniqBlocks(st, symbol, nowMs) {
    전부 그대로다. 상대강도 필터(WEAK_RS)만 뺀다 — 추세추종 신호용이고, OMNI-Q 는 20일 상대수익을 이미 피처로 본다. */
 const OMNIQ_ROUTE = { enabled: true, entryPct: 0.90, holdPct: 0.75, maxPerCycle: 2, maxPerDay: 3, dayWindowMs: 18 * 3600000,
                       maxOpenProv: 6, provMult: 0.5, minHoldCal: { 5: 7, 20: 28 } };
+/* ══ [V33.594] ★페어(PR_OU) 진입 경로 — 사용자 결정(10/14 "페어트레이딩만 살려 연결")★ ══════════════════════════
+   원장: PR_OU 체결 0건(전 기간). 워커 패널이 12초 마감에 63종목·13쌍만 만들었고, 규칙 신호라 AI 가동 중엔 버려졌다.
+   → 전 종목 페어를 GitHub Actions(무료 · trainer/modal/pairs_ext.py)가 만들고 ★표본 밖 걷기 검증★ 을 같이 올린다.
+   ★미리 고정★ 검증 통과(거래 ≥100 · 평균 순초과 > 0 · t ≥ 2 · 그 시장) 일 때만 산다. 못 넘으면 패널 기록만(매수 0).
+     진입  지금 z(현재가 · 짝 종목 최근 시세로 다시 계산) ≤ −2 · 현재가 > MA50×0.93 · 페어 36시간 안
+     크기  ×0.5(신규 전략 잠정) · 실적 관문 키 PAIR:SNAP 가 따로 센다(지면 막힘 → 7일 뒤 시험)
+     상한  사이클 1 · 시장별 하루 2 · 동시 보유 4
+     청산  z ≥ 0 → PAIR-REVERT · 14달력일 → PAIR-TIME · 손절·트레일·EOD 갭·스냅 규칙은 그대로 · 위원회 청산(AI_EXIT)은 안 건다(검증한 보유와 다르다)
+   위험 관문(폭락·약세·섹터·보유 상한·예산·추격·실적 관문)은 전부 그대로 지난다. */
+const PAIR_ROUTE = { enabled: true, entryZ: -2.0, exitZ: 0, maxPerCycle: 1, maxPerDay: 2, maxOpen: 4, mult: 0.5, freshMs: 36 * 3600000, maxHoldCal: 14 };
+function pairZ(pr, pa, pb) {
+  if (!pr || !(pa > 0) || !(pb > 0) || !(pr.sd > 0)) return null;
+  const z = (Math.log(pa) - pr.alpha - pr.beta * Math.log(pb) - pr.mu) / pr.sd;
+  return isFinite(z) ? z : null;
+}
+// 진입 판정(순수 함수) — 고르면 { b, pr, z } · 아니면 null. pbNow = 짝 종목 최근 시세(없으면 null → 종가 z 로)
+function pairRoutePick(ext, symbol, price, ma50, pbNow, nowMs) {
+  if (!PAIR_ROUTE.enabled || !ext || !ext.pairs || !(ext.bt && ext.bt.pass === true)) return null;
+  if (!(nowMs - _num(ext.ts, 0) <= PAIR_ROUTE.freshMs)) return null;
+  const pr = ext.pairs[symbol];
+  if (!pr || !pr.b) return null;
+  if (!(ma50 > 0 && price > ma50 * 0.93)) return null;
+  const z = (pbNow > 0) ? pairZ(pr, price, pbNow) : _num(pr.z, null);
+  if (z == null || z > PAIR_ROUTE.entryZ) return null;
+  return { b: pr.b, pr: pr, z: z };
+}
 function _omqHeadOn(st, h) {
   if (!st) return null;
   const g = h === 20 ? st.gate20 : st.gate, sp = h === 20 ? st.speak20 : st.speak;
@@ -16189,6 +16215,13 @@ function getNDayHigh(closes, n) {
 //   신규매수하지 않는다(청산 규칙은 계속 쓴다 — 보유분을 방치할 수는 없으므로).
 //   ★여기 파라미터를 튜닝해 수익률을 올리려 하지 말 것★ — 파일 상단 운영방침 ①②를 볼 것.
 //   성능 강화는 자체 탑재 AI(LUXML/MIND/DNN/GBDT/STIN) 쪽에서 한다.
+/* [V33.594] ★soloBlock 이 한 번도 읽히지 않았다★ — SW_RSI_REV(V9.7 '단독 진입 금지')가 표시만 달고 그대로 단독 진입했다.
+   진입 신호는 soloBlock 이 아닌 것 중 가장 무거운 것 · soloBlock 신호는 같이 떴을 때 확인으로만(무게를 빌려 주지 않는다). */
+function _swingPick(signals) {
+  let best = null;
+  for (const s of (signals || [])) { if (!s || s.soloBlock) continue; if (!best || (s.weight || 0) > (best.weight || 0)) best = s; }
+  return best;
+}
 function evaluateBuySignals_swing(price, dayPct, dailyData, cfg) {
   const closes = dailyData.closes;
   const volumes = dailyData.volumes || [];
@@ -16234,7 +16267,9 @@ function evaluateBuySignals_swing(price, dayPct, dailyData, cfg) {
     for (let i = volumes.length - 21; i < volumes.length - 1; i++) avgVol += volumes[i];
     avgVol /= 20;
     if (todayVol >= avgVol * 1.5) {
-      signals.push({ name: "SW_VOL_SPK", weight: 0.9, type: "TREND", detail: "vol x" + (todayVol/avgVol).toFixed(1) });
+      /* [V33.594] ★단독 진입 금지(확인 신호로만)★ — 원장 포지션 단위(10/14): 원자재 SW_VOL_SPK 16포지션 승률 31% · 포지션 수익률 −1.19% ·
+         −$2,506(원자재 전체 손실 −$2,490 과 같은 크기). 무게가 0.9 로 가장 커 SW_GOLDEN(0.85)과 같이 떠도 이게 뽑혀 위험 비중도 가장 컸다. */
+      signals.push({ name: "SW_VOL_SPK", weight: 0.9, type: "TREND", soloBlock: true, detail: "vol x" + (todayVol/avgVol).toFixed(1) });
     }
   }
 
@@ -19585,7 +19620,7 @@ const PERF_GATE = { windowDays: 180, maxN: 40, minN: 15, blockPf: 0.8, coolDays:
    실적 관문 구역 안에 둔다 — 관문 검사(tools/check-perf-gate)가 이 구역만 떼어 돌리므로, 밖에 두면 참조 오류가 catch 에 삼켜져 '막지 않음' 으로 샌다. */
 function _entryTag(signal) {
   // [V33.582] 패닉 단타는 PANIC 으로 따로 센다 — 평시 규칙 단타(kr:RULE:SCALP 막힘)의 성적으로 폭락날 인버스 단타를 막지 않는다(자기 성적으로 판정)
-  return (signal && signal.isPanicScalp) ? "PANIC" : (signal && signal.isSurgeScalp) ? "SURGE" : (signal && signal.isAiScalp) ? "AI-SCALP" : (signal && signal.isOmniQ) ? "AI-Q" : (signal && signal.isAiPrimary) ? "AI" : "RULE";
+  return (signal && signal.isPanicScalp) ? "PANIC" : (signal && signal.isSurgeScalp) ? "SURGE" : (signal && signal.isAiScalp) ? "AI-SCALP" : (signal && signal.isOmniQ) ? "AI-Q" : (signal && signal.isPair) ? "PAIR" : (signal && signal.isAiPrimary) ? "AI" : "RULE";
 }
 function _pgTag(reason) {
   const s = String(reason || "");
@@ -19646,9 +19681,15 @@ async function perfGateLoad(DB, force) {
     if (!/sell/i.test(t.side)) { const tg = _pgTag(t.reason); (book.get(k) || book.set(k, []).get(k)).push({ qty: +t.qty, tag: tg }); continue; }
     const q = book.get(k) || []; let need = +t.qty, first = null;
     while (need > 1e-9 && q.length) { const b = q[0]; if (!first) first = b; const u = Math.min(need, b.qty); b.qty -= u; need -= u; if (b.qty <= 1e-9) q.shift(); }
-    if (!first || !first.tag || t.pnl_pct == null || !(t.ts > now - PERF_GATE.windowDays * D)) continue;
+    if (!first || !first.tag || t.pnl_pct == null) continue;
+    /* [V33.594] ★표본 = 포지션 하나★(종전: 매도 한 줄) — 분할 익절(TP1·TP2…)이 따로따로 표본이 돼
+       '작게 여러 번 판 이익' 이 '한 번에 다 판 손실' 보다 몇 배로 셌다. 원장(10/14 · 포지션 단위 실측):
+         us:RULE:TREND 관문 평균 +1.21% ↔ 실제 포지션 +0.14% · kr:RULE:TREND +0.71% ↔ −0.07% · us:AI:TREND +0.41% ↔ +1.30%
+       → 그 매수 묶음이 다 팔렸을 때 ★수량 가중 평균 수익률★(= 그 포지션의 수익률) 하나로 센다. 문턱(minN·blockPf·maxN)은 그대로. */
+    first.pq = (first.pq || 0) + (+t.qty); first.ps = (first.ps || 0) + (+t.pnl_pct) * (+t.qty);
+    if (first.qty > 1e-9 || !(t.ts > now - PERF_GATE.windowDays * D) || !(first.pq > 0)) continue;   // 아직 남은 수량 → 다 팔릴 때 한 번
     const key = t.market + ":" + first.tag;
-    (closed[key] || (closed[key] = [])).push({ ts: t.ts, pct: +t.pnl_pct });
+    (closed[key] || (closed[key] = [])).push({ ts: t.ts, pct: first.ps / first.pq });
   }
   let changed = false;
   const keys = new Set(Object.keys(closed).concat(Object.keys(st.keys)));
@@ -19743,7 +19784,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
      (2배 상품의 밤사이 갭이 손절을 뛰어넘는다). 스냅은 이미 제외 · 규칙 추세는 ADX 로 축소 중 · 꼬리위험 헤지(hedge)는 그대로. */
   if (strategy !== "hedge" && ((typeof LEVERAGED_ETF !== "undefined" && LEVERAGED_ETF.has(symbol)) || (typeof INVERSE_ETF !== "undefined" && INVERSE_ETF.has(symbol)))
       && !_regimeScalp(signal)   // [V33.582·583 폭등 레버리지 롱 포함] 폭락날 인버스 단타(SC_PANIC_INV)는 설계상 이 ETF 를 쓴다 — 당일 청산 단타라 밤사이 갭(V33.506 의 근거)이 없다
-      && (strategy === "scalp" || (signal && (signal.isAiPrimary || signal.isAiScalp || signal.isOmniQ))) && !(cfg && cfg.levEtfAiEntries === true)) {
+      && (strategy === "scalp" || (signal && (signal.isAiPrimary || signal.isAiScalp || signal.isOmniQ || signal.isPair))) && !(cfg && cfg.levEtfAiEntries === true)) {
     await log(DB, "INFO", symbol, "BUY 레버리지·인버스 ETF — AI·단타 진입 제외(" + strategy + ")");
     return cash;
   }
@@ -19751,6 +19792,9 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   /* [V33.578] OMNI-Q 잠정 크기 — 수량 상한·예산·실적 관문을 다 지난 ★뒤★ 곱한다(앞에서 곱하면 종목비중 상한에 눌려 반 크기가 사라진다). */
   if (signal && signal.isOmniQ && typeof signal.omqMult === "number" && signal.omqMult > 0 && signal.omqMult < 1) {
     qty = Math.floor(qty * signal.omqMult); if (qty <= 0) return cash;
+  }
+  if (signal && signal.isPair && PAIR_ROUTE.mult > 0 && PAIR_ROUTE.mult < 1) {   // [V33.594] 페어 잠정 크기 — 같은 자리(상한 뒤)
+    qty = Math.floor(qty * PAIR_ROUTE.mult); if (qty <= 0) return cash;
   }
 
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
@@ -19920,6 +19964,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
           aiSetup: signal.setup || null,
           // [V33.578] OMNI-Q 가 관리하는 보유 — 머리(5·20일) · 진입 점수 · 상태 · 채점일. 있으면 보유/청산을 OMNI-Q 띠가 정한다(omniqHoldOf).
           omq: (signal && signal.isOmniQ && signal.omq) ? signal.omq : null,
+          pair: (signal && signal.isPair && signal.pair) ? signal.pair : null,   // [V33.594] 페어 관리 보유 — z ≥ 0 이면 PAIR-REVERT
           tp1Done: false, originalQty: qty,
           // [LUX-AI] 청산 시 학습용 — 진입 피처/사건키/모델확률/밴딧 컨텍스트
           entryFeatures: (signal && Array.isArray(signal.mlFeat)) ? signal.mlFeat : null,
@@ -21538,7 +21583,7 @@ function sigStatsByMarket(rows, perMkt) {
      실적 관문에 맡긴다(시험이면 반 크기 · 8건 뒤 여전히 지면 다시 7일 차단). 실적 관문에 기록이 없는 AI 키(예: 한국 AI 스냅)는 종전대로 막는다.
      규칙 신호는 그대로다. 문턱(30건 · 기대값 < 0 · 평균 < 0)도 실적 관문 문턱도 하나도 안 바꾼다. */
 function negExpDefersToPerfGate(pg, market, signal, strategy) {
-  if (!(signal && (signal.isAiPrimary || signal.isAiScalp || signal.isOmniQ))) return false;
+  if (!(signal && (signal.isAiPrimary || signal.isAiScalp || signal.isOmniQ || signal.isPair))) return false;
   const e = pg && pg.keys && pg.keys[market + ":" + _entryTag(signal) + ":" + String(strategy || "").toUpperCase()];
   return !!(e && (e.mode === "probation" || (e.mode === "open" && _num(e.n, 0) >= PERF_GATE.minN)));
 }
@@ -22642,9 +22687,9 @@ async function runCommodityCycle(env, forceTrade) {
       const signals = evaluateBuySignals_swing(price, dayPct, daily, cfg);
       if (!signals || signals.length === 0) continue;
 
-      // 가장 강한 신호 1개 선택
-      let best = signals[0];
-      for (const s of signals) if ((s.weight || 0) > (best.weight || 0)) best = s;
+      // 가장 강한 신호 1개 선택 — [V33.594] 단독 진입 금지 신호(soloBlock)는 뺀다
+      const best = _swingPick(signals);
+      if (!best) continue;
 
       // 리스크 기반 사이징 — 주식 swing과 동일 공식 (cash.cm 기준)
       let actualAtrPct = (dailyAtr != null && price > 0) ? (dailyAtr / price) * 100 : null;
@@ -22935,8 +22980,8 @@ async function runAltSleeveCycle(env, key, shared) {
       void _aiReadyAlt;
       const signals = evaluateBuySignals_swing(price, dayPct, dd, cfg);
       if (!signals || signals.length === 0) continue;
-      let best = signals[0];
-      for (const s of signals) if ((s.weight || 0) > (best.weight || 0)) best = s;
+      const best = _swingPick(signals);   // [V33.594] soloBlock 제외
+      if (!best) continue;
       let actualAtrPct = (dailyAtr != null && price > 0) ? (dailyAtr / price) * 100 : null;
       const baseStopPct = swingRules.stopLossPct || cfg.stopLoss || 5.0;
       let stopDistPct = baseStopPct;
@@ -23421,6 +23466,10 @@ async function runTradingCycle(env) {
       /* [V33.578] OMNI-Q 진입 경로 — 이 시장 이번 사이클 체결 수 · 오늘 체결 수(처음 필요할 때 원장에서 1회) · 지금 관리 중인 보유 수 */
       let __omqBought = 0, __omqToday = null, __omqOpen = 0, __omqCand = 0;
       for (const _pk in positions) { const _pm = positions[_pk] && positions[_pk].meta; if (_pm && _pm.omq) __omqOpen++; }
+      /* [V33.594] 페어 경로 — 외부(GHA) 페어 · 이번 사이클/오늘 체결 · 관리 중 보유 */
+      let __pairs = null, __prBought = 0, __prToday = null, __prOpen = 0;
+      try { if (PAIR_ROUTE.enabled && (market === "us" || market === "kr")) __pairs = await getState(DB, "rv_pairs:" + market, null); } catch (e) { __pairs = null; }
+      for (const _pk in positions) { const _pm = positions[_pk] && positions[_pk].meta; if (_pm && _pm.pair) __prOpen++; }
       const feeRate = market === "us" ? mcfg.feeUS : mcfg.feeKR;
       const regime = regimes[market];
       // [V33.119] 국면 스냅샷을 남긴다 — AI 두뇌 창이 "폭등 레버리지가 왜 안 열리나" 를
@@ -24855,6 +24904,28 @@ async function runTradingCycle(env) {
                 } else if (_hv.mode === "hold") _omqHeld = true;
               } catch (e) {}
             }
+            /* [V33.594] ★페어 관리 보유★(PAIR_ROUTE) — z ≥ 0(스프레드 복귀) → PAIR-REVERT · 14달력일 → PAIR-TIME.
+               관리 중엔 위원회 청산(AI_EXIT·ROTATE)과 모델 청산(MODEL_EXIT)을 안 건다 — 걷기 검증이 잰 보유와 다르다. 손절·트레일·EOD 갭은 그대로. */
+            let _pairHeld = false;
+            if (held.meta && held.meta.pair && held.meta.pair.b) {
+              try {
+                const _pm = held.meta.pair;
+                let _pb = null;
+                try { const _qb = await getState(DB, "quote:" + _pm.b, null); if (_qb && _qb.price > 0) _pb = _qb.price; } catch (e0) {}
+                const _zNow = pairZ(_pm, price, _pb);
+                const _hd = (Date.now() - _num(held.opened_ts, Date.now())) / 86400000;
+                const _why = (_zNow != null && _zNow >= PAIR_ROUTE.exitZ) ? "PAIR-REVERT z " + _zNow.toFixed(2) + " (짝 " + _pm.b + ")"
+                           : (_hd >= PAIR_ROUTE.maxHoldCal) ? "PAIR-TIME " + _hd.toFixed(1) + "일 z " + (_zNow == null ? "?" : _zNow.toFixed(2)) : null;
+                if (_why) {
+                  await executeSell(DB, market, symbol, held, held.qty, price, _why, mcfg, cash);
+                  sold++;
+                  const _sk = Object.keys(positions).some(k => positions[k].symbol === symbol && k !== posKey);
+                  if (!_sk) { heldSymbols.delete(symbol); const _sc = SECTOR_MAP[symbol]; if (_sc && sectorCounts[_sc]) sectorCounts[_sc]--; }
+                  continue;
+                }
+                _pairHeld = true; _omqHeld = true;
+              } catch (e) {}
+            }
 
             // [V22] 모델기반 청산(Learned Exit) — 보유 포지션을 기술예측기로 재평가.
             //   강한 약세전환(상승확률↓·신뢰도↑)이면 청산/이익실현. 저점 투매 방지 가드(minPnlForExit).
@@ -24865,7 +24936,7 @@ async function runTradingCycle(env) {
             //   evaluateSell의 검증된 트레일/TP 시스템에 맡기고, 이 확률기반 조기청산은 trend 이외 전략만 적용.
             {
               const _ex = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.exit : null;
-              if (_ex && _ex.enabled !== false && held.strategy !== "trend" && daily && Array.isArray(daily.closes) && daily.closes.length >= 30) {
+              if (_ex && _ex.enabled !== false && held.strategy !== "trend" && !_pairHeld && daily && Array.isArray(daily.closes) && daily.closes.length >= 30) {   // [V33.594] 페어 관리 보유 제외
                 let _pr = null;
                 try { _pr = taPredictDirection({ closes: daily.closes, highs: daily.highs, lows: daily.lows, volumes: daily.volumes, opens: daily.opens }, AI_PARAMS); } catch (e) {}
                 const _pnlX = held.avg > 0 ? ((price - held.avg) / held.avg) * 100 : 0;
@@ -25417,6 +25488,26 @@ async function runTradingCycle(env) {
                 }
               }
             }
+            /* [V33.594] ★페어(PR_OU) 진입★(PAIR_ROUTE 주석) — 걷기 검증 통과한 시장만 · 위원회와 독립 · 원장 꼬리표 [PAIR] */
+            if (__pairs && __pairs.pairs && __pairs.pairs[symbol] && !heldSymbols.has(symbol) && !crashGate.blockNew && canTrade && closes.length >= 55
+                && __prBought < PAIR_ROUTE.maxPerCycle && __prOpen < PAIR_ROUTE.maxOpen && !strategiesHeldNow.has("snap")) {
+              let _pbNow = null;
+              try { const _qb = await getState(DB, "quote:" + __pairs.pairs[symbol].b, null); if (_qb && _qb.price > 0 && Date.now() - _num(_qb.ts, 0) < 3 * 86400000) _pbNow = _qb.price; } catch (e) {}
+              const _pp = pairRoutePick(__pairs, symbol, price, getMA(closes, 50), _pbNow, Date.now());
+              if (_pp) {
+                if (__prToday == null) {
+                  try { const _r = await DB.prepare("SELECT COUNT(*) AS n FROM trades WHERE market = ? AND side = 'BUY' AND ts > ? AND reason LIKE '[PAIR]%'").bind(market, Date.now() - 18 * 3600000).first(); __prToday = _num(_r && _r.n, 0); } catch (e) { __prToday = PAIR_ROUTE.maxPerDay; }
+                }
+                if (__prToday + __prBought < PAIR_ROUTE.maxPerDay) {
+                  const _prr = _pp.pr;
+                  stratResults.unshift({ strategy: "snap", weight: 1,
+                    signal: { name: "PR_OU", members: ["PR_OU"], isPair: true, isCounterTrend: true, weight: 1,
+                      pair: { b: _pp.b, alpha: _prr.alpha, beta: _prr.beta, mu: _prr.mu, sd: _prr.sd, z0: +_pp.z.toFixed(3), day: __pairs.day || null, at: Date.now() },
+                      detail: "페어 " + _pp.b + " z " + _pp.z.toFixed(2) + " · β" + _prr.beta + " · 반감기 " + _prr.hl + "일 · 검증 t" + (__pairs.bt && __pairs.bt.t) +
+                              " · 잠정 ×" + PAIR_ROUTE.mult + " ★롱다리만★" } });
+                }
+              }
+            }
           } catch (e) {}
 
           if (stratResults.length === 0) {
@@ -25857,7 +25948,7 @@ async function runTradingCycle(env) {
               const _ms = __mktStratStats && __mktStratStats[market + "/" + strategy];
               // [V33.578] OMNI-Q 진입도 같은 이유로 예외 — 남의 성적(규칙·위원회 추세)으로 새 모델을 막으면 검증이 불가능하다.
               //   OMNI-Q 자기 성적은 실적 관문(AI-Q:TREND)과 잠정 회수 규칙이 따로 본다.
-              const _isAiSc = !!(signal && (signal.isAiScalp || signal.isOmniQ));
+              const _isAiSc = !!(signal && (signal.isAiScalp || signal.isOmniQ || signal.isPair));   // [V33.594] 페어도 자기 성적(PAIR:SNAP)으로
               // [V33.116] 방향 조건 + ★유의성★ 을 모두 만족할 때만 막는다.
               //   pNeg 가 없는 구 스냅샷(2시간 캐시)에는 종전 동작을 유지한다 — 갱신되면 자동 전환.
               const _msSig = (_ms && typeof _ms.pNeg === "number")
@@ -26082,7 +26173,7 @@ async function runTradingCycle(env) {
               const _swc = mcfg.signalTypeWeights || {};
               if (_swc.perTradeKelly !== false) {
                 // [V33.578] OMNI-Q 경로는 위원회 p 로 크기를 정하지 않는다(OMNIQ_ROUTE — 크기는 잠정 ×0.5 가 정한다)
-                const _pK = (signal && typeof signal.mlMindP === "number" && !signal.isOmniQ) ? signal.mlMindP : null;
+                const _pK = (signal && typeof signal.mlMindP === "number" && !signal.isOmniQ && !signal.isPair) ? signal.mlMindP : null;
                 if (_pK != null && stopDist > 0) {
                   // b = 목표거리/손절거리. 래칫 구조상 실현 목표는 트레일이 결정하므로
                   //   전략별 tp1AtR(도달 R배수)을 목표 대용치로 쓴다(보수적으로 1.0 하한).
@@ -26437,7 +26528,7 @@ async function runTradingCycle(env) {
                 //     기권·관망 건은 제외한다(그건 확률 판단 자체를 안 한 것이다).
                 try {
                   // [V33.578] OMNI-Q 후보는 넣지 않는다 — 다른 모델이 고른 집합이라 AI_PRIMARY 백분위 문턱의 분포를 비튼다.
-                  if (_md && typeof _md.p === "number" && isFinite(_md.p) && !_md.observe && !_md.abstain && !signal.isOmniQ && !_regimeScalp(signal)
+                  if (_md && typeof _md.p === "number" && isFinite(_md.p) && !_md.observe && !_md.abstain && !signal.isOmniQ && !signal.isPair && !_regimeScalp(signal)
                       && !__candSyms.has(symbol + ":pdist")) {
                     __candSyms.add(symbol + ":pdist");
                     __pDistNew.push(+_md.p.toFixed(4));
@@ -26515,7 +26606,7 @@ async function runTradingCycle(env) {
                     continue;
                   }
                 }
-                if (signal.isOmniQ || _regimeScalp(signal)) {
+                if (signal.isOmniQ || signal.isPair || _regimeScalp(signal)) {   // [V33.594] 페어도 위원회가 막지도 키우지도 않는다(걷기 검증이 판정)
                   /* [V33.582] 패닉 인버스 단타도 같다 — 위원회는 평시 롱 진입 표본으로 학습됐다(폭락날 인버스 ETF 는 학습 분포 밖). 기록만 한다.
                      [V33.578] ★OMNI-Q 경로는 위원회가 막지도 키우지도 않는다★(OMNIQ_ROUTE 주석) — 기록만 남긴다.
                      (ml_gate · 메타컷 · 열화 halt · 저확신 · 위원회 크기 배수 전부 미적용 · 크기는 잠정 ×0.5 가 정한다) */
@@ -26705,7 +26796,8 @@ async function runTradingCycle(env) {
                 if (market === "cm") cycleSpent.cm += actuallySpent;
                 else cycleSpent[market][_bk] += actuallySpent;
                 bought++; __funBuy++;   // [V33.407] 깔때기 — 실제 체결
-                if (signal && signal.isOmniQ) { __omqBought++; __omqOpen++; }   // [V33.578] OMNI-Q 경로 상한은 체결 기준
+                if (signal && signal.isOmniQ) { __omqBought++; __omqOpen++; }
+                if (signal && signal.isPair) { __prBought++; __prOpen++; }   // [V33.594] 페어 경로 상한도 체결 기준   // [V33.578] OMNI-Q 경로 상한은 체결 기준
                 boughtThisSymbol = true;
                 heldSymbols.add(symbol);
                 strategiesHeldNow.add(strategy);
@@ -29995,6 +30087,34 @@ async function handleRequest(request, env, ctx, _inner) {
                              panelDay: model.panelDay, panelN: vr.panelN }, { headers: cors });
     }
     /* [V33.535] OMNI-Q 업로드(학습기) — 시장별 오늘 점수 + 관문 ①②③. 발언은 워커가 세 관문에서 ★다시★ 판정한다. */
+    /* [V33.594] 외부(GHA · pairs_ext.py) 페어 + 걷기 검증 — 저장만 한다(진입 판단은 PAIR_ROUTE). */
+    if (path === "/api/rv-pairs" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      let body = null; try { body = await request.json(); } catch (e) {}
+      const mk = body && (body.mkt === "us" || body.mkt === "kr") ? body.mkt : null;
+      if (!mk || !body.pairs || typeof body.pairs !== "object") return Response.json({ error: "mkt·pairs 필요" }, { status: 400, headers: cors });
+      const pairs = {};
+      for (const a of Object.keys(body.pairs).slice(0, 3000)) {
+        const v = body.pairs[a] || {};
+        if (!v.b || !(v.sd > 0) || !isFinite(v.alpha) || !isFinite(v.beta) || !isFinite(v.mu)) continue;
+        pairs[a] = { b: String(v.b), alpha: +v.alpha, beta: +v.beta, mu: +v.mu, sd: +v.sd, corr: _num(v.corr, null), hl: _num(v.hl, null), vr: _num(v.vr, null), z: _num(v.z, null) };
+      }
+      const bt = (body.bt && typeof body.bt === "object") ? body.bt : {};
+      const rec = { ts: Date.now(), day: String(body.day || ""), pairs: pairs, n: Object.keys(pairs).length,
+                    bt: { n: _num(bt.n, 0), meanEx: _num(bt.meanEx, null), t: _num(bt.t, null), win: _num(bt.win, null), meanRaw: _num(bt.meanRaw, null),
+                          pass: !!(bt.pass === true && _num(bt.n, 0) >= 100 && _num(bt.meanEx, 0) > 0 && _num(bt.t, 0) >= 2) } };   // 워커가 관문을 다시 판정
+      await setState(env.DB, "rv_pairs:" + mk, rec);
+      try { await log(env.DB, "INFO", null, "[페어] " + mk.toUpperCase() + " 외부 페어 " + rec.n + "쌍 · 걷기검증 n" + rec.bt.n + " 순초과 " + rec.bt.meanEx + "% t" + rec.bt.t + " → " + (rec.bt.pass ? "진입 허용" : "기록만")); } catch (e) {}
+      return Response.json({ ok: true, n: rec.n, pass: rec.bt.pass }, { headers: cors });
+    }
+    if (path === "/api/rv-pairs") {
+      const out = {};
+      for (const mk of ["us", "kr"]) {
+        const r = await getState(env.DB, "rv_pairs:" + mk, null);
+        out[mk] = r ? { ts: r.ts, day: r.day, n: r.n, bt: r.bt, entryNow: Object.keys(r.pairs || {}).filter(function (a) { return _num(r.pairs[a].z, 0) <= PAIR_ROUTE.entryZ; }).slice(0, 30) } : null;
+      }
+      return Response.json({ ok: true, route: PAIR_ROUTE, markets: out }, { headers: cors });
+    }
     if (path === "/api/omni-q" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       let body = null; try { body = await request.json(); } catch (e) {}

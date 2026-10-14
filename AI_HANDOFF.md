@@ -12,6 +12,15 @@
 
 ## Current handoff
 
+- V33.594 (10/14) ★수익률 원인 조사 · 실적 관문 측정 수리 · 원자재 손실 신호 · 페어 실가동★
+  - 원장 포지션 단위(매수~전량 매도 묶음): 한국 AI_PRIMARY 90포지션 −1.02%/포지션 t −1.88(한국 손실의 주원인) ·
+    미국 AI_PRIMARY +0.27% · 미국 SN_RSI2 +0.70% t 2.3(유일하게 유의 · AI 가동 중 규칙이라 버려짐) · 원자재 SW_VOL_SPK 16포지션 −1.19% = 원자재 손실 전부.
+  - 실적 관문 표본 = 포지션 하나(수량 가중 수익률). 종전엔 분할 익절 한 줄 한 줄을 따로 세 us:RULE:TREND +1.21%(실제 +0.14%) 같은 부풀림.
+  - soloBlock 이 어디서도 안 읽혀 SW_RSI_REV '단독 진입 금지'가 무력이었다 → _swingPick · SW_VOL_SPK 도 확인 신호로만.
+  - 페어: GHA(omniq_gha → pairs_ext.py)가 전 종목 페어 + 표본 밖 걷기 검증(n≥100 · 순초과>0 · t≥2) → POST /api/rv-pairs →
+    PAIR_ROUTE(통과 시장만 · ×0.5 · 하루 2 · 동시 4 · z≥0 PAIR-REVERT · 14일 PAIR-TIME · [PAIR][SNAP] 실적 관문). GET /api/rv-pairs 로 상태.
+    검증 미통과면 매수 0(기록만) — 첫 실데이터 결과는 GHA 로그 '[페어]' 줄.
+  - 사용자 결정 대기: 한국 AI_PRIMARY 중단 여부 · 미국 SN_RSI2 규칙 진입 허용 여부.
 - V33.592·593 (10/14) ★미적용 시안 전부 적용★ — 누적 실현손익 시장별 패널(0선·축·최고/최저 · renderPnlCurve) ·
   포지션 재설계(상단 '펼치기' → 미국·한국 카드마다 '보유 종목 N ▾'(#posHoldUS/KR · localStorage luxPzOpen) · 전체/미국/한국/대체 탭 ·
   PC 열 맞춘 줄 · 폰 카드). #positionsBox 는 숨겨 남김(호환). 남은 일: 페어트레이딩 PR_OU 실측.
