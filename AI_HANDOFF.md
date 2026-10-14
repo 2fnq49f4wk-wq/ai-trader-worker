@@ -12,6 +12,12 @@
 
 ## Current handoff
 
+- V33.597 (10/14 10Z) ★점검 결과 · 자동튠 진동 수리★
+  - 페어 실데이터 걷기 검증(GHA 01:16Z): 미국 204쌍 n2053 순초과 −0.21% t −1.49 · 한국 225쌍 n1196 −0.61% t −2.26 → 둘 다 미통과 →
+    PAIR_ROUTE 매수 0(미리 고정한 규칙대로). '싼 다리만 롱' 은 비용 뒤 시장을 못 이긴다. GET /api/rv-pairs 로 매 회차 재판정.
+  - V33.596 효과: 01:31Z 배포 전 한국 TREND_ALIGNMENT 매수 3건 −4.89% · −4.41% · −2.99% → 배포 뒤 ai_setup_kr 가 사이클당 ~79건 차단, 셋업 없는 매수 0.
+  - autoTune 긴급 튠(panicTune)이 '새 매도' 조건 없이 매 사이클 발동 → PANIC-SIZE 10→9 / 9→8 · SWGSIZE 9→10 진동(설정 쓰기 매번). 새 매도 + 30일 창.
+  - 확인: 메모리 초과 0 · 금요일 학습(평일 MIND 학습 로그 10/14 없음) · 폭등 레버리지 SC_SURGE_LEV 2건(둘 다 SCALP-STOP −2.4%) · GHA 스케줄은 수 시간 지연(OMNIQ 점수 5일 유효라 영향 없음).
 - V33.596 (10/14) ★AI_PRIMARY 수리 · 규칙 전략을 AI 가 배운다(사용자 결정)★
   - AI_PARAMS.aiPrimary.setupByMarket = { kr: ["TR_PULLBACK"] } — 한국 AI 는 셋업 없는 강세 추종(TREND_ALIGNMENT, −1.02%/포지션)을 안 하고
     추세 안 눌림(TR_PULLBACK +0.91%) 규칙 셋업이 뜬 종목만 위원회에 올린다(스냅 셋업 우선은 그대로). 막힌 수는 nobuy 'ai_setup_kr'.

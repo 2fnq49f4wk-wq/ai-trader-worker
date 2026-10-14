@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.596";
+const _BUILD_VER = "V33.597";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -21878,8 +21878,12 @@ async function autoTune(DB, cfg, regimes) {
         && (regime === "BEAR" || tuneState.lastRegime === "BEAR");
       let panicTrigger = false;
       if (v13.enabled && v13.panicTune && v13.panicTune.enabled) {
-        const pw = mtSells.slice(0, v13.panicTune.window);
-        if (pw.length >= v13.panicTune.window) {
+        /* [V33.597] ★같은 손실로 몇 분마다 다시 발동했다★(운영 10/14 01:11~01:30 · "PANIC-SIZE 10->9 · 9->8, SWGSIZE 9->10" 반복) —
+           정기 튠(10건마다) 게이트를 우회하는데 '새 매도' 조건이 없어, 한국처럼 한 달 전 손실이 창을 채우면 매 사이클 사이즈를 깎고
+           같은 튠 안의 성과 사이징이 다시 올리는 진동이 됐다(설정 쓰기도 매번). → 마지막 튠 뒤 새 매도가 있을 때만 · 최근 30일 매도만 센다. */
+        const _ptCut = Date.now() - 30 * 86400000;
+        const pw = mtSells.filter(function (t) { return _num(t.ts, 0) > _ptCut; }).slice(0, v13.panicTune.window);
+        if (pw.length >= v13.panicTune.window && sellCount > _num(tuneState.tradeCountAtLastTune, 0)) {
           const pl = pw.filter(function(t){ return (t.pnl_pct || 0) <= 0; }).length;
           if (pl >= v13.panicTune.lossThresh) panicTrigger = true;
         }

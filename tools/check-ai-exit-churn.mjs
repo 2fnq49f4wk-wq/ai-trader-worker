@@ -49,5 +49,8 @@ import vm from "node:vm";
       && /windowDays: 30/.test(S), "LOSS_STREAK 는 최근 30일 매도만 센다");
 }
 
+// [V33.597] 긴급 튠(panicTune)은 새 매도가 있을 때만 · 최근 30일 매도만 — 같은 손실로 몇 분마다 사이즈를 깎고 되돌리던 진동
+chk(/if \(pw\.length >= v13\.panicTune\.window && sellCount > _num\(tuneState\.tradeCountAtLastTune, 0\)\) \{/.test(S)
+    && /mtSells\.filter\(function \(t\) \{ return _num\(t\.ts, 0\) > _ptCut; \}\)/.test(S), "긴급 튠은 새 매도 · 30일 창에서만 발동");
 if (fails) { console.log("check-ai-exit-churn: FAIL " + fails); process.exit(1); }
 console.log("check-ai-exit-churn: ok");
