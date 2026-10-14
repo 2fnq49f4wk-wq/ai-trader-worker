@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.589";
+const _BUILD_VER = "V33.590";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -3916,7 +3916,10 @@ const DEFAULT_CFG = {
       enabled: true,
       lookbackTrades: 15,      // [V9.8] 12→15 (창을 넓혀 단발 클러스터의 비중을 낮춤)
       maxLosses: 10,           // [V9.8] 7→10 (한 번의 손절 묶음으로 쉽게 안 켜지게)
-      pauseMinutes: 45         // [V9.8] 90→45 (전면 차단 승격 시에도 봉쇄 시간 단축)
+      pauseMinutes: 45,        // [V9.8] 90→45 (전면 차단 승격 시에도 봉쇄 시간 단축)
+      /* [V33.589] 최근 N일 안의 매도만 센다(사용자 결정 10/14) — 한국은 9/17 이후 한 달 체결이 없어
+         9/11~9/17 손실 12건이 10/14 에도 '연속손실' 로 남아 사이즈 ×0.5 를 걸고 있었다. 창 안 매도가 15건 미만이면 판정 안 함. */
+      windowDays: 30
     },
     // (3) 패닉 게이트 — 지수 동시 급락(당일) 시 전 신규진입 차단.
     //   worstDayPct는 가장 약한 지수 1개라 노이즈가 있어, "평균 지수 낙폭"으로 판단.
@@ -15979,16 +15982,28 @@ async function analyzeMarketRegime(DB, market) {
 
 
 // equity 고점 추적 + 현재 낙폭(%) 반환. 신고점이면 peak 갱신.
+/* [V33.589] ★고점 키 하나를 두 곳이 서로 다른 모양으로 썼다★ — 폭락장 게이트는 숫자, 단타 레버리지 자리는 {v, ts}.
+   서로 상대 모양을 '없음' 으로 보고 매 사이클 지금 평가액으로 고점을 다시 적어 ★낙폭이 늘 0%★ 였다
+   (로그 "[V12 CRASH-GATE KR] dd=0.0%" · DD_L1/L2/L3 가 한 번도 못 켜짐). → 숫자로 통일 · 읽기는 두 모양 다 받는다 ·
+   쓰기는 여기 한 곳. 낙폭은 아이솔레이트에 남겨 autoTune(DDRISK)이 실제 계좌 낙폭을 쓴다. */
+function _eqPeakVal(v) {
+  if (typeof v === "number" && isFinite(v) && v > 0) return v;
+  if (v && typeof v === "object" && typeof v.v === "number" && isFinite(v.v) && v.v > 0) return v.v;
+  return null;
+}
+const __ddLast = {};   // market → { dd, ts } — 폭락장 게이트가 매 사이클 남긴다
 async function updateEquityPeak(DB, market, equity) {
   const key = "equity_peak:" + market;
   /* [V33.427c] ★엄격히 읽는다★ — 못 읽은 것을 '없다' 로 보면 지금 평가액이 새 고점으로 적혀
      ★누적 낙폭이 영구히 0 으로 지워진다★(폭락장 게이트가 눈을 감는다). 못 읽으면 던지고 이번 틱만 건너뛴다. */
-  let peak = await getState(DB, key, null, true);
-  if (typeof peak !== "number" || peak <= 0 || equity > peak) {
-    peak = equity;
+  const _raw = await getState(DB, key, null, true);
+  let peak = _eqPeakVal(_raw);
+  if (peak == null || equity > peak || typeof _raw !== "number") {   // 옛 {v,ts} 모양은 숫자로 한 번 고쳐 적는다
+    if (peak == null || equity > peak) peak = equity;
     await setState(DB, key, peak);
   }
   const ddPct = peak > 0 ? ((peak - equity) / peak) * 100 : 0;
+  __ddLast[market] = { dd: ddPct, ts: Date.now() };
   return { peak: peak, ddPct: ddPct };
 }
 
@@ -16013,8 +16028,8 @@ async function checkLossStreak(DB, market, lsCfg) {
   let rows;
   try {
     rows = await DB.prepare(
-      "SELECT pnl_pct FROM trades WHERE market = ? AND side = 'SELL' ORDER BY ts DESC LIMIT ?"
-    ).bind(market, lsCfg.lookbackTrades).all();
+      "SELECT pnl_pct FROM trades WHERE market = ? AND side = 'SELL' AND ts > ? ORDER BY ts DESC LIMIT ?"
+    ).bind(market, Date.now() - _num(lsCfg.windowDays, 30) * 86400000, lsCfg.lookbackTrades).all();   // [V33.589] 최근 windowDays 안의 매도만
   } catch (e) { return { paused: false }; }
   const sells = (rows && rows.results) ? rows.results : [];
   if (sells.length < lsCfg.lookbackTrades) return { paused: false };
@@ -21973,25 +21988,26 @@ async function autoTune(DB, cfg, regimes) {
       }
 
       // [V13-E] 드로다운 연동 riskPerTrade 축소 — equity 고점 낙폭이 클수록 거래당 리스크↓.
+      /* [V33.589] ★실제 계좌 낙폭 · 양방향★(사용자 결정 10/14 "둘 다 수정")
+         종전엔 '최근 매도 10건 손익% 합' 을 낙폭이라 불렀다 — 거래 하나가 계좌의 1~5% 라 단위가 다르다
+         (한국: 실제 낙폭 0% 인데 dd~29.2% → riskPerTrade 1.6→0.75). 그리고 내리기만 해서 한 번 깎이면 영영 안 돌아왔다(톱니).
+         → 폭락장 게이트가 매 사이클 잰 실제 낙폭(__ddLast · 30분 안)으로 목표값 = 기준 − (낙폭−문턱)×계수(하한 riskFloor)를 정하고
+           위로도 아래로도 그 값에 맞춘다. 실측값이 없으면(새 아이솔레이트) 이번 튠은 건너뛴다. */
       const ddrCfg = v13.drawdownRisk;
       if (ddrCfg && ddrCfg.enabled) {
-        const peak = await getState(DB, "equity_peak:" + market, null);
-        if (typeof peak === "number" && peak > 0) {
-          // 현 equity는 정확치 않아도 되니, 직전 사이클 저장값 대신 보수적으로 cash+미실현 근사 생략 →
-          //   여기서는 peak 대비 "직전 저장된 현재가 기반 추정"을 쓸 수 없으므로 ddPct는 메인 루프 로그를 참고.
-          //   대신 trades 기반 최근 손실 누적으로 근사 트리거: 최근 10건 합이 음수이고 클수록 강하게.
-          const recentSum = mtSells.slice(0, 10).reduce(function(s,t){ return s + (t.pnl_pct || 0); }, 0);
-          const approxDd = recentSum < 0 ? Math.min(30, -recentSum) : 0;  // 최근 10건 누적손실%를 드로다운 근사
-          if (approxDd >= ddrCfg.ddTrigger) {
-            const rb = (curMcfg.riskBasedSizing && curMcfg.riskBasedSizing.riskPerTrade) || (cfg.riskBasedSizing && cfg.riskBasedSizing.riskPerTrade) || 0.8;
-            const cut = (approxDd - ddrCfg.ddTrigger) * ddrCfg.perPctRiskCut;
-            const nr = Math.max(ddrCfg.riskFloor, +(rb - cut).toFixed(2));
-            if (nr < rb) {
-              const rbObj = mNew.riskBasedSizing || JSON.parse(JSON.stringify(curMcfg.riskBasedSizing || cfg.riskBasedSizing || {}));
-              rbObj.riskPerTrade = nr;
-              mNew.riskBasedSizing = rbObj;
-              mChanges.push("DDRISK " + rb + "->" + nr + "(dd~" + approxDd.toFixed(1) + "%)");
-            }
+        const _ddl = __ddLast[market];
+        if (_ddl && typeof _ddl.dd === "number" && isFinite(_ddl.dd) && (Date.now() - _ddl.ts) < 30 * 60000) {
+          const realDd = Math.max(0, _ddl.dd);
+          const base = (cfg.riskBasedSizing && typeof cfg.riskBasedSizing.riskPerTrade === "number") ? cfg.riskBasedSizing.riskPerTrade
+                     : ((DEFAULT_CFG.riskBasedSizing && DEFAULT_CFG.riskBasedSizing.riskPerTrade) || 0.8);
+          const cut = realDd > ddrCfg.ddTrigger ? (realDd - ddrCfg.ddTrigger) * ddrCfg.perPctRiskCut : 0;
+          const nr = Math.max(ddrCfg.riskFloor, +(base - cut).toFixed(2));
+          const rb = (curMcfg.riskBasedSizing && curMcfg.riskBasedSizing.riskPerTrade) || base;
+          if (Math.abs(nr - rb) >= 0.01) {
+            const rbObj = mNew.riskBasedSizing || JSON.parse(JSON.stringify(curMcfg.riskBasedSizing || cfg.riskBasedSizing || {}));
+            rbObj.riskPerTrade = nr;
+            mNew.riskBasedSizing = rbObj;
+            mChanges.push("DDRISK " + rb + "->" + nr + "(dd " + realDd.toFixed(1) + "%)");
           }
         }
       }
@@ -24432,11 +24448,11 @@ async function runTradingCycle(env) {
                             maeMult: _num(_mae.mult, 1), maeNote: _mae.note };
           } catch (e) {}
           try {
-            const _pk = await getState(DB, "equity_peak:" + market, null);
+            // [V33.589] 읽기만 — 고점은 폭락장 게이트(updateEquityPeak) 한 곳에서만 숫자로 쓴다(종전 {v,ts} 덮어쓰기가 낙폭을 0 으로 지웠다)
+            const _pk = _eqPeakVal(await getState(DB, "equity_peak:" + market, null));
             const _eqNow = (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : null;
             if (_eqNow) {
-              const _peak = Math.max(_num(_pk && _pk.v, 0), _eqNow);
-              if (!_pk || _peak > _num(_pk.v, 0)) { try { await setState(DB, "equity_peak:" + market, { v: _peak, ts: Date.now() }); } catch (e3) {} }
+              const _peak = Math.max(_num(_pk, 0), _eqNow);
               __ddPctNow = _peak > 0 ? Math.max(0, (1 - _eqNow / _peak) * 100) : 0;
             }
           } catch (e) {}
@@ -28838,7 +28854,7 @@ async function handleRequest(request, env, ctx, _inner) {
               _kk = ((p3 * b3 - (1 - p3)) / b3) * ((nW + nL) / ((nW + nL) + 30));
             }
             let _ddU = null;
-            try { const _pk2 = await getState(env.DB, "equity_peak:us", null); if (_pk2) _ddU = _num(_pk2.v, 0); } catch (e) {}
+            try { const _pk2 = _eqPeakVal(await getState(env.DB, "equity_peak:us", null)); if (_pk2) _ddU = _pk2; } catch (e) {}   // [V33.589] 숫자 모양
             // [V33.128] ★n=0 의 이유를 남긴다.★ 운영 스냅샷에서 scalpLev.n 이 0 인데 원장에는
             //   SC_VWAP 94건·SC_PULLBACK 36건이 있었다. 두 수치의 출처가 다르다 —
             //   전자는 signal_type_stats(청산 때 누적), 후자는 trades.reason 파싱.
