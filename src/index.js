@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.599";
+const _BUILD_VER = "V33.600";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -7145,6 +7145,29 @@ const BLS_MACRO = {
   ppi:          { id: "WPUFD4",         kind: "yoy",   label: "BLS PPI 최종수요 전년동월비" },
   unemployment: { id: "LNS14000000",    kind: "level", label: "BLS 실업률(계절조정)" }
 };
+/* [V33.600] ★3번째 원천 — 경제 캘린더(TradingView) 발표치★ 사용자 10/15: "물가지표 아직도 안 바뀜 · 안 들어오면 소스 변경".
+   BLS 무키 API 는 공유 IP 한도 · FRED CSV 는 워커에서 실패 · GHA 는 스케줄이 몇 시간 밀린다. 대시보드 캘린더는 발표 순간 실제치를 준다
+   (10/14 12:30Z 'Core Inflation Rate YoY' 2.6 · 'Inflation Rate YoY' 3.7 — BLS 공표치와 같다). 관측월이 더 새로울 때만 덮는다(순수 함수). */
+const MACRO_CAL_MAP = { "Inflation Rate YoY": "cpi", "Core Inflation Rate YoY": "core_cpi", "PPI YoY": "ppi", "Unemployment Rate": "unemployment",
+                        "Core PCE Price Index YoY": "core_pce" };
+function macroFromCalendar(us, events, nowMs) {
+  const took = [];
+  for (const e of (events || [])) {
+    if (!e || e.country !== "US" || e.actual == null || !isFinite(Number(e.actual))) continue;
+    const key = MACRO_CAL_MAP[String(e.title || "").trim()]; if (!key) continue;
+    const rel = Date.parse(e.date); if (!(rel > 0) || rel > nowMs) continue;
+    const relD = new Date(rel - 4 * 3600000).toISOString().slice(0, 10);
+    const obsYm = _ymAdd(relD.slice(0, 7), -(MACRO_LAG_M[key] || 1));
+    const obsDate = obsYm + "-01";
+    const cur = us[key];
+    if (cur && cur.obsDate && String(cur.obsDate) >= obsDate) continue;
+    const mon = +obsYm.slice(5, 7);
+    us[key] = { value: Number(e.actual).toFixed(1), asOf: obsYm + " (" + mon + "월분)", obsDate: obsDate, released: relD, fetchedAt: nowMs,
+                source: "경제 캘린더 발표치(" + e.title + ")", source_url: "https://www.tradingview.com/economic-calendar/" };
+    took.push(key + " " + us[key].asOf + " " + us[key].value);
+  }
+  return took;
+}
 async function runFredMacroUpdate(DB, force) {
   if (!force) { try { const at = await getState(DB, "macro_fred_at", 0); if (Date.now() - _num(at, 0) < 6 * 3600000) return { ok: true, cached: true }; } catch (e) {} }
   const prev = await getState(DB, "macro_data", { us: {}, kr: {}, updatedAt: null });
@@ -7210,6 +7233,8 @@ async function runFredMacroUpdate(DB, force) {
     for (const k of Object.keys(kr)) { next.kr[k] = Object.assign({ released: "", fetchedAt: Date.now() }, kr[k]); got++; }
     for (const k of ["base_rate", "cpi", "ktb3y", "ktb10y"]) if (!kr[k]) fail.push("kr." + k);
   } catch (e) { fail.push("kr"); }
+  // [V33.600] 3번째 원천 — 캘린더 발표치(앞의 원천이 다 막혀도 발표 당일 반영)
+  try { const _cal = await getState(DB, "econ_calendar", null); const _tk = macroFromCalendar(next.us, _cal && _cal.events, Date.now()); if (_tk.length) { got += _tk.length; fail.push("cal→" + _tk.join("/")); } } catch (e) {}
   // [V33.598] 발표일 · 다음 발표일 · 못 받은 최신 발표분(lagging) — 공식 일정표
   for (const mk of ["us", "kr"]) for (const key of Object.keys(next[mk] || {})) {
     if (key.charAt(0) === "_") continue;
@@ -33245,6 +33270,12 @@ async function handleRequest(request, env, ctx, _inner) {
         }).filter(function(e){ return e.title && e.date; });
         const payload = { events: events, ts: Date.now() };
         try { await setState(env.DB, ck, payload); } catch (e2) {}
+        // [V33.600] 캘린더가 새 발표치를 들고 오면 경제지표에도 바로 반영(엄격 읽기 — 못 읽으면 쓰지 않는다)
+        try {
+          const _md = await getState(env.DB, "macro_data", null, true);
+          if (_md && _md.us) { const _tk = macroFromCalendar(_md.us, events, Date.now());
+            if (_tk.length) { _md.updatedAt = Date.now(); await setState(env.DB, "macro_data", _md); await log(env.DB, "INFO", null, "[거시·캘린더] 새 발표분 " + _tk.join(" · ")); } }
+        } catch (e3) {}
         return payload;
       };  // ── __buildEcon 끝 ──
       if (cached && !__force) {
@@ -56058,7 +56089,7 @@ export default {
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
 export { trainWeekKey, TRAIN_STAGES, TRAIN_WEEKLY, omniqFresh, ALT_CADENCE, surgeScalpOn, _regimeScalp, evaluateScalpEntry, runTailRiskHedge, externalTrainAges, externalTrainRow, EXT_TRAIN_KEYS, OMNIQ_ROUTE, omniqRoutePick, omniqHoldOf, omniqRouteToday, _entryTag, negExpDefersToPerfGate, evaluateBuyBlocks, setStatesBatch, _ioTag, _setYAuthDB, yahooFetch, _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
-export { macroSchedOf, _blsParse, MACRO_SCHED, getStates, _STATE_LITE, getADX, _getADXCore, getHolidaySet, _indexFreshOpen, isMarketTradingDay, KR_LUNAR_HOLIDAYS, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
+export { macroFromCalendar, macroSchedOf, _blsParse, MACRO_SCHED, getStates, _STATE_LITE, getADX, _getADXCore, getHolidaySet, _indexFreshOpen, isMarketTradingDay, KR_LUNAR_HOLIDAYS, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
      실제로 돌린다. 두 고침 다 "성적으로만 드러나는" 종류라 문장으로는 못 지킨다. */

@@ -24,5 +24,10 @@ chk(B.X && B.X.length === 2 && B.X[0].d === "2025-09-01" && B.X[1].d === "2026-0
 chk(/const _blsOk = \{\};/.test(S) && /if \(mk === "us" && _blsOk\[key\]\) continue;/.test(S), "BLS 1순위 · 받은 지표는 FRED 건너뜀");
 chk(/_relToday && _hUtc >= 12\.58/.test(S) && /runFredMacroUpdate\(env\.DB, true\)/.test(S), "발표일 12:35Z 뒤 새 발표분을 못 받았으면 20분마다 재시도");
 chk(/var obs = r\.released \|\| r\.obsDate \|\| null;/.test(H) && /<th>발표일<\/th>/.test(H) && /r\.autoSched/.test(H), "화면: 발표일 칸 · 서버 일정표의 다음 발표일");
+{ const us = { cpi: { obsDate: "2026-09-01" }, core_cpi: { obsDate: "2026-08-01" } };
+  const tk = M.macroFromCalendar(us, [{ country: "US", title: "Core Inflation Rate YoY", actual: 2.6, date: "2026-10-14T12:30:00Z" },
+    { country: "US", title: "Inflation Rate YoY", actual: 3.7, date: "2026-10-14T12:30:00Z" }, { country: "US", title: "PPI YoY", actual: 5, date: "2026-10-15T12:30:00Z" }], now);
+  chk(tk.length === 1 && us.core_cpi.value === "2.6" && us.core_cpi.obsDate === "2026-09-01" && us.core_cpi.released === "2026-10-14", "[V33.600] 캘린더 발표치 → 더 새 관측월만 · 미래 발표 무시", JSON.stringify(tk)); }
+chk(/var diff = \+\(actual - forecast\)\.toFixed\(d\);/.test(H), "[V33.600] 서프라이즈 = 실제 − 예상(같은 단위)");
 if (fails) { console.log("check-macro-sched: FAIL " + fails); process.exit(1); }
 console.log("check-macro-sched: ok");
