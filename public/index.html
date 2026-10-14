@@ -188,8 +188,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.591">
-<script src="/neural-observatory.js?v=33.591" defer></script>
+<meta name="lux-build" content="V33.592">
+<script src="/neural-observatory.js?v=33.592" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -3698,6 +3698,15 @@ html[data-theme="light"] .rail-link .nv-ico,html[data-theme="light"] .m-brainbar
 .alt-asset-label .nv-i{display:inline-flex;vertical-align:-3px;margin-right:6px;color:#8FA3BF;}
 .alt-asset-label .nv-i .nv-ico{width:14px;height:14px;}
 .alt-asset-label .nv-i.nv-amber{color:#F5B451;}
+/* [V33.592] 누적 실현손익 — 시장별 패널 */
+.pc2-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:12px;}
+.pc2{border:1px solid var(--bd,#1C222C);border-radius:14px;background:var(--s1,#0B0E13);padding:12px 12px 6px;min-width:0;}
+.pc2-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;margin-bottom:4px;}
+.pc2-n{font-weight:600;font-size:13px;display:inline-flex;align-items:center;gap:6px;}
+.pc2-n i{width:8px;height:8px;border-radius:2px;display:inline-block;}
+.pc2-v{font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:600;}
+.pc2-s{font-size:11px;color:var(--t3,#7D8799);flex-basis:100%;}
+.pnl-svg2{width:100%;height:auto;display:block;font-family:'IBM Plex Mono',monospace;}
 </style>
 <script>
 /* [V33.156] 서비스워커 등록 — ★메인 스크립트와 분리★ 한다.
@@ -4506,7 +4515,7 @@ window.LUX_NV = {
       <div class="tc-totals" id="tcTotals"></div>
 
       <!-- [V98] 누적 실현손익 추이 -->
-      <div class="page-header" style="margin-top:22px;"><span class="page-title">📈 누적 실현손익 추이</span></div>
+      <div class="page-header" style="margin-top:22px;"><span class="page-title">누적 실현손익 추이</span></div>
       <div class="pnl-curve" id="pnlCurve" style="padding:0 14px;"></div>
 
       <!-- RECENT TRADES -->
@@ -10641,31 +10650,47 @@ window.LUX_NV = {
       series[key].pts.push({ t: t.ts, cum: cum[key] });
     });
     var keys = Object.keys(series).sort(function(a, b){ return series[a].ord - series[b].ord; });
-    var W = 760, H = 220, padL = 4, padR = 8, padT = 10, padB = 18;
-    var tMin = trades[0].ts, tMax = trades[trades.length - 1].ts; if (tMax <= tMin) tMax = tMin + 1;
-    // 시리즈는 통화가 달라 절대값 비교 불가 → 각 시리즈를 자기 범위로 정규화(0=시작선 공유)
-    var X = function(t){ return padL + (t - tMin) / (tMax - tMin) * (W - padL - padR); };
-    var leg = [], lines = '';
-    keys.forEach(function(k){
-      var s = series[k];
-      var vals = s.pts.map(function(p){ return p.cum; }).concat([0]);
-      var mn = Math.min.apply(null, vals), mx = Math.max.apply(null, vals);
-      var rng = (mx - mn) || Math.abs(mx) || 1;
-      var Y = function(v){ return padT + (1 - (v - mn) / rng) * (H - padT - padB); };
-      var pts = s.pts.map(function(p){ return X(p.t).toFixed(1) + ',' + Y(p.cum).toFixed(1); });
-      // 시작점 0
-      pts.unshift(X(s.pts[0].t).toFixed(1) + ',' + Y(0).toFixed(1));
-      lines += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + s.color + '" stroke-width="1.6" stroke-linejoin="round"/>';
-      var last = s.pts[s.pts.length - 1].cum;
-      var nm = TC_LABELS[k] || s.flag;
-      leg.push('<span class="pc-leg-item"><i style="background:' + s.color + ';"></i>' + s.flag + ' ' + nm + ' <b class="' + (last >= 0 ? 'pos' : 'neg') + '">' + tcFmt(last, s.cur) + '</b></span>');
+    /* [V33.592] ★읽기 쉬운 누적 실현손익(사용자: "지금 그래프는 알아보기 너무 어려워")★
+       종전엔 통화가 다른 선을 한 칸에 각자 정규화해 겹쳐 그려 0선·눈금이 없었다 → 시장별 작은 패널 각각:
+       자기 축(0 · 최고 · 최저 눈금) · 0 실선 · 위는 초록/아래는 빨강 면 · 최고/최저 점 · 마지막 값 · 시작/끝 날짜. */
+    var W = 640, H = 170, pl = 58, pr = 14, pt = 12, pb = 24;
+    var dfmt = function(t){ var d = new Date(t); return (d.getMonth() + 1) + '/' + d.getDate(); };
+    var panels = keys.map(function(k, ki){
+      var s = series[k], P = [{ t: s.pts[0].t, cum: 0 }].concat(s.pts);
+      var t0 = P[0].t, t1 = P[P.length - 1].t; if (t1 <= t0) t1 = t0 + 1;
+      var vs = P.map(function(p){ return p.cum; });
+      var mx = Math.max.apply(null, vs.concat([0])), mn = Math.min.apply(null, vs.concat([0]));
+      var pad = (mx - mn) * 0.08 || Math.abs(mx) * 0.1 || 1; mx += pad; mn -= pad;
+      var X = function(t){ return pl + (t - t0) / (t1 - t0) * (W - pl - pr); };
+      var Y = function(v){ return pt + (1 - (v - mn) / (mx - mn)) * (H - pt - pb); };
+      var line = P.map(function(p){ return X(p.t).toFixed(1) + ',' + Y(p.cum).toFixed(1); }).join(' ');
+      var z = Y(0), x0 = X(t0), x1 = X(t1);
+      var area = 'M' + x0.toFixed(1) + ',' + z.toFixed(1) + ' L' + line.replace(/ /g, ' L') + ' L' + X(P[P.length-1].t).toFixed(1) + ',' + z.toFixed(1) + 'Z';
+      var id = 'pcClip' + ki;
+      var hi = P[0], lo = P[0]; P.forEach(function(p){ if (p.cum > hi.cum) hi = p; if (p.cum < lo.cum) lo = p; });
+      var last = P[P.length - 1].cum, nm = TC_LABELS[k] || s.flag;
+      var tick = function(v, lab){ var y = Y(v); return '<line x1="' + pl + '" x2="' + (W - pr) + '" y1="' + y.toFixed(1) + '" y2="' + y.toFixed(1) + '" stroke="var(--bd2,#2a3140)" stroke-width="' + (v === 0 ? 1 : 0.5) + '"' + (v === 0 ? '' : ' stroke-dasharray="3 4"') + '/>' +
+        '<text x="' + (pl - 6) + '" y="' + (y + 3.5).toFixed(1) + '" text-anchor="end" font-size="10" fill="var(--t3,#7D8799)">' + lab + '</text>'; };
+      var ticks = tick(0, '0');
+      if (hi.cum > 0 && Y(hi.cum) < z - 14) ticks += tick(hi.cum, tcFmt(hi.cum, s.cur));
+      if (lo.cum < 0 && Y(lo.cum) > z + 14) ticks += tick(lo.cum, tcFmt(lo.cum, s.cur));
+      var dot = function(p, c){ return '<circle cx="' + X(p.t).toFixed(1) + '" cy="' + Y(p.cum).toFixed(1) + '" r="3" fill="' + c + '"/>'; };
+      var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" class="pnl-svg2" role="img" aria-label="' + nm + ' 누적 실현손익">' +
+        '<defs><clipPath id="' + id + 'u"><rect x="0" y="0" width="' + W + '" height="' + z.toFixed(1) + '"/></clipPath>' +
+        '<clipPath id="' + id + 'd"><rect x="0" y="' + z.toFixed(1) + '" width="' + W + '" height="' + H + '"/></clipPath></defs>' +
+        ticks +
+        '<path d="' + area + '" fill="rgba(52,211,153,.16)" clip-path="url(#' + id + 'u)"/>' +
+        '<path d="' + area + '" fill="rgba(248,113,113,.16)" clip-path="url(#' + id + 'd)"/>' +
+        '<polyline points="' + line + '" fill="none" stroke="#34D399" stroke-width="1.8" stroke-linejoin="round" clip-path="url(#' + id + 'u)"/>' +
+        '<polyline points="' + line + '" fill="none" stroke="#F87171" stroke-width="1.8" stroke-linejoin="round" clip-path="url(#' + id + 'd)"/>' +
+        (hi.cum > 0 ? dot(hi, '#34D399') : '') + (lo.cum < 0 ? dot(lo, '#F87171') : '') +
+        '<text x="' + x0 + '" y="' + (H - 6) + '" font-size="10" fill="var(--t3,#7D8799)">' + dfmt(t0) + '</text>' +
+        '<text x="' + x1 + '" y="' + (H - 6) + '" font-size="10" text-anchor="end" fill="var(--t3,#7D8799)">' + dfmt(t1) + '</text></svg>';
+      return '<div class="pc2"><div class="pc2-h"><span class="pc2-n"><i style="background:' + s.color + '"></i>' + nm + '</span>' +
+        '<span class="pc2-v ' + (last >= 0 ? 'pos' : 'neg') + '">' + tcFmt(last, s.cur) + '</span>' +
+        '<span class="pc2-s">' + s.pts.length + '건 청산 · 최고 ' + tcFmt(hi.cum, s.cur) + ' · 최저 ' + tcFmt(lo.cum, s.cur) + '</span></div>' + svg + '</div>';
     });
-    // 0 기준선
-    var zeroY = padT + (H - padT - padB) * 0.5;
-    box.innerHTML = '<div class="pnl-leg">' + leg.join('') + '</div>' +
-      '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" class="pnl-svg">' +
-      '<line x1="' + padL + '" y1="' + zeroY + '" x2="' + (W - padR) + '" y2="' + zeroY + '" stroke="var(--bd2)" stroke-width="0.5" stroke-dasharray="3 3"/>' +
-      lines + '</svg>';
+    box.innerHTML = '<div class="pc2-grid">' + panels.join('') + '</div>';
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -21067,13 +21092,13 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.591">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.591">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.591">
-<link rel="stylesheet" href="/model-evidence.css?v=33.591">
+<link rel="stylesheet" href="/brain-console.css?v=33.592">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.592">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.592">
+<link rel="stylesheet" href="/model-evidence.css?v=33.592">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.591">
-<script src="/model-evidence.js?v=33.591"></script>
-<script src="/workspace-ui.js?v=33.591"></script>
+<link rel="stylesheet" href="/liquid-metal.css?v=33.592">
+<script src="/model-evidence.js?v=33.592"></script>
+<script src="/workspace-ui.js?v=33.592"></script>
 </body>
 </html>
