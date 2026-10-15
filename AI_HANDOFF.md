@@ -12,7 +12,12 @@
 
 ## Current handoff
 
-- V33.603 (10/15) ★매매법 선택 AI 실전 경로(STRAT_ROUTE)★ (사용자: "리포트 말고 실제 제작") — ★로컬 커밋 · 미푸시(배포 권한 승인 대기)★
+- V33.604~605 (10/15) ★매매법 선택 AI — 종목별 선택(LightGBM) · OMNI-Q 피처 60 · 매매법별 실전 손절★
+  - strategy_router.walk_forward_lgb: (매매법·국면·종목 특성 10 + OMNI-Q 동물원 피처 분산 상위 60) → 순초과 예측 · 63일마다 재학습 · 걷기 검증.
+    수축 모델과 둘 다 검증해 통과한 쪽 중 평균 높은 모델로 picks. omni_q.LAST_X 로 피처를 빌림(재계산 없음).
+  - 워커: picks.stop(그 매매법 손절 % · ATR 배수 중 작은 쪽, 1.5~10%) → stopPctOverride 로 실전 손절.
+  - 다음: 국면에 폭락·폭등 상태 + 경제지표 발표 전후 피처 → 실적·뉴스 피처.
+- V33.603 (10/15) ★매매법 선택 AI 실전 경로(STRAT_ROUTE)★ (사용자: "리포트 말고 실제 제작") — (푸시·배포 완료)
   - 워커가 strat_router:{mkt} 의 picks(종목 → 지금 국면에서 기대수익 최고 매매법)를 실제로 산다 — 꼬리표 [SROUTE] · 잠정 ×0.5 · 사이클1/하루3/동시6 · 36h 신선도.
   - 관문(워커 재판정 · 미리 고정): 걷기 n≥100 · 평균>0 · t≥2 · 전부 사기보다 높음. 미통과 시장은 사지 않는다. 청산: 기존 손절·트레일 + 최대보유 → SR-TIME. 위원회 무관여.
   - 게이트 check-strategy-router 확장 · 핀 정규식 4개(omniq-route·pair-route·panic-inverse·perf-gate-memory) isStratRoute 허용. 전체 게이트 통과.

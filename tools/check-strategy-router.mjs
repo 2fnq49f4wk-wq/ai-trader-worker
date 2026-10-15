@@ -46,6 +46,9 @@ chk(M.STRAT_ROUTE.mult === 0.5 && /signal\.isStratRoute && STRAT_ROUTE\.mult/.te
 chk(/\? "SROUTE"/.test(S) && /LIKE '\[SROUTE\]%'/.test(S), "원장 꼬리표 [SROUTE] · 하루 상한");
 chk(/"SR-TIME "/.test(S) && /sr: \(signal && signal\.isStratRoute/.test(S), "그 매매법 최대 보유일 → SR-TIME 청산");
 chk(/"hold": ex\["hold"\], "horizon": cat\[r\.sid\]\["horizon"\]/.test(readFileSync(dir + "strategy_router.py", "utf8")), "학습기가 picks 에 보유일·기간을 싣는다");
+chk(/signal\.isStratRoute && signal\.sr && _num\(signal\.sr\.stop, 0\) > 0\)[^\n]*\n\s*\? \{ stopPctOverride: signal\.sr\.stop \}/.test(S), "[V33.605] 매매법별 손절폭이 실전 매수 손절로 들어간다");
+chk(M.stratRoutePick({ ...good, picks: { AAA: { ...good.picks.AAA, stop: 3.2 } } }, "AAA", now)?.stop === 3.2 && M.stratRoutePick({ ...good, picks: { AAA: { ...good.picks.AAA, stop: 30 } } }, "AAA", now)?.stop === null, "손절폭 1.5~10% 만 받는다");
+chk(/LAST_X\[mk\] = /.test(readFileSync(dir + "omni_q.py", "utf8")) && /omni_x=omni_q\.LAST_X/.test(readFileSync(dir + "omniq_gha.py", "utf8")), "[V33.605] OMNI-Q 피처를 매매법 선택이 빌려 쓴다");
 chk(/strategy_router\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")), "GHA 회차에 연결");
 if (fails) { console.log("check-strategy-router: FAIL " + fails); process.exit(1); }
 console.log("check-strategy-router: ok");

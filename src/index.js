@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.603";
+const _BUILD_VER = "V33.605";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13534,7 +13534,9 @@ function stratRoutePick(ext, symbol, nowMs) {
   const p = ext.picks[symbol];
   if (!p || !p.sid || !(_num(p.mu, 0) > 0)) return null;
   const hold = Math.max(1, Math.min(40, _num(p.hold, 10)));
-  return { sid: String(p.sid), mu: _num(p.mu, 0), n: _num(p.n, 0), hold: hold, horizon: p.horizon === "swing" ? "swing" : "snap" };
+  const stop = _num(p.stop, 0);
+  return { sid: String(p.sid), mu: _num(p.mu, 0), n: _num(p.n, 0), hold: hold, horizon: p.horizon === "swing" ? "swing" : "snap",
+           stop: (stop >= 1.5 && stop <= 10) ? +stop.toFixed(2) : null };   // [V33.605] 매매법별 손절폭 — 범위 밖이면 전략 기본 손절
 }
 function _omqHeadOn(st, h) {
   if (!st) return null;
@@ -25710,9 +25712,9 @@ async function runTradingCycle(env) {
                   if (!strategiesHeldNow.has(_st)) {
                     stratResults.unshift({ strategy: _st, weight: 1,
                       signal: { name: "SR_" + _sp.sid, members: [_sp.sid], isStratRoute: true, weight: 1,
-                        sr: { sid: _sp.sid, mu: _sp.mu, hold: _sp.hold, regime: __sr.regime || null, day: __sr.day || null, at: Date.now() },
+                        sr: { sid: _sp.sid, mu: _sp.mu, hold: _sp.hold, stop: _sp.stop, regime: __sr.regime || null, day: __sr.day || null, at: Date.now() },
                         detail: "매매법AI " + _sp.sid + " · 국면 " + (__sr.regime || "?") + " · 기대 +" + _sp.mu.toFixed(2) + "% (표본 " + _sp.n + ") · 검증 t" +
-                                (__sr.wf && __sr.wf.router && __sr.wf.router.t) + " · 최대 " + _sp.hold + "거래일 · 잠정 ×" + STRAT_ROUTE.mult } });
+                                (__sr.wf && __sr.wf.router && __sr.wf.router.t) +  " · 최대 " + _sp.hold + "거래일" + (_sp.stop ? " · 손절 −" + _sp.stop + "%" : "") + " · 잠정 ×" + STRAT_ROUTE.mult } });
                   }
                 }
               }
@@ -26986,7 +26988,9 @@ async function runTradingCycle(env) {
                       return n >= 10 ? s / n : null;
                     } catch (e) { return null; }
                   })() },
-                (llmInstr && llmInstr.stop_loss_adjustment && typeof llmInstr.stop_loss_adjustment.new_pct === "number")
+                (signal && signal.isStratRoute && signal.sr && _num(signal.sr.stop, 0) > 0)   // [V33.605] 매매법 선택 AI — 그 매매법·그 종목의 손절폭(걷기 검증과 같은 규칙)
+                  ? { stopPctOverride: signal.sr.stop }
+                : (llmInstr && llmInstr.stop_loss_adjustment && typeof llmInstr.stop_loss_adjustment.new_pct === "number")
                   ? { stopPctOverride: llmInstr.stop_loss_adjustment.new_pct } : null);
               // [V33.121] 피라미딩 — 수량은 pyramidDecide 가 정한 유닛으로 ★덮어쓴다★.
               //   위 사이징은 '새 포지션' 기준이라 이미 보유중인 물량과 위험예산이 겹친다.

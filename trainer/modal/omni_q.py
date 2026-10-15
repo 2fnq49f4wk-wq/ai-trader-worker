@@ -52,6 +52,9 @@ TRAIN_FROM_HOUR = 7              # 07시Z(한국장 마감 뒤) 이후 첫 회�
 MODEL_MAX_AGE_S = 7.5 * 86400    # 금요일 학습이 빠졌으면(캐시 만료·실패) 다음 회차가 학습한다 — 자가 복구
 
 
+LAST_X = {}   # [V33.605] 시장별 마지막 피처 텐서(날짜×종목×피처 · 횡단면 순위) — strategy_router 가 빌려 쓴다
+
+
 def should_train(mode, cached, names, now_ts=None):
     """이번 회차가 학습할지와 그 이유. mode: auto(기본) · train(강제) · score(채점만 — 캐시가 맞을 때만)."""
     import datetime as _dt
@@ -425,6 +428,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         X, names = _features_q(P, log)
         if X is None:
             continue
+        LAST_X[mk] = {"X": X, "names": names, "dates": list(C.index), "syms": list(C.columns)}   # [V33.605] 매매법 선택 AI 가 같은 피처를 쓴다(다시 계산하지 않는다)
         fwd = (C.shift(-(H + 1)) / C.shift(-1) - 1.0)
         y = fwd.rank(axis=1, pct=True).values
         fwdv = fwd.values

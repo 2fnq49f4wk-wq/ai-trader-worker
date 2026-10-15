@@ -210,8 +210,11 @@ LGB_RETRAIN = 63
 SIDS = [s["id"] for s in C.CATALOG]
 
 
+QCOLS = []   # attach_omni 가 채운다(시장마다)
+
+
 def _X(d):
-    X = d[list(FEATS)].astype(float).copy()
+    X = d[list(FEATS) + [c for c in QCOLS if c in d.columns]].astype(float).copy()
     X["sid"] = pd.Categorical(d["sid"], categories=SIDS).codes
     X["reg"] = pd.Categorical(d["reg"], categories=list(REGIMES)).codes
     return X
@@ -224,6 +227,51 @@ def _lgb_fit(hist):
            "feature_fraction": 0.8, "lambda_l2": 5.0, "verbose": -1, "num_threads": 4, "seed": 7}
     m = lgb.train(prm, lgb.Dataset(_X(hist), y, categorical_feature=["sid", "reg"]), num_boost_round=200)
     return m
+
+
+OMNI_MAX_FEATS = 60   # OMNI-Q 피처 166개 중 표본 수를 감당할 만큼만(분산이 큰 순)
+
+
+def attach_omni(df, P, ox, log=print):
+    """[V33.605] OMNI-Q 피처(동물원 166개 · 날짜별 횡단면 순위)를 표본에 붙인다 — 같은 날·같은 종목 값(앞을 보지 않는다).
+    피처가 많으면 표본이 모자라니 분산이 큰 OMNI_MAX_FEATS 개만 쓴다. 이름은 'q_' 접두."""
+    if not ox or df.empty:
+        return df, []
+    di = {d: k for k, d in enumerate(ox["dates"])}
+    si = {s: k for k, s in enumerate(ox["syms"])}
+    dates, syms = list(P["close"].index), list(P["close"].columns)
+    a = np.array([di.get(dates[i], -1) for i in df["i"].values])
+    b = np.array([si.get(syms[j], -1) for j in df["j"].values])
+    ok = (a >= 0) & (b >= 0)
+    if ok.mean() < 0.5:
+        log("      ⚠️ [매매법AI] OMNI-Q 피처 정렬 실패(%.0f%%) — 기본 특성만" % (ok.mean() * 100))
+        return df, []
+    X = ox["X"]
+    M = np.full((len(df), X.shape[2]), np.nan, dtype=np.float32)
+    M[ok] = X[a[ok], b[ok], :]
+    var = np.nanvar(M, axis=0)
+    keep = np.argsort(-np.nan_to_num(var))[:OMNI_MAX_FEATS]
+    cols = ["q_" + str(ox["names"][k]) for k in keep]
+    df = pd.concat([df.reset_index(drop=True), pd.DataFrame(M[:, keep], columns=cols)], axis=1)
+    return df, cols
+
+
+def omni_today(P, ox, cols, js):
+    """오늘(마지막 날) 종목 js 의 OMNI-Q 피처 — attach_omni 와 같은 열."""
+    if not cols:
+        return None
+    si = {s: k for k, s in enumerate(ox["syms"])}
+    names = {"q_" + str(n): k for k, n in enumerate(ox["names"])}
+    d = ox["dates"].index(P["close"].index[-1]) if P["close"].index[-1] in ox["dates"] else None
+    syms = list(P["close"].columns)
+    M = np.full((len(js), len(cols)), np.nan, dtype=np.float32)
+    if d is None:
+        return pd.DataFrame(M, columns=cols)
+    for r, j in enumerate(js):
+        b = si.get(syms[j])
+        if b is not None:
+            M[r] = ox["X"][d, b, [names[c] for c in cols]]
+    return pd.DataFrame(M, columns=cols)
 
 
 def walk_forward_lgb(df, T):
@@ -256,7 +304,7 @@ def walk_forward_lgb(df, T):
     return {"router": rt, "baseline": base, "pass": bool(ok), "days": BT_DAYS, "step": STEP, "model": "lgb"}
 
 
-def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=print):
+def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=print, omni_x=None):
     for market in ("us", "kr"):
         t0 = time.time()
         P = _panel(daily, mkt_by_sym, market, day_key_of)
@@ -264,6 +312,9 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             log("   · [매매법AI] %s 일봉 부족 — 건너뜀" % market)
             continue
         df, sig, reg = build_samples(P, market)
+        ox = (omni_x or {}).get(market)
+        df, qc = attach_omni(df, P, ox, log)
+        QCOLS[:] = qc
         T = P["close"].shape[0]
         wf_s = walk_forward(df, T)
         wf_s["model"] = "shrink"
@@ -294,6 +345,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 row.update({k: F[k][-1, j] for k in FEATS})
                 last.append(row)
         L = pd.DataFrame(last)
+        if len(L) and QCOLS:
+            L = pd.concat([L.reset_index(drop=True), omni_today(P, ox, QCOLS, L["j"].tolist())], axis=1)
         picks = {}
         if len(L):
             if wf.get("model") == "lgb":
@@ -312,13 +365,13 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         sel = sorted(({"sid": k[0], "mu": round(v[0], 4), "n": v[1]} for k, v in est.items() if k[1] == now and v[1] >= MIN_N_SEL),
                      key=lambda r: -r["mu"])
         day = str(P["close"].index[-1])
-        log("   · [매매법AI] %s 모델 %s(대안 %s 평균 %s%%) · 종목 %d · 표본 %d · 국면 %s · 걷기검증 n=%s 평균 %s%% t=%s (전부사기 %s%%) → %s · 오늘 후보 %d (%.0fs)" % (
-            market, wf.get("model"), wf["alt"]["model"], wf["alt"]["router"].get("mean"), len(syms), len(df), now, wf["router"]["n"], wf["router"]["mean"], wf["router"]["t"], wf["baseline"]["mean"],
+        log("   · [매매법AI] %s OMNI-Q 피처 %d · 모델 %s(대안 %s 평균 %s%%) · 종목 %d · 표본 %d · 국면 %s · 걷기검증 n=%s 평균 %s%% t=%s (전부사기 %s%%) → %s · 오늘 후보 %d (%.0fs)" % (
+            market, len(QCOLS), wf.get("model"), wf["alt"]["model"], wf["alt"]["router"].get("mean"), len(syms), len(df), now, wf["router"]["n"], wf["router"]["mean"], wf["router"]["t"], wf["baseline"]["mean"],
             "통과" if wf["pass"] else "미통과", len(picks), time.time() - t0))
         if upload and BASE:
             try:
                 import requests
-                body = {"mkt": market, "day": day, "regime": now, "nSamples": int(len(df)), "wf": wf, "table": table,
+                body = {"mkt": market, "omniFeats": len(QCOLS), "model": wf.get("model"), "day": day, "regime": now, "nSamples": int(len(df)), "wf": wf, "table": table,
                         "ranking": sel[:17], "picks": dict(sorted(picks.items(), key=lambda kv: -kv[1]["mu"])[:40])}
                 r = requests.post(BASE + "/api/strategy-router", headers=HDR, json=body, timeout=120)
                 log("   · [매매법AI] %s 업로드 %s" % (market, r.status_code))
