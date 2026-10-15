@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.626";
+const _BUILD_VER = "V33.627";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -5809,6 +5809,15 @@ function extKeepMaskUS(state) {
    V33.339 가 미국에서 고친 것과 ★같은 결함★ 이고, 한국만 안 고쳐져 있었다.
    COALESCE 는 "새 값이 아직 안 왔다" 는 뜻이지 "지난 세션 값을 써라" 가 아니다.
    ※ 창은 isExtendedHoursWindow("kr") 과 같은 시각을 쓴다(A-2 가 통합되면 그 한 곳을 볼 것). */
+/* [V33.627] 시간외 회차 차례(순수 함수) — 시간외 시장은 마지막 회차로부터 EXT_TURN_GAP_MS 지나야 다시 돈다 · 정규장 시장은 늘 앞에 ·
+   시간외끼리는 오래 기다린 시장 먼저(분의 짝·홀에 묶이지 않는다). */
+const EXT_TURN_GAP_MS = 100000;
+function extTurnDue(last, market, nowMs) { return !(last && nowMs - _num(last[market], 0) < EXT_TURN_GAP_MS); }
+function extTurnOrder(markets, last, nowMs, isExt) {
+  const reg = markets.filter(function (m) { return !isExt(m); });
+  const ext = markets.filter(function (m) { return isExt(m); }).sort(function (a, b) { return _num(last && last[a], 0) - _num(last && last[b], 0); });
+  return reg.concat(ext);
+}
 function krMarketStateNow(now) {
   return marketSessionNow("kr", now);   // [V33.351] 창은 marketWindows 한 곳에서
 }
@@ -8618,6 +8627,7 @@ function applyKrOverMarket(o, d) {
   // 15:30~15:40 은 장 마감 직후 · 넥스트레이드 재개 전 — nv 는 오늘 종가다(정규장 값으로 그대로 둔다)
   const _closeGap = inPost && kst.totalMin < 940;
   if (!_closeGap) o.regFreeze = true;   // 정규장 밖(마감 직후 10분 제외): nv 는 정규장 가격이 아니다 — 병합에서 저장된 종가를 지킨다
+  if (inPre) o.krPre = true;   // [V33.627] 장전 = 새 거래일 — 병합에서 전일 종가를 네이버 기준가(sv)로 넘긴다
   if (d.ms === "OPEN" && (inPre || (inPost && !_closeGap))) o.extLive = true;   // 시간외 체결이 살아 있다
   /* [V33.350 · A-10 해결] 여기서 값을 안 넣고 나가는 것 자체는 맞다 — 없는 체결을 지어내지 않는다.
      문제는 기록부가 한국에 대해 아무것도 지우지 않아, 안 넣은 자리에 ★지난 세션 값★ 이
@@ -9228,6 +9238,14 @@ async function fetchBatchQuotes(symbols, opts) {
           let pq = null; try { pq = JSON.parse(r.v); } catch (e) {}
           const nq = naverXV[String(r.k).slice(6)];
           if (!nq || !pq || !(_num(pq.price, 0) > 0)) continue;
+          /* [V33.627] ★장전엔 날이 바뀌었다★ — 사용자(10/16 08:07 KST): "프리마켓 시작했는데 데이터가 아직 어제 데이터".
+             실측: 삼성 장전 216,500 인데 저장 전일 종가 232,000(그저께 종가) · 정규 등락 −9.48%(어제 것). 네이버 기준가 sv = 210,000(어제 종가).
+             종전엔 장전에도 저장된 가격·전일 종가를 그대로 지켜 정규장이 열릴 때까지 하루씩 밀렸다.
+             네이버 기준가(sv)가 저장된 전일 종가와 달라졌으면(=네이버가 날을 넘겼으면) 전일 종가 = sv · 정규 가격 = sv(오늘 정규장 체결 전) · 등락 0. */
+          if (nq.krPre && nq.prevClose > 0 && Math.abs(nq.prevClose - _num(pq.prevClose, 0)) > 1e-9) {
+            nq.price = nq.prevClose; nq.dayPct = 0; nq.regKept = 1; nq.dayRoll = 1;
+            continue;
+          }
           nq.price = pq.price;
           if (_num(pq.prevClose, 0) > 0) nq.prevClose = pq.prevClose;
           nq.dayPct = (nq.prevClose > 0) ? ((nq.price - nq.prevClose) / nq.prevClose) * 100 : _num(pq.dayPct, 0);
@@ -22183,6 +22201,33 @@ async function refreshDailyShard(env, market, shard) {
   return { ok: ok, fail: fail, shard: shard, shardCount: total, done: shard >= total - 1 };
 }
 
+/* [V33.627] 시간외(장전·장후) 시세 매분 갱신 — 시간외인 시장마다 가격 샤드 전부(미국 4 · 한국 3). 시장별 EXT_SWEEP_MS 스로틀(엄격 읽기).
+   거래·평가는 하지 않는다(사이클 몫). 정규장은 사이클이 매분 받으므로 하지 않는다. */
+const EXT_SWEEP_MS = 50000;
+function extSweepMarkets(now) {
+  return ["kr", "us"].filter(function (m) { const s0 = marketSessionNow(m, now); return s0 === "PRE" || s0 === "POST"; });
+}
+async function extQuoteSweep(env) {
+  const DB = env.DB, mk = extSweepMarkets(new Date());
+  if (!mk.length) return 0;
+  let last = null;
+  try { last = (await getState(DB, "ext_sweep", null, true)) || {}; } catch (e) { return 0; }   // 못 읽으면 이번 분은 건너뛴다(사이클이 받는다)
+  const due = mk.filter(function (m) { return Date.now() - _num(last[m], 0) >= EXT_SWEEP_MS; });
+  if (!due.length) return 0;
+  for (const m of due) last[m] = Date.now();
+  try { await setState(DB, "ext_sweep", last); } catch (e) {}
+  let n = 0;
+  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+  for (const m of due) {
+    const tickers = m === "us" ? cfg.usTickers : cfg.krTickers;
+    const total = shardCount(tickers, PRICE_SHARD_SIZE);
+    for (let sh = 0; sh < total; sh++) {
+      try { const r = await refreshPriceShard(env, m, sh); n += _num(r && r.ok, 0); } catch (e) {}
+    }
+  }
+  return n;
+}
+
 // 하위호환: 기존 refreshShard 호출(있다면) → 가격 샤드로 위임
 async function refreshShard(env, market, shard) {
   return refreshPriceShard(env, market, shard);
@@ -24045,6 +24090,18 @@ async function runTradingCycle(env) {
        관측 구간이라 가볍게 끝나 한국까지 닿았다(그래서 장후만 나왔다).
        → 둘 다 정규장이 아니면 ★창이 짧은 한국(50분)을 먼저★. 미국 보유는 빠른 감시(runFastWatch)가 따로 지킨다. */
     if (marketsForQuotes.length === 2 && !usMarketHours && !krMarketHours) marketsForQuotes.reverse();
+    /* [V33.627] ★시간외 차례는 '분의 짝·홀' 이 아니라 '마지막으로 돈 지 얼마나 됐나' 로★ — 사용자(10/16 08:07 KST): "장전 데이터가 8시 07분에 처음 들어왔다".
+       실측: 08:00~08:06 동안 미국 장후 사이클만 돌았다. V33.616 의 '짝수 분 = 한국 · 홀수 분 = 미국' 은 사이클 하나가 ~2분(미국 시간외 평가)이라
+       사이클이 늘 홀수 분에 시작하면 한국 차례(짝수 분)가 계속 빗나갔다(위상 고정). 한 시장만 시간외일 때의 '짝수 분만' 도 같은 함정.
+       → 시장별 마지막 시간외 회차 시각(ext_turn · 엄격 읽기)을 보고 EXT_TURN_GAP_MS 이상 지난 시장만, 오래 기다린 시장부터 돈다. */
+    let __extTurn = null;
+    if (marketsForQuotes.some(function (m) { return !(m === "us" ? usMarketHours : krMarketHours); })) {
+      try { __extTurn = (await getState(DB, "ext_turn", null, true)) || {}; } catch (e) { __extTurn = null; }   // 못 읽으면 종전 짝·홀 규칙
+      if (__extTurn) {
+        const _ord = extTurnOrder(marketsForQuotes, __extTurn, Date.now(), function (m) { return !(m === "us" ? usMarketHours : krMarketHours); });
+        marketsForQuotes.length = 0; for (const _m of _ord) marketsForQuotes.push(_m);
+      }
+    }
     const marketsToTrade = [];
     // [FIX V8.8] 엔진이 꺼져 있으면 거래 대상에서 제외(가격 갱신은 marketsForQuotes로 계속).
     if (engineEnabled && usCanTrade) marketsToTrade.push("us");
@@ -24106,8 +24163,14 @@ async function runTradingCycle(env) {
         void _inTradeWin;
         /* [V33.616] ★두 시장이 다 시간외면 분마다 번갈아 돈다★ — 운영(10/15 10:29~10:52Z): 한국 장후(NXT) 평가가 사이클을 다 써서
            미국 프리마켓 차례가 23분간 안 왔다(시세 · 후보 스캔 정지). 짝수 분 = 한국 · 홀수 분 = 미국. 한 시장만 시간외면 종전대로 2분마다. */
-        const _bothExt = marketsForQuotes.length === 2 && !usMarketHours && !krMarketHours;
-        if (_bothExt ? (_m % 2) !== (market === "kr" ? 0 : 1) : (_m % 2 !== 0)) continue;
+        if (__extTurn) {   // [V33.627] 마지막 회차로부터 EXT_TURN_GAP_MS — 차례가 되면 바로 기록(같은 시각 다른 사이클이 겹쳐 돌지 않게)
+          if (!extTurnDue(__extTurn, market, Date.now())) continue;
+          __extTurn[market] = Date.now();
+          try { await setState(DB, "ext_turn", __extTurn); } catch (e) {}
+        } else {
+          const _bothExt = marketsForQuotes.length === 2 && !usMarketHours && !krMarketHours;
+          if (_bothExt ? (_m % 2) !== (market === "kr" ? 0 : 1) : (_m % 2 !== 0)) continue;
+        }
       }
       const positions = await getPositions(DB, market);  // key: "SYM::strategy"
       let __omniq = null;   // [V33.535] OMNI-Q 점수(발언 중일 때만 하위 절반 신규진입 차단)
@@ -55976,6 +56039,12 @@ export default {
         }
       } catch (e) { try { await log(env.DB, "WARN", null, "[R2] 표본 스냅샷 예외: " + (e && e.message)); } catch (e2) {} }
 
+      /* [V33.627] ★시간외 시세는 매분 두 시장 다★ — 사용자(10/16): "짝·홀수 분으로 나누지 말고 한 번에 · 완전 실시간으로".
+         무거운 건 시세가 아니라 평가다(미국 시간외 평가 ~2분 · 한국 시세 446종목은 네이버 1콜 0.3초). 그래서 시세만 따로,
+         거래 사이클(락) 앞에서 매분 받는다 — 사이클이 다른 시장을 평가하거나 락이 잡혀 있어도 시세는 멈추지 않는다. */
+      __prof.mark("extSweep");
+      try { await extQuoteSweep(env); } catch (e) {}
+
       __prof.mark("trading");
       // 1) 주식/지수 가격 갱신 + 거래 (가장 무거움)
       try { await runTradingCycle(env); }
@@ -56903,7 +56972,7 @@ export {
   // [V33.348] 원장 멱등성 검사용 — tools/check-ledger-idempotent.mjs 가 실제 SQLite 로 돌린다.
   stmtRecordTrade, stmtRecordTradeIfPos, KR_SELL_TAX_BY_YEAR,
   // [V33.350 · A-10] 한국 시간외 세션 마스크 — tools/check-ext-session-mask.mjs 가 실제로 호출한다.
-  krMarketStateNow, extKeepMaskKR, extKeepMaskUS, usMarketStateNow, extKeepMaskFor, sleeveZeros, SLEEVES,
+  krMarketStateNow, extKeepMaskKR, extKeepMaskUS, usMarketStateNow, extKeepMaskFor, extTurnOrder, extTurnDue, extSweepMarkets, sleeveZeros, SLEEVES,
   // [V33.351 · A-2/A-8] 세션 창 단일화 — tools/check-session-windows.mjs 가 분 단위로 대조한다.
   MARKET_HOURS, MARKET_HOURS_SPECIAL, marketWindows, marketSessionNow, marketLocalTime, marketLocalDate,
   isMarketOpen, isTradingWindow, isQuoteRefreshWindow, isExtendedHoursWindow, minutesToClose,
