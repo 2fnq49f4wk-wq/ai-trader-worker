@@ -295,7 +295,7 @@ chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"
   chk(/id="page-nnviz" data-brain-view="operations"/.test(H) && !/data-brain-tab="playbook"/.test(H) && /<section id="pbObs"/.test(H), "[V33.612] 매매법 AI 실시간 판정은 01 작동 화면 안(00 탭 없음)");
   chk(/if \(view === 'operations'\) pbObs\(\);/.test(U) && /playbook-observatory\.js/.test(U), "01 작동 화면을 열 때 지연 로드");
   { const ST = readFileSync(new URL("../studio/src/models.ts", import.meta.url), "utf8"), BS = readFileSync(new URL("../public/brain-studio.js", import.meta.url), "utf8");
-    chk(/key: "playbook"/.test(ST) && /\/api\/playbook/.test(readFileSync(new URL("../studio/src/data.ts", import.meta.url), "utf8")) && /매매법 현황/.test(BS), "[V33.612] 02 모델 구조(Brain Studio)에 '매매법 AI' 모델 · 번들 반영"); }
+    chk(/key: "playbook"/.test(ST) && /\/api\/playbook/.test(readFileSync(new URL("../studio/src/data.ts", import.meta.url), "utf8")) && /판단 흐름/.test(BS) && /규칙 비교/.test(BS) && /후보 폭 비교/.test(BS), "[V33.612·632] 02 모델 구조(Brain Studio)에 '매매법 AI' 모델 · 새 구조관측(판단 흐름 · 실제 표) 번들 반영"); }
   chk(/window\.PlaybookObs/.test(O) && /\/api\/playbook/.test(O) && !/https?:\/\//.test(O.replace(/\/\*[\s\S]*?\*\//g, "")), "관측창은 /api/playbook 만 읽는다(외부 주소 없음)");
   chk(/recent: recent, exits: exits, open: open/.test(S), "관측창 API: 최근 매수·청산·보유"); }
 { // [V33.610] 시뮬과 실전 맞추기

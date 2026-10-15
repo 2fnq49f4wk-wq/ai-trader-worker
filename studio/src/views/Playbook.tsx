@@ -1,10 +1,10 @@
 /* [V33.612] 매매법 AI(Playbook-Sim) — 모델 구조창의 주력 모델.
    데이터는 /api/playbook 그대로(값을 지어내지 않는다): 시장별 검증 · 선택 규칙 비교 · 판정 구간에서 고른 매매법 · 매매법 정의. */
 import { type ReactNode } from "react";
-import * as Tabs from "@radix-ui/react-tabs";
 import { type Tone, f1, n0, ago } from "../models";
 import { Badge, Bars, Empty, Facts, Kpis, Section } from "./ui";
 import { PlaybookBook } from "./PlaybookBook";
+import { PlaybookDeck } from "./PlaybookDeck";
 
 const NAMES: Record<string, string> = {
   TREND_ALIGN: "추세 정렬", TR_BREAKOUT: "20일 돌파", RS_LEADER: "상대강도 상위", VT_TREND: "저변동 추세",
@@ -32,11 +32,6 @@ export function pbState(j: any): { label: string; tone: Tone } {
   return { label: "대기", tone: "idle" };
 }
 
-function verdict(v: any): { v: string; hint: string; tone: Tone } {
-  if (!v) return { v: "—", hint: "표 없음", tone: "idle" };
-  if (v.why) return { v: "—", hint: v.why, tone: "idle" };
-  return { v: pc(v.mean), hint: "아무거나 " + pc(v.base) + " · t " + f1(v.t, 2) + " · " + n0(v.n) + "건", tone: v.pass ? "ok" : "bad" };
-}
 
 /* [V33.615] 구조 탭 = 매매법 현황(설명 없이 숫자만) — 지금 후보에서 뜬 수 · 지금 고른 수 · 판정 구간에서 고른 수 · 모의 평균·승률 · 보유 · 매도 규칙 */
 function Market({ mk, r }: { mk: string; r: any }) {
@@ -86,27 +81,17 @@ function Market({ mk, r }: { mk: string; r: any }) {
 }
 
 export function Playbook({ d, head }: { d: any; head: ReactNode }) {
-  const us = d.markets?.us, kr = d.markets?.kr, a = verdict(us?.daily?.val), b = verdict(kr?.daily?.val);
+  const us = d.markets?.us, kr = d.markets?.kr;
   const caps = d.caps || {};
+  /* [V33.632] 새 구조관측(PlaybookDeck · 실제 표 수치) — 종전 매매법 카드·근거·상세는 표 탭 뒤에 그대로 */
   return (
     <div>
       {head}
-      <div className="mt-4"><Kpis items={[
-        { k: "미국 일봉 판정", v: a.v, hint: a.hint, tone: a.tone },
-        { k: "한국 일봉 판정", v: b.v, hint: b.hint, tone: b.tone },
-        { k: "주력 시장", v: [us?.primary ? "미국" : "", kr?.primary ? "한국" : ""].filter(Boolean).join("·") || "없음", hint: "통과 시장부터 AI_PRIMARY 자동 퇴역", tone: us?.primary || kr?.primary ? "ok" : "warn" },
-        { k: "매매법 보유", v: n0((d.open || []).length) + "건", hint: "최근 매수 " + n0((d.recent || []).length) + " · 청산 " + n0((d.exits || []).length) },
-      ]} /></div>
-      <Tabs.Root defaultValue="s" className="mt-5">
-        <Tabs.List className="flex gap-5 border-b border-line">
-          {[["s", "매매법 현황"], ["e", "근거"], ["f", "상세"]].map(([v, t]) => (
-            <Tabs.Trigger key={v} value={v} className="-mb-px border-b-2 border-transparent pb-2 text-[13px] text-ink-3 data-[state=active]:border-rose data-[state=active]:text-ink">{t}</Tabs.Trigger>))}
-        </Tabs.List>
-        <Tabs.Content value="s" className="pt-4 outline-none">
-          <PlaybookBook d={d} />
-        </Tabs.Content>
-        <Tabs.Content value="e" className="pt-1 outline-none"><Market mk="us" r={us} /><Market mk="kr" r={kr} /></Tabs.Content>
-        <Tabs.Content value="f" className="pt-4 outline-none"><Facts rows={[
+      <div className="mt-5">
+        <PlaybookDeck d={d} extra={[
+          { label: "매매법 카드", node: <PlaybookBook d={d} /> },
+          { label: "근거 · 청산 진단", node: <div><Market mk="us" r={us} /><Market mk="kr" r={kr} /></div> },
+          { label: "운용 설정", node: <Facts rows={[
           ["후보", "OMNI-Q 5일 상위 미 " + Math.round((1 - (us?.daily?.val?.candQ ?? d.route?.candMin ?? 0.8)) * 100) + "% · 한 " + Math.round((1 - (kr?.daily?.val?.candQ ?? d.route?.candMin ?? 0.8)) * 100) + "% · 학습기 검증이 20·40·60% 중 고름"],
           ["일봉 진입 시간", "마감 전 " + (d.route?.dailyEntryWin ?? 60) + "분(시뮬 = 신호 봉 종가 체결)"],
           ["단타 진입", "마감까지 " + (d.route?.intraMinToClose ?? 30) + "분 넘게 남았을 때 · 사이클당 분봉 조회 " + (d.route?.intraFetchMax ?? "—") + "종목"],
@@ -116,8 +101,9 @@ export function Playbook({ d, head }: { d: any; head: ReactNode }) {
           ["주력 크기", "×" + (caps.primary?.mult ?? "—") + " · 하루 " + (caps.primary?.maxPerDay ?? "—") + " · 동시 " + (caps.primary?.maxOpen ?? "—")],
           ["미국 선택 규칙", ruleTxt(us?.daily?.val?.rule)], ["한국 선택 규칙", ruleTxt(kr?.daily?.val?.rule)],
           ["표 갱신", "미 " + ago(us?.ts) + " · 한 " + ago(kr?.ts)],
-        ]} /></Tabs.Content>
-      </Tabs.Root>
+        ]} /> },
+        ]} />
+      </div>
     </div>
   );
 }

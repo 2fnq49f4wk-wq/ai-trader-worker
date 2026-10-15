@@ -12,6 +12,11 @@
 
 ## Current handoff
 
+- V33.632 (10/16) ★매매법 AI 구조관측 새 디자인 — 사이트 적용 · 실시간 연결★ — 사용자: "그 디자인 사이트에 적용하고 실시간 연결해"(시안 artifact UxjbUWvVsqrZCXv2dagggo).
+  studio/src/views/PlaybookDeck.tsx: /api/playbook 그대로 — 시장 전환 · 기준일·국면·표 나이·공황·제동 칩 · 판정 요약(평균 vs 무작위 양방향 막대 · t · 승률·표본 · 주력 전환 독립/연속) ·
+  판단 흐름 7단계(후보 폭 · 신호 수 · 공황 차단 · 칸 수 · 고른 규칙 · 거부권 · 판정) · 표 탭: 매매법(tune 진단 판정 전/판정 · 고른 수 byPb · 거르개 · 정렬) ·
+  규칙 비교(valCmp · 고른 규칙 강조) · 후보 폭 비교(candCmp) · 5분 단타 · 종전 매매법 카드·근거·운용 설정은 뒤 탭. 외부 글꼴 없음(CSP) — 시스템 글꼴 · 고정폭 숫자.
+  Playwright(라이브 데이터 + 새 번들): 오류 0 · 가로 넘침 0(1400 · 390).
 - V33.631 (10/16) ★OMNI-Q 구조 관측 — 옛 OMNI 처럼 노드 전부(실제 구조)★ — 사용자: "omni 구조관측에 옛날처럼 노드들 볼 수 있는 기능".
   - 학습기 omni_q._struct(bst, names): 피처 전부 이름 · gain 비중 · 분기 수 · 나무마다 실제 분기 피처 번호(앞 240그루) · 잎 수 → 업로드 body.struct(학습·채점만 둘 다).
   - 워커 omniqStructClean(모양·범위 검증) → omniq_struct:{mk} 따로 저장(omni-status 가볍게) · GET /api/omniq-struct?mkt=.
