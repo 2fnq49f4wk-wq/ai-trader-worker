@@ -12,6 +12,19 @@ sys.path.insert(0, HERE)
 import modal_train as mt  # noqa: E402
 
 target = os.environ.get("TRAIN_TARGET") or "ablate"
+# [V33.609] 위원회 모델 퇴역 — 미국·한국 둘 다 매매법 AI 가 주력(검증 통과 · 신선)이면 위원회 학습을 하지 않는다(워커 pbPrimaryOn 과 같은 판정).
+try:
+    import time as _t
+    import requests as _rq
+    _j = _rq.get(os.environ["BASE_URL"].rstrip("/") + "/api/playbook", timeout=30).json()
+    _ok = lambda v: bool(v and v.get("pass", {}).get("daily") and (_t.time() * 1000 - (v.get("ts") or 0)) <= 36 * 3600 * 1000)  # noqa: E731
+    if all(_ok((_j.get("markets") or {}).get(m)) for m in ("us", "kr")) and os.environ.get("FORCE_COMMITTEE") != "1":
+        print("   · [퇴역] 매매법 AI 가 미·한 주력 — 위원회 학습 건너뜀(강제로 돌리려면 FORCE_COMMITTEE=1)")
+        raise SystemExit(0)
+except SystemExit:
+    raise
+except Exception as _e:  # noqa: BLE001
+    print("   · 매매법 AI 상태 확인 실패(%s) — 종전대로 학습" % _e)
 if target in ("all", "dnn"):
     raise SystemExit("GitHub Actions 러너엔 GPU 가 없다 — all·dnn 은 Modal 에서만(단계 이름을 고르라)")
 fn = mt.train_job

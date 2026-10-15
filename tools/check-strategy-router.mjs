@@ -34,7 +34,7 @@ if (o) {
   chk(o.leak === false, "미래 라벨 누출 없음");
 }
 const S = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
-chk(/mult: 0\.5/.test(S.slice(S.indexOf("const STRAT_ROUTE"), S.indexOf("const STRAT_ROUTE") + 200)) && /signal\.isStratRoute && STRAT_ROUTE\.mult/.test(S), "잠정 크기 ×0.5");
+chk(/mult: 0\.5/.test(S.slice(S.indexOf("const STRAT_ROUTE"), S.indexOf("const STRAT_ROUTE") + 200)) && /signal\.isStratRoute && !\(signal\.sr && signal\.sr\.primary\) && STRAT_ROUTE\.mult/.test(S), "잠정 크기 ×0.5(주력 전환 시장 제외)");
 chk(/\? "SROUTE"/.test(S) && /LIKE '\[SROUTE\]%'/.test(S), "원장 꼬리표 [SROUTE] · 하루 상한");
 chk(/"SR-TIME "/.test(S) && /sr: \(signal && signal\.isStratRoute/.test(S), "그 매매법 최대 보유일 → SR-TIME 청산");
 chk(/"hold": ex\["hold"\], "horizon": cat\[r\.sid\]\["horizon"\]/.test(readFileSync(dir + "strategy_router.py", "utf8")), "학습기가 picks 에 보유일·기간을 싣는다");

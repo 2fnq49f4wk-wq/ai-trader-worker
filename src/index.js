@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.608";
+const _BUILD_VER = "V33.609";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13530,6 +13530,11 @@ const STRAT_ROUTE = { enabled: true, maxPerCycle: 1, maxPerDay: 3, maxOpen: 6, m
    ④ 매도는 그 매매법 규칙: 손절 %(stopPctOverride) · 익절 % → SR-TP · 최대 보유 → SR-TIME · 단타는 마감 10분 전 SR-EOD.
    경계(PB_KEYS)는 학습기와 같아야 한다 — check-playbook 이 대조한다. 위험 관문은 전부 그대로 지난다. */
 const PB_KEYS = { rsi: [30, 50, 70], gap20: [-5, 0, 5], ret5: [-3, 3], vr: [0.8, 1.5], daypct: [-2, -0.5, 0.5, 2], tod: [30, 120, 270] };
+/* [V33.609] ★자동 주력 전환★(사용자 10/15: "AI_PRIMARY 퇴역 · 새 매매법 AI 주력 — 단, 통과할 때까지 AI_PRIMARY 유지")
+   그 시장의 매매법 AI 일봉 검증이 통과하고 표가 신선하면(pbPrimaryOn) 그 시장에서 AI_PRIMARY 신규 진입을 끈다. 미통과면 AI_PRIMARY 그대로.
+   전환된 시장은 매매법 AI 상한을 주력 값(PB_PRIMARY_CAPS)으로 올리고 크기는 ×1.0. */
+const PB_PRIMARY_CAPS = { maxPerCycle: 2, maxPerDay: 6, maxOpen: 12, mult: 1.0 };
+function pbPrimaryOn(st, nowMs) { return !!(st && st.daily && _pbPass(st.daily.val) && (nowMs - _num(st.ts, 0)) <= STRAT_ROUTE.freshMs); }
 const PB_ROUTE = { candMin: 0.80, minWin: 0.5, intraMinToClose: 30, eodMin: 10, regMin: 390, intraFetchMax: 8 };   // intraFetchMax: 사이클당 후보 분봉 조회 상한
 function _pbBk(x, e) { if (!(typeof x === "number" && isFinite(x))) return e.length; let k = 0; while (k < e.length && x >= e[k]) k++; return k; }
 function pbDailyKeys(reg, rsi, gap20, ret5, vr, evNear) {
@@ -13671,16 +13676,20 @@ function pbLiveDaily(daily, price, prevClose) {
   else { D.c[n - 1] = price; D.h[n - 1] = Math.max(D.h[n - 1], price); D.l[n - 1] = Math.min(D.l[n - 1], price); }
   return D;
 }
-// 뜬 매매법마다 '그 매매법이 있는 가장 구체적인 칸' 값(이미 넓은 칸 쪽으로 수축됨) → (평균 > 0 · 성공확률 ≥ 50%) 중 평균 최대. 학습기 choose 와 같은 규칙.
-function pbChoose(table, keys, fired) {
+/* 뜬 매매법마다 '그 매매법이 있는 가장 구체적인 칸' 값(이미 넓은 칸 쪽으로 수축됨) → (점수 > 0 · 성공확률 ≥ 50%) 중 점수 최대. 학습기 choose 와 같은 규칙.
+   [V33.609] rule = 학습기 검증이 고른 선택 규칙 { score: "m"(평균) | "lcb"(하한 = 평균 − 표준오차), level: "fine" | "regime" | "global" }.
+   keys = [전체 칸, 국면+2조건, 국면, "*"] — regime 이면 뒤 둘만 · global 이면 "*" 만 본다. */
+function pbChoose(table, keys, fired, rule) {
   if (!table || !fired || !fired.length) return null;
+  const sc = rule && rule.score === "lcb" ? 3 : 2;
+  const lv = rule && rule.level === "global" ? keys.slice(-1) : rule && rule.level === "regime" ? keys.slice(-2) : keys;
   let best = null;
   for (const pb of fired) {
     let v = null;
-    for (const k of keys) { const row = table[k]; if (row && Array.isArray(row[pb])) { v = row[pb]; break; } }
+    for (const k of lv) { const row = table[k]; if (row && Array.isArray(row[pb])) { v = row[pb]; break; } }
     if (!v) continue;
-    const n = _num(v[0], 0), w = _num(v[1], 0), m = _num(v[2], 0);
-    if (m > 0 && w >= PB_ROUTE.minWin && (!best || m > best.m)) best = { pb: pb, n: n, w: w, m: m };
+    const n = _num(v[0], 0), w = _num(v[1], 0), m = _num(v[2], 0), lcb = _num(v[3], NaN), s = sc === 3 ? lcb : m;
+    if (s > 0 && w >= PB_ROUTE.minWin && (!best || s > best.s)) best = { pb: pb, n: n, w: w, m: m, lcb: lcb, s: s };
   }
   return best;
 }
@@ -13699,7 +13708,7 @@ function pbRoutePick(st, ctx, nowMs) {
       const ma20 = _pbSma(D.c, 20, i), rsi = _pbRsiEwm(D.c, 14)[i];
       const ret5 = D.c[i - 5] > 0 ? (px / D.c[i - 5] - 1) * 100 : null;
       const vr = _pbVr(D.v, i - 1);   // 어제(완성 봉) 거래량 배수 — 오늘 봉은 아직 덜 찼다
-      const ch = pbChoose(st.daily.table, pbDailyKeys(ctx.reg, rsi, ma20 > 0 ? (px / ma20 - 1) * 100 : null, ret5, vr, ctx.evNear), fired);
+      const ch = pbChoose(st.daily.table, pbDailyKeys(ctx.reg, rsi, ma20 > 0 ? (px / ma20 - 1) * 100 : null, ret5, vr, ctx.evNear), fired, st.daily.val && st.daily.val.rule);
       const pr = ch && st.daily.pb && st.daily.pb[ch.pb];
       if (ch && pr) {
         const atr = _pbAtrPct(D.h, D.l, D.c, i);
@@ -13714,7 +13723,7 @@ function pbRoutePick(st, ctx, nowMs) {
     if (fired.length) {
       const px = B.c[B.c.length - 1];
       const ma20p = _pbSma(D.c, 20, D.c.length - 2);
-      const ch = pbChoose(st.intra.table, pbIntraKeys(ctx.reg, (px / ctx.prevClose - 1) * 100, PB_ROUTE.regMin - mtc, ma20p > 0 && ctx.prevClose > ma20p), fired);
+      const ch = pbChoose(st.intra.table, pbIntraKeys(ctx.reg, (px / ctx.prevClose - 1) * 100, PB_ROUTE.regMin - mtc, ma20p > 0 && ctx.prevClose > ma20p), fired, st.intra.val && st.intra.val.rule);
       const pr = ch && st.intra.pb && st.intra.pb[ch.pb];
       if (ch && pr && (!best || ch.m > best.m)) best = { kind: "intra", pb: ch.pb, fired: fired, n: ch.n, w: ch.w, m: ch.m, stop: _num(pr.sl, 1), tpPct: pr.tpPct == null ? null : _num(pr.tpPct, null), bars: _num(pr.bars, 0), label: pr.label || "" };
     }
@@ -20158,7 +20167,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   if (signal && signal.isOmniQ && typeof signal.omqMult === "number" && signal.omqMult > 0 && signal.omqMult < 1) {
     qty = Math.floor(qty * signal.omqMult); if (qty <= 0) return cash;
   }
-  if (signal && signal.isStratRoute && STRAT_ROUTE.mult > 0 && STRAT_ROUTE.mult < 1) {   // [V33.603] 매매법 선택 AI 잠정 크기
+  if (signal && signal.isStratRoute && !(signal.sr && signal.sr.primary) && STRAT_ROUTE.mult > 0 && STRAT_ROUTE.mult < 1) {   // [V33.609] 주력 전환 시장은 ×1.0   // [V33.603] 매매법 선택 AI 잠정 크기
     qty = Math.floor(qty * STRAT_ROUTE.mult); if (qty <= 0) return cash;
   }
   if (signal && signal.isPair && PAIR_ROUTE.mult > 0 && PAIR_ROUTE.mult < 1) {   // [V33.594] 페어 잠정 크기 — 같은 자리(상한 뒤)
@@ -23848,6 +23857,7 @@ async function runTradingCycle(env) {
       try { if (STRAT_ROUTE.enabled && (market === "us" || market === "kr")) __sr = await getState(DB, "playbook:" + market, null); } catch (e) { __sr = null; }   // [V33.607] 모의 시뮬 표
       const __pbEv = pbEvNear(Date.now()), __pbMtc = minutesToClose(market, new Date());
       let __pbFetch = 0;   // [V33.608] 이번 사이클 후보 분봉 조회 수
+      const __pbPrim = pbPrimaryOn(__sr, Date.now()), __pbCap = __pbPrim ? PB_PRIMARY_CAPS : STRAT_ROUTE;   // [V33.609] 주력 전환(이 시장 AI_PRIMARY 신규 진입 끔)
       for (const _pk in positions) { const _pm = positions[_pk] && positions[_pk].meta; if (_pm && _pm.sr) __srOpen++; }
       const feeRate = market === "us" ? mcfg.feeUS : mcfg.feeKR;
       const regime = regimes[market];
@@ -25820,7 +25830,7 @@ async function runTradingCycle(env) {
               __ruleEntryBlocked += stratResults.length;
               stratResults = [];
             }
-            if (_ap && _ap.enabled && __aiReady && stratResults.length === 0 && !heldSymbols.has(symbol)
+            if (_ap && _ap.enabled && __aiReady && !__pbPrim && stratResults.length === 0 && !heldSymbols.has(symbol)
                 && !crashGate.blockNew && canTrade && aiPrimaryUsed < (_ap.maxPerCycle || 8)
                 && closes.length >= 55) {
               const _picked = !!(__aiPickPool && __aiPickPool.has(symbol));   // AI가 야간 전종목 스캔에서 스스로 고른 종목
@@ -25911,7 +25921,7 @@ async function runTradingCycle(env) {
             /* [V33.607] ★확률 높은 종목 → 그 종목에 맞는 매매법★(PB_ROUTE 주석) — 후보 = OMNI-Q 상위 20% · 매 분 상황 열쇠로 표 조회 · 원장 [SROUTE] */
             const _pbS = (__sr && omniqFresh(__omniq, Date.now())) ? _omqScore(__omniq, 5, symbol) : null;
             if (_pbS != null && _pbS >= PB_ROUTE.candMin && !heldSymbols.has(symbol) && !crashGate.blockNew && canTrade
-                && __srBought < STRAT_ROUTE.maxPerCycle && __srOpen < STRAT_ROUTE.maxOpen && daily && daily.closes) {
+                && __srBought < __pbCap.maxPerCycle && __srOpen < __pbCap.maxOpen && daily && daily.closes) {
               let _pb5 = null;
               if (__sr.intra && _pbPass(__sr.intra.val) && __pbMtc != null && __pbMtc >= PB_ROUTE.intraMinToClose && __pbFetch < PB_ROUTE.intraFetchMax) {
                 try {
@@ -25930,13 +25940,13 @@ async function runTradingCycle(env) {
                   try { const _r = await DB.prepare("SELECT COUNT(*) AS n FROM trades WHERE market = ? AND side = 'BUY' AND ts > ? AND reason LIKE '[SROUTE]%'").bind(market, Date.now() - 18 * 3600000).first(); __srToday = _num(_r && _r.n, 0); } catch (e) { __srToday = STRAT_ROUTE.maxPerDay; }
                 }
                 const _st = _sp.kind === "intra" ? "scalp" : (_sp.hold >= 15 ? "trend" : "snap");
-                if (__srToday + __srBought < STRAT_ROUTE.maxPerDay && !strategiesHeldNow.has(_st)) {
+                if (__srToday + __srBought < __pbCap.maxPerDay && !strategiesHeldNow.has(_st)) {
                   stratResults.unshift({ strategy: _st, weight: 1,
                     signal: { name: "PB_" + _sp.pb, members: [_sp.pb], isStratRoute: true, weight: 1,
                       sr: { sid: _sp.pb, kind: _sp.kind, stop: +_sp.stop.toFixed(2), tpR: _sp.tpR == null ? null : _sp.tpR, tpPct: _sp.tpPct == null ? null : _sp.tpPct,
-                            hold: _sp.hold || null, bars: _sp.bars || 0, m: +_sp.m.toFixed(3), w: +_sp.w.toFixed(3), n: _sp.n, omq: +_pbS.toFixed(3), regime: __sr.regime || null, at: Date.now() },
+                            hold: _sp.hold || null, bars: _sp.bars || 0, primary: __pbPrim, m: +_sp.m.toFixed(3), w: +_sp.w.toFixed(3), n: _sp.n, omq: +_pbS.toFixed(3), regime: __sr.regime || null, at: Date.now() },
                       detail: "매매법AI " + _sp.pb + "(" + (_sp.kind === "intra" ? "5분 단타" : "일봉") + " · 지금 뜬 " + _sp.fired.join("·") + ") · OMNI-Q 상위 " + Math.max(1, Math.round((1 - _pbS) * 100)) + "% · 국면 " + (__sr.regime || "?") +
-                              " · 모의 성공 " + (_sp.w * 100).toFixed(0) + "% 평균 +" + _sp.m.toFixed(2) + "% (표본 " + _sp.n + ") · 손절 −" + _sp.stop + "% · 잠정 ×" + STRAT_ROUTE.mult } });
+                              " · 모의 성공 " + (_sp.w * 100).toFixed(0) + "% 평균 +" + _sp.m.toFixed(2) + "% (표본 " + _sp.n + ") · 손절 −" + _sp.stop + "%" + (__pbPrim ? " · ★주력★" : " · 잠정 ×" + STRAT_ROUTE.mult) } });
                 }
               }
             }
@@ -30571,10 +30581,21 @@ async function handleRequest(request, env, ctx, _inner) {
       const out = {};
       for (const mk of ["us", "kr"]) {
         const r = await getState(env.DB, "playbook:" + mk, null);
-        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, pass: r.pass, daily: r.daily && { val: r.daily.val, cells: Object.keys(r.daily.table || {}).length, pb: r.daily.pb },
+        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, pass: r.pass, primary: pbPrimaryOn(r, Date.now()),
+                        daily: r.daily && { val: r.daily.val, cells: Object.keys(r.daily.table || {}).length, pb: r.daily.pb,
+                                            cross: Object.fromEntries(Object.keys(r.daily.cross || {}).map(function (k) { return [k, (r.daily.cross[k] || []).length]; })) },
                         intra: r.intra && { val: r.intra.val, cells: Object.keys(r.intra.table || {}).length, pb: r.intra.pb } } : null;
       }
-      return Response.json({ ok: true, route: PB_ROUTE, keys: PB_KEYS, markets: out }, { headers: cors });
+      /* [V33.609] 관측창 — 최근 매매법 AI 매수·청산 · 지금 들고 있는 매매법 AI 포지션(가벼운 조회 3개) */
+      let recent = [], exits = [], open = [];
+      try { const q = await env.DB.prepare("SELECT ts, market, symbol, qty, price, reason FROM trades WHERE side = 'BUY' AND reason LIKE '[SROUTE]%' ORDER BY ts DESC LIMIT 15").all(); recent = (q && q.results) || []; } catch (e) {}
+      try { const q = await env.DB.prepare("SELECT ts, market, symbol, qty, price, pnl, pnl_pct, reason FROM trades WHERE side = 'SELL' AND reason LIKE 'SR-%' ORDER BY ts DESC LIMIT 15").all(); exits = (q && q.results) || []; } catch (e) {}
+      try {
+        const q = await env.DB.prepare("SELECT symbol, market, strategy, qty, avg_price, opened_ts, meta FROM positions WHERE meta LIKE '%\"sr\":{%' LIMIT 30").all();
+        open = ((q && q.results) || []).map(function (p) { let m = null; try { m = JSON.parse(p.meta || "{}").sr; } catch (e) {} return { symbol: p.symbol, market: p.market, strategy: p.strategy, qty: p.qty, avg: p.avg_price, opened: p.opened_ts, sr: m }; }).filter(function (p) { return p.sr; });
+      } catch (e) {}
+      return Response.json({ ok: true, route: PB_ROUTE, caps: { trial: STRAT_ROUTE, primary: PB_PRIMARY_CAPS }, keys: PB_KEYS, markets: out, recent: recent, exits: exits, open: open },
+                           { headers: Object.assign({}, cors, { "Cache-Control": "public, max-age=30" }) });
     }
     if (path === "/api/strategy-router" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
@@ -56268,15 +56289,20 @@ export default {
             //   아래 학습기 전부가 이 값으로 유효표본수를 구해 Wilson 하한을 잰다.
             await _stg("retirefv", async function () { return await mlRetireStaleFeatVer(env.DB); });
             await _stg("pooluniq", async function () { return await mlPoolUniqNightly(env.DB); });
+            /* [V33.609] ★위원회 모델 퇴역★ — 미국·한국 둘 다 매매법 AI 가 주력으로 전환되면(pbPrimaryOn) AI_PRIMARY 위원회 학습(L1·노이즈·앙상블·MIND·GBDT)을 멈춘다.
+               저장된 모델 파일은 지우지 않는다(되돌릴 수 있게). 한 시장이라도 미통과면 종전대로 학습한다(그 시장 AI_PRIMARY 가 아직 쓴다). */
+            let __pbRetire = false;
+            try { __pbRetire = pbPrimaryOn(await getState(env.DB, "playbook:us", null), Date.now()) && pbPrimaryOn(await getState(env.DB, "playbook:kr", null), Date.now()); } catch (e) { __pbRetire = false; }
+            if (__pbRetire) { try { await log(env.DB, "INFO", null, "[퇴역] 매매법 AI 주력(미·한) — 위원회 학습 건너뜀"); } catch (e) {} }
             // (3) 7단 학습 파이프라인(순서 고정: L1→노이즈→앙상블→MIND→DNN→GBDT)
-            await _stg("l1", async function () { return await mlTrainNightly(env.DB); });
-            await _stg("icfamily", async function () { return await icFamilyStamp(env.DB); });
-            await _stg("bandit", async function () { return await mlBanditNoiseNightly(env.DB); });
-            await _stg("brain", async function () { return await mlBrainTrainNightly(env.DB); });
-            await _stg("mind", async function () { return await mlMindTrainNightly(env.DB); });
+            if (!__pbRetire) await _stg("l1", async function () { return await mlTrainNightly(env.DB); });
+            if (!__pbRetire) await _stg("icfamily", async function () { return await icFamilyStamp(env.DB); });
+            if (!__pbRetire) await _stg("bandit", async function () { return await mlBanditNoiseNightly(env.DB); });
+            if (!__pbRetire) await _stg("brain", async function () { return await mlBrainTrainNightly(env.DB); });
+            if (!__pbRetire) await _stg("mind", async function () { return await mlMindTrainNightly(env.DB); });
             // [V12.100] GBDT를 DNN 앞으로 — DNN(무거운 3M Worker폴백)이 CPU예산 초과로 죽어도 GBDT는
             //   먼저 완주해 학습되게(종전 순서는 DNN 실패 시 뒤의 GBDT가 영영 못 돌던 원인).
-            await _stg("gbdt", async function () { return await mlGBDTTrainNightly(env.DB); });
+            if (!__pbRetire) await _stg("gbdt", async function () { return await mlGBDTTrainNightly(env.DB); });
             /* [V33.422] dnn 퇴역 — 워커 폴백 학습도 하지 않는다(실측 40.8%, 무실력 이하). */
             // [V33.90] ★신규 4모델을 야간 파이프라인에 정식 편입 — 그동안 학습된 적이 없다★
             //   FLOW(V33.78)·XALPHA(V33.79)·STACK(V33.80)·DUAL(V33.89) 은 /api/ai/train-now 의

@@ -147,5 +147,30 @@ chk(/^SR-TP/.test(W.pbExitWhy(sd, 100, 110.5, now, now, 200)) && /^SR-TIME/.test
 chk(/_pbS >= PB_ROUTE\.candMin/.test(S) && /candMin: 0\.80/.test(S) && /omniqFresh\(__omniq, Date\.now\(\)\)/.test(S), "후보 = OMNI-Q 5일 머리 상위 20%(신선할 때만)");
 chk(/getState\(DB, "playbook:" \+ market/.test(S) && /path === "\/api\/playbook" && request\.method === "POST"/.test(S), "표 업로드·조회 배선");
 chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"5m"/.test(readFileSync(dir + "omniq_gha.py", "utf8")), "GHA 회차: 5분봉 받아 시뮬");
+// [V33.609] 선택 규칙 · 자동 주력 전환 · 위원회 퇴역
+{ const T2 = { "BULL|0|0|0|0|0": { A: [12, 0.7, 2.0, -0.4] }, "BULL|*": { A: [900, 0.55, 0.3, 0.2], B: [900, 0.56, 0.5, 0.1] }, "*": { A: [9000, 0.5, 0.05, 0.03], B: [9000, 0.52, 0.2, 0.15] } };
+  const KK = ["BULL|0|0|0|0|0", "BULL|0|0|*", "BULL|*", "*"];
+  chk(W.pbChoose(T2, KK, ["A", "B"], { score: "m", level: "fine" })?.pb === "A", "규칙 평균·전체 칸: 표본 12개짜리 높은 평균(A)을 고른다");
+  chk(W.pbChoose(T2, KK, ["A", "B"], { score: "lcb", level: "fine" })?.pb === "B", "규칙 하한·전체 칸: 표본 적은 칸의 우연한 고평균을 버린다(승자의 저주)");
+  chk(W.pbChoose(T2, KK, ["A", "B"], { score: "lcb", level: "regime" })?.pb === "A" && W.pbChoose(T2, KK, ["A", "B"], { score: "lcb", level: "global" })?.pb === "B", "규칙 칸 단계: 국면 칸까지만 · 매매법 전체만"); }
+{ const now2 = Date.now(), v = { pass: true, n: 400, mean: 0.3, t: 2.4, base: 0.05 };
+  const M2 = new Function("_num", "getMA", "getRSI", "STRAT_ROUTE", "MACRO_SCHED", fnSrc + "; return { pbPrimaryOn, PB_PRIMARY_CAPS };")(_num, getMA, getRSI, STRAT_ROUTE, MACRO_SCHED);
+  chk(M2.pbPrimaryOn({ ts: now2, daily: { val: v } }, now2) && !M2.pbPrimaryOn({ ts: now2, daily: { val: { ...v, pass: false } } }, now2) && !M2.pbPrimaryOn({ ts: now2 - 40 * 3600000, daily: { val: v } }, now2),
+      "주력 전환은 그 시장 일봉 검증 통과 + 표 신선(36시간)일 때만");
+  chk(/_ap && _ap\.enabled && __aiReady && !__pbPrim && stratResults\.length === 0/.test(S), "주력 전환된 시장은 AI_PRIMARY 신규 진입을 끈다(미통과 시장은 그대로)");
+  chk(/__pbCap = __pbPrim \? PB_PRIMARY_CAPS : STRAT_ROUTE/.test(S) && /signal\.isStratRoute && !\(signal\.sr && signal\.sr\.primary\)/.test(S) && M2.PB_PRIMARY_CAPS.mult === 1.0, "주력 시장은 상한을 올리고 크기 ×1.0 · 아니면 잠정 ×0.5");
+  chk(["l1", "icfamily", "bandit", "brain", "mind", "gbdt"].every((k) => new RegExp('if \\(!__pbRetire\\) await _stg\\("' + k + '"').test(S)) && /__pbRetire = pbPrimaryOn\(await getState\(env\.DB, "playbook:us"/.test(S),
+      "미·한 둘 다 주력이면 위원회 학습(워커) 퇴역");
+  chk(/위원회 학습 건너뜀/.test(readFileSync(dir + "train_gha.py", "utf8")), "미·한 둘 다 주력이면 위원회 학습(GitHub Actions) 퇴역"); }
+{ const Q = readFileSync(dir + "playbook_sim.py", "utf8");
+  chk(/SPLIT = \(0\.60, 0\.80\)/.test(Q) && /ho = df\[df\[timecol\] >= c2\]/.test(Q), "검증 3구간: 규칙은 [60,80%) 에서 고르고 판정은 손대지 않은 [80,100%) 에서만");
+  chk(/busy\.get\(r\.j, -1\) >= r\.t/.test(Q), "검증도 실전처럼 같은 종목은 앞 거래가 끝나야 다시 산다(겹친 표본으로 t 를 부풀리지 않는다)"); }
+{ // [V33.609] 관측창 배선
+  const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8"), U = readFileSync(new URL("../public/workspace-ui.js", import.meta.url), "utf8");
+  const O = readFileSync(new URL("../public/playbook-observatory.js", import.meta.url), "utf8");
+  chk(/id="page-nnviz" data-brain-view="playbook"/.test(H) && /data-brain-tab="playbook"/.test(H) && /<section id="pbObs"/.test(H), "두뇌 페이지 기본 탭 = 00 매매법 AI");
+  chk(/'playbook', 'operations', 'models', 'research'/.test(U) && /playbook-observatory\.js/.test(U), "탭 전환·지연 로드 배선");
+  chk(/window\.PlaybookObs/.test(O) && /\/api\/playbook/.test(O) && !/https?:\/\//.test(O.replace(/\/\*[\s\S]*?\*\//g, "")), "관측창은 /api/playbook 만 읽는다(외부 주소 없음)");
+  chk(/recent: recent, exits: exits, open: open/.test(S), "관측창 API: 최근 매수·청산·보유"); }
 if (fails) { console.log("check-playbook: FAIL " + fails); process.exit(1); }
 console.log("check-playbook: ok");

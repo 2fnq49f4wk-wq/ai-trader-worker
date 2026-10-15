@@ -213,3 +213,7 @@ html:is(:root,[data-theme]) body #page-nnviz.page .nnv-health-time { margin-left
   html:is(:root,[data-theme]) body #page-nnviz.page .nnv-head > .nnv-head-actions { width:100%!important; }
   html:is(:root,[data-theme]) body #page-nnviz.page .nnv-head-actions .nnv-btn { flex:1 1 0!important; padding:0 6px!important; overflow:hidden!important; text-overflow:ellipsis!important; }
 }
+
+/* [V33.609] 매매법 AI 관측창 탭 — 이 탭에선 머리·탭줄·#pbObs 만, 다른 탭에선 #pbObs 를 숨긴다 */
+#page-nnviz[data-brain-view="playbook"] .nnviz-content > :not(.nnv-head):not(.mission-nav):not(#pbObs) { display:none!important; }
+#page-nnviz:not([data-brain-view="playbook"]) #pbObs { display:none!important; }

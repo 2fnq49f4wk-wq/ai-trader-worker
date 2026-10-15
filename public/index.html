@@ -188,8 +188,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.608">
-<script src="/neural-observatory.js?v=33.608" defer></script>
+<meta name="lux-build" content="V33.609">
+<script src="/neural-observatory.js?v=33.609" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4890,7 +4890,7 @@ window.LUX_NV = {
 </div>
 
 <!-- [V9.12] 팝업 모달→일반 페이지 전환 -->
-<div class="page" id="page-nnviz" data-brain-view="operations">
+<div class="page" id="page-nnviz" data-brain-view="playbook">
   <div class="nnviz-content">
     <div class="nnv-head">
       <div class="nnv-heading">
@@ -4906,10 +4906,13 @@ window.LUX_NV = {
       </div>
     </div>
     <nav class="mission-nav" aria-label="두뇌 작업 화면">
-      <button type="button" data-brain-tab="operations" aria-pressed="true">01 작동 화면</button>
+      <button type="button" data-brain-tab="playbook" aria-pressed="true">00 매매법 AI</button>
+      <button type="button" data-brain-tab="operations" aria-pressed="false">01 작동 화면</button>
       <button type="button" data-brain-tab="models" aria-pressed="false">02 모델 구조</button>
       <button type="button" data-brain-tab="research" aria-pressed="false">03 후보 · 로그</button>
     </nav>
+    <!-- [V33.609] ★매매법 AI 관측창★ — 작동 구조 · 시장별 검증·주력 전환 · 실전 보유/매수/청산 · 매매법 사전(/playbook-observatory.js · /api/playbook) -->
+    <section id="pbObs" aria-label="매매법 AI 관측창"></section>
     <div class="nnv-healthbar" id="nnvHealthbar" role="status" aria-live="polite">
       <span class="nnv-health-title"><i></i><b>엔진 연결 확인 중</b></span>
       <span class="nnv-health-source pending" data-source="picks">PICKS</span>
@@ -21198,13 +21201,13 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.608">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.608">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.608">
-<link rel="stylesheet" href="/model-evidence.css?v=33.608">
+<link rel="stylesheet" href="/brain-console.css?v=33.609">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.609">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.609">
+<link rel="stylesheet" href="/model-evidence.css?v=33.609">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.608">
-<script src="/model-evidence.js?v=33.608"></script>
-<script src="/workspace-ui.js?v=33.608"></script>
+<link rel="stylesheet" href="/liquid-metal.css?v=33.609">
+<script src="/model-evidence.js?v=33.609"></script>
+<script src="/workspace-ui.js?v=33.609"></script>
 </body>
 </html>

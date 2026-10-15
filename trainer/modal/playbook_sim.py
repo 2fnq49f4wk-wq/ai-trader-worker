@@ -129,9 +129,10 @@ def _sim_profile(O, H, L, C, atr, mcum, pr, cost, t0=250):
     T, N = C.shape
     hold = pr["hold"]
     out = np.full((T, N), np.nan, dtype=np.float32)
+    xo = np.full((T, N), -1, dtype=np.int32)
     t_end = T - 1 - hold
     if t_end <= t0:
-        return out
+        return out, xo
     ts = np.arange(t0, t_end)
     pe = C[ts]
     stp = np.minimum(pr["stop"], pr["atr"] * atr[ts])
@@ -158,7 +159,8 @@ def _sim_profile(O, H, L, C, atr, mcum, pr, cost, t0=250):
     raw = (px / pe - 1) * 100
     mk = (mcum[ts[:, None] + xk + 1] / mcum[ts[:, None] + 1] - 1) * 100
     out[ts] = (raw - mk - cost).astype(np.float32)
-    return out
+    xo[ts] = (ts[:, None] + xk).astype(np.int32)
+    return out, xo
 
 
 def sim_daily(P, market, ev_dates, sig=None):
@@ -176,12 +178,12 @@ def sim_daily(P, market, ev_dates, sig=None):
         key = (pr["stop"], pr["atr"], pr["be"], pr["hold"], pr["tpR"])
         if key not in cache:
             cache[key] = _sim_profile(O, H, L, C, atr, mcum, pr, cost)
-        ex = cache[key]
+        ex, xo = cache[key]
         S = sig[pb].values & np.isfinite(ex)
         ti, jj = np.nonzero(S)
         if len(ti):
-            out.append(pd.DataFrame({"t": ti, "j": jj, "pb": pb, "ex": ex[ti, jj]}))
-    df = pd.concat(out, ignore_index=True) if out else pd.DataFrame({"t": [], "j": [], "pb": [], "ex": []})
+            out.append(pd.DataFrame({"t": ti, "j": jj, "x": xo[ti, jj], "pb": pb, "ex": ex[ti, jj]}))
+    df = pd.concat(out, ignore_index=True) if out else pd.DataFrame({"t": [], "j": [], "x": [], "pb": [], "ex": []})
     t, j = df["t"].values.astype(int), df["j"].values.astype(int)
     df["inst"] = t.astype(np.int64) * 100000 + j
     ks = daily_keys(reg[t], rsi[t, j], gap20[t, j], ret5[t, j], vr[t, j], near[t])
@@ -235,7 +237,7 @@ def intra_fires(c, h, l, v):
 
 
 def _intra_exit(c, h, l, i, pr, b_end):
-    """i 봉 종가에 사서 — 익절/손절/시간/장 끝. 같은 봉에서 둘 다 닿으면 손절."""
+    """i 봉 종가에 사서 — 익절/손절/시간/장 끝 → (청산가, 청산 봉). 같은 봉에서 둘 다 닿으면 손절."""
     pe = c[i]
     last = b_end if pr["bars"] == 0 else min(b_end, i + pr["bars"])
     tp = pe * (1 + pr["tpPct"] / 100) if pr["tpPct"] else np.inf
@@ -246,8 +248,8 @@ def _intra_exit(c, h, l, i, pr, b_end):
     fs = xs[0] if len(xs) else 10 ** 9
     ft = xt[0] if len(xt) else 10 ** 9
     if fs == 10 ** 9 and ft == 10 ** 9:
-        return c[last]
-    return sl if fs <= ft else tp
+        return c[last], last
+    return (sl, i + 1 + fs) if fs <= ft else (tp, i + 1 + ft)
 
 
 def sim_intra(bars5, daily_reg, market, day_key_of=None):
@@ -255,7 +257,7 @@ def sim_intra(bars5, daily_reg, market, day_key_of=None):
     cost = COST_RT[market]
     rows = []
     inst = 0
-    for s, bd in bars5.items():
+    for si, (s, bd) in enumerate(bars5.items()):
         if not bd or not bd.get("t") or len(bd["t"]) < 500:
             continue
         t = np.asarray(bd["t"], dtype=np.int64)
@@ -297,12 +299,12 @@ def sim_intra(bars5, daily_reg, market, day_key_of=None):
                     continue
                 inst += 1
                 for pb in pbs:
-                    px = _intra_exit(cc, hh_, ll_, i, INTRA_PB[pb], n - 1)
-                    rows.append((dkey, inst, pb, (px / pe - 1) * 100 - cost, rg, (pe / prev_close - 1) * 100, i * 5, up))
+                    px, xb = _intra_exit(cc, hh_, ll_, i, INTRA_PB[pb], n - 1)
+                    rows.append((dkey, inst, si, a + i, a + xb, pb, (px / pe - 1) * 100 - cost, rg, (pe / prev_close - 1) * 100, i * 5, up))
             prev_close = c[b - 1]
     if not rows:
-        return pd.DataFrame(columns=["day", "inst", "pb", "ex"])
-    df = pd.DataFrame(rows, columns=["day", "inst", "pb", "ex", "reg", "daypct", "tod", "up"])
+        return pd.DataFrame(columns=["day", "inst", "j", "t", "x", "pb", "ex"])
+    df = pd.DataFrame(rows, columns=["day", "inst", "j", "t", "x", "pb", "ex", "reg", "daypct", "tod", "up"])
     ks = intra_keys(df["reg"].values, df["daypct"].values, df["tod"].values, df["up"].values)
     for lv, k in enumerate(ks):
         df["k%d" % lv] = k
@@ -311,28 +313,42 @@ def sim_intra(bars5, daily_reg, market, day_key_of=None):
 
 # ── 표 만들기 · 검증 ───────────────────────────────────────────────
 def _shrunk_table(df):
-    """열쇠 4단 × 매매법 → (n, 성공확률, 평균 순수익). 넓은 칸부터 내려가며 수축한다:
-    k0 = '*' · k1 = 국면 · k2 = 국면+2조건 · k3 = 전체 조건. 구체 칸은 표본이 적을수록 부모 칸 값에 가깝다."""
-    df = df.assign(win=(df["ex"] > 0).astype(np.float32))
+    """열쇠 4단 × 매매법 → (n, 성공확률, 평균, 하한). 넓은 칸부터 내려가며 수축한다:
+    k0 = '*' · k1 = 국면 · k2 = 국면+2조건 · k3 = 전체 조건. 구체 칸은 표본이 적을수록 부모 칸 값에 가깝다.
+    [V33.609] 하한(lcb) = 수축 평균 − 표준오차(표준편차/√(n+k)) — 표본 적은 칸이 우연히 높게 나온 것을 고르지 않게(승자의 저주)."""
+    df = df.assign(win=(df["ex"] > 0).astype(np.float32), ex2=df["ex"].astype(float) ** 2)
     tab = {}
-    # 맨 위('*')
-    g0 = df.groupby("pb").agg(n=("ex", "size"), s=("ex", "sum"), w=("win", "sum"))
+
+    def put(key, n, s, s2, w, pw, pm):
+        n = float(n)
+        m = (s + K_SHRINK * pm) / (n + K_SHRINK)
+        var = max(0.0, s2 / n - (s / n) ** 2) if n > 1 else 9.0
+        lcb = m - math.sqrt(var / (n + K_SHRINK))
+        tab[key] = (int(n), float((w + K_SHRINK * pw) / (n + K_SHRINK)), float(m), float(lcb))
+
+    g0 = df.groupby("pb").agg(n=("ex", "size"), s=("ex", "sum"), s2=("ex2", "sum"), w=("win", "sum"))
     for pb, r in g0.iterrows():
-        n = float(r["n"])
-        tab[("*", pb)] = (int(n), float((r["w"] + K_SHRINK * 0.5) / (n + K_SHRINK)), float(r["s"] / (n + K_SHRINK)))
+        put(("*", pb), r["n"], r["s"], r["s2"], r["w"], 0.5, 0.0)
     for lv, plv in ((1, 0), (2, 1), (3, 2)):
         col, pcol = "k%d" % lv, "k%d" % plv
-        g = df.groupby([col, pcol, "pb"]).agg(n=("ex", "size"), s=("ex", "sum"), w=("win", "sum")).reset_index()
+        g = df.groupby([col, pcol, "pb"]).agg(n=("ex", "size"), s=("ex", "sum"), s2=("ex2", "sum"), w=("win", "sum")).reset_index()
         for r in g.itertuples(index=False):
-            k, pk, pb, n, s, w = r
+            k, pk, pb, n, s_, s2, w = r
             par = tab.get((pk, pb))
-            pn, pw, pm = par if par else (0, 0.5, 0.0)
-            tab[(k, pb)] = (int(n), float((w + K_SHRINK * pw) / (n + K_SHRINK)), float((s + K_SHRINK * pm) / (n + K_SHRINK)))
+            pw, pm = (par[1], par[2]) if par else (0.5, 0.0)
+            put((k, pb), n, s_, s2, w, pw, pm)
     return tab
 
 
+# [V33.609] 선택 규칙 후보(미리 고정) — 검증 구간에서 하나를 고르고, 판정은 손대지 않은 마지막 구간에서만 한다.
+#   score: 'm' 평균 · 'lcb' 하한 / level: 'fine' 전체 칸 · 'regime' 국면 칸까지만 · 'global' 매매법 전체 성적만
+RULES = [{"score": "m", "level": "fine"}, {"score": "lcb", "level": "fine"}, {"score": "lcb", "level": "regime"}, {"score": "lcb", "level": "global"}]
+LEVEL_COLS = {"fine": ("k3", "k2", "k1", "k0"), "regime": ("k1", "k0"), "global": ("k0",)}
+SPLIT = (0.60, 0.80)   # 표 [0,60%) → 규칙 고르기 [60,80%) → 표 [0,80%) → 판정 [80,100%)
+
+
 def lookup(tab, keys, pb):
-    """그 매매법이 있는 가장 구체적인 칸의 값(이미 넓은 칸 쪽으로 수축됨) → (n, w, m) | None. 워커 pbChoose 와 같은 규칙."""
+    """그 매매법이 있는 가장 구체적인 칸의 값(이미 넓은 칸 쪽으로 수축됨) → (n, w, m, lcb) | None. 워커 pbChoose 와 같은 규칙."""
     for k in keys:
         v = tab.get((k, pb))
         if v is not None:
@@ -340,57 +356,79 @@ def lookup(tab, keys, pb):
     return None
 
 
-def choose(tab, keys, fired):
-    """뜬 매매법들 중 (평균 > 0 · 성공확률 ≥ 50%) 이고 평균이 가장 큰 것 → (pb, n, w, m) | None."""
+def choose(tab, keys, fired, score="m"):
+    """뜬 매매법들 중 (점수 > 0 · 성공확률 ≥ 50%) 이고 점수가 가장 큰 것 → (pb, n, w, m, lcb) | None."""
     best = None
+    si = 2 if score == "m" else 3
     for pb in fired:
         v = lookup(tab, keys, pb)
         if v is None:
             continue
-        n, w, m = v
-        if m > 0 and w >= 0.5 and (best is None or m > best[3]):
-            best = (pb, n, w, m)
+        if v[si] > 0 and v[1] >= 0.5 and (best is None or v[si] > best[si + 1]):
+            best = (pb,) + tuple(v)
     return best
 
 
-def _row_vals(tab, df):
-    """행마다 lookup(가장 구체 칸 → 넓은 칸) 의 (w, m) — 벡터화."""
+def _row_vals(tab, df, rule):
+    """행마다 lookup(그 규칙의 칸 단계) 의 (w, 점수) — 벡터화."""
+    si = 2 if rule["score"] == "m" else 3
     w = np.full(len(df), np.nan)
-    m = np.full(len(df), np.nan)
-    for col in ("k3", "k2", "k1", "k0"):
-        need = np.isnan(m)
+    sc = np.full(len(df), np.nan)
+    for col in LEVEL_COLS[rule["level"]]:
+        need = np.isnan(sc)
         if not need.any():
             break
-        keys = list(zip(df[col].values[need], df["pb"].values[need]))
-        got = [tab.get(k) for k in keys]
-        mi = np.array([g[2] if g else np.nan for g in got])
-        wi = np.array([g[1] if g else np.nan for g in got])
+        got = [tab.get(k) for k in zip(df[col].values[need], df["pb"].values[need])]
         idx = np.nonzero(need)[0]
-        m[idx], w[idx] = mi, wi
-    return w, m
+        sc[idx] = np.array([g[si] if g else np.nan for g in got])
+        w[idx] = np.array([g[1] if g else np.nan for g in got])
+    return w, sc
+
+
+def _pick(tab, te, rule):
+    """후보(inst)마다 뜬 매매법 중 규칙이 고른 것 · 같은 종목은 앞 거래가 끝나야 다시 산다(실전과 같다)."""
+    w, sc = _row_vals(tab, te, rule)
+    ok = (sc > 0) & (w >= 0.5)
+    sel = te.assign(_s=sc)[ok].sort_values("_s", ascending=False).drop_duplicates("inst").sort_values("t")
+    keep, busy = [], {}
+    for r in sel[["j", "t", "x"]].itertuples(index=True):
+        if busy.get(r.j, -1) >= r.t:
+            continue
+        keep.append(r.Index)
+        busy[r.j] = r.x
+    return sel.loc[keep]
+
+
+def _stats(pk, base):
+    n = len(pk)
+    return {"n": int(n), "mean": round(float(pk.mean()), 4) if n else None, "win": round(float((pk > 0).mean() * 100), 1) if n else None,
+            "t": round(float(pk.mean() / (pk.std(ddof=1) / math.sqrt(n))), 2) if n > 2 and pk.std() > 0 else 0.0,
+            "base": round(float(base.mean()), 4) if len(base) else None}
 
 
 def validate(df, timecol, pbs=None):
-    """시간순 앞 70% 로 표 → 뒤 30% 의 후보(inst)마다: 뜬 매매법 중 표가 고른 것의 실제 결과."""
+    """3구간: 표 [0,60%) → 규칙 후보 4개를 [60,80%) 에서 비교해 하나 고름 → 표 [0,80%) → 손대지 않은 [80,100%) 에서만 판정."""
     ts = np.sort(df[timecol].unique())
-    if len(ts) < 20:
+    if len(ts) < 30:
         return {"pass": False, "why": "기간 부족"}, None
-    cut = ts[int(len(ts) * TRAIN_FRAC)]
-    tr, te = df[df[timecol] < cut], df[df[timecol] >= cut]
-    tab = _shrunk_table(tr)
-    w, m = _row_vals(tab, te)
-    ok = (m > 0) & (w >= 0.5)
-    sel = te.assign(_m=m)[ok].sort_values("_m", ascending=False).drop_duplicates("inst")
-    pk = sel["ex"].values.astype(float)
-    base = te["ex"].values.astype(float)
-    n = len(pk)
-    st = {"n": int(n), "mean": round(float(pk.mean()), 4) if n else None,
-          "win": round(float((pk > 0).mean() * 100), 1) if n else None,
-          "t": round(float(pk.mean() / (pk.std(ddof=1) / math.sqrt(n))), 2) if n > 2 and pk.std() > 0 else 0.0,
-          "base": round(float(base.mean()), 4) if len(base) else None, "cut": str(cut),
-          "byPb": {k: int(v) for k, v in sel["pb"].value_counts().items()}}
-    st["pass"] = bool(n >= 30 and st["mean"] > 0 and st["t"] >= PASS_T and st["base"] is not None and st["mean"] > st["base"])
-    return st, tab
+    c1, c2 = ts[int(len(ts) * SPLIT[0])], ts[int(len(ts) * SPLIT[1])]
+    tab1 = _shrunk_table(df[df[timecol] < c1])
+    va = df[(df[timecol] >= c1) & (df[timecol] < c2)]
+    cmp_ = []
+    for rule in RULES:
+        pk = _pick(tab1, va, rule)
+        st_ = _stats(pk["ex"].values.astype(float), va["ex"].values.astype(float))
+        cmp_.append({"rule": rule, **st_})
+    elig = [c for c in cmp_ if c["n"] >= 30 and c["mean"] is not None]
+    best = max(elig, key=lambda c: c["mean"]) if elig else cmp_[1]
+    rule = best["rule"]
+    tab2 = _shrunk_table(df[df[timecol] < c2])
+    ho = df[df[timecol] >= c2]
+    pk = _pick(tab2, ho, rule)
+    st = _stats(pk["ex"].values.astype(float), ho["ex"].values.astype(float))
+    st.update({"rule": rule, "cut": [str(c1), str(c2)], "valCmp": cmp_, "byPb": {k: int(v) for k, v in pk["pb"].value_counts().items()}})
+    st["pass"] = bool(st["n"] >= 30 and st["mean"] > 0 and st["t"] >= PASS_T and st["base"] is not None and st["mean"] > st["base"])
+    return st, tab2
 
 
 def _relevel(df):
@@ -405,10 +443,10 @@ def export(tab, pbs, min_n=30, max_bytes=1200000):
     import json
     while True:
         out = {}
-        for (k, pb), (n, w, m) in tab.items():
+        for (k, pb), (n, w, m, lcb) in tab.items():
             if k.count("|") >= 3 and n < min_n:
                 continue
-            out.setdefault(k, {})[pb] = [n, round(w, 3), round(m, 3)]
+            out.setdefault(k, {})[pb] = [n, round(w, 3), round(m, 3), round(lcb, 3)]
         if len(json.dumps(out, separators=(",", ":"))) <= max_bytes or min_n > 100000:
             return out
         min_n *= 2
