@@ -13,10 +13,6 @@
     ORB: '시가 범위 돌파', DIP_REV: '장중 눌림 반등', STOCH5: '5분 스토캐스틱', MOM3: '5분 3봉 상승', VWAP_RE: 'VWAP 회복'
   };
   function nm(id) { return NAMES[id] || id || '—'; }
-  function RULE_TXT(r) {
-    if (!r) return '—';
-    return (r.score === 'lcb' ? '하한(평균−오차)' : '평균') + ' · ' + (r.level === 'global' ? '매매법 전체 성적' : r.level === 'regime' ? '국면 칸까지' : '상황 칸 전체');
-  }
   var CSS = [
     '#pbObs{--k-bg:#0d1117;--k-panel:#11161e;--k-line:rgba(230,233,238,.10);--k-ink:#e6e9ee;--k-sub:#8b95a5;--k-dim:#5d6676;--k-acc:#39d0ff;--k-good:#3ddc97;--k-bad:#ff5d6c;--k-warn:#f5c451;',
     '--k-mono:"JetBrains Mono","SFMono-Regular",ui-monospace,Menlo,Consolas,monospace;display:flex;flex-direction:column;gap:12px;padding:2px 0 24px;color:var(--k-ink);font-size:13px}',
@@ -111,7 +107,7 @@
     var why = !r ? '학습기(GitHub Actions)가 아직 이 시장 표를 올리지 않았습니다.'
       : r.primary ? '이 시장은 검증을 통과해 AI_PRIMARY 대신 매매법 AI 가 삽니다(크기 ×1.0).'
       : '후보마다 무엇을 골랐을지 계산만 하고 사지 않습니다. 검증을 통과하면 자동으로 주력이 됩니다(그 전까지 AI_PRIMARY 유지).';
-    return '<section class="k-panel k-brief"><div><span class="k-lab">NOW · DECISION STATE</span><strong>' + esc(head) + '</strong><p>' + esc(why) + '</p></div>' +
+    return '<section class="k-panel k-brief"><div><span class="k-lab">PLAYBOOK · DECISION STATE</span><strong>' + esc(head) + '</strong><p>' + esc(why) + '</p></div>' +
       '<div><span class="k-lab">CANDIDATES</span><dd>' + ((lv && lv.n) || 0) + '</dd><small>OMNI-Q 상위 20% 평가</small></div>' +
       '<div><span class="k-lab">FIRED</span><dd>' + fired + '</dd><small>지금 매매법 신호 뜸</small></div>' +
       '<div><span class="k-lab">CHOSEN</span><dd>' + chosen + (act ? '<small class="pos"> · 매수 ' + act + '</small>' : '') + '</dd><small>고른 매매법 있음</small></div>' +
@@ -160,50 +156,10 @@
         c = lv && lv.c != null ? lv.c : items.filter(function (x) { return x.pb; }).length, a = lv && lv.a != null ? lv.a : items.filter(function (x) { return x.act; }).length;
     var mx = Math.max(1, n);
     var rows = [['① 후보(OMNI-Q 상위 20%)', n], ['② 매매법 신호 뜸', f], ['③ 매매법 선택', c], ['④ 매수 후보', a]];
-    return '<section class="k-panel"><div class="k-h"><b>판정 깔때기</b><small>' + (n > items.length ? '표시 ' + items.length + ' / 평가 ' + n + '(②~④는 표시분 기준)' : '이번 사이클') + '</small></div><div class="k-funnel">' +
+    return '<section class="k-panel"><div class="k-h"><b>판정 깔때기</b><small>' + '이번 사이클 · 평가 ' + n + '종목' + '</small></div><div class="k-funnel">' +
       rows.map(function (r) { return '<div class="k-fs"><span>' + r[0] + '</span><i style="width:' + Math.max(2, Math.round(r[1] / mx * 100)) + '%"></i><span>' + r[1] + '</span></div>'; }).join('') + '</div></section>';
   }
 
-  function flow(j) {
-    var mk = j.markets || {}, caps = j.caps || {};
-    var st = function (fn) { return ['us', 'kr'].map(function (m) { return (m === 'us' ? '미 ' : '한 ') + fn(mk[m]); }).join(' · '); };
-    var steps = [
-      ['① 후보', 'OMNI-Q 5일 상위 20%. 매매법 신호가 먼저가 아닙니다.', '매 분'],
-      ['② 지금 뜬 매매법', '일봉 17종(마감 전 60분) · 5분 단타 5종의 진입 조건을 지금 가격으로.', '스토캐스틱 · RSI2 · 눌림 · ORB …'],
-      ['③ 닮은 과거 칸', '국면 · RSI · 20일선 거리 · 5일 수익 · 거래량 · FOMC/CPI (단타: 장중 등락 · 시간)', st(function (r) { return r ? ((r.daily && r.daily.cells) || 0) + '칸' : '—'; })],
-      ['④ 선택', '뜬 것 중 그 칸 점수 최고 · 성공 ≥ 50%. 없으면 안 삼.', st(function (r) { return r && r.daily && r.daily.val && r.daily.val.rule ? (r.daily.val.rule.score === 'lcb' ? '하한' : '평균') : '—'; })],
-      ['⑤ 매수', '검증 통과 시장만 · 통과하면 AI_PRIMARY 자동 퇴역 · ×' + ((caps.primary && caps.primary.mult) || 1), st(function (r) { return r ? (r.primary ? '주력' : '그림자') : '—'; })],
-      ['⑥ 그 매매법의 매도', '손절 · 본전 이동 · 익절 · 최대 보유 · 단타 장 끝. 공통 트레일·위원회 청산 없음.', '보유 ' + ((j.open || []).length) + '건']
-    ];
-    return '<section class="k-panel"><div class="k-h"><b>작동 구조</b><small>확률 높은 종목 → 그 종목에 맞는 매매법</small></div><div class="k-flow">' +
-      steps.map(function (s) { return '<div><span class="k-lab">' + esc(s[0]) + '</span><p style="margin-top:4px">' + esc(s[1]) + '</p><em>' + esc(s[2]) + '</em></div>'; }).join('') +
-      '</div><div class="k-loop">↺ 매 학습 회차(GitHub Actions) — 과거 OMNI-Q 상위 후보에 모든 매매법을 다시 적용해 표를 새로 만들고, 손대지 않은 마지막 20% 구간에서만 통과를 판정 · ' +
-      esc(st(function (r) { return r ? ago(r.ts) : '—'; })) + '</div></section>';
-  }
-
-  function valBlock(v, label) {
-    if (!v) return '<div class="k-empty">' + esc(label) + ' — 표 없음</div>';
-    if (v.why) return '<div class="k-empty">' + esc(label) + ' — ' + esc(v.why) + '</div>';
-    var h = '<div class="k-h" style="border-top:1px solid var(--k-line)"><span class="k-lab">' + esc(label) + '</span><span class="k-tag ' + (v.pass ? 'good' : 'warn') + '">' + (v.pass ? '통과' : '미통과') + '</span><small>' + esc(v.cand || '') + '</small></div>' +
-      '<dl class="k-kv" style="margin:0"><div><span class="k-lab">고른 것</span><dd class="' + cls(v.mean) + '">' + pct(v.mean) + '</dd></div><div><span class="k-lab">아무거나</span><dd class="' + cls(v.base) + '">' + pct(v.base) + '</dd></div>' +
-      '<div><span class="k-lab">t (≥2)</span><dd>' + (v.t == null ? '—' : Number(v.t).toFixed(2)) + '</dd></div><div><span class="k-lab">거래 · 승률</span><dd>' + (v.n || 0) + ' · ' + (v.win == null ? '—' : v.win + '%') + '</dd></div></dl>';
-    if (Array.isArray(v.valCmp) && v.valCmp.length) {
-      h += '<div class="k-body k-scroll"><table><thead><tr><th>선택 규칙(검증 구간)</th><th class="num">거래</th><th class="num">평균</th><th class="num">t</th><th class="num">아무거나</th></tr></thead><tbody>' +
-        v.valCmp.map(function (c) {
-          var sel = v.rule && c.rule && c.rule.score === v.rule.score && c.rule.level === v.rule.level;
-          return '<tr' + (sel ? ' class="sel"' : '') + '><td>' + esc(RULE_TXT(c.rule)) + '</td><td class="num">' + (c.n || 0) + '</td><td class="num ' + cls(c.mean) + '">' + pct(c.mean) + '</td><td class="num">' + (c.t == null ? '—' : Number(c.t).toFixed(2)) + '</td><td class="num">' + pct(c.base) + '</td></tr>';
-        }).join('') + '</tbody></table></div>';
-    }
-    return h;
-  }
-  function markets(j) {
-    return '<div class="k-grid2">' + ['us', 'kr'].map(function (mk) {
-      var r = (j.markets || {})[mk], t = mk === 'us' ? '미국' : '한국';
-      if (!r) return '<section class="k-panel"><div class="k-h"><b>' + t + ' 검증</b><span class="k-tag">표 없음</span></div><div class="k-empty">학습기가 아직 이 시장 표를 올리지 않았습니다.</div></section>';
-      return '<section class="k-panel"><div class="k-h"><b>' + t + ' 검증</b><span class="k-tag ' + (r.primary ? 'good' : 'warn') + '">' + (r.primary ? '주력 — AI_PRIMARY 퇴역' : 'AI_PRIMARY 유지') + '</span><span class="k-tag">국면 ' + esc(r.regime || '—') + '</span><small>표 ' + esc(ago(r.ts)) + '</small></div>' +
-        valBlock(r.daily && r.daily.val, '일봉 ' + ((r.daily && r.daily.cells) || 0) + '칸') + valBlock(r.intra && r.intra.val, '5분 단타 ' + ((r.intra && r.intra.cells) || 0) + '칸') + '</section>';
-    }).join('') + '</div>';
-  }
   function live(j) {
     var open = j.open || [], rec = j.recent || [], ex = j.exits || [];
     var h = '<section class="k-panel"><div class="k-h"><b>실전 기록</b><small>보유 ' + open.length + ' · 최근 매수 ' + rec.length + ' · 청산 ' + ex.length + '</small></div><div class="k-body k-scroll">';
@@ -216,24 +172,15 @@
     }).join('') + '</tbody></table>';
     return h + '</div></section>';
   }
-  function dict(j) {
-    var any = (j.markets || {}).us || (j.markets || {}).kr;
-    if (!any) return '';
-    var d = (any.daily && any.daily.pb) || {}, it = (any.intra && any.intra.pb) || {};
-    return '<section class="k-panel"><div class="k-h"><b>매매법 사전</b><small>일봉 ' + Object.keys(d).length + ' · 5분 단타 ' + Object.keys(it).length + ' — 사는 조건도, 파는 규칙도 다르다</small></div><div class="k-dict">' +
-      Object.keys(d).map(function (k) { var p = d[k]; return '<div><b>' + esc(nm(k)) + '</b><small>' + esc(p.family || '') + ' · 손절 ' + p.stop + '%(ATR×' + p.atr + ') · 본전 ' + p.be + 'R · ' + (p.tpR ? '익절 ' + p.tpR + 'R · ' : '익절 없음 · ') + p.hold + '거래일</small></div>'; }).join('') +
-      Object.keys(it).map(function (k) { var p = it[k]; return '<div><b>' + esc(nm(k)) + '</b><small>5분 단타 · ' + (p.tpPct == null ? '익절 없음' : '+' + p.tpPct + '%') + ' · −' + p.sl + '% · ' + (p.bars ? p.bars * 5 + '분' : '장 끝까지') + '</small></div>'; }).join('') + '</div></section>';
-  }
-
   function render() {
     if (!root || !data) return;
     var j = data;
     if (!mkSel) { var lu = (j.live || {}).us, lk = (j.live || {}).kr; mkSel = (lk && (!lu || lk.ts > lu.ts)) ? 'kr' : 'us'; }
     var keepX = {}; root.querySelectorAll('.k-strip').forEach(function (s, i) { keepX[i] = s.scrollLeft; });
     root.innerHTML =
-      '<div style="display:flex;align-items:center;gap:8px"><span class="k-lab">PLAYBOOK AI · 확률 높은 종목 → 그 종목에 맞는 매매법</span><div class="k-mkt">' +
+      '<div style="display:flex;align-items:center;gap:8px"><span class="k-lab">매매법 AI · 실시간 판정 — 모델 설명·검증은 02 모델 구조</span><div class="k-mkt">' +
       ['us', 'kr'].map(function (m) { return '<button type="button" data-pbmk="' + m + '" aria-pressed="' + (m === mkSel) + '">' + (m === 'us' ? 'US' : 'KR') + '</button>'; }).join('') + '</div></div>' +
-      brief(j, mkSel) + strip(j, mkSel) + funnel(j, mkSel) + flow(j) + markets(j) + live(j) + dict(j);
+      brief(j, mkSel) + strip(j, mkSel) + funnel(j, mkSel) + live(j);   // [V33.612] 작동 구조·검증·사전은 02 모델 구조(Brain Studio '매매법 AI')
     root.querySelectorAll('.k-strip').forEach(function (s, i) { if (keepX[i]) s.scrollLeft = keepX[i]; });
   }
   function load() {

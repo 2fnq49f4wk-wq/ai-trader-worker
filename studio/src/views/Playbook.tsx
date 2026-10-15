@@ -1,0 +1,137 @@
+/* [V33.612] 매매법 AI(Playbook-Sim) — 모델 구조창의 주력 모델.
+   데이터는 /api/playbook 그대로(값을 지어내지 않는다): 시장별 검증 · 선택 규칙 비교 · 판정 구간에서 고른 매매법 · 매매법 정의. */
+import { type ReactNode } from "react";
+import * as Tabs from "@radix-ui/react-tabs";
+import { type Tone, f1, n0, ago } from "../models";
+import { Badge, Bars, Empty, Facts, Kpis, Section } from "./ui";
+
+const NAMES: Record<string, string> = {
+  TREND_ALIGN: "추세 정렬", TR_BREAKOUT: "20일 돌파", RS_LEADER: "상대강도 상위", VT_TREND: "저변동 추세",
+  TR_PULLBACK: "추세 눌림목", MA_PULLBACK: "20일선 지지", SN_RSI2: "RSI2 반등", HA_REV: "하이킨아시 전환",
+  BB_LOW: "볼린저 하단", STOCH_CROSS: "스토캐스틱 교차", STOCH_OS_EXIT: "스토캐스틱 과매도 이탈",
+  VOL_BREAKOUT: "거래량 돌파", VOL_REVERT: "거래량 급락 반등", SQUEEZE: "스퀴즈 돌파", XS_ARB: "5일 낙폭 과대",
+  DUAL_MOM: "듀얼 모멘텀", HERD_REBOUND: "거래량 2차 파동",
+  ORB: "시가 범위 돌파", DIP_REV: "장중 눌림 반등", STOCH5: "5분 스토캐스틱", MOM3: "5분 3봉 상승", VWAP_RE: "VWAP 회복",
+};
+const nm = (k: string) => NAMES[k] || k;
+const pc = (v: any) => (v == null || isNaN(+v) ? "—" : (+v > 0 ? "+" : "") + (+v).toFixed(2) + "%");
+const ruleTxt = (r: any) => (!r ? "—" : (r.score === "lcb" ? "하한(평균−오차)" : "평균") + " · " + (r.level === "global" ? "매매법 전체 성적" : r.level === "regime" ? "국면 칸까지" : "상황 칸 전체"));
+const MK: Record<string, string> = { us: "미국", kr: "한국" };
+
+export function pbState(j: any): { label: string; tone: Tone } {
+  const m = (j && j.markets) || {};
+  if (m.us?.primary || m.kr?.primary) return { label: "주력", tone: "ok" };
+  if (m.us || m.kr) return { label: "검증 중", tone: "warn" };
+  return { label: "대기", tone: "idle" };
+}
+
+function verdict(v: any): { v: string; hint: string; tone: Tone } {
+  if (!v) return { v: "—", hint: "표 없음", tone: "idle" };
+  if (v.why) return { v: "—", hint: v.why, tone: "idle" };
+  return { v: pc(v.mean), hint: "아무거나 " + pc(v.base) + " · t " + f1(v.t, 2) + " · " + n0(v.n) + "건", tone: v.pass ? "ok" : "bad" };
+}
+
+function Steps() {
+  const S = ({ n, t, children }: { n: string; t: string; children: ReactNode }) => (
+    <li className="relative border-l border-line pb-5 pl-5 last:pb-0">
+      <span className="bs-num absolute -left-[9px] top-0 flex h-[18px] w-[18px] items-center justify-center rounded-full bg-bg-3 text-[10px] text-ink-2">{n}</span>
+      <h5 className="text-[13px] font-semibold">{t}</h5><div className="mt-1.5 text-[12.5px] leading-relaxed text-ink-2">{children}</div>
+    </li>);
+  return (
+    <ol className="mt-1">
+      <S n="1" t="후보 — 오를 확률이 높은 종목">OMNI-Q 5일 머리 상위 20%. 매매법 신호가 먼저가 아니라 종목이 먼저입니다.</S>
+      <S n="2" t="지금 뜬 매매법">후보마다 일봉 도감 17종(진입은 마감 전 60분)과 5분 단타 5종(1분봉을 5분으로 묶어)의 진입 조건을 지금 가격으로 계산합니다. 뜬 것이 없으면 사지 않습니다.</S>
+      <S n="3" t="닮은 과거 칸">지금 상황을 칸으로 나눕니다 — 일봉: 국면(상승·보합·하락·폭락·폭등) · RSI14 · 20일선 거리 · 5일 수익 · 거래량 배수 · FOMC/CPI 전후 / 단타: 국면 · 장중 등락 · 장 시작 후 시간 · 일봉 추세. 표본이 적은 칸은 넓은 칸 쪽으로 당깁니다(베이즈 수축).</S>
+      <S n="4" t="선택">뜬 매매법 중 그 칸 점수가 가장 높고 모의 성공확률 ≥ 50% 인 것 하나. 점수(평균 또는 하한)와 칸 단계는 검증이 고른 규칙을 따릅니다.</S>
+      <S n="5" t="매수">검증을 통과한 시장만 삽니다. 통과한 시장은 AI_PRIMARY 가 자동으로 꺼지고 매매법 AI 가 주력(크기 ×1.0)이 됩니다. 위험 관문(폭락·섹터·예산)은 그대로 지납니다.</S>
+      <S n="6" t="그 매매법의 매도">손절 · 본전 이동 · 익절 · 최대 보유일 · 단타는 장 마감 10분 전. 공통 분할익절·트레일·위원회 청산은 걸지 않습니다(시뮬과 같게).</S>
+      <S n="7" t="매 회차 다시 시뮬 · 검증">GitHub Actions 가 과거 OMNI-Q 상위 후보에 모든 매매법을 가상 적용해 표를 새로 만들고, 표 [0,60%) → 규칙 고르기 [60,80%) → 손대지 않은 [80,100%) 에서만 통과를 판정합니다.</S>
+    </ol>
+  );
+}
+
+function Dict({ d }: { d: any }) {
+  const any = d.markets?.us || d.markets?.kr;
+  const D = any?.daily?.pb || {}, I = any?.intra?.pb || {};
+  if (!Object.keys(D).length && !Object.keys(I).length) return <Empty>매매법 정의가 아직 없습니다.</Empty>;
+  return (
+    <table className="w-full text-[12px]">
+      <thead><tr className="text-left text-[11px] text-ink-3"><th className="py-1.5 font-normal">매매법</th><th className="font-normal">종류</th><th className="font-normal">손절</th><th className="font-normal">익절</th><th className="font-normal">보유</th></tr></thead>
+      <tbody className="bs-num">
+        {Object.keys(D).map((k) => { const p = D[k]; return (
+          <tr key={k} className="border-t border-line text-ink-2"><td className="py-1.5 text-ink">{nm(k)}</td><td>{p.family || "일봉"}</td><td>{p.stop}%·ATR×{p.atr} (본전 {p.be}R)</td><td>{p.tpR ? p.tpR + "R" : "없음"}</td><td>{p.hold}거래일</td></tr>); })}
+        {Object.keys(I).map((k) => { const p = I[k]; return (
+          <tr key={k} className="border-t border-line text-ink-2"><td className="py-1.5 text-ink">{nm(k)}</td><td>5분 단타</td><td>−{p.sl}%</td><td>{p.tpPct == null ? "없음" : "+" + p.tpPct + "%"}</td><td>{p.bars ? p.bars * 5 + "분" : "장 끝까지"}</td></tr>); })}
+      </tbody>
+    </table>
+  );
+}
+
+function Market({ mk, r }: { mk: string; r: any }) {
+  if (!r) return <Section title={MK[mk] + " 검증"}><Empty>학습기가 아직 이 시장 표를 올리지 않았습니다.</Empty></Section>;
+  const one = (v: any, label: string) => {
+    if (!v) return <p className="py-2 text-[12px] text-ink-3">{label} — 표 없음</p>;
+    if (v.why) return <p className="py-2 text-[12px] text-ink-3">{label} — {v.why}</p>;
+    const by = v.byPb || {}, rows = Object.keys(by).sort((a, b) => by[b] - by[a]).map((k) => ({ name: nm(k), v: by[k], label: by[k] + "건" }));
+    return (
+      <div className="mt-3">
+        <div className="mb-2 flex items-center gap-2 text-[12.5px]"><span className="font-semibold">{label}</span><Badge tone={v.pass ? "ok" : "bad"}>{v.pass ? "통과" : "미통과"}</Badge><span className="text-[11px] text-ink-3">{v.cand || ""}</span></div>
+        <Kpis items={[
+          { k: "고른 매매법 평균", v: pc(v.mean), tone: v.mean > 0 ? "ok" : "bad" },
+          { k: "뜬 것 아무거나", v: pc(v.base) },
+          { k: "t (기준 ≥ 2)", v: f1(v.t, 2), tone: v.t >= 2 ? "ok" : "bad" },
+          { k: "거래 · 승률", v: n0(v.n) + " · " + (v.win == null ? "—" : v.win + "%") },
+        ]} />
+        {Array.isArray(v.valCmp) && v.valCmp.length > 0 && (
+          <table className="mt-3 w-full text-[12px]">
+            <thead><tr className="text-left text-[11px] text-ink-3"><th className="py-1.5 font-normal">선택 규칙(검증 구간)</th><th className="font-normal">거래</th><th className="font-normal">평균</th><th className="font-normal">t</th><th className="font-normal">아무거나</th></tr></thead>
+            <tbody className="bs-num">{v.valCmp.map((c: any, i: number) => { const sel = v.rule && c.rule && c.rule.score === v.rule.score && c.rule.level === v.rule.level;
+              return <tr key={i} className="border-t border-line" style={{ color: sel ? "var(--bs-ok)" : "var(--bs-ink2)" }}><td className="py-1.5">{ruleTxt(c.rule)}{sel ? " ✓" : ""}</td><td>{n0(c.n)}</td><td>{pc(c.mean)}</td><td>{f1(c.t, 2)}</td><td>{pc(c.base)}</td></tr>; })}</tbody>
+          </table>)}
+        {rows.length > 0 && <div className="mt-3"><div className="mb-1 text-[11px] text-ink-3">판정 구간에서 고른 매매법</div><Bars rows={rows} max={8} /></div>}
+      </div>);
+  };
+  return (
+    <Section title={MK[mk] + " 검증"} aside={<span>{r.primary ? "주력 — AI_PRIMARY 퇴역" : "AI_PRIMARY 유지"} · 국면 {r.regime || "—"} · 표 {ago(r.ts)}</span>}>
+      {one(r.daily && r.daily.val, "일봉 " + n0(r.daily && r.daily.cells) + "칸")}
+      {one(r.intra && r.intra.val, "5분 단타 " + n0(r.intra && r.intra.cells) + "칸")}
+    </Section>);
+}
+
+export function Playbook({ d, head }: { d: any; head: ReactNode }) {
+  const us = d.markets?.us, kr = d.markets?.kr, a = verdict(us?.daily?.val), b = verdict(kr?.daily?.val);
+  const caps = d.caps || {};
+  return (
+    <div>
+      {head}
+      <div className="mt-4"><Kpis items={[
+        { k: "미국 일봉 판정", v: a.v, hint: a.hint, tone: a.tone },
+        { k: "한국 일봉 판정", v: b.v, hint: b.hint, tone: b.tone },
+        { k: "주력 시장", v: [us?.primary ? "미국" : "", kr?.primary ? "한국" : ""].filter(Boolean).join("·") || "없음", hint: "통과 시장부터 AI_PRIMARY 자동 퇴역", tone: us?.primary || kr?.primary ? "ok" : "warn" },
+        { k: "매매법 보유", v: n0((d.open || []).length) + "건", hint: "최근 매수 " + n0((d.recent || []).length) + " · 청산 " + n0((d.exits || []).length) },
+      ]} /></div>
+      <Tabs.Root defaultValue="s" className="mt-5">
+        <Tabs.List className="flex gap-5 border-b border-line">
+          {[["s", "구조"], ["e", "근거"], ["f", "상세"]].map(([v, t]) => (
+            <Tabs.Trigger key={v} value={v} className="-mb-px border-b-2 border-transparent pb-2 text-[13px] text-ink-3 data-[state=active]:border-rose data-[state=active]:text-ink">{t}</Tabs.Trigger>))}
+        </Tabs.List>
+        <Tabs.Content value="s" className="pt-4 outline-none">
+          <Steps />
+          <Section title="매매법 사전" aside="사는 조건이 다르고, 파는 규칙도 다르다"><Dict d={d} /></Section>
+        </Tabs.Content>
+        <Tabs.Content value="e" className="pt-1 outline-none"><Market mk="us" r={us} /><Market mk="kr" r={kr} /></Tabs.Content>
+        <Tabs.Content value="f" className="pt-4 outline-none"><Facts rows={[
+          ["후보", "OMNI-Q 5일 상위 " + Math.round((1 - (d.route?.candMin ?? 0.8)) * 100) + "% · 실시간"],
+          ["일봉 진입 시간", "마감 전 " + (d.route?.dailyEntryWin ?? 60) + "분(시뮬 = 신호 봉 종가 체결)"],
+          ["단타 진입", "마감까지 " + (d.route?.intraMinToClose ?? 30) + "분 넘게 남았을 때 · 사이클당 분봉 조회 " + (d.route?.intraFetchMax ?? "—") + "종목"],
+          ["성공확률 하한", Math.round((d.route?.minWin ?? 0.5) * 100) + "%"],
+          ["통과 기준", "손대지 않은 마지막 20% 구간: 평균 > 0 · t ≥ 2 · 뜬 것 아무거나보다 높음 · 표본 ≥ 30"],
+          ["시험 크기", "×" + (caps.trial?.mult ?? "—") + " · 하루 " + (caps.trial?.maxPerDay ?? "—") + " · 동시 " + (caps.trial?.maxOpen ?? "—")],
+          ["주력 크기", "×" + (caps.primary?.mult ?? "—") + " · 하루 " + (caps.primary?.maxPerDay ?? "—") + " · 동시 " + (caps.primary?.maxOpen ?? "—")],
+          ["미국 선택 규칙", ruleTxt(us?.daily?.val?.rule)], ["한국 선택 규칙", ruleTxt(kr?.daily?.val?.rule)],
+          ["표 갱신", "미 " + ago(us?.ts) + " · 한 " + ago(kr?.ts)],
+        ]} /></Tabs.Content>
+      </Tabs.Root>
+    </div>
+  );
+}

@@ -168,8 +168,10 @@ chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"
 { // [V33.609] 관측창 배선
   const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8"), U = readFileSync(new URL("../public/workspace-ui.js", import.meta.url), "utf8");
   const O = readFileSync(new URL("../public/playbook-observatory.js", import.meta.url), "utf8");
-  chk(/id="page-nnviz" data-brain-view="playbook"/.test(H) && /data-brain-tab="playbook"/.test(H) && /<section id="pbObs"/.test(H), "두뇌 페이지 기본 탭 = 00 매매법 AI");
-  chk(/'playbook', 'operations', 'models', 'research'/.test(U) && /playbook-observatory\.js/.test(U), "탭 전환·지연 로드 배선");
+  chk(/id="page-nnviz" data-brain-view="operations"/.test(H) && !/data-brain-tab="playbook"/.test(H) && /<section id="pbObs"/.test(H), "[V33.612] 매매법 AI 실시간 판정은 01 작동 화면 안(00 탭 없음)");
+  chk(/if \(view === 'operations'\) pbObs\(\);/.test(U) && /playbook-observatory\.js/.test(U), "01 작동 화면을 열 때 지연 로드");
+  { const ST = readFileSync(new URL("../studio/src/models.ts", import.meta.url), "utf8"), BS = readFileSync(new URL("../public/brain-studio.js", import.meta.url), "utf8");
+    chk(/key: "playbook"/.test(ST) && /\/api\/playbook/.test(readFileSync(new URL("../studio/src/data.ts", import.meta.url), "utf8")) && /닮은 과거 칸/.test(BS), "[V33.612] 02 모델 구조(Brain Studio)에 '매매법 AI' 모델 · 번들 반영"); }
   chk(/window\.PlaybookObs/.test(O) && /\/api\/playbook/.test(O) && !/https?:\/\//.test(O.replace(/\/\*[\s\S]*?\*\//g, "")), "관측창은 /api/playbook 만 읽는다(외부 주소 없음)");
   chk(/recent: recent, exits: exits, open: open/.test(S), "관측창 API: 최근 매수·청산·보유"); }
 { // [V33.610] 시뮬과 실전 맞추기
