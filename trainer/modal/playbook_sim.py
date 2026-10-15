@@ -809,10 +809,23 @@ def lookup(tab, keys, pb):
     return None
 
 
+# [V33.624] ★국면 거부권★ — 10/15 학습 실측: 고른 규칙이 판정 구간(최근)에서 미 −0.82% · 한 −1.96%(무작위 −0.28 · −0.56%)로 무너졌다.
+#   진단(판정 구간 ★전★ 역사)에서 추세·모멘텀 매매법 거의 전부가 BULL·NEUTRAL 에선 벌고 CRASH·SURGE 에선 −2~−6% 였는데,
+#   'lcb · global' 규칙은 국면을 안 봐 한국 폭락장(5일 −16.8%)에서도 듀얼 모멘텀을 샀다. 검증 구간은 국면 교체를 미리 못 본다 —
+#   그래서 규칙과 상관없이 ★그 매매법의 지금 국면 칸(수축 평균) 이 0 아래면 고르지 않는다★(표본 REGIME_VETO_N 이상일 때).
+REGIME_VETO_N = 30
+
+
+def _regime_ok(v):
+    return v is None or v[0] < REGIME_VETO_N or v[2] >= 0
+
+
 def choose(tab, keys, fired, score="m"):
-    """뜬 매매법들 중 점수 > 0 이고 점수가 가장 큰 것 → (pb, n, w, m, lcb, hd) | None. [V33.618] 승률 조건 없음."""
+    """뜬 매매법들 중 점수 > 0 이고 점수가 가장 큰 것 → (pb, n, w, m, lcb, hd) | None. [V33.618] 승률 조건 없음 · [V33.624] 국면 거부권(keys[-2] = 국면 칸)."""
     best, bs = None, None
     for pb in fired:
+        if len(keys) >= 2 and not _regime_ok(tab.get((keys[-2], pb))):
+            continue
         v = lookup(tab, keys, pb)
         if v is None:
             continue
@@ -871,6 +884,8 @@ def _pick(tab, te, rule, hist=None):
         te = te[_gate_ok(hist, te, rule["gate"])]
     w, sc = _row_vals(tab, te, rule)
     ok = sc > 0   # [V33.618] 승률 50% 조건 삭제
+    if len(te) and "k1" in te.columns:   # [V33.624] 국면 거부권 — k1 = 국면 칸(정리 뒤)
+        ok = ok & np.array([_regime_ok(tab.get(k)) for k in zip(te["k1"].values, te["pb"].values)], dtype=bool)
     sel = te.assign(_s=sc)[ok].sort_values("_s", ascending=False).drop_duplicates("inst").sort_values("t")
     keep, busy = [], {}
     for r in sel[["j", "t", "x"]].itertuples(index=True):

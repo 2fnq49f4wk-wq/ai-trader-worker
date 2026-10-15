@@ -39,6 +39,9 @@ atr_ = PB._daily_state(P, [])[4]
 regs = PB._regime(P["close"])[0]
 LF = PB._live_filters(P, regs, atr_)["SN_RSI2"][-K:, :J].astype(int).tolist(); MR = PB._mr_exit(P)[-K:, :J].astype(int).tolist(); RG = [str(x) for x in regs[-K:]]
 tab5 = PB._shrunk_table(d.head(400))
+# [V33.624] 국면 거부권 — 전체 성적은 좋아도 지금 국면 칸이 음이면 안 고른다
+tv = {("*", "A"): (500, 0.6, 1.0, 0.8, 5.0), ("CRASH|*", "A"): (80, 0.3, -2.0, -2.5, 5.0), ("*", "B"): (500, 0.5, 0.3, 0.2, 5.0), ("CRASH|*", "B"): (80, 0.5, 0.2, 0.1, 5.0)}
+veto = [PB.choose(tv, ["CRASH|*", "*"], ["A", "B"], "m")[0], PB.choose(tv, ["BULL|*", "*"], ["A", "B"], "m")[0]]
 # [V33.618] 폭락장 반등 2종 대조 — 변동성 큰 무작위 시세(투매일이 나오게)
 import strategy_catalog as CAT
 cv = pd.DataFrame(50*np.exp(np.cumsum(rng.normal(-0.001,0.04,(400,40)),axis=0)), index=[20240101+k for k in range(400)])
@@ -92,7 +95,7 @@ dk = PB.daily_keys(["BULL"]*len(s), s[:,0], s[:,1], s[:,2], s[:,3], s[:,4].astyp
 I = np.array(${JSON.stringify(isamp)}, dtype=float)
 ik = PB.intra_keys(["CRASH"]*len(I), I[:,0], I[:,1], I[:,2].astype(int))
 print(json.dumps({"null": null_d.get("pass"), "pos": pos, "pick": ch and ch[0], "G": G, "Pa": Pa, "Sd": Sd, "K": K, "ib": ib, "dk": [[str(x) for x in lv] for lv in dk], "ik": [[str(x) for x in lv] for lv in ik],
-  "Pva": Pva, "Sv": Sv, "FMv": FMv, "gok": gok, "dec": dec, "rulesA": PB.RULES_ADAPT, "cqs": list(PB.CAND_QS), "RGv": RGv, "tnull": tnull, "tpos": tpos, "INPB": sorted(PB.INTRA_PB), "LF": LF, "MR": MR, "RG": RG, "tab5len": len(next(iter(tab5.values()))), "snapMr": sorted(k for k, v in PB.DAILY_PB.items() if v.get("mr")),
+  "veto": veto, "Pva": Pva, "Sv": Sv, "FMv": FMv, "gok": gok, "dec": dec, "rulesA": PB.RULES_ADAPT, "cqs": list(PB.CAND_QS), "RGv": RGv, "tnull": tnull, "tpos": tpos, "INPB": sorted(PB.INTRA_PB), "LF": LF, "MR": MR, "RG": RG, "tab5len": len(next(iter(tab5.values()))), "snapMr": sorted(k for k, v in PB.DAILY_PB.items() if v.get("mr")),
   "rules": PB.RULES, "chLow": PB.choose({("*", "A"): (100, 0.3, 0.6, 0.4, 2.0)}, ["*"], ["A"]), "pbs": sorted(PB.DAILY_PB), "ipbs": sorted(PB.INTRA_PB), "B": [PB.B_RSI, PB.B_GAP20, PB.B_RET5, PB.B_VR, PB.B_DAYPCT, PB.B_TOD]}))
 `;
 const r = spawnSync("python3", ["-c", py], { encoding: "utf8", timeout: 300000, maxBuffer: 256 * 1024 * 1024 });
@@ -131,6 +134,12 @@ if (o) {
       for (let q = 0; q < 120; q++) { const t = T - 120 + q, F = W.pbDailyFires({ o: A.o.slice(0, t + 1), h: A.h.slice(0, t + 1), l: A.l.slice(0, t + 1), c: A.c.slice(0, t + 1), v: A.v.slice(0, t + 1) });
         for (const pb of ["OS_DEEP","CAPIT_REV","ICHIMOKU","KELTNER","DONCHIAN","MACD_X","ENVELOPE","ELDER_RAY","WILLR","CCI_REV","PSAR","TRIPLE_SCR","IBS_LOW","HI52_NEAR"]) { const js = F.includes(pb) ? 1 : 0; cnt[pb] += js; if (js !== o.Sv[pb][q][j]) bad.push([pb, t, j, js]); } } }
     chk(!bad.length && Object.values(cnt).every((x) => x > 0), "[V33.618·619] 폭락장 반등 2종 + 고전 기술적 10종(이치모쿠·켈트너·돈치안·MACD·엔벨로프·엘더·%R·CCI·SAR·삼중창) 학습기 = 워커 " + JSON.stringify(cnt), JSON.stringify(bad.slice(0, 4))); }
+  chk(JSON.stringify(o.veto) === '["B","A"]', "[V33.624] 학습기 국면 거부권: 폭락 국면 칸이 음(−2%)인 A 는 전체 성적이 좋아도 폭락장에선 안 고르고 B · 강세장에선 A", JSON.stringify(o.veto));
+  { const Tt = { "*": { A: [500, 0.6, 1.0, 0.8, 5], B: [500, 0.5, 0.3, 0.2, 5] }, "CRASH|*": { A: [80, 0.3, -2.0, -2.5, 5], B: [80, 0.5, 0.2, 0.1, 5] } };
+    const c1 = W.pbChoose(Tt, ["CRASH|1|1|1|1|0", "CRASH|1|1|*", "CRASH|*", "*"], ["A", "B"], { score: "lcb", level: "global" }),
+          c2 = W.pbChoose(Tt, ["BULL|1|1|1|1|0", "BULL|1|1|*", "BULL|*", "*"], ["A", "B"], { score: "lcb", level: "global" });
+    chk(c1 && c1.pb === "B" && c2 && c2.pb === "A" && c1.alts.some((x) => x[0] === "A" && /국면 거부/.test(x[5] || "")),
+        "[V33.624] 워커 국면 거부권: '매매법 전체 성적' 규칙이라도 지금 국면 칸이 음이면 거부(관측창에 사유)", JSON.stringify([c1, c2])); }
   chk(o.null === false, "귀무: 무작위 시세는 일봉 검증을 통과 못 한다", JSON.stringify(o.null));
   chk(o.pos.pass === true && o.pick === o.G, "양성 대조: 심은 매매법을 골라 뒤 30% 에서 통과", JSON.stringify([o.pos, o.pick, o.G]));
   // ⑤ 진입 조건 대조(일봉 도감)

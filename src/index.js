@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.623";
+const _BUILD_VER = "V33.624";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13797,16 +13797,22 @@ function pbLiveDaily(daily, price, prevClose, minToClose) {
    score "mpd"·"lcbpd" = 하루당 평균·하한(hd 없으면 1).
    [V33.609] rule = 학습기 검증이 고른 선택 규칙 { score: "m"(평균) | "lcb"(하한 = 평균 − 표준오차), level: "fine" | "regime" | "global" }.
    keys = [전체 칸, 국면+2조건, 국면, "*"] — regime 이면 뒤 둘만 · global 이면 "*" 만 본다. */
+/* [V33.624] 국면 거부권 — 학습기 _regime_ok 와 같다. 실측: 추세·모멘텀 매매법이 BULL·NEUTRAL 에선 벌고 CRASH·SURGE 에선 −2~−6%,
+   그런데 '매매법 전체 성적' 규칙이 폭락장에서도 골랐다(판정 구간 미 −0.82% · 한 −1.96%). */
+const PB_REGIME_VETO_N = 30;
 function pbChoose(table, keys, fired, rule) {
   if (!table || !fired || !fired.length) return null;
   const sc = String((rule && rule.score) || "m");
   const lv = rule && rule.level === "global" ? keys.slice(-1) : rule && rule.level === "regime" ? keys.slice(-2) : keys;
+  const regKey = keys.length >= 2 ? keys[keys.length - 2] : null;   // [V33.624] 국면 칸 — 규칙과 상관없이 그 칸 수축 평균 < 0(표본 ≥ PB_REGIME_VETO_N) 이면 거부
   let best = null;
   const alts = [];   // [V33.620] 뜬 매매법마다 칸 값 — 관측창 '왜 이것을 골랐나'
   for (const pb of fired) {
     let v = null;
     for (const k of lv) { const row = table[k]; if (row && Array.isArray(row[pb])) { v = row[pb]; break; } }
     if (!v) { alts.push([pb, null, null, 0, null]); continue; }
+    const rv = regKey && table[regKey] && Array.isArray(table[regKey][pb]) ? table[regKey][pb] : null;
+    if (rv && _num(rv[0], 0) >= PB_REGIME_VETO_N && _num(rv[2], 0) < 0) { alts.push([pb, +_num(v[2], 0).toFixed(3), +_num(v[1], 0).toFixed(3), _num(v[0], 0), null, "국면 거부(" + _num(rv[2], 0).toFixed(2) + "%)"]); continue; }
     const n = _num(v[0], 0), w = _num(v[1], 0), m = _num(v[2], 0), lcb = _num(v[3], NaN), hd = Math.max(0.05, _num(v[4], 1));
     const s = sc === "lcb" ? lcb : sc === "mpd" ? m / hd : sc === "lcbpd" ? lcb / hd : m;
     alts.push([pb, +m.toFixed(3), +w.toFixed(3), n, +(+s).toFixed(4)]);

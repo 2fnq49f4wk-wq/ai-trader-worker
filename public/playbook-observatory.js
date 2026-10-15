@@ -134,7 +134,7 @@
     alt = alt.slice().sort(function (a, b) { return (b[4] == null ? -99 : b[4]) - (a[4] == null ? -99 : a[4]); });
     return '<div class="k-altw"><table class="k-alt"><thead><tr><th>뜬 매매법</th><th class="num">닮은 과거 평균</th><th class="num">승률</th><th class="num">표본</th></tr></thead><tbody>' + alt.map(function (r) {
       var on = r[0] === it.pb, off = bench.indexOf(r[0]) >= 0;
-      return '<tr class="' + (off ? 'off' : '') + '"><td class="' + (on ? 'on' : '') + '">' + (on ? '✓ ' : '') + esc(nm(r[0])) + (off ? ' · 최근 성적으로 쉼' : '') + '</td>' +
+      return '<tr class="' + (off ? 'off' : '') + '"><td class="' + (on ? 'on' : '') + '">' + (on ? '✓ ' : '') + esc(nm(r[0])) + (off ? ' · 최근 성적으로 쉼' : '') + (r[5] ? ' · ' + esc(r[5]) : '') + '</td>' +
         '<td class="num ' + cls(r[1]) + '">' + (r[1] == null ? '표 없음' : pct(r[1])) + '</td><td class="num">' + (r[2] == null ? '—' : Math.round(r[2] * 100) + '%') + '</td><td class="num">' + (r[3] || '—') + '</td></tr>';
     }).join('') + '</tbody></table></div>';
   }
