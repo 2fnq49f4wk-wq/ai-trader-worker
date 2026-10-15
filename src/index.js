@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.625";
+const _BUILD_VER = "V33.626";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13547,7 +13547,19 @@ const PB_PRIMARY_CAPS = { maxPerCycle: 2, maxPerDay: 6, maxOpen: 12, mult: 1.0 }
 /* [V33.621] ★주력 전환은 2회 연속 통과★ — 한 번의 검증 통과(판정 구간 t ≥ 2)는 운일 수 있다. 통과가 학습 회차 2번 연속(passStreak ≥ 2)일 때만
    AI_PRIMARY 를 퇴역시키고 전 크기로 산다. 그 전엔 시험 크기(×0.5 · 하루 3 · 동시 6). */
 const PB_PRIMARY_STREAK = 2;
-function pbPrimaryOn(st, nowMs) { return !!(st && st.daily && _pbPass(st.daily.val) && _num(st.passStreak, 0) >= PB_PRIMARY_STREAK && (nowMs - _num(st.ts, 0)) <= STRAT_ROUTE.freshMs); }
+/* [V33.626] ★연속 통과는 '겹치지 않는 판정 구간' 끼리만 센다★ — 학습은 하루 2번인데 판정 구간(최근 ~100거래일)은 회차마다 거의 같아서
+   종전 passStreak 2 는 '같은 구간을 두 번 본 것' 이었다(독립 증거 아님). 10년 걷기 검증(미 18구간 · 한 17구간 · 2016~2026 야후 일봉)에서
+   매매법 선택은 판정 구간 평균 미 −0.52% · 한 −0.38%(무작위 대비 미 −0.29%p t −3.1) · 통과 미 0/18 · 한 1/17 — 한 번의 통과는 운일 가능성이 크다.
+   통과 기록(passLog: 판정 구간 시작일)에서 앞 통과의 판정 구간이 끝난 뒤(≥ PB_INDEP_DAYS 달력일) 시작한 판정 구간이 또 통과해야 주력. */
+const PB_INDEP_DAYS = 140;
+function _pbYmdMs(d) { const s = String(d || ""); return /^\d{8}$/.test(s) ? Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8)) : NaN; }
+function pbIndepPasses(log) {
+  const xs = (Array.isArray(log) ? log : []).map(_pbYmdMs).filter(function (x) { return x === x; }).sort(function (a, b) { return a - b; });
+  let n = 0, last = -Infinity;
+  for (const x of xs) if (x - last >= PB_INDEP_DAYS * 86400000) { n++; last = x; }
+  return n;
+}
+function pbPrimaryOn(st, nowMs) { return !!(st && st.daily && _pbPass(st.daily.val) && _num(st.passStreak, 0) >= PB_PRIMARY_STREAK && pbIndepPasses(st.passLog) >= 2 && (nowMs - _num(st.ts, 0)) <= STRAT_ROUTE.freshMs); }
 /* [V33.621] ★실전 손실 제동★ — 매매법 AI 실제 청산(원장 SELL · 사유 SR-*) 최근 30일이 표본 ≥ 12 · 평균 ≤ −0.4% 이면 그 시장 신규 매수를 멈춘다(보유 청산은 그대로).
    시뮬과 실전이 갈라지는(체결가·시간·데이터) 손실을 시뮬이 못 본다 — 실제 돈 흐름으로 거는 마지막 안전장치. 30분마다 다시 잰다(상태 캐시). */
 const PB_BRAKE = { days: 30, minN: 12, mean: -0.4, everyMs: 30 * 60000 };
@@ -30940,7 +30952,12 @@ async function handleRequest(request, env, ctx, _inner) {
                     sector: (body.sector && typeof body.sector === "object") ? body.sector : null,
                     panic: body.panic === true };   // [V33.625] 공황 국면(학습기 _panic 마지막 날) — 추세·모멘텀 진입 차단   // [V33.621] 종목 → 섹터(학습기 자동 배정 · 섹터 보유 상한)
       rec.pass = { daily: _pbPass(rec.daily && rec.daily.val), intra: _pbPass(rec.intra && rec.intra.val) };
-      try { const _prev = await getState(env.DB, "playbook:" + mk, null); rec.passStreak = rec.pass.daily ? _num(_prev && _prev.passStreak, 0) + 1 : 0; } catch (e) { rec.passStreak = rec.pass.daily ? 1 : 0; }   // [V33.621] 연속 통과 수
+      try { const _prev = await getState(env.DB, "playbook:" + mk, null); rec.passStreak = rec.pass.daily ? _num(_prev && _prev.passStreak, 0) + 1 : 0;
+        /* [V33.626] 통과한 판정 구간 시작일 기록(최근 12개) — 실패가 끼어도 지우지 않는다(독립 구간 두 번 통과 · 지금 통과 중 · 연속 2회 셋 다 필요) */
+        const _pl = Array.isArray(_prev && _prev.passLog) ? _prev.passLog.slice(-12) : [];
+        const _hf = rec.daily && rec.daily.val && rec.daily.val.hoFrom;
+        if (rec.pass.daily && /^\d{8}$/.test(String(_hf || "")) && _pl.indexOf(String(_hf)) < 0) _pl.push(String(_hf));
+        rec.passLog = _pl; } catch (e) { rec.passStreak = rec.pass.daily ? 1 : 0; }   // [V33.621] 연속 통과 수
       const _sz = JSON.stringify(rec).length;
       if (_sz > 1800000) return Response.json({ error: "표가 너무 크다(" + _sz + "B > 1.8MB) — 학습기 export 문턱을 올려라" }, { status: 413, headers: cors });
       await setState(env.DB, "playbook:" + mk, rec);
@@ -30952,7 +30969,7 @@ async function handleRequest(request, env, ctx, _inner) {
       const out = {};
       for (const mk of ["us", "kr"]) {
         const r = await getState(env.DB, "playbook:" + mk, null);
-        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, panic: r.panic === true, pass: r.pass, primary: pbPrimaryOn(r, Date.now()), passStreak: r.passStreak || 0,
+        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, panic: r.panic === true, pass: r.pass, primary: pbPrimaryOn(r, Date.now()), passStreak: r.passStreak || 0, indep: pbIndepPasses(r.passLog),
                         brake: await getState(env.DB, "pb_brake:" + mk, null).catch(function () { return null; }),
                         daily: r.daily && { val: r.daily.val, cells: Object.keys(r.daily.table || {}).length, pb: r.daily.pb, gate: r.daily.gate || null,
                                             cross: Object.fromEntries(Object.keys(r.daily.cross || {}).map(function (k) { return [k, (r.daily.cross[k] || []).length]; })) },

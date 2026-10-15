@@ -1067,6 +1067,10 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             dst, _ = validate(ddf, "t")
         cm = cand_mask(P, (oos or {}).get(market), dst.get("candQ"), dst.get("candHead") or "5") if dst.get("candQ") else None
         dst["cand"] = cand_src
+        try:   # [V33.626] 판정 구간 시작 날짜 — 워커가 '겹치지 않는 판정 구간 두 번 통과' 를 셀 때 쓴다
+            dst["hoFrom"] = str(P["close"].index[int((dst.get("cut") or [0, 0])[1])])
+        except Exception:  # noqa: BLE001
+            dst["hoFrom"] = None
         dst["candCmp"] = cand_cmp   # [V33.621] 폭별 판정 구간 성적(객관 비교 · 고르기엔 안 씀)
         dst["tune"] = tune_rep
         try:

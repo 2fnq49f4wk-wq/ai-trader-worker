@@ -271,10 +271,15 @@ chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"
   chk(W.pbChoose(T2, KK, ["A", "B"], { score: "lcb", level: "fine" })?.pb === "B", "규칙 하한·전체 칸: 표본 적은 칸의 우연한 고평균을 버린다(승자의 저주)");
   chk(W.pbChoose(T2, KK, ["A", "B"], { score: "lcb", level: "regime" })?.pb === "A" && W.pbChoose(T2, KK, ["A", "B"], { score: "lcb", level: "global" })?.pb === "B", "규칙 칸 단계: 국면 칸까지만 · 매매법 전체만"); }
 { const now2 = Date.now(), v = { pass: true, n: 400, mean: 0.3, t: 2.4, base: 0.05 };
-  const M2 = new Function("_num", "getMA", "getRSI", "STRAT_ROUTE", "MACRO_SCHED", fnSrc + "; return { pbPrimaryOn, PB_PRIMARY_CAPS };")(_num, getMA, getRSI, STRAT_ROUTE, MACRO_SCHED);
-  chk(M2.pbPrimaryOn({ ts: now2, passStreak: 2, daily: { val: v } }, now2) && !M2.pbPrimaryOn({ ts: now2, passStreak: 1, daily: { val: v } }, now2)
-      && !M2.pbPrimaryOn({ ts: now2, passStreak: 2, daily: { val: { ...v, pass: false } } }, now2) && !M2.pbPrimaryOn({ ts: now2 - 40 * 3600000, passStreak: 2, daily: { val: v } }, now2),
+  const M2 = new Function("_num", "getMA", "getRSI", "STRAT_ROUTE", "MACRO_SCHED", fnSrc + "; return { pbPrimaryOn, PB_PRIMARY_CAPS, pbIndepPasses };")(_num, getMA, getRSI, STRAT_ROUTE, MACRO_SCHED);
+  const PL = ["20260301", "20260801"];
+  chk(M2.pbPrimaryOn({ ts: now2, passStreak: 2, passLog: PL, daily: { val: v } }, now2) && !M2.pbPrimaryOn({ ts: now2, passStreak: 1, passLog: PL, daily: { val: v } }, now2)
+      && !M2.pbPrimaryOn({ ts: now2, passStreak: 2, passLog: PL, daily: { val: { ...v, pass: false } } }, now2) && !M2.pbPrimaryOn({ ts: now2 - 40 * 3600000, passStreak: 2, passLog: PL, daily: { val: v } }, now2),
       "[V33.621] 주력 전환은 일봉 검증 ★2회 연속★ 통과 + 표 신선(36시간)일 때만(한 번 통과는 운일 수 있다)");
+  chk(!M2.pbPrimaryOn({ ts: now2, passStreak: 5, passLog: ["20260801", "20260802", "20260901"], daily: { val: v } }, now2) && !M2.pbPrimaryOn({ ts: now2, passStreak: 5, daily: { val: v } }, now2)
+      && M2.pbIndepPasses(["20260801", "20260802", "20260901", "20261220", "bad"]) === 2 && M2.pbIndepPasses(null) === 0,
+      "[V33.626] 주력은 ★겹치지 않는 판정 구간(시작일 140일 이상 차이) 두 번★ 통과해야 — 같은 구간을 하루 2번 다시 본 연속 통과는 독립 증거가 아니다");
+  chk(/dst\["hoFrom"\] = str\(P\["close"\]\.index\[int\(\(dst\.get\("cut"\)/.test(readFileSync(dir + "playbook_sim.py", "utf8")) && /rec\.passLog = _pl;/.test(S), "[V33.626] 학습기가 판정 구간 시작일(hoFrom)을 보내고 워커가 통과 기록(passLog)에 쌓는다");
   chk(/rec\.passStreak = rec\.pass\.daily \? _num\(_prev && _prev\.passStreak, 0\) \+ 1 : 0/.test(S), "[V33.621] 업로드가 연속 통과 수를 센다(미통과면 0)");
   chk(/_ap && _ap\.enabled && __aiReady && !__pbPrim && stratResults\.length === 0/.test(S), "주력 전환된 시장은 AI_PRIMARY 신규 진입을 끈다(미통과 시장은 그대로)");
   chk(/__pbCap = __pbPrim \? PB_PRIMARY_CAPS : STRAT_ROUTE/.test(S) && /signal\.isStratRoute && !\(signal\.sr && signal\.sr\.primary\)/.test(S) && M2.PB_PRIMARY_CAPS.mult === 1.0, "주력 시장은 상한을 올리고 크기 ×1.0 · 아니면 잠정 ×0.5");

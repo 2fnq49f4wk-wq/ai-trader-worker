@@ -170,8 +170,8 @@
     var head = !r ? '매매법 표 대기' : (r.brake && r.brake.on) ? '실전 손실 제동 — 신규 매수 멈춤' : r.primary ? '매매법 AI 주력 운용' : '검증 전 — 그림자 판정';
     var why = !r ? '학습기(GitHub Actions)가 아직 이 시장 표를 올리지 않았습니다.'
       : (r.brake && r.brake.on) ? '최근 30일 실제 청산 ' + r.brake.n + '건 평균 ' + r.brake.mean + '% — 시뮬과 실전이 갈라져 새로 사지 않습니다(보유 청산은 그대로).'
-      : r.primary ? '이 시장은 검증을 2회 연속 통과해 AI_PRIMARY 대신 매매법 AI 가 삽니다(크기 ×1.0).'
-      : '후보마다 무엇을 골랐을지 계산만 하고 사지 않습니다. 검증을 2회 연속 통과하면 자동으로 주력이 됩니다(지금 연속 ' + (r.passStreak || 0) + '/2 · 그 전까지 AI_PRIMARY 유지).';
+      : r.primary ? '이 시장은 겹치지 않는 판정 구간 두 곳에서 검증을 통과해 AI_PRIMARY 대신 매매법 AI 가 삽니다(크기 ×1.0).'
+      : '후보마다 무엇을 골랐을지 계산만 하고 사지 않습니다. 겹치지 않는 판정 구간 두 곳(약 5개월 간격)에서 통과하고 지금도 2회 연속 통과 중이면 주력이 됩니다(독립 통과 ' + (r.indep || 0) + '/2 · 연속 ' + (r.passStreak || 0) + '/2 · 그 전까지 AI_PRIMARY 유지).';
     return '<section class="k-panel k-brief"><div><span class="k-lab">PLAYBOOK · DECISION STATE</span><strong>' + esc(head) + '</strong><p>' + esc(why) + '</p></div>' +
       '<div><span class="k-lab">CANDIDATES</span><dd>' + ((lv && lv.n) || 0) + '</dd><small>OMNI-Q 상위 ' + candPct(j, mk) + '% 평가</small></div>' +
       '<div><span class="k-lab">FIRED</span><dd>' + fired + '</dd><small>지금 매매법 신호 뜸</small></div>' +
