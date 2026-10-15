@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.622";
+const _BUILD_VER = "V33.623";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -4532,7 +4532,7 @@ const DEFAULT_CFG = {
   //   LLM 없이 무료. 6그룹 × 1 subreq = 최대 6 subreq/사이클. refreshHours 캐시로 일 1~2회.
   sectorNews: {
     enabled: true,
-    refreshHours: 6,           // 캐시 TTL (시간)
+    refreshHours: 2,           // 캐시 TTL (시간) — [V33.623] 6 → 2(라이브 점검: 뉴스 화면이 6시간 묵었다 · 사용량 82% 넘으면 여전히 멈춘다)
     enrichMaxUsageRatio: 0.82, // 월 사용량 이 비율 초과 시 중단 (alt 슬리브와 동일)
     minBudgetReserve: 8,       // invocation subreq 잔여 최소 예비
     posScaleMax: 1.08,         // 매우 긍정 뉴스 → 최대 사이즈 부스트
@@ -7170,7 +7170,7 @@ function macroFromCalendar(us, events, nowMs) {
 }
 async function runFredMacroUpdate(DB, force) {
   if (!force) { try { const at = await getState(DB, "macro_fred_at", 0); if (Date.now() - _num(at, 0) < 6 * 3600000) return { ok: true, cached: true }; } catch (e) {} }
-  const prev = await getState(DB, "macro_data", { us: {}, kr: {}, updatedAt: null });
+  let prev; try { prev = (await getState(DB, "macro_data", null, true)) || { us: {}, kr: {}, updatedAt: null }; } catch (e) { try { await log(DB, "WARN", null, "[거시] macro_data 읽기 실패 — 덮지 않음(빈 값으로 지우지 않는다)"); } catch (e2) {} return { ok: false, reason: "read_fail" }; }   // [V33.623] ★느슨한 읽기 → 빈 기본값으로 덮어 한국·미국 CPI 를 지웠다★(라이브 점검: /api/macro 에 한국 0개)
   const next = Object.assign({}, prev, { us: Object.assign({}, prev.us || {}), kr: Object.assign({}, prev.kr || {}) });
   let got = 0, fail = [];
   // [V33.598] BLS 공식 API 1순위 — 한 번 호출로 4개
@@ -7265,7 +7265,7 @@ async function runInternalMacroUpdate(env, forceRun) {
     const val = function (s) { return (q[s] && typeof q[s].price === "number") ? q[s].price : null; };
     const irx = val("^IRX"), y5 = val("^FVX"), y10 = val("^TNX"), y30 = val("^TYX");
     const gold = q["GC=F"] ? q["GC=F"].dayPct : null, oil = q["CL=F"] ? q["CL=F"].dayPct : null, copper = q["HG=F"] ? q["HG=F"].dayPct : null, dxy = q["DX-Y.NYB"] ? q["DX-Y.NYB"].dayPct : null;
-    const prev = await getState(DB, "macro_data", { us: {}, kr: {}, updatedAt: null });
+    let prev; try { prev = (await getState(DB, "macro_data", null, true)) || { us: {}, kr: {}, updatedAt: null }; } catch (e) { try { await log(DB, "WARN", null, "[거시] macro_data 읽기 실패 — 덮지 않음(빈 값으로 지우지 않는다)"); } catch (e2) {} return { ok: false, reason: "read_fail" }; }   // [V33.623] ★느슨한 읽기 → 빈 기본값으로 덮어 한국·미국 CPI 를 지웠다★(라이브 점검: /api/macro 에 한국 0개)
     const next = Object.assign({}, prev, { us: Object.assign({}, prev.us), kr: Object.assign({}, prev.kr), updatedAt: Date.now(), source: "internal_yahoo_rates" });
     const today = new Date().toISOString().slice(0, 10);
     /* [V33.565] 대용 시세엔 체결 시각이 없다 — 조회한 날을 '기준일' 로 적으면 미국 채권 휴장일(10/12)에도 그날 값인 척한다.
@@ -7356,8 +7356,8 @@ async function runMacroUpdate(env, forceRun = false) {
     }
 
     // 기존 저장값 로드(부분 실패 시 보존용)
-    const prev = await getState(DB, "macro_data", { us: {}, kr: {}, updatedAt: null });
-    const next = { us: {}, kr: {}, updatedAt: Date.now(), source: "claude+web_search" };
+    let prev; try { prev = (await getState(DB, "macro_data", null, true)) || { us: {}, kr: {}, updatedAt: null }; } catch (e) { try { await log(DB, "WARN", null, "[거시] macro_data 읽기 실패 — 덮지 않음(빈 값으로 지우지 않는다)"); } catch (e2) {} return { ok: false, reason: "read_fail" }; }   // [V33.623] ★느슨한 읽기 → 빈 기본값으로 덮어 한국·미국 CPI 를 지웠다★(라이브 점검: /api/macro 에 한국 0개)
+    const next = Object.assign({}, prev, { us: Object.assign({}, prev.us || {}), kr: Object.assign({}, prev.kr || {}), updatedAt: Date.now(), source: "claude+web_search" });   // [V33.623] 다른 원천(GHA·FRED·재무부·한국)이 넣은 값을 지우지 않는다
     let filled = 0, kept = 0;
 
     ["us", "kr"].forEach(function(mkt) {
@@ -10440,7 +10440,8 @@ async function sentiLearnNightly(DB) {
 
 async function updateSectorNewsSentiment(DB, cfg, force) {
   try { await _sentiLearnedEnsure(DB); } catch (e) {}   // [V12.78] 학습 감성어휘 로드(스코어링 전)
-  const sc = Object.assign({ enabled:true, refreshHours:6, enrichMaxUsageRatio:0.82, minBudgetReserve:8, posScaleMax:1.08, negScaleMin:0.88 }, (cfg && cfg.sectorNews) || {});
+  const sc = Object.assign({ enabled:true, refreshHours:2, enrichMaxUsageRatio:0.82, minBudgetReserve:8, posScaleMax:1.08, negScaleMin:0.88 }, (cfg && cfg.sectorNews) || {});
+  if (sc.refreshHours === 6) sc.refreshHours = 2;   // [V33.623] 저장된 옛 기본값(6시간)은 새 기본으로
   if (sc.enabled === false) return null;
   let cached = null;
   try { cached = await getState(DB, "sector_news_sentiment", null); } catch(e) {}
