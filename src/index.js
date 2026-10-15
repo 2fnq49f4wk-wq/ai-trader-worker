@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.607";
+const _BUILD_VER = "V33.608";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13530,7 +13530,7 @@ const STRAT_ROUTE = { enabled: true, maxPerCycle: 1, maxPerDay: 3, maxOpen: 6, m
    ④ 매도는 그 매매법 규칙: 손절 %(stopPctOverride) · 익절 % → SR-TP · 최대 보유 → SR-TIME · 단타는 마감 10분 전 SR-EOD.
    경계(PB_KEYS)는 학습기와 같아야 한다 — check-playbook 이 대조한다. 위험 관문은 전부 그대로 지난다. */
 const PB_KEYS = { rsi: [30, 50, 70], gap20: [-5, 0, 5], ret5: [-3, 3], vr: [0.8, 1.5], daypct: [-2, -0.5, 0.5, 2], tod: [30, 120, 270] };
-const PB_ROUTE = { candMin: 0.80, minWin: 0.5, intraMinToClose: 30, eodMin: 10, regMin: 390 };
+const PB_ROUTE = { candMin: 0.80, minWin: 0.5, intraMinToClose: 30, eodMin: 10, regMin: 390, intraFetchMax: 8 };   // intraFetchMax: 사이클당 후보 분봉 조회 상한
 function _pbBk(x, e) { if (!(typeof x === "number" && isFinite(x))) return e.length; let k = 0; while (k < e.length && x >= e[k]) k++; return k; }
 function pbDailyKeys(reg, rsi, gap20, ret5, vr, evNear) {
   const r = String(reg || "NEUTRAL");
@@ -13541,44 +13541,183 @@ function pbIntraKeys(reg, daypct, tod, up) {
   const r = String(reg || "NEUTRAL");
   return [r + "|" + _pbBk(daypct, PB_KEYS.daypct) + "|" + _pbBk(tod, PB_KEYS.tod) + "|" + (up ? 1 : 0), r + "|" + _pbBk(daypct, PB_KEYS.daypct) + "|*", r + "|*", "*"];
 }
-// 가장 구체적인 칸부터 — 그 칸에 매매법이 하나라도 있으면 그 칸에서 고른다(값은 이미 부모 쪽으로 수축됨). → { pb, n, w, m } | null
-function pbChoose(table, keys) {
-  if (!table) return null;
-  for (const k of keys) {
-    const row = table[k];
-    if (!row) continue;
-    let best = null;
-    for (const pb in row) {
-      const v = row[pb]; if (!Array.isArray(v)) continue;
-      const n = _num(v[0], 0), w = _num(v[1], 0), m = _num(v[2], 0);
-      if (m > 0 && w >= PB_ROUTE.minWin && (!best || m > best.m)) best = { pb: pb, n: n, w: w, m: m };
-    }
-    return best;
+/* [V33.608] ★진입 조건★ — 학습기 strategy_catalog(일봉 17종) · playbook_sim.intra_fires(5분 5종) 와 같은 정의. 마지막 봉에서 '지금 뜬' 매매법.
+   지표는 pandas 와 같은 방식(RSI14 = ewm(adjust=False) · 표준편차 ddof 0 · 롤링 창)으로 계산한다 — check-playbook 이 무작위 시세로 대조. */
+function _pbSma(a, n, i) { if (i < n - 1) return NaN; let s = 0; for (let k = i - n + 1; k <= i; k++) { const x = a[k]; if (!(x === x)) return NaN; s += x; } return s / n; }
+function _pbMax(a, i0, i1) { let m = -Infinity, ok = false; for (let k = Math.max(0, i0); k <= i1; k++) { const x = a[k]; if (x === x) { ok = true; if (x > m) m = x; } } return ok ? m : NaN; }
+function _pbMin(a, i0, i1) { let m = Infinity, ok = false; for (let k = Math.max(0, i0); k <= i1; k++) { const x = a[k]; if (x === x) { ok = true; if (x < m) m = x; } } return ok ? m : NaN; }
+function _pbRsiEwm(c, n) {   // pandas ewm(alpha=1/n, adjust=False, min_periods=n) — 첫 변화부터
+  const out = new Array(c.length).fill(100), a = 1 / n;
+  let up = NaN, dn = NaN, cnt = 0;
+  for (let i = 1; i < c.length; i++) {
+    const d = c[i] - c[i - 1];
+    if (!(d === d)) continue;
+    const u = d > 0 ? d : 0, w = d < 0 ? -d : 0;
+    if (cnt === 0) { up = u; dn = w; } else { up = (1 - a) * up + a * u; dn = (1 - a) * dn + a * w; }
+    cnt++;
+    if (cnt >= n && dn > 0) out[i] = 100 - 100 / (1 + up / dn);
   }
-  return null;
+  return out;
+}
+function _pbRsi2(c, i) {     // 단순평균 창 2
+  if (i < 2) return 100;
+  const d1 = c[i] - c[i - 1], d0 = c[i - 1] - c[i - 2];
+  const up = ((d1 > 0 ? d1 : 0) + (d0 > 0 ? d0 : 0)) / 2, dn = ((d1 < 0 ? -d1 : 0) + (d0 < 0 ? -d0 : 0)) / 2;
+  return dn > 0 ? 100 - 100 / (1 + up / dn) : 100;
+}
+function _pbStoch(h, l, c, i) {   // 슬로우(14,3,3) %K·%D at i
+  const fast = function (j) {
+    if (j < 13) return NaN;
+    const hh = _pbMax(h, j - 13, j), ll = _pbMin(l, j - 13, j), r = hh - ll;
+    return r > 0 ? (c[j] - ll) / r * 100 : 50;
+  };
+  const kAt = function (j) { if (j < 2) return NaN; const a = fast(j), b = fast(j - 1), d = fast(j - 2); return (a === a && b === b && d === d) ? (a + b + d) / 3 : NaN; };
+  const k = kAt(i), d = (kAt(i) + kAt(i - 1) + kAt(i - 2)) / 3;
+  return { k: k, d: d };
+}
+function _pbStd0(a, n, i) { const m = _pbSma(a, n, i); if (!(m === m)) return NaN; let s = 0; for (let k = i - n + 1; k <= i; k++) s += (a[k] - m) * (a[k] - m); return Math.sqrt(s / n); }
+function _pbAtrPct(h, l, c, i) {
+  if (i < 14) return NaN;
+  let s = 0;
+  for (let k = i - 13; k <= i; k++) { const pc = c[k - 1]; s += Math.max(h[k] - l[k], Math.abs(h[k] - pc), Math.abs(l[k] - pc)); }
+  return s / 14 / c[i] * 100;
+}
+function _pbVr(v, i) { if (!v || i < 20) return NaN; let s = 0; for (let k = i - 20; k < i; k++) s += v[k]; const m = s / 20; return m > 0 ? v[i] / m : NaN; }
+function _pbQuant(vals, q) { const a = vals.filter(function (x) { return x === x; }).sort(function (x, y) { return x - y; }); if (!a.length) return NaN; const p = (a.length - 1) * q, lo = Math.floor(p), hi = Math.ceil(p); return a[lo] + (a[hi] - a[lo]) * (p - lo); }
+// D = { o, h, l, c, v } 일봉 배열(마지막 = 지금) → 지금 뜬 도감 매매법 id 배열(횡단면 3종 제외)
+function pbDailyFires(D) {
+  const c = D.c, h = D.h, l = D.l, o = D.o, v = D.v, i = c.length - 1;
+  if (i < 210) return [];
+  const ma5 = _pbSma(c, 5, i), ma20 = _pbSma(c, 20, i), ma50 = _pbSma(c, 50, i), ma200 = _pbSma(c, 200, i);
+  const r14 = _pbRsiEwm(c, 14), rsi14 = r14[i], rsi2 = _pbRsi2(c, i);
+  const ret = function (n, j) { j = j == null ? i : j; return c[j - n] > 0 ? (c[j] / c[j - n] - 1) * 100 : NaN; };
+  const ret1 = ret(1), ret20 = ret(20);
+  const hi20p = _pbMax(c, i - 20, i - 1);
+  const rg = h[i] - l[i], cpos = rg > 0 ? (c[i] - l[i]) / rg : 0.5;
+  const vr = _pbVr(v, i), atr = _pbAtrPct(h, l, c, i);
+  const sd20 = _pbStd0(c, 20, i), bbl = ma20 - 2 * sd20, bbu = ma20 + 2 * sd20;
+  const st = _pbStoch(h, l, c, i), st1 = _pbStoch(h, l, c, i - 1);
+  const bull = function (j) { return (o[j] + h[j] + l[j] + c[j]) / 4 > (o[j - 1] + c[j - 1]) / 2; };
+  const F = [];
+  if (ma20 > ma50 && ma50 > ma200 && c[i] > ma20 && rsi14 >= 45 && rsi14 <= 72) F.push("TREND_ALIGN");
+  if (c[i] > hi20p && c[i] > ma50 && ret1 > 0 && vr >= 1.5) F.push("TR_BREAKOUT");
+  if (c[i] > ma50 && ma20 > ma50 && atr < 4.0 && ret20 > 0) F.push("VT_TREND");
+  if (ma20 > ma50 && Math.abs(c[i] / ma20 - 1) <= 0.04 && ret1 > 0 && rsi14 >= 37 && rsi14 <= 68) F.push("TR_PULLBACK");
+  if (ma50 > ma200 && ma20 > ma50 && l[i] <= ma20 * 1.003 && c[i] > ma20 && ret1 > 0) F.push("MA_PULLBACK");
+  if (c[i] > ma200 && ma50 > ma200 && rsi2 <= 12 && c[i] < ma5 && rsi14 <= 55 && (ret1 > 0 || cpos >= 0.5 || rsi2 <= 3)) F.push("SN_RSI2");
+  if (bull(i) && !bull(i - 1) && !bull(i - 2) && c[i] > ma50 * 0.97) F.push("HA_REV");
+  if (c[i] <= bbl && rsi14 < 38 && rsi14 > 20 && ret1 > 0) F.push("BB_LOW");
+  if (st.k > st.d && st1.k <= st1.d && st1.k <= 30 && c[i] > ma200 * 0.95) F.push("STOCH_CROSS");
+  if (st.k > 20 && st1.k <= 20 && ret1 > 0 && c[i] > ma200 * 0.95) F.push("STOCH_OS_EXIT");
+  if (vr >= 2.0 && c[i] > hi20p && ret1 > 0 && c[i] > ma50) F.push("VOL_BREAKOUT");
+  if (vr >= 3.0 && ret1 <= -4.0 && ret1 >= -18.0 && cpos <= 0.45 && rsi2 <= 8 && c[i] > ma200) F.push("VOL_REVERT");
+  { // SQUEEZE — 어제 볼린저 폭이 그 전 120일(60개 이상) 하위 10% 이하 · 오늘 상단 돌파
+    const bw = function (j) { const m = _pbSma(c, 20, j), s0 = _pbStd0(c, 20, j); return 4 * s0 / m; };
+    const w1 = bw(i - 1), past = [];
+    for (let j = Math.max(0, i - 120); j <= i - 1; j++) past.push(bw(j));
+    if (past.filter(function (x) { return x === x; }).length >= 60 && w1 <= _pbQuant(past, 0.10) && c[i] > bbu && c[i] > ma50) F.push("SQUEEZE");
+  }
+  { // HERD_REBOUND — 최근 6일(오늘 제외) 거래량 2.5배 양봉 · 그 6일 고점에서 −5~−12% · MA20×0.98 위 · 오늘 양봉
+    let recent = false;
+    for (let j = i - 6; j <= i - 1; j++) if (_pbVr(v, j) >= 2.5 && ret(1, j) > 0) recent = true;
+    const hi6 = _pbMax(c, i - 6, i - 1), dd = (c[i] / hi6 - 1) * 100;
+    if (recent && dd <= -5 && dd >= -12 && c[i] > ma20 * 0.98 && ret1 > 0) F.push("HERD_REBOUND");
+  }
+  return F;
+}
+// 오늘 5분봉(첫 봉부터 · 마지막 = 지금) → 지금 뜬 단타 매매법
+function pbIntraFires(c, h, l, v) {
+  const n = c.length, i = n - 1, F = [];
+  if (n < 3) return F;
+  if (n > 6 && i >= 6) { const orh = _pbMax(h, 0, 5); if (c[i] > orh && c[i - 1] <= orh) F.push("ORB"); }
+  { const hm = _pbMax(h, 0, i); if (c[i] / hm - 1 <= -0.01 && c[i] > c[i - 1] && c[i - 1] < c[i - 2]) F.push("DIP_REV"); }
+  if (n >= 19) {
+    const fast = function (j) { if (j < 13) return NaN; const hh = _pbMax(h, j - 13, j), ll = _pbMin(l, j - 13, j), r = hh - ll; return r > 0 ? (c[j] - ll) / r * 100 : 50; };
+    const kAt = function (j) { return j < 2 ? NaN : (fast(j) + fast(j - 1) + fast(j - 2)) / 3; };
+    const dAt = function (j) { return j < 2 ? NaN : (kAt(j) + kAt(j - 1) + kAt(j - 2)) / 3; };
+    if (kAt(i) > dAt(i) && kAt(i - 1) <= dAt(i - 1) && kAt(i - 1) <= 25) F.push("STOCH5");
+  }
+  if (n > 3 && c[i] > c[i - 1] && c[i - 1] > c[i - 2] && c[i - 2] > c[i - 3] && c[i] / c[i - 3] - 1 >= 0.005) F.push("MOM3");
+  if (v && v.length === n) {
+    let cv = 0, cs = 0, vwPrev = NaN, vw = NaN;
+    for (let j = 0; j <= i; j++) { cv += c[j] * v[j]; cs += v[j]; if (j === i - 1) vwPrev = cs > 0 ? cv / cs : NaN; if (j === i) vw = cs > 0 ? cv / cs : NaN; }
+    if (c[i - 1] < vwPrev && c[i] > vw) F.push("VWAP_RE");
+  }
+  return F;
+}
+// 1분봉(오늘 세션 · 초 단위 times) → 5분봉(5분 경계로 묶음)
+function pbAgg5(mb) {
+  const out = { c: [], h: [], l: [], v: [] };
+  if (!mb || !Array.isArray(mb.closes) || !Array.isArray(mb.times)) return out;
+  let cur = null;
+  for (let k = 0; k < mb.closes.length; k++) {
+    const t = _num(mb.times[k], 0), c = mb.closes[k];
+    if (!(t > 0) || !(c > 0)) continue;
+    const b = Math.floor((t > 1e12 ? t / 1000 : t) / 300);
+    if (cur !== b) { out.c.push(c); out.h.push(_num(mb.highs && mb.highs[k], c)); out.l.push(_num(mb.lows && mb.lows[k], c)); out.v.push(_num(mb.volumes && mb.volumes[k], 0)); cur = b; }
+    else { const j = out.c.length - 1; out.c[j] = c; out.h[j] = Math.max(out.h[j], _num(mb.highs && mb.highs[k], c)); out.l[j] = Math.min(out.l[j], _num(mb.lows && mb.lows[k], c)); out.v[j] += _num(mb.volumes && mb.volumes[k], 0); }
+  }
+  return out;
+}
+// 일봉 + 지금 가격 → 마지막 봉이 '지금'인 배열. 마지막 봉 종가가 전일 종가면(오늘 봉 없음) 지금 봉을 붙이고, 아니면 오늘 봉을 지금 가격으로 갱신.
+function pbLiveDaily(daily, price, prevClose) {
+  const n = daily && daily.closes ? daily.closes.length : 0;
+  if (!n || !(price > 0)) return null;
+  const pick = function (a, d) { return Array.isArray(a) && a.length === n ? a.slice() : new Array(n).fill(d); };
+  const D = { c: daily.closes.slice(), h: pick(daily.highs, NaN), l: pick(daily.lows, NaN), o: pick(daily.opens, NaN), v: pick(daily.volumes, 0) };
+  for (let k = 0; k < n; k++) { if (!(D.h[k] > 0)) D.h[k] = D.c[k]; if (!(D.l[k] > 0)) D.l[k] = D.c[k]; if (!(D.o[k] > 0)) D.o[k] = D.c[k]; }
+  const last = D.c[n - 1];
+  if (prevClose > 0 && Math.abs(last / prevClose - 1) < 1e-6) { D.c.push(price); D.h.push(price); D.l.push(price); D.o.push(price); D.v.push(0); }
+  else { D.c[n - 1] = price; D.h[n - 1] = Math.max(D.h[n - 1], price); D.l[n - 1] = Math.min(D.l[n - 1], price); }
+  return D;
+}
+// 뜬 매매법마다 '그 매매법이 있는 가장 구체적인 칸' 값(이미 넓은 칸 쪽으로 수축됨) → (평균 > 0 · 성공확률 ≥ 50%) 중 평균 최대. 학습기 choose 와 같은 규칙.
+function pbChoose(table, keys, fired) {
+  if (!table || !fired || !fired.length) return null;
+  let best = null;
+  for (const pb of fired) {
+    let v = null;
+    for (const k of keys) { const row = table[k]; if (row && Array.isArray(row[pb])) { v = row[pb]; break; } }
+    if (!v) continue;
+    const n = _num(v[0], 0), w = _num(v[1], 0), m = _num(v[2], 0);
+    if (m > 0 && w >= PB_ROUTE.minWin && (!best || m > best.m)) best = { pb: pb, n: n, w: w, m: m };
+  }
+  return best;
 }
 function _pbPass(v) { return !!(v && v.pass === true && _num(v.n, 0) >= 30 && _num(v.mean, 0) > 0 && _num(v.t, 0) >= 2 && _num(v.mean, -99) > _num(v.base, 99)); }
-// 실시간 선택(순수 함수) — ctx: { reg, closes, volumes, price, prevClose, evNear, minToClose }
+// 실시간 선택(순수 함수) — ctx: { reg, symbol, D(pbLiveDaily), bars5(pbAgg5) | null, prevClose, evNear, minToClose }
 function pbRoutePick(st, ctx, nowMs) {
   if (!STRAT_ROUTE.enabled || !st || !(nowMs - _num(st.ts, 0) <= STRAT_ROUTE.freshMs)) return null;
-  const c = ctx.closes || [], v = ctx.volumes || [], px = ctx.price;
+  const D = ctx.D;
   let best = null;
-  if (st.daily && _pbPass(st.daily.val) && c.length >= 60 && px > 0) {
-    const cl = c.slice(0, -1).concat([px]);
-    const ma20 = getMA(cl, 20), rsi = getRSI(cl, 14);
-    const ret5 = cl.length > 5 && cl[cl.length - 6] > 0 ? (px / cl[cl.length - 6] - 1) * 100 : null;
-    let vr = null;
-    if (v.length >= 22) { let s = 0; for (let i = v.length - 21; i < v.length - 1; i++) s += _num(v[i], 0); vr = s > 0 ? _num(v[v.length - 2], 0) / (s / 20) : null; }   // 어제(완성 봉) 거래량 배수
-    const ch = pbChoose(st.daily.table, pbDailyKeys(ctx.reg, rsi, ma20 > 0 ? (px / ma20 - 1) * 100 : null, ret5, vr, ctx.evNear));
-    const pr = ch && st.daily.pb && st.daily.pb[ch.pb];
-    if (ch && pr) best = { kind: "daily", pb: ch.pb, n: ch.n, w: ch.w, m: ch.m, stop: _num(pr.stop, 5), tpR: pr.tpR == null ? null : _num(pr.tpR, null), hold: _num(pr.hold, 10), label: pr.label || "" };
+  if (st.daily && _pbPass(st.daily.val) && D && D.c.length >= 211) {
+    const i = D.c.length - 1, px = D.c[i];
+    const fired = pbDailyFires(D);
+    const cr = st.daily.cross || {};
+    for (const pb in cr) if (Array.isArray(cr[pb]) && cr[pb].indexOf(ctx.symbol) >= 0 && fired.indexOf(pb) < 0) fired.push(pb);   // 횡단면 조건은 학습기 판정(전일 종가 기준)
+    if (fired.length) {
+      const ma20 = _pbSma(D.c, 20, i), rsi = _pbRsiEwm(D.c, 14)[i];
+      const ret5 = D.c[i - 5] > 0 ? (px / D.c[i - 5] - 1) * 100 : null;
+      const vr = _pbVr(D.v, i - 1);   // 어제(완성 봉) 거래량 배수 — 오늘 봉은 아직 덜 찼다
+      const ch = pbChoose(st.daily.table, pbDailyKeys(ctx.reg, rsi, ma20 > 0 ? (px / ma20 - 1) * 100 : null, ret5, vr, ctx.evNear), fired);
+      const pr = ch && st.daily.pb && st.daily.pb[ch.pb];
+      if (ch && pr) {
+        const atr = _pbAtrPct(D.h, D.l, D.c, i);
+        const stop = Math.min(_num(pr.stop, 5), atr === atr ? _num(pr.atr, 2) * atr : 99);
+        best = { kind: "daily", pb: ch.pb, fired: fired, n: ch.n, w: ch.w, m: ch.m, stop: Math.max(1.5, stop), tpR: pr.tpR == null ? null : _num(pr.tpR, null), hold: _num(pr.hold, 10), label: pr.label || "" };
+      }
+    }
   }
-  const mtc = ctx.minToClose;
-  if (st.intra && _pbPass(st.intra.val) && mtc != null && mtc >= PB_ROUTE.intraMinToClose && ctx.prevClose > 0 && px > 0 && c.length >= 22) {
-    const ma20p = getMA(c.slice(0, -1), 20);
-    const ch = pbChoose(st.intra.table, pbIntraKeys(ctx.reg, (px / ctx.prevClose - 1) * 100, PB_ROUTE.regMin - mtc, ma20p > 0 && ctx.prevClose > ma20p));
-    const pr = ch && st.intra.pb && st.intra.pb[ch.pb];
-    if (ch && pr && (!best || ch.m > best.m)) best = { kind: "intra", pb: ch.pb, n: ch.n, w: ch.w, m: ch.m, stop: _num(pr.sl, 1), tpPct: pr.tpPct == null ? null : _num(pr.tpPct, null), bars: _num(pr.bars, 0), label: pr.label || "" };
+  const mtc = ctx.minToClose, B = ctx.bars5;
+  if (st.intra && _pbPass(st.intra.val) && mtc != null && mtc >= PB_ROUTE.intraMinToClose && ctx.prevClose > 0 && B && B.c.length >= 3 && D) {
+    const fired = pbIntraFires(B.c, B.h, B.l, B.v);
+    if (fired.length) {
+      const px = B.c[B.c.length - 1];
+      const ma20p = _pbSma(D.c, 20, D.c.length - 2);
+      const ch = pbChoose(st.intra.table, pbIntraKeys(ctx.reg, (px / ctx.prevClose - 1) * 100, PB_ROUTE.regMin - mtc, ma20p > 0 && ctx.prevClose > ma20p), fired);
+      const pr = ch && st.intra.pb && st.intra.pb[ch.pb];
+      if (ch && pr && (!best || ch.m > best.m)) best = { kind: "intra", pb: ch.pb, fired: fired, n: ch.n, w: ch.w, m: ch.m, stop: _num(pr.sl, 1), tpPct: pr.tpPct == null ? null : _num(pr.tpPct, null), bars: _num(pr.bars, 0), label: pr.label || "" };
+    }
   }
   return best;
 }
@@ -23708,6 +23847,7 @@ async function runTradingCycle(env) {
       let __sr = null, __srBought = 0, __srToday = null, __srOpen = 0;
       try { if (STRAT_ROUTE.enabled && (market === "us" || market === "kr")) __sr = await getState(DB, "playbook:" + market, null); } catch (e) { __sr = null; }   // [V33.607] 모의 시뮬 표
       const __pbEv = pbEvNear(Date.now()), __pbMtc = minutesToClose(market, new Date());
+      let __pbFetch = 0;   // [V33.608] 이번 사이클 후보 분봉 조회 수
       for (const _pk in positions) { const _pm = positions[_pk] && positions[_pk].meta; if (_pm && _pm.sr) __srOpen++; }
       const feeRate = market === "us" ? mcfg.feeUS : mcfg.feeKR;
       const regime = regimes[market];
@@ -25772,7 +25912,18 @@ async function runTradingCycle(env) {
             const _pbS = (__sr && omniqFresh(__omniq, Date.now())) ? _omqScore(__omniq, 5, symbol) : null;
             if (_pbS != null && _pbS >= PB_ROUTE.candMin && !heldSymbols.has(symbol) && !crashGate.blockNew && canTrade
                 && __srBought < STRAT_ROUTE.maxPerCycle && __srOpen < STRAT_ROUTE.maxOpen && daily && daily.closes) {
-              const _sp = pbRoutePick(__sr, { reg: __sr.regime, closes: daily.closes, volumes: daily.volumes || [], price: price, prevClose: prevClose,
+              let _pb5 = null;
+              if (__sr.intra && _pbPass(__sr.intra.val) && __pbMtc != null && __pbMtc >= PB_ROUTE.intraMinToClose && __pbFetch < PB_ROUTE.intraFetchMax) {
+                try {
+                  __pbFetch++;
+                  const _mb = await _enrichRun("scalp", function () {   // 지갑 결제(평가 예산) — 단타 분봉과 같은 자리
+                    const _pre = __mbPre ? __mbPre.take(symbol) : null;
+                    return _pre || fetchMinuteBars(symbol, { interval: SCALP_BAR_MIN + "m", range: "2d" });
+                  });
+                  _pb5 = pbAgg5(_mb);
+                } catch (e) { _pb5 = null; }
+              }
+              const _sp = pbRoutePick(__sr, { reg: __sr.regime, symbol: symbol, D: pbLiveDaily(daily, price, prevClose), bars5: _pb5, prevClose: prevClose,
                                               evNear: __pbEv, minToClose: __pbMtc }, Date.now());
               if (_sp) {
                 if (__srToday == null) {
@@ -25784,7 +25935,7 @@ async function runTradingCycle(env) {
                     signal: { name: "PB_" + _sp.pb, members: [_sp.pb], isStratRoute: true, weight: 1,
                       sr: { sid: _sp.pb, kind: _sp.kind, stop: +_sp.stop.toFixed(2), tpR: _sp.tpR == null ? null : _sp.tpR, tpPct: _sp.tpPct == null ? null : _sp.tpPct,
                             hold: _sp.hold || null, bars: _sp.bars || 0, m: +_sp.m.toFixed(3), w: +_sp.w.toFixed(3), n: _sp.n, omq: +_pbS.toFixed(3), regime: __sr.regime || null, at: Date.now() },
-                      detail: "매매법AI " + _sp.pb + "(" + (_sp.kind === "intra" ? "5분 단타" : "일봉") + ") · OMNI-Q 상위 " + Math.max(1, Math.round((1 - _pbS) * 100)) + "% · 국면 " + (__sr.regime || "?") +
+                      detail: "매매법AI " + _sp.pb + "(" + (_sp.kind === "intra" ? "5분 단타" : "일봉") + " · 지금 뜬 " + _sp.fired.join("·") + ") · OMNI-Q 상위 " + Math.max(1, Math.round((1 - _pbS) * 100)) + "% · 국면 " + (__sr.regime || "?") +
                               " · 모의 성공 " + (_sp.w * 100).toFixed(0) + "% 평균 +" + _sp.m.toFixed(2) + "% (표본 " + _sp.n + ") · 손절 −" + _sp.stop + "% · 잠정 ×" + STRAT_ROUTE.mult } });
                 }
               }
@@ -30409,6 +30560,8 @@ async function handleRequest(request, env, ctx, _inner) {
       const part = function (x) { return (x && typeof x === "object") ? { val: x.val || {}, table: (x.table && typeof x.table === "object") ? x.table : {}, pb: x.pb || {} } : null; };
       const rec = { ts: Date.now(), day: String(body.day || ""), regime: String(body.regime || "NEUTRAL"), daily: part(body.daily), intra: part(body.intra) };
       rec.pass = { daily: _pbPass(rec.daily && rec.daily.val), intra: _pbPass(rec.intra && rec.intra.val) };
+      const _sz = JSON.stringify(rec).length;
+      if (_sz > 1800000) return Response.json({ error: "표가 너무 크다(" + _sz + "B > 1.8MB) — 학습기 export 문턱을 올려라" }, { status: 413, headers: cors });
       await setState(env.DB, "playbook:" + mk, rec);
       try { await log(env.DB, "INFO", null, "[매매법시뮬] " + mk.toUpperCase() + " 국면 " + rec.regime + " · 일봉 표 " + Object.keys(rec.daily.table).length + "칸 검증 " + JSON.stringify(rec.daily.val) +
                       " · 5분 표 " + (rec.intra ? Object.keys(rec.intra.table).length : 0) + "칸 → 일봉 " + (rec.pass.daily ? "실전" : "기록만") + " · 5분 " + (rec.pass.intra ? "실전" : "기록만")); } catch (e) {}
