@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.610";
+const _BUILD_VER = "V33.611";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13705,7 +13705,7 @@ function pbRoutePick(st, ctx, nowMs) {
   let best = null;
   const dOk = st.daily && (ctx.shadow || _pbPass(st.daily.val));
   const dWin = ctx.minToClose != null && ctx.minToClose <= PB_ROUTE.dailyEntryWin;   // [V33.610] 일봉 매매법은 장 마지막 1시간에만 — 시뮬이 '신호 봉 종가에 산다'
-  if (dOk && dWin && D && D.c.length >= 211) {
+  if (dOk && (dWin || ctx.shadow) && D && D.c.length >= 211) {   // 그림자(관측)는 시간 창 밖에서도 계산만 한다
     const i = D.c.length - 1, px = D.c[i];
     const fired = pbDailyFires(D);
     const cr = st.daily.cross || {};
@@ -13722,7 +13722,8 @@ function pbRoutePick(st, ctx, nowMs) {
         best = { kind: "daily", pb: ch.pb, fired: fired, n: ch.n, w: ch.w, m: ch.m, s: ch.s, stop: Math.max(1.5, stop), be: _num(pr.be, 0), tpR: pr.tpR == null ? null : _num(pr.tpR, null), hold: _num(pr.hold, 10), label: pr.label || "" };
       } else if (ctx.shadow) best = { kind: "daily", pb: null, fired: fired, why: "뜬 매매법 성적 미달" };
     } else if (ctx.shadow) best = { kind: "daily", pb: null, fired: [], why: "뜬 매매법 없음" };
-  } else if (ctx.shadow && dOk && !dWin) best = { kind: "daily", pb: null, fired: [], why: "일봉 매매법은 마감 전 60분에만" };
+  }
+  if (ctx.shadow && best && best.kind === "daily" && !dWin) best.outWin = true;   // [V33.611] 창 밖 — 관측엔 보이되 '마감 전 60분에 매수' 로 표시
   const mtc = ctx.minToClose, B = ctx.bars5;
   if (st.intra && (ctx.shadow || _pbPass(st.intra.val)) && mtc != null && mtc >= PB_ROUTE.intraMinToClose && ctx.prevClose > 0 && B && B.c.length >= 3 && D) {
     const fired = pbIntraFires(B.c, B.h, B.l, B.v);
@@ -25971,7 +25972,7 @@ async function runTradingCycle(env) {
                              m: _sh && _sh.m != null ? +_num(_sh.m, 0).toFixed(3) : null, w: _sh && _sh.w != null ? +_num(_sh.w, 0).toFixed(3) : null, n: (_sh && _sh.n) || null,
                              act: null, why: null };
               if (_held) _rec.why = "보유 중";
-              else if (!_sp) _rec.why = (_sh && _sh.why) || (_sh && _sh.pb ? "검증 미통과 — 기록만(그림자)" : "고를 매매법 없음");
+              else if (!_sp) _rec.why = (_sh && _sh.why) || (_sh && _sh.pb ? (_sh.outWin && _sh.kind === "daily" && __sr.daily && _pbPass(__sr.daily.val) ? "마감 전 60분에 매수 판정" : "검증 미통과 — 기록만(그림자)") : "고를 매매법 없음");
               else if (!_canBuy) _rec.why = crashGate.blockNew ? "폭락 관문 — 신규 매수 금지" : !canTrade ? "거래 불가 시간" : "매매법 AI 상한";
               if (_sp && _canBuy) {
                 if (__srToday == null) {
