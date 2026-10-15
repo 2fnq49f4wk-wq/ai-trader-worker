@@ -34,20 +34,11 @@ if (o) {
   chk(o.leak === false, "미래 라벨 누출 없음");
 }
 const S = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
-const fnSrc = S.slice(S.indexOf("const STRAT_ROUTE"), S.indexOf("function _omqHeadOn"));
-const M = new Function("_num", fnSrc + "; return { STRAT_ROUTE, stratRoutePass, stratRoutePick };")((v, d) => (typeof v === "number" && isFinite(v) ? v : (v != null && isFinite(+v) ? +v : d)));
-const now = Date.now(), good = { ts: now, wf: { router: { n: 150, mean: 0.4, t: 2.5 }, baseline: { mean: 0.1 } }, picks: { AAA: { sid: "SN_RSI2", mu: 0.5, n: 40, hold: 8, horizon: "snap" } } };
-chk(M.stratRoutePick(good, "AAA", now)?.sid === "SN_RSI2", "관문 통과 · 신선 → 고른 매매법으로 산다");
-chk(M.stratRoutePick({ ...good, wf: { router: { n: 150, mean: 0.4, t: 1.5 }, baseline: { mean: 0.1 } } }, "AAA", now) === null, "t < 2 → 안 산다");
-chk(M.stratRoutePick({ ...good, wf: { router: { n: 150, mean: 0.4, t: 2.5 }, baseline: { mean: 0.5 } } }, "AAA", now) === null, "전부 사기보다 못하면 안 산다");
-chk(M.stratRoutePick({ ...good, wf: { router: { n: 80, mean: 0.4, t: 2.5 }, baseline: { mean: 0.1 } } }, "AAA", now) === null, "n < 100 → 안 산다");
-chk(M.stratRoutePick({ ...good, ts: now - 40 * 3600000 }, "AAA", now) === null, "36시간 넘은 선택 → 안 산다");
-chk(M.STRAT_ROUTE.mult === 0.5 && /signal\.isStratRoute && STRAT_ROUTE\.mult/.test(S), "잠정 크기 ×0.5");
+chk(/mult: 0\.5/.test(S.slice(S.indexOf("const STRAT_ROUTE"), S.indexOf("const STRAT_ROUTE") + 200)) && /signal\.isStratRoute && STRAT_ROUTE\.mult/.test(S), "잠정 크기 ×0.5");
 chk(/\? "SROUTE"/.test(S) && /LIKE '\[SROUTE\]%'/.test(S), "원장 꼬리표 [SROUTE] · 하루 상한");
 chk(/"SR-TIME "/.test(S) && /sr: \(signal && signal\.isStratRoute/.test(S), "그 매매법 최대 보유일 → SR-TIME 청산");
 chk(/"hold": ex\["hold"\], "horizon": cat\[r\.sid\]\["horizon"\]/.test(readFileSync(dir + "strategy_router.py", "utf8")), "학습기가 picks 에 보유일·기간을 싣는다");
 chk(/signal\.isStratRoute && signal\.sr && _num\(signal\.sr\.stop, 0\) > 0\)[^\n]*\n\s*\? \{ stopPctOverride: signal\.sr\.stop \}/.test(S), "[V33.605] 매매법별 손절폭이 실전 매수 손절로 들어간다");
-chk(M.stratRoutePick({ ...good, picks: { AAA: { ...good.picks.AAA, stop: 3.2 } } }, "AAA", now)?.stop === 3.2 && M.stratRoutePick({ ...good, picks: { AAA: { ...good.picks.AAA, stop: 30 } } }, "AAA", now)?.stop === null, "손절폭 1.5~10% 만 받는다");
 chk(/LAST_X\[mk\] = /.test(readFileSync(dir + "omni_q.py", "utf8")) && /omni_x=omni_q\.LAST_X/.test(readFileSync(dir + "omniq_gha.py", "utf8")), "[V33.605] OMNI-Q 피처를 매매법 선택이 빌려 쓴다");
 { const Q = readFileSync(dir + "strategy_router.py", "utf8");
   chk(/"CRASH", "SURGE"/.test(Q) && /r <= -0\.025\) \| \(r5 <= -0\.06/.test(Q), "[V33.606] 폭락·폭등 국면(하루 ±2.5% · 5일 ±6% · 3거래일)");

@@ -12,6 +12,13 @@
 
 ## Current handoff
 
+- V33.607 (10/15) ★매매법 모의 시뮬(Playbook-Sim) — 확률 높은 종목 먼저 → 그 종목에 맞는 매매법(실시간)★ (사용자 설계)
+  - 학습기 trainer/modal/playbook_sim.py(GHA · omniq_gha 회차): 과거 전 종목 × 전 날짜에 매매법 6종(일봉: REBOUND·PULLBACK·TREND·MOMENTUM·BREAKOUT·VOLX)
+    + 5분 단타 4종(SCALP_Q·M·L·DAY_HOLD · 거래대금 상위 150종목)을 가상 적용 → 상황 칸(일봉 6조건 / 5분 4조건)별 성공확률·평균 순수익 표(베이즈 수축 k40 · 넓은 칸 → 구체 칸).
+    검증: 시간순 앞 70% 표 → 뒤 30% 에서 표가 고른 매매법 평균 > 0 · t ≥ 2 · 아무거나보다 높음(실전 100건 기준 없음 — 사용자 결정).
+  - 워커 PB_ROUTE: 후보 = OMNI-Q 5일 상위 20% · 매 분 상황 열쇠 계산 → /api/playbook 표 조회 → 평균>0·성공≥50% 최고 매매법 매수([SROUTE] · ×0.5 · 손절 stopPctOverride)
+    → 청산 SR-TP · SR-TIME · SR-EOD(단타 마감 10분 전). 옛 picks 경로(stratRoutePick) 삭제 · strategy_router 는 기록용으로만 계속 돈다.
+  - 1분봉 과거는 저장돼 있지 않아 5분봉으로 단타. 게이트 check-playbook(열쇠 경계 학습기↔워커 대조 포함).
 - V33.606 (10/15) ★매매법 선택 AI — 폭락·폭등 국면 · 거시 발표 · 실적 · 뉴스 피처★ (학습기만 · 워커 무변경)
   - 국면 CRASH/SURGE(시장 하루 ±2.5% 또는 5일 ±6% 뒤 3거래일) · 시장 상태 m_r1/m_r5/m_volr/m_disp · FOMC·CPI 전후 거래일(공식 일정 2023~2026 하드코딩).
   - 실적(미국 · omni.get_earn/earn_feats) · 뉴스(한국 · get_news/news_feats) — 덮은 표본 20% 미만이면 자동 제외. 쓸모는 걷기 검증이 판정.

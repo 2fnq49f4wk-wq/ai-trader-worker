@@ -826,6 +826,9 @@ jobs:
       # [V33.602] 매매법 선택 AI(Phase B+C) — 귀무·양성 대조·누출 없음·그림자
       - name: 매매법 선택 AI 검사
         run: node tools/check-strategy-router.mjs
+      # [V33.607] 매매법 모의 시뮬 — 귀무·양성 대조 · 상황 열쇠 학습기↔워커 일치 · 실시간 조회·청산
+      - name: 매매법 모의 시뮬 검사
+        run: node tools/check-playbook.mjs
       # [V33.531] 포트폴리오 실험실 — Qlib TopK-Dropout + Vibe 부품(퍼지 전진·DSR·최적화기) · 귀무 0 · 양성 대조 통과
       - name: 포트폴리오 실험실 검사
         run: node tools/check-portfolio-lab.mjs

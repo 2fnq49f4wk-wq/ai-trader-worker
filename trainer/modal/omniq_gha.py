@@ -56,6 +56,30 @@ try:
     strategy_router.run(daily, mkt, omni.day_key_of_daily, BASE=BASE, HDR=HDR, upload=True, log=print, omni_x=omni_q.LAST_X, events=ev)
 except Exception as e:  # noqa: BLE001
     print("   ⚠️ [매매법AI] 실패: %s" % e)
+# [V33.607] ★매매법 모의 시뮬(Playbook-Sim)★ — 과거 전 종목에 모든 매매법을 가상 적용 → 상황 칸별 성공확률·평균 표(일봉 + 5분 단타).
+#   워커가 매 분 OMNI-Q 상위 종목의 지금 상황 칸을 계산해 이 표에서 매매법을 고른다. 5분봉은 거래대금 상위 PB_INTRA_N 종목만(시간).
+try:
+    import numpy as _np  # noqa: E402
+    import playbook_sim  # noqa: E402
+    import strategy_router as _sr  # noqa: E402
+    PB_INTRA_N = int(os.environ.get("PB_INTRA_N", "150"))
+    b5 = {}
+    for _m in ("us", "kr"):
+        liq = []
+        for s_, bd in daily.items():
+            if mkt.get(s_) != _m or not bd or not bd.get("c") or not bd.get("v") or s_.startswith("^"):
+                continue
+            c_, v_ = _np.asarray(bd["c"][-20:], dtype=float), _np.asarray(bd["v"][-20:], dtype=float)
+            liq.append((float(_np.nanmean(c_ * v_)), s_))
+        top = [s_ for _, s_ in sorted(liq, reverse=True)[:PB_INTRA_N]]
+        t5 = time.time()
+        for got in omni._get_bars(BASE, HDR, top, "5m", print):
+            b5.update(got)
+        print("   · [매매법시뮬] %s 5분봉 %d종목 수신 (%.0fs)" % (_m, sum(1 for s_ in top if s_ in b5), time.time() - t5))
+    playbook_sim.run(daily, mkt, omni.day_key_of_daily, BASE=BASE, HDR=HDR, upload=True, log=print, bars5=b5,
+                     ev_dates=sorted(set(_sr.FOMC) | set(_sr.CPI)))
+except Exception as e:  # noqa: BLE001
+    print("   ⚠️ [매매법시뮬] 실패: %s" % e)
 trained = bool(cache.pop("_trained", False))
 if trained:
     omni_q.save_cache(CACHE, cache)

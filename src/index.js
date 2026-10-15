@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.605";
+const _BUILD_VER = "V33.607";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13518,25 +13518,94 @@ function pairRoutePick(ext, symbol, price, ma50, pbNow, nowMs) {
   return { b: pr.b, pr: pr, z: z };
 }
 /* [V33.603] ★매매법 선택 AI(STRAT_ROUTE) — 실전 경로★ (사용자 10/15: "리포트 말고 실제 제작")
-   외부(GHA · strategy_router.py)가 매일 도감 17종 × 국면별 기대수익(베이즈 수축 · 과거에 끝난 표본만)을 추정해
-   '지금 국면에서 기대수익 > 0 인 매매법' 의 오늘 신호를 종목마다 하나씩 고른다(picks). 워커는 그 종목을 그 매매법 이름으로 산다.
-   관문(미리 고정 · 워커가 다시 판정): 걷기 검증 n ≥ 100 · 평균 순초과 > 0 · t ≥ 2 · '도감 신호 전부 사기' 보다 높음 — 못 넘은 시장은 사지 않는다.
-   크기 잠정 ×0.5 · 사이클 1 · 하루 3 · 동시 6 · 신선도 36시간. 청산: 손절·트레일·EOD 는 그대로 + 그 매매법 최대 보유일(거래일×1.45 달력일) → SR-TIME.
+   [V33.607] 선택은 PB_ROUTE(아래 · 모의 시뮬 표 실시간 조회)가 한다 — 이 상수는 그 경로의 상한(크기 잠정 ×0.5 · 사이클 1 · 하루 3 · 동시 6 · 표 신선도 36시간).
    위원회는 막지도 키우지도 않는다(페어와 같다) · 실적 관문은 자기 키(시장:SROUTE:전략)로 따로 본다 · 위험 관문은 전부 그대로. */
 const STRAT_ROUTE = { enabled: true, maxPerCycle: 1, maxPerDay: 3, maxOpen: 6, mult: 0.5, freshMs: 36 * 3600000, calPerTradingDay: 1.45 };
-function stratRoutePass(ext) {
-  const wf = ext && ext.wf, rt = wf && wf.router, bs = wf && wf.baseline;
-  return !!(rt && bs && _num(rt.n, 0) >= 100 && _num(rt.mean, 0) > 0 && _num(rt.t, 0) >= 2 && _num(rt.mean, -99) > _num(bs.mean, 99));
+/* [V33.607] ★매매법 모의 시뮬(Playbook-Sim) 실시간 선택★ (사용자 10/15: "확률 높은 종목 먼저 → 그 종목에 맞는 매매법")
+   ① 후보 = OMNI-Q 5일 머리 상위 20%(점수 ≥ 0.80 · 신선) — 매매법 신호가 떴는지는 묻지 않는다.
+   ② 그 종목의 ★지금★ 상황 열쇠를 매 분 계산(일봉: 국면·RSI14·MA20 거리·5일 수익·거래량 배수·FOMC/CPI 근접 /
+      5분: 국면·장중 등락·장 시작 후 시간·일봉 추세) → 학습기(playbook_sim.py · GHA)가 과거 전 종목에 모든 매매법을
+      가상 적용해 만든 표에서 그 칸의 ★성공확률·평균 순수익★ 을 조회. 칸이 비면 넓은 칸으로(이미 수축된 값).
+   ③ 평균 > 0 · 성공확률 ≥ 50% 중 평균이 가장 큰 매매법으로 산다 — 단 표본 밖 검증(앞 70% 표 → 뒤 30%)을 통과한 봉(일봉/5분)만.
+   ④ 매도는 그 매매법 규칙: 손절 %(stopPctOverride) · 익절 % → SR-TP · 최대 보유 → SR-TIME · 단타는 마감 10분 전 SR-EOD.
+   경계(PB_KEYS)는 학습기와 같아야 한다 — check-playbook 이 대조한다. 위험 관문은 전부 그대로 지난다. */
+const PB_KEYS = { rsi: [30, 50, 70], gap20: [-5, 0, 5], ret5: [-3, 3], vr: [0.8, 1.5], daypct: [-2, -0.5, 0.5, 2], tod: [30, 120, 270] };
+const PB_ROUTE = { candMin: 0.80, minWin: 0.5, intraMinToClose: 30, eodMin: 10, regMin: 390 };
+function _pbBk(x, e) { if (!(typeof x === "number" && isFinite(x))) return e.length; let k = 0; while (k < e.length && x >= e[k]) k++; return k; }
+function pbDailyKeys(reg, rsi, gap20, ret5, vr, evNear) {
+  const r = String(reg || "NEUTRAL");
+  return [r + "|" + _pbBk(rsi, PB_KEYS.rsi) + "|" + _pbBk(gap20, PB_KEYS.gap20) + "|" + _pbBk(ret5, PB_KEYS.ret5) + "|" + _pbBk(vr, PB_KEYS.vr) + "|" + (evNear ? 1 : 0),
+          r + "|" + _pbBk(rsi, PB_KEYS.rsi) + "|" + _pbBk(gap20, PB_KEYS.gap20) + "|*", r + "|*", "*"];
 }
-function stratRoutePick(ext, symbol, nowMs) {
-  if (!STRAT_ROUTE.enabled || !ext || !ext.picks || !stratRoutePass(ext)) return null;
-  if (!(nowMs - _num(ext.ts, 0) <= STRAT_ROUTE.freshMs)) return null;
-  const p = ext.picks[symbol];
-  if (!p || !p.sid || !(_num(p.mu, 0) > 0)) return null;
-  const hold = Math.max(1, Math.min(40, _num(p.hold, 10)));
-  const stop = _num(p.stop, 0);
-  return { sid: String(p.sid), mu: _num(p.mu, 0), n: _num(p.n, 0), hold: hold, horizon: p.horizon === "swing" ? "swing" : "snap",
-           stop: (stop >= 1.5 && stop <= 10) ? +stop.toFixed(2) : null };   // [V33.605] 매매법별 손절폭 — 범위 밖이면 전략 기본 손절
+function pbIntraKeys(reg, daypct, tod, up) {
+  const r = String(reg || "NEUTRAL");
+  return [r + "|" + _pbBk(daypct, PB_KEYS.daypct) + "|" + _pbBk(tod, PB_KEYS.tod) + "|" + (up ? 1 : 0), r + "|" + _pbBk(daypct, PB_KEYS.daypct) + "|*", r + "|*", "*"];
+}
+// 가장 구체적인 칸부터 — 그 칸에 매매법이 하나라도 있으면 그 칸에서 고른다(값은 이미 부모 쪽으로 수축됨). → { pb, n, w, m } | null
+function pbChoose(table, keys) {
+  if (!table) return null;
+  for (const k of keys) {
+    const row = table[k];
+    if (!row) continue;
+    let best = null;
+    for (const pb in row) {
+      const v = row[pb]; if (!Array.isArray(v)) continue;
+      const n = _num(v[0], 0), w = _num(v[1], 0), m = _num(v[2], 0);
+      if (m > 0 && w >= PB_ROUTE.minWin && (!best || m > best.m)) best = { pb: pb, n: n, w: w, m: m };
+    }
+    return best;
+  }
+  return null;
+}
+function _pbPass(v) { return !!(v && v.pass === true && _num(v.n, 0) >= 30 && _num(v.mean, 0) > 0 && _num(v.t, 0) >= 2 && _num(v.mean, -99) > _num(v.base, 99)); }
+// 실시간 선택(순수 함수) — ctx: { reg, closes, volumes, price, prevClose, evNear, minToClose }
+function pbRoutePick(st, ctx, nowMs) {
+  if (!STRAT_ROUTE.enabled || !st || !(nowMs - _num(st.ts, 0) <= STRAT_ROUTE.freshMs)) return null;
+  const c = ctx.closes || [], v = ctx.volumes || [], px = ctx.price;
+  let best = null;
+  if (st.daily && _pbPass(st.daily.val) && c.length >= 60 && px > 0) {
+    const cl = c.slice(0, -1).concat([px]);
+    const ma20 = getMA(cl, 20), rsi = getRSI(cl, 14);
+    const ret5 = cl.length > 5 && cl[cl.length - 6] > 0 ? (px / cl[cl.length - 6] - 1) * 100 : null;
+    let vr = null;
+    if (v.length >= 22) { let s = 0; for (let i = v.length - 21; i < v.length - 1; i++) s += _num(v[i], 0); vr = s > 0 ? _num(v[v.length - 2], 0) / (s / 20) : null; }   // 어제(완성 봉) 거래량 배수
+    const ch = pbChoose(st.daily.table, pbDailyKeys(ctx.reg, rsi, ma20 > 0 ? (px / ma20 - 1) * 100 : null, ret5, vr, ctx.evNear));
+    const pr = ch && st.daily.pb && st.daily.pb[ch.pb];
+    if (ch && pr) best = { kind: "daily", pb: ch.pb, n: ch.n, w: ch.w, m: ch.m, stop: _num(pr.stop, 5), tpR: pr.tpR == null ? null : _num(pr.tpR, null), hold: _num(pr.hold, 10), label: pr.label || "" };
+  }
+  const mtc = ctx.minToClose;
+  if (st.intra && _pbPass(st.intra.val) && mtc != null && mtc >= PB_ROUTE.intraMinToClose && ctx.prevClose > 0 && px > 0 && c.length >= 22) {
+    const ma20p = getMA(c.slice(0, -1), 20);
+    const ch = pbChoose(st.intra.table, pbIntraKeys(ctx.reg, (px / ctx.prevClose - 1) * 100, PB_ROUTE.regMin - mtc, ma20p > 0 && ctx.prevClose > ma20p));
+    const pr = ch && st.intra.pb && st.intra.pb[ch.pb];
+    if (ch && pr && (!best || ch.m > best.m)) best = { kind: "intra", pb: ch.pb, n: ch.n, w: ch.w, m: ch.m, stop: _num(pr.sl, 1), tpPct: pr.tpPct == null ? null : _num(pr.tpPct, null), bars: _num(pr.bars, 0), label: pr.label || "" };
+  }
+  return best;
+}
+// 매매법 관리 보유 청산 판정(순수 함수) → 사유 문자열 | null
+function pbExitWhy(sm, avg, price, openedTs, nowMs, minToClose) {
+  if (!sm || !(avg > 0) || !(price > 0)) return null;
+  const pnl = (price / avg - 1) * 100;
+  if (sm.kind === "intra") {
+    if (sm.tpPct != null && pnl >= sm.tpPct) return "SR-TP " + sm.sid + " +" + pnl.toFixed(2) + "%";
+    const mins = (nowMs - _num(openedTs, nowMs)) / 60000;
+    if (_num(sm.bars, 0) > 0 && mins >= sm.bars * 5) return "SR-TIME " + sm.sid + " " + mins.toFixed(0) + "분";
+    if (minToClose != null && minToClose <= PB_ROUTE.eodMin) return "SR-EOD " + sm.sid;
+    return null;
+  }
+  const tp = sm.tpR != null ? sm.tpR * _num(sm.stop, 5) : null;
+  if (tp != null && pnl >= tp) return "SR-TP " + sm.sid + " +" + pnl.toFixed(2) + "%";
+  const hd = (nowMs - _num(openedTs, nowMs)) / 86400000;
+  if (hd >= _num(sm.hold, 10) * STRAT_ROUTE.calPerTradingDay) return "SR-TIME " + sm.sid + " " + hd.toFixed(1) + "일";
+  return null;
+}
+// FOMC·CPI 발표 ±2거래일(≈ ±3달력일) — MACRO_SCHED(us.fed_rate · us.cpi)
+function pbEvNear(nowMs) {
+  try {
+    const ds = [].concat(MACRO_SCHED.us.fed_rate || [], MACRO_SCHED.us.cpi || []);
+    for (const d of ds) { const t = Date.parse(d + "T12:00:00Z"); if (isFinite(t) && Math.abs(nowMs - t) <= 3 * 86400000) return true; }
+  } catch (e) {}
+  return false;
 }
 function _omqHeadOn(st, h) {
   if (!st) return null;
@@ -23637,7 +23706,8 @@ async function runTradingCycle(env) {
       for (const _pk in positions) { const _pm = positions[_pk] && positions[_pk].meta; if (_pm && _pm.pair) __prOpen++; }
       /* [V33.603] 매매법 선택 AI 경로 — 외부 선택 · 이번 사이클/오늘 체결 · 관리 중 보유 */
       let __sr = null, __srBought = 0, __srToday = null, __srOpen = 0;
-      try { if (STRAT_ROUTE.enabled && (market === "us" || market === "kr")) __sr = await getState(DB, "strat_router:" + market, null); } catch (e) { __sr = null; }
+      try { if (STRAT_ROUTE.enabled && (market === "us" || market === "kr")) __sr = await getState(DB, "playbook:" + market, null); } catch (e) { __sr = null; }   // [V33.607] 모의 시뮬 표
+      const __pbEv = pbEvNear(Date.now()), __pbMtc = minutesToClose(market, new Date());
       for (const _pk in positions) { const _pm = positions[_pk] && positions[_pk].meta; if (_pm && _pm.sr) __srOpen++; }
       const feeRate = market === "us" ? mcfg.feeUS : mcfg.feeKR;
       const regime = regimes[market];
@@ -25096,14 +25166,13 @@ async function runTradingCycle(env) {
               } catch (e) {}
             }
 
-            /* [V33.603] ★매매법 선택 AI 관리 보유★ — 그 매매법의 최대 보유일(거래일 × 1.45 달력일)이 지나면 SR-TIME.
-               관리 중엔 위원회 청산(AI_EXIT·ROTATE)을 안 건다 — 걷기 검증이 잰 보유와 다르다. 손절·트레일·EOD 갭은 그대로. */
+            /* [V33.607] ★매매법 관리 보유★ — 그 매매법의 익절(SR-TP) · 최대 보유(SR-TIME) · 단타 마감(SR-EOD). 손절은 진입 때 stopPctOverride.
+               관리 중엔 위원회 청산(AI_EXIT·ROTATE)을 안 건다 — 모의 시뮬이 잰 보유와 다르다. 손절·트레일·EOD 갭은 그대로. */
             if (held.meta && held.meta.sr && held.meta.sr.sid) {
               try {
-                const _sm = held.meta.sr;
-                const _hd = (Date.now() - _num(held.opened_ts, Date.now())) / 86400000;
-                if (_hd >= _num(_sm.hold, 10) * STRAT_ROUTE.calPerTradingDay) {
-                  await executeSell(DB, market, symbol, held, held.qty, price, "SR-TIME " + _sm.sid + " " + _hd.toFixed(1) + "일", mcfg, cash);
+                const _why = pbExitWhy(held.meta.sr, held.avg, price, held.opened_ts, Date.now(), __pbMtc);
+                if (_why) {
+                  await executeSell(DB, market, symbol, held, held.qty, price, _why, mcfg, cash);
                   sold++;
                   const _sk = Object.keys(positions).some(k => positions[k].symbol === symbol && k !== posKey);
                   if (!_sk) { heldSymbols.delete(symbol); const _sc = SECTOR_MAP[symbol]; if (_sc && sectorCounts[_sc]) sectorCounts[_sc]--; }
@@ -25699,23 +25768,24 @@ async function runTradingCycle(env) {
                 }
               }
             }
-            /* [V33.603] ★매매법 선택 AI 진입★(STRAT_ROUTE 주석) — 관문 통과 시장만 · 원장 꼬리표 [SROUTE] */
-            if (__sr && __sr.picks && __sr.picks[symbol] && !heldSymbols.has(symbol) && !crashGate.blockNew && canTrade
-                && __srBought < STRAT_ROUTE.maxPerCycle && __srOpen < STRAT_ROUTE.maxOpen) {
-              const _sp = stratRoutePick(__sr, symbol, Date.now());
+            /* [V33.607] ★확률 높은 종목 → 그 종목에 맞는 매매법★(PB_ROUTE 주석) — 후보 = OMNI-Q 상위 20% · 매 분 상황 열쇠로 표 조회 · 원장 [SROUTE] */
+            const _pbS = (__sr && omniqFresh(__omniq, Date.now())) ? _omqScore(__omniq, 5, symbol) : null;
+            if (_pbS != null && _pbS >= PB_ROUTE.candMin && !heldSymbols.has(symbol) && !crashGate.blockNew && canTrade
+                && __srBought < STRAT_ROUTE.maxPerCycle && __srOpen < STRAT_ROUTE.maxOpen && daily && daily.closes) {
+              const _sp = pbRoutePick(__sr, { reg: __sr.regime, closes: daily.closes, volumes: daily.volumes || [], price: price, prevClose: prevClose,
+                                              evNear: __pbEv, minToClose: __pbMtc }, Date.now());
               if (_sp) {
                 if (__srToday == null) {
                   try { const _r = await DB.prepare("SELECT COUNT(*) AS n FROM trades WHERE market = ? AND side = 'BUY' AND ts > ? AND reason LIKE '[SROUTE]%'").bind(market, Date.now() - 18 * 3600000).first(); __srToday = _num(_r && _r.n, 0); } catch (e) { __srToday = STRAT_ROUTE.maxPerDay; }
                 }
-                if (__srToday + __srBought < STRAT_ROUTE.maxPerDay) {
-                  const _st = _sp.horizon === "swing" ? "trend" : "snap";
-                  if (!strategiesHeldNow.has(_st)) {
-                    stratResults.unshift({ strategy: _st, weight: 1,
-                      signal: { name: "SR_" + _sp.sid, members: [_sp.sid], isStratRoute: true, weight: 1,
-                        sr: { sid: _sp.sid, mu: _sp.mu, hold: _sp.hold, stop: _sp.stop, regime: __sr.regime || null, day: __sr.day || null, at: Date.now() },
-                        detail: "매매법AI " + _sp.sid + " · 국면 " + (__sr.regime || "?") + " · 기대 +" + _sp.mu.toFixed(2) + "% (표본 " + _sp.n + ") · 검증 t" +
-                                (__sr.wf && __sr.wf.router && __sr.wf.router.t) +  " · 최대 " + _sp.hold + "거래일" + (_sp.stop ? " · 손절 −" + _sp.stop + "%" : "") + " · 잠정 ×" + STRAT_ROUTE.mult } });
-                  }
+                const _st = _sp.kind === "intra" ? "scalp" : (_sp.hold >= 15 ? "trend" : "snap");
+                if (__srToday + __srBought < STRAT_ROUTE.maxPerDay && !strategiesHeldNow.has(_st)) {
+                  stratResults.unshift({ strategy: _st, weight: 1,
+                    signal: { name: "PB_" + _sp.pb, members: [_sp.pb], isStratRoute: true, weight: 1,
+                      sr: { sid: _sp.pb, kind: _sp.kind, stop: +_sp.stop.toFixed(2), tpR: _sp.tpR == null ? null : _sp.tpR, tpPct: _sp.tpPct == null ? null : _sp.tpPct,
+                            hold: _sp.hold || null, bars: _sp.bars || 0, m: +_sp.m.toFixed(3), w: +_sp.w.toFixed(3), n: _sp.n, omq: +_pbS.toFixed(3), regime: __sr.regime || null, at: Date.now() },
+                      detail: "매매법AI " + _sp.pb + "(" + (_sp.kind === "intra" ? "5분 단타" : "일봉") + ") · OMNI-Q 상위 " + Math.max(1, Math.round((1 - _pbS) * 100)) + "% · 국면 " + (__sr.regime || "?") +
+                              " · 모의 성공 " + (_sp.w * 100).toFixed(0) + "% 평균 +" + _sp.m.toFixed(2) + "% (표본 " + _sp.n + ") · 손절 −" + _sp.stop + "% · 잠정 ×" + STRAT_ROUTE.mult } });
                 }
               }
             }
@@ -30330,6 +30400,29 @@ async function handleRequest(request, env, ctx, _inner) {
       return Response.json({ ok: true, route: PAIR_ROUTE, markets: out }, { headers: cors });
     }
     /* [V33.602·603] 매매법 선택 AI(strategy_router.py · GHA) 업로드 — 진입은 STRAT_ROUTE(관문 통과 시장만) */
+    /* [V33.607] 매매법 모의 시뮬 표(playbook_sim.py · GHA) — 일봉·5분 표 + 표본 밖 검증. 관문은 워커가 _pbPass 로 다시 판정. */
+    if (path === "/api/playbook" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      let body = null; try { body = await request.json(); } catch (e) {}
+      const mk = body && (body.mkt === "us" || body.mkt === "kr") ? body.mkt : null;
+      if (!mk || !body.daily || typeof body.daily !== "object") return Response.json({ error: "mkt·daily 필요" }, { status: 400, headers: cors });
+      const part = function (x) { return (x && typeof x === "object") ? { val: x.val || {}, table: (x.table && typeof x.table === "object") ? x.table : {}, pb: x.pb || {} } : null; };
+      const rec = { ts: Date.now(), day: String(body.day || ""), regime: String(body.regime || "NEUTRAL"), daily: part(body.daily), intra: part(body.intra) };
+      rec.pass = { daily: _pbPass(rec.daily && rec.daily.val), intra: _pbPass(rec.intra && rec.intra.val) };
+      await setState(env.DB, "playbook:" + mk, rec);
+      try { await log(env.DB, "INFO", null, "[매매법시뮬] " + mk.toUpperCase() + " 국면 " + rec.regime + " · 일봉 표 " + Object.keys(rec.daily.table).length + "칸 검증 " + JSON.stringify(rec.daily.val) +
+                      " · 5분 표 " + (rec.intra ? Object.keys(rec.intra.table).length : 0) + "칸 → 일봉 " + (rec.pass.daily ? "실전" : "기록만") + " · 5분 " + (rec.pass.intra ? "실전" : "기록만")); } catch (e) {}
+      return Response.json({ ok: true, pass: rec.pass }, { headers: cors });
+    }
+    if (path === "/api/playbook") {
+      const out = {};
+      for (const mk of ["us", "kr"]) {
+        const r = await getState(env.DB, "playbook:" + mk, null);
+        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, pass: r.pass, daily: r.daily && { val: r.daily.val, cells: Object.keys(r.daily.table || {}).length, pb: r.daily.pb },
+                        intra: r.intra && { val: r.intra.val, cells: Object.keys(r.intra.table || {}).length, pb: r.intra.pb } } : null;
+      }
+      return Response.json({ ok: true, route: PB_ROUTE, keys: PB_KEYS, markets: out }, { headers: cors });
+    }
     if (path === "/api/strategy-router" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       let body = null; try { body = await request.json(); } catch (e) {}
