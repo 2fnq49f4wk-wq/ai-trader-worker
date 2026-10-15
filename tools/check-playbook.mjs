@@ -34,6 +34,19 @@ ch = PB.choose(tab, [X, "*"], list(PB.DAILY_PB))
 K = 60; J = 40
 Pa = {k: P[k].values[:, :J].round(6).tolist() for k in ("open", "high", "low", "close", "volume")}
 Sd = {pb: sig[pb].values[-K:, :J].astype(int).tolist() for pb in PB.DAILY_PB if pb not in PB.CROSS_PB}
+# [V33.618] 실전 거르개 · 평균회귀 청산 대조
+atr_ = PB._daily_state(P, [])[4]
+regs = PB._regime(P["close"])[0]
+LF = PB._live_filters(P, regs, atr_)["SN_RSI2"][-K:, :J].astype(int).tolist(); MR = PB._mr_exit(P)[-K:, :J].astype(int).tolist(); RG = [str(x) for x in regs[-K:]]
+tab5 = PB._shrunk_table(d.head(400))
+# [V33.618] 폭락장 반등 2종 대조 — 변동성 큰 무작위 시세(투매일이 나오게)
+import strategy_catalog as CAT
+cv = pd.DataFrame(50*np.exp(np.cumsum(rng.normal(-0.001,0.04,(400,40)),axis=0)), index=[20240101+k for k in range(400)])
+ov = cv*(1+rng.normal(0,0.01,(400,40)))
+Pv = {"close":cv,"open":ov,"high":np.maximum(cv,ov)*1.01,"low":np.minimum(cv,ov)*0.99,"volume":pd.DataFrame(rng.lognormal(13,.9,(400,40)), index=cv.index)}
+sv = CAT.signals(Pv, ids=["OS_DEEP","CAPIT_REV"])
+Pva = {k: Pv[k].values.round(6).tolist() for k in ("open","high","low","close","volume")}
+Sv = {k: sv[k].values[-120:].astype(int).tolist() for k in sv}
 # 5분 단타 진입 — 무작위 하루 30개(봉 78개)
 ib = []
 for q in range(30):
@@ -46,7 +59,8 @@ dk = PB.daily_keys(["BULL"]*len(s), s[:,0], s[:,1], s[:,2], s[:,3], s[:,4].astyp
 I = np.array(${JSON.stringify(isamp)}, dtype=float)
 ik = PB.intra_keys(["CRASH"]*len(I), I[:,0], I[:,1], I[:,2].astype(int))
 print(json.dumps({"null": null_d.get("pass"), "pos": pos, "pick": ch and ch[0], "G": G, "Pa": Pa, "Sd": Sd, "K": K, "ib": ib, "dk": [[str(x) for x in lv] for lv in dk], "ik": [[str(x) for x in lv] for lv in ik],
-  "pbs": sorted(PB.DAILY_PB), "ipbs": sorted(PB.INTRA_PB), "B": [PB.B_RSI, PB.B_GAP20, PB.B_RET5, PB.B_VR, PB.B_DAYPCT, PB.B_TOD]}))
+  "Pva": Pva, "Sv": Sv, "LF": LF, "MR": MR, "RG": RG, "tab5len": len(next(iter(tab5.values()))), "snapMr": sorted(k for k, v in PB.DAILY_PB.items() if v.get("mr")),
+  "rules": PB.RULES, "chLow": PB.choose({("*", "A"): (100, 0.3, 0.6, 0.4, 2.0)}, ["*"], ["A"]), "pbs": sorted(PB.DAILY_PB), "ipbs": sorted(PB.INTRA_PB), "B": [PB.B_RSI, PB.B_GAP20, PB.B_RET5, PB.B_VR, PB.B_DAYPCT, PB.B_TOD]}))
 `;
 const r = spawnSync("python3", ["-c", py], { encoding: "utf8", timeout: 300000, maxBuffer: 256 * 1024 * 1024 });
 let o = null; try { o = JSON.parse(r.stdout.trim().split("\n").pop()); } catch (e) {}
@@ -58,9 +72,32 @@ const getMA = (h, p) => { if (!Array.isArray(h) || h.length < p) return null; le
 const getRSI = () => 25;
 const STRAT_ROUTE = { enabled: true, freshMs: 36 * 3600000, calPerTradingDay: 1.45 };
 const MACRO_SCHED = { us: { fed_rate: ["2026-10-28"], cpi: ["2026-11-10"] } };
-const W = new Function("_num", "getMA", "getRSI", "STRAT_ROUTE", "MACRO_SCHED", fnSrc + "; return { PB_KEYS, PB_ROUTE, pbDailyKeys, pbIntraKeys, pbChoose, _pbPass, pbRoutePick, pbExitWhy, pbEvNear, pbDailyFires, pbIntraFires, pbAgg5, pbLiveDaily };")(_num, getMA, getRSI, STRAT_ROUTE, MACRO_SCHED);
+const W = new Function("_num", "getMA", "getRSI", "STRAT_ROUTE", "MACRO_SCHED", fnSrc + "; return { PB_KEYS, PB_ROUTE, pbDailyKeys, pbIntraKeys, pbChoose, _pbPass, pbRoutePick, pbExitWhy, pbEvNear, pbDailyFires, pbIntraFires, pbAgg5, pbLiveDaily, pbLiveFilterOk };")(_num, getMA, getRSI, STRAT_ROUTE, MACRO_SCHED);
 
 if (o) {
+  chk(o.tab5len === 5 && o.rules.some((x) => x.score === "mpd") && o.rules.some((x) => x.score === "lcbpd") && o.chLow && o.chLow[0] === "A", "[V33.618] 학습기: 표 = (n,w,m,lcb,hd) · 하루당 규칙 · 승률 30% 도 고른다");
+  chk(["SN_RSI2", "BB_LOW", "STOCH_CROSS"].every((x) => o.snapMr.includes(x)) && !o.snapMr.includes("TR_BREAKOUT"), "[V33.618] 스냅 매매법 = 평균회귀 청산 프로필", o.snapMr.join(","));
+  { let bad = [], badm = [], nOk = 0, nMr = 0; const T = o.Pa.close.length;
+    for (let j = 0; j < o.Pa.close[0].length; j++) {
+      const col = (k) => o.Pa[k].map((r) => r[j]);
+      const A = { o: col("open"), h: col("high"), l: col("low"), c: col("close"), v: col("volume") };
+      for (let q = 0; q < o.K; q++) {
+        const t = T - o.K + q, D = { o: A.o.slice(0, t + 1), h: A.h.slice(0, t + 1), l: A.l.slice(0, t + 1), c: A.c.slice(0, t + 1), v: A.v.slice(0, t + 1) };
+        const js = W.pbLiveFilterOk("SN_RSI2", D, o.RG[q]) ? 1 : 0; nOk += js;
+        if (js !== o.LF[q][j]) bad.push([t, j, js, o.LF[q][j]]);
+        const sm = { sid: "SN_RSI2", kind: "daily", mr: true, stop: 3.5, hold: 8, tstop: 5, rsi2x: 65 }, px = D.c[t];
+        const mr = /^SR-MR/.test(W.pbExitWhy(sm, px, px, Date.now(), Date.now(), 30, D) || "") ? 1 : 0; nMr += mr;
+        if (mr !== o.MR[q][j]) badm.push([t, j, mr, o.MR[q][j]]);
+      } }
+    chk(!bad.length && nOk > 0 && W.pbLiveFilterOk("TR_BREAKOUT", { c: [1] }, "CRASH"), "[V33.618] RSI2 실전 거르개(약세 금지·−12%·ATR 5%·당일 −4%) 학습기 = 워커 (통과 " + nOk + ")", JSON.stringify(bad.slice(0, 4)));
+    chk(!badm.length && nMr > 0, "[V33.618] 평균회귀 청산(종가 > MA5 · RSI2 ≥ 65) 학습기 = 워커 (" + nMr + ")", JSON.stringify(badm.slice(0, 4))); }
+  { const T = o.Pva.close.length, cnt = { OS_DEEP: 0, CAPIT_REV: 0 }, bad = [];
+    for (let j = 0; j < o.Pva.close[0].length; j++) {
+      const col = (k) => o.Pva[k].map((r) => r[j]);
+      const A = { o: col("open"), h: col("high"), l: col("low"), c: col("close"), v: col("volume") };
+      for (let q = 0; q < 120; q++) { const t = T - 120 + q, F = W.pbDailyFires({ o: A.o.slice(0, t + 1), h: A.h.slice(0, t + 1), l: A.l.slice(0, t + 1), c: A.c.slice(0, t + 1), v: A.v.slice(0, t + 1) });
+        for (const pb of ["OS_DEEP", "CAPIT_REV"]) { const js = F.includes(pb) ? 1 : 0; cnt[pb] += js; if (js !== o.Sv[pb][q][j]) bad.push([pb, t, j, js]); } } }
+    chk(!bad.length && cnt.OS_DEEP > 0 && cnt.CAPIT_REV > 0, "[V33.618] 폭락장 반등 2종(OS_DEEP·CAPIT_REV) 학습기 = 워커 " + JSON.stringify(cnt), JSON.stringify(bad.slice(0, 4))); }
   chk(o.null === false, "귀무: 무작위 시세는 일봉 검증을 통과 못 한다", JSON.stringify(o.null));
   chk(o.pos.pass === true && o.pick === o.G, "양성 대조: 심은 매매법을 골라 뒤 30% 에서 통과", JSON.stringify([o.pos, o.pick, o.G]));
   // ⑤ 진입 조건 대조(일봉 도감)
@@ -107,7 +144,11 @@ chk(W.pbChoose(tab, K0, ["STOCH_CROSS", "SN_RSI2"])?.pb === "STOCH_CROSS", "뜬 
 chk(W.pbChoose(tab, K0, ["SN_RSI2"])?.pb === "SN_RSI2" && W.pbChoose(tab, K0, ["HA_REV"])?.m === 0.3, "매매법마다 그것이 있는 가장 구체적인 칸 값");
 chk(W.pbChoose(tab, K0, ["TR_PULLBACK"]) === null, "그 칸 평균 ≤ 0 이면 안 산다(넓은 칸으로 도망가지 않는다)");
 chk(W.pbChoose(tab, K0, []) === null, "뜬 매매법이 없으면 안 산다");
-chk(W.pbChoose({ "*": { A: [100, 0.45, 0.5] } }, ["*"], ["A"]) === null, "성공확률 < 50% 면 안 고른다");
+chk(W.pbChoose({ "*": { A: [100, 0.3, 0.5] } }, ["*"], ["A"])?.pb === "A" && W.PB_ROUTE.minWin === 0, "[V33.618] 성공확률 조건 없음 — 승률 30% 라도 기대값 > 0 이면 고른다(사용자 결정)");
+{ const T5 = { "*": { A: [100, 0.6, 1.0, 0.8, 10], B: [100, 0.5, 0.5, 0.4, 1] } };
+  chk(W.pbChoose(T5, ["*"], ["A", "B"], { score: "m", level: "fine" })?.pb === "A" && W.pbChoose(T5, ["*"], ["A", "B"], { score: "mpd", level: "fine" })?.pb === "B"
+      && W.pbChoose(T5, ["*"], ["A", "B"], { score: "lcbpd", level: "regime" })?.pb === "B", "[V33.618] 하루당 점수(mpd·lcbpd): 10일 +1% 보다 1일 +0.5% 를 고른다");
+  chk(W.pbChoose({ "*": { A: [100, 0.5, 0.5, 0.4] } }, ["*"], ["A"], { score: "mpd", level: "fine" })?.hd === 1, "옛 표(보유일 없음)는 보유 1일로 본다"); }
 const val = { pass: true, n: 400, mean: 0.3, t: 2.4, base: 0.05 };
 chk(W._pbPass(val) && !W._pbPass({ ...val, t: 1.9 }) && !W._pbPass({ ...val, mean: 0.01, base: 0.05 }) && !W._pbPass({ ...val, n: 10 }), "관문 재판정: t ≥ 2 · 평균 > 0 · 아무거나보다 높음 · 시뮬 표본 ≥ 30");
 const now = Date.now();
@@ -178,6 +219,10 @@ chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"
   const M3 = new Function("_num", "getMA", "getRSI", "STRAT_ROUTE", "MACRO_SCHED", fnSrc + "; return { pbSellRule, pbLiveDaily, PB_ROUTE };")(_num, getMA, getRSI, STRAT_ROUTE, MACRO_SCHED);
   const pos = { avg: 100, qty: 1, meta: { sr: { sid: "SN_RSI2", kind: "daily", stop: 4, be: 0.8 }, stopPrice: 96, peakPrice: 100 } };
   chk(/^SR-STOP/.test(M3.pbSellRule(pos, 95.9).reason || "") && !M3.pbSellRule(pos, 99).sell, "매매법 보유 손절 = 진입 손절가");
+  { const pm = { avg: 100, qty: 1, meta: { sr: { sid: "SN_RSI2", kind: "daily", stop: 3.5, be: 0, bePct: 2, mr: true }, stopPrice: 96.5, peakPrice: 102.1 } };
+    chk(/^SR-BE/.test(M3.pbSellRule(pm, 99.9).reason || "") && !M3.pbSellRule({ ...pm, meta: { ...pm.meta, peakPrice: 101.9 } }, 99.9).sell, "[V33.618] 스냅 본전 이동: +2% 넘은 뒤 평단 아래면 SR-BE"); }
+  chk(/pbExitWhy\(held\.meta\.sr, held\.avg, price, held\.opened_ts, Date\.now\(\), __pbMtc, held\.meta\.sr\.mr \? pbLiveDaily\(daily, price, prevClose, __pbMtc\) : null\)/.test(S)
+      && /mr: _sp\.mr === true, bePct:/.test(S), "[V33.618] 평균회귀 청산 배선(보유 판정에 지금 일봉 · 매수 메타에 mr·bePct·tstop)");
   chk(/^SR-BE/.test(M3.pbSellRule({ ...pos, meta: { ...pos.meta, peakPrice: 103.3 } }, 99.9).reason || "") && !M3.pbSellRule({ ...pos, meta: { ...pos.meta, peakPrice: 103 } }, 99.9).sell, "본전 이동: 고점이 0.8R(=+3.2%) 넘은 뒤 평단 아래면 SR-BE");
   chk(/if \(pos\.meta && pos\.meta\.sr && pos\.meta\.sr\.sid\) return pbSellRule\(pos, price\);/.test(S) && /!_pairHeld && !\(held\.meta && held\.meta\.sr\)/.test(S),
       "매매법 보유엔 공통 분할익절·트레일·타임스톱·MODEL_EXIT 를 걸지 않는다(시뮬에 없던 매도)");

@@ -197,6 +197,21 @@ def e_vol_revert(P):
     return _and(I["vr"] >= 3.0, I["ret1"] <= -4.0, I["ret1"] >= -18.0, I["cpos"] <= 0.45, I["rsi2"] <= 8, I["c"] > I["ma200"])
 
 
+def e_os_deep(P):
+    """[V33.618] 깊은 과매도 반등 — RSI2 ≤ 5 · 볼린저 하단 아래 · 5일 −7% 이하 · RSI14 ≤ 35. ★추세 조건 없음★(폭락장 후보용).
+    OMNI-Q 가 고르는 후보(급락주)에 맞는 진입이 도감에 없었다 — 반등 매매법이 전부 MA200 위·양봉을 요구했다. 성적은 시뮬이 판정한다."""
+    I = _ind(P)
+    return _and(I["rsi2"] <= 5, I["c"] <= I["bbl"], I["ret5"] <= -7, I["rsi14"] <= 35)
+
+
+def e_capit_rev(P):
+    """[V33.618] 투매 반등 — 거래량 2배 이상 · 당일 −5~−25% · MA20 대비 −10% 이하 · 그날 종가 매수(추세 조건 없음)."""
+    I = _ind(P)
+    if I["vr"] is None:
+        return pd.DataFrame(False, index=I["c"].index, columns=I["c"].columns)
+    return _and(I["vr"] >= 2.0, I["ret1"] <= -5.0, I["ret1"] >= -25.0, I["c"] <= I["ma20"] * 0.90)
+
+
 def e_squeeze(P):
     """볼린저 폭이 최근 120일 하위 10% 로 수축한 뒤 상단 돌파."""
     I = _ind(P)
@@ -277,6 +292,8 @@ CATALOG = [
     _S("XS_ARB", "Value", "snap", e_xs_arb, "value", ALL, "rule", "낮은 우선순위 — 롱 다리만"),
     _S("DUAL_MOM", "Momentum", "swing", e_dual_momentum, "mom", (R_BULL,), "new", "종목판 — 섹터 로테이션은 다음 단계"),
     _S("HERD_REBOUND", "Volume", "snap", e_herding_rebound, "volume", (R_BULL, R_NEUT), "new", "거래량 폭증 뒤 2차 파동"),
+    _S("OS_DEEP", "Rebound", "snap", e_os_deep, "snap", ALL, "new", "깊은 과매도 반등(추세 조건 없음 · 폭락장)"),
+    _S("CAPIT_REV", "Volume", "snap", e_capit_rev, "snap", ALL, "new", "투매일 종가 매수(추세 조건 없음 · 폭락장)"),
 ]
 # 일봉으로 학습할 수 없는 것 — 도감에는 적되 후보에서 뺀다(분봉 매매법 · 보유 기간 충돌 방지)
 BLOCKED = [
@@ -286,7 +303,7 @@ BLOCKED = [
 ]
 CLUSTERS = {   # 원칙: 표본이 적은 초기엔 3~4 개 큰 묶음으로 먼저 학습(Phase C)
     "TREND": ["TREND_ALIGN", "TR_BREAKOUT", "RS_LEADER", "VT_TREND", "TR_PULLBACK", "MA_PULLBACK", "DUAL_MOM"],
-    "MEANREV": ["SN_RSI2", "HA_REV", "BB_LOW", "STOCH_CROSS", "STOCH_OS_EXIT", "VOL_REVERT", "XS_ARB"],
+    "MEANREV": ["SN_RSI2", "HA_REV", "BB_LOW", "STOCH_CROSS", "STOCH_OS_EXIT", "VOL_REVERT", "XS_ARB", "OS_DEEP", "CAPIT_REV"],
     "VOLVOL": ["VOL_BREAKOUT", "SQUEEZE", "HERD_REBOUND"],
 }
 

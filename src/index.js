@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.617";
+const _BUILD_VER = "V33.618";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13544,8 +13544,9 @@ const PB_KEYS = { rsi: [30, 50, 70], gap20: [-5, 0, 5], ret5: [-3, 3], vr: [0.8,
 const COMMITTEE_RETIRED = true;
 const PB_PRIMARY_CAPS = { maxPerCycle: 2, maxPerDay: 6, maxOpen: 12, mult: 1.0 };
 function pbPrimaryOn(st, nowMs) { return !!(st && st.daily && _pbPass(st.daily.val) && (nowMs - _num(st.ts, 0)) <= STRAT_ROUTE.freshMs); }
-const PB_ROUTE = { candMin: 0.80, minWin: 0.5, intraMinToClose: 30, eodMin: 10, regMin: 390, intraFetchMax: 8, dailyEntryWin: 60, liveKeep: 60,
-                   promoteMax: 25, intraPreMax: 40 };   // [V33.614] promoteMax: 살 수 있는 후보 앞당김 상한 · intraPreMax: 후보 분봉 선행 병렬 조회 상한   // dailyEntryWin: 일봉 매매법 진입 = 마감 전 60분 · liveKeep: 관측창에 남길 후보 수   // intraFetchMax: 사이클당 후보 분봉 조회 상한
+const PB_ROUTE = { candMin: 0.80, minWin: 0, intraMinToClose: 30, eodMin: 10, regMin: 390, intraFetchMax: 8, dailyEntryWin: 60, liveKeep: 60,
+                   promoteMax: 25, intraPreMax: 40,
+                   candDailyWin: 80, candDailyMax: 8, candDailyMin: 20 };   // [V33.618] 마감 전 80분부터 후보 일봉을 사이클당 8개씩 · 20분 수명으로 갱신   // [V33.614] promoteMax: 살 수 있는 후보 앞당김 상한 · intraPreMax: 후보 분봉 선행 병렬 조회 상한   // dailyEntryWin: 일봉 매매법 진입 = 마감 전 60분 · liveKeep: 관측창에 남길 후보 수   // intraFetchMax: 사이클당 후보 분봉 조회 상한
 function _pbBk(x, e) { if (!(typeof x === "number" && isFinite(x))) return e.length; let k = 0; while (k < e.length && x >= e[k]) k++; return k; }
 function pbDailyKeys(reg, rsi, gap20, ret5, vr, evNear) {
   const r = String(reg || "NEUTRAL");
@@ -13626,6 +13627,9 @@ function pbDailyFires(D) {
   if (st.k > 20 && st1.k <= 20 && ret1 > 0 && c[i] > ma200 * 0.95) F.push("STOCH_OS_EXIT");
   if (vr >= 2.0 && c[i] > hi20p && ret1 > 0 && c[i] > ma50) F.push("VOL_BREAKOUT");
   if (vr >= 3.0 && ret1 <= -4.0 && ret1 >= -18.0 && cpos <= 0.45 && rsi2 <= 8 && c[i] > ma200) F.push("VOL_REVERT");
+  // [V33.618] 폭락장 반등 2종 — 추세 조건 없음(OMNI-Q 후보 = 급락주에 맞는 진입이 도감에 없었다)
+  if (rsi2 <= 5 && c[i] <= bbl && ret(5) <= -7 && rsi14 <= 35) F.push("OS_DEEP");
+  if (vr >= 2.0 && ret1 <= -5.0 && ret1 >= -25.0 && c[i] <= ma20 * 0.90) F.push("CAPIT_REV");
   { // SQUEEZE — 어제 볼린저 폭이 그 전 120일(60개 이상) 하위 10% 이하 · 오늘 상단 돌파
     const bw = function (j) { const m = _pbSma(c, 20, j), s0 = _pbStd0(c, 20, j); return 4 * s0 / m; };
     const w1 = bw(i - 1), past = [];
@@ -13682,7 +13686,7 @@ function pbLiveDaily(daily, price, prevClose, minToClose) {
   const D = { c: daily.closes.slice(), h: pick(daily.highs, NaN), l: pick(daily.lows, NaN), o: pick(daily.opens, NaN), v: pick(daily.volumes, 0) };
   for (let k = 0; k < n; k++) { if (!(D.h[k] > 0)) D.h[k] = D.c[k]; if (!(D.l[k] > 0)) D.l[k] = D.c[k]; if (!(D.o[k] > 0)) D.o[k] = D.c[k]; }
   const last = D.c[n - 1];
-  if (prevClose > 0 && Math.abs(last / prevClose - 1) < 1e-6) { D.c.push(price); D.h.push(price); D.l.push(price); D.o.push(price); D.v.push(0); }
+  if (prevClose > 0 && Math.abs(last / prevClose - 1) < 1e-6) { D.c.push(price); D.h.push(price); D.l.push(price); D.o.push(price); D.v.push(NaN); }   // [V33.618] 오늘 거래량은 모른다 — 0(최저 거래량 칸)이 아니라 NaN(거래량 조건 안 뜸 · 칸은 넓은 쪽)
   else {
     D.c[n - 1] = price; D.h[n - 1] = Math.max(D.h[n - 1], price); D.l[n - 1] = Math.min(D.l[n - 1], price);
     // [V33.610] 오늘 거래량은 아직 덜 찼다 — 지난 시간 비율로 하루치를 추정(시뮬은 완성된 봉의 거래량을 본다)
@@ -13690,22 +13694,35 @@ function pbLiveDaily(daily, price, prevClose, minToClose) {
   }
   return D;
 }
-/* 뜬 매매법마다 '그 매매법이 있는 가장 구체적인 칸' 값(이미 넓은 칸 쪽으로 수축됨) → (점수 > 0 · 성공확률 ≥ 50%) 중 점수 최대. 학습기 choose 와 같은 규칙.
+/* 뜬 매매법마다 '그 매매법이 있는 가장 구체적인 칸' 값(이미 넓은 칸 쪽으로 수축됨) → 점수 > 0 중 점수 최대. 학습기 choose 와 같은 규칙.
+   [V33.618] 성공확률 ≥ 50% 조건 삭제(사용자 결정 — 승률 낮고 기대값 높은 추세·모멘텀 매매법이 빠졌다). 칸 값 = [n, w, m, lcb, hd(평균 보유 거래일)] ·
+   score "mpd"·"lcbpd" = 하루당 평균·하한(hd 없으면 1).
    [V33.609] rule = 학습기 검증이 고른 선택 규칙 { score: "m"(평균) | "lcb"(하한 = 평균 − 표준오차), level: "fine" | "regime" | "global" }.
    keys = [전체 칸, 국면+2조건, 국면, "*"] — regime 이면 뒤 둘만 · global 이면 "*" 만 본다. */
 function pbChoose(table, keys, fired, rule) {
   if (!table || !fired || !fired.length) return null;
-  const sc = rule && rule.score === "lcb" ? 3 : 2;
+  const sc = String((rule && rule.score) || "m");
   const lv = rule && rule.level === "global" ? keys.slice(-1) : rule && rule.level === "regime" ? keys.slice(-2) : keys;
   let best = null;
   for (const pb of fired) {
     let v = null;
     for (const k of lv) { const row = table[k]; if (row && Array.isArray(row[pb])) { v = row[pb]; break; } }
     if (!v) continue;
-    const n = _num(v[0], 0), w = _num(v[1], 0), m = _num(v[2], 0), lcb = _num(v[3], NaN), s = sc === 3 ? lcb : m;
-    if (s > 0 && w >= PB_ROUTE.minWin && (!best || s > best.s)) best = { pb: pb, n: n, w: w, m: m, lcb: lcb, s: s };
+    const n = _num(v[0], 0), w = _num(v[1], 0), m = _num(v[2], 0), lcb = _num(v[3], NaN), hd = Math.max(0.05, _num(v[4], 1));
+    const s = sc === "lcb" ? lcb : sc === "mpd" ? m / hd : sc === "lcbpd" ? lcb / hd : m;
+    if (s > 0 && w >= PB_ROUTE.minWin && (!best || s > best.s)) best = { pb: pb, n: n, w: w, m: m, lcb: lcb, hd: hd, s: s };
   }
   return best;
+}
+/* [V33.618] 실전 규칙 진입 거르개(snapRules) — RSI2 반등에만: 약세·폭락 국면 금지 · 20일 종가 고점 대비 −12% 이내 · ATR ≤ 5% · 당일 −4% 이상.
+   학습기 playbook_sim._live_filters 와 같다(check-playbook 대조). */
+const PB_LIVE_FILTER = { SN_RSI2: true };
+function pbLiveFilterOk(pb, D, reg) {
+  if (!PB_LIVE_FILTER[pb]) return true;
+  const c = D.c, i = c.length - 1;
+  if (reg === "BEAR" || reg === "CRASH") return false;
+  const hi20 = i >= 19 ? _pbMax(c, i - 19, i) : NaN, atr = _pbAtrPct(D.h, D.l, D.c, i), r1 = c[i - 1] > 0 ? (c[i] / c[i - 1] - 1) * 100 : NaN;
+  return hi20 > 0 && (c[i] / hi20 - 1) * 100 >= -12 && atr === atr && atr <= 5 && r1 === r1 && r1 >= -4;
 }
 function _pbPass(v) { return !!(v && v.pass === true && _num(v.n, 0) >= 30 && _num(v.mean, 0) > 0 && _num(v.t, 0) >= 2 && _num(v.mean, -99) > _num(v.base, 99)); }
 // 실시간 선택(순수 함수) — ctx: { reg, symbol, D(pbLiveDaily), bars5(pbAgg5) | null, prevClose, evNear, minToClose }
@@ -13717,7 +13734,7 @@ function pbRoutePick(st, ctx, nowMs) {
   const dWin = ctx.minToClose != null && ctx.minToClose <= PB_ROUTE.dailyEntryWin;   // [V33.610] 일봉 매매법은 장 마지막 1시간에만 — 시뮬이 '신호 봉 종가에 산다'
   if (dOk && (dWin || ctx.shadow) && D && D.c.length >= 211) {   // 그림자(관측)는 시간 창 밖에서도 계산만 한다
     const i = D.c.length - 1, px = D.c[i];
-    const fired = pbDailyFires(D);
+    const fired = pbDailyFires(D).filter(function (pb) { return pbLiveFilterOk(pb, D, ctx.reg); });
     const cr = st.daily.cross || {};
     for (const pb in cr) if (Array.isArray(cr[pb]) && cr[pb].indexOf(ctx.symbol) >= 0 && fired.indexOf(pb) < 0) fired.push(pb);   // 횡단면 조건은 학습기 판정(전일 종가 기준)
     if (fired.length) {
@@ -13729,7 +13746,8 @@ function pbRoutePick(st, ctx, nowMs) {
       if (ch && pr) {
         const atr = _pbAtrPct(D.h, D.l, D.c, i);
         const stop = Math.min(_num(pr.stop, 5), atr === atr ? _num(pr.atr, 2) * atr : 99);
-        best = { kind: "daily", pb: ch.pb, fired: fired, n: ch.n, w: ch.w, m: ch.m, s: ch.s, stop: Math.max(1.5, stop), be: _num(pr.be, 0), tpR: pr.tpR == null ? null : _num(pr.tpR, null), hold: _num(pr.hold, 10), label: pr.label || "" };
+        best = { kind: "daily", pb: ch.pb, fired: fired, n: ch.n, w: ch.w, m: ch.m, s: ch.s, stop: Math.max(1.5, stop), be: _num(pr.be, 0), tpR: pr.tpR == null ? null : _num(pr.tpR, null), hold: _num(pr.hold, 10), label: pr.label || "",
+                 mr: pr.mr === true, tpPct: pr.tpPct == null ? null : _num(pr.tpPct, null), bePct: pr.bePct == null ? null : _num(pr.bePct, null), tstop: _num(pr.tstop, 0), rsi2x: _num(pr.rsi2x, 65) };
       } else if (ctx.shadow) best = { kind: "daily", pb: null, fired: fired, why: "뜬 매매법 성적 미달" };
     } else if (ctx.shadow) best = { kind: "daily", pb: null, fired: [], why: "뜬 매매법 없음" };
   }
@@ -13777,7 +13795,7 @@ async function pbObserveScan(DB, market, quotes, st, omniq) {
   return items.length;
 }
 // 매매법 관리 보유 청산 판정(순수 함수) → 사유 문자열 | null
-function pbExitWhy(sm, avg, price, openedTs, nowMs, minToClose) {
+function pbExitWhy(sm, avg, price, openedTs, nowMs, minToClose, D) {
   if (!sm || !(avg > 0) || !(price > 0)) return null;
   const pnl = (price / avg - 1) * 100;
   if (sm.kind === "intra") {
@@ -13787,9 +13805,16 @@ function pbExitWhy(sm, avg, price, openedTs, nowMs, minToClose) {
     if (minToClose != null && minToClose <= PB_ROUTE.eodMin) return "SR-EOD " + sm.sid;
     return null;
   }
-  const tp = sm.tpR != null ? sm.tpR * _num(sm.stop, 5) : null;
+  const tp = sm.tpPct != null ? _num(sm.tpPct, 99) : sm.tpR != null ? sm.tpR * _num(sm.stop, 5) : null;
   if (tp != null && pnl >= tp) return "SR-TP " + sm.sid + " +" + pnl.toFixed(2) + "%";
   const hd = (nowMs - _num(openedTs, nowMs)) / 86400000;
+  if (sm.mr) {   // [V33.618] 평균회귀 청산(실전 snapRules) — 마감 전 창에서 종가 > MA5 또는 RSI2 ≥ 65 · N거래일 지나도 손실이면
+    if (D && D.c && D.c.length >= 6 && minToClose != null && minToClose <= PB_ROUTE.dailyEntryWin) {
+      const i = D.c.length - 1, ma5 = _pbSma(D.c, 5, i), r2 = _pbRsi2(D.c, i);
+      if (D.c[i] > ma5 || r2 >= _num(sm.rsi2x, 65)) return "SR-MR " + sm.sid + " " + pnl.toFixed(2) + "% (" + (D.c[i] > ma5 ? "MA5 위" : "RSI2 " + r2.toFixed(0)) + ")";
+    }
+    if (_num(sm.tstop, 0) > 0 && hd >= sm.tstop * STRAT_ROUTE.calPerTradingDay && pnl < 0) return "SR-TIME " + sm.sid + " " + hd.toFixed(1) + "일 손실";
+  }
   if (hd >= _num(sm.hold, 10) * STRAT_ROUTE.calPerTradingDay) return "SR-TIME " + sm.sid + " " + hd.toFixed(1) + "일";
   return null;
 }
@@ -13800,9 +13825,10 @@ function pbSellRule(pos, price) {
   const pnl = (price / avg - 1) * 100;
   const sp = typeof pos.meta.stopPrice === "number" && pos.meta.stopPrice > 0 ? pos.meta.stopPrice : avg * (1 - _num(sm.stop, 5) / 100);
   if (price <= sp) return { sell: true, sellQty: pos.qty, reason: "SR-STOP " + sm.sid + " " + pnl.toFixed(2) + "%" };
-  if (sm.kind !== "intra" && _num(sm.be, 0) > 0) {
+  if (sm.kind !== "intra" && (_num(sm.be, 0) > 0 || _num(sm.bePct, 0) > 0)) {   // [V33.618] bePct = 고정 % 에 본전(스냅 평균회귀)
     const peak = Math.max(_num(pos.meta.peakPrice, avg), price);
-    if (peak >= avg * (1 + _num(sm.be, 0) * _num(sm.stop, 5) / 100) && price <= avg) return { sell: true, sellQty: pos.qty, reason: "SR-BE " + sm.sid + " 본전" };
+    const bel = _num(sm.bePct, 0) > 0 ? avg * (1 + sm.bePct / 100) : avg * (1 + _num(sm.be, 0) * _num(sm.stop, 5) / 100);
+    if (peak >= bel && price <= avg) return { sell: true, sellQty: pos.qty, reason: "SR-BE " + sm.sid + " 본전" };
   }
   return { sell: false };
 }
@@ -24416,6 +24442,22 @@ async function runTradingCycle(env) {
       // 보유 종목 추가 (중복 제거)
       const dailyTargets = new Set(rrSymbols);
       if (!extSessMkt) { for (const key in positions) dailyTargets.add(positions[key].symbol); }
+      /* [V33.618] ★매매법 AI 후보(OMNI-Q 상위 20%) 일봉을 진입 창 앞뒤로 자주 갱신한다★ — 사용자 10/15 "OMNI 가 고른 주식 중 뜬 매매법이 별로 없다".
+         원인 하나: 일봉 캐시는 75~90분 · 라운드로빈 한 바퀴 ~1시간이라, 마감 전 60분에도 후보 일봉이 장 전에 받은 것(오늘 봉 없음)이거나
+         한참 전 반쪽 봉이었다 → 지금 봉이 시가=고가=저가=지금가 · 거래량 0 으로 붙어 거래량·돌파 매매법이 못 떴다.
+         창(마감 전 PB_ROUTE.candDailyWin 분)에서는 후보를 사이클마다 candDailyMax 개씩 돌려 넣고 캐시 수명 candDailyMin 분으로 본다. */
+      const __pbCandFresh = new Set();
+      try {
+        if (!extSessMkt && __sr && omniqFresh(__omniq, Date.now()) && __pbMtc != null && __pbMtc <= PB_ROUTE.candDailyWin) {
+          const _cs = Object.keys(__omniq.scores || {}).filter(function (s0) { return _num(__omniq.scores[s0], 0) >= PB_ROUTE.candMin; }).sort();
+          if (_cs.length) {
+            const _ck = "pb_cand_rr:" + market;
+            let _co = await getState(DB, _ck, 0, true); if (!(typeof _co === "number" && _co >= 0)) _co = 0;
+            for (let j = 0; j < Math.min(PB_ROUTE.candDailyMax, _cs.length); j++) __pbCandFresh.add(_cs[(_co + j) % _cs.length]);
+            await setState(DB, _ck, (_co + PB_ROUTE.candDailyMax) % _cs.length);
+          }
+        }
+      } catch (e) {}
 
       // --- 일봉 갱신 (배치 10개씩, subrequest 예산 내) ---
       //   [V11] 캐시 히트는 fetch 0 — 만료/미존재 종목만 "남은 예산"만큼 실제 fetch 하고,
@@ -24424,7 +24466,7 @@ async function runTradingCycle(env) {
       const DBATCH = 20;  // [데이터개선] 10→20: 병렬 일봉 fetch 확대
       // 일봉 fetch는 위에서 정한 maxDailyPerCycle(라운드로빈 슬라이스와 동일)로 제한.
       //   캐시 히트는 fetch 0이라, 실제 fetch는 만료/미존재 종목만 발생.
-      const dailyTargetArr = Array.from(dailyTargets).slice(0, maxDailyPerCycle);
+      const dailyTargetArr = Array.from(__pbCandFresh).concat(Array.from(dailyTargets).filter(function (s0) { return !__pbCandFresh.has(s0); }).slice(0, maxDailyPerCycle));   // [V33.618] 후보 갱신분은 라운드로빈 몫과 따로
       const dailyMap = {};   // symbol -> daily data (이번에 갱신/캐시 로드된 것)
       let dailyFetchTried = 0, dailyFetchFail = 0;   // [통계FIX] 일봉 fetch 전멸 감지용
       /* [V33.571] ★갱신 대상 일봉 캐시를 한 번에 읽는다★ — 운영 계측(V33.568 [D1 상위]): 사이클마다 'SELECT state [daily] ×73~77 · 누적 대기 30~33s'.
@@ -24445,7 +24487,7 @@ async function runTradingCycle(env) {
             let cached = __dailyOf(symbol);   // [V33.571] 위 묶음 읽기
             // [V33.217] 신선도 판정을 getDailyCached 와 ★같은 함수★ 로 한다 —
             //   여기만 days 를 안 보면 이 경로로 들어온 종목은 영원히 옛 스키마로 남는다.
-            if (cached && cached.ts && (Date.now() - cached.ts) < cacheMin * 60 * 1000 && _dailyCacheOk(cached)) {
+            if (cached && cached.ts && (Date.now() - cached.ts) < (__pbCandFresh.has(symbol) ? PB_ROUTE.candDailyMin : cacheMin) * 60 * 1000 && _dailyCacheOk(cached)) {
               return { symbol: symbol, daily: cached };
             }
             // 예산 소진 시 실제 fetch 생략 — 있으면 캐시값 사용, 없으면 null
@@ -25433,7 +25475,7 @@ async function runTradingCycle(env) {
                관리 중엔 위원회 청산(AI_EXIT·ROTATE)을 안 건다 — 모의 시뮬이 잰 보유와 다르다. 손절·트레일·EOD 갭은 그대로. */
             if (held.meta && held.meta.sr && held.meta.sr.sid) {
               try {
-                const _why = pbExitWhy(held.meta.sr, held.avg, price, held.opened_ts, Date.now(), __pbMtc);
+                const _why = pbExitWhy(held.meta.sr, held.avg, price, held.opened_ts, Date.now(), __pbMtc, held.meta.sr.mr ? pbLiveDaily(daily, price, prevClose, __pbMtc) : null);   // [V33.618] 평균회귀 청산은 지금 일봉(MA5·RSI2)을 본다
                 if (_why) {
                   await executeSell(DB, market, symbol, held, held.qty, price, _why, mcfg, cash);
                   sold++;
@@ -26075,6 +26117,7 @@ async function runTradingCycle(env) {
                   stratResults.unshift({ strategy: _st, weight: 1,
                     signal: { name: "PB_" + _sp.pb, members: [_sp.pb], isStratRoute: true, weight: 1,
                       sr: { sid: _sp.pb, kind: _sp.kind, stop: +_sp.stop.toFixed(2), be: _sp.be || 0, tpR: _sp.tpR == null ? null : _sp.tpR, tpPct: _sp.tpPct == null ? null : _sp.tpPct,
+                            mr: _sp.mr === true, bePct: _sp.bePct == null ? null : _sp.bePct, tstop: _sp.tstop || 0, rsi2x: _sp.rsi2x || 65,
                             hold: _sp.hold || null, bars: _sp.bars || 0, primary: __pbPrim, m: +_sp.m.toFixed(3), w: +_sp.w.toFixed(3), n: _sp.n, omq: +_pbS.toFixed(3), regime: __sr.regime || null, at: Date.now() },
                       detail: "매매법AI " + _sp.pb + "(" + (_sp.kind === "intra" ? "5분 단타" : "일봉") + " · 지금 뜬 " + _sp.fired.join("·") + ") · OMNI-Q 상위 " + Math.max(1, Math.round((1 - _pbS) * 100)) + "% · 국면 " + (__sr.regime || "?") +
                               " · 모의 성공 " + (_sp.w * 100).toFixed(0) + "% 평균 +" + _sp.m.toFixed(2) + "% (표본 " + _sp.n + ") · 손절 −" + _sp.stop + "%" + (__pbPrim ? " · ★주력★" : " · 잠정 ×" + STRAT_ROUTE.mult) } });

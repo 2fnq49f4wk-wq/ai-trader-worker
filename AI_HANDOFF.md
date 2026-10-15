@@ -12,6 +12,21 @@
 
 ## Current handoff
 
+- V33.618 (10/15) ★매매법 AI 재설계: 승률 50% 조건 삭제 · RSI2 반등 실전 청산 · 폭락장 반등 2종 · 후보 일봉 신선도 · OMNI-Q 구형 신경망★
+  (사용자: "승률 조건 빼고 다시 설계" · "규칙으로 가장 많이 번 건 RSI2 반등인데 왜 시뮬에선 지냐" · "OMNI 신경망 옛날처럼 구형으로" · "OMNI 가 고른 주식 중 뜬 매매법이 별로 없다")
+  - 선택: 성공확률 ≥ 50% 조건 삭제(학습기 choose/_pick · 워커 pbChoose · PB_ROUTE.minWin 0) — 승률 낮고 기대값 높은 추세·모멘텀(RS_LEADER·DUAL_MOM·TR_BREAKOUT)이 빠지고
+    지는 반등류만 남던 원인. 표 값 = [n, w, m, lcb, hd(평균 보유 거래일)] · 규칙 후보에 mpd·lcbpd(하루당 평균·하한) 추가. 옛 4칸 표는 hd=1.
+  - RSI2 원인: 시뮬이 스냅 매매법에 일반 프로필(손절 4%·1.5R·8일)을 썼다. 실전 snapRules 는 평균회귀 청산(종가 > MA5 또는 RSI2 ≥ 65 → 그날 종가 · +5% 익절 ·
+    +2% 본전 · 5거래일 손실이면 매도 · 손절 min(3.5%, ATR×1.5))과 진입 거르개(약세·폭락 금지 · 20일 고점 −12% 이내 · ATR ≤ 5% · 당일 −4% 이상).
+    → playbook_sim SNAP_MR(스냅 전부) · _mr_exit · _live_filters(SN_RSI2) · 워커 pbLiveFilterOk · pbExitWhy SR-MR(마감 전 60분 창 · 지금 일봉) · pbSellRule bePct.
+    다른 차이(실전 표본 20건 t 2.3 · 절대수익 vs 시장 초과−비용 · OMNI-Q 후보 한정 · 지금 약세/폭락 국면)는 남는다.
+  - 뜬 매매법 적음(라이브 pb_live 실측): 미국 후보 110 중 50 뜸 · 고름 4(26 = 성적 미달 → 승률 조건 삭제로 풀림) · 한국 48 중 1 뜸 —
+    한국 OMNI-Q 후보가 그날 −4~−11% 급락주(폭락 국면)인데 도감 반등 매매법이 전부 MA200 위·양봉을 요구했다 → 도감에 OS_DEEP(RSI2 ≤ 5 · 볼린저 하단 · 5일 −7% · RSI14 ≤ 35)
+    · CAPIT_REV(거래량 2배 · 당일 −5~−25% · MA20 −10%) 추가(추세 조건 없음 · 스냅 평균회귀 청산 · 성적은 시뮬이 판정 · 학습기=워커 대조).
+    또 일봉 캐시(75~90분)·라운드로빈 때문에 마감 전 창에서도 후보 일봉에 오늘 봉이 없어 지금 봉이 거래량 0 으로 붙었다 → 마감 전 80분부터 후보 일봉을 사이클당 8개 · 수명 20분으로 갱신
+    (pb_cand_rr) · 붙인 봉 거래량은 NaN(0 칸 아님).
+  - Brain Studio OMNI-Q 신경망 = 옛 OMNI 구형(바깥 구 피처 · 안쪽 구 묶음 · 도는 고리 나무 · 가운데 머리 5 · 유리 껍질 · 장미→하늘 색). featTop 상위 40.
+  - 다음: omniq-gha 회차 결과(새 표 · 검증)를 확인하고 사용자에게 보고. 피처(도감 19종)가 바뀌어 OMNI-Q 재학습.
 - V33.617 (10/15) ★위원회(AI_PRIMARY) 모델 학습·수집 퇴역 · 모델 구조창 = 매매법 AI + OMNI-Q 신경망★ (사용자: "AI_PRIMARY 모델 왜 다시 보여주냐 · 학습·수집 중단 · OMNI-Q·매매법 AI 에 집중 · OMNI-Q 신경망은 옛 OMNI 에서 고쳐서")
   - COMMITTEE_RETIRED=true: 야간 위원회 학습(L1·노이즈·앙상블·MIND·GBDT·MEMO·이중헤드·보정·계수류) · 표본 수집(harvest·cflabel·deephist·pooluniq·장중 단타 표본·백필)
     · 옛 OMNI 섀도 채점/결과(omniscore·omniresolve) · 수급(omniflow) 끔. Modal 크론 None · modal-watchdog 예약 끔 · train_gha 는 FORCE_COMMITTEE=1 일 때만.

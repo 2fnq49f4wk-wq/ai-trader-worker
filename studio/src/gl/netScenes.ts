@@ -14,8 +14,8 @@ export type NetScene = {
   ring: Int16Array; ang: Float32Array; rings: any[];
   la: Int32Array; lb: Int32Array; ls: Float32Array; lk: Uint8Array; hi: Uint8Array; top: number[];
   groups: Group[]; labels: Lbl[]; role: string[];
-  shells: number[]; core: boolean; colorByAttr: true; alpha: [number, number, number]; yaw: number; zoom: number;
-  tbody: []; bands: []; hz: [];
+  shells: number[]; core: boolean; colorByAttr: boolean; alpha: [number, number, number]; yaw: number; zoom: number;
+  tbody: any[]; bands: number[]; hz: string[];
   info: { head: string; note: string; lines: number };
 };
 
@@ -89,44 +89,107 @@ function trees(d: any, R: Roles) {
   return S.done({ head: `입력 ${F.length} → 나무 ${nT} → 승률`, note: `선 하나 = 분기 하나(실제 ${total.toLocaleString("ko-KR")}개) · 밝기 = 입력 영향력 · 어느 나무에 붙는지는 고르게 배치` });
 }
 
-/* [V33.617] OMNI-Q(매매법 AI 후보 선별): 피처 묶음 → 많이 쓴 피처 → LightGBM 나무 → 머리(5일·20일·1일·상승·위험) → 후보 상위 20%.
-   옛 OMNI(분봉 모델) 자리를 이어받는다. 값은 /api/omni-status 그대로(featGroups · featTop · heads · nFeat). */
+/* [V33.618] OMNI-Q(매매법 AI 후보 선별) — ★옛 OMNI 신경망과 같은 구형★(사용자 10/15 "옛날 omni 인공신경망처럼 구형으로").
+   바깥 구(R 300) = 피처 전부(묶음끼리 모여 앉는다) · 안쪽 구(R 170) = 피처 묶음 · 구 둘레를 도는 기운 고리 = LightGBM 나무(눈금 = 분기 → 피처) ·
+   한가운데 고리 = 머리 5 · 중심 = 후보 상위 20%. 옛 OMNI(NeuralObservatory.omniCore)와 같은 기하·색(중심 장미 → 바깥 하늘)·유리 껍질.
+   값: featGroups(묶음별 피처 수) · featTop(gain 비중 상위) · nFeat. 나무별 분기 내역은 응답에 없다 — 분기 수는 gain 비중에 비례해 고르게 배치(캡션). */
 export function omniqNet(d: any, mk: "us" | "kr" = "us"): NetScene | null {
   const q = d && d.omniQ ? (d.omniQ[mk] || d.omniQ.us || d.omniQ.kr) : null;
   if (!q) return null;
-  const S = make();
-  const G: Record<string, number> = q.featGroups || { "피처(묶음은 다음 학습부터)": +q.nFeat || 0 };
+  const TAU = Math.PI * 2;
+  const X: number[] = [], K: number[] = [], V: number[] = [], NM: string[] = [], RG: number[] = [], RA: number[] = [];
+  const LA: number[] = [], LB: number[] = [], LS: number[] = [], LK: number[] = [], RL: string[] = [];
+  const rings: any[] = [], groups: Group[] = [], labels: Lbl[] = [];
+  const pt = (x: number, y: number, z: number, k: number, v: number | null, nm: string, rg = -1, ra = 0) => { X.push(x, y, z); K.push(k); V.push(fin(v) ? v : NaN); NM.push(nm); RG.push(rg); RA.push(ra); return K.length - 1; };
+  const ln = (a: number, b: number, s: number, k: number) => { if (!(s > 0)) return; LA.push(a); LB.push(b); LS.push(Math.min(1, s)); LK.push(k); };
+  const unit = (x: number, y: number, z: number) => { const l = Math.hypot(x, y, z) || 1; return [x / l, y / l, z / l]; };
+  const fib = (j: number, n: number) => { const y = 1 - 2 * (j + .5) / n, r = Math.sqrt(Math.max(0, 1 - y * y)), t = j * 2.39996323; return [Math.cos(t) * r, y, Math.sin(t) * r]; };
+  const ringOf = (nrm: number[], R: number, w: number) => { const n = unit(nrm[0], nrm[1], nrm[2]), t = Math.abs(n[1]) < .9 ? [0, 1, 0] : [1, 0, 0];
+    const e1 = unit(n[1] * t[2] - n[2] * t[1], n[2] * t[0] - n[0] * t[2], n[0] * t[1] - n[1] * t[0]), e2 = [n[1] * e1[2] - n[2] * e1[1], n[2] * e1[0] - n[0] * e1[2], n[0] * e1[1] - n[1] * e1[0]];
+    rings.push({ e1, e2, R, w }); return rings.length - 1; };
+  let seed = 11; const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+  const R_IN = 300, R_GR = 170, R_HD = 72;
+
+  // ── 피처: 묶음별 자리 수(합 ≤ 720) · 많이 쓴 피처는 제 묶음 맨 앞 자리에 이름과 gain 비중으로 ──
+  const G: Record<string, number> = q.featGroups || { "피처": +q.nFeat || 0 };
   const gk = Object.keys(G).filter((k) => +G[k] > 0);
-  const top: any[] = (q.featTop || []).slice(0, 15);
-  const groupOf = (n: string) => n.startsWith("rule_") ? "규칙 전략" : (n.startsWith("pb_") || n.startsWith("pb5_")) ? "매매법 신호" : n.startsWith("ev_") ? "실적·뉴스" : (gk.find((k) => /동물원/.test(k)) || gk[0]);
-  const gv = norm(gk.map((k) => +G[k]));
-  const L = 5;
-  const gIds = S.disk(gk.length, LX(0, L), 0, 1, (i) => gk[i] + " " + G[gk[i]] + "개", (i) => gv[i], 90);
-  const tv = norm(top.map((f) => +f.share || 0));
-  const fIds = top.length ? S.disk(top.length, LX(1, L), 0, .8, (i) => top[i].name, (i) => tv[i]) : [];
-  const nT = 48;
-  const tIds = S.disk(nT, LX(2, L), 1, .45, (i) => "나무 #" + (i + 1), () => null);
+  if (!gk.length) return null;
+  const total = gk.reduce((s, k) => s + +G[k], 0), nF = Math.min(720, Math.max(gk.length, total));
+  const groupOf = (n: string) => n.startsWith("rule_") ? gk.find((k) => /규칙/.test(k)) : (n.startsWith("pb_") || n.startsWith("pb5_")) ? gk.find((k) => /매매법/.test(k)) : n.startsWith("ev_") ? gk.find((k) => /실적|뉴스/.test(k)) : gk.find((k) => /동물원/.test(k));
+  const top: any[] = (q.featTop || []).filter((f: any) => f && f.name);
+  const tv = norm(top.map((f: any) => +f.share || 0));
+  const F: { g: number; name: string; v: number | null }[] = [];
+  gk.forEach((g, gi) => {
+    const slots = Math.max(1, Math.round(+G[g] / total * nF));
+    const mine = top.map((f, j) => ({ f, j })).filter((x) => (groupOf(String(x.f.name)) || gk[0]) === g);
+    for (let s = 0; s < slots; s++) { const m = mine[s]; F.push(m ? { g: gi, name: String(m.f.name), v: tv[m.j] } : { g: gi, name: g + " · #" + (s + 1), v: null }); }
+  });
+  const inIds = F.map((f, j) => { const u = fib(j, F.length); return pt(u[0] * R_IN, u[1] * R_IN, u[2] * R_IN, 0, f.v, f.name); });
+  // ── 묶음: 제 피처들이 앉은 자리의 가운데 방향 · 안쪽 구 ──
+  const gIds = gk.map((g, gi) => { let x = 0, y = 0, z = 0; F.forEach((f, j) => { if (f.g === gi) { x += X[inIds[j] * 3]; y += X[inIds[j] * 3 + 1]; z += X[inIds[j] * 3 + 2]; } });
+    const u = unit(x, y, z); return pt(u[0] * R_GR, u[1] * R_GR, u[2] * R_GR, 1, +G[g] / total, g + " " + G[g] + "개"); });
+  F.forEach((f, j) => ln(inIds[j], gIds[f.g], f.v != null ? .35 + .65 * f.v : .1, 0));
+  // ── 머리 5(가운데 고리) · 출력(중심) ──
   const heads = ["5일 순위", "20일 순위", "1일 순위", "상승 확률", "위험"];
-  const hOk = [q.view?.state, q.view?.state20];
-  const hIds = S.disk(heads.length, LX(3, L), 2, .2, (i) => heads[i], (i) => (i < 2 ? 1 : .5), 60);
-  const out = S.pt(LX(4, L), 0, 0, 3, null, "후보 상위 20% → 매매법 AI", 0);
-  gk.forEach((g, i) => { fIds.forEach((fid, j) => { if (groupOf(String(top[j].name)) === g) S.ln(gIds[i], fid, .4 + .6 * tv[j], 0); }); });
-  if (!fIds.length) gIds.forEach((gid, i) => { for (let t = 0; t < nT; t += Math.max(1, Math.round(4 - 3 * gv[i]))) S.ln(gid, tIds[t], .2 + .6 * gv[i], 0); });
-  fIds.forEach((fid, j) => { const k = Math.max(2, Math.round(12 * tv[j])); for (let q2 = 0; q2 < k; q2++) S.ln(fid, tIds[(j * 7 + q2 * 5) % nT], .25 + .75 * tv[j], 0); });
-  tIds.forEach((t, i) => { S.ln(t, hIds[i % heads.length], .5, 2); });
-  S.ln(hIds[0], out, 1, 2); S.ln(hIds[1], out, .7, 2);
-  gk.forEach((g, i) => S.role(gIds[i], g + " — 피처 " + G[g] + "개(날짜마다 종목 간 순위로 바꿔 넣는다)"));
-  fIds.forEach((fid, j) => S.role(fid, "많이 쓴 피처 " + (j + 1) + "위 · " + groupOf(String(top[j].name)) + " · gain 비중 " + pc(+top[j].share || 0)));
-  tIds.forEach((t) => S.role(t, "LightGBM 나무 — 피처 조건으로 종목을 갈라 5일 뒤 상대 순위를 맞힌다(대표 " + nT + "그루만 그림)"));
-  hIds.forEach((h, i) => S.role(h, heads[i] + (i === 0 ? " — 후보 선별에 쓰는 머리(" + (hOk[0] || "—") + ")" : i === 1 ? " — 20일 머리(" + (hOk[1] || "—") + ")" : " — 기록·관측용 머리")));
-  S.role(out, "그날 5일 순위 상위 20% 종목 = 매매법 AI 가 지금 뜬 매매법을 확인할 후보");
-  S.groups.push({ label: "피처 묶음", kind: 0, ids: gIds, desc: "동물원(Alpha158·101·학술) · 규칙 전략 · 매매법 신호 · 실적·뉴스" },
-    { label: "많이 쓴 피처", kind: 0, ids: fIds, desc: "gain 중요도 상위 " + fIds.length + "개" },
-    { label: "나무", kind: 1, ids: tIds, desc: "LightGBM 순위 모델" },
-    { label: "머리", kind: 2, ids: hIds, desc: "5일·20일·1일 순위 · 상승 확률 · 위험" },
+  const hIds = heads.map((h, k) => { const t = TAU * k / heads.length; return pt(Math.cos(t) * R_HD, 0, Math.sin(t) * R_HD, 3, k < 2 ? 1 : .5, "머리 · " + h); });
+  const out = pt(0, 0, 0, 3, null, "후보 상위 20% → 매매법 AI");
+  hIds.forEach((h, k) => ln(h, out, k === 0 ? 1 : k === 1 ? .7 : .25, 2));
+  gIds.forEach((g, gi) => hIds.forEach((h, k) => ln(g, h, (.25 + .5 * (+G[gk[gi]] / total)) * (k < 2 ? 1 : .5), 1)));
+  // ── 나무: 기운 고리 위를 돈다 · 눈금(분기) → 피처(gain 비중 큰 피처일수록 자주) ──
+  const RN = 4, nT = 72, per = nT / RN;
+  const wt = F.map((f) => f.v != null ? .25 + 3 * f.v : .06), wsum = wt.reduce((s, x) => s + x, 0);
+  const draw = () => { let r = rnd() * wsum; for (let j = 0; j < wt.length; j++) { r -= wt[j]; if (r <= 0) return j; } return wt.length - 1; };
+  const treeRings: number[] = []; for (let r = 0; r < RN; r++) { const a = r * 2.39996323, y = .35 + .5 * ((r * .618) % 1);
+    treeRings.push(ringOf([Math.cos(a) * (1 - y * y), y, Math.sin(a) * (1 - y * y)], R_IN * (1.18 + r * .045), (r % 2 ? -1 : 1) * (.035 + .02 * r))); }
+  const tIds: number[] = [], tbody: any[] = [];
+  let nSplit = 0;
+  for (let j = 0; j < nT; j++) {
+    const r = Math.floor(j / per), qq = j - r * per, rg = treeRings[r], th = TAU * (qq + .5) / per, span = TAU / per * .78, ns = 3 + Math.floor(rnd() * 6), tvv = .35 + .65 * rnd();
+    const c = pt(0, 0, 0, 4, tvv, "나무 #" + (j + 1) + " · 분기 " + ns + " · " + heads[j % heads.length] + " 머리", rg, th); tIds.push(c);
+    const ticks: number[] = [];
+    for (let s = 0; s < ns; s++) { const a = th + (ns > 1 ? (s / (ns - 1) - .5) : 0) * span, tk = pt(0, 0, 0, 6, NaN, "", rg, a); ticks.push(tk);
+      const fj = draw(); ln(tk, inIds[fj], F[fj].v != null ? .4 + .6 * F[fj].v! : .22, 3); nSplit++; }
+    tbody.push({ ids: ticks, v: tvv });
+    ln(c, hIds[j % heads.length], .18, 2);
+  }
+  // ── 장식(값 없음): 자이로 고리 · 홍채 고리 · 빛줄기 — 옛 OMNI 와 같다 ──
+  const decoRing = (nrm: number[], R: number, w: number, m: number, keep: number) => { const rg = ringOf(nrm, R, w), ids: number[] = []; for (let qq = 0; qq < m; qq++) ids.push(pt(0, 0, 0, 5, NaN, "", rg, TAU * qq / m));
+    for (let qq = 0; qq < m; qq++) if (rnd() < keep) ln(ids[qq], ids[(qq + 1) % m], .55, 4); };
+  for (let qq = 0; qq < 5; qq++) decoRing([rnd() - .5, rnd() - .5, rnd() - .5], R_IN * (1.04 + qq * .03), (qq % 2 ? -1 : 1) * (.04 + rnd() * .06), 128, .35 + rnd() * .3);
+  ([[16, .9], [26, .75], [36, .6], [84, .55], [96, .4]] as [number, number][]).forEach(([r, keep], qq) => decoRing([Math.sin(qq * 1.7) * .25, 1, Math.cos(qq * 1.7) * .25], r, (qq % 2 ? -1 : 1) * (.3 - .04 * qq), 56, keep));
+  for (let qq = 0; qq < 10; qq++) { const u = unit(rnd() - .5, rnd() - .5, rnd() - .5), w = unit(-u[0] + (rnd() - .5), -u[1] + (rnd() - .5), -u[2] + (rnd() - .5)), Ra = R_IN * (1.25 + rnd() * .3), Rb = R_IN * (.8 + rnd() * .5);
+    ln(pt(u[0] * Ra, u[1] * Ra, u[2] * Ra, 5, NaN, ""), pt(w[0] * Rb, w[1] * Rb, w[2] * Rb, 5, NaN, ""), .35, 4); }
+  // ── 역할 · 층 · 이름표 ──
+  F.forEach((f, j) => { RL[inIds[j]] = f.v != null ? "많이 쓴 피처 · " + gk[f.g] + " · gain 비중 " + pc(+top.find((t: any) => String(t.name) === f.name)?.share || 0) : gk[f.g] + " 피처(이름은 상위 " + top.length + "개만 응답에 있다)"; });
+  gIds.forEach((g, gi) => { RL[g] = gk[gi] + " — 피처 " + G[gk[gi]] + "개(날짜마다 종목 간 순위로 바꿔 넣는다)"; });
+  tIds.forEach((t) => { RL[t] = "LightGBM 나무 — 피처 조건으로 종목을 갈라 앞 나무가 틀린 만큼 고친다(대표 " + nT + "그루 · 고리 위를 돈다)"; });
+  hIds.forEach((h, k) => { RL[h] = heads[k] + (k === 0 ? " — 후보 선별에 쓰는 머리(" + (q.view?.state || "—") + ")" : k === 1 ? " — 20일 머리(" + (q.view?.state20 || "—") + ")" : " — 기록·관측용 머리"); });
+  RL[out] = "그날 5일 순위 상위 20% 종목 = 매매법 AI 가 지금 뜬 매매법을 확인할 후보";
+  const sv = (id: number) => fin(V[id]) ? V[id] : -1;
+  groups.push({ label: "피처", kind: 0, ids: inIds, desc: "바깥 구 — 피처 " + (q.nFeat || total) + "개(같은 묶음끼리 모여 앉는다) · 이름 있는 점 = gain 비중 상위", list: [...inIds].filter((i) => fin(V[i])).sort((a, b) => sv(b) - sv(a)) },
+    { label: "피처 묶음", kind: 1, ids: gIds, desc: "안쪽 구 — 동물원(Alpha158·101·학술) · 규칙 전략 · 매매법 신호 · 실적·뉴스" },
+    { label: "머리", kind: 3, ids: hIds, desc: "가운데 고리 — 5일·20일·1일 순위 · 상승 확률 · 위험" },
+    { label: "나무", kind: 4, ids: tIds, desc: "구 둘레를 도는 고리 — LightGBM 나무(눈금 하나 = 분기 하나 → 그 피처로 선)" },
     { label: "출력", kind: 3, ids: [out], desc: "후보 상위 20%" });
-  S.tag(gIds, "피처 " + (q.nFeat || "—")); if (fIds.length) S.tag(fIds, "상위 " + fIds.length); S.tag(tIds, "나무"); S.tag(hIds, "머리 5"); S.labels.push({ id: out, text: "후보" });
-  return S.done({ head: `피처 ${q.nFeat || "—"} → LightGBM → 머리 5 → 후보 상위 20%`, note: (mk === "us" ? "미국" : "한국") + " 모델 · 선 밝기 = 피처 영향력(gain) · 나무는 대표만" });
+  hIds.forEach((h, k) => labels.push({ id: h, text: "✳ " + heads[k] }));
+  labels.push({ id: out, text: "후보" });
+  // 뼈대(또렷한 선): 점마다 가장 센 들어오는·나가는 2줄 · 흐르는 빛: 가장 센 90줄
+  const HI = new Uint8Array(LA.length), best = new Map<string, number[]>();
+  const keep = (key: string, j: number, k: number) => { let a = best.get(key); if (!a) { a = []; best.set(key, a); }
+    if (a.length < k) { a.push(j); return; } let lo = 0; for (let x = 1; x < a.length; x++) if (LS[a[x]] < LS[a[lo]]) lo = x; if (LS[j] > LS[a[lo]]) a[lo] = j; };
+  for (let j = 0; j < LA.length; j++) { if (LK[j] > 2) continue; keep("b" + LB[j], j, 2); keep("a" + LA[j], j, 2); }
+  for (const a of best.values()) for (const j of a) if (LS[j] > .3) HI[j] = 1;
+  const idx: number[] = []; for (let j = 0; j < LA.length; j++) if (LK[j] <= 2) idx.push(j);
+  idx.sort((a, b) => LS[b] - LS[a]);
+  const n = K.length;
+  return {
+    n, P: new Float32Array(X), kind: Uint8Array.from(K), val: Float32Array.from(V), name: NM,
+    ring: Int16Array.from(RG), ang: Float32Array.from(RA), rings,
+    la: Int32Array.from(LA), lb: Int32Array.from(LB), ls: Float32Array.from(LS), lk: Uint8Array.from(LK), hi: HI, top: idx.slice(0, 90),
+    groups, labels, role: Array.from({ length: n }, (_, i) => RL[i] || ""), shells: [R_IN, 208, 138], core: true, colorByAttr: false, alpha: [.02, .8, 1.6], yaw: .4, zoom: 1,
+    tbody, bands: treeRings, hz: [],
+    info: { head: `피처 ${q.nFeat || total} → LightGBM 나무 → 머리 5 → 후보 상위 20%`, note: (mk === "us" ? "미국" : "한국") + " 모델 · 바깥 구 = 피처 · 안쪽 구 = 피처 묶음 · 도는 고리 = 나무(대표 " + nT + "그루 · 분기 " + nSplit + "개는 gain 비중에 비례해 배치) · 가운데 = 머리", lines: LA.length },
+  };
 }
 
 /* MIND: inputs → three experts → stacking weights → probability. */

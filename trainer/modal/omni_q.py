@@ -277,7 +277,7 @@ def _auc(p, yb):
     return float((r[:len(pos)].sum() - len(pos) * (len(pos) + 1) / 2) / (len(pos) * len(neg)))
 
 
-def _imp_top(bst, names, k=15):
+def _imp_top(bst, names, k=40):
     """[V33.615] 5일 머리 모델의 gain 중요도 상위 k — 화면용(판정에 안 씀)."""
     try:
         g = bst.feature_importance("gain")

@@ -41,6 +41,16 @@ import strategy_catalog as CAT  # noqa: E402
 TPR = {"trend": None, "pullbk": 2.0, "snap": 1.5, "stoch": 1.5, "volume": 2.0, "vol": 2.5, "value": 1.5, "mom": None}
 DAILY_PB = {s_["id"]: {"stop": s_["exit"]["stop"], "atr": s_["exit"]["atr"], "be": s_["exit"]["tp1R"], "hold": s_["exit"]["hold"],
                        "tpR": TPR[s_["exitKey"]], "family": s_["family"], "label": s_["note"] or s_["family"]} for s_ in CAT.CATALOG}
+# [V33.618] ★스냅(반등·스토캐스틱·거래량 단기) 매매법 = 워커 실전 스냅 청산(snapRules)★ — 사용자 10/15 "규칙으로 돌렸을 때 RSI2 반등이 가장 많이 벌었는데 왜?"
+#   원인: 시뮬이 스냅 매매법에 '손절 4% · 1.5R 익절 · 8일 보유' 같은 일반 프로필을 썼다. 실전은 평균회귀 청산이다 —
+#   종가 > MA5 또는 RSI2 ≥ 65 이면 그날 종가에 판다 · +5% 익절 · +2% 에 본전 이동 · 5거래일 지나도 손실이면 판다 · 손절 min(3.5%, ATR×1.5).
+#   반등을 먹고 바로 나오는 이 청산이 RSI2 반등의 실력이다 — 일반 프로필로는 반등 뒤 되밀림을 다 맞았다.
+SNAP_MR = {"mr": True, "stop": 3.5, "atr": 1.5, "be": 0.0, "tpR": None, "tpPct": 5.0, "bePct": 2.0, "tstop": 5, "rsi2x": 65}
+for _id, _p in DAILY_PB.items():
+    _h = next(s_["horizon"] for s_ in CAT.CATALOG if s_["id"] == _id)
+    if _h == "snap":
+        _p.update(SNAP_MR)
+        _p["hold"] = max(_p["hold"], 8)
 CROSS_PB = ("RS_LEADER", "XS_ARB", "DUAL_MOM")   # 횡단면(전 종목 순위) 조건 — 워커는 학습기가 보낸 '오늘 뜬 종목' 목록을 쓴다
 # 5분 단타: 진입 조건(오늘 5분봉) + tpPct/sl % · bars = 최대 5분봉 수(0 = 장 끝까지) · 장 끝에는 무조건 판다
 INTRA_PB = {
@@ -124,7 +134,7 @@ def _daily_state(P, ev_dates):
     return rsi, gap20, ret5, vr, atr, near
 
 
-def _sim_profile(O, H, L, C, atr, mcum, pr, cost, t0=250):
+def _sim_profile(O, H, L, C, atr, mcum, pr, cost, t0=250, mrx=None):
     """모든 (날짜 t ≥ t0 · 종목 j) 에서 t 종가에 샀다면 — 그 청산 프로필의 순초과 % (T×N · 시뮬 못 하는 칸 NaN)."""
     T, N = C.shape
     hold = pr["hold"]
@@ -138,8 +148,8 @@ def _sim_profile(O, H, L, C, atr, mcum, pr, cost, t0=250):
     stp = np.minimum(pr["stop"], pr["atr"] * atr[ts])
     sl = pe * (1 - stp / 100)
     R = pe * stp / 100
-    be_px = pe + pr["be"] * R
-    tp_px = pe + pr["tpR"] * R if pr["tpR"] else np.full_like(pe, np.inf)
+    be_px = pe * (1 + pr["bePct"] / 100) if pr.get("bePct") else pe + pr["be"] * R if pr["be"] else np.full_like(pe, np.inf)
+    tp_px = (pe * (1 + pr["tpPct"] / 100) if pr.get("tpPct") else pe + pr["tpR"] * R if pr["tpR"] else np.full_like(pe, np.inf))
     alive = np.isfinite(pe) & np.isfinite(stp) & (pe > 0)
     px = np.full_like(pe, np.nan)
     xk = np.full(pe.shape, hold)
@@ -154,6 +164,12 @@ def _sim_profile(O, H, L, C, atr, mcum, pr, cost, t0=250):
         xk = np.where(hit_tp, k, xk)
         alive &= ~hit_tp
         sl = np.where(alive & (h >= be_px), np.maximum(sl, pe), sl)       # 본전으로
+        if pr.get("mr") and mrx is not None:                              # [V33.618] 평균회귀 청산(종가 > MA5 · RSI2 ≥ 65) — 그날 종가
+            hit_mr = alive & mrx[ts + k]
+            px = np.where(hit_mr, cl, px); xk = np.where(hit_mr, k, xk); alive &= ~hit_mr
+        if pr.get("tstop") and k == pr["tstop"]:                          # [V33.618] N거래일 지나도 손실이면 판다
+            hit_ts = alive & (cl < pe)
+            px = np.where(hit_ts, cl, px); xk = np.where(hit_ts, k, xk); alive &= ~hit_ts
         if k == hold:
             px = np.where(alive, cl, px)
     raw = (px / pe - 1) * 100
@@ -185,6 +201,32 @@ def cand_mask(P, oos):
     return np.nan_to_num(rk, nan=0.0) >= CAND_Q
 
 
+def _mr_exit(P):
+    """[V33.618] 평균회귀 청산 신호(T×N) — 종가 > MA5 또는 RSI2(단순 2봉) ≥ 65. 워커 snapRules.exitAboveMa5 · exitRsi2 와 같다."""
+    C = P["close"]
+    ma5 = C.rolling(5, min_periods=5).mean()
+    d = C.diff()
+    up = d.clip(lower=0).rolling(2).mean()
+    dn = (-d.clip(upper=0)).rolling(2).mean()
+    rsi2 = (100 - 100 / (1 + up / dn.replace(0, np.nan))).where(dn > 0, 100.0)
+    return ((C > ma5) | (rsi2 >= SNAP_MR["rsi2x"])).fillna(False).values
+
+
+LIVE_FILTER_PB = ("SN_RSI2",)
+
+
+def _live_filters(P, reg, atr):
+    """[V33.618] 실전 규칙의 진입 거르개(snapRules) — RSI2 반등에만: 약세·폭락 국면 금지 · 20일 고점 대비 −12% 이내 · ATR ≤ 5% · 당일 −4% 이상.
+    워커 pbLiveFilterOk 와 같다(check-playbook 대조)."""
+    C = P["close"]
+    hi20 = C.rolling(20, min_periods=20).max()
+    pull = (C / hi20 - 1) * 100
+    ret1 = C.pct_change(fill_method=None) * 100
+    regok = ~np.isin(np.asarray(reg).astype(str), ["BEAR", "CRASH"])
+    ok = (pull >= -12).values & (atr <= 5) & (ret1 >= -4).values & regok[:, None]
+    return {pb: np.nan_to_num(ok, nan=0).astype(bool) for pb in LIVE_FILTER_PB}
+
+
 def sim_daily(P, market, ev_dates, sig=None, cand=None):
     """도감 매매법이 뜬 모든 (날짜 · 종목 · 매매법) 의 모의 결과 — 표: [t, j, inst, pb, ex, k0..k3]. inst = 같은 후보(날짜·종목)."""
     O, H, L, C = (P[k].values for k in ("open", "high", "low", "close"))
@@ -196,12 +238,15 @@ def sim_daily(P, market, ev_dates, sig=None, cand=None):
     sig = sig if sig is not None else CAT.signals(P)
     cache = {}
     out = []
+    mrx, live_ok = _mr_exit(P), _live_filters(P, reg, atr)
     for pb, pr in DAILY_PB.items():
-        key = (pr["stop"], pr["atr"], pr["be"], pr["hold"], pr["tpR"])
+        key = (pr["stop"], pr["atr"], pr["be"], pr["hold"], pr["tpR"], pr.get("mr"), pr.get("tpPct"), pr.get("bePct"), pr.get("tstop"))
         if key not in cache:
-            cache[key] = _sim_profile(O, H, L, C, atr, mcum, pr, cost)
+            cache[key] = _sim_profile(O, H, L, C, atr, mcum, pr, cost, mrx=mrx)
         ex, xo = cache[key]
         S = sig[pb].values & np.isfinite(ex)
+        if pb in live_ok:
+            S = S & live_ok[pb]
         if cand is not None:
             S = S & cand
         ti, jj = np.nonzero(S)
@@ -210,6 +255,7 @@ def sim_daily(P, market, ev_dates, sig=None, cand=None):
     df = pd.concat(out, ignore_index=True) if out else pd.DataFrame({"t": [], "j": [], "x": [], "pb": [], "ex": []})
     t, j = df["t"].values.astype(int), df["j"].values.astype(int)
     df["inst"] = t.astype(np.int64) * 100000 + j
+    df["hd"] = (df["x"].values - t).clip(1, None).astype(np.float32)   # [V33.618] 실제 보유 거래일(하루당 수익 점수용)
     ks = daily_keys(reg[t], rsi[t, j], gap20[t, j], ret5[t, j], vr[t, j], near[t])
     for lv, k in enumerate(ks):
         df["k%d" % lv] = k
@@ -226,6 +272,7 @@ def exit_diag(P, market, sig, cand=None):
     cost = COST_RT[market]
     out = {}
     cache = {}
+    mrx = _mr_exit(P)
     for pb, pr in DAILY_PB.items():
         S = sig[pb].values if pb in sig else None
         if S is None:
@@ -234,9 +281,9 @@ def exit_diag(P, market, sig, cand=None):
             S = S & cand
         row = {}
         for tag, prof in (("cur", pr), ("wide", dict(pr, atr=99.0))):
-            key = (prof["stop"], prof["atr"], prof["be"], prof["hold"], prof["tpR"])
+            key = (prof["stop"], prof["atr"], prof["be"], prof["hold"], prof["tpR"], prof.get("mr"), prof.get("tpPct"))
             if key not in cache:
-                cache[key] = _sim_profile(O, H, L, C, atr, mcum, prof, cost)[0]
+                cache[key] = _sim_profile(O, H, L, C, atr, mcum, prof, cost, mrx=mrx)[0]
             ex = cache[key]
             v = ex[S & np.isfinite(ex)]
             row[tag] = [int(len(v)), round(float(v.mean()), 3) if len(v) else None, round(float((v > 0).mean() * 100), 1) if len(v) else None]
@@ -357,6 +404,7 @@ def sim_intra(bars5, daily_reg, market, day_key_of=None):
     if not rows:
         return pd.DataFrame(columns=["day", "inst", "j", "t", "x", "pb", "ex"])
     df = pd.DataFrame(rows, columns=["day", "inst", "j", "t", "x", "pb", "ex", "reg", "daypct", "tod", "up"])
+    df["hd"] = ((df["x"] - df["t"]).clip(1, None) / 78.0).astype(np.float32)   # [V33.618] 보유 5분봉 → 거래일
     ks = intra_keys(df["reg"].values, df["daypct"].values, df["tod"].values, df["up"].values)
     for lv, k in enumerate(ks):
         df["k%d" % lv] = k
@@ -368,33 +416,44 @@ def _shrunk_table(df):
     """열쇠 4단 × 매매법 → (n, 성공확률, 평균, 하한). 넓은 칸부터 내려가며 수축한다:
     k0 = '*' · k1 = 국면 · k2 = 국면+2조건 · k3 = 전체 조건. 구체 칸은 표본이 적을수록 부모 칸 값에 가깝다.
     [V33.609] 하한(lcb) = 수축 평균 − 표준오차(표준편차/√(n+k)) — 표본 적은 칸이 우연히 높게 나온 것을 고르지 않게(승자의 저주)."""
+    if "hd" not in df.columns:
+        df = df.assign(hd=1.0)
     df = df.assign(win=(df["ex"] > 0).astype(np.float32), ex2=df["ex"].astype(float) ** 2)
     tab = {}
 
-    def put(key, n, s, s2, w, pw, pm):
+    def put(key, n, s, s2, w, hs, pw, pm, ph):
         n = float(n)
         m = (s + K_SHRINK * pm) / (n + K_SHRINK)
         var = max(0.0, s2 / n - (s / n) ** 2) if n > 1 else 9.0
         lcb = m - math.sqrt(var / (n + K_SHRINK))
-        tab[key] = (int(n), float((w + K_SHRINK * pw) / (n + K_SHRINK)), float(m), float(lcb))
+        hd = (hs + K_SHRINK * ph) / (n + K_SHRINK)   # 평균 보유 거래일(수축)
+        tab[key] = (int(n), float((w + K_SHRINK * pw) / (n + K_SHRINK)), float(m), float(lcb), float(max(hd, 0.05)))
 
-    g0 = df.groupby("pb").agg(n=("ex", "size"), s=("ex", "sum"), s2=("ex2", "sum"), w=("win", "sum"))
+    g0 = df.groupby("pb").agg(n=("ex", "size"), s=("ex", "sum"), s2=("ex2", "sum"), w=("win", "sum"), h=("hd", "sum"))
     for pb, r in g0.iterrows():
-        put(("*", pb), r["n"], r["s"], r["s2"], r["w"], 0.5, 0.0)
+        put(("*", pb), r["n"], r["s"], r["s2"], r["w"], r["h"], 0.5, 0.0, r["h"] / max(1.0, r["n"]))
     for lv, plv in ((1, 0), (2, 1), (3, 2)):
         col, pcol = "k%d" % lv, "k%d" % plv
-        g = df.groupby([col, pcol, "pb"]).agg(n=("ex", "size"), s=("ex", "sum"), s2=("ex2", "sum"), w=("win", "sum")).reset_index()
+        g = df.groupby([col, pcol, "pb"]).agg(n=("ex", "size"), s=("ex", "sum"), s2=("ex2", "sum"), w=("win", "sum"), h=("hd", "sum")).reset_index()
         for r in g.itertuples(index=False):
-            k, pk, pb, n, s_, s2, w = r
+            k, pk, pb, n, s_, s2, w, h = r
             par = tab.get((pk, pb))
-            pw, pm = (par[1], par[2]) if par else (0.5, 0.0)
-            put((k, pb), n, s_, s2, w, pw, pm)
+            pw, pm, ph = (par[1], par[2], par[4]) if par else (0.5, 0.0, h / max(1.0, n))
+            put((k, pb), n, s_, s2, w, h, pw, pm, ph)
     return tab
 
 
 # [V33.609] 선택 규칙 후보(미리 고정) — 검증 구간에서 하나를 고르고, 판정은 손대지 않은 마지막 구간에서만 한다.
 #   score: 'm' 평균 · 'lcb' 하한 / level: 'fine' 전체 칸 · 'regime' 국면 칸까지만 · 'global' 매매법 전체 성적만
-RULES = [{"score": "m", "level": "fine"}, {"score": "lcb", "level": "fine"}, {"score": "lcb", "level": "regime"}, {"score": "lcb", "level": "global"}]
+#   [V33.618] 승률 50% 조건 삭제(사용자 결정) — 기대값만 본다. 'mpd'·'lcbpd' = 하루당 평균·하한(보유 기간이 긴 매매법이 한 거래 평균만으로 유리하지 않게).
+RULES = [{"score": "m", "level": "fine"}, {"score": "lcb", "level": "fine"}, {"score": "lcb", "level": "regime"}, {"score": "lcb", "level": "global"},
+         {"score": "mpd", "level": "fine"}, {"score": "lcbpd", "level": "regime"}]
+
+
+def score_of(v, score):
+    """표 값 (n, w, m, lcb, hd) → 규칙 점수. 워커 pbChoose 와 같은 식."""
+    m, lcb, hd = v[2], v[3], max(v[4] if len(v) > 4 else 1.0, 0.05)
+    return m if score == "m" else lcb if score == "lcb" else m / hd if score == "mpd" else lcb / hd
 LEVEL_COLS = {"fine": ("k3", "k2", "k1", "k0"), "regime": ("k1", "k0"), "global": ("k0",)}
 SPLIT = (0.60, 0.80)   # 표 [0,60%) → 규칙 고르기 [60,80%) → 표 [0,80%) → 판정 [80,100%)
 
@@ -409,21 +468,20 @@ def lookup(tab, keys, pb):
 
 
 def choose(tab, keys, fired, score="m"):
-    """뜬 매매법들 중 (점수 > 0 · 성공확률 ≥ 50%) 이고 점수가 가장 큰 것 → (pb, n, w, m, lcb) | None."""
-    best = None
-    si = 2 if score == "m" else 3
+    """뜬 매매법들 중 점수 > 0 이고 점수가 가장 큰 것 → (pb, n, w, m, lcb, hd) | None. [V33.618] 승률 조건 없음."""
+    best, bs = None, None
     for pb in fired:
         v = lookup(tab, keys, pb)
         if v is None:
             continue
-        if v[si] > 0 and v[1] >= 0.5 and (best is None or v[si] > best[si + 1]):
-            best = (pb,) + tuple(v)
+        sc = score_of(v, score)
+        if sc > 0 and (bs is None or sc > bs):
+            best, bs = (pb,) + tuple(v), sc
     return best
 
 
 def _row_vals(tab, df, rule):
     """행마다 lookup(그 규칙의 칸 단계) 의 (w, 점수) — 벡터화."""
-    si = 2 if rule["score"] == "m" else 3
     w = np.full(len(df), np.nan)
     sc = np.full(len(df), np.nan)
     for col in LEVEL_COLS[rule["level"]]:
@@ -432,7 +490,7 @@ def _row_vals(tab, df, rule):
             break
         got = [tab.get(k) for k in zip(df[col].values[need], df["pb"].values[need])]
         idx = np.nonzero(need)[0]
-        sc[idx] = np.array([g[si] if g else np.nan for g in got])
+        sc[idx] = np.array([score_of(g, rule["score"]) if g else np.nan for g in got])
         w[idx] = np.array([g[1] if g else np.nan for g in got])
     return w, sc
 
@@ -440,7 +498,7 @@ def _row_vals(tab, df, rule):
 def _pick(tab, te, rule):
     """후보(inst)마다 뜬 매매법 중 규칙이 고른 것 · 같은 종목은 앞 거래가 끝나야 다시 산다(실전과 같다)."""
     w, sc = _row_vals(tab, te, rule)
-    ok = (sc > 0) & (w >= 0.5)
+    ok = sc > 0   # [V33.618] 승률 50% 조건 삭제
     sel = te.assign(_s=sc)[ok].sort_values("_s", ascending=False).drop_duplicates("inst").sort_values("t")
     keep, busy = [], {}
     for r in sel[["j", "t", "x"]].itertuples(index=True):
@@ -527,10 +585,10 @@ def export(tab, pbs, min_n=30, max_bytes=1200000):
     import json
     while True:
         out = {}
-        for (k, pb), (n, w, m, lcb) in tab.items():
+        for (k, pb), (n, w, m, lcb, hd) in tab.items():
             if k.count("|") >= 3 and n < min_n:
                 continue
-            out.setdefault(k, {})[pb] = [n, round(w, 3), round(m, 3), round(lcb, 3)]
+            out.setdefault(k, {})[pb] = [n, round(w, 3), round(m, 3), round(lcb, 3), round(hd, 2)]
         if len(json.dumps(out, separators=(",", ":"))) <= max_bytes or min_n > 100000:
             return out
         min_n *= 2

@@ -40,7 +40,7 @@ export function OmniQ({ d, head }: { d: any; head: ReactNode }) {
   if (!us && !kr) return <div>{head}<Empty>OMNI-Q 가 아직 올라오지 않았습니다.</Empty></div>;
   const st = (r: any) => (r && r.view && ST[r.view.state]) || ["—", "idle"] as [string, Tone];
   const groups = (us && us.featGroups) || (kr && kr.featGroups) || null;
-  const top = (r: any) => ((r && r.featTop) || []).map((f: any) => ({ name: f.name, v: f.share }));
+  const top = (r: any) => ((r && r.featTop) || []).slice(0, 15).map((f: any) => ({ name: f.name, v: f.share }));
   return (
     <div>
       {head}
