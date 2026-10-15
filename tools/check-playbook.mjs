@@ -302,8 +302,9 @@ chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"
   chk(/★매매법 AI 선행 판정\(속도\)★/.test(S) && /for \(const it of _take\) _evalPromoted\.add\(it\)/.test(S) && /__pbMb = mbPrefetchStart\(_pc/.test(S) && /__pbMb\.take\(symbol\)/.test(S),
       "선행 판정: 전 후보 기록 · 살 수 있는 후보 앞당김(순환 진도 제외) · 후보 분봉 병렬 선행 조회");
   const L = readFileSync(new URL("../public/workspace-layout.css", import.meta.url), "utf8"), A = readFileSync(new URL("../studio/src/App.tsx", import.meta.url), "utf8");
-  chk(/#page-nnviz\.pb-primary\[data-brain-view="operations"\]/.test(L) && /classList\.toggle\('pb-primary'/.test(readFileSync(new URL("../public/playbook-observatory.js", import.meta.url), "utf8")),
-      "주력이면 01 작동 화면에서 AI_PRIMARY(위원회) 화면을 걷어낸다");
+  chk(/#page-nnviz\[data-brain-view="operations"\] \.nnviz-content > :not\(\.nnv-head\):not\(\.mission-nav\):not\(#pbObs\) \{ display:none!important; \}/.test(L)
+      && /AI 스캔 · 매매법 판정/.test(readFileSync(new URL("../public/playbook-observatory.js", import.meta.url), "utf8")),
+      "[V33.620] 01 작동 화면 = 매매법 AI 하나(옛 위원회 스캔 순회를 'AI 스캔 · 매매법 판정' 으로 합침 · 주력 여부와 무관)");
   chk(/const groups = \["주력", "후보 선별"\]/.test(A), "02 모델 구조에서 위원회 모델을 걷어낸다(V33.617 상시)"); }
 { // [V33.615] OMNI-Q 재구성 — 후보 선별기 · 피처 추가
   const Q = readFileSync(dir + "omni_q.py", "utf8"), G = readFileSync(dir + "omniq_gha.py", "utf8");
