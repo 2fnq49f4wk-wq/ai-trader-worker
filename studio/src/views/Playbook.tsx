@@ -4,6 +4,7 @@ import { type ReactNode } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import { type Tone, f1, n0, ago } from "../models";
 import { Badge, Bars, Empty, Facts, Kpis, Section } from "./ui";
+import { PlaybookBook } from "./PlaybookBook";
 
 const NAMES: Record<string, string> = {
   TREND_ALIGN: "추세 정렬", TR_BREAKOUT: "20일 돌파", RS_LEADER: "상대강도 상위", VT_TREND: "저변동 추세",
@@ -19,7 +20,8 @@ const NAMES: Record<string, string> = {
 };
 const nm = (k: string) => NAMES[k] || k;
 const pc = (v: any) => (v == null || isNaN(+v) ? "—" : (+v > 0 ? "+" : "") + (+v).toFixed(2) + "%");
-const ruleTxt = (r: any) => (!r ? "—" : (r.score === "lcb" ? "하한(평균−오차)" : "평균") + " · " + (r.level === "global" ? "매매법 전체 성적" : r.level === "regime" ? "국면 칸까지" : "상황 칸 전체"));
+const ruleTxt = (r: any) => (!r ? "—" : ({ lcb: "하한(평균−오차)", m: "평균", mpd: "하루당 평균", lcbpd: "하루당 하한" } as Record<string, string>)[r.score] + " · " + (r.level === "global" ? "매매법 전체 성적" : r.level === "regime" ? "국면 칸까지" : "상황 칸 전체")
+  + (r.decay ? " · 최근 가중(반감 " + r.decay + "일)" : "") + (r.gate ? " · 최근 " + r.gate + "일 성적 스위치" : ""));
 const MK: Record<string, string> = { us: "미국", kr: "한국" };
 
 export function pbState(j: any): { label: string; tone: Tone } {
@@ -36,53 +38,6 @@ function verdict(v: any): { v: string; hint: string; tone: Tone } {
 }
 
 /* [V33.615] 구조 탭 = 매매법 현황(설명 없이 숫자만) — 지금 후보에서 뜬 수 · 지금 고른 수 · 판정 구간에서 고른 수 · 모의 평균·승률 · 보유 · 매도 규칙 */
-function Status({ d }: { d: any }) {
-  const any = d.markets?.us || d.markets?.kr;
-  const D = any?.daily?.pb || {}, I = any?.intra?.pb || {};
-  const ids = [...Object.keys(D), ...Object.keys(I)];
-  if (!ids.length) return <Empty>매매법 표가 아직 없습니다.</Empty>;
-  const live = (mk: string) => (d.live?.[mk]?.items || []) as any[];
-  const cnt = (mk: string, f: (x: any) => boolean) => live(mk).filter(f).length;
-  const by = (mk: string, k: string) => +(d.markets?.[mk]?.daily?.val?.byPb?.[k] || d.markets?.[mk]?.intra?.val?.byPb?.[k] || 0);
-  const diag = (mk: string, k: string) => d.markets?.[mk]?.daily?.val?.exitDiag?.[k]?.cur as any[] | undefined;
-  const held = (k: string) => (d.open || []).filter((p: any) => p.sr && p.sr.sid === k).length;
-  const rows = ids.map((k) => {
-    const isI = k in I, p = isI ? I[k] : D[k];
-    const fu = cnt("us", (x) => (x.fired || []).includes(k)), fk = cnt("kr", (x) => (x.fired || []).includes(k));
-    const cu = cnt("us", (x) => x.pb === k), ck = cnt("kr", (x) => x.pb === k);
-    return { k, isI, p, fu, fk, cu, ck, bu: by("us", k), bk: by("kr", k), du: diag("us", k), dk: diag("kr", k), h: held(k) };
-  }).sort((a, b) => (b.cu + b.ck) - (a.cu + a.ck) || (b.fu + b.fk) - (a.fu + a.fk) || (b.bu + b.bk) - (a.bu + a.bk));
-  const two = (u: any, k: any) => <><span className={u ? "text-ink" : "text-ink-3"}>{u || 0}</span><span className="text-ink-3"> / </span><span className={k ? "text-ink" : "text-ink-3"}>{k || 0}</span></>;
-  const dg = (x: any[] | undefined) => (x && x[0] ? <span style={{ color: x[1] > 0 ? "var(--bs-ok)" : x[1] < 0 ? "var(--bs-bad)" : undefined }}>{pc(x[1])} · {x[2]}%</span> : <span className="text-ink-3">—</span>);
-  const FLT: Record<string, string> = { trend: "MA200 위만", noBear: "약세장 제외", calm: "변동 작을 때", up20: "MA20>MA50" };
-  const PROF: Record<string, string> = { trend: "추세(길게)", swing: "스윙", short: "짧게", quick: "빠른 회전", mr: "평균회귀" };
-  const rule = (r: any) => r.isI ? "−" + r.p.sl + "% · " + (r.p.tpAt === "pc" ? "전일 종가까지" : r.p.tpAt === "piv" ? "피봇까지" : r.p.tpPct == null ? "익절 없음" : "+" + r.p.tpPct + "%") + " · " + (r.p.bars ? r.p.bars * 5 + "분" : "장 끝")
-    : r.p.stop + "%/ATR×" + r.p.atr + " · " + (r.p.mr ? "MA5·RSI2 회귀" : r.p.tpPct ? "+" + r.p.tpPct + "%" : r.p.tpR ? r.p.tpR + "R" : "익절 없음") + " · " + r.p.hold + "일" + (r.p.tstop ? " · " + r.p.tstop + "일 손실 정리" : "");
-  /* [V33.619] 자동 조율 — 앞 40% 에서 고르고 [40,55%) 확인 · 판정 구간(뒤 20%) 기본 → 조율 평균 */
-  const tn = (mk: string, k: string) => { const t = d.markets?.[mk]?.daily?.val?.tune?.[k]; if (!t) return <span className="text-ink-3">—</span>;
-    if (t.prof === "base" && !t.flt) return <span className="text-ink-3">기본 유지</span>;
-    const b = t.test?.base?.[1], u = t.test?.tuned?.[1];
-    return <span title={"판정 구간 기본 " + pc(b) + " → 조율 " + pc(u)}>{[t.prof !== "base" ? PROF[t.prof] || t.prof : null, t.flt ? FLT[t.flt] || t.flt : null].filter(Boolean).join(" · ")}
-      {b != null && u != null && <span className="ml-1" style={{ color: u > b ? "var(--bs-ok)" : "var(--bs-bad)" }}>{(u - b >= 0 ? "+" : "") + (u - b).toFixed(2)}%p</span>}</span>; };
-  const ts = d.live?.us?.ts || d.live?.kr?.ts;
-  return (
-    <div className="overflow-x-auto">
-      <p className="mb-2 text-[11px] text-ink-3">미 / 한 · 후보 기준 {ago(ts)}</p>
-      <table className="w-full min-w-[920px] text-[12px]">
-        <thead><tr className="text-left text-[11px] text-ink-3">
-          <th className="py-1.5 font-normal">매매법</th><th className="font-normal">지금 뜬 후보</th><th className="font-normal">지금 고름</th><th className="font-normal">판정 구간 선택</th>
-          <th className="font-normal">모의 평균·승률 미</th><th className="font-normal">한</th><th className="font-normal">보유</th><th className="font-normal">매도 규칙</th><th className="font-normal">자동 조율 미</th><th className="font-normal">한</th></tr></thead>
-        <tbody className="bs-num">{rows.map((r) => (
-          <tr key={r.k} className="border-t border-line text-ink-2" style={r.cu + r.ck ? { background: "color-mix(in srgb, var(--bs-ok) 7%, transparent)" } : undefined}>
-            <td className="py-1.5"><span className="text-ink">{nm(r.k)}</span><span className="ml-1.5 text-[10.5px] text-ink-3">{r.isI ? "5분" : "일봉"}</span></td>
-            <td>{two(r.fu, r.fk)}</td><td>{two(r.cu, r.ck)}</td><td>{two(r.bu, r.bk)}</td>
-            <td>{dg(r.du)}</td><td>{dg(r.dk)}</td><td>{r.h ? <span className="text-ink">{r.h}</span> : <span className="text-ink-3">0</span>}</td>
-            <td className="text-[11px]">{rule(r)}</td><td className="text-[11px]">{r.isI ? "—" : tn("us", r.k)}</td><td className="text-[11px]">{r.isI ? "—" : tn("kr", r.k)}</td></tr>))}</tbody>
-      </table>
-    </div>
-  );
-}
-
 function Market({ mk, r }: { mk: string; r: any }) {
   if (!r) return <Section title={MK[mk] + " 검증"}><Empty>학습기가 아직 이 시장 표를 올리지 않았습니다.</Empty></Section>;
   const one = (v: any, label: string) => {
@@ -141,14 +96,14 @@ export function Playbook({ d, head }: { d: any; head: ReactNode }) {
             <Tabs.Trigger key={v} value={v} className="-mb-px border-b-2 border-transparent pb-2 text-[13px] text-ink-3 data-[state=active]:border-rose data-[state=active]:text-ink">{t}</Tabs.Trigger>))}
         </Tabs.List>
         <Tabs.Content value="s" className="pt-4 outline-none">
-          <Status d={d} />
+          <PlaybookBook d={d} />
         </Tabs.Content>
         <Tabs.Content value="e" className="pt-1 outline-none"><Market mk="us" r={us} /><Market mk="kr" r={kr} /></Tabs.Content>
         <Tabs.Content value="f" className="pt-4 outline-none"><Facts rows={[
-          ["후보", "OMNI-Q 5일 상위 " + Math.round((1 - (d.route?.candMin ?? 0.8)) * 100) + "% · 실시간"],
+          ["후보", "OMNI-Q 5일 상위 미 " + Math.round((1 - (us?.daily?.val?.candQ ?? d.route?.candMin ?? 0.8)) * 100) + "% · 한 " + Math.round((1 - (kr?.daily?.val?.candQ ?? d.route?.candMin ?? 0.8)) * 100) + "% · 학습기 검증이 20·40·60% 중 고름"],
           ["일봉 진입 시간", "마감 전 " + (d.route?.dailyEntryWin ?? 60) + "분(시뮬 = 신호 봉 종가 체결)"],
           ["단타 진입", "마감까지 " + (d.route?.intraMinToClose ?? 30) + "분 넘게 남았을 때 · 사이클당 분봉 조회 " + (d.route?.intraFetchMax ?? "—") + "종목"],
-          ["성공확률 하한", Math.round((d.route?.minWin ?? 0.5) * 100) + "%"],
+          ["성공확률 하한", "없음(기대값으로 고름)"],
           ["통과 기준", "손대지 않은 마지막 20% 구간: 평균 > 0 · t ≥ 2 · 뜬 것 아무거나보다 높음 · 표본 ≥ 30"],
           ["시험 크기", "×" + (caps.trial?.mult ?? "—") + " · 하루 " + (caps.trial?.maxPerDay ?? "—") + " · 동시 " + (caps.trial?.maxOpen ?? "—")],
           ["주력 크기", "×" + (caps.primary?.mult ?? "—") + " · 하루 " + (caps.primary?.maxPerDay ?? "—") + " · 동시 " + (caps.primary?.maxOpen ?? "—")],

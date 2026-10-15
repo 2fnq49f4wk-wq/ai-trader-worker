@@ -69,6 +69,20 @@
     '#pbObs .k-dict{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px;padding:10px 14px}#pbObs .k-dict div{border:1px solid var(--k-line);border-radius:8px;padding:7px 9px;font-size:11.5px}#pbObs .k-dict b{display:block;font-size:12px}#pbObs .k-dict small{color:var(--k-sub);line-height:1.45;display:block}',
     '#pbObs .k-empty{color:var(--k-sub);font-size:12px;padding:12px 14px}',
     '#pbObs .pos{color:var(--k-good)}#pbObs .neg{color:var(--k-bad)}',
+    /* [V33.620] AI 스캔 · 매매법 판정(옛 위원회 스캔 순회를 합침) */
+    '#pbObs .k-scan{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr) minmax(0,1.1fr);border-top:1px solid var(--k-line)}',
+    '#pbObs .k-scan>div{padding:14px;min-width:0}#pbObs .k-scan>div+div{border-left:1px solid var(--k-line)}',
+    '#pbObs .k-chart{display:block;width:100%;height:150px;margin:8px 0 10px}',
+    '#pbObs .k-ind{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}#pbObs .k-ind div{border:1px solid var(--k-line);border-radius:8px;padding:6px 8px;min-width:0}',
+    '#pbObs .k-ind span{display:block;font-size:10.5px;color:var(--k-sub);white-space:nowrap}#pbObs .k-ind b{font-family:var(--k-mono);font-size:14px}',
+    '#pbObs .k-prog{height:2px;background:var(--k-line);position:relative;overflow:hidden}#pbObs .k-prog i{position:absolute;inset:0 auto 0 0;background:var(--k-acc);animation:kprog 4.5s linear}',
+    '@keyframes kprog{from{width:0}to{width:100%}}#pbObs .k-prog.off i{display:none}',
+    '#pbObs .k-altw{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:6px}#pbObs .k-alt td:first-child{white-space:normal;min-width:110px}',
+    '#pbObs .k-alt td.on{color:var(--k-acc);font-weight:700}#pbObs .k-alt tr.off td{color:var(--k-dim);text-decoration:line-through}',
+    '#pbObs .k-live{display:inline-flex;align-items:center;gap:6px}#pbObs .k-live:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--k-good);box-shadow:0 0 0 0 var(--k-good);animation:kpulse 1.6s infinite}',
+    '@keyframes kpulse{0%{box-shadow:0 0 0 0 rgba(61,220,151,.6)}70%{box-shadow:0 0 0 7px rgba(61,220,151,0)}100%{box-shadow:0 0 0 0 rgba(61,220,151,0)}}',
+    '@media (max-width:1100px){#pbObs .k-scan{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}#pbObs .k-scan>div:last-child{grid-column:1/-1;border-left:0;border-top:1px solid var(--k-line)}}',
+    '@media (max-width:700px){#pbObs .k-scan{grid-template-columns:minmax(0,1fr)}#pbObs .k-scan>div+div{border-left:0;border-top:1px solid var(--k-line)}#pbObs .k-ind{grid-template-columns:repeat(2,minmax(0,1fr))}}',
     '@media (max-width:900px){#pbObs .k-brief{grid-template-columns:repeat(2,minmax(0,1fr))}#pbObs .k-brief>div:first-child{grid-column:1/-1}#pbObs .k-brief>div:nth-child(2){border-left:0}',
     '#pbObs .k-brief>div{border-top:1px solid var(--k-line)}#pbObs .k-brief>div:first-child{border-top:0}#pbObs .k-flow{grid-template-columns:repeat(2,minmax(0,1fr))}#pbObs .k-flow>div:nth-child(odd){border-left:0}#pbObs .k-flow>div{border-top:1px solid var(--k-line)}',
     '#pbObs .k-detail,#pbObs .k-grid2{grid-template-columns:minmax(0,1fr)}#pbObs .k-detail>div+div{border-left:0;border-top:1px solid var(--k-line)}#pbObs .k-kv{grid-template-columns:repeat(2,minmax(0,1fr))}#pbObs .k-fs{grid-template-columns:110px minmax(0,1fr) 44px}}'
@@ -89,6 +103,41 @@
     var up = a[a.length - 1] >= a[0];
     return '<svg viewBox="0 0 100 34" preserveAspectRatio="none"><polyline fill="none" stroke="' + (up ? 'var(--k-good)' : 'var(--k-bad)') + '" stroke-width="1.4" vector-effect="non-scaling-stroke" points="' + pts + '"/></svg>';
   }
+  function chart(a) {   // [V33.620] 60일 종가 + 20일선
+    if (!Array.isArray(a) || a.length < 5) return '<svg class="k-chart" viewBox="0 0 300 150"></svg>';
+    var lo = Math.min.apply(null, a), hi = Math.max.apply(null, a), r = hi - lo || 1, n = a.length;
+    var X = function (i) { return (i / (n - 1) * 296 + 2).toFixed(1); }, Y = function (v) { return (140 - (v - lo) / r * 128).toFixed(1); };
+    var pts = a.map(function (v, i) { return X(i) + ',' + Y(v); }).join(' ');
+    var ma = [], s = 0;
+    for (var i = 0; i < n; i++) { s += a[i]; if (i >= 20) s -= a[i - 20]; if (i >= 19) ma.push(X(i) + ',' + Y(s / 20)); }
+    var up = a[n - 1] >= a[0], col = up ? 'var(--k-good)' : 'var(--k-bad)';
+    return '<svg class="k-chart" viewBox="0 0 300 150" preserveAspectRatio="none">' +
+      '<polygon fill="' + col + '" opacity=".08" points="2,142 ' + pts + ' 298,142"/>' +
+      (ma.length > 1 ? '<polyline fill="none" stroke="var(--k-sub)" stroke-dasharray="3 3" stroke-width="1" vector-effect="non-scaling-stroke" points="' + ma.join(' ') + '"/>' : '') +
+      '<polyline fill="none" stroke="' + col + '" stroke-width="1.6" vector-effect="non-scaling-stroke" points="' + pts + '"/>' +
+      '<circle cx="' + X(n - 1) + '" cy="' + Y(a[n - 1]) + '" r="3" fill="' + col + '"/>' +
+      '<text x="4" y="12" fill="var(--k-sub)" font-size="9">' + Number(hi).toLocaleString() + '</text><text x="4" y="148" fill="var(--k-sub)" font-size="9">' + Number(lo).toLocaleString() + '</text></svg>';
+  }
+  function ind(it) {
+    var x = it.ind || {}, f = function (v, d, suf) { return v == null ? '—' : (+v).toFixed(d) + (suf || ''); };
+    var cells = [['RSI14', f(x.rsi, 0), x.rsi != null && (x.rsi < 30 ? 'pos' : x.rsi > 70 ? 'neg' : '')], ['RSI2', f(x.rsi2, 0), x.rsi2 != null && (x.rsi2 <= 10 ? 'pos' : '')],
+      ['20일선', x.g20 == null ? '—' : pct(x.g20, 1), cls(x.g20)], ['5일 수익', x.r5 == null ? '—' : pct(x.r5, 1), cls(x.r5)],
+      ['거래량 배수', f(x.vr, 2, '×'), ''], ['ATR', f(x.atr, 1, '%'), ''], ['200일선', x.ma200 == null ? '—' : pct(x.ma200, 0), cls(x.ma200)], ['OMNI-Q', '상위 ' + Math.max(1, Math.round((1 - it.q) * 100)) + '%', '']];
+    return '<div class="k-ind">' + cells.map(function (c) { return '<div><span>' + c[0] + '</span><b class="' + (c[2] || '') + '">' + c[1] + '</b></div>'; }).join('') + '</div>';
+  }
+  function altTable(it) {
+    var alt = it.alt || [], bench = it.bench || [];
+    var seen = {}; alt.forEach(function (r) { seen[r[0]] = 1; });
+    (it.fired || []).forEach(function (f) { if (!seen[f]) alt.push([f, null, null, 0, null]); });
+    if (!alt.length) return '<div class="k-empty">지금 뜬 매매법이 없습니다 — 진입 조건이 뜰 때까지 기다립니다.</div>';
+    alt = alt.slice().sort(function (a, b) { return (b[4] == null ? -99 : b[4]) - (a[4] == null ? -99 : a[4]); });
+    return '<div class="k-altw"><table class="k-alt"><thead><tr><th>뜬 매매법</th><th class="num">닮은 과거 평균</th><th class="num">승률</th><th class="num">표본</th></tr></thead><tbody>' + alt.map(function (r) {
+      var on = r[0] === it.pb, off = bench.indexOf(r[0]) >= 0;
+      return '<tr class="' + (off ? 'off' : '') + '"><td class="' + (on ? 'on' : '') + '">' + (on ? '✓ ' : '') + esc(nm(r[0])) + (off ? ' · 최근 성적으로 쉼' : '') + '</td>' +
+        '<td class="num ' + cls(r[1]) + '">' + (r[1] == null ? '표 없음' : pct(r[1])) + '</td><td class="num">' + (r[2] == null ? '—' : Math.round(r[2] * 100) + '%') + '</td><td class="num">' + (r[3] || '—') + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+  }
+  function candPct(j, mk) { var r = (j.markets || {})[mk], q = r && r.daily && r.daily.val && r.daily.val.candQ; return Math.round((1 - (typeof q === 'number' ? q : 0.8)) * 100); }   // [V33.620] 검증이 고른 후보 폭
   function state(it) {   // 카드 배지
     if (it.act) return ['매수 후보', 'good'];
     if (it.why === '보유 중') return ['보유 중', 'acc'];
@@ -101,7 +150,17 @@
     return '−' + (it.stop || '—') + '% 손절 · ' + (it.tpR ? it.tpR + 'R 익절 · ' : '익절 없음 · ') + (it.hold || '—') + '거래일';
   }
 
-  var root = null, timer = null, busy = false, data = null, mkSel = null, symSel = null;
+  var root = null, timer = null, busy = false, data = null, mkSel = null, symSel = null, rot = null, pauseUntil = 0;
+  function advance() {   // [V33.620] 스포트라이트 자동 순회(옛 'AI 스캔 순회' 처럼) — 누르면 30초 멈춤
+    if (!root || !data || root.offsetParent === null || document.hidden || pauseUntil > Date.now()) return;
+    var lv = (data.live || {})[mkSel], items = (lv && lv.items) || [];
+    if (items.length < 2) return;
+    var k = items.map(function (x) { return x.s; }).indexOf(symSel);
+    symSel = items[(k + 1) % items.length].s;
+    render();
+    var c = root.querySelector('.k-card.sel'), s = root.querySelector('.k-strip');
+    if (c && s) s.scrollTo({ left: Math.max(0, c.offsetLeft - s.offsetLeft - 20), behavior: 'smooth' });
+  }
 
   function brief(j, mk) {
     var lv = (j.live || {})[mk], r = (j.markets || {})[mk];
@@ -112,7 +171,7 @@
       : r.primary ? '이 시장은 검증을 통과해 AI_PRIMARY 대신 매매법 AI 가 삽니다(크기 ×1.0).'
       : '후보마다 무엇을 골랐을지 계산만 하고 사지 않습니다. 검증을 통과하면 자동으로 주력이 됩니다(그 전까지 AI_PRIMARY 유지).';
     return '<section class="k-panel k-brief"><div><span class="k-lab">PLAYBOOK · DECISION STATE</span><strong>' + esc(head) + '</strong><p>' + esc(why) + '</p></div>' +
-      '<div><span class="k-lab">CANDIDATES</span><dd>' + ((lv && lv.n) || 0) + '</dd><small>OMNI-Q 상위 20% 평가</small></div>' +
+      '<div><span class="k-lab">CANDIDATES</span><dd>' + ((lv && lv.n) || 0) + '</dd><small>OMNI-Q 상위 ' + candPct(j, mk) + '% 평가</small></div>' +
       '<div><span class="k-lab">FIRED</span><dd>' + fired + '</dd><small>지금 매매법 신호 뜸</small></div>' +
       '<div><span class="k-lab">CHOSEN</span><dd>' + chosen + (act ? '<small class="pos"> · 매수 ' + act + '</small>' : '') + '</dd><small>고른 매매법 있음</small></div>' +
       '<div><span class="k-lab">SCAN AGE</span><dd>' + esc(lv ? ago(lv.ts).replace(' 전', '') : '—') + '</dd><small>국면 ' + esc((lv && lv.regime) || (r && r.regime) || '—') + '</small></div></section>';
@@ -120,9 +179,12 @@
 
   function strip(j, mk) {
     var lv = (j.live || {})[mk], items = (lv && lv.items) || [];
-    var h = '<section class="k-panel"><div class="k-h"><b>매매법 AI 후보 순회</b><span class="k-tag">' + (mk === 'us' ? '미국' : '한국') + '</span>' +
-      '<small>' + (lv ? '최근 사이클 ' + esc(ago(lv.ts)) + (lv.mtc != null ? ' · 마감까지 ' + lv.mtc + '분' : ' · 장 밖') : '아직 기록 없음') + '</small></div>';
-    if (!items.length) return h + '<div class="k-empty">이번 사이클에 OMNI-Q 상위 20% 후보가 평가되지 않았습니다(장 밖이거나 OMNI-Q 점수가 낡음).</div></section>';
+    var pos = items.length ? Math.max(0, items.map(function (x) { return x.s; }).indexOf(symSel)) + 1 : 0;
+    var h = '<section class="k-panel"><div class="k-h"><b>AI 스캔 · 매매법 판정</b><span class="k-tag">' + (mk === 'us' ? '미국' : '한국') + '</span>' +
+      '<span class="k-live" style="font-size:11px;color:var(--k-sub)">' + (pauseUntil > Date.now() ? '고정(30초 뒤 다시 순회)' : '순회 중 ' + pos + '/' + items.length) + '</span>' +
+      '<small>' + (lv ? '최근 사이클 ' + esc(ago(lv.ts)) + (lv.mtc != null ? ' · 마감까지 ' + lv.mtc + '분' : ' · 장 밖') : '아직 기록 없음') + '</small></div>' +
+      '<div class="k-prog' + (pauseUntil > Date.now() ? ' off' : '') + '"><i></i></div>';
+    if (!items.length) return h + '<div class="k-empty">이번 사이클에 OMNI-Q 상위 ' + candPct(j, mk) + '% 후보가 평가되지 않았습니다(장 밖이거나 OMNI-Q 점수가 낡음).</div></section>';
     if (!symSel || !items.some(function (x) { return x.s === symSel; })) symSel = items[0].s;
     h += '<div class="k-strip">' + items.map(function (it) {
       var st = state(it);
@@ -140,16 +202,11 @@
         [!!it.pb, '닮은 과거 칸에서 선택', it.pb ? nm(it.pb) + ' · 모의 성공 ' + (it.w != null ? Math.round(it.w * 100) + '%' : '—') + ' · 평균 ' + pct(it.m) + ' · 표본 ' + (it.n || '—') : (it.why || '성적 기준을 넘는 매매법 없음')],
         [!!it.act, '매수', it.act ? it.act : (it.why || '—')]
       ];
-      h += '<div class="k-detail"><div><div class="k-big"><b>' + esc(it.s) + '</b><span>' + (it.pb ? esc(nm(it.pb)) : '대기') + '</span></div><div class="k-sub" style="color:var(--k-sub);font-size:12px">' + esc(it.nm || '') + '</div>' +
-        '<div class="k-steps">' + steps.map(function (s, i) { return '<div class="k-step ' + (s[0] ? 'ok' : 'no') + '"><i>' + (i + 1) + '</i><div>' + esc(s[1]) + '<small>' + esc(s[2]) + '</small></div></div>'; }).join('') + '</div></div>' +
-        '<div><span class="k-lab">판정 근거</span>' +
-        '<div class="k-row"><span>현재가 · 오늘</span><span>' + Number(it.px).toLocaleString() + ' · <span class="' + cls(it.dp) + '">' + pct(it.dp) + '</span></span></div>' +
-        '<div class="k-row"><span>고른 매매법</span><span>' + esc(nm(it.pb)) + (it.kind ? ' (' + (it.kind === 'intra' ? '5분 단타' : '일봉') + ')' : '') + '</span></div>' +
-        '<div class="k-row"><span>모의 성공확률</span><span>' + (it.w != null ? Math.round(it.w * 100) + '%' : '—') + '</span></div>' +
-        '<div class="k-row"><span>모의 평균 순수익</span><span class="' + cls(it.m) + '">' + pct(it.m) + '</span></div>' +
-        '<div class="k-row"><span>시뮬 표본</span><span>' + (it.n || '—') + '</span></div>' +
-        '<div class="k-row"><span>매도 규칙</span><span>' + esc(exitTxt(it)) + '</span></div>' +
-        '<div class="k-row"><span>상태</span><span>' + esc(it.act || it.why || '—') + '</span></div></div></div>';
+      h += '<div class="k-scan"><div><div class="k-big"><b>' + esc(it.s) + '</b><span class="' + cls(it.dp) + '" style="font-size:18px">' + Number(it.px).toLocaleString() + ' · ' + pct(it.dp) + '</span></div>' +
+        '<div style="color:var(--k-sub);font-size:12px">' + esc(it.nm || '') + '</div>' + chart(it.sp) + ind(it) + '</div>' +
+        '<div><span class="k-lab">판정 단계</span><div class="k-steps">' + steps.map(function (s, i) { return '<div class="k-step ' + (s[0] ? 'ok' : 'no') + '"><i>' + (i + 1) + '</i><div>' + esc(s[1]) + '<small>' + esc(s[2]) + '</small></div></div>'; }).join('') + '</div>' +
+        '<div class="k-row" style="margin-top:6px"><span>매도 규칙</span><span>' + esc(exitTxt(it)) + '</span></div><div class="k-row"><span>상태</span><span>' + esc(it.act || it.why || '—') + '</span></div></div>' +
+        '<div><span class="k-lab">왜 이 매매법인가 — 뜬 매매법 비교</span>' + altTable(it) + '</div></div>';
     }
     return h + '</section>';
   }
@@ -159,7 +216,7 @@
     var n = (lv && lv.n) || 0, f = lv && lv.f != null ? lv.f : items.filter(function (x) { return x.fired && x.fired.length; }).length,
         c = lv && lv.c != null ? lv.c : items.filter(function (x) { return x.pb; }).length, a = lv && lv.a != null ? lv.a : items.filter(function (x) { return x.act; }).length;
     var mx = Math.max(1, n);
-    var rows = [['① 후보(OMNI-Q 상위 20%)', n], ['② 매매법 신호 뜸', f], ['③ 매매법 선택', c], ['④ 매수 후보', a]];
+    var rows = [['① 후보(OMNI-Q 상위 ' + candPct(j, mk) + '%)', n], ['② 매매법 신호 뜸', f], ['③ 매매법 선택', c], ['④ 매수 후보', a]];
     return '<section class="k-panel"><div class="k-h"><b>판정 깔때기</b><small>' + '이번 사이클 · 평가 ' + n + '종목' + '</small></div><div class="k-funnel">' +
       rows.map(function (r) { return '<div class="k-fs"><span>' + r[0] + '</span><i style="width:' + Math.max(2, Math.round(r[1] / mx * 100)) + '%"></i><span>' + r[1] + '</span></div>'; }).join('') + '</div></section>';
   }
@@ -210,12 +267,13 @@
         root = el;
         root.addEventListener('click', function (e) {
           var b = e.target.closest('[data-pbmk]'); if (b) { mkSel = b.getAttribute('data-pbmk'); symSel = null; render(); return; }
-          var c = e.target.closest('[data-pbsym]'); if (c) { symSel = c.getAttribute('data-pbsym'); render(); }
+          var c = e.target.closest('[data-pbsym]'); if (c) { symSel = c.getAttribute('data-pbsym'); pauseUntil = Date.now() + 30000; render(); }
         });
       }
       if (!root.innerHTML) root.innerHTML = '<section class="k-panel"><div class="k-empty">매매법 AI 상태 불러오는 중…</div></section>';
       load();
       if (!timer) timer = setInterval(function () { if (root && root.offsetParent !== null && !document.hidden) load(); }, 30000);
+      if (!rot) rot = setInterval(advance, 4500);
       return true;
     },
     refresh: load

@@ -829,6 +829,8 @@ jobs:
       # [V33.607] 매매법 모의 시뮬 — 귀무·양성 대조 · 상황 열쇠 학습기↔워커 일치 · 실시간 조회·청산
       - name: 매매법 모의 시뮬 검사
         run: node tools/check-playbook.mjs
+      - name: OMNI-Q 거시·섹터 피처 계약(섹터 배정 · 누출 없음 · 민감도 × 거시)
+        run: node tools/check-omniq-macro.mjs
       # [V33.531] 포트폴리오 실험실 — Qlib TopK-Dropout + Vibe 부품(퍼지 전진·DSR·최적화기) · 귀무 0 · 양성 대조 통과
       - name: 포트폴리오 실험실 검사
         run: node tools/check-portfolio-lab.mjs

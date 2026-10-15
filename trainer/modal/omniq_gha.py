@@ -45,6 +45,17 @@ try:
 except Exception as e:  # noqa: BLE001
     print("   ⚠️ 뉴스 이력 못 받음: %s" % e)
 omni_q.EVENTS = EV
+# [V33.620] 거시·섹터 피처 — 미국 ETF(SPY·TLT·GLD·섹터 XL*·SMH) 일봉을 날짜 키로 · FRED 월별 거시(서프라이즈) + 연방기금금리
+try:
+    _etf = {}
+    for s_ in ("SPY", "TLT", "GLD") + omni_q.SECTOR_ETFS:
+        bd = daily.get(s_)
+        if bd and bd.get("t") and bd.get("c"):
+            _etf[s_] = {int(omni.day_key_of_daily(t)): float(c) for t, c in zip(bd["t"], bd["c"]) if c}
+    omni_q.MACRO = {"etf": _etf, "fred": omni_q.fetch_fred(print)}
+    print("   · 거시·섹터 ETF %d종" % len(_etf))
+except Exception as e:  # noqa: BLE001
+    print("   ⚠️ 거시 자료 못 받음: %s" % e)
 omni_q.run(daily, mkt, omni.day_key_of_daily, BASE=BASE, HDR=HDR, upload=True, log=print, cache=cache, mode=MODE)
 # [V33.594] 페어(PR_OU) — 같은 일봉으로 전 종목 공적분 페어 + 표본 밖 걷기 검증(워커 CPU 0). 실패해도 OMNI-Q 는 살린다.
 try:

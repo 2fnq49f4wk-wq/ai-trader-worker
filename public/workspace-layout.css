@@ -217,5 +217,6 @@ html:is(:root,[data-theme]) body #page-nnviz.page .nnv-health-time { margin-left
 /* [V33.612] 매매법 AI 실시간 판정은 01 작동 화면에서만 */
 #page-nnviz:not([data-brain-view="operations"]) #pbObs { display:none!important; }
 /* [V33.614] 매매법 AI 주력(한 시장 이상) — 01 작동 화면은 매매법 AI 만(AI_PRIMARY·위원회 화면 퇴역) */
-#page-nnviz.pb-primary[data-brain-view="operations"] .nnviz-content > :not(.nnv-head):not(.mission-nav):not(#pbObs) { display:none!important; }
+/* [V33.620] 01 작동 화면 = 매매법 AI 하나(옛 위원회 'AI 스캔 순회'·요약 띠는 매매법 AI 의 'AI 스캔 · 매매법 판정' 으로 합쳤다 — 사용자 10/15) */
+#page-nnviz[data-brain-view="operations"] .nnviz-content > :not(.nnv-head):not(.mission-nav):not(#pbObs) { display:none!important; }
 #page-nnviz.pb-primary[data-brain-view="models"] .nnviz-content > :not(.nnv-head):not(.mission-nav):not(#brain-studio) { display:none!important; }

@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.619";
+const _BUILD_VER = "V33.620";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13547,6 +13547,8 @@ function pbPrimaryOn(st, nowMs) { return !!(st && st.daily && _pbPass(st.daily.v
 const PB_ROUTE = { candMin: 0.80, minWin: 0, intraMinToClose: 30, eodMin: 10, regMin: 390, intraFetchMax: 8, dailyEntryWin: 60, liveKeep: 60,
                    promoteMax: 25, intraPreMax: 40,
                    candDailyWin: 80, candDailyMax: 8, candDailyMin: 20 };   // [V33.618] 마감 전 80분부터 후보 일봉을 사이클당 8개씩 · 20분 수명으로 갱신   // [V33.614] promoteMax: 살 수 있는 후보 앞당김 상한 · intraPreMax: 후보 분봉 선행 병렬 조회 상한   // dailyEntryWin: 일봉 매매법 진입 = 마감 전 60분 · liveKeep: 관측창에 남길 후보 수   // intraFetchMax: 사이클당 후보 분봉 조회 상한
+/* [V33.620] 후보 폭(OMNI-Q 상위 몇 %)도 학습기 검증이 고른다(상위 20·40·60% 중 검증 구간 성적이 가장 좋은 것) — 표에 없으면 상위 20% */
+function pbCandMin(st) { const q = st && st.daily && st.daily.val && st.daily.val.candQ; return (typeof q === "number" && q >= 0.3 && q <= 0.95) ? q : PB_ROUTE.candMin; }
 function _pbBk(x, e) { if (!(typeof x === "number" && isFinite(x))) return e.length; let k = 0; while (k < e.length && x >= e[k]) k++; return k; }
 function pbDailyKeys(reg, rsi, gap20, ret5, vr, evNear) {
   const r = String(reg || "NEUTRAL");
@@ -13754,14 +13756,18 @@ function pbChoose(table, keys, fired, rule) {
   const sc = String((rule && rule.score) || "m");
   const lv = rule && rule.level === "global" ? keys.slice(-1) : rule && rule.level === "regime" ? keys.slice(-2) : keys;
   let best = null;
+  const alts = [];   // [V33.620] 뜬 매매법마다 칸 값 — 관측창 '왜 이것을 골랐나'
   for (const pb of fired) {
     let v = null;
     for (const k of lv) { const row = table[k]; if (row && Array.isArray(row[pb])) { v = row[pb]; break; } }
-    if (!v) continue;
+    if (!v) { alts.push([pb, null, null, 0, null]); continue; }
     const n = _num(v[0], 0), w = _num(v[1], 0), m = _num(v[2], 0), lcb = _num(v[3], NaN), hd = Math.max(0.05, _num(v[4], 1));
     const s = sc === "lcb" ? lcb : sc === "mpd" ? m / hd : sc === "lcbpd" ? lcb / hd : m;
+    alts.push([pb, +m.toFixed(3), +w.toFixed(3), n, +(+s).toFixed(4)]);
     if (s > 0 && w >= PB_ROUTE.minWin && (!best || s > best.s)) best = { pb: pb, n: n, w: w, m: m, lcb: lcb, hd: hd, s: s };
   }
+  if (best) best.alts = alts;
+  pbChoose.lastAlts = alts;   // 고를 것이 없을 때도 관측창이 칸 값을 보이게(순수 함수 바깥 기록 — 같은 호출 직후에만 읽는다)
   return best;
 }
 /* [V33.618] 실전 규칙 진입 거르개(snapRules) — RSI2 반등에만: 약세·폭락 국면 금지 · 20일 종가 고점 대비 −12% 이내 · ATR ≤ 5% · 당일 −4% 이상.
@@ -13771,7 +13777,12 @@ const PB_LIVE_FILTER = { SN_RSI2: true };
    trend: 종가 > MA200 · noBear: 약세·폭락 국면 아님 · calm: ATR ≤ 4% 이고 당일 −4% 이상 · up20: MA20 > MA50 */
 function pbTunedFilterOk(flt, D, reg) {
   if (!flt) return true;
+  if (String(flt).indexOf("+") >= 0) return String(flt).split("+").every(function (f) { return pbTunedFilterOk(f, D, reg); });   // [V33.620] 2개 조합
   const c = D.c, i = c.length - 1;
+  // [V33.620] notExt: 20일선 +8% 이내 · dip5: 5일 수익 ≤ 0 · rsiMid: 40 ≤ RSI14 ≤ 65
+  if (flt === "notExt") { const m = _pbSma(c, 20, i); return m === m && c[i] / m - 1 <= 0.08; }
+  if (flt === "dip5") return i >= 5 && c[i - 5] > 0 && (c[i] / c[i - 5] - 1) * 100 <= 0;
+  if (flt === "rsiMid") { const r = _pbRsiEwm(c, 14)[i]; return r >= 40 && r <= 65; }
   if (flt === "trend") { const m = _pbSma(c, 200, i); return m === m && c[i] > m; }
   if (flt === "noBear") return reg !== "BEAR" && reg !== "CRASH";
   if (flt === "calm") { const a = _pbAtrPct(D.h, D.l, c, i), r1 = c[i - 1] > 0 ? (c[i] / c[i - 1] - 1) * 100 : NaN; return a === a && a <= 4 && r1 === r1 && r1 >= -4; }
@@ -13785,6 +13796,14 @@ function pbLiveFilterOk(pb, D, reg, pr) {
   if (reg === "BEAR" || reg === "CRASH") return false;
   const hi20 = i >= 19 ? _pbMax(c, i - 19, i) : NaN, atr = _pbAtrPct(D.h, D.l, D.c, i), r1 = c[i - 1] > 0 ? (c[i] / c[i - 1] - 1) * 100 : NaN;
   return hi20 > 0 && (c[i] / hi20 - 1) * 100 >= -12 && atr === atr && atr <= 5 && r1 === r1 && r1 >= -4;
+}
+/* [V33.620] 매매법 최근 성적 스위치 — 고른 규칙에 gate 가 있으면, 학습기가 보낸 그 매매법의 최근 끝난 모의 거래(gate[pb] = [n, 평균])가
+   표본 ≥ PB_GATE_MIN 이고 평균 < 0 이면 쉰다(학습기 _gate_ok 와 같은 기준). */
+const PB_GATE_MIN = 15;
+function pbGateOff(daily, fired) {
+  const r = daily && daily.val && daily.val.rule, g = daily && daily.gate;
+  if (!r || !r.gate || !g) return [];
+  return (fired || []).filter(function (pb) { const x = g[pb]; return Array.isArray(x) && _num(x[0], 0) >= PB_GATE_MIN && _num(x[1], 0) < 0; });
 }
 function _pbPass(v) { return !!(v && v.pass === true && _num(v.n, 0) >= 30 && _num(v.mean, 0) > 0 && _num(v.t, 0) >= 2 && _num(v.mean, -99) > _num(v.base, 99)); }
 // 실시간 선택(순수 함수) — ctx: { reg, symbol, D(pbLiveDaily), bars5(pbAgg5) | null, prevClose, evNear, minToClose }
@@ -13800,18 +13819,20 @@ function pbRoutePick(st, ctx, nowMs) {
     const cr = st.daily.cross || {};
     for (const pb in cr) if (Array.isArray(cr[pb]) && cr[pb].indexOf(ctx.symbol) >= 0 && fired0.indexOf(pb) < 0) fired0.push(pb);   // 횡단면 조건은 학습기 판정(전일 종가 기준)
     const fired = fired0.filter(function (pb) { return pbLiveFilterOk(pb, D, ctx.reg, st.daily.pb && st.daily.pb[pb]); });   // [V33.619] 자동 조율 거르개 포함
+    const benched = pbGateOff(st.daily, fired);   // [V33.620] 최근 성적 스위치로 쉬는 매매법
     if (fired.length) {
       const ma20 = _pbSma(D.c, 20, i), rsi = _pbRsiEwm(D.c, 14)[i];
       const ret5 = D.c[i - 5] > 0 ? (px / D.c[i - 5] - 1) * 100 : null;
       const vr = _pbVr(D.v, i);   // [V33.610] 오늘 거래량(지난 시간 비율로 하루치 추정 · pbLiveDaily) — 시뮬 칸과 같은 날 기준
-      const ch = pbChoose(st.daily.table, pbDailyKeys(ctx.reg, rsi, ma20 > 0 ? (px / ma20 - 1) * 100 : null, ret5, vr, ctx.evNear), fired, st.daily.val && st.daily.val.rule);
+      const ch = pbChoose(st.daily.table, pbDailyKeys(ctx.reg, rsi, ma20 > 0 ? (px / ma20 - 1) * 100 : null, ret5, vr, ctx.evNear), fired.filter(function (pb) { return benched.indexOf(pb) < 0; }), st.daily.val && st.daily.val.rule);
       const pr = ch && st.daily.pb && st.daily.pb[ch.pb];
       if (ch && pr) {
         const atr = _pbAtrPct(D.h, D.l, D.c, i);
         const stop = Math.min(_num(pr.stop, 5), atr === atr ? _num(pr.atr, 2) * atr : 99);
-        best = { kind: "daily", pb: ch.pb, fired: fired, n: ch.n, w: ch.w, m: ch.m, s: ch.s, stop: Math.max(1.5, stop), be: _num(pr.be, 0), tpR: pr.tpR == null ? null : _num(pr.tpR, null), hold: _num(pr.hold, 10), label: pr.label || "",
+        best = { kind: "daily", pb: ch.pb, fired: fired, n: ch.n, w: ch.w, m: ch.m, s: ch.s, stop: Math.max(1.5, stop), be: _num(pr.be, 0), tpR: pr.tpR == null ? null : _num(pr.tpR, null), hold: _num(pr.hold, 10), label: pr.label || "", alts: ch.alts || [], benched: benched,
                  mr: pr.mr === true, tpPct: pr.tpPct == null ? null : _num(pr.tpPct, null), bePct: pr.bePct == null ? null : _num(pr.bePct, null), tstop: _num(pr.tstop, 0), rsi2x: _num(pr.rsi2x, 65) };
-      } else if (ctx.shadow) best = { kind: "daily", pb: null, fired: fired, why: "뜬 매매법 성적 미달" };
+      } else if (ctx.shadow) best = { kind: "daily", pb: null, fired: fired, benched: benched, alts: pbChoose.lastAlts || [],
+                                      why: benched.length && benched.length === fired.length ? "최근 성적 스위치로 쉼(" + benched.join("·") + ")" : "뜬 매매법 성적 미달" };
     } else if (ctx.shadow) best = { kind: "daily", pb: null, fired: [], why: "뜬 매매법 없음" };
   }
   if (ctx.shadow && best && best.kind === "daily" && !dWin) best.outWin = true;   // [V33.611] 창 밖 — 관측엔 보이되 '마감 전 60분에 매수' 로 표시
@@ -13830,10 +13851,25 @@ function pbRoutePick(st, ctx, nowMs) {
   }
   return best;
 }
+/* [V33.620] 관측창(01 'AI 스캔 · 매매법 판정') 후보 기록에 지표·뜬 매매법별 칸 값·쉬는 매매법을 붙인다 */
+function pbRecExtra(rec, sh, D) {
+  try {
+    if (D && D.c && D.c.length > 25) {
+      const c = D.c, i = c.length - 1, ma20 = _pbSma(c, 20, i), r = function (x, k) { return x === x && x != null ? +(+x).toFixed(k) : null; };
+      rec.ind = { rsi: r(_pbRsiEwm(c, 14)[i], 1), rsi2: r(_pbRsi2(c, i), 1), g20: r(ma20 > 0 ? (c[i] / ma20 - 1) * 100 : NaN, 2),
+                  r5: r(c[i - 5] > 0 ? (c[i] / c[i - 5] - 1) * 100 : NaN, 2), vr: r(_pbVr(D.v, i), 2), atr: r(_pbAtrPct(D.h, D.l, c, i), 2),
+                  ma200: r(i >= 199 ? (c[i] / _pbSma(c, 200, i) - 1) * 100 : NaN, 1) };
+      rec.sp = c.slice(-60).map(function (x) { return +(+x).toPrecision(5); });
+    }
+    if (sh && Array.isArray(sh.alts) && sh.alts.length) rec.alt = sh.alts.slice(0, 8);
+    if (sh && Array.isArray(sh.benched) && sh.benched.length) rec.bench = sh.benched;
+  } catch (e) {}
+  return rec;
+}
 /* [V33.616] 거래 창 밖 관측 스캔 — 후보(OMNI-Q 상위 20%) 일봉 캐시를 한 번에 읽고(getStates · 90개씩) 그림자 판정만 남긴다. 주문 없음. */
 async function pbObserveScan(DB, market, quotes, st, omniq) {
   if (!st || !omniqFresh(omniq, Date.now())) return 0;
-  const syms = Object.keys((omniq && omniq.scores) || {}).filter(function (s0) { return _num(omniq.scores[s0], 0) >= PB_ROUTE.candMin && quotes && quotes[s0]; });
+  const syms = Object.keys((omniq && omniq.scores) || {}).filter(function (s0) { return _num(omniq.scores[s0], 0) >= pbCandMin(st) && quotes && quotes[s0]; });
   if (!syms.length) return 0;
   const dk = syms.map(function (s0) { return "daily:" + s0; }), daily = {};
   for (let j = 0; j < dk.length; j += 90) Object.assign(daily, await getStates(DB, dk.slice(j, j + 90)));
@@ -13845,14 +13881,15 @@ async function pbObserveScan(DB, market, quotes, st, omniq) {
     const ext = q.mstate === "PRE" ? _num(q.pre, 0) : (q.mstate === "POST" || q.mstate === "POSTPOST") ? _num(q.post, 0) : 0;
     const px = ext > 0 ? ext : _num(q.price, 0), pcl = ext > 0 ? _num(q.price, px) : _num(q.prevClose, px);
     if (!(px > 0)) continue;
-    const sh = pbRoutePick(st, { reg: st.regime, symbol: s0, D: pbLiveDaily(d, px, pcl, mtc), bars5: null, prevClose: pcl, evNear: ev, minToClose: mtc, shadow: true }, now);
-    items.push({ s: s0, nm: (typeof NAME_MAP !== "undefined" && NAME_MAP[s0]) || null, q: +_num(omniq.scores[s0], 0).toFixed(3), px: px,
+    const D0 = pbLiveDaily(d, px, pcl, mtc);
+    const sh = pbRoutePick(st, { reg: st.regime, symbol: s0, D: D0, bars5: null, prevClose: pcl, evNear: ev, minToClose: mtc, shadow: true }, now);
+    items.push(pbRecExtra({ s: s0, nm: (typeof NAME_MAP !== "undefined" && NAME_MAP[s0]) || null, q: +_num(omniq.scores[s0], 0).toFixed(3), px: px,
                  dp: pcl > 0 ? +((px / pcl - 1) * 100).toFixed(2) : null, sp: d.closes.slice(-30).map(function (x) { return +(+x).toPrecision(5); }),
                  fired: (sh && sh.fired) || [], pb: (sh && sh.pb) || null, kind: (sh && sh.kind) || null,
                  m: sh && sh.m != null ? +_num(sh.m, 0).toFixed(3) : null, w: sh && sh.w != null ? +_num(sh.w, 0).toFixed(3) : null, n: (sh && sh.n) || null,
                  stop: sh && sh.stop != null ? +_num(sh.stop, 0).toFixed(2) : null, hold: (sh && sh.hold) || null, bars: (sh && sh.bars) || null,
                  tpR: sh && sh.tpR != null ? sh.tpR : null, tpPct: sh && sh.tpPct != null ? sh.tpPct : null,
-                 act: null, why: "관측 창(거래 창 밖) — 스캔만", obs: true });
+                 act: null, why: "관측 창(거래 창 밖) — 스캔만", obs: true }, sh, D0));
   }
   const top = items.slice().sort(function (a, b) { return (b.pb ? 1 : 0) - (a.pb ? 1 : 0) || b.q - a.q; }).slice(0, PB_ROUTE.liveKeep);
   await setState(DB, "pb_live:" + market, { ts: now, mtc: mtc, primary: pbPrimaryOn(st, now), regime: st.regime || null, n: items.length, obs: true,
@@ -24515,7 +24552,7 @@ async function runTradingCycle(env) {
       const __pbCandFresh = new Set();
       try {
         if (!extSessMkt && __sr && omniqFresh(__omniq, Date.now()) && __pbMtc != null && __pbMtc <= PB_ROUTE.candDailyWin) {
-          const _cs = Object.keys(__omniq.scores || {}).filter(function (s0) { return _num(__omniq.scores[s0], 0) >= PB_ROUTE.candMin; }).sort();
+          const _cs = Object.keys(__omniq.scores || {}).filter(function (s0) { return _num(__omniq.scores[s0], 0) >= pbCandMin(__sr); }).sort();
           if (_cs.length) {
             const _ck = "pb_cand_rr:" + market;
             let _co = await getState(DB, _ck, 0, true); if (!(typeof _co === "number" && _co >= 0)) _co = 0;
@@ -25252,19 +25289,19 @@ async function runTradingCycle(env) {
           const _pc = [], _hot = [];
           for (const it of orderedEval) {
             const sym = it && it.symbol, sc = sym ? _omqScore(__omniq, 5, sym) : null;
-            if (sc == null || sc < PB_ROUTE.candMin || !it.daily || !Array.isArray(it.daily.closes) || !(it.intra && it.intra.price > 0)) continue;
+            if (sc == null || sc < pbCandMin(__sr) || !it.daily || !Array.isArray(it.daily.closes) || !(it.intra && it.intra.price > 0)) continue;
             _pc.push(sym);
             const px = it.intra.price, pcl = it.intra.prevClose || px;
             const ctx = { reg: __sr.regime, symbol: sym, D: pbLiveDaily(it.daily, px, pcl, __pbMtc), bars5: null, prevClose: pcl, evNear: __pbEv, minToClose: __pbMtc };
             const real = pbRoutePick(__sr, ctx, Date.now()), sh = real || pbRoutePick(__sr, Object.assign({}, ctx, { shadow: true }), Date.now());
             __pbSeen.set(sym, __pbLive.length);
-            __pbLive.push({ s: sym, nm: (typeof NAME_MAP !== "undefined" && NAME_MAP[sym]) || null, q: +sc.toFixed(3), px: px,
+            __pbLive.push(pbRecExtra({ s: sym, nm: (typeof NAME_MAP !== "undefined" && NAME_MAP[sym]) || null, q: +sc.toFixed(3), px: px,
                             dp: pcl > 0 ? +((px / pcl - 1) * 100).toFixed(2) : null, sp: it.daily.closes.slice(-30).map(function (x) { return +(+x).toPrecision(5); }),
                             fired: (sh && sh.fired) || [], pb: (sh && sh.pb) || null, kind: (sh && sh.kind) || null,
                             m: sh && sh.m != null ? +_num(sh.m, 0).toFixed(3) : null, w: sh && sh.w != null ? +_num(sh.w, 0).toFixed(3) : null, n: (sh && sh.n) || null,
                             stop: sh && sh.stop != null ? +_num(sh.stop, 0).toFixed(2) : null, hold: (sh && sh.hold) || null, bars: (sh && sh.bars) || null,
                             tpR: sh && sh.tpR != null ? sh.tpR : null, tpPct: sh && sh.tpPct != null ? sh.tpPct : null,
-                            act: null, why: heldSymbols.has(sym) ? "보유 중" : real ? "평가 대기(앞으로 당김)" : ((sh && sh.why) || (sh && sh.pb ? "검증 미통과 — 기록만(그림자)" : "고를 매매법 없음")), pre: true });
+                            act: null, why: heldSymbols.has(sym) ? "보유 중" : real ? "평가 대기(앞으로 당김)" : ((sh && sh.why) || (sh && sh.pb ? "검증 미통과 — 기록만(그림자)" : "고를 매매법 없음")), pre: true }, sh, ctx.D));
             if (real && !heldSymbols.has(sym)) _hot.push(it);
           }
           // 살 수 있는 후보를 맨 앞으로(상한 PB_ROUTE.promoteMax) — 원래 자리에서 빼고 앞에 붙인다
@@ -26142,7 +26179,7 @@ async function runTradingCycle(env) {
             /* [V33.607·610] ★확률 높은 종목 → 그 종목에 맞는 매매법★(PB_ROUTE 주석) — 후보 = OMNI-Q 상위 20% · 매 분 지금 뜬 매매법 + 상황 칸 표 조회 · 원장 [SROUTE]
                [V33.610] 검증 미통과 시장도 후보마다 '무엇이 떴고 무엇을 골랐을지' 를 그림자로 계산해 관측창(pb_live)에 남긴다 — 매수는 통과 시장만. */
             const _pbS = (__sr && omniqFresh(__omniq, Date.now())) ? _omqScore(__omniq, 5, symbol) : null;
-            if (_pbS != null && _pbS >= PB_ROUTE.candMin && daily && daily.closes) {
+            if (_pbS != null && _pbS >= pbCandMin(__sr) && daily && daily.closes) {
               const _held = heldSymbols.has(symbol);
               const _canBuy = !_held && !crashGate.blockNew && canTrade && __srBought < __pbCap.maxPerCycle && __srOpen < __pbCap.maxOpen;
               let _pb5 = null;
@@ -26168,6 +26205,7 @@ async function runTradingCycle(env) {
                              fired: (_sh && _sh.fired) || [], pb: (_sh && _sh.pb) || null, kind: (_sh && _sh.kind) || null,
                              m: _sh && _sh.m != null ? +_num(_sh.m, 0).toFixed(3) : null, w: _sh && _sh.w != null ? +_num(_sh.w, 0).toFixed(3) : null, n: (_sh && _sh.n) || null,
                              act: null, why: null };
+              pbRecExtra(_rec, _sh, _pbCtx.D);
               if (_held) _rec.why = "보유 중";
               else if (!_sp) _rec.why = (_sh && _sh.why) || (_sh && _sh.pb ? (_sh.outWin && _sh.kind === "daily" && __sr.daily && _pbPass(__sr.daily.val) ? "마감 전 60분에 매수 판정" : "검증 미통과 — 기록만(그림자)") : "고를 매매법 없음");
               else if (!_canBuy) _rec.why = crashGate.blockNew ? "폭락 관문 — 신규 매수 금지" : !canTrade ? "거래 불가 시간" : "매매법 AI 상한";
@@ -30819,7 +30857,9 @@ async function handleRequest(request, env, ctx, _inner) {
       let body = null; try { body = await request.json(); } catch (e) {}
       const mk = body && (body.mkt === "us" || body.mkt === "kr") ? body.mkt : null;
       if (!mk || !body.daily || typeof body.daily !== "object") return Response.json({ error: "mkt·daily 필요" }, { status: 400, headers: cors });
-      const part = function (x) { return (x && typeof x === "object") ? { val: x.val || {}, table: (x.table && typeof x.table === "object") ? x.table : {}, pb: x.pb || {} } : null; };
+      /* [V33.620] cross(횡단면 3종 '오늘 뜬 종목') · gate(매매법 최근 성적) 도 남긴다 — 종전엔 cross 를 버려 상대강도·5일 낙폭·듀얼 모멘텀이 실전 판정에서 한 번도 안 떴다 */
+      const part = function (x) { return (x && typeof x === "object") ? { val: x.val || {}, table: (x.table && typeof x.table === "object") ? x.table : {}, pb: x.pb || {},
+                                                                          cross: (x.cross && typeof x.cross === "object") ? x.cross : {}, gate: (x.gate && typeof x.gate === "object") ? x.gate : null } : null; };
       const rec = { ts: Date.now(), day: String(body.day || ""), regime: String(body.regime || "NEUTRAL"), daily: part(body.daily), intra: part(body.intra) };
       rec.pass = { daily: _pbPass(rec.daily && rec.daily.val), intra: _pbPass(rec.intra && rec.intra.val) };
       const _sz = JSON.stringify(rec).length;
@@ -30834,7 +30874,7 @@ async function handleRequest(request, env, ctx, _inner) {
       for (const mk of ["us", "kr"]) {
         const r = await getState(env.DB, "playbook:" + mk, null);
         out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, pass: r.pass, primary: pbPrimaryOn(r, Date.now()),
-                        daily: r.daily && { val: r.daily.val, cells: Object.keys(r.daily.table || {}).length, pb: r.daily.pb,
+                        daily: r.daily && { val: r.daily.val, cells: Object.keys(r.daily.table || {}).length, pb: r.daily.pb, gate: r.daily.gate || null,
                                             cross: Object.fromEntries(Object.keys(r.daily.cross || {}).map(function (k) { return [k, (r.daily.cross[k] || []).length]; })) },
                         intra: r.intra && { val: r.intra.val, cells: Object.keys(r.intra.table || {}).length, pb: r.intra.pb } } : null;
       }

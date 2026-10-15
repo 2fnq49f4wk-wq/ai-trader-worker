@@ -339,6 +339,189 @@ def _event_feats(P, mk, log):
     return out
 
 
+# ── [V33.620] ★거시·섹터 피처★ — 사용자 10/15 "섹터·미국/한국·물가지수 발표 대응 · 악재면 헬스케어·보험·은행·필수소비재 · 금리 인하면 기술주 · 서프라이즈엔 다르게".
+#   OMNI-Q 피처는 전부 '그날 종목 간 순위' 다. 그날 모든 종목에 같은 값(CPI 서프라이즈 하나)은 순위로 바꾸면 전부 0.5 — 아무것도 못 배운다.
+#   그래서 거시는 ★종목별 민감도 × 지금 거시 상태★ 로 넣는다(그 거시에서 '어느 종목이 이득인가'):
+#     민감도 = 120일 베타(시장 SPY · 금리 TLT · 금 GLD) · 섹터 = 250일 상관이 가장 큰 섹터 ETF(XL* 11 + SMH · 21일마다 과거만으로 다시 정함 ·
+#     한국은 전날 미국 섹터 ETF 와의 상관) · 거시 상태 = TLT·SPY 수익 · 시장 스트레스(60일 낙폭 + 20일 변동) · 연방기금금리 60일 변화 ·
+#     발표 서프라이즈(CPI·근원 CPI·PPI·실업률·고용 — 실제 변화 − 직전 6개월 추세, 표준화 · 발표 뒤 10일 반감) — FRED 무료(합의 예측치 없음 → 추세가 기대).
+#   발표일은 보수적으로 늦게 잡는다(미래 정보 누출 없음). 미국 = 그날 종가 · 한국 = 전날 미국 마감까지만. 끄려면 OMNIQ_MACRO=0.
+SECTOR_NOW = {}   # 시장별 {종목: 섹터 ETF}
+MACRO = {}   # omniq_gha 가 넣는다: {"etf": {sym: {daykey: close}}, "fred": {id: [(YYYY-MM-DD, v), ...]}}
+SECTOR_ETFS = ("XLK", "XLV", "XLF", "XLP", "XLE", "XLU", "XLI", "XLY", "XLB", "XLRE", "XLC", "SMH")
+DEFENSIVE = ("XLV", "XLP", "XLU")
+GROWTH = ("XLK", "XLC", "SMH")
+FRED_IDS = {"CPIAUCSL": (15, "pct"), "CPILFESL": (15, "pct"), "PPIFIS": (16, "pct"), "UNRATE": (8, "diff"), "PAYEMS": (8, "diff")}   # (발표일 근사 = 다음 달 그 날짜 · 보수적, 변화 방식)
+
+
+def fetch_fred(log=print):
+    """FRED CSV(키 없음) — 월별 거시 + 일별 연방기금금리(DFF). 실패한 계열은 빠진다."""
+    import urllib.request
+    out = {}
+    for sid in list(FRED_IDS) + ["DFF"]:
+        try:
+            req = urllib.request.Request("https://fred.stlouisfed.org/graph/fredgraph.csv?id=" + sid, headers={"User-Agent": "ai-trader-worker omniq (github actions)"})
+            t = urllib.request.urlopen(req, timeout=60).read().decode()
+            rows = []
+            for ln in t.splitlines()[1:]:
+                a = ln.split(",")
+                if len(a) >= 2 and a[0][:2] in ("19", "20"):
+                    try:
+                        rows.append((a[0], float(a[1])))
+                    except ValueError:
+                        pass
+            out[sid] = rows[-400:] if sid != "DFF" else rows[-2000:]
+        except Exception as e:  # noqa: BLE001
+            log("      ⚠️ FRED %s 못 받음: %s" % (sid, e))
+    log("      거시(FRED) %s" % " · ".join("%s %d" % (k, len(v)) for k, v in out.items()))
+    return out
+
+
+def _dk2ts(dk):
+    import pandas as pd
+    return pd.Timestamp(str(int(dk)))
+
+
+def _macro_surprise(fred, dates, strict):
+    """발표 서프라이즈(표준화 · 발표 뒤 반감 10일) — dates(일 키) 마다 값. strict = 발표일 '다음 날부터'(한국)."""
+    import pandas as pd
+    res = {}
+    dts = [_dk2ts(d) for d in dates]
+    for sid, (rday, kind) in FRED_IDS.items():
+        rows = fred.get(sid) or []
+        if len(rows) < 30:
+            continue
+        v = np.array([x[1] for x in rows], dtype=float)
+        ch = (v[1:] / v[:-1] - 1) * 100 if kind == "pct" else np.diff(v)
+        rel, srp = [], []
+        for k in range(8, len(ch)):
+            exp_ = ch[k - 6:k].mean()
+            sd = ch[max(0, k - 24):k].std() or 1e-9
+            obs = pd.Timestamp(rows[k + 1][0])
+            ry, rm = (obs.year + (obs.month // 12), obs.month % 12 + 1)
+            rel.append(pd.Timestamp(year=ry, month=rm, day=rday))
+            srp.append((ch[k] - exp_) / sd)
+        rel, srp = np.array(rel, dtype="datetime64[ns]"), np.array(srp)
+        out = np.zeros(len(dates))
+        for i, d in enumerate(dts):
+            dd = np.datetime64(d)
+            m = (rel < dd) if strict else (rel <= dd)
+            if not m.any():
+                continue
+            j = np.nonzero(m)[0][-1]
+            age = (dd - rel[j]) / np.timedelta64(1, "D")
+            out[i] = srp[j] * 0.5 ** (age / 10.0)
+        res[sid] = out
+    return res
+
+
+def _macro_feats(P, mk, log):
+    import pandas as pd
+    etf_raw = (MACRO or {}).get("etf") or {}
+    C = P["close"]
+    dates = list(C.index)
+    if "SPY" not in etf_raw or "TLT" not in etf_raw:
+        log("      ⚠️ 거시·섹터 피처: SPY/TLT 일봉 없음 — 건너뜀")
+        return []
+    strict = mk == "kr"
+
+    def ser(sym):
+        s = pd.Series(etf_raw[sym]).sort_index()
+        s = s[~s.index.duplicated(keep="last")]
+        idx = np.array([int(d) for d in dates])
+        if strict:   # 한국 날짜 d ← 미국 d 보다 앞선 마지막 마감
+            pos = np.searchsorted(s.index.values.astype(np.int64), idx, side="left") - 1
+        else:
+            pos = np.searchsorted(s.index.values.astype(np.int64), idx, side="right") - 1
+        vals = np.where(pos >= 0, s.values[np.clip(pos, 0, None)], np.nan)
+        return pd.Series(vals, index=C.index, dtype=float)
+
+    R = C.pct_change(fill_method=None)
+    spy, tlt = ser("SPY"), ser("TLT")
+    gld = ser("GLD") if "GLD" in etf_raw else None
+    rs, rt = spy.pct_change(fill_method=None), tlt.pct_change(fill_method=None)
+    W = 120
+
+    def beta(rm):
+        mi, mm = R.rolling(W, min_periods=60).mean(), rm.rolling(W, min_periods=60).mean()
+        cov = R.mul(rm, axis=0).rolling(W, min_periods=60).mean().sub(mi.mul(mm, axis=0))
+        var = rm.rolling(W, min_periods=60).var(ddof=0)
+        return cov.div(var.replace(0, np.nan), axis=0)
+
+    # 한국은 자기 시장(동일가중) 베타 + 전날 미국 베타
+    rk = R.mean(axis=1) if mk == "kr" else rs
+    b_mkt, b_tlt = beta(rk), beta(rt)
+    b_spy = beta(rs) if mk == "kr" else b_mkt
+    b_gld = beta(gld.pct_change(fill_method=None)) if gld is not None else None
+    # 섹터 — 21일마다 과거 250일 상관 최대 섹터 ETF
+    secs = [s for s in SECTOR_ETFS if s in etf_raw]
+    SR = pd.DataFrame({s: ser(s).pct_change(fill_method=None) for s in secs})
+    T, N = C.shape
+    sec_idx = np.full((T, N), -1, dtype=np.int16)
+    Rv, SRv = R.values, SR.values
+    last = -1
+    for t in range(250, T):
+        if last < 0 or t - last >= 21:
+            a, b = Rv[t - 249:t + 1], SRv[t - 249:t + 1]
+            ok = np.isfinite(b).all(axis=1)
+            a, b = a[ok], b[ok]
+            if len(b) >= 120:
+                a0 = np.nan_to_num(a - np.nanmean(a, axis=0), nan=0.0)
+                b0 = b - b.mean(axis=0)
+                cor = (a0.T @ b0) / (np.sqrt((a0 ** 2).sum(axis=0))[:, None] * np.sqrt((b0 ** 2).sum(axis=0))[None, :] + 1e-12)
+                cur = np.argmax(cor, axis=1).astype(np.int16)
+                cur[np.isfinite(a).sum(axis=0) < 120] = -1
+            else:
+                cur = np.full(N, -1, dtype=np.int16)
+            last = t
+        sec_idx[t] = cur
+    cum = (1 + SR.fillna(0)).cumprod()
+    s5, s20 = (cum / cum.shift(5) - 1).values, (cum / cum.shift(20) - 1).values
+    srank = pd.DataFrame(s20).rank(axis=1, pct=True).values
+    def pick(M):
+        out = np.full((T, N), np.nan)
+        for k in range(len(secs)):
+            m = sec_idx == k
+            out[m] = np.broadcast_to(M[:, k:k + 1], (T, N))[m]
+        return pd.DataFrame(out, index=C.index, columns=C.columns)
+    sec5, sec20, secrk = pick(s5), pick(s20), pick(srank)
+    ret20 = C / C.shift(20) - 1
+    flag = lambda names: pd.DataFrame(np.isin(sec_idx, [secs.index(x) for x in names if x in secs]).astype(float), index=C.index, columns=C.columns)
+    f_def, f_gro, f_fin = flag(DEFENSIVE), flag(GROWTH), flag(("XLF",))
+    # 거시 상태(그날 하나)
+    spy_c = spy
+    stress = (-(spy_c / spy_c.rolling(60, min_periods=20).max() - 1)).fillna(0) * 10 + rs.rolling(20, min_periods=10).std().fillna(0) * 100
+    tlt5, tlt20, spy5 = tlt / tlt.shift(5) - 1, tlt / tlt.shift(20) - 1, spy / spy.shift(5) - 1
+    fred = (MACRO or {}).get("fred") or {}
+    fed = None
+    if fred.get("DFF"):
+        dff = pd.Series({pd.Timestamp(d): v for d, v in fred["DFF"]}).sort_index()
+        ts_ = [_dk2ts(d) - (pd.Timedelta(days=1) if strict else pd.Timedelta(0)) for d in dates]
+        now = dff.reindex(ts_, method="ffill").values
+        ago = dff.reindex([t - pd.Timedelta(days=60) for t in ts_], method="ffill").values
+        fed = pd.Series(now - ago, index=C.index)
+    sur = _macro_surprise(fred, dates, strict) if fred else {}
+    mul = lambda B, s: B.mul(s, axis=0)
+    out = [("mx_rate20", mul(b_tlt, tlt20)), ("mx_rate5", mul(b_tlt, tlt5)), ("mx_mkt5", mul(b_mkt, spy5)),
+           ("mx_stress_def", -mul(b_mkt, stress)), ("mx_def_stress", mul(f_def, stress)), ("mx_gro_rate", mul(f_gro, tlt20)),
+           ("mx_fin_yield", mul(f_fin, -tlt20)), ("mx_sec5", sec5), ("mx_sec20", sec20), ("mx_sec_rank", secrk), ("mx_vs_sec20", ret20 - sec20),
+           ("mx_b_tlt", b_tlt), ("mx_b_mkt", -b_mkt)]
+    if mk == "kr":
+        out.append(("mx_us_night", mul(b_spy, rs)))
+    if b_gld is not None:
+        out.append(("mx_gold20", mul(b_gld, gld / gld.shift(20) - 1)))
+    if fed is not None:
+        out += [("mx_fed_rate", mul(b_tlt, -fed)), ("mx_fed_gro", mul(f_gro, -fed))]
+    for sid, v in sur.items():
+        sv = pd.Series(v, index=C.index)
+        out.append(("mx_s_%s_rate" % sid.lower(), mul(b_tlt, sv)))
+        out.append(("mx_s_%s_mkt" % sid.lower(), mul(b_mkt, sv)))
+    SECTOR_NOW[mk] = {str(s_): secs[k] for s_, k in zip(C.columns, sec_idx[-1]) if k >= 0}   # 화면·매매법 AI 용 지금 섹터
+    nsec = int((sec_idx[-1] >= 0).sum())
+    log("      거시·섹터 피처 %d개 · 섹터 배정 %d/%d종목 · 서프라이즈 %s" % (len(out), nsec, N, ",".join(sur) or "없음"))
+    return out
+
+
 def _features_q(P, log, mk=None):
     """portfolio_lab._features 와 같되 동물원에 alpha101 을 더한다(반복 2)."""
     import factor_screen as fs
@@ -377,7 +560,7 @@ def _features_q(P, log, mk=None):
         except Exception as e:  # noqa: BLE001
             log("      ⚠️ 규칙 피처 실패: %s" % e)
     # [V33.615] 매매법 신호(34) · 실적·뉴스 — 다른 피처처럼 날짜별 횡단면 순위. 끄려면 OMNIQ_PBFEAT=0 · OMNIQ_EVFEAT=0
-    for flag, fn in (("OMNIQ_PBFEAT", lambda: _pb_feats(P)), ("OMNIQ_EVFEAT", lambda: _event_feats(P, mk, log))):
+    for flag, fn in (("OMNIQ_PBFEAT", lambda: _pb_feats(P)), ("OMNIQ_EVFEAT", lambda: _event_feats(P, mk, log)), ("OMNIQ_MACRO", lambda: _macro_feats(P, mk, log))):
         if os.environ.get(flag, "1") == "0":
             continue
         try:
@@ -397,7 +580,7 @@ FEAT_GROUPS = {}
 
 def _groups(names):
     """피처 묶음 수 — 화면(모델 구조)용."""
-    g = {"동물원(Alpha158·101·학술)": 0, "규칙 전략": 0, "매매법 신호": 0, "실적·뉴스": 0}
+    g = {"동물원(Alpha158·101·학술)": 0, "규칙 전략": 0, "매매법 신호": 0, "실적·뉴스": 0, "거시·섹터": 0}
     for n in names:
         n = str(n)
         if n.startswith("rule_"):
@@ -406,6 +589,8 @@ def _groups(names):
             g["매매법 신호"] += 1
         elif n.startswith("ev_"):
             g["실적·뉴스"] += 1
+        elif n.startswith("mx_"):
+            g["거시·섹터"] += 1
         else:
             g["동물원(Alpha158·101·학술)"] += 1
     return g

@@ -47,7 +47,17 @@ Pv = {"close":cv,"open":ov,"high":np.maximum(cv,ov)*1.01,"low":np.minimum(cv,ov)
 sv = CAT.signals(Pv, ids=["OS_DEEP","CAPIT_REV","ICHIMOKU","KELTNER","DONCHIAN","MACD_X","ENVELOPE","ELDER_RAY","WILLR","CCI_REV","PSAR","TRIPLE_SCR"])
 # [V33.619] 자동 조율 거르개 대조(같은 변동성 큰 시세)
 regv = PB._regime(Pv["close"])[0]; atrv = PB._daily_state(Pv, [])[4]; fmv = PB._flt_masks(Pv, regv, atrv)
-FMv = {k: np.asarray(fmv[k])[-120:].astype(int).tolist() for k in ("trend", "noBear", "calm", "up20")}; RGv = [str(x) for x in regv[-120:]]
+FMv = {k: np.asarray(fmv[k])[-120:].astype(int).tolist() for k in ("trend", "noBear", "calm", "up20", "notExt", "dip5", "rsiMid")}
+FMv["trend+dip5"] = (np.asarray(fmv["trend"]) & np.asarray(fmv["dip5"]))[-120:].astype(int).tolist()
+# [V33.620] 최근 성적 스위치 · 최근 가중 표
+import pandas as _pd
+hist = _pd.DataFrame({"pb": ["A"] * 20 + ["B"] * 20, "x": list(range(80, 100)) * 2, "ex": [-1.0] * 20 + [1.0] * 20, "t": list(range(70, 90)) * 2})
+te = _pd.DataFrame({"pb": ["A", "B", "A"], "t": [101, 101, 200]})
+gok = PB._gate_ok(hist, te, 40).astype(int).tolist()
+dd = _pd.DataFrame({"pb": ["A"] * 200, "t": list(range(200)), "ex": [-1.0] * 100 + [1.0] * 100, "hd": 1.0})
+for k_ in ("k0", "k1", "k2", "k3"):
+    dd[k_] = "*"
+dec = [PB._shrunk_table(dd)[("*", "A")][2], PB._shrunk_table(dd, decay=20, tcol="t", ref=200)[("*", "A")][2]]; RGv = [str(x) for x in regv[-120:]]
 # [V33.619] 자동 조율 귀무·양성 대조 — 하루를 26걸음으로 걸은 무작위 시세(진짜 고가·저가)
 def _path(seed, T=800, N=220, sub=26, sg=0.018):
     r2 = np.random.default_rng(seed)
@@ -82,7 +92,7 @@ dk = PB.daily_keys(["BULL"]*len(s), s[:,0], s[:,1], s[:,2], s[:,3], s[:,4].astyp
 I = np.array(${JSON.stringify(isamp)}, dtype=float)
 ik = PB.intra_keys(["CRASH"]*len(I), I[:,0], I[:,1], I[:,2].astype(int))
 print(json.dumps({"null": null_d.get("pass"), "pos": pos, "pick": ch and ch[0], "G": G, "Pa": Pa, "Sd": Sd, "K": K, "ib": ib, "dk": [[str(x) for x in lv] for lv in dk], "ik": [[str(x) for x in lv] for lv in ik],
-  "Pva": Pva, "Sv": Sv, "FMv": FMv, "RGv": RGv, "tnull": tnull, "tpos": tpos, "INPB": sorted(PB.INTRA_PB), "LF": LF, "MR": MR, "RG": RG, "tab5len": len(next(iter(tab5.values()))), "snapMr": sorted(k for k, v in PB.DAILY_PB.items() if v.get("mr")),
+  "Pva": Pva, "Sv": Sv, "FMv": FMv, "gok": gok, "dec": dec, "rulesA": PB.RULES_ADAPT, "cqs": list(PB.CAND_QS), "RGv": RGv, "tnull": tnull, "tpos": tpos, "INPB": sorted(PB.INTRA_PB), "LF": LF, "MR": MR, "RG": RG, "tab5len": len(next(iter(tab5.values()))), "snapMr": sorted(k for k, v in PB.DAILY_PB.items() if v.get("mr")),
   "rules": PB.RULES, "chLow": PB.choose({("*", "A"): (100, 0.3, 0.6, 0.4, 2.0)}, ["*"], ["A"]), "pbs": sorted(PB.DAILY_PB), "ipbs": sorted(PB.INTRA_PB), "B": [PB.B_RSI, PB.B_GAP20, PB.B_RET5, PB.B_VR, PB.B_DAYPCT, PB.B_TOD]}))
 `;
 const r = spawnSync("python3", ["-c", py], { encoding: "utf8", timeout: 300000, maxBuffer: 256 * 1024 * 1024 });
@@ -154,10 +164,22 @@ if (o) {
       const col = (k) => o.Pva[k].map((r) => r[j]);
       const A = { o: col("open"), h: col("high"), l: col("low"), c: col("close"), v: col("volume") };
       for (let q = 0; q < 120; q++) { const t = T - 120 + q, D = { o: A.o.slice(0, t + 1), h: A.h.slice(0, t + 1), l: A.l.slice(0, t + 1), c: A.c.slice(0, t + 1), v: A.v.slice(0, t + 1) };
-        for (const f of ["trend", "noBear", "calm", "up20"]) { const js = W.pbLiveFilterOk("ZZ", D, o.RGv[q], { flt: f }) ? 1 : 0; if (js !== o.FMv[f][q][j] && bad.length < 5) bad.push([f, t, j, js]); } } }
-    chk(!bad.length, "[V33.619] 자동 조율 거르개(trend·noBear·calm·up20) 학습기 = 워커", JSON.stringify(bad));
+        for (const f of ["trend", "noBear", "calm", "up20", "notExt", "dip5", "rsiMid", "trend+dip5"]) { const js = W.pbLiveFilterOk("ZZ", D, o.RGv[q], { flt: f }) ? 1 : 0; if (js !== o.FMv[f][q][j] && bad.length < 5) bad.push([f, t, j, js]); } } }
+    chk(!bad.length, "[V33.619·620] 조율 거르개 7종(trend·noBear·calm·up20·notExt·dip5·rsiMid) + 2개 조합 학습기 = 워커", JSON.stringify(bad));
+    chk(JSON.stringify(o.gok) === "[0,1,1]", "[V33.620] 최근 성적 스위치: 최근 40일 끝난 모의 거래 평균 < 0(표본 ≥ 15)인 매매법은 쉬고, 오래된 손실은 안 센다", JSON.stringify(o.gok));
+    chk(Math.abs(o.dec[0]) < 0.2 && o.dec[1] > 0.5, "[V33.620] 최근 가중 표: 앞 절반 손실·뒤 절반 이익이면 가중 표가 이익 쪽(국면 변화 적응)", JSON.stringify(o.dec));
+    chk(o.rulesA.some((r) => r.decay) && o.rulesA.some((r) => r.gate) && JSON.stringify(o.cqs) === "[0.8,0.6,0.4]", "[V33.620] 규칙 후보에 최근 가중·성적 스위치 · 후보 폭 상위 20·40·60% 를 검증이 고른다");
     chk(o.tnull.length <= 2, "[V33.619] 조율 귀무: 무작위 시세(진짜 고·저가)에선 29종 중 2종 이하만 바꾼다(달 묶음 t · 확인 구간)", JSON.stringify(o.tnull));
-    chk(o.tpos.flt === "trend" && o.tpos.test.tuned[1] > o.tpos.test.base[1] + 0.5, "[V33.619] 조율 양성: '종가 > MA200 일 때만 오르는' 엔벨로프 우위를 심으면 trend 거르개를 찾고 손대지 않은 구간에서도 낫다", JSON.stringify(o.tpos)); }
+    chk(String(o.tpos.flt || "").split("+").includes("trend") && o.tpos.test.tuned[1] > o.tpos.test.base[1] + 0.5, "[V33.620] 정밀 조율 양성: '종가 > MA200 일 때만 오르는' 엔벨로프 우위를 심으면 한 칸씩 올라 trend 거르개를 찾고 손대지 않은 구간에서도 낫다", JSON.stringify(o.tpos));
+    chk(o.tpos.diag && o.tpos.diag.rc && Array.isArray(o.tpos.problems) && Array.isArray(o.tpos.path) && o.tpos.path.length >= 2, "[V33.620] 매매법 진단(청산 사유·국면별·문제) · 걸어온 길 기록", JSON.stringify([o.tpos.problems, o.tpos.path])); }
+  { const Wg = new Function("_num", "getMA", "getRSI", "STRAT_ROUTE", "MACRO_SCHED", fnSrc + "; return { pbGateOff, pbCandMin, pbChoose };")(_num, getMA, getRSI, STRAT_ROUTE, MACRO_SCHED);
+    const dly = { val: { rule: { score: "lcb", level: "global", gate: 40 } }, gate: { A: [20, -0.4], B: [20, 0.3], C: [5, -2] } };
+    chk(JSON.stringify(Wg.pbGateOff(dly, ["A", "B", "C"])) === '["A"]' && Wg.pbGateOff({ ...dly, val: { rule: { score: "m", level: "fine" } } }, ["A"]).length === 0,
+        "[V33.620] 워커 성적 스위치: 규칙에 gate 가 있을 때만 · 표본 ≥ 15 · 평균 < 0 인 매매법만 쉰다");
+    chk(Wg.pbCandMin({ daily: { val: { candQ: 0.6 } } }) === 0.6 && Wg.pbCandMin({ daily: { val: {} } }) === 0.8, "[V33.620] 후보 폭 = 학습기 검증이 고른 값(없으면 상위 20%)");
+    const ch = Wg.pbChoose({ "*": { A: [100, 0.5, 0.5, 0.4, 1], B: [100, 0.5, -0.2, -0.3, 1] } }, ["*"], ["A", "B", "Z"]);
+    chk(ch && ch.pb === "A" && ch.alts.length === 3, "[V33.620] 고른 근거: 뜬 매매법마다 칸 값(관측창)", JSON.stringify(ch));
+    chk(/cross: \(x\.cross && typeof x\.cross === "object"\) \? x\.cross : \{\}, gate:/.test(S), "[V33.620] 업로드가 cross(횡단면 3종)·gate 를 버리지 않는다 — 종전엔 상대강도·5일 낙폭·듀얼 모멘텀이 실전에서 한 번도 안 떴다"); }
   const B = o.B;
   chk(JSON.stringify(B) === JSON.stringify([W.PB_KEYS.rsi, W.PB_KEYS.gap20, W.PB_KEYS.ret5, W.PB_KEYS.vr, W.PB_KEYS.daypct, W.PB_KEYS.tod]), "열쇠 경계가 학습기와 같다");
   let same = true, bad = "";
@@ -227,7 +249,7 @@ chk(/^SR-TP/.test(W.pbExitWhy(si, 100, 101.3, now - 60000, now, 200)) && /^SR-TI
 const sd = { sid: "PULLBACK", kind: "daily", stop: 5, tpR: 2, hold: 10 };
 chk(/^SR-TP/.test(W.pbExitWhy(sd, 100, 110.5, now, now, 200)) && /^SR-TIME/.test(W.pbExitWhy(sd, 100, 101, now - 15 * 86400000, now, 200)) && W.pbExitWhy(sd, 100, 101, now - 86400000, now, 200) === null,
     "스윙 청산: 익절(2R = 10%) · 최대 보유(10거래일 ≈ 14.5일)");
-chk(/_pbS >= PB_ROUTE\.candMin/.test(S) && /candMin: 0\.80/.test(S) && /omniqFresh\(__omniq, Date\.now\(\)\)/.test(S), "후보 = OMNI-Q 5일 머리 상위 20%(신선할 때만)");
+chk(/_pbS >= pbCandMin\(__sr\)/.test(S) && /candMin: 0\.80/.test(S) && /omniqFresh\(__omniq, Date\.now\(\)\)/.test(S), "후보 = OMNI-Q 5일 머리 상위 20%(신선할 때만)");
 chk(/getState\(DB, "playbook:" \+ market/.test(S) && /path === "\/api\/playbook" && request\.method === "POST"/.test(S), "표 업로드·조회 배선");
 chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"5m"/.test(readFileSync(dir + "omniq_gha.py", "utf8")), "GHA 회차: 5분봉 받아 시뮬");
 // [V33.609] 선택 규칙 · 자동 주력 전환 · 위원회 퇴역
