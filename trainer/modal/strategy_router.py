@@ -75,6 +75,26 @@ def _atr_pct(P):
     return (tr.rolling(14, min_periods=14).mean() / c * 100).values
 
 
+FEATS = ("rsi14", "atr", "ret5", "ret20", "ret60", "gap20", "gap50", "pos250", "vr20", "mret20")
+
+
+def _feats(P):
+    """[V33.604] 종목 특성(신호 날 · 그날까지의 값만) — 같은 매매법이라도 종목마다 맞고 안 맞음을 배운다."""
+    c = P["close"]
+    d = c.diff()
+    up = d.clip(lower=0).ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+    dn = (-d.clip(upper=0)).ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+    v = P.get("volume")
+    mr = c.pct_change(fill_method=None).mean(axis=1)
+    F = {"rsi14": (100 - 100 / (1 + up / dn.replace(0, np.nan))).values, "atr": _atr_pct(P),
+         "ret5": (c / c.shift(5) - 1).values * 100, "ret20": (c / c.shift(20) - 1).values * 100, "ret60": (c / c.shift(60) - 1).values * 100,
+         "gap20": (c / c.rolling(20).mean() - 1).values * 100, "gap50": (c / c.rolling(50).mean() - 1).values * 100,
+         "pos250": (c / c.rolling(250, min_periods=120).max()).values,
+         "vr20": (v / v.rolling(20).mean()).values if v is not None else np.full(c.shape, np.nan),
+         "mret20": np.repeat(((1 + mr).rolling(20).apply(np.prod, raw=True) - 1).values[:, None] * 100, c.shape[1], axis=1)}
+    return F
+
+
 def build_samples(P, market):
     """Phase B — 모든 매매법 신호의 결과표. 같은 매매법·종목은 앞 거래가 끝나기 전엔 다시 세지 않는다."""
     O, H, L, Cl = (P[k].values for k in ("open", "high", "low", "close"))
@@ -118,6 +138,13 @@ def build_samples(P, market):
             rows.append((s["id"], j, i, x, regv[i], raw - mk - cost, raw - cost))
             busy[j] = x
     df = pd.DataFrame(rows, columns=["sid", "j", "i", "x", "reg", "ex", "raw"])
+    if len(df):
+        F = _feats(P)
+        for k in FEATS:
+            df[k] = F[k][df["i"].values, df["j"].values]
+        sv = {s["id"]: min(s["exit"]["stop"], 1e9) for s in C.CATALOG}
+        am = {s["id"]: s["exit"]["atr"] for s in C.CATALOG}
+        df["stop"] = np.minimum(df["sid"].map(sv).values, df["sid"].map(am).values * df["atr"].values)
     return df, sig, reg
 
 
@@ -179,6 +206,56 @@ def walk_forward(df, T):
     return {"router": rt, "baseline": base, "pass": bool(ok), "days": BT_DAYS, "step": STEP, "k": K_SHRINK}
 
 
+LGB_RETRAIN = 63
+SIDS = [s["id"] for s in C.CATALOG]
+
+
+def _X(d):
+    X = d[list(FEATS)].astype(float).copy()
+    X["sid"] = pd.Categorical(d["sid"], categories=SIDS).codes
+    X["reg"] = pd.Categorical(d["reg"], categories=list(REGIMES)).codes
+    return X
+
+
+def _lgb_fit(hist):
+    import lightgbm as lgb
+    y = hist["ex"].clip(-15, 15).values                 # 꼬리 몇 건이 모델을 끌고 가지 않게
+    prm = {"objective": "regression", "learning_rate": 0.03, "num_leaves": 15, "min_data_in_leaf": 80, "bagging_fraction": 0.8, "bagging_freq": 1,
+           "feature_fraction": 0.8, "lambda_l2": 5.0, "verbose": -1, "num_threads": 4, "seed": 7}
+    m = lgb.train(prm, lgb.Dataset(_X(hist), y, categorical_feature=["sid", "reg"]), num_boost_round=200)
+    return m
+
+
+def walk_forward_lgb(df, T):
+    """[V33.604] 종목별 매매법 선택 — LightGBM 이 (매매법 · 국면 · 종목 특성) → 순초과를 예측.
+    63거래일마다 그 전에 ★끝난★ 표본만으로 다시 학습 · 한 종목·하루에 신호가 여럿이면 예측이 가장 큰 매매법 · 예측 > 0 만 산다."""
+    start = max(260, T - BT_DAYS)
+    picked, allsig = [], []
+    m, mf = None, -10 ** 9
+    for f in range(start, T - 2, STEP):
+        if f - mf >= LGB_RETRAIN or m is None:
+            hist = df[(df["x"] < f) & (df["i"] >= f - 750)]
+            if len(hist) < 2000:
+                continue
+            m, mf = _lgb_fit(hist), f
+        blk = df[(df["i"] >= f) & (df["i"] < f + STEP)]
+        if blk.empty:
+            continue
+        allsig.extend(blk["ex"].tolist())
+        b = blk.assign(mu=m.predict(_X(blk)))
+        b = b[b["mu"] > 0].sort_values(["i", "mu"], ascending=[True, False]).drop_duplicates(["i", "j"])
+        busy = {}
+        for r in b.itertuples():
+            if busy.get(r.j, -1) >= r.i:
+                continue
+            picked.append(r.ex)
+            busy[r.j] = r.x
+    rt, base = _stats(picked), _stats(allsig)
+    ok = (rt["n"] >= PASS["minN"] and (rt["mean"] or 0) > 0 and rt["t"] >= PASS["minT"]
+          and base["mean"] is not None and rt["mean"] > base["mean"])
+    return {"router": rt, "baseline": base, "pass": bool(ok), "days": BT_DAYS, "step": STEP, "model": "lgb"}
+
+
 def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=print):
     for market in ("us", "kr"):
         t0 = time.time()
@@ -188,7 +265,17 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             continue
         df, sig, reg = build_samples(P, market)
         T = P["close"].shape[0]
-        wf = walk_forward(df, T)
+        wf_s = walk_forward(df, T)
+        wf_s["model"] = "shrink"
+        try:
+            wf_l = walk_forward_lgb(df, T)
+        except Exception as e:  # noqa: BLE001
+            log("   ⚠️ [매매법AI] LightGBM 실패 %s — 수축 모델만" % e)
+            wf_l = {"pass": False, "model": "lgb", "router": {"n": 0, "mean": None, "t": 0.0}}
+        # 미리 고정: 통과한 쪽 중 걷기 평균이 높은 모델 · 둘 다 못 넘으면 수축(기록만)
+        cand = [w for w in (wf_l, wf_s) if w["pass"]]
+        wf = max(cand, key=lambda w: w["router"]["mean"]) if cand else wf_s
+        wf["alt"] = {"model": (wf_l if wf is wf_s else wf_s).get("model"), "router": (wf_l if wf is wf_s else wf_s)["router"]}
         # 매매법별 성적(최근 500일 · 국면별) — 화면·사람 검토용
         rec = df[df["i"] >= T - BT_DAYS]
         table = {}
@@ -198,20 +285,35 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         est = _shrunk(df[df["x"] < T - 1])
         now = str(reg.iloc[-1])
         syms = list(P["close"].columns)
-        picks = {}
+        F = _feats(P)
+        cat = C.by_id()
+        last = []                                     # 오늘 신호 전부(종목 × 매매법) + 특성
         for s in C.CATALOG:
-            mu, n = est.get((s["id"], now), (0.0, 0))
-            if mu <= 0 or n < MIN_N_SEL:
-                continue
             for j in np.nonzero(sig[s["id"]].values[-1])[0]:
-                sym = syms[j]
-                if sym not in picks or picks[sym]["mu"] < mu:
-                    picks[sym] = {"sid": s["id"], "mu": round(mu, 4), "n": n, "hold": s["exit"]["hold"], "horizon": s["horizon"]}
+                row = {"sid": s["id"], "j": int(j), "reg": now}
+                row.update({k: F[k][-1, j] for k in FEATS})
+                last.append(row)
+        L = pd.DataFrame(last)
+        picks = {}
+        if len(L):
+            if wf.get("model") == "lgb":
+                L["mu"] = _lgb_fit(df[(df["x"] < T - 1) & (df["i"] >= T - 750)]).predict(_X(L))
+                L["n"] = [est.get((sid, now), (0.0, 0))[1] for sid in L["sid"]]
+            else:
+                L["mu"] = [est.get((sid, now), (0.0, 0))[0] for sid in L["sid"]]
+                L["n"] = [est.get((sid, now), (0.0, 0))[1] for sid in L["sid"]]
+                L = L[L["n"] >= MIN_N_SEL]
+            L = L[L["mu"] > 0].sort_values("mu", ascending=False).drop_duplicates("j")
+            for r in L.itertuples():
+                ex = cat[r.sid]["exit"]
+                stop = float(min(ex["stop"], ex["atr"] * r.atr)) if r.atr == r.atr else float(ex["stop"])
+                picks[syms[r.j]] = {"sid": r.sid, "mu": round(float(r.mu), 4), "n": int(r.n), "hold": ex["hold"], "horizon": cat[r.sid]["horizon"],
+                                    "stop": round(max(1.5, stop), 2)}
         sel = sorted(({"sid": k[0], "mu": round(v[0], 4), "n": v[1]} for k, v in est.items() if k[1] == now and v[1] >= MIN_N_SEL),
                      key=lambda r: -r["mu"])
         day = str(P["close"].index[-1])
-        log("   · [매매법AI] %s 종목 %d · 표본 %d · 국면 %s · 걷기검증 n=%s 평균 %s%% t=%s (전부사기 %s%%) → %s · 오늘 후보 %d (%.0fs)" % (
-            market, len(syms), len(df), now, wf["router"]["n"], wf["router"]["mean"], wf["router"]["t"], wf["baseline"]["mean"],
+        log("   · [매매법AI] %s 모델 %s(대안 %s 평균 %s%%) · 종목 %d · 표본 %d · 국면 %s · 걷기검증 n=%s 평균 %s%% t=%s (전부사기 %s%%) → %s · 오늘 후보 %d (%.0fs)" % (
+            market, wf.get("model"), wf["alt"]["model"], wf["alt"]["router"].get("mean"), len(syms), len(df), now, wf["router"]["n"], wf["router"]["mean"], wf["router"]["t"], wf["baseline"]["mean"],
             "통과" if wf["pass"] else "미통과", len(picks), time.time() - t0))
         if upload and BASE:
             try:
