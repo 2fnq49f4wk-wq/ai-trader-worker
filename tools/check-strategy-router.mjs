@@ -45,7 +45,7 @@ chk(M.stratRoutePick({ ...good, ts: now - 40 * 3600000 }, "AAA", now) === null, 
 chk(M.STRAT_ROUTE.mult === 0.5 && /signal\.isStratRoute && STRAT_ROUTE\.mult/.test(S), "잠정 크기 ×0.5");
 chk(/\? "SROUTE"/.test(S) && /LIKE '\[SROUTE\]%'/.test(S), "원장 꼬리표 [SROUTE] · 하루 상한");
 chk(/"SR-TIME "/.test(S) && /sr: \(signal && signal\.isStratRoute/.test(S), "그 매매법 최대 보유일 → SR-TIME 청산");
-chk(/"hold": s\["exit"\]\["hold"\]/.test(readFileSync(dir + "strategy_router.py", "utf8")), "학습기가 picks 에 보유일·기간을 싣는다");
+chk(/"hold": ex\["hold"\], "horizon": cat\[r\.sid\]\["horizon"\]/.test(readFileSync(dir + "strategy_router.py", "utf8")), "학습기가 picks 에 보유일·기간을 싣는다");
 chk(/strategy_router\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")), "GHA 회차에 연결");
 if (fails) { console.log("check-strategy-router: FAIL " + fails); process.exit(1); }
 console.log("check-strategy-router: ok");
