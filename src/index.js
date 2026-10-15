@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.615";
+const _BUILD_VER = "V33.617";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -10693,8 +10693,11 @@ async function fetchMinuteBars(symbol, opts) {
   // US 종목 — 기존 Yahoo v8 chart 분봉
   const interval = (opts && opts.interval) || (SCALP_BAR_MIN + "m");   // [V33.222] 기준봉에서 파생
   const range = (opts && opts.range) || "1d";
+  /* [V33.616] ★시간외엔 프리·애프터 분봉을 받는다★ — includePrePost 가 없으면 야후는 '어제 정규장' 분봉만 준다(실측 10/15 06:54 ET:
+     없이 391봉 · 마지막 10/14 16:00 / 붙이면 172봉 · 마지막 10/15 06:54 프리마켓). 정규장엔 붙이지 않는다(VWAP·당일 고저가 정규장 기준). */
+  const _pp = isExtendedHoursWindow("us") ? "&includePrePost=true" : "";
   const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" +
-    encodeURIComponent(symbol) + "?interval=" + interval + "&range=" + range);
+    encodeURIComponent(symbol) + "?interval=" + interval + "&range=" + range + _pp);
   const result = j && j.chart && j.chart.result && j.chart.result[0];
   if (!result) throw new Error("no minute data");
   const meta = result.meta || {};
@@ -13533,6 +13536,12 @@ const PB_KEYS = { rsi: [30, 50, 70], gap20: [-5, 0, 5], ret5: [-3, 3], vr: [0.8,
 /* [V33.609] ★자동 주력 전환★(사용자 10/15: "AI_PRIMARY 퇴역 · 새 매매법 AI 주력 — 단, 통과할 때까지 AI_PRIMARY 유지")
    그 시장의 매매법 AI 일봉 검증이 통과하고 표가 신선하면(pbPrimaryOn) 그 시장에서 AI_PRIMARY 신규 진입을 끈다. 미통과면 AI_PRIMARY 그대로.
    전환된 시장은 매매법 AI 상한을 주력 값(PB_PRIMARY_CAPS)으로 올리고 크기는 ×1.0. */
+/* [V33.617] ★위원회(AI_PRIMARY) 모델 학습·표본 수집 퇴역★(사용자 10/15: "ai-primary 모델 학습·데이터 수집 중단 — OMNI-Q 와 매매법 AI 에 집중")
+   끄는 것: 야간 위원회 학습(L1·노이즈·앙상블·MIND·GBDT·MEMO·이중헤드·보정·전문가/블렌드 계수) · 위원회 표본 수집(하베스트·반사실 라벨·딥이력·장중 단타 표본)
+            · 옛 OMNI(분봉 모델) 섀도 채점·결과 수집 · 수급(flow) 수집 · Modal 위원회 학습(크론) · GHA 위원회 학습.
+   남기는 것: ★추론★(이미 저장된 모델로 AI_PRIMARY 가 매매법 AI 검증 통과 전까지 계속 판단) · OMNI-Q/매매법 AI 데이터(일봉·5분봉·실적·뉴스).
+   되돌리려면 false. 저장된 모델 파일은 지우지 않는다. */
+const COMMITTEE_RETIRED = true;
 const PB_PRIMARY_CAPS = { maxPerCycle: 2, maxPerDay: 6, maxOpen: 12, mult: 1.0 };
 function pbPrimaryOn(st, nowMs) { return !!(st && st.daily && _pbPass(st.daily.val) && (nowMs - _num(st.ts, 0)) <= STRAT_ROUTE.freshMs); }
 const PB_ROUTE = { candMin: 0.80, minWin: 0.5, intraMinToClose: 30, eodMin: 10, regMin: 390, intraFetchMax: 8, dailyEntryWin: 60, liveKeep: 60,
@@ -13737,6 +13746,35 @@ function pbRoutePick(st, ctx, nowMs) {
     }
   }
   return best;
+}
+/* [V33.616] 거래 창 밖 관측 스캔 — 후보(OMNI-Q 상위 20%) 일봉 캐시를 한 번에 읽고(getStates · 90개씩) 그림자 판정만 남긴다. 주문 없음. */
+async function pbObserveScan(DB, market, quotes, st, omniq) {
+  if (!st || !omniqFresh(omniq, Date.now())) return 0;
+  const syms = Object.keys((omniq && omniq.scores) || {}).filter(function (s0) { return _num(omniq.scores[s0], 0) >= PB_ROUTE.candMin && quotes && quotes[s0]; });
+  if (!syms.length) return 0;
+  const dk = syms.map(function (s0) { return "daily:" + s0; }), daily = {};
+  for (let j = 0; j < dk.length; j += 90) Object.assign(daily, await getStates(DB, dk.slice(j, j + 90)));
+  const now = Date.now(), mtc = minutesToClose(market, new Date()), ev = pbEvNear(now), items = [];
+  for (const s0 of syms) {
+    const d = daily["daily:" + s0], q = quotes[s0];
+    if (!d || !Array.isArray(d.closes) || d.closes.length < 211) continue;
+    // 시간외 체결가(장전 pre · 장후 post)와 그 기준(정규장 마지막 값 price). 시간외 체결이 없으면 정규장 값과 그 전일 종가.
+    const ext = q.mstate === "PRE" ? _num(q.pre, 0) : (q.mstate === "POST" || q.mstate === "POSTPOST") ? _num(q.post, 0) : 0;
+    const px = ext > 0 ? ext : _num(q.price, 0), pcl = ext > 0 ? _num(q.price, px) : _num(q.prevClose, px);
+    if (!(px > 0)) continue;
+    const sh = pbRoutePick(st, { reg: st.regime, symbol: s0, D: pbLiveDaily(d, px, pcl, mtc), bars5: null, prevClose: pcl, evNear: ev, minToClose: mtc, shadow: true }, now);
+    items.push({ s: s0, nm: (typeof NAME_MAP !== "undefined" && NAME_MAP[s0]) || null, q: +_num(omniq.scores[s0], 0).toFixed(3), px: px,
+                 dp: pcl > 0 ? +((px / pcl - 1) * 100).toFixed(2) : null, sp: d.closes.slice(-30).map(function (x) { return +(+x).toPrecision(5); }),
+                 fired: (sh && sh.fired) || [], pb: (sh && sh.pb) || null, kind: (sh && sh.kind) || null,
+                 m: sh && sh.m != null ? +_num(sh.m, 0).toFixed(3) : null, w: sh && sh.w != null ? +_num(sh.w, 0).toFixed(3) : null, n: (sh && sh.n) || null,
+                 stop: sh && sh.stop != null ? +_num(sh.stop, 0).toFixed(2) : null, hold: (sh && sh.hold) || null, bars: (sh && sh.bars) || null,
+                 tpR: sh && sh.tpR != null ? sh.tpR : null, tpPct: sh && sh.tpPct != null ? sh.tpPct : null,
+                 act: null, why: "관측 창(거래 창 밖) — 스캔만", obs: true });
+  }
+  const top = items.slice().sort(function (a, b) { return (b.pb ? 1 : 0) - (a.pb ? 1 : 0) || b.q - a.q; }).slice(0, PB_ROUTE.liveKeep);
+  await setState(DB, "pb_live:" + market, { ts: now, mtc: mtc, primary: pbPrimaryOn(st, now), regime: st.regime || null, n: items.length, obs: true,
+    f: items.filter(function (x) { return x.fired.length; }).length, c: items.filter(function (x) { return x.pb; }).length, a: 0, items: top });
+  return items.length;
 }
 // 매매법 관리 보유 청산 판정(순수 함수) → 사유 문자열 | null
 function pbExitWhy(sm, avg, price, openedTs, nowMs, minToClose) {
@@ -23779,7 +23817,7 @@ async function runTradingCycle(env) {
       if (isMarketOpen("us") || isMarketOpen("kr")) {
         // [V33.110] R2 가 없으면 폴백하지 않는다 — 대신 그 사실을 크게 남긴다.
         //   조용한 폴백이 'R2 가 꺼져 있는데 잘 돌고 있는 줄 아는' 상태를 만들었다.
-        if (_bigR2()) __stinPend = await _stinLoadPend();
+        if (_bigR2() && !COMMITTEE_RETIRED) __stinPend = await _stinLoadPend();   // [V33.617] 장중 단타 표본(위원회용) 수집 퇴역
         else {
           __stinPend = null;
           try {
@@ -23865,7 +23903,10 @@ async function runTradingCycle(env) {
         /* [V33.512] 관측 전용 구간도 2분 — 사용자 요청("프리·애프터 실시간"). 운영(10/07 08:41Z 프리마켓): 미국 557종목 시세 나이 4.6분.
            V33.502 로 미국 시간외가 나스닥 배치(종목 수십 개당 1콜)가 되어 6분으로 아끼던 예산 이유가 사라졌다. */
         void _inTradeWin;
-        if (_m % 2 !== 0) continue;
+        /* [V33.616] ★두 시장이 다 시간외면 분마다 번갈아 돈다★ — 운영(10/15 10:29~10:52Z): 한국 장후(NXT) 평가가 사이클을 다 써서
+           미국 프리마켓 차례가 23분간 안 왔다(시세 · 후보 스캔 정지). 짝수 분 = 한국 · 홀수 분 = 미국. 한 시장만 시간외면 종전대로 2분마다. */
+        const _bothExt = marketsForQuotes.length === 2 && !usMarketHours && !krMarketHours;
+        if (_bothExt ? (_m % 2) !== (market === "kr" ? 0 : 1) : (_m % 2 !== 0)) continue;
       }
       const positions = await getPositions(DB, market);  // key: "SYM::strategy"
       let __omniq = null;   // [V33.535] OMNI-Q 점수(발언 중일 때만 하위 절반 신규진입 차단)
@@ -24347,7 +24388,12 @@ async function runTradingCycle(env) {
          ※ 아직 열려 있는 것: A-8(조기폐장) — 반장 13:00~16:00 ET 는 정규장으로 보므로
            그 3시간에는 이 가드가 아예 안 걸린다. */
       const extSessMkt = extOnly ? extTradeSession(market, cfg) : null;
-      if (extOnly && !extSessMkt) continue;   // 시간외 거래를 껐거나 창 밖 — 종전대로 가격만 갱신
+      if (extOnly && !extSessMkt) {   // 시간외 거래를 껐거나 창 밖 — 가격만 갱신
+        /* [V33.616] ★관측 창(미국 04:00~07:00 ET 등)에서도 매매법 AI 후보를 스캔한다(매수 없음)★ — 사용자 10/15 "프리·애프터에도 스캔".
+           OMNI-Q 상위 20% 후보의 캐시 일봉 + 지금 시간외 시세로 지금 뜬 매매법·고를 매매법을 판정해 관측창(pb_live)에만 남긴다. */
+        try { if (__sr) await pbObserveScan(DB, market, batchQuotes, __sr, __omniq); } catch (e) {}
+        continue;
+      }
 
       // --- (2) 일봉 라운드로빈 갱신 대상 선정 ---
       // [거래확대] 라운드로빈 슬라이스를 "캐시시간"이 아니라 "사이클당 fetch 능력"에 묶는다.
@@ -55532,7 +55578,7 @@ export default {
         //   회차당 마감시한(장외 25s·장중 6s)이 있어 사이클을 잠식하지 않는다.
         const _gap = _mkoBf ? 15 * 60000 : 5 * 60000;
         const _due = (Date.now() - _bfLock) > _gap;
-        if (_r2ok && _due) {
+        if (_r2ok && _due && !COMMITTEE_RETIRED) {   // [V33.617] 위원회 단타 표본 백필 퇴역
           await setState(env.DB, "stin_bf_lock", Date.now());
           // [V33.106] 전용 예산 상향 — 장외 120 → 200(마감시한이 먼저 걸리는 게 정상),
           //   장중 30 → 45. Workers Paid subrequest 상한(1000/invocation) 안쪽이다.
@@ -56327,7 +56373,7 @@ export default {
               } catch (e) { try { await log(env.DB, "ERROR", null, "[STAGE:" + nm + "] " + (e && e.message)); } catch (e2) {} }
             };
             // (1) 반사실 후보 라벨링 — 성숙분(N일 경과)을 손절반영 경로로 라벨링해 표본 편입
-            await _stg("cflabel", async function () { return await cfLabelNightly(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("cflabel", async function () { return await cfLabelNightly(env.DB); });
             // (2) 외부 감성 수집 — SENTI_SOURCES에 URL이 채워진 경우만 동작(없으면 스킵)
             await _stg("senti", async function () { const _se = await sentiFetchAndStore(env.DB, null, null); return (_se && !/스킵/.test(_se)) ? _se : null; });
             // [V12.78] 감성 자가학습 — 어제 헤드라인×오늘 섹터등락으로 토큰 극성 온라인 학습(외부 API 0)
@@ -56338,7 +56384,7 @@ export default {
             //   fetchBudgetLeft()<20에서 조기중단, 딥이력 커버리지(358/900+종목)가 며칠째 정체된 원인.
             //   LLM(400)·시세백필(140)과 동일 패턴으로 이 단계만의 깨끗한 예산 부여.
             try { resetFetchBudget(380); } catch (e0) {}   // [V12.95] 280→380 (deepFetchPerNight 260 + 지수·여유 수용, Paid 850 내)
-            await _stg("deephist", async function () { return await harvestDeepFetchNightly(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("deephist", async function () { return await harvestDeepFetchNightly(env.DB); });
             // (2.45) [XS] 유니버스 횡단면 랭크 패널 — 수확 전에 갱신(수확이 z-score 정규화에 사용)
             await _stg("xspanel", async function () { return await mlBuildXSPanel(env.DB); });
             // [V33.250] 상대가치 패널 — 페어(공적분·OU) · 횡단면 잔차 · 실시간 시총순위.
@@ -56352,15 +56398,15 @@ export default {
                승격(실거래 반영)은 이 성적이 부호검정 z ≥ 1.65 를 넘긴 뒤에 논한다. */
             await _stg("lsmscore", async function () { return await lsmScoreNightly(env.DB); });
             // (2.5) [HARVEST] 시장 자기지도 표본 수확 — 전 종목 일봉에서 "피처→N일 뒤 방향" 대량 편입
-            await _stg("harvest", async function () { return await mlMarketHarvestNightly(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("harvest", async function () { return await mlMarketHarvestNightly(env.DB); });
             // [V33.418] OMNI 원시 봉 — 수동 파이프라인과 ★같은 단계★ 를 같은 이름으로(check-pipeline-graph)
             await _stg("omnibars", async function () { try { resetFetchBudget(200); } catch (e) {} return await omniBarsCollect(env.DB, { perRun: 40 }); });
-            await _stg("omniflow", async function () { try { resetFetchBudget(300); } catch (e) {} return await omniFlowCollect(env.DB, { perRun: 30 }); });
+            if (!COMMITTEE_RETIRED) await _stg("omniflow", async function () { try { resetFetchBudget(300); } catch (e) {} return await omniFlowCollect(env.DB, { perRun: 30 }); });
             await _stg("omninews", async function () { try { resetFetchBudget(300); } catch (e) {} return await omniNewsCollect(env.DB, { perRun: 9 }); });
             await _stg("omniearn", async function () { try { resetFetchBudget(100); } catch (e) {} return await omniEarnCollect(env.DB, { perRun: 30 }); });
             // [V33.426] OMNI 섀도우 채점·사후채점 — 수동 파이프라인과 ★같은 이름★ 으로(check-pipeline-graph)
-            await _stg("omniscore", async function () { return await omniShadowScore(env.DB, { perRun: OMNI_SHADOW.perRun, budgetMs: 45000 }); });
-            await _stg("omniresolve", async function () { return await omniShadowResolve(env.DB, {}); });
+            if (!COMMITTEE_RETIRED) await _stg("omniscore", async function () { return await omniShadowScore(env.DB, { perRun: OMNI_SHADOW.perRun, budgetMs: 45000 }); });
+            if (!COMMITTEE_RETIRED) await _stg("omniresolve", async function () { return await omniShadowResolve(env.DB, {}); });
             // [V12.122] ★재구축기 재학습 가속★ _stg는 하루 1회만 학습을 허용하는데, 표본풀이 재구축
             //   중(< rebuildTarget)엔 하루 안에도 풀이 크게 늘어난다(catch-up 수확이 매 틱 실행). GBDT가
             //   그날 이른 시각 작은 풀(예: 7만)로 한 번 학습해버리면, 그 뒤 풀이 16만으로 늘어도 다음날까지
@@ -56386,15 +56432,15 @@ export default {
             //   아래 l1~memo 가 돌고 나면 그 행들은 in-sample 이 되어 못 쓴다.
             /* [V33.422] stackbf 삭제(STACK 퇴역). expepoch 는 남긴다 —
                STACK 것이 아니라 ★상황별 IC 의 누출 방지 기준선★ 이다. 반드시 학습기들 앞이다. */
-            await _stg("expepoch", async function () { return await expertEpochStamp(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("expepoch", async function () { return await expertEpochStamp(env.DB); });
             // [V33.115] 표본 풀의 평균 고유도 — 수확 직후·전 학습기 앞에서 한 번만 잰다.
             //   아래 학습기 전부가 이 값으로 유효표본수를 구해 Wilson 하한을 잰다.
-            await _stg("retirefv", async function () { return await mlRetireStaleFeatVer(env.DB); });
-            await _stg("pooluniq", async function () { return await mlPoolUniqNightly(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("retirefv", async function () { return await mlRetireStaleFeatVer(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("pooluniq", async function () { return await mlPoolUniqNightly(env.DB); });
             /* [V33.609] ★위원회 모델 퇴역★ — 미국·한국 둘 다 매매법 AI 가 주력으로 전환되면(pbPrimaryOn) AI_PRIMARY 위원회 학습(L1·노이즈·앙상블·MIND·GBDT)을 멈춘다.
                저장된 모델 파일은 지우지 않는다(되돌릴 수 있게). 한 시장이라도 미통과면 종전대로 학습한다(그 시장 AI_PRIMARY 가 아직 쓴다). */
-            let __pbRetire = false;
-            try { __pbRetire = pbPrimaryOn(await getState(env.DB, "playbook:us", null), Date.now()) && pbPrimaryOn(await getState(env.DB, "playbook:kr", null), Date.now()); } catch (e) { __pbRetire = false; }
+            let __pbRetire = COMMITTEE_RETIRED;
+            if (!__pbRetire) try { __pbRetire = pbPrimaryOn(await getState(env.DB, "playbook:us", null), Date.now()) && pbPrimaryOn(await getState(env.DB, "playbook:kr", null), Date.now()); } catch (e) { __pbRetire = false; }
             if (__pbRetire) { try { await log(env.DB, "INFO", null, "[퇴역] 매매법 AI 주력(미·한) — 위원회 학습 건너뜀"); } catch (e) {} }
             // (3) 7단 학습 파이프라인(순서 고정: L1→노이즈→앙상블→MIND→DNN→GBDT)
             if (!__pbRetire) await _stg("l1", async function () { return await mlTrainNightly(env.DB); });
@@ -56414,33 +56460,33 @@ export default {
             //   순서: 전문가 3종(flow·xalpha) → STACK(전문가 확률을 입력으로 받으므로 뒤) → DUAL.
             /* [V33.422] flow·xalpha 퇴역 — 정적칸 때문에 종목을 외울 뿐이었다(블록 IC ≤ 0). */
             // [V33.92] MEMO(유사상황 기억)를 STACK 앞에 둔다 — STACK 입력에 memo 확률이 들어간다.
-            await _stg("memo", async function () { return await memoTrainNightly(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("memo", async function () { return await memoTrainNightly(env.DB); });
             // [V33.94] 기술 프라이어 계수 실측 + 최종 확률 보정(T2) — 상수를 측정으로 대체.
             // [V33.107] 상황별 반성기억 — 전문가 재학습이 끝난 뒤, 그들이 학습하지 않은
             //   구간으로만 레짐별 IC 를 잰다(누출 방지). memo 다음 자리가 맞다.
-            await _stg("expreg", async function () { return await expertRegimeFitNightly(env.DB); });
-            await _stg("techk", async function () { return await techPriorFitNightly(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("expreg", async function () { return await expertRegimeFitNightly(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("techk", async function () { return await techPriorFitNightly(env.DB); });
             // [V33.151] 목표가 개정 계수 실측 — 추가 fetch 0(저장된 일봉 + 개정 원장 사건연구).
-            await _stg("anlrevk", async function () { return await analystRevFitNightly(env.DB); });
-            await _stg("finalcal", async function () { return await finalCalFitNightly(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("anlrevk", async function () { return await analystRevFitNightly(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("finalcal", async function () { return await finalCalFitNightly(env.DB); });
             // [V33.95] 게이트 감사 — 고확률로 막힌 자리가 실제로 올랐는지 실측(추가 fetch 0).
             await _stg("gateaudit", async function () { return await gateAuditNightly(env.DB); });
             // [V33.96] 결정블렌드 계수 실측 — 기술·뉴스 점수의 로그오즈 기여를 데이터로 정한다.
-            await _stg("blendk", async function () { return await decisionBlendFitNightly(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("blendk", async function () { return await decisionBlendFitNightly(env.DB); });
             // [V33.109] 소셜 관측 적립 → 계수 실측. 반드시 이 순서다(오늘 점수를 적립하고,
             //   어제 적립분을 오늘 종가로 라벨링한 뒤에야 계수를 잰다).
             await _stg("socialobs", async function () { return await socialObserveNightly(env.DB); });
-            await _stg("socialk", async function () { return await socialCoefFitNightly(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("socialk", async function () { return await socialCoefFitNightly(env.DB); });
             // [V33.98] 단타 합류 로짓 계수 실측(모델 확률을 오프셋으로 고정한 잔여효과).
-            await _stg("scalpmae", async function () { return await scalpMaeFitNightly(env.DB); });
-            await _stg("confk", async function () { return await scalpConfluenceFitNightly(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("scalpmae", async function () { return await scalpMaeFitNightly(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("confk", async function () { return await scalpConfluenceFitNightly(env.DB); });
             // [V33.105] 충격 프라이어 잔여계수 실측 — 확률 체인에서 가장 큰 개입(최대 −1.8 로짓)이
             //   유일하게 미측정 상수로 남아 있었다. 사건 표본이 쌓이는 만큼만 배율이 움직인다.
-            await _stg("shockk", async function () { return await shockPriorFitNightly(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("shockk", async function () { return await shockPriorFitNightly(env.DB); });
             // [V33.101] 섀도우 MIND 재평가 — 저장만 하고 아무도 안 읽던 키를 살린다.
-            await _stg("mindshadow", async function () { return await mindShadowPromoteNightly(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("mindshadow", async function () { return await mindShadowPromoteNightly(env.DB); });
             /* [V33.422] stack 퇴역 — 표본이 늘수록 나빠졌다(V33.298). */
-            await _stg("dual", async function () { return await dualHeadTrainNightly(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("dual", async function () { return await dualHeadTrainNightly(env.DB); });
             // [V33.90] 실제 원장 기준 포트폴리오 통계(NautilusTrader PortfolioAnalyzer) —
             //   EV 게이트가 이 값을 읽으므로 보정(calibrate)보다 앞에서 갱신한다.
             await _stg("portstats", async function () { return await portfolioStatsNightly(env.DB); });
@@ -56453,7 +56499,7 @@ export default {
                           : "[감사] " + r.checked + "종목 중 " + r.issues.length + "건 불일치";
             });
             // (4) [V4] 위원회 확률 보정(온도 스케일링) — 결합확률의 과신/과소신 교정
-            await _stg("calibrate", async function () { return await mlCalibrateCommittee(env.DB); });
+            if (!COMMITTEE_RETIRED) await _stg("calibrate", async function () { return await mlCalibrateCommittee(env.DB); });
             // (4.5) [V6] 전 종목 야간 AI 스캔 — 유니버스 전체 승률예측(AI 픽·리포트 커버리지)
             await _stg("uniscan", async function () { return await mlUniverseScanNightly(env.DB); });
             // [V12.72] AI 자가평가 — 최근 원장 스스로 분석해 문제점 진단(대시보드/정책조정 근거)

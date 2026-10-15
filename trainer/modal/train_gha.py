@@ -12,6 +12,10 @@ sys.path.insert(0, HERE)
 import modal_train as mt  # noqa: E402
 
 target = os.environ.get("TRAIN_TARGET") or "ablate"
+# [V33.617] 위원회(AI_PRIMARY) 학습 퇴역 — FORCE_COMMITTEE=1 일 때만 돈다.
+if os.environ.get("FORCE_COMMITTEE") != "1":
+    print("   · [퇴역] 위원회 학습은 중단됨(V33.617 · OMNI-Q·매매법 AI 에 집중) — 강제로 돌리려면 FORCE_COMMITTEE=1")
+    raise SystemExit(0)
 # [V33.609] 위원회 모델 퇴역 — 미국·한국 둘 다 매매법 AI 가 주력(검증 통과 · 신선)이면 위원회 학습을 하지 않는다(워커 pbPrimaryOn 과 같은 판정).
 try:
     import time as _t

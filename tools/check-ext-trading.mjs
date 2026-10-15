@@ -214,7 +214,7 @@ const _num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d;
   const cyc = S.slice(S.indexOf("const extSessMkt = extOnly ? extTradeSession(market, cfg) : null;"),
                       S.indexOf("/* [통계FIX] tried=0 무음 처리 방지"));
   if (!cyc) bad("메인 사이클의 시간외 구간을 못 찾았다");
-  if (/if \(extOnly && !extSessMkt\) continue;/.test(cyc))
+  if (/if \(extOnly && !extSessMkt\) (continue;|\{[\s\S]{0,700}?continue;\s*\})/.test(cyc))
     ok("시간외 거래를 껐거나 창 밖이면 종전대로 가격만 갱신하고 빠진다");
   else bad("시간외 스위치가 메인 사이클에 안 걸린다");
   if (/const _xr = extTradePriceEx\(bq, extSessMkt, cfg\);\n\s*if \(_xr\.px == null\) \{ extNoPrice\+\+; extBlock\[_xr\.why\]/.test(cyc))

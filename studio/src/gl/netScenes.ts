@@ -89,6 +89,46 @@ function trees(d: any, R: Roles) {
   return S.done({ head: `입력 ${F.length} → 나무 ${nT} → 승률`, note: `선 하나 = 분기 하나(실제 ${total.toLocaleString("ko-KR")}개) · 밝기 = 입력 영향력 · 어느 나무에 붙는지는 고르게 배치` });
 }
 
+/* [V33.617] OMNI-Q(매매법 AI 후보 선별): 피처 묶음 → 많이 쓴 피처 → LightGBM 나무 → 머리(5일·20일·1일·상승·위험) → 후보 상위 20%.
+   옛 OMNI(분봉 모델) 자리를 이어받는다. 값은 /api/omni-status 그대로(featGroups · featTop · heads · nFeat). */
+export function omniqNet(d: any, mk: "us" | "kr" = "us"): NetScene | null {
+  const q = d && d.omniQ ? (d.omniQ[mk] || d.omniQ.us || d.omniQ.kr) : null;
+  if (!q) return null;
+  const S = make();
+  const G: Record<string, number> = q.featGroups || { "피처(묶음은 다음 학습부터)": +q.nFeat || 0 };
+  const gk = Object.keys(G).filter((k) => +G[k] > 0);
+  const top: any[] = (q.featTop || []).slice(0, 15);
+  const groupOf = (n: string) => n.startsWith("rule_") ? "규칙 전략" : (n.startsWith("pb_") || n.startsWith("pb5_")) ? "매매법 신호" : n.startsWith("ev_") ? "실적·뉴스" : (gk.find((k) => /동물원/.test(k)) || gk[0]);
+  const gv = norm(gk.map((k) => +G[k]));
+  const L = 5;
+  const gIds = S.disk(gk.length, LX(0, L), 0, 1, (i) => gk[i] + " " + G[gk[i]] + "개", (i) => gv[i], 90);
+  const tv = norm(top.map((f) => +f.share || 0));
+  const fIds = top.length ? S.disk(top.length, LX(1, L), 0, .8, (i) => top[i].name, (i) => tv[i]) : [];
+  const nT = 48;
+  const tIds = S.disk(nT, LX(2, L), 1, .45, (i) => "나무 #" + (i + 1), () => null);
+  const heads = ["5일 순위", "20일 순위", "1일 순위", "상승 확률", "위험"];
+  const hOk = [q.view?.state, q.view?.state20];
+  const hIds = S.disk(heads.length, LX(3, L), 2, .2, (i) => heads[i], (i) => (i < 2 ? 1 : .5), 60);
+  const out = S.pt(LX(4, L), 0, 0, 3, null, "후보 상위 20% → 매매법 AI", 0);
+  gk.forEach((g, i) => { fIds.forEach((fid, j) => { if (groupOf(String(top[j].name)) === g) S.ln(gIds[i], fid, .4 + .6 * tv[j], 0); }); });
+  if (!fIds.length) gIds.forEach((gid, i) => { for (let t = 0; t < nT; t += Math.max(1, Math.round(4 - 3 * gv[i]))) S.ln(gid, tIds[t], .2 + .6 * gv[i], 0); });
+  fIds.forEach((fid, j) => { const k = Math.max(2, Math.round(12 * tv[j])); for (let q2 = 0; q2 < k; q2++) S.ln(fid, tIds[(j * 7 + q2 * 5) % nT], .25 + .75 * tv[j], 0); });
+  tIds.forEach((t, i) => { S.ln(t, hIds[i % heads.length], .5, 2); });
+  S.ln(hIds[0], out, 1, 2); S.ln(hIds[1], out, .7, 2);
+  gk.forEach((g, i) => S.role(gIds[i], g + " — 피처 " + G[g] + "개(날짜마다 종목 간 순위로 바꿔 넣는다)"));
+  fIds.forEach((fid, j) => S.role(fid, "많이 쓴 피처 " + (j + 1) + "위 · " + groupOf(String(top[j].name)) + " · gain 비중 " + pc(+top[j].share || 0)));
+  tIds.forEach((t) => S.role(t, "LightGBM 나무 — 피처 조건으로 종목을 갈라 5일 뒤 상대 순위를 맞힌다(대표 " + nT + "그루만 그림)"));
+  hIds.forEach((h, i) => S.role(h, heads[i] + (i === 0 ? " — 후보 선별에 쓰는 머리(" + (hOk[0] || "—") + ")" : i === 1 ? " — 20일 머리(" + (hOk[1] || "—") + ")" : " — 기록·관측용 머리")));
+  S.role(out, "그날 5일 순위 상위 20% 종목 = 매매법 AI 가 지금 뜬 매매법을 확인할 후보");
+  S.groups.push({ label: "피처 묶음", kind: 0, ids: gIds, desc: "동물원(Alpha158·101·학술) · 규칙 전략 · 매매법 신호 · 실적·뉴스" },
+    { label: "많이 쓴 피처", kind: 0, ids: fIds, desc: "gain 중요도 상위 " + fIds.length + "개" },
+    { label: "나무", kind: 1, ids: tIds, desc: "LightGBM 순위 모델" },
+    { label: "머리", kind: 2, ids: hIds, desc: "5일·20일·1일 순위 · 상승 확률 · 위험" },
+    { label: "출력", kind: 3, ids: [out], desc: "후보 상위 20%" });
+  S.tag(gIds, "피처 " + (q.nFeat || "—")); if (fIds.length) S.tag(fIds, "상위 " + fIds.length); S.tag(tIds, "나무"); S.tag(hIds, "머리 5"); S.labels.push({ id: out, text: "후보" });
+  return S.done({ head: `피처 ${q.nFeat || "—"} → LightGBM → 머리 5 → 후보 상위 20%`, note: (mk === "us" ? "미국" : "한국") + " 모델 · 선 밝기 = 피처 영향력(gain) · 나무는 대표만" });
+}
+
 /* MIND: inputs → three experts → stacking weights → probability. */
 const EXPERT = (nm: string, d: any) => /로지스틱/.test(nm) ? "입력마다 가중치 하나를 곱해 더한다(L1 — 쓸모없는 입력은 0 으로 지운다)."
   : /FM|인수분해/.test(nm) ? "입력 두 개의 조합(상호작용)을 " + (d.fmK ?? "k") + "차원 잠재 벡터의 내적으로 잡는다 — 'RSI 가 낮은데 시장도 약세' 같은 짝."

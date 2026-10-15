@@ -14,7 +14,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  useEffect(() => { getJSON(nnPath("overview")).then(setOv).catch(() => { /* nav still works from cache */ }); }, []);
+  void setOv;   // [V33.617] 위원회 개요(/api/nn-viz)는 더 부르지 않는다 — 위원회 퇴역
   /* [V33.614] 매매법 AI 가 주력(한 시장 이상)이면 위원회(AI_PRIMARY) 모델들은 퇴역 — 목록에서 걷어내고 매매법 AI 만 남긴다 */
   const [pb, setPb] = useState<any>(() => cached(nnPath("playbook")));
   useEffect(() => { getJSON(nnPath("playbook")).then(setPb).catch(() => { /* */ }); }, []);
@@ -29,7 +29,8 @@ export default function App() {
 
   const roster = (ov && ov.roster) || [];
   const st = (key: string) => stateOf(roster.find((r: any) => r.key === key));
-  const groups = retired ? ["주력", "후보 선별"] : ["주력", "후보 선별", "결합", "위원", "방향", "관측"];
+  const groups = ["주력", "후보 선별"];   // [V33.617] 위원회 모델 목록 퇴역(주력 전환과 무관하게) · retired=${retired}
+  void retired;
   return (
     <div className="grid gap-5 md:grid-cols-[220px_minmax(0,1fr)] md:gap-8">
       {/* phones: one compact strip · desktop: a quiet grouped list */}

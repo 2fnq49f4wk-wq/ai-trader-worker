@@ -38,7 +38,9 @@ image = modal.Image.debian_slim(python_version="3.11").pip_install(
 #     check-cycle-capacity 가 이 계산을 실제로 돌려 확인한다.
 # ══ [V33.585] ★외부 학습은 하루 2회 유지★ — 사용자(10/13): "내부 cpu 사용 안 하는 학습은 일일 2회로 유지".
 #   V33.584 의 금요일 주 1회는 ★워커 안 학습★(야간 파이프라인 TRAIN_STAGES)에만 남긴다. Modal 은 워커 CPU 를 쓰지 않는다.
-CRON = modal.Cron("10 */12 * * *")  # 매 12시간(하루 2회): 00:10 / 12:10 UTC
+# [V33.617] 위원회(AI_PRIMARY) 모델 학습 퇴역 — 사용자 10/15 "AI_PRIMARY 모델 학습 중단 · OMNI-Q·매매법 AI 에 집중". 되살리려면 아래 줄을 원래대로.
+COMMITTEE_RETIRED = True
+CRON = None if COMMITTEE_RETIRED else modal.Cron("10 */12 * * *")  # 매 12시간(하루 2회): 00:10 / 12:10 UTC
 
 # [성능강화] 외부 GPU가 학습을 맡으므로 Worker 추론비용 없이 학습 품질을 올린다.
 #   에폭↑(수렴), 시드↑(앙상블 분산↓·신뢰하한↑). 구조(3M)는 유지 — Worker 매사이클 추론속도 보호.

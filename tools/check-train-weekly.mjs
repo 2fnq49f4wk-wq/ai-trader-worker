@@ -77,7 +77,7 @@ chk(/if \(!_trainKey\) throw 0;/.test(S) && /if \(_trainKey\) \{ try \{ await en
 }
 
 // ② Modal · 자동 재트리거 · 워치독 · GHA
-chk(/^CRON = modal\.Cron\("10 \*\/12 \* \* \*"\)/m.test(PY), "외부 Modal 학습은 하루 2회 유지(워커 CPU 안 씀)");
+chk(/^CRON = (None if COMMITTEE_RETIRED else )?modal\.Cron\("10 \*\/12 \* \* \*"\)/m.test(PY), "외부 Modal 학습은 하루 2회 유지(워커 CPU 안 씀) · [V33.617] 위원회 퇴역 스위치로만 끈다");
 chk(M.MODALAUTO.staleH === 14, "워커 자동 재트리거 문턱 14h 그대로(외부 학습 하루 2회)");
 chk(/float\('\$AGE'\) > 14 /.test(WD) && !/date -u \+%u/.test(WD), "워치독: 14h 문턱 · 금요일 제한 없음");
 chk(/cron: "10 22 \* \* 0"/.test(TG), "위원회 전진평가(GHA)는 종전 일요일 그대로");

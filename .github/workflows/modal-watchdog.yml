@@ -20,8 +20,9 @@ name: Modal Trainer Watchdog
 #     그건 "아무 일도 안 했는데 초록불" 이라 이번 사고를 8일간 가렸다. 같은 실수를 반복하지 않는다.
 
 on:
-  schedule:
-    - cron: '40 */6 * * *'   # Modal 자체 cron(10분)과 30분 어긋나게 — 정상일 땐 아래 신선도 검사에서 스킵된다
+  # [V33.617] 위원회 학습 퇴역 — 신선도 감시가 '낡았다' 며 학습을 되살리지 않게 예약을 끈다(수동 실행만).
+  # schedule:
+  #   - cron: '40 */6 * * *'
   workflow_dispatch:
     inputs:
       force:

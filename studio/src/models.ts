@@ -1,20 +1,11 @@
 /* Model catalogue — order, grouping and one-line purpose. Status always comes from the
    server roster (never invented here). */
 export type ModelKey = "playbook" | "omniq" | "overview" | "mind" | "gbdt" | "xgb" | "lgb" | "cat" | "memo" | "seq" | "dualbull" | "dualbear" | "omni";
+/* [V33.617] 위원회(AI_PRIMARY) 모델(MIND·GBDT·XGB·LGB·CAT·MEMO·SEQ·이중헤드)과 옛 OMNI(분봉)는 퇴역 — 목록에서 뺐다.
+   남는 것: 주력 매매법 AI · 후보 선별 OMNI-Q(옛 OMNI 신경망 화면을 이어받음). */
 export const MODELS: { key: ModelKey; roster: string; name: string; short: string; group: string; what: string }[] = [
   { key: "playbook", roster: "", name: "매매법 AI", short: "매매법", group: "주력", what: "확률 높은 종목(OMNI-Q 상위 20%) → 지금 뜬 매매법 중 닮은 과거에서 성적이 가장 좋은 것으로 사고, 그 매매법의 규칙으로 판다" },
-  { key: "omniq", roster: "", name: "OMNI-Q", short: "OMNI-Q", group: "후보 선별", what: "매매법 AI 가 볼 종목을 고르는 순위 모델 — 동물원·규칙·매매법 신호·실적·뉴스 피처로 5일 뒤 상대 순위를 맞힌다" },
-  { key: "overview", roster: "", name: "전체 결합", short: "전체", group: "결합", what: "위원들의 투표가 하나의 확률이 되는 순서" },
-  { key: "mind", roster: "mind", name: "MIND", short: "MIND", group: "위원", what: "위원장 — 인수분해기계와 전문가 스태킹" },
-  { key: "gbdt", roster: "gbdt", name: "GBDT", short: "GBDT", group: "위원", what: "부스팅 트리 — 기술지표 갈림" },
-  { key: "xgb", roster: "xgb", name: "XGBoost", short: "XGB", group: "위원", what: "부스팅 트리 3종 합의의 한 축" },
-  { key: "lgb", roster: "lgb", name: "LightGBM", short: "LGB", group: "위원", what: "부스팅 트리 3종 합의의 한 축" },
-  { key: "cat", roster: "cat", name: "CatBoost", short: "CAT", group: "위원", what: "부스팅 트리 3종 합의의 한 축" },
-  { key: "memo", roster: "memo", name: "MEMO", short: "MEMO", group: "위원", what: "비슷한 과거 상황(원형)의 결과를 기억" },
-  { key: "seq", roster: "seq", name: "SEQ", short: "SEQ", group: "위원", what: "최근 16봉을 순서대로 읽는 트랜스포머" },
-  { key: "dualbull", roster: "dual_bull", name: "이중헤드 강세", short: "강세", group: "방향", what: "오를 쪽만 따로 본다" },
-  { key: "dualbear", roster: "dual_bear", name: "이중헤드 약세", short: "약세", group: "방향", what: "내릴 쪽만 따로 본다" },
-  { key: "omni", roster: "omni", name: "OMNI", short: "OMNI", group: "관측", what: "분봉 한 모델이 장타·단타를 같이 배운다" },
+  { key: "omniq", roster: "", name: "OMNI-Q", short: "OMNI-Q", group: "후보 선별", what: "매매법 AI 가 볼 종목을 고르는 순위 신경망(LightGBM) — 동물원·규칙·매매법 신호·실적·뉴스 피처로 5일 뒤 상대 순위를 맞힌다" },
 ];
 
 export type Tone = "ok" | "warn" | "bad" | "shade" | "idle";

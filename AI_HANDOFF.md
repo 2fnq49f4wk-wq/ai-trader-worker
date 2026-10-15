@@ -12,6 +12,17 @@
 
 ## Current handoff
 
+- V33.617 (10/15) ★위원회(AI_PRIMARY) 모델 학습·수집 퇴역 · 모델 구조창 = 매매법 AI + OMNI-Q 신경망★ (사용자: "AI_PRIMARY 모델 왜 다시 보여주냐 · 학습·수집 중단 · OMNI-Q·매매법 AI 에 집중 · OMNI-Q 신경망은 옛 OMNI 에서 고쳐서")
+  - COMMITTEE_RETIRED=true: 야간 위원회 학습(L1·노이즈·앙상블·MIND·GBDT·MEMO·이중헤드·보정·계수류) · 표본 수집(harvest·cflabel·deephist·pooluniq·장중 단타 표본·백필)
+    · 옛 OMNI 섀도 채점/결과(omniscore·omniresolve) · 수급(omniflow) 끔. Modal 크론 None · modal-watchdog 예약 끔 · train_gha 는 FORCE_COMMITTEE=1 일 때만.
+    추론은 유지(AI_PRIMARY 는 매매법 AI 검증 통과 전까지 저장된 모델로 계속 판단). 일봉·5분봉(omnibars)·실적·뉴스 수집은 유지(OMNI-Q·매매법 AI 용).
+  - Brain Studio: 목록 = 주력 매매법 AI + 후보 선별 OMNI-Q 만(위원회·옛 OMNI 제거). OMNI-Q 는 옛 OMNI 3D 화면(ModelNet)으로 신경망 — omniqNet(피처 묶음→많이 쓴 피처→나무→머리5→후보).
+- V33.616 (10/15 11Z) ★미국 프리마켓 시세 정지 · 미국 스캔 정지 수정★ (사용자: "미장 프리마켓 가격 갱신 안 됨 · OMNI-Q 가 미장에서 스캔 안 함 · 애프터·NXT 에서도 스캔")
+  - 원인: 한국 장후(NXT 15:40~20:00 KST)와 미국 장전(04:00~ ET)이 겹치는 10:29~10:52Z, V33.587 이 한국을 먼저 돌리는데 한국 평가가 사이클을 다 써서
+    미국 차례가 23분간 안 왔다(시세 ts 06:29 ET 정지 · 미국 평가 0). → 두 시장 다 시간외면 짝수 분 한국 · 홀수 분 미국(각자 사이클 전체).
+  - 미국 매매 분봉(fetchMinuteBars)에 includePrePost 가 없어 시간외엔 '어제 정규장' 봉만 왔다 → 시간외면 붙인다(실측 172봉 프리마켓 확인).
+    한국 네이버 분봉은 파라미터 없이도 NXT 봉 포함(19:54 KST 확인).
+  - 거래 창 밖 관측 창(미국 04:00~07:00 ET)에서도 pbObserveScan — OMNI-Q 상위 20% 후보를 캐시 일봉 + 시간외 시세로 그림자 판정(매수 없음) → pb_live.
 - V33.615 (10/15) ★OMNI-Q 재구성(매매법 AI 후보 선별기) · 모델 구조 정리★ (사용자: "omni-q 는 쓰잖아 — 지금 형태로 다시 · 피처 추가" · "구조에서 설명 빼고 매매법 현황만")
   - omni_q 피처 추가: 매매법 도감 17종 오늘 뜸(pb_*) + 최근 5일 뜬 횟수(pb5_*) = 34 · 실적(미국 ev_x_*)·뉴스(한국 ev_e_*) — omniq_gha 가 학습 전에 실적·뉴스를 받아 omni_q.EVENTS 로.
     피처가 바뀌어 다음 회차는 재학습(should_train). 끄개 OMNIQ_PBFEAT=0 · OMNIQ_EVFEAT=0. 관문 ①②③ 은 그대로(발언 판정 불변).

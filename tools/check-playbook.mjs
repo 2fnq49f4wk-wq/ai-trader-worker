@@ -195,7 +195,7 @@ chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"
   const L = readFileSync(new URL("../public/workspace-layout.css", import.meta.url), "utf8"), A = readFileSync(new URL("../studio/src/App.tsx", import.meta.url), "utf8");
   chk(/#page-nnviz\.pb-primary\[data-brain-view="operations"\]/.test(L) && /classList\.toggle\('pb-primary'/.test(readFileSync(new URL("../public/playbook-observatory.js", import.meta.url), "utf8")),
       "주력이면 01 작동 화면에서 AI_PRIMARY(위원회) 화면을 걷어낸다");
-  chk(/const groups = retired \? \["주력", "후보 선별"\]/.test(A), "주력이면 02 모델 구조에서 위원회 모델을 걷어낸다"); }
+  chk(/const groups = \["주력", "후보 선별"\]/.test(A), "02 모델 구조에서 위원회 모델을 걷어낸다(V33.617 상시)"); }
 { // [V33.615] OMNI-Q 재구성 — 후보 선별기 · 피처 추가
   const Q = readFileSync(dir + "omni_q.py", "utf8"), G = readFileSync(dir + "omniq_gha.py", "utf8");
   chk(/def _pb_feats/.test(Q) && /"pb_" \+ pid/.test(Q) && /def _event_feats/.test(Q) && /OMNIQ_PBFEAT/.test(Q) && /OMNIQ_EVFEAT/.test(Q), "OMNI-Q 피처: 매매법 신호 34 · 실적·뉴스(끄개 있음)");
@@ -203,5 +203,16 @@ chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"
   chk(/featGroups: \(body\.featGroups/.test(S) && /featGroups: q\.featGroups/.test(S), "피처 묶음·중요도를 저장·공개(모델 구조창)");
   chk(/key: "omniq"/.test(readFileSync(new URL("../studio/src/models.ts", import.meta.url), "utf8")) && /\["주력", "후보 선별"\]/.test(readFileSync(new URL("../studio/src/App.tsx", import.meta.url), "utf8")),
       "모델 구조창: 주력 매매법 AI + 후보 선별 OMNI-Q(주력 전환 뒤에도 남는다)"); }
+{ // [V33.616] 시간외 시세·스캔
+  chk(/const _pp = isExtendedHoursWindow\("us"\) \? "&includePrePost=true" : "";/.test(S), "미국 시간외엔 분봉에 프리·애프터를 담는다(includePrePost)");
+  chk(/_bothExt \? \(_m % 2\) !== \(market === "kr" \? 0 : 1\)/.test(S), "두 시장이 다 시간외면 분마다 번갈아(한쪽이 사이클을 다 써도 다른 쪽이 굶지 않게)");
+  chk(/await pbObserveScan\(DB, market, batchQuotes, __sr, __omniq\)/.test(S) && /async function pbObserveScan/.test(S), "거래 창 밖 시간외에도 매매법 AI 후보 스캔(매수 없음)"); }
+{ // [V33.617] 위원회 퇴역 · OMNI-Q 신경망
+  chk(/const COMMITTEE_RETIRED = true;/.test(S) && /let __pbRetire = COMMITTEE_RETIRED;/.test(S) && /if \(!COMMITTEE_RETIRED\) await _stg\("harvest"/.test(S) && /if \(!COMMITTEE_RETIRED\) await _stg\("omniscore"/.test(S)
+      && /_bigR2\(\) && !COMMITTEE_RETIRED\) __stinPend/.test(S), "위원회 학습·표본 수집 퇴역(추론은 유지)");
+  chk(/CRON = None if COMMITTEE_RETIRED/.test(readFileSync(dir + "modal_train.py", "utf8")) && /FORCE_COMMITTEE/.test(readFileSync(dir + "train_gha.py", "utf8"))
+      && /# schedule:/.test(readFileSync(new URL("../.github/workflows/modal-watchdog.yml", import.meta.url), "utf8")), "Modal·GHA 위원회 학습 예약 끔");
+  const MS = readFileSync(new URL("../studio/src/models.ts", import.meta.url), "utf8");
+  chk(!/key: "mind"|key: "gbdt"|key: "omni",/.test(MS) && /export function omniqNet/.test(readFileSync(new URL("../studio/src/gl/netScenes.ts", import.meta.url), "utf8")), "모델 구조창: 위원회·옛 OMNI 목록 없음 · OMNI-Q 신경망"); }
 if (fails) { console.log("check-playbook: FAIL " + fails); process.exit(1); }
 console.log("check-playbook: ok");

@@ -2,7 +2,10 @@
 import { type ReactNode } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import { type Tone, f1, n0, ago } from "../models";
+import { useMemo, useState } from "react";
 import { Badge, Bars, Empty, Facts, Kpis, Section } from "./ui";
+import { ModelNet } from "./OmniStage";
+import { omniqNet } from "../gl/netScenes";
 
 const MK: Record<string, string> = { us: "미국", kr: "한국" };
 export function oqState(j: any): { label: string; tone: Tone } {
@@ -32,6 +35,8 @@ function Gate({ g, label }: { g: any; label: string }) {
 
 export function OmniQ({ d, head }: { d: any; head: ReactNode }) {
   const q = d.omniQ || {}, us = q.us, kr = q.kr;
+  const [mk, setMk] = useState<"us" | "kr">(us ? "us" : "kr");
+  const net = useMemo(() => omniqNet(d, mk), [d, mk]);
   if (!us && !kr) return <div>{head}<Empty>OMNI-Q 가 아직 올라오지 않았습니다.</Empty></div>;
   const st = (r: any) => (r && r.view && ST[r.view.state]) || ["—", "idle"] as [string, Tone];
   const groups = (us && us.featGroups) || (kr && kr.featGroups) || null;
@@ -47,10 +52,12 @@ export function OmniQ({ d, head }: { d: any; head: ReactNode }) {
       ]} /></div>
       <Tabs.Root defaultValue="s" className="mt-5">
         <Tabs.List className="flex gap-5 border-b border-line">
-          {[["s", "피처"], ["e", "관문"], ["f", "상세"]].map(([v, t]) => (
+          {[["s", "신경망"], ["e", "관문"], ["f", "상세"]].map(([v, t]) => (
             <Tabs.Trigger key={v} value={v} className="-mb-px border-b-2 border-transparent pb-2 text-[13px] text-ink-3 data-[state=active]:border-rose data-[state=active]:text-ink">{t}</Tabs.Trigger>))}
         </Tabs.List>
-        <Tabs.Content value="s" className="pt-1 outline-none">
+        <Tabs.Content value="s" className="pt-4 outline-none">
+          <div className="mb-2 flex gap-1.5">{(["us", "kr"] as const).filter((m) => q[m]).map((m) => <button key={m} onClick={() => setMk(m)} className={"rounded-sm px-2.5 py-1 text-[12px] " + (mk === m ? "bg-ink text-bg" : "bg-bg-3 text-ink-2")}>{MK[m]}</button>)}</div>
+          {net ? <ModelNet sc={net} name="OMNI-Q" /> : <Empty>신경망을 그릴 자료가 없습니다.</Empty>}
           {groups ? <Section title="피처 묶음" aside={"총 " + n0(Object.values(groups).reduce((a: number, b: any) => a + (+b || 0), 0)) + "개"}>
             <Bars rows={Object.keys(groups).map((k) => ({ name: k, v: +groups[k] || 0, label: n0(groups[k]) + "개" }))} />
           </Section> : <Empty>피처 묶음은 다음 학습 회차부터 표시됩니다.</Empty>}
