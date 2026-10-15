@@ -59,6 +59,9 @@ INTRA_PB = {
     "STOCH5":  {"tpPct": 0.8, "sl": 0.6, "bars": 12, "label": "5분 스토캐스틱 — 과매도(≤25) %K↗%D · 60분"},
     "MOM3":    {"tpPct": 1.0, "sl": 0.6, "bars": 6,  "label": "5분 모멘텀 — 3봉 연속 상승 +0.5% · 30분"},
     "VWAP_RE": {"tpPct": 1.0, "sl": 0.6, "bars": 18, "label": "VWAP 회복 — 아래에서 위로 · 90분"},
+    # [V33.619] tpAt = 목표가가 % 가 아니라 가격(pc 전일 종가 · piv 피봇) — 진입 때 정해진다
+    "GAP_FILL":  {"tpPct": None, "tpAt": "pc", "sl": 1.0, "bars": 0, "label": "갭 메우기 — 1.5%+ 하락 갭 뒤 첫 봉 고가 회복(첫 1시간) · 전일 종가까지"},
+    "PIVOT_BNC": {"tpPct": None, "tpAt": "piv", "sl": 0.7, "bars": 24, "label": "피봇 지지 반등 — 전일 피봇 1차 지지(S1) 닿고 반등 봉 · 피봇까지 · 2시간"},
 }
 INTRA_MIN_LEFT = 6   # 장 끝까지 5분봉 6개(30분) 넘게 남아야 산다(워커 intraMinToClose 30분과 같다)
 
@@ -214,6 +217,131 @@ def _mr_exit(P):
 
 LIVE_FILTER_PB = ("SN_RSI2",)
 
+# ── [V33.619] ★매매법 자동 조율★ — 사용자 10/15 "승률·수익률 낮은 매매법은 지우지 말고 세부 사항을 고쳐 올려라".
+#   사람이 숫자를 골라 넣으면 과거에 맞춘다(과적합). 대신 매매법마다 청산 프로필 6 × 진입 거르개 5 = 30 가지를
+#   ★표 구간보다도 앞(앞 55%)★ 에서만 비교해 하한(평균 − 표준오차)이 기본보다 TUNE_MARGIN 이상 좋을 때만 바꾼다.
+#   규칙 고르기 [60,80%) · 판정 [80,100%) 는 손대지 않은 채 남는다 — 바꾼 것이 실제로 나은지는 판정 구간이 말한다(tune.test 에 기록).
+PROFILES = {
+    "trend": {"stop": 7.0, "atr": 2.5, "be": 1.0, "tpR": None, "hold": 30},
+    "swing": {"stop": 5.0, "atr": 2.0, "be": 1.0, "tpR": 2.0, "hold": 15},
+    "short": {"stop": 4.0, "atr": 1.5, "be": 0.8, "tpR": 1.5, "hold": 8},
+    "quick": {"stop": 3.0, "atr": 1.2, "be": 0.0, "tpR": None, "tpPct": 3.0, "bePct": 1.5, "hold": 5, "tstop": 3},
+    "mr": dict(SNAP_MR, hold=8),
+}
+PROF_KEYS = ("stop", "atr", "be", "tpR", "hold", "mr", "tpPct", "bePct", "tstop", "rsi2x")
+FILTERS = (None, "trend", "noBear", "calm", "up20")
+TUNE_CUT, TUNE_PICK, TUNE_MIN_N, TUNE_MARGIN, TUNE_T = 0.55, 0.40, 80, 0.05, 3.0
+#   고르기 [0,40%) → 확인 [40,55%). 같은 종목 연일 신호는 서로 겹쳐 거래 수만큼 독립이 아니다(무작위 시세 대조에서 29종 중 11종을 '개선' 으로 잘못 골랐다) →
+#   ★달(21거래일) 묶음★ 으로 '조율 − 기본' 월평균 차이의 t ≥ TUNE_T · 평균 차이 ≥ TUNE_MARGIN 이고, 확인 구간에서도 조율 평균 ≥ 기본 평균 + TUNE_MARGIN 일 때만 바꾼다.
+
+
+def _month_diff_t(exa, Sa, exb, Sb, t0, t1):
+    """[t0,t1) 날짜를 21일 묶음으로 — 묶음마다 (A 평균 − B 평균) → (평균 차이, t, 묶음 수). 표본 5개 미만 묶음은 뺀다."""
+    d = []
+    for a in range(t0, t1, 21):
+        b = min(t1, a + 21)
+        va, vb = exa[a:b][Sa[a:b]], exb[a:b][Sb[a:b]]
+        if len(va) >= 5 and len(vb) >= 5:
+            d.append(float(va.mean()) - float(vb.mean()))
+    if len(d) < 4:
+        return None, 0.0, len(d)
+    d = np.asarray(d)
+    sd = d.std(ddof=1)
+    return float(d.mean()), (float(d.mean() / (sd / math.sqrt(len(d)))) if sd > 0 else 0.0), len(d)
+
+
+def _prof_key(pr):
+    return tuple(pr.get(k) for k in PROF_KEYS)
+
+
+def _apply_prof(base, name):
+    if name == "base":
+        return dict(base, prof="base")
+    out = {k: v for k, v in base.items() if k not in PROF_KEYS}
+    out.update({"mr": False, "tpPct": None, "bePct": None, "tstop": 0})
+    out.update(PROFILES[name])
+    out["prof"] = name
+    return out
+
+
+def _flt_masks(P, reg, atr):
+    """[V33.619] 진입 거르개 T×N — 워커 pbTunedFilterOk 와 같다(check-playbook 대조)."""
+    C = P["close"]
+    shp = C.shape
+    ma20, ma50, ma200 = C.rolling(20).mean(), C.rolling(50).mean(), C.rolling(200).mean()
+    ret1 = C.pct_change(fill_method=None) * 100
+    regok = ~np.isin(np.asarray(reg).astype(str), ["BEAR", "CRASH"])
+    return {None: np.ones(shp, dtype=bool), "trend": (C > ma200).values, "noBear": np.broadcast_to(regok[:, None], shp),
+            "calm": np.nan_to_num((atr <= 4) & (ret1 >= -4).values, nan=0).astype(bool), "up20": (ma20 > ma50).values}
+
+
+def _nmw(v):
+    return [int(len(v)), round(float(v.mean()), 3) if len(v) else None, round(float((v > 0).mean() * 100), 1) if len(v) else None]
+
+
+def tune_daily(P, market, sig, log=print):
+    """매매법별 (청산 프로필 × 거르개) 를 앞 40% 에서 고르고 [40,55%) 에서 확인한다 → (조율된 DAILY_PB 사본, 보고)."""
+    O, H, L, C = (P[k].values for k in ("open", "high", "low", "close"))
+    T = C.shape[0]
+    reg, mret = _regime(P["close"])
+    atr = _daily_state(P, [])[4]
+    mcum = np.concatenate([[1.0], np.cumprod(1 + mret)])
+    cost = COST_RT[market]
+    mrx, live_ok, fm = _mr_exit(P), _live_filters(P, reg, atr), _flt_masks(P, reg, atr)
+    ca, cut, c2 = 250 + int((T - 250) * TUNE_PICK), 250 + int((T - 250) * TUNE_CUT), 250 + int((T - 250) * SPLIT[1])
+    cache, out, rep_ = {}, {}, {}
+
+    def ex_of(pr):
+        k = _prof_key(pr)
+        if k not in cache:
+            cache[k] = _sim_profile(O, H, L, C, atr, mcum, pr, cost, mrx=mrx)[0]
+        return cache[k]
+
+    for pb, base in DAILY_PB.items():
+        if pb not in sig:
+            out[pb] = dict(base, prof="base", flt=None)
+            continue
+        S0 = sig[pb].values.astype(bool)
+        if pb in live_ok:
+            S0 = S0 & live_ok[pb]
+        exb0 = ex_of(_apply_prof(base, "base"))
+        Sb0 = S0 & np.isfinite(exb0)
+        vb = exb0[:ca][Sb0[:ca]]
+        vbc = exb0[ca:cut][Sb0[ca:cut]]
+        b0 = (None, float(vb.mean()), "base", None, len(vb), float((vb > 0).mean()), float(vbc.mean()) if len(vbc) >= 30 else None, 0.0) if len(vb) >= TUNE_MIN_N else None
+        cands = []
+        for pn in ("base",) + tuple(PROFILES):
+            pr = _apply_prof(base, pn)
+            ex = ex_of(pr)
+            for fl in FILTERS:
+                if pn == "base" and fl is None:
+                    continue
+                S = S0 & np.isfinite(ex) & fm[fl]
+                v = ex[:ca][S[:ca]]
+                if len(v) < TUNE_MIN_N or b0 is None:
+                    continue
+                dm, tt, nb = _month_diff_t(ex, S, exb0, Sb0, 250, ca)
+                vc = ex[ca:cut][S[ca:cut]]   # 확인 구간
+                cands.append((tt, float(v.mean()), pn, fl, len(v), float((v > 0).mean()), float(vc.mean()) if len(vc) >= 30 else None, dm))
+        best = max(cands, key=lambda c_: c_[0]) if cands else None
+        pick = best if (b0 and best and best[0] >= TUNE_T and best[7] is not None and best[7] >= TUNE_MARGIN
+                        and best[6] is not None and b0[6] is not None and best[6] >= b0[6] + TUNE_MARGIN) else None
+        pn, fl = (pick[2], pick[3]) if pick else ("base", None)
+        out[pb] = dict(_apply_prof(base, pn), flt=fl)
+        exb, ext = exb0, ex_of(out[pb])
+        Sb = S0 & np.isfinite(exb)
+        St = S0 & np.isfinite(ext) & fm[fl]
+        rep_[pb] = {"prof": pn, "flt": fl,
+                    "train": {"base": [b0[4], round(b0[1], 3), round(b0[5] * 100, 1)] if b0 else None,
+                              "tuned": [pick[4], round(pick[1], 3), round(pick[5] * 100, 1)] if pick else None,
+                              "best": [best[2], best[3], round(best[0], 2), round(best[7], 3) if best[7] is not None else None] if best else None},
+                    "test": {"base": _nmw(exb[c2:][Sb[c2:]]), "tuned": _nmw(ext[c2:][St[c2:]])}}
+    ch = [k for k, v in rep_.items() if v["prof"] != "base" or v["flt"]]
+    log("   · [매매법조율] %s %d종 중 %d종 조정 — %s" % (market, len(rep_), len(ch), " · ".join(
+        "%s→%s%s 판정구간 %s%%/%s%%→%s%%/%s%%" % (k, rep_[k]["prof"], ("+" + rep_[k]["flt"]) if rep_[k]["flt"] else "",
+                                         rep_[k]["test"]["base"][1], rep_[k]["test"]["base"][2], rep_[k]["test"]["tuned"][1], rep_[k]["test"]["tuned"][2]) for k in ch[:12])))
+    return out, rep_
+
 
 def _live_filters(P, reg, atr):
     """[V33.618] 실전 규칙의 진입 거르개(snapRules) — RSI2 반등에만: 약세·폭락 국면 금지 · 20일 고점 대비 −12% 이내 · ATR ≤ 5% · 당일 −4% 이상.
@@ -227,7 +355,7 @@ def _live_filters(P, reg, atr):
     return {pb: np.nan_to_num(ok, nan=0).astype(bool) for pb in LIVE_FILTER_PB}
 
 
-def sim_daily(P, market, ev_dates, sig=None, cand=None):
+def sim_daily(P, market, ev_dates, sig=None, cand=None, pbs=None):
     """도감 매매법이 뜬 모든 (날짜 · 종목 · 매매법) 의 모의 결과 — 표: [t, j, inst, pb, ex, k0..k3]. inst = 같은 후보(날짜·종목)."""
     O, H, L, C = (P[k].values for k in ("open", "high", "low", "close"))
     T, N = C.shape
@@ -239,14 +367,17 @@ def sim_daily(P, market, ev_dates, sig=None, cand=None):
     cache = {}
     out = []
     mrx, live_ok = _mr_exit(P), _live_filters(P, reg, atr)
-    for pb, pr in DAILY_PB.items():
-        key = (pr["stop"], pr["atr"], pr["be"], pr["hold"], pr["tpR"], pr.get("mr"), pr.get("tpPct"), pr.get("bePct"), pr.get("tstop"))
+    fm = _flt_masks(P, reg, atr)
+    for pb, pr in (pbs or DAILY_PB).items():
+        key = _prof_key(pr)
         if key not in cache:
             cache[key] = _sim_profile(O, H, L, C, atr, mcum, pr, cost, mrx=mrx)
         ex, xo = cache[key]
         S = sig[pb].values & np.isfinite(ex)
         if pb in live_ok:
             S = S & live_ok[pb]
+        if pr.get("flt"):
+            S = S & fm[pr["flt"]]   # [V33.619] 자동 조율 거르개
         if cand is not None:
             S = S & cand
         ti, jj = np.nonzero(S)
@@ -262,7 +393,7 @@ def sim_daily(P, market, ev_dates, sig=None, cand=None):
     return df, str(reg[-1]), sig
 
 
-def exit_diag(P, market, sig, cand=None):
+def exit_diag(P, market, sig, cand=None, pbs=None):
     """[V33.613] ★진단(기록만 · 판정에 안 씀)★ 매매법마다 지금 손절(% 와 ATR×배수 중 타이트한 쪽) vs '고정 % 손절만'(넓은 쪽)의
     평균 순초과·승률 — 승률 39~41% 가 너무 타이트한 손절 때문인지 본다. 전 기간 · 후보 거른 표본."""
     O, H, L, C = (P[k].values for k in ("open", "high", "low", "close"))
@@ -273,7 +404,7 @@ def exit_diag(P, market, sig, cand=None):
     out = {}
     cache = {}
     mrx = _mr_exit(P)
-    for pb, pr in DAILY_PB.items():
+    for pb, pr in (pbs or DAILY_PB).items():
         S = sig[pb].values if pb in sig else None
         if S is None:
             continue
@@ -281,7 +412,7 @@ def exit_diag(P, market, sig, cand=None):
             S = S & cand
         row = {}
         for tag, prof in (("cur", pr), ("wide", dict(pr, atr=99.0))):
-            key = (prof["stop"], prof["atr"], prof["be"], prof["hold"], prof["tpR"], prof.get("mr"), prof.get("tpPct"))
+            key = _prof_key(prof)
             if key not in cache:
                 cache[key] = _sim_profile(O, H, L, C, atr, mcum, prof, cost, mrx=mrx)[0]
             ex = cache[key]
@@ -302,12 +433,24 @@ def _roll(x, n, fn):
     return out
 
 
-def intra_fires(c, h, l, v):
-    """오늘 5분봉(첫 봉부터) → 매매법별 '이 봉에서 진입 신호' bool 배열. 워커 pbIntraFires 와 같은 정의(check-playbook 이 대조)."""
+def intra_fires(c, h, l, v, ctx=None):
+    """오늘 5분봉(첫 봉부터) → 매매법별 '이 봉에서 진입 신호' bool 배열. 워커 pbIntraFires 와 같은 정의(check-playbook 이 대조).
+    ctx = {pc 전일 종가, ph 전일 고가, pl 전일 저가} — 갭 메우기 · 피봇(없으면 안 뜬다)."""
     n = len(c)
     F = {k: np.zeros(n, dtype=bool) for k in INTRA_PB}
     if n < 3:
         return F
+    if ctx and ctx.get("pc") and ctx["pc"] > 0:
+        pc = ctx["pc"]
+        if c[0] / pc - 1 <= -0.015:
+            i = np.arange(1, min(13, n))
+            F["GAP_FILL"][i] = (c[i] > h[0]) & (c[i - 1] <= h[0]) & (c[i] < pc)
+        if ctx.get("ph") and ctx.get("pl") and ctx["ph"] > 0 and ctx["pl"] > 0:
+            piv = (ctx["ph"] + ctx["pl"] + pc) / 3
+            s1 = 2 * piv - ctx["ph"]
+            i = np.arange(2, n)
+            lo3 = np.minimum(np.minimum(l[i - 2], l[i - 1]), l[i])
+            F["PIVOT_BNC"][i] = (lo3 <= s1 * 1.002) & (c[i] > s1) & (c[i] > c[i - 1]) & (c[i] < piv)
     if n > 6:
         orh = np.max(h[:6])
         i = np.arange(6, n)
@@ -335,11 +478,11 @@ def intra_fires(c, h, l, v):
     return F
 
 
-def _intra_exit(c, h, l, i, pr, b_end):
-    """i 봉 종가에 사서 — 익절/손절/시간/장 끝 → (청산가, 청산 봉). 같은 봉에서 둘 다 닿으면 손절."""
+def _intra_exit(c, h, l, i, pr, b_end, tp_px=None):
+    """i 봉 종가에 사서 — 익절/손절/시간/장 끝 → (청산가, 청산 봉). 같은 봉에서 둘 다 닿으면 손절. tp_px = 가격 목표(갭·피봇)."""
     pe = c[i]
     last = b_end if pr["bars"] == 0 else min(b_end, i + pr["bars"])
-    tp = pe * (1 + pr["tpPct"] / 100) if pr["tpPct"] else np.inf
+    tp = tp_px if (tp_px is not None and tp_px > pe) else pe * (1 + pr["tpPct"] / 100) if pr.get("tpPct") else np.inf
     sl = pe * (1 - pr["sl"] / 100)
     hh, ll = h[i + 1:last + 1], l[i + 1:last + 1]
     xs = np.nonzero(ll <= sl)[0]
@@ -372,21 +515,23 @@ def sim_intra(bars5, daily_reg, market, day_key_of=None):
         cut = np.nonzero(np.diff(day))[0] + 1
         starts = np.concatenate([[0], cut])
         ends = np.concatenate([cut, [len(t)]])
-        prev_close, closes_d = None, []
+        prev_close, closes_d, prev_hl = None, [], (None, None)
         for a, b in zip(starts, ends):
             if b - a < 20:
-                prev_close = c[b - 1]
+                prev_close, prev_hl = c[b - 1], (float(np.max(h[a:b])), float(np.min(l[a:b])))
                 continue
             dkey = int(pd.Timestamp(int(day[a]) * 86400, unit="s").strftime("%Y%m%d"))
             ma20 = np.mean(closes_d[-20:]) if len(closes_d) >= 20 else None
             closes_d.append(c[b - 1])
             rg = daily_reg.get(dkey)
             if prev_close is None or rg is None:
-                prev_close = c[b - 1]
+                prev_close, prev_hl = c[b - 1], (float(np.max(h[a:b])), float(np.min(l[a:b])))
                 continue
             up = 1 if (ma20 is not None and prev_close > ma20) else 0
             cc, hh_, ll_ = c[a:b], h[a:b], l[a:b]
-            F = intra_fires(cc, hh_, ll_, v[a:b] if v is not None else None)
+            ctx = {"pc": float(prev_close), "ph": prev_hl[0], "pl": prev_hl[1]}
+            F = intra_fires(cc, hh_, ll_, v[a:b] if v is not None else None, ctx)
+            piv = (prev_hl[0] + prev_hl[1] + prev_close) / 3 if prev_hl[0] else None
             n = b - a
             fired_at = {}
             for pb, arr in F.items():
@@ -398,9 +543,10 @@ def sim_intra(bars5, daily_reg, market, day_key_of=None):
                     continue
                 inst += 1
                 for pb in pbs:
-                    px, xb = _intra_exit(cc, hh_, ll_, i, INTRA_PB[pb], n - 1)
+                    ta = INTRA_PB[pb].get("tpAt")
+                    px, xb = _intra_exit(cc, hh_, ll_, i, INTRA_PB[pb], n - 1, tp_px=prev_close if ta == "pc" else piv if ta == "piv" else None)
                     rows.append((dkey, inst, si, a + i, a + xb, pb, (px / pe - 1) * 100 - cost, rg, (pe / prev_close - 1) * 100, i * 5, up))
-            prev_close = c[b - 1]
+            prev_close, prev_hl = c[b - 1], (float(np.max(h[a:b])), float(np.min(l[a:b])))
     if not rows:
         return pd.DataFrame(columns=["day", "inst", "j", "t", "x", "pb", "ex"])
     df = pd.DataFrame(rows, columns=["day", "inst", "j", "t", "x", "pb", "ex", "reg", "daypct", "tod", "up"])
@@ -603,17 +749,24 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             log("   · [매매법시뮬] %s 일봉 부족 — 건너뜀" % market)
             continue
         cm = cand_mask(P, (oos or {}).get(market))
-        ddf, reg_now, sig = sim_daily(P, market, ev_dates, cand=cm)
+        sig = CAT.signals(P)
+        try:
+            dpb, tune_rep = tune_daily(P, market, sig, log=log)   # [V33.619] 매매법 자동 조율(앞 55% 만)
+        except Exception as e:  # noqa: BLE001
+            log("   ⚠️ [매매법조율] %s 실패 %s — 기본 프로필" % (market, e))
+            dpb, tune_rep = {k: dict(v, prof="base", flt=None) for k, v in DAILY_PB.items()}, None
+        ddf, reg_now, sig = sim_daily(P, market, ev_dates, sig=sig, cand=cm, pbs=dpb)
         cand_src = "OMNI-Q 표본 밖 상위 20%"
         if cm is None or len(ddf) < CAND_MIN_ROWS:
             log("   · [매매법시뮬] %s 후보 거름 %s → 전 종목으로" % (market, "점수 없음" if cm is None else "표본 %d 부족" % len(ddf)))
-            ddf, reg_now, sig = sim_daily(P, market, ev_dates, sig=sig)
+            ddf, reg_now, sig = sim_daily(P, market, ev_dates, sig=sig, pbs=dpb)
             cand_src = "전 종목(OMNI-Q 과거 점수 없음·부족)"
         ddf = _relevel(ddf)
         dst, _ = validate(ddf, "t")
         dst["cand"] = cand_src
+        dst["tune"] = tune_rep
         try:
-            dst["exitDiag"] = exit_diag(P, market, sig, cm if cand_src.startswith("OMNI") else None)
+            dst["exitDiag"] = exit_diag(P, market, sig, cm if cand_src.startswith("OMNI") else None, pbs=dpb)
             ed = dst["exitDiag"]
             log("   · [매매법시뮬] %s 손절 진단(기록만) — " % market + " · ".join(
                 "%s 지금 %s%%/%s%% 넓게 %s%%/%s%%" % (k, v["cur"][1], v["cur"][2], v["wide"][1], v["wide"][2]) for k, v in list(ed.items())[:6]))
@@ -641,7 +794,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             try:
                 import requests
                 body = {"mkt": market, "day": str(P["close"].index[-1]), "regime": reg_now,
-                        "daily": {"val": dst, "table": export(dtab, list(DAILY_PB)), "pb": DAILY_PB, "cross": cross},
+                        "daily": {"val": dst, "table": export(dtab, list(DAILY_PB)), "pb": dpb, "cross": cross},
                         "intra": {"val": ist, "table": export(itab, list(INTRA_PB)), "pb": INTRA_PB}}
                 r = requests.post(BASE + "/api/playbook", headers=HDR, json=body, timeout=180)
                 log("   · [매매법시뮬] %s 업로드 %s" % (market, r.status_code))

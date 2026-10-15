@@ -29,7 +29,7 @@ const chk = (c, m, d) => { if (c) console.log("  ok   " + m); else { fails++; co
 let o = null; try { o = JSON.parse(r.stdout.trim().split("\n").pop()); } catch (e) {}
 chk(o, "도감을 불러온다", (r.stderr || "").slice(-300));
 if (o) {
-  chk(o.n === 19 && Object.values(o.fired).filter((x) => x > 0).length >= 18, "19개 매매법(V33.618 폭락장 반등 2종 포함) · 거의 전부 신호를 낸다", JSON.stringify(o.fired));
+  chk(o.n === 29 && Object.values(o.fired).filter((x) => x > 0).length >= 27, "29개 매매법(V33.618 폭락장 반등 2종 · V33.619 고전 기술적 10종 포함) · 거의 전부 신호를 낸다", JSON.stringify(o.fired));
   chk(["cluster", "exit", "family", "horizon", "id", "note", "regimes", "status"].every((k) => o.keys.includes(k)), "같은 규격(family·horizon·exit·regimes·status)");
   chk(o.leak.length === 0, "미래 정보 누출 없음(끝 20일을 지워도 앞 구간 신호 동일)", JSON.stringify(o.leak));
   chk(o.novol > 0, "거래량이 없어도 죽지 않는다");

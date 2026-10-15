@@ -11,6 +11,10 @@ const NAMES: Record<string, string> = {
   BB_LOW: "볼린저 하단", STOCH_CROSS: "스토캐스틱 교차", STOCH_OS_EXIT: "스토캐스틱 과매도 이탈",
   VOL_BREAKOUT: "거래량 돌파", VOL_REVERT: "거래량 급락 반등", SQUEEZE: "스퀴즈 돌파", XS_ARB: "5일 낙폭 과대",
   DUAL_MOM: "듀얼 모멘텀", HERD_REBOUND: "거래량 2차 파동",
+    OS_DEEP: "깊은 과매도 반등", CAPIT_REV: "투매 반등",
+    ICHIMOKU: "이치모쿠 구름 돌파", KELTNER: "켈트너 채널 돌파", DONCHIAN: "돈치안 55일 돌파", MACD_X: "MACD 교차", ENVELOPE: "이격도 반등",
+    ELDER_RAY: "엘더 레이", WILLR: "윌리엄스 %R", CCI_REV: "CCI 반등", PSAR: "파라볼릭 SAR", TRIPLE_SCR: "삼중창",
+    GAP_FILL: "갭 메우기", PIVOT_BNC: "피봇 지지 반등",
   ORB: "시가 범위 돌파", DIP_REV: "장중 눌림 반등", STOCH5: "5분 스토캐스틱", MOM3: "5분 3봉 상승", VWAP_RE: "VWAP 회복",
 };
 const nm = (k: string) => NAMES[k] || k;
@@ -50,22 +54,30 @@ function Status({ d }: { d: any }) {
   }).sort((a, b) => (b.cu + b.ck) - (a.cu + a.ck) || (b.fu + b.fk) - (a.fu + a.fk) || (b.bu + b.bk) - (a.bu + a.bk));
   const two = (u: any, k: any) => <><span className={u ? "text-ink" : "text-ink-3"}>{u || 0}</span><span className="text-ink-3"> / </span><span className={k ? "text-ink" : "text-ink-3"}>{k || 0}</span></>;
   const dg = (x: any[] | undefined) => (x && x[0] ? <span style={{ color: x[1] > 0 ? "var(--bs-ok)" : x[1] < 0 ? "var(--bs-bad)" : undefined }}>{pc(x[1])} · {x[2]}%</span> : <span className="text-ink-3">—</span>);
-  const rule = (r: any) => r.isI ? "−" + r.p.sl + "% · " + (r.p.tpPct == null ? "익절 없음" : "+" + r.p.tpPct + "%") + " · " + (r.p.bars ? r.p.bars * 5 + "분" : "장 끝")
-    : r.p.stop + "%/ATR×" + r.p.atr + " · " + (r.p.tpR ? r.p.tpR + "R" : "익절 없음") + " · " + r.p.hold + "일";
+  const FLT: Record<string, string> = { trend: "MA200 위만", noBear: "약세장 제외", calm: "변동 작을 때", up20: "MA20>MA50" };
+  const PROF: Record<string, string> = { trend: "추세(길게)", swing: "스윙", short: "짧게", quick: "빠른 회전", mr: "평균회귀" };
+  const rule = (r: any) => r.isI ? "−" + r.p.sl + "% · " + (r.p.tpAt === "pc" ? "전일 종가까지" : r.p.tpAt === "piv" ? "피봇까지" : r.p.tpPct == null ? "익절 없음" : "+" + r.p.tpPct + "%") + " · " + (r.p.bars ? r.p.bars * 5 + "분" : "장 끝")
+    : r.p.stop + "%/ATR×" + r.p.atr + " · " + (r.p.mr ? "MA5·RSI2 회귀" : r.p.tpPct ? "+" + r.p.tpPct + "%" : r.p.tpR ? r.p.tpR + "R" : "익절 없음") + " · " + r.p.hold + "일" + (r.p.tstop ? " · " + r.p.tstop + "일 손실 정리" : "");
+  /* [V33.619] 자동 조율 — 앞 40% 에서 고르고 [40,55%) 확인 · 판정 구간(뒤 20%) 기본 → 조율 평균 */
+  const tn = (mk: string, k: string) => { const t = d.markets?.[mk]?.daily?.val?.tune?.[k]; if (!t) return <span className="text-ink-3">—</span>;
+    if (t.prof === "base" && !t.flt) return <span className="text-ink-3">기본 유지</span>;
+    const b = t.test?.base?.[1], u = t.test?.tuned?.[1];
+    return <span title={"판정 구간 기본 " + pc(b) + " → 조율 " + pc(u)}>{[t.prof !== "base" ? PROF[t.prof] || t.prof : null, t.flt ? FLT[t.flt] || t.flt : null].filter(Boolean).join(" · ")}
+      {b != null && u != null && <span className="ml-1" style={{ color: u > b ? "var(--bs-ok)" : "var(--bs-bad)" }}>{(u - b >= 0 ? "+" : "") + (u - b).toFixed(2)}%p</span>}</span>; };
   const ts = d.live?.us?.ts || d.live?.kr?.ts;
   return (
     <div className="overflow-x-auto">
       <p className="mb-2 text-[11px] text-ink-3">미 / 한 · 후보 기준 {ago(ts)}</p>
-      <table className="w-full min-w-[720px] text-[12px]">
+      <table className="w-full min-w-[920px] text-[12px]">
         <thead><tr className="text-left text-[11px] text-ink-3">
           <th className="py-1.5 font-normal">매매법</th><th className="font-normal">지금 뜬 후보</th><th className="font-normal">지금 고름</th><th className="font-normal">판정 구간 선택</th>
-          <th className="font-normal">모의 평균·승률 미</th><th className="font-normal">한</th><th className="font-normal">보유</th><th className="font-normal">매도 규칙</th></tr></thead>
+          <th className="font-normal">모의 평균·승률 미</th><th className="font-normal">한</th><th className="font-normal">보유</th><th className="font-normal">매도 규칙</th><th className="font-normal">자동 조율 미</th><th className="font-normal">한</th></tr></thead>
         <tbody className="bs-num">{rows.map((r) => (
           <tr key={r.k} className="border-t border-line text-ink-2" style={r.cu + r.ck ? { background: "color-mix(in srgb, var(--bs-ok) 7%, transparent)" } : undefined}>
             <td className="py-1.5"><span className="text-ink">{nm(r.k)}</span><span className="ml-1.5 text-[10.5px] text-ink-3">{r.isI ? "5분" : "일봉"}</span></td>
             <td>{two(r.fu, r.fk)}</td><td>{two(r.cu, r.ck)}</td><td>{two(r.bu, r.bk)}</td>
             <td>{dg(r.du)}</td><td>{dg(r.dk)}</td><td>{r.h ? <span className="text-ink">{r.h}</span> : <span className="text-ink-3">0</span>}</td>
-            <td className="text-[11px]">{rule(r)}</td></tr>))}</tbody>
+            <td className="text-[11px]">{rule(r)}</td><td className="text-[11px]">{r.isI ? "—" : tn("us", r.k)}</td><td className="text-[11px]">{r.isI ? "—" : tn("kr", r.k)}</td></tr>))}</tbody>
       </table>
     </div>
   );

@@ -212,6 +212,142 @@ def e_capit_rev(P):
     return _and(I["vr"] >= 2.0, I["ret1"] <= -5.0, I["ret1"] >= -25.0, I["c"] <= I["ma20"] * 0.90)
 
 
+# ── [V33.619] 고전 기술적 매매법 10종(사용자 10/15 제안) — 워커 pbDailyFires 와 같은 식(check-playbook 대조) ──
+def _ema(x, n):
+    """지수이동평균 — pandas ewm(span=n, adjust=False). 워커 _pbEma 와 같다."""
+    return x.ewm(span=n, adjust=False).mean()
+
+
+def e_ichimoku(P):
+    """이치모쿠 구름대 돌파 — 종가가 구름 상단(선행스팬 1·2 중 큰 값 · 26일 앞당김)을 오늘 처음 넘음 · 전환선 > 기준선 · 구름 두께 ≤ 5%."""
+    I = _ind(P)
+    h, l, c = I["h"], I["l"], I["c"]
+    ten = (h.rolling(9).max() + l.rolling(9).min()) / 2
+    kij = (h.rolling(26).max() + l.rolling(26).min()) / 2
+    sa = ((ten + kij) / 2).shift(26)
+    sb = ((h.rolling(52).max() + l.rolling(52).min()) / 2).shift(26)
+    top = sa.where(sa > sb, sb)
+    return _and(c > top, c.shift(1) <= top.shift(1), ten > kij, (sa - sb).abs() / c <= 0.05)
+
+
+def e_keltner(P):
+    """켈트너 채널 돌파 — EMA20 + 2×ATR10(단순평균) 상단을 오늘 처음 넘는 양봉."""
+    I = _ind(P)
+    h, l, c = I["h"], I["l"], I["c"]
+    pc = c.shift(1)
+    tr = pd.concat([(h - l), (h - pc).abs(), (l - pc).abs()]).groupby(level=0).max().reindex(c.index)
+    up = _ema(c, 20) + 2 * tr.rolling(10).mean()
+    return _and(c > up, c.shift(1) <= up.shift(1), I["ret1"] > 0)
+
+
+def e_donchian(P):
+    """돈치안 채널(터틀) 돌파 — 지난 55일 최고가를 오늘 처음 넘음."""
+    I = _ind(P)
+    hp = I["h"].shift(1).rolling(55).max()
+    return _and(I["c"] > hp, I["c"].shift(1) <= hp.shift(1))
+
+
+def e_macd(P):
+    """MACD(12·26·9) — 0 아래에서 시그널 상향 교차(초기 반전) 또는 0선 상향 돌파(시그널 위)."""
+    I = _ind(P)
+    m = _ema(I["c"], 12) - _ema(I["c"], 26)
+    s = _ema(m, 9)
+    xs = (m > s) & (m.shift(1) <= s.shift(1))
+    xz = (m > 0) & (m.shift(1) <= 0)
+    return ((xs & (m < 0)) | (xz & (m > s))).fillna(False)
+
+
+def e_envelope(P):
+    """이격도(엔벨로프) 반등 — 어제 종가가 MA20 −7% 선 아래 · 오늘 그 선 위로 회복한 양봉."""
+    I = _ind(P)
+    lo = I["ma20"] * 0.93
+    return _and(I["c"].shift(1) < lo.shift(1), I["c"] > lo, I["ret1"] > 0)
+
+
+def e_elder_ray(P):
+    """엘더 레이 — EMA13 상승 중 · 베어 파워(저가 − EMA13) 음수이면서 어제 바닥 찍고 오늘 올라섬."""
+    I = _ind(P)
+    e = _ema(I["c"], 13)
+    bear = I["l"] - e
+    return _and(e > e.shift(1), bear < 0, bear > bear.shift(1), bear.shift(1) <= bear.shift(2))
+
+
+def e_williams_r(P):
+    """윌리엄스 %R(14) — 어제 −80 이하(과매도) · 오늘 −80 위로."""
+    I = _ind(P)
+    hh, ll = I["h"].rolling(14).max(), I["l"].rolling(14).min()
+    rg = hh - ll
+    wr = ((hh - I["c"]) / rg.where(rg > 0) * -100).fillna(-50.0).where(hh.notna())
+    return _and(wr.shift(1) <= -80, wr > -80)
+
+
+def _cci(P, n=20):
+    I = _ind(P)
+    tp = (I["h"] + I["l"] + I["c"]) / 3
+    sma = tp.rolling(n).mean()
+    a = tp.values
+    mad = np.full(a.shape, np.nan)
+    if a.shape[0] >= n:
+        from numpy.lib.stride_tricks import sliding_window_view
+        w = sliding_window_view(a, n, axis=0)                       # (T-n+1, N, n)
+        mad[n - 1:] = np.abs(w - w.mean(axis=2, keepdims=True)).mean(axis=2)
+    mad = pd.DataFrame(mad, index=tp.index, columns=tp.columns)
+    return (tp - sma) / (0.015 * mad.where(mad > 0))
+
+
+def e_cci(P):
+    """CCI(20) — 어제 −100 이하 · 오늘 −100 위로(평균 회귀)."""
+    c = _cci(P)
+    return _and(c.shift(1) <= -100, c > -100)
+
+
+def _psar_flip(h, l):
+    """파라볼릭 SAR(0.02 · 최대 0.2) — 하락 → 상승으로 뒤집힌 날 True. 워커 _pbPsarFlipUp 과 같은 순서(첫 유효 봉 = 상승 가정)."""
+    H, L = h.values, l.values
+    T, N = H.shape
+    out = np.zeros((T, N), dtype=bool)
+    for j in range(N):
+        hj, lj = H[:, j], L[:, j]
+        ok = np.isfinite(hj) & np.isfinite(lj)
+        idx = np.nonzero(ok)[0]
+        if len(idx) < 3:
+            continue
+        j0 = idx[0]
+        up, sar, ep, af = True, lj[j0], hj[j0], 0.02
+        p1, p2 = j0, j0                                              # 직전·그 전 유효 봉
+        for i in idx[1:]:
+            s = sar + af * (ep - sar)
+            if up:
+                s = min(s, lj[p1], lj[p2])
+                if lj[i] < s:
+                    up, s, ep, af = False, ep, lj[i], 0.02
+                elif hj[i] > ep:
+                    ep, af = hj[i], min(af + 0.02, 0.2)
+            else:
+                s = max(s, hj[p1], hj[p2])
+                if hj[i] > s:
+                    up, s, ep, af = True, ep, hj[i], 0.02
+                    out[i, j] = True
+                elif lj[i] < ep:
+                    ep, af = lj[i], min(af + 0.02, 0.2)
+            sar = s
+            p2, p1 = p1, i
+    return pd.DataFrame(out, index=h.index, columns=h.columns)
+
+
+def e_psar(P):
+    """파라볼릭 SAR 반전 — 하락 SAR 이 오늘 가격 아래로 뒤집힘(상승 전환)."""
+    I = _ind(P)
+    return _psar_flip(I["h"], I["l"])
+
+
+def e_triple_screen(P):
+    """삼중창(엘더) — ① 큰 추세: EMA65(≈13주) 가 5일 전보다 위 ② 어제 슬로우 스토캐스틱 %K ≤ 30(눌림) ③ 오늘 종가가 어제 고가 돌파."""
+    I = _ind(P)
+    e = _ema(I["c"], 65)
+    return _and(e > e.shift(5), I["sk"].shift(1) <= 30, I["c"] > I["h"].shift(1))
+
+
 def e_squeeze(P):
     """볼린저 폭이 최근 120일 하위 10% 로 수축한 뒤 상단 돌파."""
     I = _ind(P)
@@ -294,6 +430,17 @@ CATALOG = [
     _S("HERD_REBOUND", "Volume", "snap", e_herding_rebound, "volume", (R_BULL, R_NEUT), "new", "거래량 폭증 뒤 2차 파동"),
     _S("OS_DEEP", "Rebound", "snap", e_os_deep, "snap", ALL, "new", "깊은 과매도 반등(추세 조건 없음 · 폭락장)"),
     _S("CAPIT_REV", "Volume", "snap", e_capit_rev, "snap", ALL, "new", "투매일 종가 매수(추세 조건 없음 · 폭락장)"),
+    # [V33.619] 고전 기술적 매매법 10종
+    _S("ICHIMOKU", "Trend", "swing", e_ichimoku, "trend", (R_BULL, R_NEUT), "new", "이치모쿠 구름대 상단 돌파 · 전환선>기준선 · 얇은 구름"),
+    _S("KELTNER", "Volatility", "swing", e_keltner, "vol", (R_BULL, R_NEUT), "new", "켈트너 채널(EMA20+2×ATR10) 상단 돌파"),
+    _S("DONCHIAN", "Trend", "swing", e_donchian, "trend", (R_BULL, R_NEUT), "new", "돈치안 55일 고점 돌파(터틀)"),
+    _S("MACD_X", "Momentum", "swing", e_macd, "pullbk", ALL, "new", "MACD 0 아래 골든크로스 · 0선 돌파"),
+    _S("ENVELOPE", "Rebound", "snap", e_envelope, "snap", ALL, "new", "MA20 −7% 엔벨로프 하단 이탈 뒤 회복"),
+    _S("ELDER_RAY", "Pullback", "swing", e_elder_ray, "pullbk", (R_BULL, R_NEUT), "new", "EMA13 상승 중 베어 파워 음수에서 반등"),
+    _S("WILLR", "Rebound", "snap", e_williams_r, "snap", ALL, "new", "윌리엄스 %R −80 상향 이탈"),
+    _S("CCI_REV", "Rebound", "snap", e_cci, "snap", ALL, "new", "CCI −100 상향 복귀"),
+    _S("PSAR", "Trend", "swing", e_psar, "trend", ALL, "new", "파라볼릭 SAR 상승 전환"),
+    _S("TRIPLE_SCR", "Pullback", "swing", e_triple_screen, "pullbk", (R_BULL, R_NEUT), "new", "삼중창 — 큰 추세↑ · 눌림 · 어제 고가 돌파"),
 ]
 # 일봉으로 학습할 수 없는 것 — 도감에는 적되 후보에서 뺀다(분봉 매매법 · 보유 기간 충돌 방지)
 BLOCKED = [
@@ -302,9 +449,9 @@ BLOCKED = [
     {"id": "SC_PULLBACK", "family": "DayTrading", "status": "blocked", "why": "분봉 · 한국 막힘"},
 ]
 CLUSTERS = {   # 원칙: 표본이 적은 초기엔 3~4 개 큰 묶음으로 먼저 학습(Phase C)
-    "TREND": ["TREND_ALIGN", "TR_BREAKOUT", "RS_LEADER", "VT_TREND", "TR_PULLBACK", "MA_PULLBACK", "DUAL_MOM"],
-    "MEANREV": ["SN_RSI2", "HA_REV", "BB_LOW", "STOCH_CROSS", "STOCH_OS_EXIT", "VOL_REVERT", "XS_ARB", "OS_DEEP", "CAPIT_REV"],
-    "VOLVOL": ["VOL_BREAKOUT", "SQUEEZE", "HERD_REBOUND"],
+    "TREND": ["TREND_ALIGN", "TR_BREAKOUT", "RS_LEADER", "VT_TREND", "TR_PULLBACK", "MA_PULLBACK", "DUAL_MOM", "ICHIMOKU", "DONCHIAN", "MACD_X", "ELDER_RAY", "PSAR", "TRIPLE_SCR"],
+    "MEANREV": ["SN_RSI2", "HA_REV", "BB_LOW", "STOCH_CROSS", "STOCH_OS_EXIT", "VOL_REVERT", "XS_ARB", "OS_DEEP", "CAPIT_REV", "ENVELOPE", "WILLR", "CCI_REV"],
+    "VOLVOL": ["VOL_BREAKOUT", "SQUEEZE", "HERD_REBOUND", "KELTNER"],
 }
 
 

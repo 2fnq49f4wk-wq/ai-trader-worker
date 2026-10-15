@@ -44,22 +44,45 @@ import strategy_catalog as CAT
 cv = pd.DataFrame(50*np.exp(np.cumsum(rng.normal(-0.001,0.04,(400,40)),axis=0)), index=[20240101+k for k in range(400)])
 ov = cv*(1+rng.normal(0,0.01,(400,40)))
 Pv = {"close":cv,"open":ov,"high":np.maximum(cv,ov)*1.01,"low":np.minimum(cv,ov)*0.99,"volume":pd.DataFrame(rng.lognormal(13,.9,(400,40)), index=cv.index)}
-sv = CAT.signals(Pv, ids=["OS_DEEP","CAPIT_REV"])
+sv = CAT.signals(Pv, ids=["OS_DEEP","CAPIT_REV","ICHIMOKU","KELTNER","DONCHIAN","MACD_X","ENVELOPE","ELDER_RAY","WILLR","CCI_REV","PSAR","TRIPLE_SCR"])
+# [V33.619] 자동 조율 거르개 대조(같은 변동성 큰 시세)
+regv = PB._regime(Pv["close"])[0]; atrv = PB._daily_state(Pv, [])[4]; fmv = PB._flt_masks(Pv, regv, atrv)
+FMv = {k: np.asarray(fmv[k])[-120:].astype(int).tolist() for k in ("trend", "noBear", "calm", "up20")}; RGv = [str(x) for x in regv[-120:]]
+# [V33.619] 자동 조율 귀무·양성 대조 — 하루를 26걸음으로 걸은 무작위 시세(진짜 고가·저가)
+def _path(seed, T=800, N=220, sub=26, sg=0.018):
+    r2 = np.random.default_rng(seed)
+    lp = np.log(50) + np.cumsum(r2.normal(0, sg / np.sqrt(sub), (T * sub, N)), axis=0).reshape(T, sub, N)
+    prev = np.concatenate([np.full((1, N), np.log(50)), lp[:-1, -1, :]], axis=0)
+    o_ = np.exp(prev + r2.normal(0, 0.002, (T, N))); al = np.concatenate([np.log(o_)[:, None, :], lp], axis=1)
+    ix = [20220101 + k for k in range(T)]; D_ = lambda a: pd.DataFrame(a, index=ix)
+    return {"close": D_(np.exp(lp[:, -1, :])), "open": D_(o_), "high": D_(np.exp(al.max(axis=1))), "low": D_(np.exp(al.min(axis=1))), "volume": D_(r2.lognormal(13, .5, (T, N)))}
+Pn = _path(4); _, tn = PB.tune_daily(Pn, "us", CAT.signals(Pn), log=lambda *a: None)
+tnull = [k for k, v in tn.items() if v["prof"] != "base" or v["flt"]]
+Pp = _path(5); C_ = Pp["close"]; Sx = CAT.signals(Pp, ids=["ENVELOPE"])["ENVELOPE"].values & (C_ > C_.rolling(200).mean()).values
+add = np.zeros(C_.shape)
+for t_, j_ in zip(*np.nonzero(Sx)):
+    add[t_ + 1:t_ + 11, j_] += 0.004
+cum = np.exp(np.cumsum(add, axis=0)); pcum = np.vstack([np.ones((1, C_.shape[1])), cum[:-1]])
+Pp = {"close": Pp["close"] * cum, "high": Pp["high"] * cum, "low": Pp["low"] * cum, "open": Pp["open"] * pcum, "volume": Pp["volume"]}
+_, tp_ = PB.tune_daily(Pp, "us", CAT.signals(Pp), log=lambda *a: None)
+tpos = tp_["ENVELOPE"]
 Pva = {k: Pv[k].values.round(6).tolist() for k in ("open","high","low","close","volume")}
 Sv = {k: sv[k].values[-120:].astype(int).tolist() for k in sv}
 # 5분 단타 진입 — 무작위 하루 30개(봉 78개)
 ib = []
 for q in range(30):
     cc = 50*np.exp(np.cumsum(rng.normal(0, 0.003, 78))); hh = cc*(1+rng.uniform(0,0.002,78)); ll = cc*(1-rng.uniform(0,0.002,78)); vv = rng.lognormal(8,.6,78)
-    F = PB.intra_fires(cc, hh, ll, vv)
-    ib.append({"c": cc.tolist(), "h": hh.tolist(), "l": ll.tolist(), "v": vv.tolist(), "F": {k: v.astype(int).tolist() for k, v in F.items()}})
+    pc_ = float(cc[0] / 0.98) if q % 2 == 0 else float(cc[0] * (1 + rng.normal(0, 0.01)))   # [V33.619] 반은 −2% 하락 갭
+    ctx = {"pc": pc_, "ph": pc_ * 1.01, "pl": pc_ * 0.97}
+    F = PB.intra_fires(cc, hh, ll, vv, ctx)
+    ib.append({"c": cc.tolist(), "h": hh.tolist(), "l": ll.tolist(), "v": vv.tolist(), "ctx": ctx, "F": {k: v.astype(int).tolist() for k, v in F.items()}})
 S = json.loads(${JSON.stringify(JSON.stringify(samples))})
 s = np.array([[np.nan if x is None else x for x in r] for r in S], dtype=float)
 dk = PB.daily_keys(["BULL"]*len(s), s[:,0], s[:,1], s[:,2], s[:,3], s[:,4].astype(int))
 I = np.array(${JSON.stringify(isamp)}, dtype=float)
 ik = PB.intra_keys(["CRASH"]*len(I), I[:,0], I[:,1], I[:,2].astype(int))
 print(json.dumps({"null": null_d.get("pass"), "pos": pos, "pick": ch and ch[0], "G": G, "Pa": Pa, "Sd": Sd, "K": K, "ib": ib, "dk": [[str(x) for x in lv] for lv in dk], "ik": [[str(x) for x in lv] for lv in ik],
-  "Pva": Pva, "Sv": Sv, "LF": LF, "MR": MR, "RG": RG, "tab5len": len(next(iter(tab5.values()))), "snapMr": sorted(k for k, v in PB.DAILY_PB.items() if v.get("mr")),
+  "Pva": Pva, "Sv": Sv, "FMv": FMv, "RGv": RGv, "tnull": tnull, "tpos": tpos, "INPB": sorted(PB.INTRA_PB), "LF": LF, "MR": MR, "RG": RG, "tab5len": len(next(iter(tab5.values()))), "snapMr": sorted(k for k, v in PB.DAILY_PB.items() if v.get("mr")),
   "rules": PB.RULES, "chLow": PB.choose({("*", "A"): (100, 0.3, 0.6, 0.4, 2.0)}, ["*"], ["A"]), "pbs": sorted(PB.DAILY_PB), "ipbs": sorted(PB.INTRA_PB), "B": [PB.B_RSI, PB.B_GAP20, PB.B_RET5, PB.B_VR, PB.B_DAYPCT, PB.B_TOD]}))
 `;
 const r = spawnSync("python3", ["-c", py], { encoding: "utf8", timeout: 300000, maxBuffer: 256 * 1024 * 1024 });
@@ -91,13 +114,13 @@ if (o) {
       } }
     chk(!bad.length && nOk > 0 && W.pbLiveFilterOk("TR_BREAKOUT", { c: [1] }, "CRASH"), "[V33.618] RSI2 실전 거르개(약세 금지·−12%·ATR 5%·당일 −4%) 학습기 = 워커 (통과 " + nOk + ")", JSON.stringify(bad.slice(0, 4)));
     chk(!badm.length && nMr > 0, "[V33.618] 평균회귀 청산(종가 > MA5 · RSI2 ≥ 65) 학습기 = 워커 (" + nMr + ")", JSON.stringify(badm.slice(0, 4))); }
-  { const T = o.Pva.close.length, cnt = { OS_DEEP: 0, CAPIT_REV: 0 }, bad = [];
+  { const T = o.Pva.close.length, cnt = Object.fromEntries(["OS_DEEP","CAPIT_REV","ICHIMOKU","KELTNER","DONCHIAN","MACD_X","ENVELOPE","ELDER_RAY","WILLR","CCI_REV","PSAR","TRIPLE_SCR"].map((k) => [k, 0])), bad = [];
     for (let j = 0; j < o.Pva.close[0].length; j++) {
       const col = (k) => o.Pva[k].map((r) => r[j]);
       const A = { o: col("open"), h: col("high"), l: col("low"), c: col("close"), v: col("volume") };
       for (let q = 0; q < 120; q++) { const t = T - 120 + q, F = W.pbDailyFires({ o: A.o.slice(0, t + 1), h: A.h.slice(0, t + 1), l: A.l.slice(0, t + 1), c: A.c.slice(0, t + 1), v: A.v.slice(0, t + 1) });
-        for (const pb of ["OS_DEEP", "CAPIT_REV"]) { const js = F.includes(pb) ? 1 : 0; cnt[pb] += js; if (js !== o.Sv[pb][q][j]) bad.push([pb, t, j, js]); } } }
-    chk(!bad.length && cnt.OS_DEEP > 0 && cnt.CAPIT_REV > 0, "[V33.618] 폭락장 반등 2종(OS_DEEP·CAPIT_REV) 학습기 = 워커 " + JSON.stringify(cnt), JSON.stringify(bad.slice(0, 4))); }
+        for (const pb of ["OS_DEEP","CAPIT_REV","ICHIMOKU","KELTNER","DONCHIAN","MACD_X","ENVELOPE","ELDER_RAY","WILLR","CCI_REV","PSAR","TRIPLE_SCR"]) { const js = F.includes(pb) ? 1 : 0; cnt[pb] += js; if (js !== o.Sv[pb][q][j]) bad.push([pb, t, j, js]); } } }
+    chk(!bad.length && Object.values(cnt).every((x) => x > 0), "[V33.618·619] 폭락장 반등 2종 + 고전 기술적 10종(이치모쿠·켈트너·돈치안·MACD·엔벨로프·엘더·%R·CCI·SAR·삼중창) 학습기 = 워커 " + JSON.stringify(cnt), JSON.stringify(bad.slice(0, 4))); }
   chk(o.null === false, "귀무: 무작위 시세는 일봉 검증을 통과 못 한다", JSON.stringify(o.null));
   chk(o.pos.pass === true && o.pick === o.G, "양성 대조: 심은 매매법을 골라 뒤 30% 에서 통과", JSON.stringify([o.pos, o.pick, o.G]));
   // ⑤ 진입 조건 대조(일봉 도감)
@@ -114,14 +137,27 @@ if (o) {
     }
     chk(bad.length === 0 && fired > 50, "도감 진입 조건: 학습기 ↔ 워커 같은 날 같은 매매법(" + tot + "칸 · 발화 " + fired + ")", bad.join(" | ")); }
   // ⑤ 진입 조건 대조(5분 단타)
-  { let bad = [], fired = 0;
+  { let bad = [], fired = 0; const per = {};
     for (const b of o.ib) for (let i = 2; i < b.c.length; i++) {
-      const js = W.pbIntraFires(b.c.slice(0, i + 1), b.h.slice(0, i + 1), b.l.slice(0, i + 1), b.v.slice(0, i + 1)).sort().join(",");
+      const jsA = W.pbIntraFires(b.c.slice(0, i + 1), b.h.slice(0, i + 1), b.l.slice(0, i + 1), b.v.slice(0, i + 1), b.ctx); jsA.forEach((k) => { per[k] = (per[k] || 0) + 1; });
+      const js = jsA.sort().join(",");
       const py = Object.keys(b.F).filter((k) => b.F[k][i]).sort().join(",");
       if (py) fired++;
       if (js !== py && bad.length < 5) bad.push("i" + i + " py[" + py + "] js[" + js + "]");
     }
-    chk(bad.length === 0 && fired > 30, "5분 단타 진입 조건: 학습기 ↔ 워커 같은 봉(발화 " + fired + ")", bad.join(" | ")); }
+    chk(bad.length === 0 && fired > 30, "5분 단타 진입 조건: 학습기 ↔ 워커 같은 봉(발화 " + fired + ")", bad.join(" | "));
+    chk(per.GAP_FILL > 0 && per.PIVOT_BNC > 0 && o.INPB.includes("GAP_FILL") && o.INPB.includes("PIVOT_BNC"), "[V33.619] 갭 메우기 · 피봇 반등(전일 고·저·종) 학습기 = 워커 " + JSON.stringify(per)); }
+  // [V33.619] 자동 조율
+  { let bad = [];
+    const T = o.Pva.close.length;
+    for (let j = 0; j < o.Pva.close[0].length; j++) {
+      const col = (k) => o.Pva[k].map((r) => r[j]);
+      const A = { o: col("open"), h: col("high"), l: col("low"), c: col("close"), v: col("volume") };
+      for (let q = 0; q < 120; q++) { const t = T - 120 + q, D = { o: A.o.slice(0, t + 1), h: A.h.slice(0, t + 1), l: A.l.slice(0, t + 1), c: A.c.slice(0, t + 1), v: A.v.slice(0, t + 1) };
+        for (const f of ["trend", "noBear", "calm", "up20"]) { const js = W.pbLiveFilterOk("ZZ", D, o.RGv[q], { flt: f }) ? 1 : 0; if (js !== o.FMv[f][q][j] && bad.length < 5) bad.push([f, t, j, js]); } } }
+    chk(!bad.length, "[V33.619] 자동 조율 거르개(trend·noBear·calm·up20) 학습기 = 워커", JSON.stringify(bad));
+    chk(o.tnull.length <= 2, "[V33.619] 조율 귀무: 무작위 시세(진짜 고·저가)에선 29종 중 2종 이하만 바꾼다(달 묶음 t · 확인 구간)", JSON.stringify(o.tnull));
+    chk(o.tpos.flt === "trend" && o.tpos.test.tuned[1] > o.tpos.test.base[1] + 0.5, "[V33.619] 조율 양성: '종가 > MA200 일 때만 오르는' 엔벨로프 우위를 심으면 trend 거르개를 찾고 손대지 않은 구간에서도 낫다", JSON.stringify(o.tpos)); }
   const B = o.B;
   chk(JSON.stringify(B) === JSON.stringify([W.PB_KEYS.rsi, W.PB_KEYS.gap20, W.PB_KEYS.ret5, W.PB_KEYS.vr, W.PB_KEYS.daypct, W.PB_KEYS.tod]), "열쇠 경계가 학습기와 같다");
   let same = true, bad = "";
@@ -182,6 +218,12 @@ chk(W.pbRoutePick({ ...st, daily: { ...st.daily, table: { "*": { RS_LEADER: [900
 const si = { sid: "SCALP_M", kind: "intra", tpPct: 1.2, bars: 18 };
 chk(/^SR-TP/.test(W.pbExitWhy(si, 100, 101.3, now - 60000, now, 200)) && /^SR-TIME/.test(W.pbExitWhy(si, 100, 100.2, now - 91 * 60000, now, 200))
     && /^SR-EOD/.test(W.pbExitWhy(si, 100, 100.2, now - 60000, now, 8)) && W.pbExitWhy(si, 100, 100.2, now - 60000, now, 200) === null, "단타 청산: 익절 · 시간 · 마감 10분 전");
+{ const sg = { sid: "GAP_FILL", kind: "intra", tpPct: null, tpPx: 102, bars: 0 };
+  chk(/^SR-TP/.test(W.pbExitWhy(sg, 100, 102.05, now - 60000, now, 200) || "") && W.pbExitWhy(sg, 100, 101.5, now - 60000, now, 200) === null, "[V33.619] 단타 가격 목표(갭 = 전일 종가 · 피봇)에서 익절");
+  const sq = { sid: "WILLR", kind: "daily", stop: 3, tpR: null, tpPct: 3, hold: 5, tstop: 3 };
+  chk(/^SR-TIME/.test(W.pbExitWhy(sq, 100, 99, now - 4.5 * 86400000, now, 200) || "") && W.pbExitWhy(sq, 100, 101, now - 4.5 * 86400000, now, 200) === null && /^SR-TP/.test(W.pbExitWhy(sq, 100, 103.1, now, now, 200) || ""),
+      "[V33.619] 조율 프로필 quick: 3거래일 지나 손실이면 매도 · +3% 익절(평균회귀 밖에서도)");
+  chk(/pbLiveFilterOk\(pb, D, ctx\.reg, st\.daily\.pb && st\.daily\.pb\[pb\]\)/.test(S) && /tpPx: _sp\.tpPx == null \? null : _sp\.tpPx/.test(S), "[V33.619] 조율 거르개가 실전 판정에 · 가격 목표가 매수 메타에"); }
 const sd = { sid: "PULLBACK", kind: "daily", stop: 5, tpR: 2, hold: 10 };
 chk(/^SR-TP/.test(W.pbExitWhy(sd, 100, 110.5, now, now, 200)) && /^SR-TIME/.test(W.pbExitWhy(sd, 100, 101, now - 15 * 86400000, now, 200)) && W.pbExitWhy(sd, 100, 101, now - 86400000, now, 200) === null,
     "스윙 청산: 익절(2R = 10%) · 최대 보유(10거래일 ≈ 14.5일)");
