@@ -78,7 +78,7 @@ function Market({ mk, r }: { mk: string; r: any }) {
         <div className="mb-2 flex items-center gap-2 text-[12.5px]"><span className="font-semibold">{label}</span><Badge tone={v.pass ? "ok" : "bad"}>{v.pass ? "통과" : "미통과"}</Badge><span className="text-[11px] text-ink-3">{v.cand || ""}</span></div>
         <Kpis items={[
           { k: "고른 매매법 평균", v: pc(v.mean), tone: v.mean > 0 ? "ok" : "bad" },
-          { k: "뜬 것 아무거나", v: pc(v.base) },
+          { k: "뜬 것 아무거나", v: pc(v.base), hint: v.baseAll != null ? "후보마다 무작위 하나 · 겹침 제외(옛 전부 평균 " + pc(v.baseAll) + ")" : undefined },
           { k: "t (기준 ≥ 2)", v: f1(v.t, 2), tone: v.t >= 2 ? "ok" : "bad" },
           { k: "거래 · 승률", v: n0(v.n) + " · " + (v.win == null ? "—" : v.win + "%") },
         ]} />
@@ -89,6 +89,15 @@ function Market({ mk, r }: { mk: string; r: any }) {
               return <tr key={i} className="border-t border-line" style={{ color: sel ? "var(--bs-ok)" : "var(--bs-ink2)" }}><td className="py-1.5">{ruleTxt(c.rule)}{sel ? " ✓" : ""}</td><td>{n0(c.n)}</td><td>{pc(c.mean)}</td><td>{f1(c.t, 2)}</td><td>{pc(c.base)}</td></tr>; })}</tbody>
           </table>)}
         {rows.length > 0 && <div className="mt-3"><div className="mb-1 text-[11px] text-ink-3">판정 구간에서 고른 매매법</div><Bars rows={rows} max={8} /></div>}
+        {v.exitDiag && (
+          <details className="mt-3">
+            <summary className="cursor-pointer text-[11.5px] text-ink-3">손절 진단(기록만) — 지금 손절 vs 고정 % 손절만</summary>
+            <table className="mt-2 w-full text-[11.5px]">
+              <thead><tr className="text-left text-[11px] text-ink-3"><th className="py-1 font-normal">매매법</th><th className="font-normal">표본</th><th className="font-normal">지금 평균·승률</th><th className="font-normal">넓게 평균·승률</th></tr></thead>
+              <tbody className="bs-num">{Object.keys(v.exitDiag).map((k) => { const e = v.exitDiag[k], c = e.cur || [], w = e.wide || [];
+                return <tr key={k} className="border-t border-line text-ink-2"><td className="py-1 text-ink">{nm(k)}</td><td>{n0(c[0])}</td><td>{pc(c[1])} · {c[2] ?? "—"}%</td><td style={{ color: w[1] > c[1] ? "var(--bs-ok)" : undefined }}>{pc(w[1])} · {w[2] ?? "—"}%</td></tr>; })}</tbody>
+            </table>
+          </details>)}
       </div>);
   };
   return (

@@ -216,6 +216,34 @@ def sim_daily(P, market, ev_dates, sig=None, cand=None):
     return df, str(reg[-1]), sig
 
 
+def exit_diag(P, market, sig, cand=None):
+    """[V33.613] ★진단(기록만 · 판정에 안 씀)★ 매매법마다 지금 손절(% 와 ATR×배수 중 타이트한 쪽) vs '고정 % 손절만'(넓은 쪽)의
+    평균 순초과·승률 — 승률 39~41% 가 너무 타이트한 손절 때문인지 본다. 전 기간 · 후보 거른 표본."""
+    O, H, L, C = (P[k].values for k in ("open", "high", "low", "close"))
+    _r, mret = _regime(P["close"])
+    atr = _daily_state(P, [])[4]
+    mcum = np.concatenate([[1.0], np.cumprod(1 + mret)])
+    cost = COST_RT[market]
+    out = {}
+    cache = {}
+    for pb, pr in DAILY_PB.items():
+        S = sig[pb].values if pb in sig else None
+        if S is None:
+            continue
+        if cand is not None:
+            S = S & cand
+        row = {}
+        for tag, prof in (("cur", pr), ("wide", dict(pr, atr=99.0))):
+            key = (prof["stop"], prof["atr"], prof["be"], prof["hold"], prof["tpR"])
+            if key not in cache:
+                cache[key] = _sim_profile(O, H, L, C, atr, mcum, prof, cost)[0]
+            ex = cache[key]
+            v = ex[S & np.isfinite(ex)]
+            row[tag] = [int(len(v)), round(float(v.mean()), 3) if len(v) else None, round(float((v > 0).mean() * 100), 1) if len(v) else None]
+        out[pb] = row
+    return out
+
+
 # ── 5분봉 시뮬(단타) ───────────────────────────────────────────────
 TZ_OFF = {"us": -4 * 3600, "kr": 9 * 3600}
 
@@ -423,6 +451,34 @@ def _pick(tab, te, rule):
     return sel.loc[keep]
 
 
+BASE_DRAWS = 30   # [V33.613] 공정한 '아무거나' — 후보마다 뜬 매매법 중 무작위 하나 · 같은 겹침 규칙 · 30번 평균
+
+
+def _nonoverlap(sel):
+    keep, busy = [], {}
+    for r in sel[["j", "t", "x"]].itertuples(index=True):
+        if busy.get(r.j, -1) >= r.t:
+            continue
+        keep.append(r.Index)
+        busy[r.j] = r.x
+    return sel.loc[keep]
+
+
+def fair_base(te, draws=BASE_DRAWS, seed=11):
+    """[V33.613] 고른 것과 같은 조건의 기준선: 후보(inst)마다 뜬 매매법 중 ★무작위 하나★ → 같은 종목 겹침 제외 → 평균.
+    (V33.609~612 의 '아무거나' 는 겹친 거래까지 전부 평균이라, 추세 종목이 연일 신호를 내면 여러 번 세어 기준이 부풀었다.)"""
+    if not len(te):
+        return None, None
+    rng = np.random.default_rng(seed)
+    ms, ns = [], []
+    for _ in range(draws):
+        sh = te.assign(_r=rng.random(len(te))).sort_values("_r").drop_duplicates("inst").sort_values("t")
+        pk = _nonoverlap(sh)["ex"].values.astype(float)
+        if len(pk):
+            ms.append(pk.mean()); ns.append(len(pk))
+    return (round(float(np.mean(ms)), 4) if ms else None), (int(np.mean(ns)) if ns else None)
+
+
 def _stats(pk, base):
     n = len(pk)
     return {"n": int(n), "mean": round(float(pk.mean()), 4) if n else None, "win": round(float((pk > 0).mean() * 100), 1) if n else None,
@@ -439,9 +495,11 @@ def validate(df, timecol, pbs=None):
     tab1 = _shrunk_table(df[df[timecol] < c1])
     va = df[(df[timecol] >= c1) & (df[timecol] < c2)]
     cmp_ = []
+    vbase, _vn = fair_base(va)
     for rule in RULES:
         pk = _pick(tab1, va, rule)
         st_ = _stats(pk["ex"].values.astype(float), va["ex"].values.astype(float))
+        st_["baseAll"], st_["base"] = st_["base"], vbase
         cmp_.append({"rule": rule, **st_})
     elig = [c for c in cmp_ if c["n"] >= 30 and c["mean"] is not None]
     best = max(elig, key=lambda c: c["mean"]) if elig else cmp_[1]
@@ -450,6 +508,8 @@ def validate(df, timecol, pbs=None):
     ho = df[df[timecol] >= c2]
     pk = _pick(tab2, ho, rule)
     st = _stats(pk["ex"].values.astype(float), ho["ex"].values.astype(float))
+    hb, hn = fair_base(ho)
+    st["baseAll"], st["base"], st["baseN"] = st["base"], hb, hn   # 판정 기준 = 공정한 무작위 기준선 · 옛 '전부 평균' 은 baseAll 로 남긴다
     st.update({"rule": rule, "cut": [str(c1), str(c2)], "valCmp": cmp_, "byPb": {k: int(v) for k, v in pk["pb"].value_counts().items()}})
     st["pass"] = bool(st["n"] >= 30 and st["mean"] > 0 and st["t"] >= PASS_T and st["base"] is not None and st["mean"] > st["base"])
     return st, tab2
@@ -494,6 +554,13 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         ddf = _relevel(ddf)
         dst, _ = validate(ddf, "t")
         dst["cand"] = cand_src
+        try:
+            dst["exitDiag"] = exit_diag(P, market, sig, cm if cand_src.startswith("OMNI") else None)
+            ed = dst["exitDiag"]
+            log("   · [매매법시뮬] %s 손절 진단(기록만) — " % market + " · ".join(
+                "%s 지금 %s%%/%s%% 넓게 %s%%/%s%%" % (k, v["cur"][1], v["cur"][2], v["wide"][1], v["wide"][2]) for k, v in list(ed.items())[:6]))
+        except Exception as e:  # noqa: BLE001
+            log("   ⚠️ [매매법시뮬] 손절 진단 실패 %s" % e)
         syms_all = list(P["close"].columns)
         cross = {pb: [syms_all[j] for j in np.nonzero(sig[pb].values[-1])[0]] for pb in CROSS_PB if pb in sig}
         dtab = _shrunk_table(ddf)                       # 실전 표는 전 기간으로
