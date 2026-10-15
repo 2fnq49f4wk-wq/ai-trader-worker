@@ -823,6 +823,9 @@ jobs:
       # [V33.601] 매매법 도감(Strategy-Router Phase A) — 17개 매매법 규격 · 미래 정보 누출 없음 · 워커 문턱과 일치
       - name: 매매법 도감 검사
         run: node tools/check-strategy-catalog.mjs
+      # [V33.602] 매매법 선택 AI(Phase B+C) — 귀무·양성 대조·누출 없음·그림자
+      - name: 매매법 선택 AI 검사
+        run: node tools/check-strategy-router.mjs
       # [V33.531] 포트폴리오 실험실 — Qlib TopK-Dropout + Vibe 부품(퍼지 전진·DSR·최적화기) · 귀무 0 · 양성 대조 통과
       - name: 포트폴리오 실험실 검사
         run: node tools/check-portfolio-lab.mjs

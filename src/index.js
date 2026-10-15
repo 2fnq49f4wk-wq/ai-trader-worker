@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.601";
+const _BUILD_VER = "V33.602";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -30259,6 +30259,27 @@ async function handleRequest(request, env, ctx, _inner) {
         out[mk] = r ? { ts: r.ts, day: r.day, n: r.n, bt: r.bt, entryNow: Object.keys(r.pairs || {}).filter(function (a) { return _num(r.pairs[a].z, 0) <= PAIR_ROUTE.entryZ; }).slice(0, 30) } : null;
       }
       return Response.json({ ok: true, route: PAIR_ROUTE, markets: out }, { headers: cors });
+    }
+    /* [V33.602] 매매법 선택 AI(Strategy-Router · strategy_router.py · GHA) — ★그림자: 저장·표시만, 주문 영향 없음★ 관문은 워커가 다시 판정 */
+    if (path === "/api/strategy-router" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      let body = null; try { body = await request.json(); } catch (e) {}
+      const mk = body && (body.mkt === "us" || body.mkt === "kr") ? body.mkt : null;
+      if (!mk || !body.wf || typeof body.wf !== "object") return Response.json({ error: "mkt·wf 필요" }, { status: 400, headers: cors });
+      const rt = body.wf.router || {}, bs = body.wf.baseline || {};
+      const pass = !!(_num(rt.n, 0) >= 100 && _num(rt.mean, 0) > 0 && _num(rt.t, 0) >= 2 && _num(rt.mean, -99) > _num(bs.mean, 99));
+      const rec = { ts: Date.now(), day: String(body.day || ""), regime: String(body.regime || ""), nSamples: _num(body.nSamples, 0),
+                    wf: { router: rt, baseline: bs, pass: pass }, mode: "shadow", table: body.table || {},
+                    ranking: Array.isArray(body.ranking) ? body.ranking.slice(0, 20) : [],
+                    picks: (body.picks && typeof body.picks === "object") ? body.picks : {} };
+      await setState(env.DB, "strat_router:" + mk, rec);
+      try { await log(env.DB, "INFO", null, "[매매법AI] " + mk.toUpperCase() + " 국면 " + rec.regime + " · 걷기검증 n" + _num(rt.n, 0) + " 평균 " + rt.mean + "% t" + rt.t + " (전부사기 " + bs.mean + "%) → " + (pass ? "통과(그림자)" : "미통과") + " · 후보 " + Object.keys(rec.picks).length); } catch (e) {}
+      return Response.json({ ok: true, pass: pass, mode: "shadow" }, { headers: cors });
+    }
+    if (path === "/api/strategy-router") {
+      const out = {};
+      for (const mk of ["us", "kr"]) out[mk] = await getState(env.DB, "strat_router:" + mk, null);
+      return Response.json({ ok: true, mode: "shadow", markets: out }, { headers: cors });
     }
     if (path === "/api/omni-q" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
