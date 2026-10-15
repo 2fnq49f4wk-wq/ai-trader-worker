@@ -4,6 +4,7 @@
  *   ③ 서프라이즈 = 실제 변화 − 직전 추세(표준화) · 발표 뒤 반감 · 한국은 발표 다음 날부터
  *   ④ 순위 피처라 그날 모두 같은 값은 쓸모없다 → 거시는 종목별 민감도 × 거시 상태로 넣는다 */
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 const dir = new URL("../trainer/modal/", import.meta.url).pathname;
 const py = `
 import sys, json, numpy as np, pandas as pd
@@ -55,6 +56,32 @@ if (o) {
       "금리·스트레스(방어주)·성장주×금리·금융×수익률·연준 인하×성장·미국 밤사이·CPI 서프라이즈 × 민감도", o.names.join(","));
   chk(o.sur[0] === o.sur[1] || isFinite(o.sur[0]), "발표 서프라이즈 값(추세 대비 · 반감)", JSON.stringify(o.sur));
   chk(o.groups["거시·섹터"] === o.names.length, "모델 구조창 묶음 '거시·섹터'", JSON.stringify(o.groups));
+}
+{ // [V33.631] OMNI-Q 구조 전부(구조 관측 '옛날처럼 노드를 다 보기')
+  const pyS = `
+import sys, json, numpy as np, lightgbm as lgb
+sys.path.insert(0, ${JSON.stringify(new URL("../trainer/modal/", import.meta.url).pathname)})
+import omni_q as Q
+rng = np.random.default_rng(3); X = rng.random((600, 9)); y = X[:, 2] * 2 + rng.random(600) * .1
+b = lgb.train({"objective": "regression", "verbose": -1, "num_leaves": 7}, lgb.Dataset(X, y), num_boost_round=25)
+s = Q._struct(b, ["f%d" % i for i in range(9)])
+print(json.dumps({"n": len(s["feat"]), "g": len(s["gain"]), "gsum": sum(s["gain"]), "t": len(s["trees"]), "nT": s["nTrees"], "top": max(range(9), key=lambda i: s["gain"][i]),
+  "ok": all(0 <= f < 9 for t in s["trees"] for f in t), "f2": sum(1 for t in s["trees"] for f in t if f == 2)}))
+`;
+  const r = spawnSync("python3", ["-c", pyS], { encoding: "utf8" });
+  let o = null; try { o = JSON.parse(r.stdout.trim().split("\n").pop()); } catch (e) { console.log(r.stderr.slice(-800)); }
+  chk(o && o.n === 9 && o.g === 9 && Math.abs(o.gsum - 1) < 1e-3 && o.t === 25 && o.nT === 25 && o.top === 2 && o.ok && o.f2 > 0,
+      "학습기 _struct: 피처 전부 · gain 합 1 · 나무마다 실제 분기 피처(신호 피처 f2 가 1위)", JSON.stringify(o));
+  const M = await import("../src/index.js");
+  const c1 = M.omniqStructClean({ feat: ["a", "b", "c"], gain: [.5, .3, .2], split: [3, 2, 1], trees: [[0, 1, 9, -1, 2], "x"], nTrees: 40 });
+  chk(c1 && c1.trees[0].join() === "0,1,2" && c1.trees[1].length === 0 && c1.nTrees === 40 && M.omniqStructClean({ feat: [] }) === null && M.omniqStructClean({ feat: ["a"], gain: [1, 2] }).gain === null,
+      "워커 검증: 범위 밖 피처 번호 제거 · 모양 틀린 배열은 버림 · 빈 피처는 저장 안 함", JSON.stringify(c1));
+  const S = readFileSync(new URL("../src/index.js", import.meta.url), "utf8"), Q2 = readFileSync(new URL("../trainer/modal/omni_q.py", import.meta.url), "utf8");
+  const N = readFileSync(new URL("../studio/src/gl/netScenes.ts", import.meta.url), "utf8"), O = readFileSync(new URL("../studio/src/views/OmniQ.tsx", import.meta.url), "utf8"), R = readFileSync(new URL("../studio/src/views/NodeRoles.tsx", import.meta.url), "utf8");
+  chk(/"struct": _struct\(bst, names\)/.test(Q2) && /"struct": cached\.get\("struct"\)/.test(Q2) && /setState\(env\.DB, "omniq_struct:" \+ mk/.test(S) && /path === "\/api\/omniq-struct"/.test(S),
+      "배선: 학습·채점만 회차 모두 struct 업로드 → 워커 omniq_struct:{mk} → GET /api/omniq-struct");
+  chk(/export function omniqNet\(d: any, mk: "us" \| "kr" = "us", st\?: any\)/.test(N) && /getJSON\("\/api\/omniq-struct\?mkt=" \+ mk\)/.test(O) && /노드 찾기/.test(R),
+      "화면: 실제 구조로 그림(피처 전부 · 실제 나무 분기) · 노드 찾기(이름·역할)");
 }
 if (fails) { console.log("check-omniq-macro: FAIL " + fails); process.exit(1); }
 console.log("check-omniq-macro: ok");

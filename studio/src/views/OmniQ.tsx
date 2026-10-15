@@ -2,7 +2,8 @@
 import { type ReactNode } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import { type Tone, f1, n0, ago } from "../models";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { cached, getJSON } from "../data";
 import { Badge, Bars, Empty, Facts, Kpis, Section } from "./ui";
 import { ModelNet } from "./OmniStage";
 import { omniqNet } from "../gl/netScenes";
@@ -36,7 +37,9 @@ function Gate({ g, label }: { g: any; label: string }) {
 export function OmniQ({ d, head }: { d: any; head: ReactNode }) {
   const q = d.omniQ || {}, us = q.us, kr = q.kr;
   const [mk, setMk] = useState<"us" | "kr">(us ? "us" : "kr");
-  const net = useMemo(() => omniqNet(d, mk), [d, mk]);
+  const [oqs, setOqs] = useState<any>(null);   // [V33.631] 실제 모델 구조(/api/omniq-struct) — 없으면 요약 그림
+  useEffect(() => { let on = true; setOqs(cached("/api/omniq-struct?mkt=" + mk)); getJSON("/api/omniq-struct?mkt=" + mk).then((j) => { if (on) setOqs(j && !j.empty ? j : null); }).catch(() => {}); return () => { on = false; }; }, [mk]);
+  const net = useMemo(() => omniqNet(d, mk, oqs && !oqs.empty ? oqs : null), [d, mk, oqs]);
   if (!us && !kr) return <div>{head}<Empty>OMNI-Q 가 아직 올라오지 않았습니다.</Empty></div>;
   const st = (r: any) => (r && r.view && ST[r.view.state]) || ["—", "idle"] as [string, Tone];
   const groups = (us && us.featGroups) || (kr && kr.featGroups) || null;

@@ -93,9 +93,11 @@ function trees(d: any, R: Roles) {
    바깥 구(R 300) = 피처 전부(묶음끼리 모여 앉는다) · 안쪽 구(R 170) = 피처 묶음 · 구 둘레를 도는 기운 고리 = LightGBM 나무(눈금 = 분기 → 피처) ·
    한가운데 고리 = 머리 5 · 중심 = 후보 상위 20%. 옛 OMNI(NeuralObservatory.omniCore)와 같은 기하·색(중심 장미 → 바깥 하늘)·유리 껍질.
    값: featGroups(묶음별 피처 수) · featTop(gain 비중 상위) · nFeat. 나무별 분기 내역은 응답에 없다 — 분기 수는 gain 비중에 비례해 고르게 배치(캡션). */
-export function omniqNet(d: any, mk: "us" | "kr" = "us"): NetScene | null {
+/* [V33.631] st = /api/omniq-struct — 실제 모델 구조(피처 전부 이름·gain·분기 · 나무마다 실제 분기 피처). 있으면 그것으로 그린다(사용자 "옛날 OMNI 처럼 노드를 다 보게"). */
+export function omniqNet(d: any, mk: "us" | "kr" = "us", st?: any): NetScene | null {
   const q = d && d.omniQ ? (d.omniQ[mk] || d.omniQ.us || d.omniQ.kr) : null;
   if (!q) return null;
+  const real = !!(st && Array.isArray(st.feat) && st.feat.length && Array.isArray(st.gain) && st.gain.length === st.feat.length);
   const TAU = Math.PI * 2;
   const X: number[] = [], K: number[] = [], V: number[] = [], NM: string[] = [], RG: number[] = [], RA: number[] = [];
   const LA: number[] = [], LB: number[] = [], LS: number[] = [], LK: number[] = [], RL: string[] = [];
@@ -115,11 +117,19 @@ export function omniqNet(d: any, mk: "us" | "kr" = "us"): NetScene | null {
   const gk = Object.keys(G).filter((k) => +G[k] > 0);
   if (!gk.length) return null;
   const total = gk.reduce((s, k) => s + +G[k], 0), nF = Math.min(720, Math.max(gk.length, total));
-  const groupOf = (n: string) => n.startsWith("rule_") ? gk.find((k) => /규칙/.test(k)) : (n.startsWith("pb_") || n.startsWith("pb5_")) ? gk.find((k) => /매매법/.test(k)) : n.startsWith("ev_") ? gk.find((k) => /실적|뉴스/.test(k)) : gk.find((k) => /동물원/.test(k));
+  const groupOf = (n: string) => n.startsWith("rule_") ? gk.find((k) => /규칙/.test(k)) : (n.startsWith("pb_") || n.startsWith("pb5_")) ? gk.find((k) => /매매법/.test(k)) : n.startsWith("ev_") ? gk.find((k) => /실적|뉴스/.test(k)) : n.startsWith("mx_") ? gk.find((k) => /거시/.test(k)) : gk.find((k) => /동물원/.test(k));
   const top: any[] = (q.featTop || []).filter((f: any) => f && f.name);
   const tv = norm(top.map((f: any) => +f.share || 0));
-  const F: { g: number; name: string; v: number | null }[] = [];
-  gk.forEach((g, gi) => {
+  const F: { g: number; name: string; v: number | null; fi?: number; gain?: number; split?: number }[] = [];
+  const fiPos = new Map<number, number>();   // 모델 피처 번호 → F 자리
+  if (real) {
+    // 실제 피처 전부(많으면 gain 상위 720) — 묶음끼리 모여 앉게 묶음 순 · 묶음 안은 gain 순
+    const ord = st.feat.map((_: any, i: number) => i).sort((a: number, b: number) => (+st.gain[b] || 0) - (+st.gain[a] || 0)).slice(0, 720);
+    const gv = norm(ord.map((i: number) => +st.gain[i] || 0));
+    const rows = ord.map((i: number, r: number) => ({ i, g: Math.max(0, gk.indexOf(groupOf(String(st.feat[i])) || gk[0])), v: gv[r] }));
+    rows.sort((a: any, b: any) => a.g - b.g || b.v - a.v);
+    rows.forEach((r: any) => { fiPos.set(r.i, F.length); F.push({ g: r.g, name: String(st.feat[r.i]), v: r.v, fi: r.i, gain: +st.gain[r.i] || 0, split: st.split ? +st.split[r.i] || 0 : undefined }); });
+  } else gk.forEach((g, gi) => {
     const slots = Math.max(1, Math.round(+G[g] / total * nF));
     const mine = top.map((f, j) => ({ f, j })).filter((x) => (groupOf(String(x.f.name)) || gk[0]) === g);
     for (let s = 0; s < slots; s++) { const m = mine[s]; F.push(m ? { g: gi, name: String(m.f.name), v: tv[m.j] } : { g: gi, name: g + " · #" + (s + 1), v: null }); }
@@ -136,7 +146,8 @@ export function omniqNet(d: any, mk: "us" | "kr" = "us"): NetScene | null {
   hIds.forEach((h, k) => ln(h, out, k === 0 ? 1 : k === 1 ? .7 : .25, 2));
   gIds.forEach((g, gi) => hIds.forEach((h, k) => ln(g, h, (.25 + .5 * (+G[gk[gi]] / total)) * (k < 2 ? 1 : .5), 1)));
   // ── 나무: 기운 고리 위를 돈다 · 눈금(분기) → 피처(gain 비중 큰 피처일수록 자주) ──
-  const RN = 4, nT = 72, per = nT / RN;
+  const realTrees: number[][] = real && Array.isArray(st.trees) ? st.trees.filter((t: any) => Array.isArray(t) && t.length) : [];
+  const RN = 4, nT = realTrees.length ? Math.min(96, Math.max(RN, realTrees.length - (realTrees.length % RN))) : 72, per = nT / RN;
   const wt = F.map((f) => f.v != null ? .25 + 3 * f.v : .06), wsum = wt.reduce((s, x) => s + x, 0);
   const draw = () => { let r = rnd() * wsum; for (let j = 0; j < wt.length; j++) { r -= wt[j]; if (r <= 0) return j; } return wt.length - 1; };
   const treeRings: number[] = []; for (let r = 0; r < RN; r++) { const a = r * 2.39996323, y = .35 + .5 * ((r * .618) % 1);
@@ -144,11 +155,17 @@ export function omniqNet(d: any, mk: "us" | "kr" = "us"): NetScene | null {
   const tIds: number[] = [], tbody: any[] = [];
   let nSplit = 0;
   for (let j = 0; j < nT; j++) {
-    const r = Math.floor(j / per), qq = j - r * per, rg = treeRings[r], th = TAU * (qq + .5) / per, span = TAU / per * .78, ns = 3 + Math.floor(rnd() * 6), tvv = .35 + .65 * rnd();
-    const c = pt(0, 0, 0, 4, tvv, "나무 #" + (j + 1) + " · 분기 " + ns + " · " + heads[j % heads.length] + " 머리", rg, th); tIds.push(c);
+    const r = Math.floor(j / per), qq = j - r * per, rg = treeRings[r], th = TAU * (qq + .5) / per, span = TAU / per * .78;
+    // [V33.631] 실제 나무면 분기마다 그 피처로(5일 머리 모델 앞 nT 그루) · 없으면 종전 요약(gain 비중 비례 배치)
+    const rt = realTrees.length ? realTrees[j] : null;
+    const tgt: number[] = rt ? rt.map((fi) => fiPos.has(fi) ? fiPos.get(fi)! : -1).slice(0, 24) : Array.from({ length: 3 + Math.floor(rnd() * 6) }, () => draw());
+    const ns = tgt.length, tvv = rt ? Math.min(1, .3 + rt.length / 40) : .35 + .65 * rnd();
+    const fnames = rt ? Array.from(new Set(rt.slice(0, 8).map((fi) => String(st.feat[fi])))).slice(0, 4).join(" · ") : "";
+    const c = pt(0, 0, 0, 4, tvv, "나무 #" + (j + 1) + " · 분기 " + (rt ? rt.length : ns) + (rt ? "" : " · " + heads[j % heads.length] + " 머리"), rg, th); tIds.push(c);
+    if (rt) RL[c] = "5일 머리 LightGBM 나무 " + (j + 1) + "번째 — 분기 " + rt.length + "개 · 주로 가른 피처: " + fnames;
     const ticks: number[] = [];
     for (let s = 0; s < ns; s++) { const a = th + (ns > 1 ? (s / (ns - 1) - .5) : 0) * span, tk = pt(0, 0, 0, 6, NaN, "", rg, a); ticks.push(tk);
-      const fj = draw(); ln(tk, inIds[fj], F[fj].v != null ? .4 + .6 * F[fj].v! : .22, 3); nSplit++; }
+      const fj = tgt[s]; if (fj >= 0) { ln(tk, inIds[fj], F[fj].v != null ? .4 + .6 * F[fj].v! : .22, 3); nSplit++; } }
     tbody.push({ ids: ticks, v: tvv });
     ln(c, hIds[j % heads.length], .18, 2);
   }
@@ -160,9 +177,10 @@ export function omniqNet(d: any, mk: "us" | "kr" = "us"): NetScene | null {
   for (let qq = 0; qq < 10; qq++) { const u = unit(rnd() - .5, rnd() - .5, rnd() - .5), w = unit(-u[0] + (rnd() - .5), -u[1] + (rnd() - .5), -u[2] + (rnd() - .5)), Ra = R_IN * (1.25 + rnd() * .3), Rb = R_IN * (.8 + rnd() * .5);
     ln(pt(u[0] * Ra, u[1] * Ra, u[2] * Ra, 5, NaN, ""), pt(w[0] * Rb, w[1] * Rb, w[2] * Rb, 5, NaN, ""), .35, 4); }
   // ── 역할 · 층 · 이름표 ──
-  F.forEach((f, j) => { RL[inIds[j]] = f.v != null ? "많이 쓴 피처 · " + gk[f.g] + " · gain 비중 " + pc(+top.find((t: any) => String(t.name) === f.name)?.share || 0) : gk[f.g] + " 피처(이름은 상위 " + top.length + "개만 응답에 있다)"; });
+  if (real) F.forEach((f, j) => { RL[inIds[j]] = gk[f.g] + " · gain 비중 " + (f.gain! * 100).toFixed(2) + "%" + (f.split != null ? " · 분기 " + f.split + "회" : "") + (f.split === 0 ? " (이 모델에선 안 씀)" : ""); });
+  else F.forEach((f, j) => { RL[inIds[j]] = f.v != null ? "많이 쓴 피처 · " + gk[f.g] + " · gain 비중 " + pc(+top.find((t: any) => String(t.name) === f.name)?.share || 0) : gk[f.g] + " 피처(이름은 상위 " + top.length + "개만 응답에 있다)"; });
   gIds.forEach((g, gi) => { RL[g] = gk[gi] + " — 피처 " + G[gk[gi]] + "개(날짜마다 종목 간 순위로 바꿔 넣는다)"; });
-  tIds.forEach((t) => { RL[t] = "LightGBM 나무 — 피처 조건으로 종목을 갈라 앞 나무가 틀린 만큼 고친다(대표 " + nT + "그루 · 고리 위를 돈다)"; });
+  tIds.forEach((t) => { if (!RL[t]) RL[t] = "LightGBM 나무 — 피처 조건으로 종목을 갈라 앞 나무가 틀린 만큼 고친다(대표 " + nT + "그루 · 고리 위를 돈다)"; });
   hIds.forEach((h, k) => { RL[h] = heads[k] + (k === 0 ? " — 후보 선별에 쓰는 머리(" + (q.view?.state || "—") + ")" : k === 1 ? " — 20일 머리(" + (q.view?.state20 || "—") + ")" : " — 기록·관측용 머리"); });
   RL[out] = "그날 5일 순위 상위 20% 종목 = 매매법 AI 가 지금 뜬 매매법을 확인할 후보";
   const sv = (id: number) => fin(V[id]) ? V[id] : -1;
@@ -188,7 +206,9 @@ export function omniqNet(d: any, mk: "us" | "kr" = "us"): NetScene | null {
     la: Int32Array.from(LA), lb: Int32Array.from(LB), ls: Float32Array.from(LS), lk: Uint8Array.from(LK), hi: HI, top: idx.slice(0, 90),
     groups, labels, role: Array.from({ length: n }, (_, i) => RL[i] || ""), shells: [R_IN, 208, 138], core: true, colorByAttr: false, alpha: [.02, .8, 1.6], yaw: .4, zoom: 1,
     tbody, bands: treeRings, hz: [],
-    info: { head: `피처 ${q.nFeat || total} → LightGBM 나무 → 머리 5 → 후보 상위 20%`, note: (mk === "us" ? "미국" : "한국") + " 모델 · 바깥 구 = 피처 · 안쪽 구 = 피처 묶음 · 도는 고리 = 나무(대표 " + nT + "그루 · 분기 " + nSplit + "개는 gain 비중에 비례해 배치) · 가운데 = 머리", lines: LA.length },
+    info: { head: `피처 ${q.nFeat || total} → LightGBM 나무${real && st.nTrees ? " " + st.nTrees : ""} → 머리 5 → 후보 상위 20%`,
+            note: (mk === "us" ? "미국" : "한국") + " 모델 · 바깥 구 = 피처" + (real ? " 전부(이름·gain·분기 실제 값" + (st.feat.length > 720 ? " · gain 상위 720" : "") + ")" : "") + " · 안쪽 구 = 피처 묶음 · 도는 고리 = 나무" +
+              (real ? "(실제 " + nT + "그루 · 분기 " + nSplit + "개 = 실제 분기 피처로 선)" : "(대표 " + nT + "그루 · 분기 " + nSplit + "개는 gain 비중에 비례해 배치 — 실제 구조는 다음 학습부터)") + " · 가운데 = 머리", lines: LA.length },
   };
 }
 

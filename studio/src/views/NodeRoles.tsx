@@ -12,11 +12,14 @@ export function NodeRoles({ sc, sel, onSel, dark }: { sc: any; sel: number; onSe
   const home = (id: number) => layers.findIndex((g: any) => (g.list || g.ids).includes(id));
   const [li, setLi] = useState(() => { const k = sel >= 0 ? home(sel) : -1; return k >= 0 ? k : 0; });
   const [shown, setShown] = useState(8);
+  const [qry, setQry] = useState("");   // [V33.631] 노드 찾기 — 이름·역할에서(모든 층)
   useEffect(() => { if (sel < 0) return; const k = home(sel); if (k >= 0 && k !== li) { setLi(k); setShown(8); } }, [sel]);
   const g = layers[li];
   const links = useMemo(() => (sel >= 0 ? linkCount(sc, sel) : 0), [sc, sel]);
   if (!g) return null;
-  const ids: number[] = g.list || g.ids;
+  const allIds: number[] = useMemo(() => { const o: number[] = []; for (const L of layers) for (const id of (L.list || L.ids)) o.push(id); return o; }, [layers]);
+  const ql = qry.trim().toLowerCase();
+  const ids: number[] = ql ? allIds.filter((id) => (nodeTitle(sc, id) + " " + nodeRole(sc, id)).toLowerCase().includes(ql)) : (g.list || g.ids);
   const c = dark ? { card: "bg-white/5", ink: "text-[#f4ecff]", ink2: "text-[#e6cfe0]/80", ink3: "text-[#e6cfe0]/55", on: "bg-[#f4ecff] text-[#1a0b24]", off: "bg-white/5 text-[#e6cfe0]/80", line: "border-white/10" }
     : { card: "bg-bg-2", ink: "text-ink", ink2: "text-ink-2", ink3: "text-ink-3", on: "bg-ink text-bg", off: "bg-bg-3 text-ink-2", line: "border-line" };
   const v = (id: number) => { const x = sc.val[id]; return x === x ? Math.min(1, Math.abs(x)) : null; };
@@ -38,7 +41,9 @@ export function NodeRoles({ sc, sel, onSel, dark }: { sc: any; sel: number; onSe
             {L.label} <span className="bs-num opacity-70">{(L.list || L.ids).length}</span>
           </button>))}
       </div>
-      {g.desc && <p className={"mt-2 text-[12px] leading-snug " + c.ink2}>{g.desc}</p>}
+      <input value={qry} onChange={(e) => { setQry(e.target.value); setShown(30); }} placeholder={"노드 찾기 — 이름·역할 (전체 " + allIds.length.toLocaleString("ko-KR") + "개)"} aria-label="노드 찾기"
+        className={"mt-2 w-full rounded-sm border px-2.5 py-1.5 text-[12px] outline-none " + c.line + " " + (dark ? "bg-white/5 text-[#f4ecff] placeholder:text-[#e6cfe0]/40" : "bg-bg-2 text-ink placeholder:text-ink-3")} />
+      {ql ? <p className={"mt-2 text-[12px] " + c.ink3}>찾은 노드 {ids.length.toLocaleString("ko-KR")}개</p> : g.desc && <p className={"mt-2 text-[12px] leading-snug " + c.ink2}>{g.desc}</p>}
       <ul className={"mt-2 divide-y border-y " + c.line + " " + (dark ? "divide-white/10" : "divide-line")}>
         {ids.slice(0, shown).map((id) => { const x = v(id), on = id === sel;
           return (

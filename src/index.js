@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.627";
+const _BUILD_VER = "V33.631";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -5541,7 +5541,9 @@ async function _indexFreshOpen(DB, market, today) {
      ★보는 것과 돈을 거는 것은 다른 문제다.★ preTrade 를 넓히는 것은 그 둘을 재고 나서 한다.
    ※ preTrade/postTrade 가 없으면 pre/post 를 그대로 쓴다(한국은 갈라 둘 이유가 없다). */
 const MARKET_HOURS = {
-  us: { pre: [240, 570], preTrade: [420, 570], regular: [570, 960], post: [960, 1200], quoteTail: 10 },
+  us: { pre: [240, 570], preTrade: [420, 570], regular: [570, 960], post: [960, 1200], quoteTail: 10,
+        // [V33.629] 데이마켓(야간 대체거래소 · 관측만): 일~목 20:00~24:00 · 월~금 00:00~04:00 ET
+        overnight: [{ a: 1200, b: 1440, days: [0, 1, 2, 3, 4] }, { a: 0, b: 240, days: [1, 2, 3, 4, 5] }] },
   kr: { pre: [480, 540], regular: [540, 930], post: [930, 1200], preTrade: [480, 530], postTrade: [940, 1200], quoteTail: 0, postTail: 10 }
 };
 /* [V33.565] ★한국 거래 창 = 넥스트레이드 실제 체결 창★(결함 A-2 해결) — 프리 08:00~08:50 · 애프터 15:40~20:00.
@@ -22228,6 +22230,188 @@ async function extQuoteSweep(env) {
   return n;
 }
 
+/* ══ [V33.629] ★미국 데이마켓(야간 대체거래소 · 20:00~04:00 ET) 가격 + 미국 시세 2차 원천(네이버 해외주식)★ ══════════════
+   사용자(10/16): "미국 데이마켓 가격도 가져와 · 미국장 항상 가격 제대로 · 서머타임 엄격 · 자동으로 돌되 오류 절대 안 됨".
+   네이버 해외주식 실시간(polling …/worldstock/stock/코드,코드)은 한 번에 여러 종목 · 정규 종가(closePrice) · 시간외 체결(overMarketPriceInfo:
+   세션 · 체결가 · 체결 시각(ET 오프셋 포함)) · 거래소 운영 시각(서머타임 반영)을 준다(실측 10/15 19:22 ET: AAPL.O AFTER_MARKET 341.20).
+   종목 코드는 거래소마다 다르다(AAPL.O · SPY · SOXL.K · BRKb) — 후보를 한꺼번에 물어 돌아온 것으로 표(nv_us_rc)를 만들고 7일마다 다시 만든다.
+   ★지어내지 않는다★: 체결 시각이 없거나 20분 넘게 묵은 값은 쓰지 않는다. 데이마켓 값은 따로(ovn·ovnPct·ovnTs) 적고 정규 가격·세션은 건드리지 않는다. */
+const NV_WORLD_RT = "https://polling.finance.naver.com/api/realtime/worldstock/stock/";
+const NV_US_CHUNK = 80;
+const NV_US_MAP_MS = 7 * 86400000;
+const OVN_FRESH_MS = 20 * 60000;
+function nvUsCandidates(sym) {
+  const s0 = String(sym || "").toUpperCase();
+  if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(s0)) return [];
+  const out = [s0 + ".O", s0, s0 + ".K"];
+  const m = /^([A-Z]+)[-.]([A-Z])$/.exec(s0);
+  if (m) out.push(m[1] + m[2].toLowerCase());
+  return out;
+}
+/* 미국 야간(데이마켓) 창 — ET 기준(서머타임은 getUSEt 가 표준시 DB 로 반영): 일~목 20:00~24:00 · 월~금 00:00~04:00 */
+function usOvernightNow(now) {
+  const t = getUSEt(now || new Date());
+  return _inWin(t.totalMin, MARKET_HOURS.us.overnight, t.day);   // 창은 MARKET_HOURS 한 곳(A-2)
+}
+/* 네이버 해외주식 한 건 → {close, sess(pre|post|ovn|null), px, ts} (순수 함수) */
+function nvUsParse(x, nowMs) {
+  if (!x || typeof x !== "object") return null;
+  const num = function (v) { const n = Number(String(v == null ? "" : v).replace(/,/g, "")); return isFinite(n) ? n : NaN; };
+  const close = num(x.closePriceRaw != null ? x.closePriceRaw : x.closePrice);
+  const o = x.overMarketPriceInfo || null, out = { close: close > 0 ? close : null, sess: null, px: null, ts: 0, mkt: String(x.marketStatus || "") };
+  if (!o) return out;
+  const px = num(o.overPriceRaw != null ? o.overPriceRaw : o.overPrice);
+  const ts = typeof o.localTradedAt === "string" && /(?:Z|[+-]\d\d:\d\d)$/.test(o.localTradedAt) ? Date.parse(o.localTradedAt) : NaN;
+  if (!(px > 0) || !isFinite(ts) || nowMs - ts > OVN_FRESH_MS || ts - nowMs > 120000) return out;   // 체결 시각 없음·묵음·미래 → 안 씀
+  const st = String(o.tradingSessionType || "").toUpperCase();
+  const blocked = (o.overMarketStatus && o.overMarketStatus !== "OPEN") || (o.tradeStopType && o.tradeStopType.code && o.tradeStopType.code !== "1");
+  if (blocked) return out;
+  out.px = px; out.ts = ts;
+  // 세션은 ★체결 시각★ 으로 정한다(이름표는 보조) — 야간 창 안의 체결이면 데이마켓
+  out.sess = usOvernightNow(new Date(ts)) ? "ovn" : /PRE|BEFORE/.test(st) ? "pre" : /AFTER|POST/.test(st) ? "post" : null;
+  return out;
+}
+async function _nvWorldFetch(codes) {
+  const r = await fetch(NV_WORLD_RT + codes.map(encodeURIComponent).join(","), { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" }, signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error("naver world " + r.status);
+  const j = await r.json();
+  return Array.isArray(j && j.datas) ? j.datas : [];
+}
+/* 야후식 티커 → 네이버 코드 표(엄격 읽기 · 7일) */
+async function nvUsCodeMap(DB, syms) {
+  let cur = null;
+  try { cur = await getState(DB, "nv_us_rc", null, true); } catch (e) { return null; }
+  if (cur && cur.map && Date.now() - _num(cur.ts, 0) < NV_US_MAP_MS && syms.every(function (x) { return x in cur.map; })) return cur.map;
+  const want = {}, cand = [];
+  for (const y of syms) for (const c of nvUsCandidates(y)) { want[c] = want[c] || []; want[c].push(y); cand.push(c); }
+  const got = {};
+  for (let i = 0; i < cand.length; i += NV_US_CHUNK) {
+    try { for (const x of await _nvWorldFetch(cand.slice(i, i + NV_US_CHUNK))) if (x && x.reutersCode) got[x.reutersCode] = 1; } catch (e) {}
+  }
+  const map = {};
+  for (const y of syms) { const c = nvUsCandidates(y).filter(function (k) { return got[k]; })[0]; map[y] = c || null; }   // 못 찾으면 null(다음 주 다시)
+  try { await setState(DB, "nv_us_rc", { ts: Date.now(), map: map }); } catch (e) {}
+  return map;
+}
+/* 미국 전 종목 네이버 시세 → 데이마켓(ovn) 값 기록 · (opts.fill) 시간외·정규 2차 원천으로도 쓴다. 반환: 기록 수 */
+async function usNaverSweep(env, opts) {
+  const DB = env.DB, cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+  const syms = (cfg.usTickers || []).filter(function (x) { return !/^\^|=/.test(x); });
+  const map = await nvUsCodeMap(DB, syms);
+  if (!map) return 0;
+  const byCode = {}; for (const y of syms) if (map[y]) byCode[map[y]] = y;
+  const codes = Object.keys(byCode), now = Date.now(), stmts = [];
+  for (let i = 0; i < codes.length; i += NV_US_CHUNK) {
+    let rows = [];
+    try { rows = await _nvWorldFetch(codes.slice(i, i + NV_US_CHUNK)); } catch (e) { continue; }
+    for (const x of rows) {
+      const y = byCode[x && x.reutersCode]; if (!y) continue;
+      const p = nvUsParse(x, now); if (!p) continue;
+      if (p.sess === "ovn" && p.close > 0) {
+        stmts.push(DB.prepare("UPDATE state SET v = json_set(v, '$.ovn', ?2, '$.ovnPct', ?3, '$.ovnTs', ?4, '$.ovnBase', ?5), updated_ts = ?6 WHERE k = ?1 AND json_valid(v)")
+          .bind("quote:" + y, p.px, (p.px / p.close - 1) * 100, p.ts, p.close, now));
+      } else if (opts && opts.fill && (p.sess === "pre" || p.sess === "post")) {
+        const kp = p.sess === "pre" ? "pre" : "post";
+        stmts.push(DB.prepare("UPDATE state SET v = json_set(v, '$." + kp + "', ?2, '$." + kp + "Pct', ?3, '$.extTs', ?4, '$.mstate', ?5, '$.ts', ?6), updated_ts = ?6 WHERE k = ?1 AND json_valid(v) AND COALESCE(json_extract(v, '$.extTs'), 0) < ?4")
+          .bind("quote:" + y, p.px, p.close > 0 ? (p.px / p.close - 1) * 100 : null, p.ts, p.sess === "pre" ? "PRE" : "POST", now));
+      }
+    }
+  }
+  for (let i = 0; i < stmts.length; i += 100) { try { await DB.batch(stmts.slice(i, i + 100)); } catch (e) {} }
+  return stmts.length;
+}
+
+/* [V33.631] OMNI-Q 구조 검증(순수 함수) — 모양이 틀리면 null(저장 안 함). 피처 ≤ 3000 · 나무 ≤ 400 · 나무당 분기 ≤ 512 · 피처 번호 범위 확인 */
+function omniqStructClean(x) {
+  if (!x || typeof x !== "object" || !Array.isArray(x.feat) || !x.feat.length || x.feat.length > 3000) return null;
+  const nf = x.feat.length;
+  const arr = function (a) { return Array.isArray(a) && a.length === nf ? a.map(function (v) { return _num(Number(v), 0); }) : null; };
+  const trees = (Array.isArray(x.trees) ? x.trees.slice(0, 400) : []).map(function (t) {
+    return (Array.isArray(t) ? t.slice(0, 512) : []).map(function (v) { return Math.floor(_num(Number(v), -1)); }).filter(function (v) { return v >= 0 && v < nf; });
+  });
+  return { feat: x.feat.map(function (v) { return String(v).slice(0, 60); }), gain: arr(x.gain), split: arr(x.split), trees: trees,
+           nTrees: Math.max(trees.length, Math.floor(_num(Number(x.nTrees), trees.length))), leaves: x.leaves == null ? null : _num(Number(x.leaves), null) };
+}
+
+/* ══ [V33.628] ★데이터 감시·자가 복구★ — 사용자(10/16): "다시는 이런 문제가 안 생기게 대비하는 코드 · 거래보다 실시간 데이터에 주력".
+   매분 거래 사이클(락) ★앞★에서 값싸게(D1 몇 줄) 잰다: 세션별 시세 나이(시장마다 대표 40종목 중앙값) · 환율 나이 · 경제지표 빈 칸·나이.
+   기준을 넘으면 ① 그 자리에서 직접 다시 받고(시세 = 가격 샤드 전부 · 환율 = runFxUpdate · 지표 = FRED·BOK 강제) ② 상태가 바뀔 때만 경고 로그
+   ③ data_health 에 남겨 /api/data-health · 화면이 본다. 같은 복구는 DATA_HEAL_GAP_MS 안에 반복하지 않는다(외부 한도 보호). ══ */
+const DATA_LIMITS = { quoteRegMs: 4 * 60000, quoteExtMs: 3 * 60000, fxMs: 6 * 60000, macroMs: 3 * 3600000 };
+const DATA_HEAL_GAP_MS = 2 * 60000;
+const DATA_MACRO_HEAL_GAP_MS = 30 * 60000;
+const MACRO_MUST = { us: ["fed_rate", "cpi", "core_cpi", "unemployment", "ust10y"], kr: ["base_rate", "cpi", "ktb3y", "ktb10y"] };
+function _medianNum(xs) { const a = xs.filter(function (x) { return x === x; }).sort(function (p, q) { return p - q; }); return a.length ? a[Math.floor(a.length / 2)] : NaN; }
+/* 순수 판정 — 입력: 지금 · 시장별 세션 · 시장별 시세 나이 배열 · 환율 갱신 시각 · 환율 장 여부 · 거시 자료. 출력: 항목별 {ok, age, limit, why} */
+function dataHealthJudge(now, sess, quoteAges, fxAt, fxOpen, macro) {
+  const out = {};
+  for (const m of ["us", "kr"]) {
+    const s0 = sess[m];
+    if (s0 !== "REGULAR" && s0 !== "PRE" && s0 !== "POST") { out["quote_" + m] = { ok: true, idle: true, sess: s0 }; continue; }
+    const lim = s0 === "REGULAR" ? DATA_LIMITS.quoteRegMs : DATA_LIMITS.quoteExtMs, med = _medianNum(quoteAges[m] || []);
+    out["quote_" + m] = { ok: med === med && med <= lim, age: med === med ? Math.round(med) : null, limit: lim, sess: s0, why: med === med ? null : "no_quotes" };
+  }
+  const fxAge = fxAt > 0 ? now - fxAt : Infinity;
+  out.fx = fxOpen ? { ok: fxAge <= DATA_LIMITS.fxMs, age: isFinite(fxAge) ? Math.round(fxAge) : null, limit: DATA_LIMITS.fxMs } : { ok: true, idle: true };
+  const miss = [];
+  for (const mk of ["us", "kr"]) for (const k of MACRO_MUST[mk]) { const it = macro && macro[mk] && macro[mk][k]; if (!it || it.value == null || it.value === "") miss.push(mk + "." + k); }
+  const mAge = macro && macro.updatedAt ? now - macro.updatedAt : Infinity;
+  out.macro = { ok: !miss.length && mAge <= DATA_LIMITS.macroMs, age: isFinite(mAge) ? Math.round(mAge) : null, limit: DATA_LIMITS.macroMs, missing: miss };
+  return out;
+}
+async function dataHealthRun(env) {
+  const DB = env.DB, now = Date.now(), d0 = new Date(now);
+  let prev = null;
+  try { prev = (await getState(DB, "data_health", null, true)) || {}; } catch (e) { return null; }   // 못 읽으면 이번 분은 쉰다(엄격 읽기)
+  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+  const sess = { us: marketSessionNow("us", d0), kr: marketSessionNow("kr", d0) };
+  const quoteAges = {};
+  for (const m of ["us", "kr"]) {
+    if (sess[m] !== "REGULAR" && sess[m] !== "PRE" && sess[m] !== "POST") continue;
+    const syms = ((m === "us" ? cfg.usTickers : cfg.krTickers) || []).slice(0, 40);
+    if (!syms.length) continue;
+    try {
+      const st = DB.prepare("SELECT json_extract(v, '$.ts') AS t FROM state WHERE k IN (" + syms.map(function () { return "?"; }).join(",") + ")");
+      const rw = await st.bind.apply(st, syms.map(function (x) { return "quote:" + x; })).all();
+      quoteAges[m] = ((rw && rw.results) || []).map(function (r) { return now - _num(Number(r.t), 0); });
+    } catch (e) { quoteAges[m] = []; }
+  }
+  let fx = null, macro = null;
+  try { fx = await getState(DB, "fx", null); } catch (e) {}
+  try { macro = await getState(DB, "macro_data", null); } catch (e) {}
+  const J = dataHealthJudge(now, sess, quoteAges, fx && fx.updatedAt, isFxMarketOpen(), macro);
+  const heal = Object.assign({}, prev.heal || {}), acts = [];
+  const due = function (k, gap) { return now - _num(heal[k], 0) >= gap; };
+  for (const m of ["us", "kr"]) {
+    const it = J["quote_" + m];
+    if (it && !it.ok && !it.idle && due("quote_" + m, DATA_HEAL_GAP_MS)) {
+      heal["quote_" + m] = now;
+      let n = 0; const tk = m === "us" ? cfg.usTickers : cfg.krTickers, tot = shardCount(tk, PRICE_SHARD_SIZE);
+      for (let sh = 0; sh < tot; sh++) { try { const r = await refreshPriceShard(env, m, sh); n += _num(r && r.ok, 0); } catch (e) {} }
+      it.healed = n; acts.push(m.toUpperCase() + " 시세 " + n + "종목 다시 받음");
+      if (m === "us" && (it.sess === "PRE" || it.sess === "POST")) {   // [V33.629] 미국 시간외는 네이버 해외주식으로도 채운다(2차 원천 · 더 새 체결만)
+        try { const k2 = await usNaverSweep(env, { fill: true }); it.healed2 = k2; acts.push("미국 시간외 2차 원천 " + k2 + "건"); } catch (e) {}
+      }
+    }
+  }
+  if (!J.fx.ok && !J.fx.idle && due("fx", DATA_HEAL_GAP_MS)) {
+    heal.fx = now;
+    try { await runFxUpdate(env); J.fx.healed = 1; acts.push("환율 다시 받음"); } catch (e) { J.fx.err = String(e && e.message || e).slice(0, 80); }
+  }
+  if (!J.macro.ok && due("macro", DATA_MACRO_HEAL_GAP_MS)) {
+    heal.macro = now;
+    try { const r = await runFredMacroUpdate(DB, true); J.macro.healed = r && r.got; acts.push("경제지표 다시 받음(" + _num(r && r.got, 0) + "개)"); } catch (e) { J.macro.err = String(e && e.message || e).slice(0, 80); }
+    try { await runInternalMacroUpdate(env, true); } catch (e) {}
+  }
+  const bad = Object.keys(J).filter(function (k) { return !J[k].ok; });
+  const sig = bad.join(",");
+  try { await setState(DB, "data_health", { ts: now, items: J, bad: bad, heal: heal, sig: sig, since: sig === prev.sig ? _num(prev.since, now) : now }); } catch (e) {}
+  if (sig !== (prev.sig || "") || acts.length) {
+    try { await log(DB, bad.length ? "WARN" : "INFO", null, "[데이터감시] " + (bad.length ? "낡음 " + bad.map(function (k) { const x = J[k]; return k + (x.age != null ? " " + Math.round(x.age / 60000) + "분" : "") + (x.missing && x.missing.length ? " 빈칸 " + x.missing.join("/") : ""); }).join(" · ") : "전부 정상") + (acts.length ? " → " + acts.join(" · ") : "")); } catch (e) {}
+  }
+  return J;
+}
+
 // 하위호환: 기존 refreshShard 호출(있다면) → 가격 샤드로 위임
 async function refreshShard(env, market, shard) {
   return refreshPriceShard(env, market, shard);
@@ -28831,7 +29015,7 @@ async function stockProfileExt(DB, sym) {
      force/run/refresh 가 붙은 요청 · 200 이 아닌 응답 · JSON 이 아닌 응답은 담지 않는다. 항목 300개 상한. */
 const MICRO_CACHE_TTL = {
   "/api/news": 60000, "/api/fx": 30000, "/api/econ": 60000, "/api/econ-impact": 60000, "/api/earnings": 120000,
-  "/api/insider": 120000, "/api/crisis": 30000, "/api/kr-halt": 15000, "/api/shard_meta": 300000,
+  "/api/insider": 120000, "/api/crisis": 30000, "/api/kr-halt": 15000, "/api/data-health": 15000, "/api/omniq-struct": 300000, "/api/shard_meta": 300000,
   "/api/commodities": 20000, "/api/bonds": 30000, "/api/ta-screener": 60000,
   "/api/tech-summary": 120000, "/api/fundamentals": 600000, "/api/stock-profile": 300000, "/api/analyst": 600000, "/api/chart": 300000,
   /* [V33.523] 운영 탐침(10/08 04:39Z · 동시 24회): news-picks 0.7초 · nn-viz 0.66→3~4초 · alerts(보유종목마다 D1 한 번) · macro · logs 가 매번 D1 */
@@ -28892,10 +29076,10 @@ const __mcR2At = new Map();
 const MC_NO_R2 = { "/api/logs": 1, "/api/chart": 1 };   // 로그는 5초짜리 · 차트는 종목마다 키가 갈라져 R2 쓰기만 늘린다
 /* 느리게 바뀌는 자료는 낡은 사본을 더 오래 준다(뒤에서 곧 갱신) — 운영 탐침(04:54Z): /api/macro 는 getState 한 줄인데 크론이 D1 을 쥔 분 경계에
    첫 요청이 30초 끊김. 조용한 시간(10분+) 뒤 첫 방문자도 R2 사본을 즉시 받게 한다. 화면은 다음 폴링에서 새 값을 받는다. */
-const MC_STALE_MAX = { "/api/macro": 21600000, "/api/econ": 21600000, "/api/econ-impact": 21600000, "/api/earnings": 21600000,
+const MC_STALE_MAX = { "/api/macro": 1800000, "/api/econ": 21600000, "/api/econ-impact": 21600000, "/api/earnings": 21600000,
   "/api/insider": 21600000, "/api/fundamentals": 21600000, "/api/stock-profile": 21600000, "/api/analyst": 21600000,
   "/api/tech-summary": 21600000, "/api/shard_meta": 3600000, "/api/news": 3600000, "/api/news-picks": 3600000,
-  "/api/nn-viz": 3600000, "/api/ta-screener": 3600000, "/api/fx": 3600000, "/api/crisis": 3600000 };
+  "/api/nn-viz": 3600000, "/api/ta-screener": 3600000, "/api/fx": 600000, "/api/crisis": 3600000 };
 function _mcStaleMax(ttl, path) { return MC_STALE_MAX[path] || Math.min(3600000, Math.max(ttl * 10, 120000)); }
 /* [V33.526] 브라우저도 TTL 의 절반(3~30초)은 스스로 답하게 한다 — 같은 화면의 폴링이 워커 요청으로 곱해지지 않는다(요청 한도 보호).
    화면이 주는 값은 같다: 서버도 그 시간 동안은 같은 사본을 준다. 강제 갱신(force/refresh=1)은 주소가 달라 이 캐시를 안 탄다. */
@@ -31091,6 +31275,8 @@ async function handleRequest(request, env, ctx, _inner) {
                    gate20: (body.gate20 && typeof body.gate20 === "object") ? body.gate20 : null,
                    speak20: omniqSpeakOf(body.gate20) };
       await setState(env.DB, "omniq:" + mk, st);
+      /* [V33.631] 모델 구조 전부(피처 이름·gain·분기 · 나무별 분기 피처) — 화면(구조 관측) 전용 · 따로 둔다(omni-status 를 무겁게 하지 않게) */
+      try { const sx = omniqStructClean(body.struct); if (sx) await setState(env.DB, "omniq_struct:" + mk, Object.assign(sx, { day: st.day, trainedAt: st.trainedAt, ts: Date.now() })); } catch (e) {}
       // 라이브 장부 — 엄격 읽기(못 읽으면 쓰지 않는다: 빈 배열로 덮으면 전진 기록이 사라진다)
       let picksN = null, added = false;
       try {
@@ -34930,6 +35116,15 @@ async function handleRequest(request, env, ctx, _inner) {
     //   쓸 수 있었고★, 그 값이 매수신호·사이즈·트레일·전량청산까지 좌우했다.
     //   즉 URL 만 알면 외부에서 우리 매매를 움직일 수 있는 상태였다.
 
+    if (path === "/api/omniq-struct") {   // [V33.631] OMNI-Q 구조 전부(구조 관측 화면)
+      const mk = url.searchParams.get("mkt") === "kr" ? "kr" : "us";
+      const sx = await getState(env.DB, "omniq_struct:" + mk, null);
+      return Response.json(sx || { empty: true }, { headers: cors });
+    }
+    if (path === "/api/data-health") {   // [V33.628] 데이터 감시 상태(시세·환율·경제지표 나이 · 마지막 자가 복구)
+      const h = await getState(env.DB, "data_health", null);
+      return Response.json(h || { ts: null, items: {}, bad: [] }, { headers: cors });
+    }
     if (path === "/api/macro" && request.method === "GET") {
       const data = await getState(env.DB, "macro_data", null);
       // [V33.598] 발표일·다음 발표일은 읽을 때마다 일정표로 다시 정한다(갱신 사이에 날짜가 지나도 맞게)
@@ -56044,6 +56239,15 @@ export default {
          거래 사이클(락) 앞에서 매분 받는다 — 사이클이 다른 시장을 평가하거나 락이 잡혀 있어도 시세는 멈추지 않는다. */
       __prof.mark("extSweep");
       try { await extQuoteSweep(env); } catch (e) {}
+      __prof.mark("usOvn");   // [V33.629] 미국 데이마켓(야간) — 2분마다 네이버 해외주식(스로틀 · 엄격 읽기)
+      try {
+        if (usOvernightNow(new Date())) {
+          let _ov = null; try { _ov = await getState(env.DB, "us_ovn_at", null, true); } catch (e) { _ov = false; }
+          if (_ov !== false && Date.now() - _num(_ov, 0) >= 110000) { await setState(env.DB, "us_ovn_at", Date.now()); await usNaverSweep(env, null); }
+        }
+      } catch (e) {}
+      __prof.mark("dataHealth");   // [V33.628] 데이터 감시·자가 복구 — 거래보다 먼저
+      try { await dataHealthRun(env); } catch (e) {}
 
       __prof.mark("trading");
       // 1) 주식/지수 가격 갱신 + 거래 (가장 무거움)
@@ -56195,7 +56399,7 @@ export default {
         if (isFxMarketOpen()) {
           const fxPrev = await getState(env.DB, "fx", null);
           const fxAge = (fxPrev && fxPrev.updatedAt) ? (Date.now() - fxPrev.updatedAt) : Infinity;
-          if (fxAge > 10 * 60 * 1000) {
+          if (fxAge > 3 * 60 * 1000) {   // [V33.628] 10분 → 3분(사용자: 실시간 데이터에 주력)
             try { await runFxUpdate(env); }
             catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] fx fail: " + e.message); } catch (e2) {} }
           }
@@ -56972,7 +57176,7 @@ export {
   // [V33.348] 원장 멱등성 검사용 — tools/check-ledger-idempotent.mjs 가 실제 SQLite 로 돌린다.
   stmtRecordTrade, stmtRecordTradeIfPos, KR_SELL_TAX_BY_YEAR,
   // [V33.350 · A-10] 한국 시간외 세션 마스크 — tools/check-ext-session-mask.mjs 가 실제로 호출한다.
-  krMarketStateNow, extKeepMaskKR, extKeepMaskUS, usMarketStateNow, extKeepMaskFor, extTurnOrder, extTurnDue, extSweepMarkets, sleeveZeros, SLEEVES,
+  krMarketStateNow, extKeepMaskKR, extKeepMaskUS, usMarketStateNow, extKeepMaskFor, dataHealthJudge, omniqStructClean, nvUsParse, nvUsCandidates, usOvernightNow, getUSEtOffset, getUSEt, extTurnOrder, extTurnDue, extSweepMarkets, sleeveZeros, SLEEVES,
   // [V33.351 · A-2/A-8] 세션 창 단일화 — tools/check-session-windows.mjs 가 분 단위로 대조한다.
   MARKET_HOURS, MARKET_HOURS_SPECIAL, marketWindows, marketSessionNow, marketLocalTime, marketLocalDate,
   isMarketOpen, isTradingWindow, isQuoteRefreshWindow, isExtendedHoursWindow, minutesToClose,

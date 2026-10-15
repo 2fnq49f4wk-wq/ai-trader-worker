@@ -74,7 +74,7 @@ const i145 = S.indexOf("--- 1.45) [V33.502]"), i15 = S.indexOf("--- 1.5) [V33.47
 chk(i145 > 0 && i145 < i15 && i15 < i25, "순서: 나스닥 시간외 → spark → v8 폴백 → 분봉 보강(채운 종목은 뒤를 안 탄다)", "순서 " + [i145, i15, i25]);
 
 console.log("⑤ 화면 이름표");
-chk(/function extSessLabel\(market, kind\) \{\s*if \(market === 'us'\) return kind === 'pre' \? '프리마켓' : '애프터마켓';/.test(H), "미국 = 프리마켓 / 애프터마켓", "이름표 함수");
+chk(/function extSessLabel\(market, kind\) \{\s*(?:if \(kind === 'day'\) return '데이마켓';[^\n]*\n\s*)?if \(market === 'us'\) return kind === 'pre' \? '프리마켓' : '애프터마켓';/.test(H), "미국 = 프리마켓 / 애프터마켓 (V33.629 데이마켓 분기 허용)", "이름표 함수");
 chk(/extSessLabel\(market,'pre'\)/.test(H) && /extSessLabel\(market,'post'\)/.test(H), "관심종목 카드가 이름표 함수를 쓴다", "카드");
 chk(/add\(extSessLabel\(st\.market, 'pre'\)/.test(H) && /add\(extSessLabel\(st\.market, 'post'\)/.test(H) && /id="detailExt"/.test(H), "종목상세 행·머리글도 같은 함수", "상세");
 chk(!/add\('장전\(시간외\)'/.test(H) && !/extLine='<div class="wl-ext">장후 '/.test(H), "옛 일괄 표기(장전/장후)가 미국에 남지 않는다", "옛 표기 잔존");

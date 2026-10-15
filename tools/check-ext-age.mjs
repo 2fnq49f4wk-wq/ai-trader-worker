@@ -50,7 +50,7 @@ ok(f(NOW + 60000, NOW) === "", "미래 시각 → 표시 없음");
 ok(f(ago(10), NOW, 5) === "10분 전", "문턱을 5분으로 주면 10분 전도 말한다");
 
 /* 배선 — 함수가 맞아도 카드가 안 쓰면 화면은 그대로다 */
-const card = H.slice(H.indexOf("var extLine = ''"), H.indexOf("var extLine = ''") + 1400);
+const card = H.slice(H.indexOf("var extLine = ''"), H.indexOf("var extLine = ''") + 2600);
 ok(/extAgeTxt\(q\.extTs\)/.test(card), "워치리스트 카드가 q.extTs 로 나이를 만든다");
 // [V33.502] 이름표는 extSessLabel(미국 프리마켓/애프터마켓 · 한국 장전/장후 시간외)
 const preOk = /extSessLabel\(market,'pre'\).*_ageTag/.test(card), postOk = /extSessLabel\(market,'post'\).*_ageTag/.test(card);

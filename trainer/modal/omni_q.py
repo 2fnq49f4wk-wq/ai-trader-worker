@@ -288,6 +288,38 @@ def _imp_top(bst, names, k=40):
         return None
 
 
+STRUCT_MAX_TREES = 240
+
+
+def _struct(bst, names, max_trees=STRUCT_MAX_TREES):
+    """[V33.631] ★모델 구조 전부(화면용 · 판정에 안 씀)★ — 사용자(10/16) "옛날 OMNI 처럼 노드들을 볼 수 있게".
+    피처 전체 이름 · gain 비중 · 분기 수 · 나무마다 실제 분기 피처 번호(앞 max_trees 그루) · 잎 수. 실패하면 None(화면은 종전 요약)."""
+    try:
+        g = np.asarray(bst.feature_importance("gain"), dtype=float)
+        sp = np.asarray(bst.feature_importance("split"), dtype=float)
+        tot = float(g.sum()) or 1.0
+        dm = bst.dump_model(num_iteration=-1)
+        trees, leaves = [], []
+        for ti in dm.get("tree_info", []):
+            fs_, nl = [], [0]
+
+            def walk(nd):
+                if "split_feature" in nd:
+                    fs_.append(int(nd["split_feature"]))
+                    walk(nd.get("left_child") or {})
+                    walk(nd.get("right_child") or {})
+                elif "leaf_index" in nd or "leaf_value" in nd:
+                    nl[0] += 1
+            walk(ti.get("tree_structure") or {})
+            leaves.append(nl[0])
+            if len(trees) < max_trees:
+                trees.append(fs_)
+        return {"feat": [str(x) for x in names], "gain": [round(float(x) / tot, 5) for x in g], "split": [int(x) for x in sp],
+                "trees": trees, "nTrees": len(leaves), "leaves": round(float(np.mean(leaves)), 1) if leaves else None}
+    except Exception:  # noqa: BLE001
+        return None
+
+
 EVENTS = {}   # [V33.615] 시장별 {"earn": {...}, "news": {...}} — omniq_gha 가 학습 전에 넣는다(실적·뉴스 피처)
 
 
@@ -679,7 +711,7 @@ def _score_only(mk, cached, C, X, y, req, BASE, HDR, log):
             mk, g3["days"], g3["lb"], "통과" if g3["ok"] else "미달", g3_20["days"], "통과" if g3_20["ok"] else "미달"))
         return {"mkt": mk, "day": str(C.index[last]), "h": H, "q": Q, "trainedAt": int(cached["trainedAt"]),
                 "scoredAt": int(time.time() * 1000), "scoreOnly": True, "nFeat": int(cached.get("nFeat") or xl.shape[1]), "n": len(sc),
-                "featGroups": cached.get("featGroups"), "featTop": cached.get("featTop"),
+                "featGroups": cached.get("featGroups"), "featTop": cached.get("featTop"), "struct": cached.get("struct"),
                 "scores": sc, "top": top, "heads": extra, "learner": cached.get("learner") or LEARNER_5D, "lab": cached.get("lab"),
                 "gate": gate, "top20": top20, "gate20": gate20 or None}
     except Exception as e:  # noqa: BLE001
@@ -945,7 +977,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         t_ms = int(time.time() * 1000)
         body = {"mkt": mk, "day": day, "h": H, "q": Q, "trainedAt": t_ms, "scoredAt": t_ms, "scoreOnly": False, "nFeat": len(names), "n": len(sc),
                 "scores": sc, "top": top, "heads": extra, "learner": LEARNER_5D, "lab": lab_rep or None,
-                "featGroups": FEAT_GROUPS.get(mk), "featTop": _imp_top(bst, names),
+                "featGroups": FEAT_GROUPS.get(mk), "featTop": _imp_top(bst, names), "struct": _struct(bst, names),
                 "gate": {"g1": dict(br, ok=g1, needT=G1_T), "g2": {"folds": fold_x, "foldsFullSwap": fold_x0, "band": BAND, "pos": pos, "need": need, "ok": g2},
                          "g3": dict(g3, needDays=G3_MIN_DAYS), "speak": speak, "fit": fitdiag.get("5일")},
                 "top20": top20,
@@ -955,7 +987,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         if isinstance(cache, dict):   # [V33.584] 다음 금요일까지 평일 회차가 이 모델로 채점한다
             cache[mk] = {"names": list(names), "trainedAt": t_ms, "learner": LEARNER_5D, "bst": bst, "heads": head_models,
                          "gate": body["gate"], "gate20": body["gate20"], "lab": body["lab"], "nFeat": len(names),
-                         "featGroups": body["featGroups"], "featTop": body["featTop"]}
+                         "featGroups": body["featGroups"], "featTop": body["featTop"], "struct": body["struct"]}
             cache["_trained"] = True
         log("      [OMNI-Q %s] 오늘(%s) %d종목 채점 · 상위 %d · 발언 %s (%.0fs)" % (mk, day, len(sc), len(top), "가능" if speak else "불가(섀도우)", time.time() - t0))
         if req is not None:
