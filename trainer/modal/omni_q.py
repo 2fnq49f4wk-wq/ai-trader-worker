@@ -52,6 +52,7 @@ TRAIN_FROM_HOUR = 7              # 07시Z(한국장 마감 뒤) 이후 첫 회�
 MODEL_MAX_AGE_S = 7.5 * 86400    # 금요일 학습이 빠졌으면(캐시 만료·실패) 다음 회차가 학습한다 — 자가 복구
 
 
+LAST_OOS = {}  # [V33.610] 시장별 표본 밖(퍼지 전진) 5일 점수(날짜×종목) — playbook_sim 이 과거 후보(상위 20%)를 고른다
 LAST_X = {}   # [V33.605] 시장별 마지막 피처 텐서(날짜×종목×피처 · 횡단면 순위) — strategy_router 가 빌려 쓴다
 
 
@@ -517,6 +518,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         import os as _os
         LAB = _os.environ.get("OMNIQ_LAB") == "1"
         scores, test_all = cv(y, LEARNER_5D, diag="5일")
+        LAST_OOS[mk] = {"sc": scores, "dates": list(C.index), "syms": list(C.columns)}   # [V33.610] 표본 밖 5일 점수 — 매매법 시뮬 후보를 실전과 같게
         br, fold_x, fold_x0, g2, pos, need = judge(scores, test_all, y, fwdv, "5일 · " + LEARNER_5D)
         # [V33.543] ★두 번째 발언 머리 — 20일 순위★(연구 회차 10/11: 미국 ① 53.3% t 12.9 · 한국 54.0% t 18.0 · ② 4/4). 관문 ①②③ 동일 · 20일마다 갈아탐.
         f20 = (C.shift(-(H20 + 1)) / C.shift(-1) - 1.0)

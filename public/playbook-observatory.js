@@ -1,6 +1,7 @@
-/* [V33.609] 매매법 AI 관측창 — 두뇌 페이지 '00 매매법 AI' 탭.
-   작동 구조(후보 → 지금 뜬 매매법 → 닮은 과거 칸 → 선택 → 매수 → 매매법 매도 → 매 회차 재시뮬)를 실제 상태와 함께 보여준다.
-   데이터: GET /api/playbook (표 요약 · 검증 · 매매법 정의 · 최근 매수/청산 · 보유). 읽기 전용 — 주문·학습을 건드리지 않는다. */
+/* [V33.609·610] 매매법 AI 관측창 — 두뇌 페이지 '00 매매법 AI' 탭. 옛 MISSION CONTROL 과 같은 콘솔 문법(NOW · DECISION STATE · 스캔 순회 · 판정 깔때기).
+   보여 주는 것: 이번 사이클 후보(OMNI-Q 상위 20%) 하나하나에서 ★지금 뜬 매매법★ 과 ★고른 매매법(또는 안 산 이유)★ ·
+   작동 구조 · 시장별 검증/주력 전환 · 실전 보유·매수·청산 · 매매법 사전.
+   데이터: GET /api/playbook (live = 워커가 매 사이클 남기는 후보별 판정). 읽기 전용 — 주문·학습을 건드리지 않는다. */
 (function () {
   'use strict';
   var NAMES = {
@@ -11,48 +12,66 @@
     DUAL_MOM: '듀얼 모멘텀', HERD_REBOUND: '거래량 2차 파동',
     ORB: '시가 범위 돌파', DIP_REV: '장중 눌림 반등', STOCH5: '5분 스토캐스틱', MOM3: '5분 3봉 상승', VWAP_RE: 'VWAP 회복'
   };
-  var RULE_TXT = function (r) {
+  function nm(id) { return NAMES[id] || id || '—'; }
+  function RULE_TXT(r) {
     if (!r) return '—';
     return (r.score === 'lcb' ? '하한(평균−오차)' : '평균') + ' · ' + (r.level === 'global' ? '매매법 전체 성적' : r.level === 'regime' ? '국면 칸까지' : '상황 칸 전체');
-  };
+  }
   var CSS = [
-    '#pbObs{--pb-bg:rgba(20,28,44,.55);--pb-line:rgba(140,170,220,.18);--pb-ink:#e3ebf8;--pb-sub:#8fa3c4;--pb-good:#5fe0b0;--pb-warn:#ffc46b;--pb-bad:#ff8f8f;--pb-acc:#7cc4ff;',
-    'display:flex;flex-direction:column;gap:14px;padding:4px 0 24px;color:var(--pb-ink);font-size:13px;}',
-    'html[data-theme="light"] #pbObs{--pb-bg:#fff;--pb-line:#dbe3ee;--pb-ink:#16202e;--pb-sub:#5b6b82;--pb-good:#0f8a5f;--pb-warn:#a36a00;--pb-bad:#c23b3b;--pb-acc:#0b5fb8;}',
-    '#pbObs h3{margin:0;font-size:15px;font-weight:700;letter-spacing:-.2px}',
-    '#pbObs .pb-sub{color:var(--pb-sub);font-size:12px;line-height:1.55;margin:4px 0 0}',
-    '#pbObs .pb-card{background:var(--pb-bg);border:1px solid var(--pb-line);border-radius:12px;padding:14px 16px;min-width:0}',
-    '#pbObs .pb-flow{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:12px;counter-reset:pbstep}',
-    '#pbObs .pb-step{position:relative;border:1px solid var(--pb-line);border-radius:10px;padding:10px 11px;background:rgba(124,196,255,.04);min-width:0}',
-    '#pbObs .pb-step b{display:block;font-size:12.5px;margin-bottom:3px}',
-    '#pbObs .pb-step b:before{counter-increment:pbstep;content:counter(pbstep);display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;margin-right:6px;font-size:10.5px;background:var(--pb-acc);color:#08111f}',
-    '#pbObs .pb-step p{margin:0;color:var(--pb-sub);font-size:11.5px;line-height:1.5}',
-    '#pbObs .pb-step .pb-live{margin-top:6px;font-size:11.5px;color:var(--pb-ink);font-variant-numeric:tabular-nums}',
-    '#pbObs .pb-step.loop{border-style:dashed;grid-column:1/-1}',
-    '#pbObs .pb-step.loop b:after{content:" ↺ 다시 ①로";color:var(--pb-sub);font-weight:400;font-size:11px}',
-    '#pbObs .pb-mk{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}',
-    '#pbObs .pb-mkh{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}',
-    '#pbObs .pb-badge{font-size:11px;padding:2px 9px;border-radius:999px;border:1px solid currentColor;white-space:nowrap}',
-    '#pbObs .pb-badge.good{color:var(--pb-good)}#pbObs .pb-badge.warn{color:var(--pb-warn)}#pbObs .pb-badge.bad{color:var(--pb-bad)}#pbObs .pb-badge.dim{color:var(--pb-sub)}',
-    '#pbObs .pb-kv{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:8px 0}',
-    '#pbObs .pb-kv div{border:1px solid var(--pb-line);border-radius:8px;padding:6px 8px;min-width:0}',
-    '#pbObs .pb-kv dt{font-size:10.5px;color:var(--pb-sub)}#pbObs .pb-kv dd{margin:2px 0 0;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}',
-    '#pbObs table{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-numeric:tabular-nums}',
-    '#pbObs th,#pbObs td{text-align:left;padding:4px 6px;border-bottom:1px solid var(--pb-line);white-space:nowrap}',
-    '#pbObs th{color:var(--pb-sub);font-weight:500}#pbObs td.num,#pbObs th.num{text-align:right}',
-    '#pbObs tr.sel td{color:var(--pb-acc);font-weight:700}',
-    '#pbObs .pb-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}',
-    '#pbObs .pb-bars{display:flex;flex-direction:column;gap:4px;margin-top:6px}',
-    '#pbObs .pb-bar{display:grid;grid-template-columns:110px minmax(0,1fr) 40px;gap:6px;align-items:center;font-size:11.5px}',
-    '#pbObs .pb-bar i{display:block;height:7px;border-radius:4px;background:var(--pb-acc);opacity:.75}',
-    '#pbObs .pb-bar span:last-child{text-align:right;color:var(--pb-sub);font-variant-numeric:tabular-nums}',
-    '#pbObs .pb-sec{font-size:12px;color:var(--pb-sub);margin:10px 0 4px;font-weight:600}',
-    '#pbObs .pb-dict{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:6px}',
-    '#pbObs .pb-dict div{border:1px solid var(--pb-line);border-radius:8px;padding:7px 9px;font-size:11.5px;min-width:0}',
-    '#pbObs .pb-dict b{display:block;font-size:12px}#pbObs .pb-dict small{color:var(--pb-sub);display:block;line-height:1.45}',
-    '#pbObs .pb-empty{color:var(--pb-sub);font-size:12px;padding:6px 0}',
-    '#pbObs .pos{color:var(--pb-good)}#pbObs .neg{color:var(--pb-bad)}',
-    '@media (max-width:560px){#pbObs .pb-kv{grid-template-columns:repeat(2,minmax(0,1fr))}#pbObs .pb-bar{grid-template-columns:92px minmax(0,1fr) 34px}}'
+    '#pbObs{--k-bg:#0d1117;--k-panel:#11161e;--k-line:rgba(230,233,238,.10);--k-ink:#e6e9ee;--k-sub:#8b95a5;--k-dim:#5d6676;--k-acc:#39d0ff;--k-good:#3ddc97;--k-bad:#ff5d6c;--k-warn:#f5c451;',
+    '--k-mono:"JetBrains Mono","SFMono-Regular",ui-monospace,Menlo,Consolas,monospace;display:flex;flex-direction:column;gap:12px;padding:2px 0 24px;color:var(--k-ink);font-size:13px}',
+    'html[data-theme="light"] #pbObs{--k-bg:#f4f6f9;--k-panel:#fff;--k-line:#dde2ea;--k-ink:#141a22;--k-sub:#5a6474;--k-dim:#8a93a1;--k-acc:#0a6fb3;--k-good:#0d8a5c;--k-bad:#c8323f;--k-warn:#9a6a00}',
+    '#pbObs .k-panel{background:var(--k-panel);border:1px solid var(--k-line);border-radius:12px;min-width:0}',
+    '#pbObs .k-h{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 14px;border-bottom:1px solid var(--k-line)}',
+    '#pbObs .k-h b{font-family:var(--k-mono);font-size:12px;letter-spacing:1.6px;font-weight:700}',
+    '#pbObs .k-h b:before{content:"";display:inline-block;width:14px;height:1px;background:currentColor;margin-right:8px;vertical-align:middle}',
+    '#pbObs .k-h small{color:var(--k-sub);font-size:11px;margin-left:auto;font-family:var(--k-mono)}',
+    '#pbObs .k-lab{font-family:var(--k-mono);font-size:10.5px;letter-spacing:1.8px;color:var(--k-sub);text-transform:uppercase}',
+    '#pbObs .k-tag{font-family:var(--k-mono);font-size:10.5px;padding:2px 8px;border-radius:999px;border:1px solid var(--k-line);color:var(--k-sub);white-space:nowrap}',
+    '#pbObs .k-tag.good{color:var(--k-good);border-color:currentColor}#pbObs .k-tag.warn{color:var(--k-warn);border-color:currentColor}#pbObs .k-tag.bad{color:var(--k-bad);border-color:currentColor}#pbObs .k-tag.acc{color:var(--k-acc);border-color:currentColor}',
+    '#pbObs .k-brief{display:grid;grid-template-columns:minmax(0,1.6fr) repeat(4,minmax(0,1fr))}',
+    '#pbObs .k-brief>div{padding:14px;border-left:1px solid var(--k-line);min-width:0}#pbObs .k-brief>div:first-child{border-left:0}',
+    '#pbObs .k-brief strong{display:block;font-size:20px;margin:6px 0 4px;letter-spacing:-.3px}',
+    '#pbObs .k-brief p{margin:0;color:var(--k-sub);font-size:12px;line-height:1.5}',
+    '#pbObs .k-brief dd{margin:6px 0 2px;font-family:var(--k-mono);font-size:24px;font-weight:600}#pbObs .k-brief small{color:var(--k-sub);font-size:11px}',
+    '#pbObs .k-mkt{display:flex;gap:6px;margin-left:auto}#pbObs .k-mkt button{font-family:var(--k-mono);font-size:11px;padding:4px 10px;border-radius:7px;border:1px solid var(--k-line);background:transparent;color:var(--k-sub);cursor:pointer}',
+    '#pbObs .k-mkt button[aria-pressed="true"]{background:var(--k-ink);color:var(--k-bg);border-color:var(--k-ink)}',
+    '#pbObs .k-strip{display:flex;gap:8px;overflow-x:auto;padding:10px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}',
+    '#pbObs .k-card{flex:0 0 200px;scroll-snap-align:start;border:1px solid var(--k-line);border-radius:10px;padding:10px;cursor:pointer;background:transparent;color:inherit;text-align:left;font:inherit}',
+    '#pbObs .k-card.sel{border-color:var(--k-acc);box-shadow:0 0 0 1px var(--k-acc) inset}',
+    '#pbObs .k-card .t{display:flex;justify-content:space-between;align-items:center;gap:6px}#pbObs .k-card .t b{font-family:var(--k-mono);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '#pbObs .k-card .n{color:var(--k-sub);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}',
+    '#pbObs .k-card svg{display:block;width:100%;height:34px;margin:6px 0}',
+    '#pbObs .k-card .r{font-family:var(--k-mono);font-size:11px;display:flex;justify-content:space-between;color:var(--k-sub)}',
+    '#pbObs .k-card .p{margin-top:6px;font-size:12px;font-weight:600;min-height:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '#pbObs .k-card .f{display:flex;gap:4px;flex-wrap:wrap;margin-top:5px;min-height:18px}',
+    '#pbObs .k-chip{font-size:10.5px;padding:1px 6px;border-radius:5px;border:1px solid var(--k-line);color:var(--k-sub);white-space:nowrap}#pbObs .k-chip.on{color:var(--k-acc);border-color:var(--k-acc)}',
+    '#pbObs .k-detail{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);border-top:1px solid var(--k-line)}',
+    '#pbObs .k-detail>div{padding:14px;min-width:0}#pbObs .k-detail>div+div{border-left:1px solid var(--k-line)}',
+    '#pbObs .k-big{display:flex;align-items:baseline;justify-content:space-between;gap:8px}#pbObs .k-big b{font-family:var(--k-mono);font-size:22px}#pbObs .k-big span{font-family:var(--k-mono);font-size:26px;color:var(--k-acc)}',
+    '#pbObs .k-row{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--k-line);font-size:12px}#pbObs .k-row span:first-child{color:var(--k-sub)}#pbObs .k-row span:last-child{font-family:var(--k-mono);text-align:right}',
+    '#pbObs .k-steps{display:flex;flex-direction:column;gap:0;margin-top:8px}#pbObs .k-step{display:grid;grid-template-columns:22px minmax(0,1fr);gap:8px;padding:6px 0;font-size:12px}',
+    '#pbObs .k-step i{width:20px;height:20px;border-radius:50%;border:1px solid var(--k-line);display:grid;place-items:center;font-style:normal;font-family:var(--k-mono);font-size:10px;color:var(--k-sub)}',
+    '#pbObs .k-step.ok i{border-color:var(--k-good);color:var(--k-good)}#pbObs .k-step.no i{border-color:var(--k-bad);color:var(--k-bad)}#pbObs .k-step small{display:block;color:var(--k-sub);font-size:11px}',
+    '#pbObs .k-funnel{padding:12px 14px;display:flex;flex-direction:column;gap:8px}',
+    '#pbObs .k-fs{display:grid;grid-template-columns:170px minmax(0,1fr) 60px;gap:10px;align-items:center;font-size:12px}#pbObs .k-fs i{display:block;height:8px;border-radius:4px;background:var(--k-acc);opacity:.8}#pbObs .k-fs span:last-child{font-family:var(--k-mono);text-align:right}',
+    '#pbObs .k-flow{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:0}',
+    '#pbObs .k-flow>div{padding:12px;border-left:1px solid var(--k-line);min-width:0}#pbObs .k-flow>div:first-child{border-left:0}',
+    '#pbObs .k-flow b{display:block;font-size:12.5px;margin:4px 0}#pbObs .k-flow p{margin:0;font-size:11.5px;color:var(--k-sub);line-height:1.5}#pbObs .k-flow em{display:block;margin-top:6px;font-style:normal;font-family:var(--k-mono);font-size:11px;color:var(--k-ink)}',
+    '#pbObs .k-loop{padding:9px 14px;border-top:1px dashed var(--k-line);font-size:11.5px;color:var(--k-sub)}',
+    '#pbObs .k-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}',
+    '#pbObs .k-kv{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-bottom:1px solid var(--k-line)}#pbObs .k-kv div{padding:10px 12px;border-left:1px solid var(--k-line)}#pbObs .k-kv div:first-child{border-left:0}',
+    '#pbObs .k-kv dd{margin:4px 0 0;font-family:var(--k-mono);font-size:17px;font-weight:600}',
+    '#pbObs .k-body{padding:10px 14px}',
+    '#pbObs table{width:100%;border-collapse:collapse;font-size:11.5px}#pbObs th,#pbObs td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--k-line);white-space:nowrap}',
+    '#pbObs th{color:var(--k-sub);font-weight:500;font-family:var(--k-mono);font-size:10.5px;letter-spacing:.6px}#pbObs td.num,#pbObs th.num{text-align:right;font-family:var(--k-mono)}#pbObs tr.sel td{color:var(--k-acc);font-weight:700}',
+    '#pbObs .k-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}',
+    '#pbObs .k-dict{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px;padding:10px 14px}#pbObs .k-dict div{border:1px solid var(--k-line);border-radius:8px;padding:7px 9px;font-size:11.5px}#pbObs .k-dict b{display:block;font-size:12px}#pbObs .k-dict small{color:var(--k-sub);line-height:1.45;display:block}',
+    '#pbObs .k-empty{color:var(--k-sub);font-size:12px;padding:12px 14px}',
+    '#pbObs .pos{color:var(--k-good)}#pbObs .neg{color:var(--k-bad)}',
+    '@media (max-width:900px){#pbObs .k-brief{grid-template-columns:repeat(2,minmax(0,1fr))}#pbObs .k-brief>div:first-child{grid-column:1/-1}#pbObs .k-brief>div:nth-child(2){border-left:0}',
+    '#pbObs .k-brief>div{border-top:1px solid var(--k-line)}#pbObs .k-brief>div:first-child{border-top:0}#pbObs .k-flow{grid-template-columns:repeat(2,minmax(0,1fr))}#pbObs .k-flow>div:nth-child(odd){border-left:0}#pbObs .k-flow>div{border-top:1px solid var(--k-line)}',
+    '#pbObs .k-detail,#pbObs .k-grid2{grid-template-columns:minmax(0,1fr)}#pbObs .k-detail>div+div{border-left:0;border-top:1px solid var(--k-line)}#pbObs .k-kv{grid-template-columns:repeat(2,minmax(0,1fr))}#pbObs .k-fs{grid-template-columns:110px minmax(0,1fr) 44px}}'
   ].join('\n');
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
@@ -61,132 +80,183 @@
   function ago(ts) {
     if (!ts) return '—';
     var m = Math.round((Date.now() - ts) / 60000);
-    return m < 60 ? m + '분 전' : m < 1440 ? Math.round(m / 60) + '시간 전' : Math.round(m / 1440) + '일 전';
+    return m < 1 ? '방금' : m < 60 ? m + '분 전' : m < 1440 ? Math.round(m / 60) + '시간 전' : Math.round(m / 1440) + '일 전';
   }
-  function nm(id) { return NAMES[id] || id; }
+  function spark(a) {
+    if (!Array.isArray(a) || a.length < 2) return '<svg viewBox="0 0 100 34"></svg>';
+    var lo = Math.min.apply(null, a), hi = Math.max.apply(null, a), r = hi - lo || 1;
+    var pts = a.map(function (v, i) { return (i / (a.length - 1) * 100).toFixed(1) + ',' + (32 - (v - lo) / r * 30).toFixed(1); }).join(' ');
+    var up = a[a.length - 1] >= a[0];
+    return '<svg viewBox="0 0 100 34" preserveAspectRatio="none"><polyline fill="none" stroke="' + (up ? 'var(--k-good)' : 'var(--k-bad)') + '" stroke-width="1.4" vector-effect="non-scaling-stroke" points="' + pts + '"/></svg>';
+  }
+  function state(it) {   // 카드 배지
+    if (it.act) return ['매수 후보', 'good'];
+    if (it.why === '보유 중') return ['보유 중', 'acc'];
+    if (it.pb) return ['선택(기록)', 'warn'];
+    return ['대기', ''];
+  }
+  function exitTxt(it) {
+    if (!it.pb) return '—';
+    if (it.kind === 'intra') return (it.tpPct != null ? '+' + it.tpPct + '% 익절 · ' : '') + '−' + (it.stop || '—') + '% 손절 · ' + (it.bars ? it.bars * 5 + '분' : '장 끝까지');
+    return '−' + (it.stop || '—') + '% 손절 · ' + (it.tpR ? it.tpR + 'R 익절 · ' : '익절 없음 · ') + (it.hold || '—') + '거래일';
+  }
 
-  function valBlock(v, label) {
-    if (!v) return '<div class="pb-empty">' + esc(label) + ' — 아직 표 없음</div>';
-    if (v.why) return '<div class="pb-empty">' + esc(label) + ' — ' + esc(v.why) + '</div>';
-    var h = '<div class="pb-sec">' + esc(label) + ' · 손대지 않은 마지막 20% 구간 판정</div>' +
-      '<dl class="pb-kv">' +
-      '<div><dt>고른 매매법 평균</dt><dd class="' + cls(v.mean) + '">' + pct(v.mean) + '</dd></div>' +
-      '<div><dt>아무거나 평균</dt><dd class="' + cls(v.base) + '">' + pct(v.base) + '</dd></div>' +
-      '<div><dt>t 값 (기준 ≥ 2)</dt><dd>' + (v.t == null ? '—' : Number(v.t).toFixed(2)) + '</dd></div>' +
-      '<div><dt>거래 · 승률</dt><dd>' + (v.n || 0) + ' · ' + (v.win == null ? '—' : v.win + '%') + '</dd></div></dl>' +
-      '<div class="pb-sub">선택 규칙: <b>' + esc(RULE_TXT(v.rule)) + '</b> (검증 구간에서 4개 중 고름)</div>';
-    if (Array.isArray(v.valCmp) && v.valCmp.length) {
-      h += '<div class="pb-scroll"><table><thead><tr><th>규칙 후보</th><th class="num">거래</th><th class="num">평균</th><th class="num">t</th><th class="num">아무거나</th></tr></thead><tbody>';
-      v.valCmp.forEach(function (c) {
-        var sel = v.rule && c.rule && c.rule.score === v.rule.score && c.rule.level === v.rule.level;
-        h += '<tr' + (sel ? ' class="sel"' : '') + '><td>' + esc(RULE_TXT(c.rule)) + '</td><td class="num">' + (c.n || 0) + '</td><td class="num ' + cls(c.mean) + '">' + pct(c.mean) +
-          '</td><td class="num">' + (c.t == null ? '—' : Number(c.t).toFixed(2)) + '</td><td class="num">' + pct(c.base) + '</td></tr>';
-      });
-      h += '</tbody></table></div>';
+  var root = null, timer = null, busy = false, data = null, mkSel = null, symSel = null;
+
+  function brief(j, mk) {
+    var lv = (j.live || {})[mk], r = (j.markets || {})[mk];
+    var items = (lv && lv.items) || [];
+    var fired = lv && lv.f != null ? lv.f : items.filter(function (x) { return x.fired && x.fired.length; }).length, chosen = lv && lv.c != null ? lv.c : items.filter(function (x) { return x.pb; }).length, act = lv && lv.a != null ? lv.a : items.filter(function (x) { return x.act; }).length;
+    var head = !r ? '매매법 표 대기' : r.primary ? '매매법 AI 주력 운용' : '검증 전 — 그림자 판정';
+    var why = !r ? '학습기(GitHub Actions)가 아직 이 시장 표를 올리지 않았습니다.'
+      : r.primary ? '이 시장은 검증을 통과해 AI_PRIMARY 대신 매매법 AI 가 삽니다(크기 ×1.0).'
+      : '후보마다 무엇을 골랐을지 계산만 하고 사지 않습니다. 검증을 통과하면 자동으로 주력이 됩니다(그 전까지 AI_PRIMARY 유지).';
+    return '<section class="k-panel k-brief"><div><span class="k-lab">NOW · DECISION STATE</span><strong>' + esc(head) + '</strong><p>' + esc(why) + '</p></div>' +
+      '<div><span class="k-lab">CANDIDATES</span><dd>' + ((lv && lv.n) || 0) + '</dd><small>OMNI-Q 상위 20% 평가</small></div>' +
+      '<div><span class="k-lab">FIRED</span><dd>' + fired + '</dd><small>지금 매매법 신호 뜸</small></div>' +
+      '<div><span class="k-lab">CHOSEN</span><dd>' + chosen + (act ? '<small class="pos"> · 매수 ' + act + '</small>' : '') + '</dd><small>고른 매매법 있음</small></div>' +
+      '<div><span class="k-lab">SCAN AGE</span><dd>' + esc(lv ? ago(lv.ts).replace(' 전', '') : '—') + '</dd><small>국면 ' + esc((lv && lv.regime) || (r && r.regime) || '—') + '</small></div></section>';
+  }
+
+  function strip(j, mk) {
+    var lv = (j.live || {})[mk], items = (lv && lv.items) || [];
+    var h = '<section class="k-panel"><div class="k-h"><b>매매법 AI 후보 순회</b><span class="k-tag">' + (mk === 'us' ? '미국' : '한국') + '</span>' +
+      '<small>' + (lv ? '최근 사이클 ' + esc(ago(lv.ts)) + (lv.mtc != null ? ' · 마감까지 ' + lv.mtc + '분' : ' · 장 밖') : '아직 기록 없음') + '</small></div>';
+    if (!items.length) return h + '<div class="k-empty">이번 사이클에 OMNI-Q 상위 20% 후보가 평가되지 않았습니다(장 밖이거나 OMNI-Q 점수가 낡음).</div></section>';
+    if (!symSel || !items.some(function (x) { return x.s === symSel; })) symSel = items[0].s;
+    h += '<div class="k-strip">' + items.map(function (it) {
+      var st = state(it);
+      return '<button type="button" class="k-card' + (it.s === symSel ? ' sel' : '') + '" data-pbsym="' + esc(it.s) + '">' +
+        '<div class="t"><b>' + esc(it.s) + '</b><span class="k-tag ' + st[1] + '">' + st[0] + '</span></div><div class="n">' + esc(it.nm || '') + '</div>' + spark(it.sp) +
+        '<div class="r"><span>OMNI-Q 상위 ' + Math.max(1, Math.round((1 - it.q) * 100)) + '%</span><span class="' + cls(it.dp) + '">' + pct(it.dp) + '</span></div>' +
+        '<div class="p">' + (it.pb ? '→ ' + esc(nm(it.pb)) : '<span style="color:var(--k-dim)">' + esc(it.why || '대기') + '</span>') + '</div>' +
+        '<div class="f">' + (it.fired || []).slice(0, 4).map(function (f) { return '<span class="k-chip' + (f === it.pb ? ' on' : '') + '">' + esc(nm(f)) + '</span>'; }).join('') + '</div></button>';
+    }).join('') + '</div>';
+    var it = items.filter(function (x) { return x.s === symSel; })[0];
+    if (it) {
+      var steps = [
+        [true, '후보', 'OMNI-Q 5일 상위 ' + Math.max(1, Math.round((1 - it.q) * 100)) + '% (점수 ' + it.q + ')'],
+        [(it.fired || []).length > 0, '지금 뜬 매매법', (it.fired || []).length ? it.fired.map(nm).join(' · ') : '없음 — 진입 조건이 뜨기 전엔 사지 않습니다'],
+        [!!it.pb, '닮은 과거 칸에서 선택', it.pb ? nm(it.pb) + ' · 모의 성공 ' + (it.w != null ? Math.round(it.w * 100) + '%' : '—') + ' · 평균 ' + pct(it.m) + ' · 표본 ' + (it.n || '—') : (it.why || '성적 기준을 넘는 매매법 없음')],
+        [!!it.act, '매수', it.act ? it.act : (it.why || '—')]
+      ];
+      h += '<div class="k-detail"><div><div class="k-big"><b>' + esc(it.s) + '</b><span>' + (it.pb ? esc(nm(it.pb)) : '대기') + '</span></div><div class="k-sub" style="color:var(--k-sub);font-size:12px">' + esc(it.nm || '') + '</div>' +
+        '<div class="k-steps">' + steps.map(function (s, i) { return '<div class="k-step ' + (s[0] ? 'ok' : 'no') + '"><i>' + (i + 1) + '</i><div>' + esc(s[1]) + '<small>' + esc(s[2]) + '</small></div></div>'; }).join('') + '</div></div>' +
+        '<div><span class="k-lab">판정 근거</span>' +
+        '<div class="k-row"><span>현재가 · 오늘</span><span>' + Number(it.px).toLocaleString() + ' · <span class="' + cls(it.dp) + '">' + pct(it.dp) + '</span></span></div>' +
+        '<div class="k-row"><span>고른 매매법</span><span>' + esc(nm(it.pb)) + (it.kind ? ' (' + (it.kind === 'intra' ? '5분 단타' : '일봉') + ')' : '') + '</span></div>' +
+        '<div class="k-row"><span>모의 성공확률</span><span>' + (it.w != null ? Math.round(it.w * 100) + '%' : '—') + '</span></div>' +
+        '<div class="k-row"><span>모의 평균 순수익</span><span class="' + cls(it.m) + '">' + pct(it.m) + '</span></div>' +
+        '<div class="k-row"><span>시뮬 표본</span><span>' + (it.n || '—') + '</span></div>' +
+        '<div class="k-row"><span>매도 규칙</span><span>' + esc(exitTxt(it)) + '</span></div>' +
+        '<div class="k-row"><span>상태</span><span>' + esc(it.act || it.why || '—') + '</span></div></div></div>';
     }
-    var by = v.byPb || {}, keys = Object.keys(by).sort(function (a, b) { return by[b] - by[a]; }).slice(0, 8), mx = keys.length ? by[keys[0]] : 1;
-    if (keys.length) {
-      h += '<div class="pb-sec">판정 구간에서 고른 매매법</div><div class="pb-bars">';
-      keys.forEach(function (k) { h += '<div class="pb-bar"><span>' + esc(nm(k)) + '</span><i style="width:' + Math.max(4, Math.round(by[k] / mx * 100)) + '%"></i><span>' + by[k] + '</span></div>'; });
-      h += '</div>';
-    }
-    return h;
+    return h + '</section>';
   }
 
-  function marketCard(mk, r) {
-    var title = mk === 'us' ? '미국' : '한국';
-    if (!r) return '<div class="pb-card"><div class="pb-mkh"><h3>' + title + '</h3><span class="pb-badge dim">표 없음</span></div><div class="pb-empty">학습기(GitHub Actions)가 아직 이 시장 표를 올리지 않았습니다.</div></div>';
-    var badge = r.primary ? '<span class="pb-badge good">주력 — AI_PRIMARY 퇴역</span>'
-      : (r.pass && r.pass.daily ? '<span class="pb-badge warn">통과 · 표가 낡음</span>' : '<span class="pb-badge warn">검증 미통과 — AI_PRIMARY 유지</span>');
-    return '<div class="pb-card"><div class="pb-mkh"><h3>' + title + '</h3>' + badge +
-      '<span class="pb-badge dim">국면 ' + esc(r.regime || '—') + '</span><span class="pb-badge dim">표 ' + esc(ago(r.ts)) + '</span></div>' +
-      valBlock(r.daily && r.daily.val, '일봉 매매법 ' + ((r.daily && r.daily.cells) || 0) + '칸') +
-      valBlock(r.intra && r.intra.val, '5분 단타 ' + ((r.intra && r.intra.cells) || 0) + '칸') + '</div>';
-  }
-
-  function dict(j) {
-    var any = null;
-    ['us', 'kr'].forEach(function (m) { if (!any && j.markets && j.markets[m]) any = j.markets[m]; });
-    if (!any) return '';
-    var h = '<div class="pb-card"><h3>매매법 사전 — 사는 조건이 다르고, 파는 규칙도 다르다</h3><p class="pb-sub">후보 종목에서 아래 매매법의 진입 신호가 ★지금★ 떠야 삽니다. 여러 개가 뜨면 그 종목의 지금 상황 칸에서 성적이 가장 좋은 것 하나로 삽니다.</p>';
-    var d = (any.daily && any.daily.pb) || {}, it = (any.intra && any.intra.pb) || {};
-    h += '<div class="pb-sec">일봉 (스윙) · ' + Object.keys(d).length + '종</div><div class="pb-dict">';
-    Object.keys(d).forEach(function (k) {
-      var p = d[k];
-      h += '<div><b>' + esc(nm(k)) + '</b><small>' + esc(p.family || '') + ' · 손절 ' + p.stop + '% (ATR×' + p.atr + ' 중 작은 쪽) · 본전 ' + p.be + 'R · ' +
-        (p.tpR ? '익절 ' + p.tpR + 'R · ' : '익절 없음 · ') + '최대 ' + p.hold + '거래일</small></div>';
-    });
-    h += '</div><div class="pb-sec">5분 단타 · ' + Object.keys(it).length + '종</div><div class="pb-dict">';
-    Object.keys(it).forEach(function (k) {
-      var p = it[k];
-      h += '<div><b>' + esc(nm(k)) + '</b><small>' + esc(p.label || '') + ' · 익절 ' + (p.tpPct == null ? '없음' : '+' + p.tpPct + '%') + ' · 손절 −' + p.sl + '% · ' + (p.bars ? p.bars * 5 + '분' : '장 끝까지') + '</small></div>';
-    });
-    return h + '</div></div>';
-  }
-
-  function live(j) {
-    var h = '<div class="pb-card"><h3>실전 — 매매법 AI 가 산 것</h3>';
-    var open = j.open || [], rec = j.recent || [], ex = j.exits || [];
-    h += '<div class="pb-sec">보유 중 ' + open.length + '건</div>';
-    if (!open.length) h += '<div class="pb-empty">없음</div>';
-    else {
-      h += '<div class="pb-scroll"><table><thead><tr><th>종목</th><th>매매법</th><th class="num">진입가</th><th class="num">손절</th><th>매도 규칙</th><th>진입</th></tr></thead><tbody>';
-      open.forEach(function (p) {
-        var s = p.sr || {};
-        var rule = s.kind === 'intra' ? (s.tpPct ? '+' + s.tpPct + '% · ' : '') + (s.bars ? s.bars * 5 + '분' : '장 끝') : (s.tpR ? s.tpR + 'R 익절 · ' : '') + (s.hold || '—') + '거래일';
-        h += '<tr><td>' + esc(p.symbol) + '</td><td>' + esc(nm(s.sid)) + (s.primary ? ' ★' : '') + '</td><td class="num">' + Number(p.avg).toLocaleString() + '</td><td class="num">−' + (s.stop || '—') + '%</td><td>' + esc(rule) + '</td><td>' + esc(ago(p.opened)) + '</td></tr>';
-      });
-      h += '</tbody></table></div>';
-    }
-    h += '<div class="pb-sec">최근 매수</div>';
-    h += rec.length ? '<div class="pb-scroll"><table><tbody>' + rec.map(function (t) {
-      return '<tr><td>' + esc(ago(t.ts)) + '</td><td>' + esc(t.symbol) + '</td><td>' + esc(String(t.reason || '').replace(/^\[SROUTE\]\[[A-Z]+\]\s*/, '').slice(0, 90)) + '</td></tr>';
-    }).join('') + '</tbody></table></div>' : '<div class="pb-empty">아직 없음 — 검증을 통과한 시장에서만 삽니다.</div>';
-    h += '<div class="pb-sec">최근 매매법 청산</div>';
-    h += ex.length ? '<div class="pb-scroll"><table><tbody>' + ex.map(function (t) {
-      return '<tr><td>' + esc(ago(t.ts)) + '</td><td>' + esc(t.symbol) + '</td><td class="num ' + cls(t.pnl_pct) + '">' + pct(t.pnl_pct) + '</td><td>' + esc(String(t.reason || '').slice(0, 60)) + '</td></tr>';
-    }).join('') + '</tbody></table></div>' : '<div class="pb-empty">아직 없음</div>';
-    return h + '</div>';
+  function funnel(j, mk) {
+    var lv = (j.live || {})[mk], items = (lv && lv.items) || [];
+    var n = (lv && lv.n) || 0, f = lv && lv.f != null ? lv.f : items.filter(function (x) { return x.fired && x.fired.length; }).length,
+        c = lv && lv.c != null ? lv.c : items.filter(function (x) { return x.pb; }).length, a = lv && lv.a != null ? lv.a : items.filter(function (x) { return x.act; }).length;
+    var mx = Math.max(1, n);
+    var rows = [['① 후보(OMNI-Q 상위 20%)', n], ['② 매매법 신호 뜸', f], ['③ 매매법 선택', c], ['④ 매수 후보', a]];
+    return '<section class="k-panel"><div class="k-h"><b>판정 깔때기</b><small>' + (n > items.length ? '표시 ' + items.length + ' / 평가 ' + n + '(②~④는 표시분 기준)' : '이번 사이클') + '</small></div><div class="k-funnel">' +
+      rows.map(function (r) { return '<div class="k-fs"><span>' + r[0] + '</span><i style="width:' + Math.max(2, Math.round(r[1] / mx * 100)) + '%"></i><span>' + r[1] + '</span></div>'; }).join('') + '</div></section>';
   }
 
   function flow(j) {
-    var mk = j.markets || {}, caps = j.caps || {}, route = j.route || {};
+    var mk = j.markets || {}, caps = j.caps || {};
     var st = function (fn) { return ['us', 'kr'].map(function (m) { return (m === 'us' ? '미 ' : '한 ') + fn(mk[m]); }).join(' · '); };
     var steps = [
-      ['후보', 'OMNI-Q 5일 머리 상위 ' + Math.round((1 - (route.candMin || 0.8)) * 100) + '% 종목만 봅니다. 매매법 신호가 먼저가 아닙니다.', '매 분 · 오를 확률 높은 종목'],
-      ['지금 뜬 매매법', '그 종목에서 일봉 17종 · 5분 단타 5종의 진입 조건을 지금 가격으로 계산합니다.', '스토캐스틱 · RSI2 · 눌림 · 돌파 · ORB · VWAP …'],
-      ['닮은 과거 칸', '지금 상황(국면 · RSI · 20일선 거리 · 5일 수익 · 거래량 · FOMC/CPI / 장중 등락 · 시간)과 같은 칸의 과거 시뮬 성적을 찾습니다.', st(function (r) { return r ? ((r.daily && r.daily.cells) || 0) + '칸' : '—'; })],
-      ['선택', '뜬 매매법 중 그 칸 점수가 가장 높고 성공확률 ≥ 50% 인 것 하나. 없으면 안 삽니다.', st(function (r) { return r && r.daily && r.daily.val ? RULE_TXT(r.daily.val.rule) : '—'; })],
-      ['매수', '검증을 통과한 시장만. 통과 시장은 AI_PRIMARY 를 끄고 주력(크기 ×' + ((caps.primary && caps.primary.mult) || 1) + ' · 하루 ' + ((caps.primary && caps.primary.maxPerDay) || '—') + '건).', st(function (r) { return r ? (r.primary ? '주력' : '미통과') : '—'; })],
-      ['그 매매법의 매도', '손절 · 익절 · 본전 이동 · 최대 보유일 · 단타는 장 끝 10분 전. 위원회 청산은 걸지 않습니다.', '보유 ' + ((j.open || []).length) + '건'],
-      ['매 회차 재시뮬 · 검증', 'GitHub Actions 가 과거 전 종목에 모든 매매법을 다시 적용해 표를 새로 만들고, 손대지 않은 마지막 구간에서만 통과를 판정합니다.', st(function (r) { return r ? ago(r.ts) : '—'; })]
+      ['① 후보', 'OMNI-Q 5일 상위 20%. 매매법 신호가 먼저가 아닙니다.', '매 분'],
+      ['② 지금 뜬 매매법', '일봉 17종(마감 전 60분) · 5분 단타 5종의 진입 조건을 지금 가격으로.', '스토캐스틱 · RSI2 · 눌림 · ORB …'],
+      ['③ 닮은 과거 칸', '국면 · RSI · 20일선 거리 · 5일 수익 · 거래량 · FOMC/CPI (단타: 장중 등락 · 시간)', st(function (r) { return r ? ((r.daily && r.daily.cells) || 0) + '칸' : '—'; })],
+      ['④ 선택', '뜬 것 중 그 칸 점수 최고 · 성공 ≥ 50%. 없으면 안 삼.', st(function (r) { return r && r.daily && r.daily.val && r.daily.val.rule ? (r.daily.val.rule.score === 'lcb' ? '하한' : '평균') : '—'; })],
+      ['⑤ 매수', '검증 통과 시장만 · 통과하면 AI_PRIMARY 자동 퇴역 · ×' + ((caps.primary && caps.primary.mult) || 1), st(function (r) { return r ? (r.primary ? '주력' : '그림자') : '—'; })],
+      ['⑥ 그 매매법의 매도', '손절 · 본전 이동 · 익절 · 최대 보유 · 단타 장 끝. 공통 트레일·위원회 청산 없음.', '보유 ' + ((j.open || []).length) + '건']
     ];
-    return '<div class="pb-card"><h3>작동 구조 — 확률 높은 종목을 먼저 뽑고, 그 종목에 맞는 매매법으로 산다</h3>' +
-      '<p class="pb-sub">모든 단계 아래 줄은 지금 실제 상태입니다. 위원회(AI_PRIMARY)는 검증을 통과한 시장부터 자동으로 퇴역합니다.</p><div class="pb-flow">' +
-      steps.map(function (s, i) { return '<div class="pb-step' + (i === steps.length - 1 ? ' loop' : '') + '"><b>' + esc(s[0]) + '</b><p>' + esc(s[1]) + '</p><div class="pb-live">' + esc(s[2]) + '</div></div>'; }).join('') +
-      '</div></div>';
+    return '<section class="k-panel"><div class="k-h"><b>작동 구조</b><small>확률 높은 종목 → 그 종목에 맞는 매매법</small></div><div class="k-flow">' +
+      steps.map(function (s) { return '<div><span class="k-lab">' + esc(s[0]) + '</span><p style="margin-top:4px">' + esc(s[1]) + '</p><em>' + esc(s[2]) + '</em></div>'; }).join('') +
+      '</div><div class="k-loop">↺ 매 학습 회차(GitHub Actions) — 과거 OMNI-Q 상위 후보에 모든 매매법을 다시 적용해 표를 새로 만들고, 손대지 않은 마지막 20% 구간에서만 통과를 판정 · ' +
+      esc(st(function (r) { return r ? ago(r.ts) : '—'; })) + '</div></section>';
   }
 
-  var root = null, timer = null, busy = false;
-  function render(j) {
-    if (!root) return;
-    root.innerHTML = flow(j) + '<div class="pb-mk">' + marketCard('us', j.markets && j.markets.us) + marketCard('kr', j.markets && j.markets.kr) + '</div>' + live(j) + dict(j);
+  function valBlock(v, label) {
+    if (!v) return '<div class="k-empty">' + esc(label) + ' — 표 없음</div>';
+    if (v.why) return '<div class="k-empty">' + esc(label) + ' — ' + esc(v.why) + '</div>';
+    var h = '<div class="k-h" style="border-top:1px solid var(--k-line)"><span class="k-lab">' + esc(label) + '</span><span class="k-tag ' + (v.pass ? 'good' : 'warn') + '">' + (v.pass ? '통과' : '미통과') + '</span><small>' + esc(v.cand || '') + '</small></div>' +
+      '<dl class="k-kv" style="margin:0"><div><span class="k-lab">고른 것</span><dd class="' + cls(v.mean) + '">' + pct(v.mean) + '</dd></div><div><span class="k-lab">아무거나</span><dd class="' + cls(v.base) + '">' + pct(v.base) + '</dd></div>' +
+      '<div><span class="k-lab">t (≥2)</span><dd>' + (v.t == null ? '—' : Number(v.t).toFixed(2)) + '</dd></div><div><span class="k-lab">거래 · 승률</span><dd>' + (v.n || 0) + ' · ' + (v.win == null ? '—' : v.win + '%') + '</dd></div></dl>';
+    if (Array.isArray(v.valCmp) && v.valCmp.length) {
+      h += '<div class="k-body k-scroll"><table><thead><tr><th>선택 규칙(검증 구간)</th><th class="num">거래</th><th class="num">평균</th><th class="num">t</th><th class="num">아무거나</th></tr></thead><tbody>' +
+        v.valCmp.map(function (c) {
+          var sel = v.rule && c.rule && c.rule.score === v.rule.score && c.rule.level === v.rule.level;
+          return '<tr' + (sel ? ' class="sel"' : '') + '><td>' + esc(RULE_TXT(c.rule)) + '</td><td class="num">' + (c.n || 0) + '</td><td class="num ' + cls(c.mean) + '">' + pct(c.mean) + '</td><td class="num">' + (c.t == null ? '—' : Number(c.t).toFixed(2)) + '</td><td class="num">' + pct(c.base) + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }
+    return h;
+  }
+  function markets(j) {
+    return '<div class="k-grid2">' + ['us', 'kr'].map(function (mk) {
+      var r = (j.markets || {})[mk], t = mk === 'us' ? '미국' : '한국';
+      if (!r) return '<section class="k-panel"><div class="k-h"><b>' + t + ' 검증</b><span class="k-tag">표 없음</span></div><div class="k-empty">학습기가 아직 이 시장 표를 올리지 않았습니다.</div></section>';
+      return '<section class="k-panel"><div class="k-h"><b>' + t + ' 검증</b><span class="k-tag ' + (r.primary ? 'good' : 'warn') + '">' + (r.primary ? '주력 — AI_PRIMARY 퇴역' : 'AI_PRIMARY 유지') + '</span><span class="k-tag">국면 ' + esc(r.regime || '—') + '</span><small>표 ' + esc(ago(r.ts)) + '</small></div>' +
+        valBlock(r.daily && r.daily.val, '일봉 ' + ((r.daily && r.daily.cells) || 0) + '칸') + valBlock(r.intra && r.intra.val, '5분 단타 ' + ((r.intra && r.intra.cells) || 0) + '칸') + '</section>';
+    }).join('') + '</div>';
+  }
+  function live(j) {
+    var open = j.open || [], rec = j.recent || [], ex = j.exits || [];
+    var h = '<section class="k-panel"><div class="k-h"><b>실전 기록</b><small>보유 ' + open.length + ' · 최근 매수 ' + rec.length + ' · 청산 ' + ex.length + '</small></div><div class="k-body k-scroll">';
+    if (!open.length && !rec.length && !ex.length) return h + '<div class="k-empty" style="padding:4px 0">아직 매매법 AI 거래가 없습니다 — 검증을 통과한 시장에서만 삽니다.</div></div></section>';
+    if (open.length) h += '<table><thead><tr><th>보유</th><th>매매법</th><th class="num">진입가</th><th class="num">손절</th><th>진입</th></tr></thead><tbody>' + open.map(function (p) {
+      var s = p.sr || {}; return '<tr><td>' + esc(p.symbol) + '</td><td>' + esc(nm(s.sid)) + (s.primary ? ' ★' : '') + '</td><td class="num">' + Number(p.avg).toLocaleString() + '</td><td class="num">−' + (s.stop || '—') + '%</td><td>' + esc(ago(p.opened)) + '</td></tr>';
+    }).join('') + '</tbody></table>';
+    if (ex.length) h += '<table style="margin-top:8px"><thead><tr><th>청산</th><th>종목</th><th class="num">손익</th><th>사유</th></tr></thead><tbody>' + ex.map(function (t) {
+      return '<tr><td>' + esc(ago(t.ts)) + '</td><td>' + esc(t.symbol) + '</td><td class="num ' + cls(t.pnl_pct) + '">' + pct(t.pnl_pct) + '</td><td>' + esc(String(t.reason || '').slice(0, 50)) + '</td></tr>';
+    }).join('') + '</tbody></table>';
+    return h + '</div></section>';
+  }
+  function dict(j) {
+    var any = (j.markets || {}).us || (j.markets || {}).kr;
+    if (!any) return '';
+    var d = (any.daily && any.daily.pb) || {}, it = (any.intra && any.intra.pb) || {};
+    return '<section class="k-panel"><div class="k-h"><b>매매법 사전</b><small>일봉 ' + Object.keys(d).length + ' · 5분 단타 ' + Object.keys(it).length + ' — 사는 조건도, 파는 규칙도 다르다</small></div><div class="k-dict">' +
+      Object.keys(d).map(function (k) { var p = d[k]; return '<div><b>' + esc(nm(k)) + '</b><small>' + esc(p.family || '') + ' · 손절 ' + p.stop + '%(ATR×' + p.atr + ') · 본전 ' + p.be + 'R · ' + (p.tpR ? '익절 ' + p.tpR + 'R · ' : '익절 없음 · ') + p.hold + '거래일</small></div>'; }).join('') +
+      Object.keys(it).map(function (k) { var p = it[k]; return '<div><b>' + esc(nm(k)) + '</b><small>5분 단타 · ' + (p.tpPct == null ? '익절 없음' : '+' + p.tpPct + '%') + ' · −' + p.sl + '% · ' + (p.bars ? p.bars * 5 + '분' : '장 끝까지') + '</small></div>'; }).join('') + '</div></section>';
+  }
+
+  function render() {
+    if (!root || !data) return;
+    var j = data;
+    if (!mkSel) { var lu = (j.live || {}).us, lk = (j.live || {}).kr; mkSel = (lk && (!lu || lk.ts > lu.ts)) ? 'kr' : 'us'; }
+    var keepX = {}; root.querySelectorAll('.k-strip').forEach(function (s, i) { keepX[i] = s.scrollLeft; });
+    root.innerHTML =
+      '<div style="display:flex;align-items:center;gap:8px"><span class="k-lab">PLAYBOOK AI · 확률 높은 종목 → 그 종목에 맞는 매매법</span><div class="k-mkt">' +
+      ['us', 'kr'].map(function (m) { return '<button type="button" data-pbmk="' + m + '" aria-pressed="' + (m === mkSel) + '">' + (m === 'us' ? 'US' : 'KR') + '</button>'; }).join('') + '</div></div>' +
+      brief(j, mkSel) + strip(j, mkSel) + funnel(j, mkSel) + flow(j) + markets(j) + live(j) + dict(j);
+    root.querySelectorAll('.k-strip').forEach(function (s, i) { if (keepX[i]) s.scrollLeft = keepX[i]; });
   }
   function load() {
     if (busy || !root) return;
     busy = true;
-    fetch('/api/playbook', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) { render(j || {}); })
-      .catch(function () { if (root && !root.innerHTML) root.innerHTML = '<div class="pb-card"><div class="pb-empty">매매법 AI 상태를 불러오지 못했습니다. 잠시 뒤 다시 시도합니다.</div></div>'; })
+    fetch('/api/playbook', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) { data = j || {}; render(); })
+      .catch(function () { if (root && !data) root.innerHTML = '<section class="k-panel"><div class="k-empty">매매법 AI 상태를 불러오지 못했습니다. 잠시 뒤 다시 시도합니다.</div></section>'; })
       .then(function () { busy = false; });
   }
   window.PlaybookObs = {
     mount: function (el) {
       if (!el) return false;
       if (!document.getElementById('pbObsCss')) { var st = document.createElement('style'); st.id = 'pbObsCss'; st.textContent = CSS; document.head.appendChild(st); }
-      root = el;
-      if (!root.innerHTML) root.innerHTML = '<div class="pb-card"><div class="pb-empty">매매법 AI 상태 불러오는 중…</div></div>';
+      if (root !== el) {
+        root = el;
+        root.addEventListener('click', function (e) {
+          var b = e.target.closest('[data-pbmk]'); if (b) { mkSel = b.getAttribute('data-pbmk'); symSel = null; render(); return; }
+          var c = e.target.closest('[data-pbsym]'); if (c) { symSel = c.getAttribute('data-pbsym'); render(); }
+        });
+      }
+      if (!root.innerHTML) root.innerHTML = '<section class="k-panel"><div class="k-empty">매매법 AI 상태 불러오는 중…</div></section>';
       load();
-      if (!timer) timer = setInterval(function () { if (root && root.offsetParent !== null && !document.hidden) load(); }, 60000);
+      if (!timer) timer = setInterval(function () { if (root && root.offsetParent !== null && !document.hidden) load(); }, 30000);
       return true;
     },
     refresh: load

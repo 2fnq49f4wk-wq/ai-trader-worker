@@ -130,7 +130,7 @@ chk(pk2 && pk2.kind === "daily" && firedNow.indexOf(pk2.pb) >= 0, "마감 30분 
 chk(W.pbRoutePick({ ...st, daily: { ...st.daily, table: { "*": { NOPE: [9000, 0.6, 0.9] } } }, intra: null }, ctx, now) === null, "뜬 매매법이 표에 없으면 안 산다(안 뜬 매매법으론 안 산다)");
 chk(W.pbRoutePick({ ...st, ts: now - 40 * 3600000 }, ctx, now) === null, "36시간 넘은 표 → 안 산다");
 chk(W.pbRoutePick({ ...st, daily: { ...st.daily, val: { ...val, pass: false } }, intra: null }, ctx, now) === null, "검증 미통과 봉은 안 쓴다");
-chk(W.pbRoutePick({ ...st, daily: { ...st.daily, table: { "*": { RS_LEADER: [9000, 0.6, 0.9] } }, pb: { RS_LEADER: { stop: 8, atr: 2.5, hold: 30, tpR: null } }, cross: { RS_LEADER: ["AAA"] } }, intra: null }, ctx, now)?.pb === "RS_LEADER",
+chk(W.pbRoutePick({ ...st, daily: { ...st.daily, table: { "*": { RS_LEADER: [9000, 0.6, 0.9] } }, pb: { RS_LEADER: { stop: 8, atr: 2.5, hold: 30, tpR: null } }, cross: { RS_LEADER: ["AAA"] } }, intra: null }, { ...ctx, minToClose: 20 }, now)?.pb === "RS_LEADER",
     "횡단면 매매법(RS_LEADER 등)은 학습기가 보낸 오늘 발화 목록으로");
 { const mb = { closes: [10, 10.1, 10.2, 10.3, 10.4, 10.5], highs: [10, 10.2, 10.2, 10.3, 10.6, 10.5], lows: [9.9, 10, 10.1, 10.2, 10.3, 10.4], volumes: [1, 2, 3, 4, 5, 6], times: [0, 60, 120, 240, 300, 360].map((x) => 1760000100 + x) };
   const a5 = W.pbAgg5(mb);
@@ -172,5 +172,18 @@ chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"
   chk(/'playbook', 'operations', 'models', 'research'/.test(U) && /playbook-observatory\.js/.test(U), "탭 전환·지연 로드 배선");
   chk(/window\.PlaybookObs/.test(O) && /\/api\/playbook/.test(O) && !/https?:\/\//.test(O.replace(/\/\*[\s\S]*?\*\//g, "")), "관측창은 /api/playbook 만 읽는다(외부 주소 없음)");
   chk(/recent: recent, exits: exits, open: open/.test(S), "관측창 API: 최근 매수·청산·보유"); }
+{ // [V33.610] 시뮬과 실전 맞추기
+  const M3 = new Function("_num", "getMA", "getRSI", "STRAT_ROUTE", "MACRO_SCHED", fnSrc + "; return { pbSellRule, pbLiveDaily, PB_ROUTE };")(_num, getMA, getRSI, STRAT_ROUTE, MACRO_SCHED);
+  const pos = { avg: 100, qty: 1, meta: { sr: { sid: "SN_RSI2", kind: "daily", stop: 4, be: 0.8 }, stopPrice: 96, peakPrice: 100 } };
+  chk(/^SR-STOP/.test(M3.pbSellRule(pos, 95.9).reason || "") && !M3.pbSellRule(pos, 99).sell, "매매법 보유 손절 = 진입 손절가");
+  chk(/^SR-BE/.test(M3.pbSellRule({ ...pos, meta: { ...pos.meta, peakPrice: 103.3 } }, 99.9).reason || "") && !M3.pbSellRule({ ...pos, meta: { ...pos.meta, peakPrice: 103 } }, 99.9).sell, "본전 이동: 고점이 0.8R(=+3.2%) 넘은 뒤 평단 아래면 SR-BE");
+  chk(/if \(pos\.meta && pos\.meta\.sr && pos\.meta\.sr\.sid\) return pbSellRule\(pos, price\);/.test(S) && /!_pairHeld && !\(held\.meta && held\.meta\.sr\)/.test(S),
+      "매매법 보유엔 공통 분할익절·트레일·타임스톱·MODEL_EXIT 를 걸지 않는다(시뮬에 없던 매도)");
+  chk(/dWin = ctx\.minToClose != null && ctx\.minToClose <= PB_ROUTE\.dailyEntryWin/.test(S) && M3.PB_ROUTE.dailyEntryWin === 60, "일봉 매매법 진입은 마감 전 60분(시뮬 = 신호 봉 종가 체결)");
+  const dl = { closes: [1, 2, 3], highs: [1, 2, 3], lows: [1, 2, 3], opens: [1, 2, 3], volumes: [5, 5, 100] };
+  chk(Math.abs(M3.pbLiveDaily(dl, 3.1, 2, 195).v[2] - 200) < 1e-6, "장중 거래량을 지난 시간 비율로 하루치 추정(195분 남음 → ×2)");
+  chk(/setState\(DB, "pb_live:" \+ market/.test(S) && /live: live/.test(S) && /shadow: true/.test(S), "후보별 판정(그림자 포함)을 매 사이클 관측창에 남긴다");
+  chk(/LAST_OOS\[mk\] = /.test(readFileSync(dir + "omni_q.py", "utf8")) && /oos=omni_q\.LAST_OOS/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /def cand_mask/.test(readFileSync(dir + "playbook_sim.py", "utf8")),
+      "시뮬 후보 = 그날 OMNI-Q 표본 밖 상위 20%(실전 후보와 같게)"); }
 if (fails) { console.log("check-playbook: FAIL " + fails); process.exit(1); }
 console.log("check-playbook: ok");

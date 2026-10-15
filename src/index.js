@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.609";
+const _BUILD_VER = "V33.610";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13535,7 +13535,7 @@ const PB_KEYS = { rsi: [30, 50, 70], gap20: [-5, 0, 5], ret5: [-3, 3], vr: [0.8,
    전환된 시장은 매매법 AI 상한을 주력 값(PB_PRIMARY_CAPS)으로 올리고 크기는 ×1.0. */
 const PB_PRIMARY_CAPS = { maxPerCycle: 2, maxPerDay: 6, maxOpen: 12, mult: 1.0 };
 function pbPrimaryOn(st, nowMs) { return !!(st && st.daily && _pbPass(st.daily.val) && (nowMs - _num(st.ts, 0)) <= STRAT_ROUTE.freshMs); }
-const PB_ROUTE = { candMin: 0.80, minWin: 0.5, intraMinToClose: 30, eodMin: 10, regMin: 390, intraFetchMax: 8 };   // intraFetchMax: 사이클당 후보 분봉 조회 상한
+const PB_ROUTE = { candMin: 0.80, minWin: 0.5, intraMinToClose: 30, eodMin: 10, regMin: 390, intraFetchMax: 8, dailyEntryWin: 60, liveKeep: 40 };   // dailyEntryWin: 일봉 매매법 진입 = 마감 전 60분 · liveKeep: 관측창에 남길 후보 수   // intraFetchMax: 사이클당 후보 분봉 조회 상한
 function _pbBk(x, e) { if (!(typeof x === "number" && isFinite(x))) return e.length; let k = 0; while (k < e.length && x >= e[k]) k++; return k; }
 function pbDailyKeys(reg, rsi, gap20, ret5, vr, evNear) {
   const r = String(reg || "NEUTRAL");
@@ -13665,7 +13665,7 @@ function pbAgg5(mb) {
   return out;
 }
 // 일봉 + 지금 가격 → 마지막 봉이 '지금'인 배열. 마지막 봉 종가가 전일 종가면(오늘 봉 없음) 지금 봉을 붙이고, 아니면 오늘 봉을 지금 가격으로 갱신.
-function pbLiveDaily(daily, price, prevClose) {
+function pbLiveDaily(daily, price, prevClose, minToClose) {
   const n = daily && daily.closes ? daily.closes.length : 0;
   if (!n || !(price > 0)) return null;
   const pick = function (a, d) { return Array.isArray(a) && a.length === n ? a.slice() : new Array(n).fill(d); };
@@ -13673,7 +13673,11 @@ function pbLiveDaily(daily, price, prevClose) {
   for (let k = 0; k < n; k++) { if (!(D.h[k] > 0)) D.h[k] = D.c[k]; if (!(D.l[k] > 0)) D.l[k] = D.c[k]; if (!(D.o[k] > 0)) D.o[k] = D.c[k]; }
   const last = D.c[n - 1];
   if (prevClose > 0 && Math.abs(last / prevClose - 1) < 1e-6) { D.c.push(price); D.h.push(price); D.l.push(price); D.o.push(price); D.v.push(0); }
-  else { D.c[n - 1] = price; D.h[n - 1] = Math.max(D.h[n - 1], price); D.l[n - 1] = Math.min(D.l[n - 1], price); }
+  else {
+    D.c[n - 1] = price; D.h[n - 1] = Math.max(D.h[n - 1], price); D.l[n - 1] = Math.min(D.l[n - 1], price);
+    // [V33.610] 오늘 거래량은 아직 덜 찼다 — 지난 시간 비율로 하루치를 추정(시뮬은 완성된 봉의 거래량을 본다)
+    if (minToClose != null && minToClose >= 0) { const fr = Math.min(1, Math.max(0.15, (PB_ROUTE.regMin - minToClose) / PB_ROUTE.regMin)); D.v[n - 1] = D.v[n - 1] / fr; }
+  }
   return D;
 }
 /* 뜬 매매법마다 '그 매매법이 있는 가장 구체적인 칸' 값(이미 넓은 칸 쪽으로 수축됨) → (점수 > 0 · 성공확률 ≥ 50%) 중 점수 최대. 학습기 choose 와 같은 규칙.
@@ -13699,7 +13703,9 @@ function pbRoutePick(st, ctx, nowMs) {
   if (!STRAT_ROUTE.enabled || !st || !(nowMs - _num(st.ts, 0) <= STRAT_ROUTE.freshMs)) return null;
   const D = ctx.D;
   let best = null;
-  if (st.daily && _pbPass(st.daily.val) && D && D.c.length >= 211) {
+  const dOk = st.daily && (ctx.shadow || _pbPass(st.daily.val));
+  const dWin = ctx.minToClose != null && ctx.minToClose <= PB_ROUTE.dailyEntryWin;   // [V33.610] 일봉 매매법은 장 마지막 1시간에만 — 시뮬이 '신호 봉 종가에 산다'
+  if (dOk && dWin && D && D.c.length >= 211) {
     const i = D.c.length - 1, px = D.c[i];
     const fired = pbDailyFires(D);
     const cr = st.daily.cross || {};
@@ -13707,25 +13713,25 @@ function pbRoutePick(st, ctx, nowMs) {
     if (fired.length) {
       const ma20 = _pbSma(D.c, 20, i), rsi = _pbRsiEwm(D.c, 14)[i];
       const ret5 = D.c[i - 5] > 0 ? (px / D.c[i - 5] - 1) * 100 : null;
-      const vr = _pbVr(D.v, i - 1);   // 어제(완성 봉) 거래량 배수 — 오늘 봉은 아직 덜 찼다
+      const vr = _pbVr(D.v, i);   // [V33.610] 오늘 거래량(지난 시간 비율로 하루치 추정 · pbLiveDaily) — 시뮬 칸과 같은 날 기준
       const ch = pbChoose(st.daily.table, pbDailyKeys(ctx.reg, rsi, ma20 > 0 ? (px / ma20 - 1) * 100 : null, ret5, vr, ctx.evNear), fired, st.daily.val && st.daily.val.rule);
       const pr = ch && st.daily.pb && st.daily.pb[ch.pb];
       if (ch && pr) {
         const atr = _pbAtrPct(D.h, D.l, D.c, i);
         const stop = Math.min(_num(pr.stop, 5), atr === atr ? _num(pr.atr, 2) * atr : 99);
-        best = { kind: "daily", pb: ch.pb, fired: fired, n: ch.n, w: ch.w, m: ch.m, stop: Math.max(1.5, stop), tpR: pr.tpR == null ? null : _num(pr.tpR, null), hold: _num(pr.hold, 10), label: pr.label || "" };
-      }
-    }
-  }
+        best = { kind: "daily", pb: ch.pb, fired: fired, n: ch.n, w: ch.w, m: ch.m, s: ch.s, stop: Math.max(1.5, stop), be: _num(pr.be, 0), tpR: pr.tpR == null ? null : _num(pr.tpR, null), hold: _num(pr.hold, 10), label: pr.label || "" };
+      } else if (ctx.shadow) best = { kind: "daily", pb: null, fired: fired, why: "뜬 매매법 성적 미달" };
+    } else if (ctx.shadow) best = { kind: "daily", pb: null, fired: [], why: "뜬 매매법 없음" };
+  } else if (ctx.shadow && dOk && !dWin) best = { kind: "daily", pb: null, fired: [], why: "일봉 매매법은 마감 전 60분에만" };
   const mtc = ctx.minToClose, B = ctx.bars5;
-  if (st.intra && _pbPass(st.intra.val) && mtc != null && mtc >= PB_ROUTE.intraMinToClose && ctx.prevClose > 0 && B && B.c.length >= 3 && D) {
+  if (st.intra && (ctx.shadow || _pbPass(st.intra.val)) && mtc != null && mtc >= PB_ROUTE.intraMinToClose && ctx.prevClose > 0 && B && B.c.length >= 3 && D) {
     const fired = pbIntraFires(B.c, B.h, B.l, B.v);
     if (fired.length) {
       const px = B.c[B.c.length - 1];
       const ma20p = _pbSma(D.c, 20, D.c.length - 2);
       const ch = pbChoose(st.intra.table, pbIntraKeys(ctx.reg, (px / ctx.prevClose - 1) * 100, PB_ROUTE.regMin - mtc, ma20p > 0 && ctx.prevClose > ma20p), fired, st.intra.val && st.intra.val.rule);
       const pr = ch && st.intra.pb && st.intra.pb[ch.pb];
-      if (ch && pr && (!best || ch.m > best.m)) best = { kind: "intra", pb: ch.pb, fired: fired, n: ch.n, w: ch.w, m: ch.m, stop: _num(pr.sl, 1), tpPct: pr.tpPct == null ? null : _num(pr.tpPct, null), bars: _num(pr.bars, 0), label: pr.label || "" };
+      if (ch && pr && (!best || !best.pb || ch.m > best.m)) best = { kind: "intra", pb: ch.pb, fired: fired, n: ch.n, w: ch.w, m: ch.m, s: ch.s, stop: _num(pr.sl, 1), tpPct: pr.tpPct == null ? null : _num(pr.tpPct, null), bars: _num(pr.bars, 0), label: pr.label || "" };
     }
   }
   return best;
@@ -13746,6 +13752,19 @@ function pbExitWhy(sm, avg, price, openedTs, nowMs, minToClose) {
   const hd = (nowMs - _num(openedTs, nowMs)) / 86400000;
   if (hd >= _num(sm.hold, 10) * STRAT_ROUTE.calPerTradingDay) return "SR-TIME " + sm.sid + " " + hd.toFixed(1) + "일";
   return null;
+}
+// [V33.610] 매매법 AI 보유의 손절·본전 판정(순수 함수) — evaluateSell 이 부른다
+function pbSellRule(pos, price) {
+  const sm = pos.meta.sr, avg = pos.avg;
+  if (!(avg > 0) || !(price > 0)) return { sell: false };
+  const pnl = (price / avg - 1) * 100;
+  const sp = typeof pos.meta.stopPrice === "number" && pos.meta.stopPrice > 0 ? pos.meta.stopPrice : avg * (1 - _num(sm.stop, 5) / 100);
+  if (price <= sp) return { sell: true, sellQty: pos.qty, reason: "SR-STOP " + sm.sid + " " + pnl.toFixed(2) + "%" };
+  if (sm.kind !== "intra" && _num(sm.be, 0) > 0) {
+    const peak = Math.max(_num(pos.meta.peakPrice, avg), price);
+    if (peak >= avg * (1 + _num(sm.be, 0) * _num(sm.stop, 5) / 100) && price <= avg) return { sell: true, sellQty: pos.qty, reason: "SR-BE " + sm.sid + " 본전" };
+  }
+  return { sell: false };
 }
 // FOMC·CPI 발표 ±2거래일(≈ ±3달력일) — MACRO_SCHED(us.fed_rate · us.cpi)
 function pbEvNear(nowMs) {
@@ -20721,6 +20740,10 @@ async function applyRatchet(DB, market, symbol, strategy, pos, decision) {
 function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, marketOpenForThis, market, deRiskOpts) {
   const strategyName = pos.strategy || (pos.meta && pos.meta.strategy) || "trend";
 
+  /* [V33.610] ★매매법 AI 보유 — 시뮬과 같은 매도만★ 손절(진입 때 stopPrice) · 본전 이동(be·R 도달 뒤 평단 아래로 오면 SR-BE).
+     익절·최대보유·장 끝은 메인 루프 pbExitWhy 가 먼저 본다. 분할익절·트레일·타임스톱(전략 공통 규칙)은 시뮬에 없었으므로 걸지 않는다. */
+  if (pos.meta && pos.meta.sr && pos.meta.sr.sid) return pbSellRule(pos, price);
+
   // === [SCALP] 단타 전략 전용 청산 — 빠른 손절 / 분할익절+본전락 / 트레일 / 타임스톱 ===
   if (strategyName === "scalp") {
     const sr = Object.assign({}, cfg.scalpRules || DEFAULT_CFG.scalpRules || {});
@@ -23857,6 +23880,7 @@ async function runTradingCycle(env) {
       try { if (STRAT_ROUTE.enabled && (market === "us" || market === "kr")) __sr = await getState(DB, "playbook:" + market, null); } catch (e) { __sr = null; }   // [V33.607] 모의 시뮬 표
       const __pbEv = pbEvNear(Date.now()), __pbMtc = minutesToClose(market, new Date());
       let __pbFetch = 0;   // [V33.608] 이번 사이클 후보 분봉 조회 수
+      const __pbLive = [];   // [V33.610] 이번 사이클 후보별 매매법 판정(관측창)
       const __pbPrim = pbPrimaryOn(__sr, Date.now()), __pbCap = __pbPrim ? PB_PRIMARY_CAPS : STRAT_ROUTE;   // [V33.609] 주력 전환(이 시장 AI_PRIMARY 신규 진입 끔)
       for (const _pk in positions) { const _pm = positions[_pk] && positions[_pk].meta; if (_pm && _pm.sr) __srOpen++; }
       const feeRate = market === "us" ? mcfg.feeUS : mcfg.feeKR;
@@ -25341,7 +25365,7 @@ async function runTradingCycle(env) {
             //   evaluateSell의 검증된 트레일/TP 시스템에 맡기고, 이 확률기반 조기청산은 trend 이외 전략만 적용.
             {
               const _ex = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.exit : null;
-              if (_ex && _ex.enabled !== false && held.strategy !== "trend" && !_pairHeld && daily && Array.isArray(daily.closes) && daily.closes.length >= 30) {   // [V33.594] 페어 관리 보유 제외
+              if (_ex && _ex.enabled !== false && held.strategy !== "trend" && !_pairHeld && !(held.meta && held.meta.sr) && daily && Array.isArray(daily.closes) && daily.closes.length >= 30) {   // [V33.594] 페어 관리 보유 제외
                 let _pr = null;
                 try { _pr = taPredictDirection({ closes: daily.closes, highs: daily.highs, lows: daily.lows, volumes: daily.volumes, opens: daily.opens }, AI_PARAMS); } catch (e) {}
                 const _pnlX = held.avg > 0 ? ((price - held.avg) / held.avg) * 100 : 0;
@@ -25918,12 +25942,14 @@ async function runTradingCycle(env) {
                 }
               }
             }
-            /* [V33.607] ★확률 높은 종목 → 그 종목에 맞는 매매법★(PB_ROUTE 주석) — 후보 = OMNI-Q 상위 20% · 매 분 상황 열쇠로 표 조회 · 원장 [SROUTE] */
+            /* [V33.607·610] ★확률 높은 종목 → 그 종목에 맞는 매매법★(PB_ROUTE 주석) — 후보 = OMNI-Q 상위 20% · 매 분 지금 뜬 매매법 + 상황 칸 표 조회 · 원장 [SROUTE]
+               [V33.610] 검증 미통과 시장도 후보마다 '무엇이 떴고 무엇을 골랐을지' 를 그림자로 계산해 관측창(pb_live)에 남긴다 — 매수는 통과 시장만. */
             const _pbS = (__sr && omniqFresh(__omniq, Date.now())) ? _omqScore(__omniq, 5, symbol) : null;
-            if (_pbS != null && _pbS >= PB_ROUTE.candMin && !heldSymbols.has(symbol) && !crashGate.blockNew && canTrade
-                && __srBought < __pbCap.maxPerCycle && __srOpen < __pbCap.maxOpen && daily && daily.closes) {
+            if (_pbS != null && _pbS >= PB_ROUTE.candMin && daily && daily.closes) {
+              const _held = heldSymbols.has(symbol);
+              const _canBuy = !_held && !crashGate.blockNew && canTrade && __srBought < __pbCap.maxPerCycle && __srOpen < __pbCap.maxOpen;
               let _pb5 = null;
-              if (__sr.intra && _pbPass(__sr.intra.val) && __pbMtc != null && __pbMtc >= PB_ROUTE.intraMinToClose && __pbFetch < PB_ROUTE.intraFetchMax) {
+              if (_canBuy && __sr.intra && _pbPass(__sr.intra.val) && __pbMtc != null && __pbMtc >= PB_ROUTE.intraMinToClose && __pbFetch < PB_ROUTE.intraFetchMax) {
                 try {
                   __pbFetch++;
                   const _mb = await _enrichRun("scalp", function () {   // 지갑 결제(평가 예산) — 단타 분봉과 같은 자리
@@ -25933,22 +25959,38 @@ async function runTradingCycle(env) {
                   _pb5 = pbAgg5(_mb);
                 } catch (e) { _pb5 = null; }
               }
-              const _sp = pbRoutePick(__sr, { reg: __sr.regime, symbol: symbol, D: pbLiveDaily(daily, price, prevClose), bars5: _pb5, prevClose: prevClose,
-                                              evNear: __pbEv, minToClose: __pbMtc }, Date.now());
-              if (_sp) {
+              const _pbCtx = { reg: __sr.regime, symbol: symbol, D: pbLiveDaily(daily, price, prevClose, __pbMtc), bars5: _pb5, prevClose: prevClose, evNear: __pbEv, minToClose: __pbMtc };
+              const _sp = pbRoutePick(__sr, _pbCtx, Date.now());
+              const _sh = _sp || pbRoutePick(__sr, Object.assign({}, _pbCtx, { shadow: true }), Date.now());
+              const _rec = { s: symbol, nm: (typeof NAME_MAP !== "undefined" && NAME_MAP[symbol]) || null, q: +_pbS.toFixed(3), px: price,
+                             dp: prevClose > 0 ? +((price / prevClose - 1) * 100).toFixed(2) : null,
+                             sp: daily.closes.slice(-30).map(function (x) { return +(+x).toPrecision(5); }),
+                             stop: _sh && _sh.stop != null ? +_num(_sh.stop, 0).toFixed(2) : null, hold: (_sh && _sh.hold) || null, bars: (_sh && _sh.bars) || null,
+                             tpR: _sh && _sh.tpR != null ? _sh.tpR : null, tpPct: _sh && _sh.tpPct != null ? _sh.tpPct : null,
+                             fired: (_sh && _sh.fired) || [], pb: (_sh && _sh.pb) || null, kind: (_sh && _sh.kind) || null,
+                             m: _sh && _sh.m != null ? +_num(_sh.m, 0).toFixed(3) : null, w: _sh && _sh.w != null ? +_num(_sh.w, 0).toFixed(3) : null, n: (_sh && _sh.n) || null,
+                             act: null, why: null };
+              if (_held) _rec.why = "보유 중";
+              else if (!_sp) _rec.why = (_sh && _sh.why) || (_sh && _sh.pb ? "검증 미통과 — 기록만(그림자)" : "고를 매매법 없음");
+              else if (!_canBuy) _rec.why = crashGate.blockNew ? "폭락 관문 — 신규 매수 금지" : !canTrade ? "거래 불가 시간" : "매매법 AI 상한";
+              if (_sp && _canBuy) {
                 if (__srToday == null) {
                   try { const _r = await DB.prepare("SELECT COUNT(*) AS n FROM trades WHERE market = ? AND side = 'BUY' AND ts > ? AND reason LIKE '[SROUTE]%'").bind(market, Date.now() - 18 * 3600000).first(); __srToday = _num(_r && _r.n, 0); } catch (e) { __srToday = STRAT_ROUTE.maxPerDay; }
                 }
                 const _st = _sp.kind === "intra" ? "scalp" : (_sp.hold >= 15 ? "trend" : "snap");
-                if (__srToday + __srBought < __pbCap.maxPerDay && !strategiesHeldNow.has(_st)) {
+                if (__srToday + __srBought >= __pbCap.maxPerDay) _rec.why = "오늘 매매법 AI 매수 상한";
+                else if (strategiesHeldNow.has(_st)) _rec.why = "같은 전략 보유 중";
+                else {
+                  _rec.act = "매수 후보 → 위험 관문";
                   stratResults.unshift({ strategy: _st, weight: 1,
                     signal: { name: "PB_" + _sp.pb, members: [_sp.pb], isStratRoute: true, weight: 1,
-                      sr: { sid: _sp.pb, kind: _sp.kind, stop: +_sp.stop.toFixed(2), tpR: _sp.tpR == null ? null : _sp.tpR, tpPct: _sp.tpPct == null ? null : _sp.tpPct,
+                      sr: { sid: _sp.pb, kind: _sp.kind, stop: +_sp.stop.toFixed(2), be: _sp.be || 0, tpR: _sp.tpR == null ? null : _sp.tpR, tpPct: _sp.tpPct == null ? null : _sp.tpPct,
                             hold: _sp.hold || null, bars: _sp.bars || 0, primary: __pbPrim, m: +_sp.m.toFixed(3), w: +_sp.w.toFixed(3), n: _sp.n, omq: +_pbS.toFixed(3), regime: __sr.regime || null, at: Date.now() },
                       detail: "매매법AI " + _sp.pb + "(" + (_sp.kind === "intra" ? "5분 단타" : "일봉") + " · 지금 뜬 " + _sp.fired.join("·") + ") · OMNI-Q 상위 " + Math.max(1, Math.round((1 - _pbS) * 100)) + "% · 국면 " + (__sr.regime || "?") +
                               " · 모의 성공 " + (_sp.w * 100).toFixed(0) + "% 평균 +" + _sp.m.toFixed(2) + "% (표본 " + _sp.n + ") · 손절 −" + _sp.stop + "%" + (__pbPrim ? " · ★주력★" : " · 잠정 ×" + STRAT_ROUTE.mult) } });
                 }
               }
+              __pbLive.push(_rec);
             }
           } catch (e) {}
 
@@ -27339,6 +27381,15 @@ async function runTradingCycle(env) {
             (__aiPickPool ? " · AI픽풀 " + __aiPickPool.size + "종목" : " · AI픽풀 없음"));
       } catch (e) {}
       __phMark(market + ".ee");   // [V33.574] 평가 루프 끝
+      /* [V33.610] 관측창 — 이번 사이클 후보(OMNI-Q 상위)별 '지금 뜬 매매법 · 고른 매매법 · 이유' 를 한 칸에 남긴다(사이클당 D1 쓰기 1회) */
+      if (__sr) {
+        try {
+          const _items = __pbLive.slice().sort(function (a, b) { return (b.act ? 1 : 0) - (a.act ? 1 : 0) || (b.pb ? 1 : 0) - (a.pb ? 1 : 0) || b.q - a.q; }).slice(0, PB_ROUTE.liveKeep);
+          await setState(DB, "pb_live:" + market, { ts: Date.now(), mtc: __pbMtc, primary: __pbPrim, regime: __sr.regime || null, n: __pbLive.length,
+                                                    f: __pbLive.filter(function (x) { return x.fired && x.fired.length; }).length, c: __pbLive.filter(function (x) { return x.pb; }).length,
+                                                    a: __pbLive.filter(function (x) { return x.act; }).length, items: _items });
+        } catch (e) {}
+      }
       // [V33.172] ★"어디에 시간이 갔나"를 매 사이클 한 줄로 남긴다★
       //   평가가 450종목 → 34종목으로 주저앉은 원인을 찾는 데 3주치 커밋을 뒤져야 했다.
       //   원인은 평가 루프 안의 부가조회였는데, 그게 얼마를 먹는지 아무도 재고 있지 않았다.
@@ -30594,7 +30645,9 @@ async function handleRequest(request, env, ctx, _inner) {
         const q = await env.DB.prepare("SELECT symbol, market, strategy, qty, avg_price, opened_ts, meta FROM positions WHERE meta LIKE '%\"sr\":{%' LIMIT 30").all();
         open = ((q && q.results) || []).map(function (p) { let m = null; try { m = JSON.parse(p.meta || "{}").sr; } catch (e) {} return { symbol: p.symbol, market: p.market, strategy: p.strategy, qty: p.qty, avg: p.avg_price, opened: p.opened_ts, sr: m }; }).filter(function (p) { return p.sr; });
       } catch (e) {}
-      return Response.json({ ok: true, route: PB_ROUTE, caps: { trial: STRAT_ROUTE, primary: PB_PRIMARY_CAPS }, keys: PB_KEYS, markets: out, recent: recent, exits: exits, open: open },
+      const live = {};
+      for (const mk of ["us", "kr"]) { try { live[mk] = await getState(env.DB, "pb_live:" + mk, null); } catch (e) { live[mk] = null; } }   // [V33.610] 이번 사이클 후보별 판정
+      return Response.json({ ok: true, route: PB_ROUTE, caps: { trial: STRAT_ROUTE, primary: PB_PRIMARY_CAPS }, keys: PB_KEYS, markets: out, recent: recent, exits: exits, open: open, live: live },
                            { headers: Object.assign({}, cors, { "Cache-Control": "public, max-age=30" }) });
     }
     if (path === "/api/strategy-router" && request.method === "POST") {

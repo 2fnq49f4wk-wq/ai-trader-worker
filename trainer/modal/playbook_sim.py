@@ -163,7 +163,29 @@ def _sim_profile(O, H, L, C, atr, mcum, pr, cost, t0=250):
     return out, xo
 
 
-def sim_daily(P, market, ev_dates, sig=None):
+CAND_Q = 0.80        # 후보 = 그날 OMNI-Q 표본 밖 점수 상위 20%(워커 PB_ROUTE.candMin 과 같다)
+CAND_MIN_ROWS = 3000  # 후보로 거른 표본이 이보다 적으면 전 종목으로(기록에 남긴다)
+
+
+def cand_mask(P, oos):
+    """OMNI-Q 표본 밖 점수(날짜×종목) → P 와 같은 모양의 '그날 후보(상위 20%)' bool. 점수 없는 날은 전부 False."""
+    if not oos or oos.get("sc") is None:
+        return None
+    di = {d: k for k, d in enumerate(oos["dates"])}
+    si = {s_: k for k, s_ in enumerate(oos["syms"])}
+    dates, syms = list(P["close"].index), list(P["close"].columns)
+    a = np.array([di.get(d, -1) for d in dates])
+    b = np.array([si.get(s_, -1) for s_ in syms])
+    M = np.full((len(dates), len(syms)), np.nan, dtype=np.float32)
+    ra, cb = np.nonzero(a >= 0)[0], np.nonzero(b >= 0)[0]
+    if len(ra) == 0 or len(cb) == 0:
+        return None
+    M[np.ix_(ra, cb)] = oos["sc"][np.ix_(a[ra], b[cb])]
+    rk = pd.DataFrame(M).rank(axis=1, pct=True).values
+    return np.nan_to_num(rk, nan=0.0) >= CAND_Q
+
+
+def sim_daily(P, market, ev_dates, sig=None, cand=None):
     """도감 매매법이 뜬 모든 (날짜 · 종목 · 매매법) 의 모의 결과 — 표: [t, j, inst, pb, ex, k0..k3]. inst = 같은 후보(날짜·종목)."""
     O, H, L, C = (P[k].values for k in ("open", "high", "low", "close"))
     T, N = C.shape
@@ -180,6 +202,8 @@ def sim_daily(P, market, ev_dates, sig=None):
             cache[key] = _sim_profile(O, H, L, C, atr, mcum, pr, cost)
         ex, xo = cache[key]
         S = sig[pb].values & np.isfinite(ex)
+        if cand is not None:
+            S = S & cand
         ti, jj = np.nonzero(S)
         if len(ti):
             out.append(pd.DataFrame({"t": ti, "j": jj, "x": xo[ti, jj], "pb": pb, "ex": ex[ti, jj]}))
@@ -452,7 +476,7 @@ def export(tab, pbs, min_n=30, max_bytes=1200000):
         min_n *= 2
 
 
-def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=print, bars5=None, ev_dates=()):
+def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=print, bars5=None, ev_dates=(), oos=None):
     import strategy_router as SR
     for market in ("us", "kr"):
         t0 = time.time()
@@ -460,9 +484,16 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         if P is None:
             log("   · [매매법시뮬] %s 일봉 부족 — 건너뜀" % market)
             continue
-        ddf, reg_now, sig = sim_daily(P, market, ev_dates)
+        cm = cand_mask(P, (oos or {}).get(market))
+        ddf, reg_now, sig = sim_daily(P, market, ev_dates, cand=cm)
+        cand_src = "OMNI-Q 표본 밖 상위 20%"
+        if cm is None or len(ddf) < CAND_MIN_ROWS:
+            log("   · [매매법시뮬] %s 후보 거름 %s → 전 종목으로" % (market, "점수 없음" if cm is None else "표본 %d 부족" % len(ddf)))
+            ddf, reg_now, sig = sim_daily(P, market, ev_dates, sig=sig)
+            cand_src = "전 종목(OMNI-Q 과거 점수 없음·부족)"
         ddf = _relevel(ddf)
         dst, _ = validate(ddf, "t")
+        dst["cand"] = cand_src
         syms_all = list(P["close"].columns)
         cross = {pb: [syms_all[j] for j in np.nonzero(sig[pb].values[-1])[0]] for pb in CROSS_PB if pb in sig}
         dtab = _shrunk_table(ddf)                       # 실전 표는 전 기간으로
