@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.614";
+const _BUILD_VER = "V33.615";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -28494,7 +28494,9 @@ const MICRO_CACHE_TTL = {
   "/api/news-picks": 60000, "/api/nn-viz": 60000, "/api/alerts": 30000, "/api/macro": 60000, "/api/logs": 5000,
   /* [V33.526] 화면이 부르는 GET 중 캐시 층이 없던 나머지(전수 대조: public/*.html·js 의 /api/* × 라우트) — 설정(/api/cfg)·상태변경은 넣지 않는다 */
   "/api/whatif": 300000, "/api/stock-report": 300000, "/api/report/monthly": 300000, "/api/r2-status": 60000,
-  "/api/llm/instruction": 60000, "/api/daily-stats": 30000
+  "/api/llm/instruction": 60000, "/api/daily-stats": 30000,
+  /* [V33.615] 두뇌 모델 구조창(Brain Studio)이 부르는 매매법 AI · OMNI-Q 요약 */
+  "/api/omni-status": 60000, "/api/playbook": 30000
 };
 const MICRO_CACHE_MAX = 300;
 const __microCache = new Map();
@@ -30725,6 +30727,8 @@ async function handleRequest(request, env, ctx, _inner) {
                    scoredAt: _num(body.scoredAt, Date.now()),   // [V33.584] 금요일 모델로 평일 채점 — 신선도는 채점 시각(omniqFresh)
                    scoreOnly: body.scoreOnly === true,
                    nFeat: _num(body.nFeat, 0), n: nS, scores: body.scores, gate: g, speak: omniqSpeakOf(g), ts: Date.now(),
+                   featGroups: (body.featGroups && typeof body.featGroups === "object") ? body.featGroups : null,   // [V33.615] 피처 묶음 수(화면)
+                   featTop: Array.isArray(body.featTop) ? body.featTop.slice(0, 20) : null,                        // [V33.615] gain 중요도 상위(화면)
                    /* [V33.539] 복합 머리(순위 1·20일 · 상승확률 · 위험) — 기록·관측용. 발언(매매 영향)은 5일 머리(scores)만 */
                    heads: (body.heads && typeof body.heads === "object") ? body.heads : null,
                    learner: String(body.learner || "lgb"), lab: (body.lab && typeof body.lab === "object") ? body.lab : null,
@@ -30799,7 +30803,8 @@ async function handleRequest(request, env, ctx, _inner) {
                           learner: q.learner || "lgb", heads: q.heads ? Object.keys(q.heads) : [], lab: q.lab || null,
                           gate20: q.gate20 || null, speak20: !!q.speak20,
                           prov: !q.speak && omniqProvOf(q.gate), prov20: !q.speak20 && omniqProvOf(q.gate20),   // [V33.558] 잠정 발언
-                          view: omniqView(q) };   // [V33.562] 화면용 요약(상태·관문·적합)
+                          view: omniqView(q),   // [V33.562] 화면용 요약(상태·관문·적합)
+                          featGroups: q.featGroups || null, featTop: q.featTop || null, cand: PB_ROUTE.candMin };   // [V33.615] 모델 구조창(후보 선별 · OMNI-Q)
           }
         } catch (e) {}
       }

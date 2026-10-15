@@ -31,39 +31,43 @@ function verdict(v: any): { v: string; hint: string; tone: Tone } {
   return { v: pc(v.mean), hint: "아무거나 " + pc(v.base) + " · t " + f1(v.t, 2) + " · " + n0(v.n) + "건", tone: v.pass ? "ok" : "bad" };
 }
 
-function Steps() {
-  const S = ({ n, t, children }: { n: string; t: string; children: ReactNode }) => (
-    <li className="relative border-l border-line pb-5 pl-5 last:pb-0">
-      <span className="bs-num absolute -left-[9px] top-0 flex h-[18px] w-[18px] items-center justify-center rounded-full bg-bg-3 text-[10px] text-ink-2">{n}</span>
-      <h5 className="text-[13px] font-semibold">{t}</h5><div className="mt-1.5 text-[12.5px] leading-relaxed text-ink-2">{children}</div>
-    </li>);
-  return (
-    <ol className="mt-1">
-      <S n="1" t="후보 — 오를 확률이 높은 종목">OMNI-Q 5일 머리 상위 20%. 매매법 신호가 먼저가 아니라 종목이 먼저입니다.</S>
-      <S n="2" t="지금 뜬 매매법">후보마다 일봉 도감 17종(진입은 마감 전 60분)과 5분 단타 5종(1분봉을 5분으로 묶어)의 진입 조건을 지금 가격으로 계산합니다. 뜬 것이 없으면 사지 않습니다.</S>
-      <S n="3" t="닮은 과거 칸">지금 상황을 칸으로 나눕니다 — 일봉: 국면(상승·보합·하락·폭락·폭등) · RSI14 · 20일선 거리 · 5일 수익 · 거래량 배수 · FOMC/CPI 전후 / 단타: 국면 · 장중 등락 · 장 시작 후 시간 · 일봉 추세. 표본이 적은 칸은 넓은 칸 쪽으로 당깁니다(베이즈 수축).</S>
-      <S n="4" t="선택">뜬 매매법 중 그 칸 점수가 가장 높고 모의 성공확률 ≥ 50% 인 것 하나. 점수(평균 또는 하한)와 칸 단계는 검증이 고른 규칙을 따릅니다.</S>
-      <S n="5" t="매수">검증을 통과한 시장만 삽니다. 통과한 시장은 AI_PRIMARY 가 자동으로 꺼지고 매매법 AI 가 주력(크기 ×1.0)이 됩니다. 위험 관문(폭락·섹터·예산)은 그대로 지납니다.</S>
-      <S n="6" t="그 매매법의 매도">손절 · 본전 이동 · 익절 · 최대 보유일 · 단타는 장 마감 10분 전. 공통 분할익절·트레일·위원회 청산은 걸지 않습니다(시뮬과 같게).</S>
-      <S n="7" t="매 회차 다시 시뮬 · 검증">GitHub Actions 가 과거 OMNI-Q 상위 후보에 모든 매매법을 가상 적용해 표를 새로 만들고, 표 [0,60%) → 규칙 고르기 [60,80%) → 손대지 않은 [80,100%) 에서만 통과를 판정합니다.</S>
-    </ol>
-  );
-}
-
-function Dict({ d }: { d: any }) {
+/* [V33.615] 구조 탭 = 매매법 현황(설명 없이 숫자만) — 지금 후보에서 뜬 수 · 지금 고른 수 · 판정 구간에서 고른 수 · 모의 평균·승률 · 보유 · 매도 규칙 */
+function Status({ d }: { d: any }) {
   const any = d.markets?.us || d.markets?.kr;
   const D = any?.daily?.pb || {}, I = any?.intra?.pb || {};
-  if (!Object.keys(D).length && !Object.keys(I).length) return <Empty>매매법 정의가 아직 없습니다.</Empty>;
+  const ids = [...Object.keys(D), ...Object.keys(I)];
+  if (!ids.length) return <Empty>매매법 표가 아직 없습니다.</Empty>;
+  const live = (mk: string) => (d.live?.[mk]?.items || []) as any[];
+  const cnt = (mk: string, f: (x: any) => boolean) => live(mk).filter(f).length;
+  const by = (mk: string, k: string) => +(d.markets?.[mk]?.daily?.val?.byPb?.[k] || d.markets?.[mk]?.intra?.val?.byPb?.[k] || 0);
+  const diag = (mk: string, k: string) => d.markets?.[mk]?.daily?.val?.exitDiag?.[k]?.cur as any[] | undefined;
+  const held = (k: string) => (d.open || []).filter((p: any) => p.sr && p.sr.sid === k).length;
+  const rows = ids.map((k) => {
+    const isI = k in I, p = isI ? I[k] : D[k];
+    const fu = cnt("us", (x) => (x.fired || []).includes(k)), fk = cnt("kr", (x) => (x.fired || []).includes(k));
+    const cu = cnt("us", (x) => x.pb === k), ck = cnt("kr", (x) => x.pb === k);
+    return { k, isI, p, fu, fk, cu, ck, bu: by("us", k), bk: by("kr", k), du: diag("us", k), dk: diag("kr", k), h: held(k) };
+  }).sort((a, b) => (b.cu + b.ck) - (a.cu + a.ck) || (b.fu + b.fk) - (a.fu + a.fk) || (b.bu + b.bk) - (a.bu + a.bk));
+  const two = (u: any, k: any) => <><span className={u ? "text-ink" : "text-ink-3"}>{u || 0}</span><span className="text-ink-3"> / </span><span className={k ? "text-ink" : "text-ink-3"}>{k || 0}</span></>;
+  const dg = (x: any[] | undefined) => (x && x[0] ? <span style={{ color: x[1] > 0 ? "var(--bs-ok)" : x[1] < 0 ? "var(--bs-bad)" : undefined }}>{pc(x[1])} · {x[2]}%</span> : <span className="text-ink-3">—</span>);
+  const rule = (r: any) => r.isI ? "−" + r.p.sl + "% · " + (r.p.tpPct == null ? "익절 없음" : "+" + r.p.tpPct + "%") + " · " + (r.p.bars ? r.p.bars * 5 + "분" : "장 끝")
+    : r.p.stop + "%/ATR×" + r.p.atr + " · " + (r.p.tpR ? r.p.tpR + "R" : "익절 없음") + " · " + r.p.hold + "일";
+  const ts = d.live?.us?.ts || d.live?.kr?.ts;
   return (
-    <table className="w-full text-[12px]">
-      <thead><tr className="text-left text-[11px] text-ink-3"><th className="py-1.5 font-normal">매매법</th><th className="font-normal">종류</th><th className="font-normal">손절</th><th className="font-normal">익절</th><th className="font-normal">보유</th></tr></thead>
-      <tbody className="bs-num">
-        {Object.keys(D).map((k) => { const p = D[k]; return (
-          <tr key={k} className="border-t border-line text-ink-2"><td className="py-1.5 text-ink">{nm(k)}</td><td>{p.family || "일봉"}</td><td>{p.stop}%·ATR×{p.atr} (본전 {p.be}R)</td><td>{p.tpR ? p.tpR + "R" : "없음"}</td><td>{p.hold}거래일</td></tr>); })}
-        {Object.keys(I).map((k) => { const p = I[k]; return (
-          <tr key={k} className="border-t border-line text-ink-2"><td className="py-1.5 text-ink">{nm(k)}</td><td>5분 단타</td><td>−{p.sl}%</td><td>{p.tpPct == null ? "없음" : "+" + p.tpPct + "%"}</td><td>{p.bars ? p.bars * 5 + "분" : "장 끝까지"}</td></tr>); })}
-      </tbody>
-    </table>
+    <div className="overflow-x-auto">
+      <p className="mb-2 text-[11px] text-ink-3">미 / 한 · 후보 기준 {ago(ts)}</p>
+      <table className="w-full min-w-[720px] text-[12px]">
+        <thead><tr className="text-left text-[11px] text-ink-3">
+          <th className="py-1.5 font-normal">매매법</th><th className="font-normal">지금 뜬 후보</th><th className="font-normal">지금 고름</th><th className="font-normal">판정 구간 선택</th>
+          <th className="font-normal">모의 평균·승률 미</th><th className="font-normal">한</th><th className="font-normal">보유</th><th className="font-normal">매도 규칙</th></tr></thead>
+        <tbody className="bs-num">{rows.map((r) => (
+          <tr key={r.k} className="border-t border-line text-ink-2" style={r.cu + r.ck ? { background: "color-mix(in srgb, var(--bs-ok) 7%, transparent)" } : undefined}>
+            <td className="py-1.5"><span className="text-ink">{nm(r.k)}</span><span className="ml-1.5 text-[10.5px] text-ink-3">{r.isI ? "5분" : "일봉"}</span></td>
+            <td>{two(r.fu, r.fk)}</td><td>{two(r.cu, r.ck)}</td><td>{two(r.bu, r.bk)}</td>
+            <td>{dg(r.du)}</td><td>{dg(r.dk)}</td><td>{r.h ? <span className="text-ink">{r.h}</span> : <span className="text-ink-3">0</span>}</td>
+            <td className="text-[11px]">{rule(r)}</td></tr>))}</tbody>
+      </table>
+    </div>
   );
 }
 
@@ -121,12 +125,11 @@ export function Playbook({ d, head }: { d: any; head: ReactNode }) {
       ]} /></div>
       <Tabs.Root defaultValue="s" className="mt-5">
         <Tabs.List className="flex gap-5 border-b border-line">
-          {[["s", "구조"], ["e", "근거"], ["f", "상세"]].map(([v, t]) => (
+          {[["s", "매매법 현황"], ["e", "근거"], ["f", "상세"]].map(([v, t]) => (
             <Tabs.Trigger key={v} value={v} className="-mb-px border-b-2 border-transparent pb-2 text-[13px] text-ink-3 data-[state=active]:border-rose data-[state=active]:text-ink">{t}</Tabs.Trigger>))}
         </Tabs.List>
         <Tabs.Content value="s" className="pt-4 outline-none">
-          <Steps />
-          <Section title="매매법 사전" aside="사는 조건이 다르고, 파는 규칙도 다르다"><Dict d={d} /></Section>
+          <Status d={d} />
         </Tabs.Content>
         <Tabs.Content value="e" className="pt-1 outline-none"><Market mk="us" r={us} /><Market mk="kr" r={kr} /></Tabs.Content>
         <Tabs.Content value="f" className="pt-4 outline-none"><Facts rows={[

@@ -1,8 +1,9 @@
 /* Model catalogue — order, grouping and one-line purpose. Status always comes from the
    server roster (never invented here). */
-export type ModelKey = "playbook" | "overview" | "mind" | "gbdt" | "xgb" | "lgb" | "cat" | "memo" | "seq" | "dualbull" | "dualbear" | "omni";
+export type ModelKey = "playbook" | "omniq" | "overview" | "mind" | "gbdt" | "xgb" | "lgb" | "cat" | "memo" | "seq" | "dualbull" | "dualbear" | "omni";
 export const MODELS: { key: ModelKey; roster: string; name: string; short: string; group: string; what: string }[] = [
   { key: "playbook", roster: "", name: "매매법 AI", short: "매매법", group: "주력", what: "확률 높은 종목(OMNI-Q 상위 20%) → 지금 뜬 매매법 중 닮은 과거에서 성적이 가장 좋은 것으로 사고, 그 매매법의 규칙으로 판다" },
+  { key: "omniq", roster: "", name: "OMNI-Q", short: "OMNI-Q", group: "후보 선별", what: "매매법 AI 가 볼 종목을 고르는 순위 모델 — 동물원·규칙·매매법 신호·실적·뉴스 피처로 5일 뒤 상대 순위를 맞힌다" },
   { key: "overview", roster: "", name: "전체 결합", short: "전체", group: "결합", what: "위원들의 투표가 하나의 확률이 되는 순서" },
   { key: "mind", roster: "mind", name: "MIND", short: "MIND", group: "위원", what: "위원장 — 인수분해기계와 전문가 스태킹" },
   { key: "gbdt", roster: "gbdt", name: "GBDT", short: "GBDT", group: "위원", what: "부스팅 트리 — 기술지표 갈림" },

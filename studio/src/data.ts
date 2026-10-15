@@ -23,4 +23,4 @@ export async function getJSON(path: string, fresh = false): Promise<any> {
   return j;
 }
 
-export const nnPath = (m: string) => (m === "playbook" ? "/api/playbook" : "/api/nn-viz?model=" + encodeURIComponent(m));   // [V33.612] 매매법 AI 는 자기 API
+export const nnPath = (m: string) => (m === "playbook" ? "/api/playbook" : m === "omniq" ? "/api/omni-status" : "/api/nn-viz?model=" + encodeURIComponent(m));   // [V33.612] 매매법 AI 는 자기 API

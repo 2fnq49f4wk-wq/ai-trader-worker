@@ -12,6 +12,12 @@
 
 ## Current handoff
 
+- V33.615 (10/15) ★OMNI-Q 재구성(매매법 AI 후보 선별기) · 모델 구조 정리★ (사용자: "omni-q 는 쓰잖아 — 지금 형태로 다시 · 피처 추가" · "구조에서 설명 빼고 매매법 현황만")
+  - omni_q 피처 추가: 매매법 도감 17종 오늘 뜸(pb_*) + 최근 5일 뜬 횟수(pb5_*) = 34 · 실적(미국 ev_x_*)·뉴스(한국 ev_e_*) — omniq_gha 가 학습 전에 실적·뉴스를 받아 omni_q.EVENTS 로.
+    피처가 바뀌어 다음 회차는 재학습(should_train). 끄개 OMNIQ_PBFEAT=0 · OMNIQ_EVFEAT=0. 관문 ①②③ 은 그대로(발언 판정 불변).
+  - 업로드에 featGroups(묶음 수) · featTop(gain 상위 15) → /api/omni-status · Brain Studio '후보 선별 · OMNI-Q'(피처/관문/상세).
+  - Brain Studio 매매법 AI '구조' 탭 → '매매법 현황'(설명 없이 매매법별 지금 뜬 후보·고름·판정 구간 선택·모의 평균·승률·보유·매도 규칙).
+  - 주력 전환 시 모델 구조는 '주력 매매법 AI + 후보 선별 OMNI-Q' 만 · 01/02 화면에서 위원회 패널 숨김(#page-nnviz.pb-primary).
 - V33.614 (10/15) ★매매법 AI 주력 시 일괄 퇴역 · 선행 판정(속도)★ (사용자: "매매법 AI 로 거래가 나오면 AI_PRIMARY·OMNI-Q 단독 매매 퇴역 · 화면에서 AI_PRIMARY 삭제 · 속도↑")
   - 시장별 pbPrimaryOn(검증 통과 · 표 신선) = 매매법 AI 가 실제로 사는 조건 → 그 시장 AI_PRIMARY 신규 진입 끔(기존) + OMNI-Q 단독 매수(OMNIQ_ROUTE) 끔 +
     규칙 신호는 위원회 가동과 무관하게 버림. 보유 포지션 청산 경로는 그대로.

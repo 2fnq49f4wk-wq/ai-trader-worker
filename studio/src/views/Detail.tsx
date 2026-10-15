@@ -6,6 +6,7 @@ import { ModelNet, OmniStage } from "./OmniStage";
 import { buildNet, seqBlocks } from "../gl/netScenes";
 import { cached, nnPath } from "../data";
 import { Playbook, pbState } from "./Playbook";
+import { OmniQ, oqState } from "./OmniQ";
 
 type Built = { kpis: KpiT[]; structure: ReactNode; evidence: ReactNode; facts: [string, ReactNode][] };
 
@@ -243,14 +244,14 @@ function Overview({ ov }: { ov: any }) {
 export function Detail({ model, d, ov, onRefresh, busy }: { model: ModelKey; d: any; ov: any; onRefresh: () => void; busy: boolean }) {
   const meta = MODELS.find((m) => m.key === model)!;
   const net = useMemo(() => {
-    if (model === "omni" || model === "playbook") return null;
+    if (model === "omni" || model === "playbook" || model === "omniq") return null;
     const R: Record<string, string> = {};
     for (const src of [d, ...["mind", "gbdt", "seq", "xgb"].map((k) => cached(nnPath(k)))]) ((src && src.inputFeatures) || []).forEach((f: any) => { if (f && f.name && f.role && !R[f.name]) R[f.name] = f.role; });
     return buildNet(model, d, R);
   }, [model, d]);
   const netView = net ? <div className="mb-2"><ModelNet sc={net} name={meta.name} /></div> : null;
   const rost = ((d && d.roster) || (ov && ov.roster) || []).find((r: any) => r.key === meta.roster);
-  const s = model === "playbook" ? pbState(d) : stateOf(rost);
+  const s = model === "playbook" ? pbState(d) : model === "omniq" ? oqState(d) : stateOf(rost);
   const head = (
     <header className="flex items-start justify-between gap-3">
       <div className="min-w-0 flex-1">
@@ -263,6 +264,7 @@ export function Detail({ model, d, ov, onRefresh, busy }: { model: ModelKey; d: 
   );
   if (!d) return <div>{head}<Empty>불러오는 중…</Empty></div>;
   if (model === "playbook") return <Playbook d={d} head={head} />;
+  if (model === "omniq") return <OmniQ d={d} head={head} />;
   if (model === "overview") {
     const T = d.tally || {}, C = d.combine || {};
     return (<div>{head}<div className="mt-4"><Kpis items={[

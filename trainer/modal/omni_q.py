@@ -277,7 +277,69 @@ def _auc(p, yb):
     return float((r[:len(pos)].sum() - len(pos) * (len(pos) + 1) / 2) / (len(pos) * len(neg)))
 
 
-def _features_q(P, log):
+def _imp_top(bst, names, k=15):
+    """[V33.615] 5일 머리 모델의 gain 중요도 상위 k — 화면용(판정에 안 씀)."""
+    try:
+        g = bst.feature_importance("gain")
+        tot = float(g.sum()) or 1.0
+        idx = np.argsort(-g)[:k]
+        return [{"name": str(names[i]), "share": round(float(g[i]) / tot, 4)} for i in idx]
+    except Exception:  # noqa: BLE001
+        return None
+
+
+EVENTS = {}   # [V33.615] 시장별 {"earn": {...}, "news": {...}} — omniq_gha 가 학습 전에 넣는다(실적·뉴스 피처)
+
+
+def _pb_feats(P):
+    """[V33.615] ★매매법 신호 피처★ — 매매법 AI 도감 17종의 '오늘 뜸'(0/1) + '최근 5일 안에 뜬 횟수'.
+    OMNI-Q 가 매매법 AI 의 후보 선별기이므로, 어떤 매매법 셋업이 걸린 종목이 실제로 올랐는지를 같이 배운다. 이름 pb_* / pb5_*."""
+    import strategy_catalog as CAT
+    sig = CAT.signals({k: P[k] for k in ("open", "high", "low", "close", "volume") if k in P})
+    out = []
+    for pid, S in sig.items():
+        f = S.astype(float)
+        out.append(("pb_" + pid, f.where(P["close"].notna())))
+        out.append(("pb5_" + pid, f.rolling(5, min_periods=1).sum().where(P["close"].notna())))
+    return out
+
+
+def _event_feats(P, mk, log):
+    """[V33.615] ★실적(미국) · 뉴스(한국) 피처★ — omni.earn_feats / news_feats 를 그날까지만(미래 안 봄). 이름 ev_*."""
+    import omni
+    import pandas as pd
+    ev = EVENTS.get(mk) or {}
+    ear, nws = ev.get("earn") or {}, ev.get("news") or {}
+    if not ear and not nws:
+        return []
+    C = P["close"]
+    cols = {}
+    t0 = time.time()
+    for s_ in C.columns:
+        pe, pn = ear.get(s_), nws.get(s_)
+        if not pe and not pn:
+            continue
+        rows = []
+        for dk in C.index:
+            r = {}
+            if pe:
+                r.update(omni.earn_feats(pe, dk))
+            if pn:
+                r.update(omni.news_feats(pn, dk))
+            rows.append(r)
+        df = pd.DataFrame(rows, index=C.index)
+        for k in df.columns:
+            cols.setdefault(k, {})[s_] = df[k]
+    out = []
+    for k, d in cols.items():
+        F = pd.DataFrame(d).reindex(index=C.index, columns=C.columns)
+        if F.notna().mean().mean() >= 0.05:
+            out.append(("ev_" + k, F))
+    log("      실적·뉴스 피처 %d개(%.0fs)" % (len(out), time.time() - t0))
+    return out
+
+
+def _features_q(P, log, mk=None):
     """portfolio_lab._features 와 같되 동물원에 alpha101 을 더한다(반복 2)."""
     import factor_screen as fs
     old = fs.ZOOS
@@ -314,8 +376,39 @@ def _features_q(P, log):
                 names.append(nm)
         except Exception as e:  # noqa: BLE001
             log("      ⚠️ 규칙 피처 실패: %s" % e)
-    log("      피처 %d개 (%s · %.0fs)" % (len(names), "+".join(ZOOS_Q), time.time() - t0))
+    # [V33.615] 매매법 신호(34) · 실적·뉴스 — 다른 피처처럼 날짜별 횡단면 순위. 끄려면 OMNIQ_PBFEAT=0 · OMNIQ_EVFEAT=0
+    for flag, fn in (("OMNIQ_PBFEAT", lambda: _pb_feats(P)), ("OMNIQ_EVFEAT", lambda: _event_feats(P, mk, log))):
+        if os.environ.get(flag, "1") == "0":
+            continue
+        try:
+            for nm_, F in fn():
+                F = F.replace([np.inf, -np.inf], np.nan).reindex_like(P["close"])
+                out.append(F.rank(axis=1, pct=True).values.astype(np.float32))
+                names.append(nm_)
+        except Exception as e:  # noqa: BLE001
+            log("      ⚠️ %s 피처 실패: %s" % (flag, e))
+    FEAT_GROUPS[mk or "?"] = _groups(names)
+    log("      피처 %d개 (%s · %.0fs) %s" % (len(names), "+".join(ZOOS_Q), time.time() - t0, FEAT_GROUPS[mk or "?"]))
     return (np.stack(out, axis=2) if out else None), names
+
+
+FEAT_GROUPS = {}
+
+
+def _groups(names):
+    """피처 묶음 수 — 화면(모델 구조)용."""
+    g = {"동물원(Alpha158·101·학술)": 0, "규칙 전략": 0, "매매법 신호": 0, "실적·뉴스": 0}
+    for n in names:
+        n = str(n)
+        if n.startswith("rule_"):
+            g["규칙 전략"] += 1
+        elif n.startswith(("pb_", "pb5_")):
+            g["매매법 신호"] += 1
+        elif n.startswith("ev_"):
+            g["실적·뉴스"] += 1
+        else:
+            g["동물원(Alpha158·101·학술)"] += 1
+    return g
 
 
 def _rule_feats(P):
@@ -401,6 +494,7 @@ def _score_only(mk, cached, C, X, y, req, BASE, HDR, log):
             mk, g3["days"], g3["lb"], "통과" if g3["ok"] else "미달", g3_20["days"], "통과" if g3_20["ok"] else "미달"))
         return {"mkt": mk, "day": str(C.index[last]), "h": H, "q": Q, "trainedAt": int(cached["trainedAt"]),
                 "scoredAt": int(time.time() * 1000), "scoreOnly": True, "nFeat": int(cached.get("nFeat") or xl.shape[1]), "n": len(sc),
+                "featGroups": cached.get("featGroups"), "featTop": cached.get("featTop"),
                 "scores": sc, "top": top, "heads": extra, "learner": cached.get("learner") or LEARNER_5D, "lab": cached.get("lab"),
                 "gate": gate, "top20": top20, "gate20": gate20 or None}
     except Exception as e:  # noqa: BLE001
@@ -426,7 +520,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             continue
         C = P["close"]
         D, S = C.shape
-        X, names = _features_q(P, log)
+        X, names = _features_q(P, log, mk)
         if X is None:
             continue
         LAST_X[mk] = {"X": X, "names": names, "dates": list(C.index), "syms": list(C.columns)}   # [V33.605] 매매법 선택 AI 가 같은 피처를 쓴다(다시 계산하지 않는다)
@@ -665,6 +759,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         t_ms = int(time.time() * 1000)
         body = {"mkt": mk, "day": day, "h": H, "q": Q, "trainedAt": t_ms, "scoredAt": t_ms, "scoreOnly": False, "nFeat": len(names), "n": len(sc),
                 "scores": sc, "top": top, "heads": extra, "learner": LEARNER_5D, "lab": lab_rep or None,
+                "featGroups": FEAT_GROUPS.get(mk), "featTop": _imp_top(bst, names),
                 "gate": {"g1": dict(br, ok=g1, needT=G1_T), "g2": {"folds": fold_x, "foldsFullSwap": fold_x0, "band": BAND, "pos": pos, "need": need, "ok": g2},
                          "g3": dict(g3, needDays=G3_MIN_DAYS), "speak": speak, "fit": fitdiag.get("5일")},
                 "top20": top20,
@@ -673,7 +768,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         out[mk] = body["gate"]
         if isinstance(cache, dict):   # [V33.584] 다음 금요일까지 평일 회차가 이 모델로 채점한다
             cache[mk] = {"names": list(names), "trainedAt": t_ms, "learner": LEARNER_5D, "bst": bst, "heads": head_models,
-                         "gate": body["gate"], "gate20": body["gate20"], "lab": body["lab"], "nFeat": len(names)}
+                         "gate": body["gate"], "gate20": body["gate20"], "lab": body["lab"], "nFeat": len(names),
+                         "featGroups": body["featGroups"], "featTop": body["featTop"]}
             cache["_trained"] = True
         log("      [OMNI-Q %s] 오늘(%s) %d종목 채점 · 상위 %d · 발언 %s (%.0fs)" % (mk, day, len(sc), len(top), "가능" if speak else "불가(섀도우)", time.time() - t0))
         if req is not None:

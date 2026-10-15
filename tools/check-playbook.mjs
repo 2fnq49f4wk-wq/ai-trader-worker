@@ -171,7 +171,7 @@ chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"
   chk(/id="page-nnviz" data-brain-view="operations"/.test(H) && !/data-brain-tab="playbook"/.test(H) && /<section id="pbObs"/.test(H), "[V33.612] 매매법 AI 실시간 판정은 01 작동 화면 안(00 탭 없음)");
   chk(/if \(view === 'operations'\) pbObs\(\);/.test(U) && /playbook-observatory\.js/.test(U), "01 작동 화면을 열 때 지연 로드");
   { const ST = readFileSync(new URL("../studio/src/models.ts", import.meta.url), "utf8"), BS = readFileSync(new URL("../public/brain-studio.js", import.meta.url), "utf8");
-    chk(/key: "playbook"/.test(ST) && /\/api\/playbook/.test(readFileSync(new URL("../studio/src/data.ts", import.meta.url), "utf8")) && /닮은 과거 칸/.test(BS), "[V33.612] 02 모델 구조(Brain Studio)에 '매매법 AI' 모델 · 번들 반영"); }
+    chk(/key: "playbook"/.test(ST) && /\/api\/playbook/.test(readFileSync(new URL("../studio/src/data.ts", import.meta.url), "utf8")) && /매매법 현황/.test(BS), "[V33.612] 02 모델 구조(Brain Studio)에 '매매법 AI' 모델 · 번들 반영"); }
   chk(/window\.PlaybookObs/.test(O) && /\/api\/playbook/.test(O) && !/https?:\/\//.test(O.replace(/\/\*[\s\S]*?\*\//g, "")), "관측창은 /api/playbook 만 읽는다(외부 주소 없음)");
   chk(/recent: recent, exits: exits, open: open/.test(S), "관측창 API: 최근 매수·청산·보유"); }
 { // [V33.610] 시뮬과 실전 맞추기
@@ -195,6 +195,13 @@ chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"
   const L = readFileSync(new URL("../public/workspace-layout.css", import.meta.url), "utf8"), A = readFileSync(new URL("../studio/src/App.tsx", import.meta.url), "utf8");
   chk(/#page-nnviz\.pb-primary\[data-brain-view="operations"\]/.test(L) && /classList\.toggle\('pb-primary'/.test(readFileSync(new URL("../public/playbook-observatory.js", import.meta.url), "utf8")),
       "주력이면 01 작동 화면에서 AI_PRIMARY(위원회) 화면을 걷어낸다");
-  chk(/const groups = retired \? \["주력"\]/.test(A), "주력이면 02 모델 구조에서 위원회 모델을 걷어낸다"); }
+  chk(/const groups = retired \? \["주력", "후보 선별"\]/.test(A), "주력이면 02 모델 구조에서 위원회 모델을 걷어낸다"); }
+{ // [V33.615] OMNI-Q 재구성 — 후보 선별기 · 피처 추가
+  const Q = readFileSync(dir + "omni_q.py", "utf8"), G = readFileSync(dir + "omniq_gha.py", "utf8");
+  chk(/def _pb_feats/.test(Q) && /"pb_" \+ pid/.test(Q) && /def _event_feats/.test(Q) && /OMNIQ_PBFEAT/.test(Q) && /OMNIQ_EVFEAT/.test(Q), "OMNI-Q 피처: 매매법 신호 34 · 실적·뉴스(끄개 있음)");
+  chk(/omni_q\.EVENTS = EV/.test(G) && G.indexOf("omni_q.EVENTS = EV") < G.indexOf("omni_q.run("), "실적·뉴스를 OMNI-Q 학습 전에 넣는다");
+  chk(/featGroups: \(body\.featGroups/.test(S) && /featGroups: q\.featGroups/.test(S), "피처 묶음·중요도를 저장·공개(모델 구조창)");
+  chk(/key: "omniq"/.test(readFileSync(new URL("../studio/src/models.ts", import.meta.url), "utf8")) && /\["주력", "후보 선별"\]/.test(readFileSync(new URL("../studio/src/App.tsx", import.meta.url), "utf8")),
+      "모델 구조창: 주력 매매법 AI + 후보 선별 OMNI-Q(주력 전환 뒤에도 남는다)"); }
 if (fails) { console.log("check-playbook: FAIL " + fails); process.exit(1); }
 console.log("check-playbook: ok");
