@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.613";
+const _BUILD_VER = "V33.614";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13535,7 +13535,8 @@ const PB_KEYS = { rsi: [30, 50, 70], gap20: [-5, 0, 5], ret5: [-3, 3], vr: [0.8,
    전환된 시장은 매매법 AI 상한을 주력 값(PB_PRIMARY_CAPS)으로 올리고 크기는 ×1.0. */
 const PB_PRIMARY_CAPS = { maxPerCycle: 2, maxPerDay: 6, maxOpen: 12, mult: 1.0 };
 function pbPrimaryOn(st, nowMs) { return !!(st && st.daily && _pbPass(st.daily.val) && (nowMs - _num(st.ts, 0)) <= STRAT_ROUTE.freshMs); }
-const PB_ROUTE = { candMin: 0.80, minWin: 0.5, intraMinToClose: 30, eodMin: 10, regMin: 390, intraFetchMax: 8, dailyEntryWin: 60, liveKeep: 40 };   // dailyEntryWin: 일봉 매매법 진입 = 마감 전 60분 · liveKeep: 관측창에 남길 후보 수   // intraFetchMax: 사이클당 후보 분봉 조회 상한
+const PB_ROUTE = { candMin: 0.80, minWin: 0.5, intraMinToClose: 30, eodMin: 10, regMin: 390, intraFetchMax: 8, dailyEntryWin: 60, liveKeep: 60,
+                   promoteMax: 25, intraPreMax: 40 };   // [V33.614] promoteMax: 살 수 있는 후보 앞당김 상한 · intraPreMax: 후보 분봉 선행 병렬 조회 상한   // dailyEntryWin: 일봉 매매법 진입 = 마감 전 60분 · liveKeep: 관측창에 남길 후보 수   // intraFetchMax: 사이클당 후보 분봉 조회 상한
 function _pbBk(x, e) { if (!(typeof x === "number" && isFinite(x))) return e.length; let k = 0; while (k < e.length && x >= e[k]) k++; return k; }
 function pbDailyKeys(reg, rsi, gap20, ret5, vr, evNear) {
   const r = String(reg || "NEUTRAL");
@@ -25085,6 +25086,47 @@ async function runTradingCycle(env) {
       try { await refreshCycleLock(DB, cfg.cycleLockTTL || 180000, myLockPid); } catch (e) {}
       let __lockRefAt = Date.now();   // [V33.571] 평가 루프 락 갱신은 시간 간격으로
       _enrich.budget = Math.max(0, Math.round(evalBudgetMs * ENRICH.share));   // [V33.172] 지갑 확정
+      /* [V33.614] ★매매법 AI 선행 판정(속도)★ (사용자 10/15: "매매법 AI 속도 — 더 빨리 많이 보게")
+         평가 루프는 예산(40s) 안에서 도는 만큼만 보고 나머지는 다음 사이클로 넘긴다 — 후보(OMNI-Q 상위 20%)가 순번 뒤쪽이면 몇 분 늦게 본다.
+         루프 전에 ★메모리에 이미 있는★ 일봉·시세로 전 후보를 한 번에 판정(산술만 · I/O 0)해 관측 기록을 채우고,
+         지금 살 수 있는 매매법이 뜬 후보는 평가 순서 맨 앞으로 당긴다(순환 진도에는 안 셈 — _evalPromoted).
+         단타 표가 통과한 시장이면 후보 분봉을 루프와 겹쳐 병렬로 미리 받는다(__pbMb · 미국은 연결 2개로 보수적). */
+      const __pbSeen = new Map();   // 종목 → __pbLive 위치(루프가 같은 종목을 다시 적으면 덮어쓴다)
+      let __pbMb = null, __pbHot = 0;
+      try {
+        if (__sr && omniqFresh(__omniq, Date.now())) {
+          const _pc = [], _hot = [];
+          for (const it of orderedEval) {
+            const sym = it && it.symbol, sc = sym ? _omqScore(__omniq, 5, sym) : null;
+            if (sc == null || sc < PB_ROUTE.candMin || !it.daily || !Array.isArray(it.daily.closes) || !(it.intra && it.intra.price > 0)) continue;
+            _pc.push(sym);
+            const px = it.intra.price, pcl = it.intra.prevClose || px;
+            const ctx = { reg: __sr.regime, symbol: sym, D: pbLiveDaily(it.daily, px, pcl, __pbMtc), bars5: null, prevClose: pcl, evNear: __pbEv, minToClose: __pbMtc };
+            const real = pbRoutePick(__sr, ctx, Date.now()), sh = real || pbRoutePick(__sr, Object.assign({}, ctx, { shadow: true }), Date.now());
+            __pbSeen.set(sym, __pbLive.length);
+            __pbLive.push({ s: sym, nm: (typeof NAME_MAP !== "undefined" && NAME_MAP[sym]) || null, q: +sc.toFixed(3), px: px,
+                            dp: pcl > 0 ? +((px / pcl - 1) * 100).toFixed(2) : null, sp: it.daily.closes.slice(-30).map(function (x) { return +(+x).toPrecision(5); }),
+                            fired: (sh && sh.fired) || [], pb: (sh && sh.pb) || null, kind: (sh && sh.kind) || null,
+                            m: sh && sh.m != null ? +_num(sh.m, 0).toFixed(3) : null, w: sh && sh.w != null ? +_num(sh.w, 0).toFixed(3) : null, n: (sh && sh.n) || null,
+                            stop: sh && sh.stop != null ? +_num(sh.stop, 0).toFixed(2) : null, hold: (sh && sh.hold) || null, bars: (sh && sh.bars) || null,
+                            tpR: sh && sh.tpR != null ? sh.tpR : null, tpPct: sh && sh.tpPct != null ? sh.tpPct : null,
+                            act: null, why: heldSymbols.has(sym) ? "보유 중" : real ? "평가 대기(앞으로 당김)" : ((sh && sh.why) || (sh && sh.pb ? "검증 미통과 — 기록만(그림자)" : "고를 매매법 없음")), pre: true });
+            if (real && !heldSymbols.has(sym)) _hot.push(it);
+          }
+          // 살 수 있는 후보를 맨 앞으로(상한 PB_ROUTE.promoteMax) — 원래 자리에서 빼고 앞에 붙인다
+          const _take = _hot.slice(0, PB_ROUTE.promoteMax);
+          if (_take.length) {
+            const _ts = new Set(_take);
+            orderedEval = _take.concat(orderedEval.filter(function (it) { return !_ts.has(it); }));
+            for (const it of _take) _evalPromoted.add(it);
+            __pbHot = _take.length;
+          }
+          if (__sr.intra && _pbPass(__sr.intra.val) && __pbMtc != null && __pbMtc >= PB_ROUTE.intraMinToClose && _pc.length && fetchBudgetLeft() > PB_ROUTE.intraPreMax + 10) {
+            __pbMb = mbPrefetchStart(_pc, function (sym) { return fetchMinuteBars(sym, { interval: SCALP_BAR_MIN + "m", range: "2d" }); },
+                                     { max: PB_ROUTE.intraPreMax, conc: market === "us" ? 2 : 4 });
+          }
+        }
+      } catch (e) {}
       /* [V33.564] 한국 단타 분봉 선행 병렬 조회(위 MBPRE 주석) — 단타가 분봉을 볼 수 있는 상태(AI 단타 가동 또는 표본 관측)일 때만 */
       let __mbPre = null;
       try {
@@ -25842,7 +25884,7 @@ async function runTradingCycle(env) {
             //   __aiReady가 아니면 규칙엔진이 비상 폴백으로 매매(stratResults 유지). 후보는 AI 야간 스캔픽 우선,
             //   보조로 상승추세 사전필터 — 최종 허용/차단·사이즈는 아래 위원회(mlDeepDecide + metaHardFilter)가 결정.
             // Codex V33.329: the independently evaluated intraday path was being erased here.
-            if (_ap && _ap.enabled && __aiReady) stratResults = stratResults.filter(function(sr){ return sr.strategy === "scalp"; });
+            if ((_ap && _ap.enabled && __aiReady) || __pbPrim) stratResults = stratResults.filter(function(sr){ return sr.strategy === "scalp"; });   // [V33.614] 매매법 AI 주력이면 위원회 가동과 무관하게 규칙 신호를 버린다
             /* ══ [V33.407] ★AI 가 못 서면 규칙엔진도 신규진입을 하지 않는다.★ ═══════════════
                종전엔 __aiReady 가 false 면 stratResults 를 ★그대로 두어★ 규칙엔진이 매수했다.
                그게 사용자가 관측한 "AI 없는 규칙 버전이 작동해 처참한 성적" 의 경로다.
@@ -25908,7 +25950,7 @@ async function runTradingCycle(env) {
             /* [V33.578] ★OMNI-Q 상위권 진입★(OMNIQ_ROUTE 주석) — 위원회와 독립된 경로 · 원장 꼬리표 [AI-Q](실적 관문 · 신호 통계가 따로 센다).
                맨 앞에 넣는다 — 같은 종목에 AI_PRIMARY 가 함께 있어도 종목당 한 번만 산다(boughtThisSymbol). 이 경로가 위험 관문에
                막히면 뒤의 후보가 종전대로 자기 차례를 받는다. 상한은 ★체결★ 기준이다(후보만 내고 막힌 건 상한을 쓰지 않는다). */
-            if (OMNIQ_ROUTE.enabled && __omniq && !heldSymbols.has(symbol) && !crashGate.blockNew && canTrade && closes.length >= 25
+            if (OMNIQ_ROUTE.enabled && __omniq && !__pbPrim && !heldSymbols.has(symbol) && !crashGate.blockNew && canTrade && closes.length >= 25   // [V33.614] 매매법 AI 주력 시장은 OMNI-Q 단독 매수 퇴역(OMNI-Q 는 후보 선별로만)
                 && __omqBought < OMNIQ_ROUTE.maxPerCycle && !(typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy && AI_PARAMS.autonomy.enabled === false)) {
               const _oq = omniqRoutePick(__omniq, symbol, Date.now());
               if (_oq && (_oq.mode === "speak" || __omqOpen < OMNIQ_ROUTE.maxOpenProv)) {
@@ -25950,11 +25992,12 @@ async function runTradingCycle(env) {
               const _held = heldSymbols.has(symbol);
               const _canBuy = !_held && !crashGate.blockNew && canTrade && __srBought < __pbCap.maxPerCycle && __srOpen < __pbCap.maxOpen;
               let _pb5 = null;
-              if (_canBuy && __sr.intra && _pbPass(__sr.intra.val) && __pbMtc != null && __pbMtc >= PB_ROUTE.intraMinToClose && __pbFetch < PB_ROUTE.intraFetchMax) {
+              const _pbPreMb = (_canBuy && __pbMb) ? __pbMb.take(symbol) : null;   // [V33.614] 선행 병렬 조회분
+              if (_canBuy && __sr.intra && _pbPass(__sr.intra.val) && __pbMtc != null && __pbMtc >= PB_ROUTE.intraMinToClose && (_pbPreMb || __pbFetch < PB_ROUTE.intraFetchMax)) {
                 try {
-                  __pbFetch++;
+                  if (!_pbPreMb) __pbFetch++;
                   const _mb = await _enrichRun("scalp", function () {   // 지갑 결제(평가 예산) — 단타 분봉과 같은 자리
-                    const _pre = __mbPre ? __mbPre.take(symbol) : null;
+                    const _pre = _pbPreMb || (__mbPre ? __mbPre.take(symbol) : null);
                     return _pre || fetchMinuteBars(symbol, { interval: SCALP_BAR_MIN + "m", range: "2d" });
                   });
                   _pb5 = pbAgg5(_mb);
@@ -25991,7 +26034,7 @@ async function runTradingCycle(env) {
                               " · 모의 성공 " + (_sp.w * 100).toFixed(0) + "% 평균 +" + _sp.m.toFixed(2) + "% (표본 " + _sp.n + ") · 손절 −" + _sp.stop + "%" + (__pbPrim ? " · ★주력★" : " · 잠정 ×" + STRAT_ROUTE.mult) } });
                 }
               }
-              __pbLive.push(_rec);
+              if (__pbSeen.has(symbol)) __pbLive[__pbSeen.get(symbol)] = _rec; else { __pbSeen.set(symbol, __pbLive.length); __pbLive.push(_rec); }   // [V33.614] 선행 판정을 루프 판정으로 덮어쓴다
             }
           } catch (e) {}
 

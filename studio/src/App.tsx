@@ -14,6 +14,11 @@ export default function App() {
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => { getJSON(nnPath("overview")).then(setOv).catch(() => { /* nav still works from cache */ }); }, []);
+  /* [V33.614] 매매법 AI 가 주력(한 시장 이상)이면 위원회(AI_PRIMARY) 모델들은 퇴역 — 목록에서 걷어내고 매매법 AI 만 남긴다 */
+  const [pb, setPb] = useState<any>(() => cached(nnPath("playbook")));
+  useEffect(() => { getJSON(nnPath("playbook")).then(setPb).catch(() => { /* */ }); }, []);
+  const retired = pbState(pb).label === "주력";
+  useEffect(() => { if (retired && model !== "playbook") setModel("playbook"); }, [retired]);
   const load = (m: ModelKey, fresh = false) => {
     setBusy(true); setErr(null);
     getJSON(nnPath(m), fresh).then((j) => { if (j && (j.kind === m || j.reqModel === m || (m === "playbook" && j.ok && j.markets))) { setD(j); if (m === "overview") setOv(j); } else setErr("다른 모델의 응답을 받았습니다"); })
@@ -23,7 +28,7 @@ export default function App() {
 
   const roster = (ov && ov.roster) || [];
   const st = (key: string) => stateOf(roster.find((r: any) => r.key === key));
-  const groups = ["주력", "결합", "위원", "방향", "관측"];
+  const groups = retired ? ["주력"] : ["주력", "결합", "위원", "방향", "관측"];
   return (
     <div className="grid gap-5 md:grid-cols-[220px_minmax(0,1fr)] md:gap-8">
       {/* phones: one compact strip · desktop: a quiet grouped list */}

@@ -187,5 +187,14 @@ chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"
   chk(/setState\(DB, "pb_live:" \+ market/.test(S) && /live: live/.test(S) && /shadow: true/.test(S), "후보별 판정(그림자 포함)을 매 사이클 관측창에 남긴다");
   chk(/LAST_OOS\[mk\] = /.test(readFileSync(dir + "omni_q.py", "utf8")) && /oos=omni_q\.LAST_OOS/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /def cand_mask/.test(readFileSync(dir + "playbook_sim.py", "utf8")),
       "시뮬 후보 = 그날 OMNI-Q 표본 밖 상위 20%(실전 후보와 같게)"); }
+{ // [V33.614] 조건부 퇴역 · 화면 전환 · 속도
+  chk(/OMNIQ_ROUTE\.enabled && __omniq && !__pbPrim/.test(S), "매매법 AI 주력 시장은 OMNI-Q 단독 매수 퇴역");
+  chk(/\(\(_ap && _ap\.enabled && __aiReady\) \|\| __pbPrim\) stratResults = stratResults\.filter/.test(S), "주력 시장은 위원회 가동과 무관하게 규칙 신호를 버린다");
+  chk(/★매매법 AI 선행 판정\(속도\)★/.test(S) && /for \(const it of _take\) _evalPromoted\.add\(it\)/.test(S) && /__pbMb = mbPrefetchStart\(_pc/.test(S) && /__pbMb\.take\(symbol\)/.test(S),
+      "선행 판정: 전 후보 기록 · 살 수 있는 후보 앞당김(순환 진도 제외) · 후보 분봉 병렬 선행 조회");
+  const L = readFileSync(new URL("../public/workspace-layout.css", import.meta.url), "utf8"), A = readFileSync(new URL("../studio/src/App.tsx", import.meta.url), "utf8");
+  chk(/#page-nnviz\.pb-primary\[data-brain-view="operations"\]/.test(L) && /classList\.toggle\('pb-primary'/.test(readFileSync(new URL("../public/playbook-observatory.js", import.meta.url), "utf8")),
+      "주력이면 01 작동 화면에서 AI_PRIMARY(위원회) 화면을 걷어낸다");
+  chk(/const groups = retired \? \["주력"\]/.test(A), "주력이면 02 모델 구조에서 위원회 모델을 걷어낸다"); }
 if (fails) { console.log("check-playbook: FAIL " + fails); process.exit(1); }
 console.log("check-playbook: ok");

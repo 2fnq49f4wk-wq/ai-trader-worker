@@ -183,10 +183,18 @@
       brief(j, mkSel) + strip(j, mkSel) + funnel(j, mkSel) + live(j);   // [V33.612] 작동 구조·검증·사전은 02 모델 구조(Brain Studio '매매법 AI')
     root.querySelectorAll('.k-strip').forEach(function (s, i) { if (keepX[i]) s.scrollLeft = keepX[i]; });
   }
+  /* [V33.614] 매매법 AI 가 한 시장이라도 주력이면 01 작동 화면에서 AI_PRIMARY(위원회) 화면을 걷어낸다(#page-nnviz.pb-primary · CSS) */
+  function primaryMode(j) {
+    var m = (j && j.markets) || {}, on = !!((m.us && m.us.primary) || (m.kr && m.kr.primary));
+    var pg = document.getElementById('page-nnviz');
+    if (pg) pg.classList.toggle('pb-primary', on);
+    var t = document.getElementById('nnvHeadcopy');
+    if (t && on) t.textContent = '확률 높은 종목(OMNI-Q 상위)을 먼저 뽑고, 그 종목에서 지금 뜬 매매법 중 닮은 과거 성적이 가장 좋은 것으로 삽니다.';
+  }
   function load() {
     if (busy || !root) return;
     busy = true;
-    fetch('/api/playbook', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) { data = j || {}; render(); })
+    fetch('/api/playbook', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) { data = j || {}; primaryMode(data); render(); })
       .catch(function () { if (root && !data) root.innerHTML = '<section class="k-panel"><div class="k-empty">매매법 AI 상태를 불러오지 못했습니다. 잠시 뒤 다시 시도합니다.</div></section>'; })
       .then(function () { busy = false; });
   }
