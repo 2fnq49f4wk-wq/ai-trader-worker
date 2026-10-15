@@ -49,6 +49,10 @@ chk(/"hold": ex\["hold"\], "horizon": cat\[r\.sid\]\["horizon"\]/.test(readFileS
 chk(/signal\.isStratRoute && signal\.sr && _num\(signal\.sr\.stop, 0\) > 0\)[^\n]*\n\s*\? \{ stopPctOverride: signal\.sr\.stop \}/.test(S), "[V33.605] 매매법별 손절폭이 실전 매수 손절로 들어간다");
 chk(M.stratRoutePick({ ...good, picks: { AAA: { ...good.picks.AAA, stop: 3.2 } } }, "AAA", now)?.stop === 3.2 && M.stratRoutePick({ ...good, picks: { AAA: { ...good.picks.AAA, stop: 30 } } }, "AAA", now)?.stop === null, "손절폭 1.5~10% 만 받는다");
 chk(/LAST_X\[mk\] = /.test(readFileSync(dir + "omni_q.py", "utf8")) && /omni_x=omni_q\.LAST_X/.test(readFileSync(dir + "omniq_gha.py", "utf8")), "[V33.605] OMNI-Q 피처를 매매법 선택이 빌려 쓴다");
+{ const Q = readFileSync(dir + "strategy_router.py", "utf8");
+  chk(/"CRASH", "SURGE"/.test(Q) && /r <= -0\.025\) \| \(r5 <= -0\.06/.test(Q), "[V33.606] 폭락·폭등 국면(하루 ±2.5% · 5일 ±6% · 3거래일)");
+  chk(/"ev_fomc_to"/.test(Q) && /20261028/.test(Q) && /omni\.earn_feats/.test(Q) && /omni\.news_feats/.test(Q), "[V33.606] 거시 발표 전후 · 실적 · 뉴스 피처");
+  chk(/events=ev\)/.test(readFileSync(dir + "omniq_gha.py", "utf8")), "실적·뉴스 이력을 GHA 회차가 넘긴다"); }
 chk(/strategy_router\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")), "GHA 회차에 연결");
 if (fails) { console.log("check-strategy-router: FAIL " + fails); process.exit(1); }
 console.log("check-strategy-router: ok");

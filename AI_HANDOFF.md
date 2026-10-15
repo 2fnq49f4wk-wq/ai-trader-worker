@@ -12,6 +12,9 @@
 
 ## Current handoff
 
+- V33.606 (10/15) ★매매법 선택 AI — 폭락·폭등 국면 · 거시 발표 · 실적 · 뉴스 피처★ (학습기만 · 워커 무변경)
+  - 국면 CRASH/SURGE(시장 하루 ±2.5% 또는 5일 ±6% 뒤 3거래일) · 시장 상태 m_r1/m_r5/m_volr/m_disp · FOMC·CPI 전후 거래일(공식 일정 2023~2026 하드코딩).
+  - 실적(미국 · omni.get_earn/earn_feats) · 뉴스(한국 · get_news/news_feats) — 덮은 표본 20% 미만이면 자동 제외. 쓸모는 걷기 검증이 판정.
 - V33.604~605 (10/15) ★매매법 선택 AI — 종목별 선택(LightGBM) · OMNI-Q 피처 60 · 매매법별 실전 손절★
   - strategy_router.walk_forward_lgb: (매매법·국면·종목 특성 10 + OMNI-Q 동물원 피처 분산 상위 60) → 순초과 예측 · 63일마다 재학습 · 걷기 검증.
     수축 모델과 둘 다 검증해 통과한 쪽 중 평균 높은 모델로 picks. omni_q.LAST_X 로 피처를 빌림(재계산 없음).

@@ -44,7 +44,16 @@ except Exception as e:  # noqa: BLE001
 # [V33.602] 매매법 선택 AI(Strategy-Router) — 도감 17종 표본 + 걷기 검증 · 그림자(주문 영향 없음). 실패해도 OMNI-Q 는 살린다.
 try:
     import strategy_router  # noqa: E402
-    strategy_router.run(daily, mkt, omni.day_key_of_daily, BASE=BASE, HDR=HDR, upload=True, log=print, omni_x=omni_q.LAST_X)
+    ev = {"us": {}, "kr": {}}   # [V33.606] 실적(미국) · 뉴스(한국) — 못 받으면 그 피처 없이
+    try:
+        ev["us"]["earn"] = omni.get_earn(BASE, HDR, [s for s in daily if mkt.get(s) == "us"], print)
+    except Exception as e:  # noqa: BLE001
+        print("   ⚠️ [매매법AI] 실적 이력 못 받음: %s" % e)
+    try:
+        ev["kr"]["news"] = omni.get_news(BASE, HDR, [s for s in daily if mkt.get(s) == "kr"], print)
+    except Exception as e:  # noqa: BLE001
+        print("   ⚠️ [매매법AI] 뉴스 이력 못 받음: %s" % e)
+    strategy_router.run(daily, mkt, omni.day_key_of_daily, BASE=BASE, HDR=HDR, upload=True, log=print, omni_x=omni_q.LAST_X, events=ev)
 except Exception as e:  # noqa: BLE001
     print("   ⚠️ [매매법AI] 실패: %s" % e)
 trained = bool(cache.pop("_trained", False))

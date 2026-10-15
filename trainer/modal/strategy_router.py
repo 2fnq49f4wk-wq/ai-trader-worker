@@ -28,7 +28,7 @@ STEP = 21
 BT_DAYS = 500
 MIN_N_SEL = 20
 PASS = {"minN": 100, "minT": 2.0}
-REGIMES = ("BULL", "NEUTRAL", "BEAR")
+REGIMES = ("BULL", "NEUTRAL", "BEAR", "CRASH", "SURGE")   # [V33.606] 폭락·폭등 국면 추가
 
 
 def _panel(daily, mkt_by_sym, market, day_key_of, max_days=760, min_len=260):
@@ -65,6 +65,11 @@ def _regime(close):
     m200, m50 = idx.rolling(200, min_periods=120).mean(), idx.rolling(50, min_periods=40).mean()
     up = m50 > m50.shift(10)
     reg = np.where((idx > m200) & up, "BULL", np.where((idx < m200) & ~up, "BEAR", "NEUTRAL"))
+    # [V33.606] 폭락·폭등 — 시장 동일가중 하루 ≤ −2.5%(≥ +2.5%) 또는 5일 ≤ −6%(≥ +6%) 가 난 날부터 3거래일은 그 국면(미리 고정)
+    r5 = (1 + r).rolling(5).apply(np.prod, raw=True) - 1
+    crash = ((r <= -0.025) | (r5 <= -0.06)).astype(float).rolling(3, min_periods=1).max() > 0
+    surge = ((r >= 0.025) | (r5 >= 0.06)).astype(float).rolling(3, min_periods=1).max() > 0
+    reg = np.where(crash.values, "CRASH", np.where(surge.values, "SURGE", reg))
     return pd.Series(reg, index=close.index), r.values
 
 
@@ -75,7 +80,36 @@ def _atr_pct(P):
     return (tr.rolling(14, min_periods=14).mean() / c * 100).values
 
 
-FEATS = ("rsi14", "atr", "ret5", "ret20", "ret60", "gap20", "gap50", "pos250", "vr20", "mret20")
+FEATS = ("rsi14", "atr", "ret5", "ret20", "ret60", "gap20", "gap50", "pos250", "vr20", "mret20",
+         "m_r1", "m_r5", "m_volr", "m_disp", "ev_fomc_to", "ev_fomc_since", "ev_cpi_to", "ev_cpi_since")
+
+# [V33.606] 미국 거시 발표일(공식 일정 · 한국 종목도 이 날 크게 흔들린다). 발표 '전 며칠·후 며칠' 을 피처로(발표 수치 자체는 시장 반응 m_r1 이 담는다).
+FOMC = [20230201, 20230322, 20230503, 20230614, 20230726, 20230920, 20231101, 20231213,
+        20240131, 20240320, 20240501, 20240612, 20240731, 20240918, 20241107, 20241218,
+        20250129, 20250319, 20250507, 20250618, 20250730, 20250917, 20251029, 20251210,
+        20260128, 20260318, 20260429, 20260617, 20260729, 20260916, 20261028, 20261209]
+CPI = [20230112, 20230214, 20230314, 20230412, 20230510, 20230613, 20230712, 20230810, 20230913, 20231012, 20231114, 20231212,
+       20240111, 20240213, 20240312, 20240410, 20240515, 20240612, 20240711, 20240814, 20240911, 20241010, 20241113, 20241211,
+       20250115, 20250212, 20250312, 20250410, 20250513, 20250611, 20250715, 20250812, 20250911, 20251024, 20251218,
+       20260113, 20260211, 20260311, 20260410, 20260512, 20260610, 20260714, 20260812, 20260911, 20261014, 20261110, 20261210]
+EV_CAP = 10.0
+
+
+def _ev_days(dates, evs):
+    """거래일 단위로 다음 발표까지 · 지난 발표 이후(0 = 발표 당일, 최대 10). 일정표 밖은 NaN."""
+    dk = np.asarray([int(d) for d in dates])
+    pos = np.searchsorted(dk, np.asarray(evs))          # 발표일이 들어갈 거래일 자리
+    to, since = np.full(len(dk), np.nan), np.full(len(dk), np.nan)
+    inside = (dk >= min(evs) - 100) & (dk <= max(evs))
+    for t in range(len(dk)):
+        nxt = pos[pos >= t]
+        prv = pos[pos <= t]
+        if len(nxt):
+            to[t] = min(EV_CAP, nxt[0] - t)
+        if len(prv):
+            since[t] = min(EV_CAP, t - prv[-1])
+    to[~inside] = np.nan
+    return to, since
 
 
 def _feats(P):
@@ -92,7 +126,37 @@ def _feats(P):
          "pos250": (c / c.rolling(250, min_periods=120).max()).values,
          "vr20": (v / v.rolling(20).mean()).values if v is not None else np.full(c.shape, np.nan),
          "mret20": np.repeat(((1 + mr).rolling(20).apply(np.prod, raw=True) - 1).values[:, None] * 100, c.shape[1], axis=1)}
+    # [V33.606] 시장 상태(폭락·폭등 강도) + 거시 발표 전후 — 날짜마다 같은 값(모든 종목)
+    rr = c.pct_change(fill_method=None)
+    rep = lambda x: np.repeat(np.asarray(x, dtype=float)[:, None], c.shape[1], axis=1)  # noqa: E731
+    F["m_r1"] = rep(mr.values * 100)
+    F["m_r5"] = rep(((1 + mr).rolling(5).apply(np.prod, raw=True) - 1).values * 100)
+    F["m_volr"] = rep((mr.rolling(5).std() / mr.rolling(60).std()).values)
+    F["m_disp"] = rep(rr.std(axis=1).values * 100)
+    for nm, ev in (("fomc", FOMC), ("cpi", CPI)):
+        to, since = _ev_days(c.index, ev)
+        F["ev_%s_to" % nm], F["ev_%s_since" % nm] = rep(to), rep(since)
     return F
+
+
+def event_cols(dks, syms, market, ext):
+    """[V33.606] 종목 사건 피처 — 실적(미국: 서프라이즈·경과일·최근 4번 상회율) · 뉴스(한국: 건수·급증·논조·공백).
+    omni.earn_feats / news_feats 를 그대로 쓴다(그 날짜까지만 · 미래를 안 본다). ext 없으면 빈 표."""
+    import omni
+    rows = []
+    ear, nws = (ext or {}).get("earn") or {}, (ext or {}).get("news") or {}
+    cache = {}
+    for dk, sy in zip(dks, syms):
+        k = (dk, sy)
+        if k not in cache:
+            r = {}
+            if ear:
+                r.update(omni.earn_feats(ear.get(sy), dk))
+            if nws:
+                r.update(omni.news_feats(nws.get(sy), dk))
+            cache[k] = r
+        rows.append(cache[k])
+    return pd.DataFrame(rows)
 
 
 def build_samples(P, market):
@@ -304,7 +368,7 @@ def walk_forward_lgb(df, T):
     return {"router": rt, "baseline": base, "pass": bool(ok), "days": BT_DAYS, "step": STEP, "model": "lgb"}
 
 
-def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=print, omni_x=None):
+def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=print, omni_x=None, events=None):
     for market in ("us", "kr"):
         t0 = time.time()
         P = _panel(daily, mkt_by_sym, market, day_key_of)
@@ -313,8 +377,18 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             continue
         df, sig, reg = build_samples(P, market)
         ox = (omni_x or {}).get(market)
+        ext = (events or {}).get(market)
         df, qc = attach_omni(df, P, ox, log)
-        QCOLS[:] = qc
+        syms0, dts0 = list(P["close"].columns), list(P["close"].index)
+        ec = []
+        try:
+            E = event_cols([dts0[i] for i in df["i"].values], [syms0[j] for j in df["j"].values], market, ext)
+            ec = [c for c in E.columns if E[c].notna().mean() >= 0.2]   # 덮은 표본이 20% 미만이면 안 쓴다
+            if ec:
+                df = pd.concat([df.reset_index(drop=True), E[ec].reset_index(drop=True)], axis=1)
+        except Exception as e:  # noqa: BLE001
+            log("      ⚠️ [매매법AI] 사건 피처 실패 %s" % e)
+        QCOLS[:] = qc + ec
         T = P["close"].shape[0]
         wf_s = walk_forward(df, T)
         wf_s["model"] = "shrink"
@@ -345,8 +419,11 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 row.update({k: F[k][-1, j] for k in FEATS})
                 last.append(row)
         L = pd.DataFrame(last)
-        if len(L) and QCOLS:
-            L = pd.concat([L.reset_index(drop=True), omni_today(P, ox, QCOLS, L["j"].tolist())], axis=1)
+        if len(L) and qc:
+            L = pd.concat([L.reset_index(drop=True), omni_today(P, ox, qc, L["j"].tolist())], axis=1)
+        if len(L) and ec:
+            E2 = event_cols([P["close"].index[-1]] * len(L), [syms[j] for j in L["j"]], market, ext)
+            L = pd.concat([L.reset_index(drop=True), E2.reindex(columns=ec).reset_index(drop=True)], axis=1)
         picks = {}
         if len(L):
             if wf.get("model") == "lgb":
@@ -365,13 +442,13 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         sel = sorted(({"sid": k[0], "mu": round(v[0], 4), "n": v[1]} for k, v in est.items() if k[1] == now and v[1] >= MIN_N_SEL),
                      key=lambda r: -r["mu"])
         day = str(P["close"].index[-1])
-        log("   · [매매법AI] %s OMNI-Q 피처 %d · 모델 %s(대안 %s 평균 %s%%) · 종목 %d · 표본 %d · 국면 %s · 걷기검증 n=%s 평균 %s%% t=%s (전부사기 %s%%) → %s · 오늘 후보 %d (%.0fs)" % (
-            market, len(QCOLS), wf.get("model"), wf["alt"]["model"], wf["alt"]["router"].get("mean"), len(syms), len(df), now, wf["router"]["n"], wf["router"]["mean"], wf["router"]["t"], wf["baseline"]["mean"],
+        log("   · [매매법AI] %s OMNI-Q 피처 %d · 사건 피처 %d · 모델 %s(대안 %s 평균 %s%%) · 종목 %d · 표본 %d · 국면 %s · 걷기검증 n=%s 평균 %s%% t=%s (전부사기 %s%%) → %s · 오늘 후보 %d (%.0fs)" % (
+            market, len(qc), len(ec), wf.get("model"), wf["alt"]["model"], wf["alt"]["router"].get("mean"), len(syms), len(df), now, wf["router"]["n"], wf["router"]["mean"], wf["router"]["t"], wf["baseline"]["mean"],
             "통과" if wf["pass"] else "미통과", len(picks), time.time() - t0))
         if upload and BASE:
             try:
                 import requests
-                body = {"mkt": market, "omniFeats": len(QCOLS), "model": wf.get("model"), "day": day, "regime": now, "nSamples": int(len(df)), "wf": wf, "table": table,
+                body = {"mkt": market, "omniFeats": len(qc), "eventFeats": ec, "model": wf.get("model"), "day": day, "regime": now, "nSamples": int(len(df)), "wf": wf, "table": table,
                         "ranking": sel[:17], "picks": dict(sorted(picks.items(), key=lambda kv: -kv[1]["mu"])[:40])}
                 r = requests.post(BASE + "/api/strategy-router", headers=HDR, json=body, timeout=120)
                 log("   · [매매법AI] %s 업로드 %s" % (market, r.status_code))
