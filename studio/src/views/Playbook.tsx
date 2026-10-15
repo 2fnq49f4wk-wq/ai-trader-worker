@@ -79,7 +79,7 @@ function Market({ mk, r }: { mk: string; r: any }) {
       </div>);
   };
   return (
-    <Section title={MK[mk] + " 검증"} aside={<span>{r.primary ? "주력 — AI_PRIMARY 퇴역" : "AI_PRIMARY 유지(연속 통과 " + (r.passStreak || 0) + "/2)"} · {r.brake && r.brake.on ? "실전 손실 제동 중(" + r.brake.n + "건 " + pc(r.brake.mean) + ")" : "제동 없음"} · 국면 {r.regime || "—"} · 표 {ago(r.ts)}</span>}>
+    <Section title={MK[mk] + " 검증"} aside={<span>{r.primary ? "주력 — AI_PRIMARY 퇴역" : "AI_PRIMARY 유지(연속 통과 " + (r.passStreak || 0) + "/2)"} · {r.brake && r.brake.on ? "실전 손실 제동 중(" + r.brake.n + "건 " + pc(r.brake.mean) + ")" : "제동 없음"} · 국면 {r.regime || "—"}{r.panic ? " · 공황 — 추세·모멘텀 쉼" : ""} · 표 {ago(r.ts)}</span>}>
       {one(r.daily && r.daily.val, "일봉 " + n0(r.daily && r.daily.cells) + "칸")}
       {one(r.intra && r.intra.val, "5분 단타 " + n0(r.intra && r.intra.cells) + "칸")}
     </Section>);

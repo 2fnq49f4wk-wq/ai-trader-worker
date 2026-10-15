@@ -512,6 +512,24 @@ def tune_daily(P, market, sig, log=print, budget_s=TUNE_BUDGET_S):
     return out, rep_
 
 
+# [V33.625] 모멘텀 붕괴 차단 — Daniel & Moskowitz (2016, JFE 122(2) "Momentum Crashes"): 모멘텀 손실은 '시장이 하락한 뒤 · 변동성이 높을 때'
+#   몰린다(공황 국면에서 패자 반등 · 승자 급락). 그 국면엔 추세·모멘텀·돌파 매매법 진입을 막는다(평균회귀·반등 매매법은 그대로).
+#   공황 = (등가중 시장 60거래일 수익 < 0 이고 20일 변동성 ≥ 지난 1년 80% 분위) 또는 폭락(CRASH) 국면. t 일 종가까지만 본다.
+#   근거는 문헌 + 판정 구간 ★전★ 진단(추세·모멘텀이 CRASH 칸에서 −2~−6%) — 판정 구간 결과로 고른 값이 아니다.
+PANIC_PB = tuple(CAT.CLUSTERS["TREND"]) + ("VOL_BREAKOUT", "SQUEEZE", "KELTNER")
+PANIC_LB, PANIC_VW, PANIC_VQ = 60, 20, 0.8
+
+
+def _panic(close, reg):
+    """[V33.625] 날짜별 공황 여부(bool[T]) — 워커는 학습기가 보낸 마지막 날 값(st.panic)을 쓴다."""
+    r = close.pct_change(fill_method=None).mean(axis=1).fillna(0)
+    idx = (1 + r).cumprod()
+    down = (idx / idx.shift(PANIC_LB) - 1) < 0
+    v = r.rolling(PANIC_VW, min_periods=PANIC_VW).std()
+    hi = v >= v.rolling(252, min_periods=120).quantile(PANIC_VQ)
+    return (down & hi).values.astype(bool) | (np.asarray(reg).astype(str) == "CRASH")
+
+
 def _live_filters(P, reg, atr):
     """[V33.618] 실전 규칙의 진입 거르개(snapRules) — RSI2 반등에만: 약세·폭락 국면 금지 · 20일 고점 대비 −12% 이내 · ATR ≤ 5% · 당일 −4% 이상.
     워커 pbLiveFilterOk 와 같다(check-playbook 대조)."""
@@ -521,7 +539,11 @@ def _live_filters(P, reg, atr):
     ret1 = C.pct_change(fill_method=None) * 100
     regok = ~np.isin(np.asarray(reg).astype(str), ["BEAR", "CRASH"])
     ok = (pull >= -12).values & (atr <= 5) & (ret1 >= -4).values & regok[:, None]
-    return {pb: np.nan_to_num(ok, nan=0).astype(bool) for pb in LIVE_FILTER_PB}
+    out = {pb: np.nan_to_num(ok, nan=0).astype(bool) for pb in LIVE_FILTER_PB}
+    calm = ~_panic(C, reg)[:, None] & np.ones(C.shape, dtype=bool)   # [V33.625] 공황 국면엔 추세·모멘텀 진입 없음
+    for pb in PANIC_PB:
+        out[pb] = out[pb] & calm if pb in out else calm
+    return out
 
 
 def sim_daily(P, market, ev_dates, sig=None, cand=None, pbs=None):
@@ -1060,6 +1082,10 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         dtab = _shrunk_table(ddf, decay=_r.get("decay"), tcol="t", ref=int(ddf["t"].max()) + 1 if len(ddf) else None)   # 실전 표는 전 기간으로(고른 규칙의 최근 가중)
         gate_live = gate_now(ddf, _r["gate"], int(P["close"].shape[0]) - 1) if _r.get("gate") else None
         reg_series, _ = _regime(P["close"])
+        _pn = _panic(P["close"], reg_series)
+        panic_now = bool(_pn[-1])   # [V33.625]
+        log("   · [매매법시뮬] %s 공황 국면(추세·모멘텀 진입 차단) %s · 전 기간 %.1f%% · 최근 60일 %.1f%%" % (
+            market, "켜짐" if panic_now else "꺼짐", float(_pn.mean() * 100), float(_pn[-60:].mean() * 100)))
         reg_by_day = {int(d): r for d, r in zip(P["close"].index, reg_series)}
         ist, itab = {"pass": False, "why": "5분봉 없음"}, {}
         b5 = {s: v for s, v in (bars5 or {}).items() if mkt_by_sym.get(s) == market}
@@ -1077,7 +1103,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         if upload and BASE:
             try:
                 import requests
-                body = {"mkt": market, "day": str(P["close"].index[-1]), "regime": reg_now, "sector": (sector or {}).get(market),
+                body = {"mkt": market, "day": str(P["close"].index[-1]), "regime": reg_now, "sector": (sector or {}).get(market), "panic": panic_now,
                         "daily": {"val": dst, "table": export(dtab, list(DAILY_PB)), "pb": dpb, "cross": cross, "gate": gate_live},
                         "intra": {"val": ist, "table": export(itab, list(INTRA_PB)), "pb": INTRA_PB}}
                 r = requests.post(BASE + "/api/playbook", headers=HDR, json=body, timeout=180)

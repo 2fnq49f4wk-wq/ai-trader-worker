@@ -341,5 +341,33 @@ chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"
       && /# schedule:/.test(readFileSync(new URL("../.github/workflows/modal-watchdog.yml", import.meta.url), "utf8")), "Modal·GHA 위원회 학습 예약 끔");
   const MS = readFileSync(new URL("../studio/src/models.ts", import.meta.url), "utf8");
   chk(!/key: "mind"|key: "gbdt"|key: "omni",/.test(MS) && /export function omniqNet/.test(readFileSync(new URL("../studio/src/gl/netScenes.ts", import.meta.url), "utf8")), "모델 구조창: 위원회·옛 OMNI 목록 없음 · OMNI-Q 신경망"); }
+{ // [V33.625] 모멘텀 붕괴 차단(공황 국면 추세·모멘텀 쉼)
+  const pyP = `
+import sys, json, numpy as np, pandas as pd
+sys.path.insert(0, ${JSON.stringify(dir)})
+import playbook_sim as PB
+rng = np.random.default_rng(9); T, N = 620, 60
+r = rng.normal(0.0004, 0.008, (T, 1)) + rng.normal(0, 0.012, (T, N)); r[420:480] = r[420:480] * 2.5 - 0.006
+c = pd.DataFrame(50*np.exp(np.cumsum(r, axis=0)), index=[20240101+k for k in range(T)])
+o = c*(1+rng.normal(0,0.004,(T,N)))
+P = {"close":c,"open":o,"high":np.maximum(c,o)*1.01,"low":np.minimum(c,o)*0.99,"volume":pd.DataFrame(rng.lognormal(13,.5,(T,N)), index=c.index)}
+reg, _ = PB._regime(c); pn = PB._panic(c, reg)
+d, _r, sig = PB.sim_daily(P, "us", [])
+pt = set(np.nonzero(pn)[0].tolist())
+mom = d[d["pb"].isin(PB.PANIC_PB)]; mr = d[~d["pb"].isin(PB.PANIC_PB)]
+# 미래를 안 본다: 앞 450일만 넣어도 그 구간 값이 같다
+c2 = c.iloc[:450]; reg2, _ = PB._regime(c2); pn2 = PB._panic(c2, reg2)
+print(json.dumps({"pb": sorted(PB.PANIC_PB), "calm": float(pn[250:400].mean()), "storm": float(pn[440:480].mean()),
+  "momIn": int(mom["t"].isin(pt).sum()), "mrIn": int(mr["t"].isin(pt).sum()), "momN": int(len(mom)), "causal": bool((pn2 == pn[:450]).all())}))
+`;
+  const rp = spawnSync("python3", ["-c", pyP], { encoding: "utf8", maxBuffer: 1 << 26 });
+  let q = null; try { q = JSON.parse(rp.stdout.trim().split("\n").pop()); } catch (e) { console.log(rp.stderr.slice(-1500)); }
+  chk(q && q.storm > 0.5 && q.calm < 0.3 && q.causal, "[V33.625] 공황 판정: 하락 뒤 고변동 구간에서 켜지고 평온한 상승장에선 대부분 꺼진다 · 미래를 안 본다", JSON.stringify(q && [q.calm, q.storm, q.causal]));
+  chk(q && q.momN > 0 && q.momIn === 0 && q.mrIn > 0, "[V33.625] 시뮬: 공황일엔 추세·모멘텀·돌파 진입 0건 · 평균회귀·반등은 그대로 뜬다", JSON.stringify(q && [q.momN, q.momIn, q.mrIn]));
+  const Wp = new Function("_num", "getMA", "getRSI", "STRAT_ROUTE", "MACRO_SCHED", fnSrc + "; return { pbPanicOff, PB_PANIC_PB };")(_num, getMA, getRSI, STRAT_ROUTE, MACRO_SCHED);
+  chk(q && JSON.stringify(Object.keys(Wp.PB_PANIC_PB).sort()) === JSON.stringify(q.pb), "[V33.625] 차단 매매법 목록 학습기 PANIC_PB = 워커 PB_PANIC_PB", JSON.stringify([Object.keys(Wp.PB_PANIC_PB).length, q && q.pb.length]));
+  chk(JSON.stringify(Wp.pbPanicOff({ panic: true }, ["DUAL_MOM", "SN_RSI2", "KELTNER"])) === '["DUAL_MOM","KELTNER"]' && Wp.pbPanicOff({ panic: false }, ["DUAL_MOM"]).length === 0 && Wp.pbPanicOff({}, ["DUAL_MOM"]).length === 0,
+      "[V33.625] 워커: 학습기가 공황이라 보낸 날만 추세·모멘텀을 쉰다");
+  chk(/panic: body\.panic === true/.test(S) && /"panic": panic_now/.test(readFileSync(dir + "playbook_sim.py", "utf8")), "[V33.625] 학습기 업로드 → 워커 저장(panic)"); }
 if (fails) { console.log("check-playbook: FAIL " + fails); process.exit(1); }
 console.log("check-playbook: ok");

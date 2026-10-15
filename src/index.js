@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.624";
+const _BUILD_VER = "V33.625";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13852,6 +13852,11 @@ function pbLiveFilterOk(pb, D, reg, pr) {
 /* [V33.620] 매매법 최근 성적 스위치 — 고른 규칙에 gate 가 있으면, 학습기가 보낸 그 매매법의 최근 끝난 모의 거래(gate[pb] = [n, 평균])가
    표본 ≥ PB_GATE_MIN 이고 평균 < 0 이면 쉰다(학습기 _gate_ok 와 같은 기준). */
 const PB_GATE_MIN = 15;
+/* [V33.625] 모멘텀 붕괴 차단 — 학습기 PANIC_PB 와 같다(Daniel & Moskowitz 2016 "Momentum Crashes": 하락 뒤 고변동 국면에 모멘텀 손실이 몰린다).
+   st.panic(학습기가 본 마지막 날 공황 여부)이면 추세·모멘텀·돌파 매매법은 고르지 않는다(평균회귀·반등은 그대로). */
+const PB_PANIC_PB = { TREND_ALIGN: 1, TR_BREAKOUT: 1, RS_LEADER: 1, VT_TREND: 1, TR_PULLBACK: 1, MA_PULLBACK: 1, DUAL_MOM: 1, ICHIMOKU: 1, DONCHIAN: 1,
+                      MACD_X: 1, ELDER_RAY: 1, PSAR: 1, TRIPLE_SCR: 1, HI52_NEAR: 1, VOL_BREAKOUT: 1, SQUEEZE: 1, KELTNER: 1 };
+function pbPanicOff(st, fired) { return st && st.panic === true ? (fired || []).filter(function (pb) { return PB_PANIC_PB[pb] === 1; }) : []; }
 function pbGateOff(daily, fired) {
   const r = daily && daily.val && daily.val.rule, g = daily && daily.gate;
   if (!r || !r.gate || !g) return [];
@@ -13871,7 +13876,8 @@ function pbRoutePick(st, ctx, nowMs) {
     const cr = st.daily.cross || {};
     for (const pb in cr) if (Array.isArray(cr[pb]) && cr[pb].indexOf(ctx.symbol) >= 0 && fired0.indexOf(pb) < 0) fired0.push(pb);   // 횡단면 조건은 학습기 판정(전일 종가 기준)
     const fired = fired0.filter(function (pb) { return pbLiveFilterOk(pb, D, ctx.reg, st.daily.pb && st.daily.pb[pb]); });   // [V33.619] 자동 조율 거르개 포함
-    const benched = pbGateOff(st.daily, fired);   // [V33.620] 최근 성적 스위치로 쉬는 매매법
+    const panicked = pbPanicOff(st, fired);   // [V33.625] 공황 국면 — 추세·모멘텀 쉼
+    const benched = pbGateOff(st.daily, fired).filter(function (pb) { return panicked.indexOf(pb) < 0; }).concat(panicked);   // [V33.620] 최근 성적 스위치로 쉬는 매매법
     if (fired.length) {
       const ma20 = _pbSma(D.c, 20, i), rsi = _pbRsiEwm(D.c, 14)[i];
       const ret5 = D.c[i - 5] > 0 ? (px / D.c[i - 5] - 1) * 100 : null;
@@ -13884,7 +13890,8 @@ function pbRoutePick(st, ctx, nowMs) {
         best = { kind: "daily", pb: ch.pb, fired: fired, n: ch.n, w: ch.w, m: ch.m, s: ch.s, stop: Math.max(1.5, stop), be: _num(pr.be, 0), tpR: pr.tpR == null ? null : _num(pr.tpR, null), hold: _num(pr.hold, 10), label: pr.label || "", alts: ch.alts || [], benched: benched,
                  mr: pr.mr === true, tpPct: pr.tpPct == null ? null : _num(pr.tpPct, null), bePct: pr.bePct == null ? null : _num(pr.bePct, null), tstop: _num(pr.tstop, 0), rsi2x: _num(pr.rsi2x, 65) };
       } else if (ctx.shadow) best = { kind: "daily", pb: null, fired: fired, benched: benched, alts: pbChoose.lastAlts || [],
-                                      why: benched.length && benched.length === fired.length ? "최근 성적 스위치로 쉼(" + benched.join("·") + ")" : "뜬 매매법 성적 미달" };
+                                      why: panicked.length && panicked.length === fired.length ? "공황 국면 — 추세·모멘텀 쉼(" + panicked.join("·") + ")"
+                                         : benched.length && benched.length === fired.length ? "최근 성적 스위치로 쉼(" + benched.join("·") + ")" : "뜬 매매법 성적 미달" };
     } else if (ctx.shadow) best = { kind: "daily", pb: null, fired: [], why: "뜬 매매법 없음" };
   }
   if (ctx.shadow && best && best.kind === "daily" && !dWin) best.outWin = true;   // [V33.611] 창 밖 — 관측엔 보이되 '마감 전 60분에 매수' 로 표시
@@ -30930,7 +30937,8 @@ async function handleRequest(request, env, ctx, _inner) {
       const part = function (x) { return (x && typeof x === "object") ? { val: x.val || {}, table: (x.table && typeof x.table === "object") ? x.table : {}, pb: x.pb || {},
                                                                           cross: (x.cross && typeof x.cross === "object") ? x.cross : {}, gate: (x.gate && typeof x.gate === "object") ? x.gate : null } : null; };
       const rec = { ts: Date.now(), day: String(body.day || ""), regime: String(body.regime || "NEUTRAL"), daily: part(body.daily), intra: part(body.intra),
-                    sector: (body.sector && typeof body.sector === "object") ? body.sector : null };   // [V33.621] 종목 → 섹터(학습기 자동 배정 · 섹터 보유 상한)
+                    sector: (body.sector && typeof body.sector === "object") ? body.sector : null,
+                    panic: body.panic === true };   // [V33.625] 공황 국면(학습기 _panic 마지막 날) — 추세·모멘텀 진입 차단   // [V33.621] 종목 → 섹터(학습기 자동 배정 · 섹터 보유 상한)
       rec.pass = { daily: _pbPass(rec.daily && rec.daily.val), intra: _pbPass(rec.intra && rec.intra.val) };
       try { const _prev = await getState(env.DB, "playbook:" + mk, null); rec.passStreak = rec.pass.daily ? _num(_prev && _prev.passStreak, 0) + 1 : 0; } catch (e) { rec.passStreak = rec.pass.daily ? 1 : 0; }   // [V33.621] 연속 통과 수
       const _sz = JSON.stringify(rec).length;
@@ -30944,7 +30952,7 @@ async function handleRequest(request, env, ctx, _inner) {
       const out = {};
       for (const mk of ["us", "kr"]) {
         const r = await getState(env.DB, "playbook:" + mk, null);
-        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, pass: r.pass, primary: pbPrimaryOn(r, Date.now()), passStreak: r.passStreak || 0,
+        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, panic: r.panic === true, pass: r.pass, primary: pbPrimaryOn(r, Date.now()), passStreak: r.passStreak || 0,
                         brake: await getState(env.DB, "pb_brake:" + mk, null).catch(function () { return null; }),
                         daily: r.daily && { val: r.daily.val, cells: Object.keys(r.daily.table || {}).length, pb: r.daily.pb, gate: r.daily.gate || null,
                                             cross: Object.fromEntries(Object.keys(r.daily.cross || {}).map(function (k) { return [k, (r.daily.cross[k] || []).length]; })) },
