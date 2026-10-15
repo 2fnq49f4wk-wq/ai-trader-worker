@@ -196,7 +196,7 @@ def _sim_profile(O, H, L, C, atr, mcum, pr, cost, t0=250, mrx=None, t_max=None, 
     return out, xo
 
 
-CAND_QS = (0.80, 0.60, 0.40)   # [V33.620] 후보 폭 후보(상위 20·40·60%) — 검증 구간이 고른다
+CAND_QS = (0.80, 0.60, 0.40, 0.0)   # [V33.620] 후보 폭 후보(상위 20·40·60%) — 검증 구간이 고른다 · [V33.621] 0.0 = OMNI-Q 거름 없음(전 종목) — 'OMNI 먼저' 가 유리한지 검증이 판정
 CAND_Q = 0.80        # 후보 = 그날 OMNI-Q 표본 밖 점수 상위 20%(워커 PB_ROUTE.candMin 과 같다)
 CAND_MIN_ROWS = 3000  # 후보로 거른 표본이 이보다 적으면 전 종목으로(기록에 남긴다)
 
@@ -958,7 +958,7 @@ def export(tab, pbs, min_n=30, max_bytes=1200000):
         min_n *= 2
 
 
-def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=print, bars5=None, ev_dates=(), oos=None):
+def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=print, bars5=None, ev_dates=(), oos=None, sector=None):
     import strategy_router as SR
     for market in ("us", "kr"):
         t0 = time.time()
@@ -974,7 +974,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             dpb, tune_rep = {k: dict(v, prof="base", flt=None) for k, v in DAILY_PB.items()}, None
         # [V33.620] ★후보 폭도 검증이 고른다★ — OMNI-Q 상위 20·40·60%(사용자 10/15 "가장 유리한 방식 · 매수 신호가 나올 넉넉함").
         #   폭마다 시뮬 → 3구간 검증. 검증 구간 [60,80%) 에서 고른 규칙 평균이 가장 높은 폭을 쓴다(판정 구간은 고르기에 안 쓴다).
-        best_q = None
+        best_q, cand_cmp = None, []
         for q_ in CAND_QS:
             cm_ = cand_mask(P, (oos or {}).get(market), q_)
             if cm_ is None:
@@ -987,11 +987,12 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             el = [c_ for c_ in (st_.get("valCmp") or []) if c_.get("n", 0) >= 30 and c_.get("mean") is not None]
             vm = max(c_["mean"] for c_ in el) if el else None
             log("   · [매매법시뮬] %s 후보 OMNI-Q 상위 %d%% — 검증 구간 최고 %s%% · 판정 %s%%(n %s)" % (market, round((1 - q_) * 100), vm, st_.get("mean"), st_.get("n")))
+            cand_cmp.append({"q": q_, "val": vm, "n": st_.get("n"), "mean": st_.get("mean"), "base": st_.get("base"), "t": st_.get("t"), "win": st_.get("win")})   # 기록만(고르기는 val)
             if vm is not None and (best_q is None or vm > best_q[0]):
                 best_q = (vm, q_, d_, st_)
         if best_q is not None:
             _, q_, ddf, dst = best_q
-            cand_src = "OMNI-Q 표본 밖 상위 %d%%" % round((1 - q_) * 100)
+            cand_src = ("OMNI-Q 표본 밖 상위 %d%%" % round((1 - q_) * 100)) if q_ > 0 else "OMNI-Q 거름 없음(전 종목 · 검증이 고름)"
             dst["candQ"] = q_
         else:
             log("   · [매매법시뮬] %s 후보 거름 불가(OMNI-Q 과거 점수 없음·부족) → 전 종목으로" % market)
@@ -1001,6 +1002,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             dst, _ = validate(ddf, "t")
         cm = cand_mask(P, (oos or {}).get(market), dst.get("candQ")) if dst.get("candQ") else None
         dst["cand"] = cand_src
+        dst["candCmp"] = cand_cmp   # [V33.621] 폭별 판정 구간 성적(객관 비교 · 고르기엔 안 씀)
         dst["tune"] = tune_rep
         try:
             dst["exitDiag"] = exit_diag(P, market, sig, cm if cand_src.startswith("OMNI") else None, pbs=dpb)
@@ -1032,7 +1034,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         if upload and BASE:
             try:
                 import requests
-                body = {"mkt": market, "day": str(P["close"].index[-1]), "regime": reg_now,
+                body = {"mkt": market, "day": str(P["close"].index[-1]), "regime": reg_now, "sector": (sector or {}).get(market),
                         "daily": {"val": dst, "table": export(dtab, list(DAILY_PB)), "pb": dpb, "cross": cross, "gate": gate_live},
                         "intra": {"val": ist, "table": export(itab, list(INTRA_PB)), "pb": INTRA_PB}}
                 r = requests.post(BASE + "/api/playbook", headers=HDR, json=body, timeout=180)

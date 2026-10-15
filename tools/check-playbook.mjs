@@ -168,7 +168,7 @@ if (o) {
     chk(!bad.length, "[V33.619·620] 조율 거르개 7종(trend·noBear·calm·up20·notExt·dip5·rsiMid) + 2개 조합 학습기 = 워커", JSON.stringify(bad));
     chk(JSON.stringify(o.gok) === "[0,1,1]", "[V33.620] 최근 성적 스위치: 최근 40일 끝난 모의 거래 평균 < 0(표본 ≥ 15)인 매매법은 쉬고, 오래된 손실은 안 센다", JSON.stringify(o.gok));
     chk(Math.abs(o.dec[0]) < 0.2 && o.dec[1] > 0.5, "[V33.620] 최근 가중 표: 앞 절반 손실·뒤 절반 이익이면 가중 표가 이익 쪽(국면 변화 적응)", JSON.stringify(o.dec));
-    chk(o.rulesA.some((r) => r.decay) && o.rulesA.some((r) => r.gate) && JSON.stringify(o.cqs) === "[0.8,0.6,0.4]", "[V33.620] 규칙 후보에 최근 가중·성적 스위치 · 후보 폭 상위 20·40·60% 를 검증이 고른다");
+    chk(o.rulesA.some((r) => r.decay) && o.rulesA.some((r) => r.gate) && JSON.stringify(o.cqs) === "[0.8,0.6,0.4,0]", "[V33.620·621] 규칙 후보에 최근 가중·성적 스위치 · 후보 폭 상위 20·40·60% · OMNI-Q 거름 없음 중 검증이 고른다");
     chk(o.tnull.length <= 2, "[V33.619] 조율 귀무: 무작위 시세(진짜 고·저가)에선 29종 중 2종 이하만 바꾼다(달 묶음 t · 확인 구간)", JSON.stringify(o.tnull));
     chk(String(o.tpos.flt || "").split("+").includes("trend") && o.tpos.test.tuned[1] > o.tpos.test.base[1] + 0.5, "[V33.620] 정밀 조율 양성: '종가 > MA200 일 때만 오르는' 엔벨로프 우위를 심으면 한 칸씩 올라 trend 거르개를 찾고 손대지 않은 구간에서도 낫다", JSON.stringify(o.tpos));
     chk(o.tpos.diag && o.tpos.diag.rc && Array.isArray(o.tpos.problems) && Array.isArray(o.tpos.path) && o.tpos.path.length >= 2, "[V33.620] 매매법 진단(청산 사유·국면별·문제) · 걸어온 길 기록", JSON.stringify([o.tpos.problems, o.tpos.path])); }
@@ -260,8 +260,10 @@ chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"
   chk(W.pbChoose(T2, KK, ["A", "B"], { score: "lcb", level: "regime" })?.pb === "A" && W.pbChoose(T2, KK, ["A", "B"], { score: "lcb", level: "global" })?.pb === "B", "규칙 칸 단계: 국면 칸까지만 · 매매법 전체만"); }
 { const now2 = Date.now(), v = { pass: true, n: 400, mean: 0.3, t: 2.4, base: 0.05 };
   const M2 = new Function("_num", "getMA", "getRSI", "STRAT_ROUTE", "MACRO_SCHED", fnSrc + "; return { pbPrimaryOn, PB_PRIMARY_CAPS };")(_num, getMA, getRSI, STRAT_ROUTE, MACRO_SCHED);
-  chk(M2.pbPrimaryOn({ ts: now2, daily: { val: v } }, now2) && !M2.pbPrimaryOn({ ts: now2, daily: { val: { ...v, pass: false } } }, now2) && !M2.pbPrimaryOn({ ts: now2 - 40 * 3600000, daily: { val: v } }, now2),
-      "주력 전환은 그 시장 일봉 검증 통과 + 표 신선(36시간)일 때만");
+  chk(M2.pbPrimaryOn({ ts: now2, passStreak: 2, daily: { val: v } }, now2) && !M2.pbPrimaryOn({ ts: now2, passStreak: 1, daily: { val: v } }, now2)
+      && !M2.pbPrimaryOn({ ts: now2, passStreak: 2, daily: { val: { ...v, pass: false } } }, now2) && !M2.pbPrimaryOn({ ts: now2 - 40 * 3600000, passStreak: 2, daily: { val: v } }, now2),
+      "[V33.621] 주력 전환은 일봉 검증 ★2회 연속★ 통과 + 표 신선(36시간)일 때만(한 번 통과는 운일 수 있다)");
+  chk(/rec\.passStreak = rec\.pass\.daily \? _num\(_prev && _prev\.passStreak, 0\) \+ 1 : 0/.test(S), "[V33.621] 업로드가 연속 통과 수를 센다(미통과면 0)");
   chk(/_ap && _ap\.enabled && __aiReady && !__pbPrim && stratResults\.length === 0/.test(S), "주력 전환된 시장은 AI_PRIMARY 신규 진입을 끈다(미통과 시장은 그대로)");
   chk(/__pbCap = __pbPrim \? PB_PRIMARY_CAPS : STRAT_ROUTE/.test(S) && /signal\.isStratRoute && !\(signal\.sr && signal\.sr\.primary\)/.test(S) && M2.PB_PRIMARY_CAPS.mult === 1.0, "주력 시장은 상한을 올리고 크기 ×1.0 · 아니면 잠정 ×0.5");
   chk(["l1", "icfamily", "bandit", "brain", "mind", "gbdt"].every((k) => new RegExp('if \\(!__pbRetire\\) await _stg\\("' + k + '"').test(S)) && /__pbRetire = pbPrimaryOn\(await getState\(env\.DB, "playbook:us"/.test(S),
@@ -290,7 +292,10 @@ chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"
   chk(/^SR-BE/.test(M3.pbSellRule({ ...pos, meta: { ...pos.meta, peakPrice: 103.3 } }, 99.9).reason || "") && !M3.pbSellRule({ ...pos, meta: { ...pos.meta, peakPrice: 103 } }, 99.9).sell, "본전 이동: 고점이 0.8R(=+3.2%) 넘은 뒤 평단 아래면 SR-BE");
   chk(/if \(pos\.meta && pos\.meta\.sr && pos\.meta\.sr\.sid\) return pbSellRule\(pos, price\);/.test(S) && /!_pairHeld && !\(held\.meta && held\.meta\.sr\)/.test(S),
       "매매법 보유엔 공통 분할익절·트레일·타임스톱·MODEL_EXIT 를 걸지 않는다(시뮬에 없던 매도)");
-  chk(/dWin = ctx\.minToClose != null && ctx\.minToClose <= PB_ROUTE\.dailyEntryWin/.test(S) && M3.PB_ROUTE.dailyEntryWin === 60, "일봉 매매법 진입은 마감 전 60분(시뮬 = 신호 봉 종가 체결)");
+  chk(/dWin = ctx\.minToClose != null && ctx\.minToClose <= PB_ROUTE\.dailyEntryWin/.test(S) && M3.PB_ROUTE.dailyEntryWin === 30, "[V33.621] 일봉 매매법 진입은 마감 전 30분(시뮬 = 신호 봉 종가 체결 — 60분이면 그사이 신호가 꺼지는 괴리가 컸다)");
+  chk(/AVG\(pnl_pct\) AS m FROM trades WHERE market = \? AND side = 'SELL' AND reason LIKE 'SR-%'/.test(S) && /!_secFull && !_braked/.test(S) && /PB_BRAKE = \{ days: 30, minN: 12, mean: -0\.4/.test(S),
+      "[V33.621] 실전 손실 제동(최근 30일 실제 청산 12건+ 평균 ≤ −0.4% → 신규 매수 멈춤) · 같은 섹터 보유 상한 3");
+  chk(/const _hf = orderedEval\.filter\(function \(it\) \{ return it && heldSymbols\.has\(it\.symbol\); \}\)/.test(S), "[V33.621] 보유 종목은 사이클마다 맨 먼저 평가(마감 창 청산을 놓치지 않게)");
   const dl = { closes: [1, 2, 3], highs: [1, 2, 3], lows: [1, 2, 3], opens: [1, 2, 3], volumes: [5, 5, 100] };
   chk(Math.abs(M3.pbLiveDaily(dl, 3.1, 2, 195).v[2] - 200) < 1e-6, "장중 거래량을 지난 시간 비율로 하루치 추정(195분 남음 → ×2)");
   chk(/setState\(DB, "pb_live:" \+ market/.test(S) && /live: live/.test(S) && /shadow: true/.test(S), "후보별 판정(그림자 포함)을 매 사이클 관측창에 남긴다");

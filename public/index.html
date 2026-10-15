@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ko" class="lux-booting">
+<html lang="ko" class="lux-booting lux-cssw">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -16,7 +16,13 @@
        ⑶ neural-observatory.js 에 defer — 이 파일의 NeuralObservatory 는 boot() 이후에만 쓴다.
      ※ .lux-booting 은 인트로가 사라질 때 벗긴다. 그래서 라이트 테마의 오버스크롤 영역이
        어두워지는 부작용이 없다(인트로 동안에만 적용된다). -->
-<style>html.lux-booting{background:#000}html.lux-booting body{background:#000}html.lux-nointro #lux-intro-overlay{display:none!important}</style>
+<style>html.lux-booting{background:#000}html.lux-booting body{background:#000}html.lux-nointro #lux-intro-overlay{display:none!important}
+/* [V33.621] ★디자인 파일이 오기 전엔 본문을 감춘다★ — 사용자 10/15 "로딩이 안 되면 옛날 디자인 화면이 뜬다". 디자인 시트 5개(리퀴드 메탈 등)는 본문 맨 뒤에 있어
+   (본문 안 인라인 스타일을 덮어야 해서 머리로 못 올린다) 늦거나 실패하면 그 앞 본문이 ★옛 기본 디자인★ 으로 먼저 칠해졌다.
+   시트 뒤 지킴이 스크립트가 다 왔는지 보고 벗긴다(실패 시트는 캐시 우회로 다시 받음). 스크립트가 죽어도 6초 뒤엔 CSS 만으로 드러난다(갇히지 않는다). */
+html.lux-cssw,html.lux-cssw body{background:#05070b}
+html.lux-cssw body>*:not(#lux-intro-overlay){visibility:hidden;animation:luxCssReveal 0s linear 6s forwards}
+@keyframes luxCssReveal{to{visibility:visible}}</style>
 <script>
 /* [V33.498] ★인트로는 하루 한 번★ — 사용자: "다른 도메인처럼 로딩 속도 압도적으로 빠르게 · 화면에 정보 뜨는 속도가 너무 늦다".
    운영 실측(폰 속도 · run 37490336395): 데이터는 이미 와 있는데 인트로(4.3초)가 덮어 '보이기' 까지 재방문 4.9초.
@@ -188,8 +194,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.620">
-<script src="/neural-observatory.js?v=33.620" defer></script>
+<meta name="lux-build" content="V33.621">
+<script src="/neural-observatory.js?v=33.621" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -15733,12 +15739,14 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       var head = st.head || 'lin';
       // ③ 봉 날짜 재구축 — 링 하나. 100%면 근사가 완전히 사라졌다는 뜻이다.
       var cw = cc ? (cc.dailyN>0 ? cc.dailyDays/cc.dailyN : 0) : null;
+      /* [V33.621] 위원 좌석·결합기(퇴역한 위원회) → ★매매법 AI★ 시장별 상태(01 관측창과 같은 /api/playbook 자료를 나눠 쓴다) */
+      var pbS = window.__pbState, pbTxt = function(m){ var r = pbS && pbS.markets && pbS.markets[m]; if(!r) return '—';
+        return (r.brake && r.brake.on) ? '<b style="color:#ff5d6c">제동</b>' : r.primary ? '<b>주력</b>' : '검증 '+(r.passStreak||0)+'/2'; };
+      if(!pbS && !window.__pbFetching && window.fetch){ window.__pbFetching = 1;
+        fetch('/api/playbook').then(function(r){ return r.json(); }).then(function(j){ window.__pbState = j; window.__pbFetching = 0; try{ NNV_paintGlance(d); }catch(e2){} })['catch'](function(){ window.__pbFetching = 0; }); }
       el.innerHTML =
-        '<div class="rg-row"><span class="rg-k">위원 좌석</span>'
-          +'<span class="rg-v">'+live+(prov?'<b>+'+prov+'</b>':'')+' / '+seats+'</span></div>'
-        /* [V33.562] STACK 퇴역(V33.422) 뒤 결합은 늘 IC 가중이다 — 'LIN' 회색 배지는 "꺼져 있다" 로 읽혔다. */
-        +'<div class="rg-row"><span class="rg-k">결합기</span>'
-          +'<span class="rg-head on'+(head!=='lin'?' nl':'')+'">'+(head==='lin'?'IC 가중':esc(head))+'</span></div>'
+        '<div class="rg-row"><span class="rg-k">매매법 AI</span>'
+          +'<span class="rg-v" style="font-family:inherit;font-size:10px;">美 '+pbTxt('us')+' · 韓 '+pbTxt('kr')+'</span></div>'
         /* [V33.562] OMNI-Q — 실제로 신규진입을 좁히는지(발언·잠정 발언) 한눈에 */
         + (window.LUX_omq && d.omniQ
             ? '<div class="rg-row"><span class="rg-k">OMNI-Q</span><span class="rg-v" style="font-family:inherit;font-size:10px;">'+window.LUX_omq.brief(d.omniQ)+'</span></div>'
@@ -21201,13 +21209,39 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.620">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.620">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.620">
-<link rel="stylesheet" href="/model-evidence.css?v=33.620">
+<link rel="stylesheet" href="/brain-console.css?v=33.621">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.621">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.621">
+<link rel="stylesheet" href="/model-evidence.css?v=33.621">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.620">
-<script src="/model-evidence.js?v=33.620"></script>
-<script src="/workspace-ui.js?v=33.620"></script>
+<link rel="stylesheet" href="/liquid-metal.css?v=33.621">
+<script>
+/* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
+   못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
+(function () {
+  var html = document.documentElement, reveal = function () { html.classList.remove('lux-cssw'); };
+  var want = ['brain-console.css', 'workspace-layout.css', 'neural-observatory.css', 'model-evidence.css', 'liquid-metal.css'];
+  var ok = function (l) { try { return !!(l.sheet && l.sheet.cssRules && l.sheet.cssRules.length); } catch (e) { return false; } };   // 같은 출처 시트를 못 읽으면(SecurityError) = 못 받은 것
+  var links = [].slice.call(document.querySelectorAll('link[rel="stylesheet"]')).filter(function (l) { return want.some(function (w) { return (l.getAttribute('href') || '').indexOf('/' + w) === 0; }); });
+  var bad = links.filter(function (l) { return !ok(l); });
+  if (!bad.length) return reveal();
+  var left = bad.length, done = function () { if (--left <= 0) reveal(); };
+  bad.forEach(function (l) {
+    var tries = 0;
+    (function again() {
+      tries++;
+      var n = document.createElement('link'); n.rel = 'stylesheet';
+      n.href = l.getAttribute('href') + '&r=' + Date.now();
+      var t = setTimeout(function () { n.onload = n.onerror = null; tries < 2 ? again() : done(); }, 4000);
+      n.onload = function () { clearTimeout(t); done(); };
+      n.onerror = function () { clearTimeout(t); tries < 2 ? setTimeout(again, 800) : done(); };
+      l.parentNode.insertBefore(n, l.nextSibling);   // 같은 자리(순서 = 우선순위 유지)
+    })();
+  });
+  setTimeout(reveal, 9500);
+})();
+</script>
+<script src="/model-evidence.js?v=33.621"></script>
+<script src="/workspace-ui.js?v=33.621"></script>
 </body>
 </html>

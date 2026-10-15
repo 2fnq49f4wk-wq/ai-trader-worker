@@ -4,7 +4,7 @@ export type ModelKey = "playbook" | "omniq" | "overview" | "mind" | "gbdt" | "xg
 /* [V33.617] 위원회(AI_PRIMARY) 모델(MIND·GBDT·XGB·LGB·CAT·MEMO·SEQ·이중헤드)과 옛 OMNI(분봉)는 퇴역 — 목록에서 뺐다.
    남는 것: 주력 매매법 AI · 후보 선별 OMNI-Q(옛 OMNI 신경망 화면을 이어받음). */
 export const MODELS: { key: ModelKey; roster: string; name: string; short: string; group: string; what: string }[] = [
-  { key: "playbook", roster: "", name: "매매법 AI", short: "매매법", group: "주력", what: "확률 높은 종목(OMNI-Q 상위 20%) → 지금 뜬 매매법 중 닮은 과거에서 성적이 가장 좋은 것으로 사고, 그 매매법의 규칙으로 판다" },
+  { key: "playbook", roster: "", name: "매매법 AI", short: "매매법", group: "주력", what: "후보(OMNI-Q 상위 일부 — 폭은 학습기 검증이 20·40·60%·전 종목 중 고름) → 지금 뜬 매매법 중 닮은 과거에서 성적이 가장 좋은 것으로 사고, 그 매매법의 규칙으로 판다" },
   { key: "omniq", roster: "", name: "OMNI-Q", short: "OMNI-Q", group: "후보 선별", what: "매매법 AI 가 볼 종목을 고르는 순위 신경망(LightGBM) — 동물원·규칙·매매법 신호·실적·뉴스 피처로 5일 뒤 상대 순위를 맞힌다" },
 ];
 

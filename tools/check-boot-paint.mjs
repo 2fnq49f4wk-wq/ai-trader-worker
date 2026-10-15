@@ -34,7 +34,9 @@ const ok = (c, m) => { n++; if (c) console.log("  ok   " + m); else { fail++; co
   ok(/fonts\.googleapis\.com[^>]*media="print"[^>]*onload="this\.media='all'/.test(head),
      "폰트 스타일시트를 비차단으로 받는다(media=print → onload)");
   ok(/<noscript><link[^>]*fonts\.googleapis\.com/.test(head), "JS 가 꺼져 있어도 폰트는 받는다(noscript)");
-  ok(/<html lang="ko" class="lux-booting">/.test(H), "<html> 이 첫 바이트부터 부팅 상태를 들고 있다");
+  ok(/<html lang="ko" class="lux-booting lux-cssw">/.test(H), "<html> 이 첫 바이트부터 부팅 상태(+ [V33.621] 디자인 시트 대기)를 들고 있다");
+  ok(/html\.lux-cssw body>\*:not\(#lux-intro-overlay\)\{visibility:hidden;animation:luxCssReveal 0s linear 6s forwards\}/.test(H) && /SecurityError\) = 못 받은 것/.test(H),
+     "[V33.621] 디자인 시트가 오기 전엔 본문을 감추고(옛 기본 디자인이 먼저 칠해지지 않게) · 실패 시트는 다시 받고 · 6초 뒤엔 CSS 만으로도 드러난다");
   ok(/neural-observatory\.js\?v=[\d.]+" defer><\/script>/.test(H), "무거운 외부 스크립트가 파싱을 안 막는다(defer)");
 }
 // 인트로가 걷힐 때 배경 고정을 푼다 — 안 풀면 라이트 테마 오버스크롤이 어두워진다

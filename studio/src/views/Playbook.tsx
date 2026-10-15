@@ -59,6 +59,12 @@ function Market({ mk, r }: { mk: string; r: any }) {
             <tbody className="bs-num">{v.valCmp.map((c: any, i: number) => { const sel = v.rule && c.rule && c.rule.score === v.rule.score && c.rule.level === v.rule.level;
               return <tr key={i} className="border-t border-line" style={{ color: sel ? "var(--bs-ok)" : "var(--bs-ink2)" }}><td className="py-1.5">{ruleTxt(c.rule)}{sel ? " ✓" : ""}</td><td>{n0(c.n)}</td><td>{pc(c.mean)}</td><td>{f1(c.t, 2)}</td><td>{pc(c.base)}</td></tr>; })}</tbody>
           </table>)}
+        {Array.isArray(v.candCmp) && v.candCmp.length > 0 && (
+          <table className="mt-3 w-full text-[12px]">
+            <thead><tr className="text-left text-[11px] text-ink-3"><th className="py-1.5 font-normal">후보 폭(OMNI-Q 먼저?)</th><th className="font-normal">검증 구간</th><th className="font-normal">판정 평균</th><th className="font-normal">t</th><th className="font-normal">무작위</th><th className="font-normal">거래</th></tr></thead>
+            <tbody className="bs-num">{v.candCmp.map((c: any, i: number) => { const sel = v.candQ === c.q;
+              return <tr key={i} className="border-t border-line" style={{ color: sel ? "var(--bs-ok)" : "var(--bs-ink2)" }}><td className="py-1.5">{c.q > 0 ? "상위 " + Math.round((1 - c.q) * 100) + "%" : "거름 없음(전 종목)"}{sel ? " ✓" : ""}</td><td>{pc(c.val)}</td><td>{pc(c.mean)}</td><td>{f1(c.t, 2)}</td><td>{pc(c.base)}</td><td>{n0(c.n)}</td></tr>; })}</tbody>
+          </table>)}
         {rows.length > 0 && <div className="mt-3"><div className="mb-1 text-[11px] text-ink-3">판정 구간에서 고른 매매법</div><Bars rows={rows} max={8} /></div>}
         {v.exitDiag && (
           <details className="mt-3">
@@ -72,7 +78,7 @@ function Market({ mk, r }: { mk: string; r: any }) {
       </div>);
   };
   return (
-    <Section title={MK[mk] + " 검증"} aside={<span>{r.primary ? "주력 — AI_PRIMARY 퇴역" : "AI_PRIMARY 유지"} · 국면 {r.regime || "—"} · 표 {ago(r.ts)}</span>}>
+    <Section title={MK[mk] + " 검증"} aside={<span>{r.primary ? "주력 — AI_PRIMARY 퇴역" : "AI_PRIMARY 유지(연속 통과 " + (r.passStreak || 0) + "/2)"} · {r.brake && r.brake.on ? "실전 손실 제동 중(" + r.brake.n + "건 " + pc(r.brake.mean) + ")" : "제동 없음"} · 국면 {r.regime || "—"} · 표 {ago(r.ts)}</span>}>
       {one(r.daily && r.daily.val, "일봉 " + n0(r.daily && r.daily.cells) + "칸")}
       {one(r.intra && r.intra.val, "5분 단타 " + n0(r.intra && r.intra.cells) + "칸")}
     </Section>);

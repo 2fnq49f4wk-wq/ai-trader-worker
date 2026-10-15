@@ -184,8 +184,11 @@ html:is(:root,[data-theme]) body #page-macro .macro-table-wrap { overflow-x:auto
 
 /* [V33.466] Brain Studio — '02 모델 구조' 한 화면. 붙으면(.bs-on) 옛 검증 카드·옛 구조 창을 숨긴다(못 붙으면 옛 화면 그대로). */
 #page-nnviz:not([data-brain-view="models"]) #brain-studio { display:none; }
-#page-nnviz[data-brain-view="models"] #brain-studio:empty { display:none; }
-#page-nnviz.bs-on[data-brain-view="models"] :is(#modelEvidence,#nnvStruct) { display:none !important; }
+/* [V33.621] ★옛 화면은 붙기 전·실패해도 안 보인다★ — 사용자 10/15 "로딩이 안 되면 옛날 디자인이 뜬다". 종전엔 Brain Studio 가 붙은 뒤(.bs-on)에만 옛 카드를 숨겨,
+   불러오는 동안·실패하면 옛 검증 카드·옛 구조 창이 그대로 보였다. 이제 언제나 숨기고 #brain-studio 자리에 '불러오는 중 / 다시 시도' 를 둔다(workspace-ui.js). */
+#page-nnviz[data-brain-view="models"] :is(#modelEvidence,#nnvStruct) { display:none !important; }
+#brain-studio .bs-wait{padding:28px 18px;border:1px solid rgba(230,233,238,.12);border-radius:12px;color:#8b95a5;font-size:13px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+#brain-studio .bs-wait button{font:inherit;font-size:12px;padding:5px 12px;border-radius:7px;border:1px solid currentColor;background:transparent;color:#e6e9ee;cursor:pointer}
 #page-nnviz #brain-studio { padding:6px 0 28px; min-width:0; }
 
 /* ══ [V33.466] 두뇌 화면 머리 — 조용하고 촘촘하게(사용자: "저급해 보인다 · 정보가 여기저기 퍼져 있다") ══
@@ -219,4 +222,4 @@ html:is(:root,[data-theme]) body #page-nnviz.page .nnv-health-time { margin-left
 /* [V33.614] 매매법 AI 주력(한 시장 이상) — 01 작동 화면은 매매법 AI 만(AI_PRIMARY·위원회 화면 퇴역) */
 /* [V33.620] 01 작동 화면 = 매매법 AI 하나(옛 위원회 'AI 스캔 순회'·요약 띠는 매매법 AI 의 'AI 스캔 · 매매법 판정' 으로 합쳤다 — 사용자 10/15) */
 #page-nnviz[data-brain-view="operations"] .nnviz-content > :not(.nnv-head):not(.mission-nav):not(#pbObs) { display:none!important; }
-#page-nnviz.pb-primary[data-brain-view="models"] .nnviz-content > :not(.nnv-head):not(.mission-nav):not(#brain-studio) { display:none!important; }
+#page-nnviz[data-brain-view="models"] .nnviz-content > :not(.nnv-head):not(.mission-nav):not(#brain-studio) { display:none!important; }   /* [V33.621] 주력 여부와 무관 */

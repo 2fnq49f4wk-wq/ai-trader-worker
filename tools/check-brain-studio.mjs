@@ -60,8 +60,8 @@ chk(/onPick=\{setSel\} apiRef=\{api\}/.test(OS) && /<NodeRoles sc=\{sc\} sel=\{s
 console.log("⑤ 사이트 배선");
 const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8"), WU = readFileSync(new URL("../public/workspace-ui.js", import.meta.url), "utf8"), WL = readFileSync(new URL("../public/workspace-layout.css", import.meta.url), "utf8");
 chk(/<div id="brain-studio" class="bs-mount"><\/div>/.test(H), "index.html 에 #brain-studio 자리", "★붙일 자리가 없다★");
-chk(/sc\.src = '\/brain-studio\.js\?v='/.test(WU) && /if \(!ok && typeof window\.openNnViz === 'function'\) window\.openNnViz\(\);/.test(WU) && /brain\.classList\.add\('bs-on'\)/.test(WU),
-  "'02 모델 구조' 를 열 때 불러와 붙이고 · 못 붙으면 옛 화면", "★배선이 틀렸다★");
-chk(/#page-nnviz\.bs-on\[data-brain-view="models"\] :is\(#modelEvidence,#nnvStruct\) \{ display:none !important; \}/.test(WL), "붙으면 옛 검증 카드·옛 구조 창을 숨긴다", "★옛 화면과 새 화면이 겹친다★");
+chk(/sc\.src = '\/brain-studio\.js\?v='/.test(WU) && !/window\.openNnViz\(\);/.test(WU) && /brain\.classList\.add\('bs-on'\)/.test(WU) && /studioTry < 3/.test(WU) && /data-bs-retry/.test(WU),
+  "[V33.621] '02 모델 구조' 를 열 때 불러와 붙이고 · 못 붙으면 옛 화면이 아니라 자동 재시도(3번) → '다시 시도' 단추", "★배선이 틀렸다★");
+chk(/#page-nnviz\[data-brain-view="models"\] :is\(#modelEvidence,#nnvStruct\) \{ display:none !important; \}/.test(WL), "[V33.621] 옛 검증 카드·옛 구조 창은 붙기 전·실패해도 언제나 숨긴다", "★옛 화면과 새 화면이 겹친다★");
 if (fails) { console.error("\n✗ Brain Studio 검사 실패 " + fails); process.exit(1); }
 console.log("\n✓ Brain Studio 검사 통과");

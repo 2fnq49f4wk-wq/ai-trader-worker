@@ -91,7 +91,7 @@ try:
             b5.update(got)
         print("   · [매매법시뮬] %s 5분봉 %d종목 수신 (%.0fs)" % (_m, sum(1 for s_ in top if s_ in b5), time.time() - t5))
     playbook_sim.run(daily, mkt, omni.day_key_of_daily, BASE=BASE, HDR=HDR, upload=True, log=print, bars5=b5,
-                     ev_dates=sorted(set(_sr.FOMC) | set(_sr.CPI)), oos=omni_q.LAST_OOS)
+                     ev_dates=sorted(set(_sr.FOMC) | set(_sr.CPI)), oos=omni_q.LAST_OOS, sector=omni_q.SECTOR_NOW)
 except Exception as e:  # noqa: BLE001
     print("   ⚠️ [매매법시뮬] 실패: %s" % e)
 trained = bool(cache.pop("_trained", False))

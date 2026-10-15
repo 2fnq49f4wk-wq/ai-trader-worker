@@ -166,10 +166,11 @@
     var lv = (j.live || {})[mk], r = (j.markets || {})[mk];
     var items = (lv && lv.items) || [];
     var fired = lv && lv.f != null ? lv.f : items.filter(function (x) { return x.fired && x.fired.length; }).length, chosen = lv && lv.c != null ? lv.c : items.filter(function (x) { return x.pb; }).length, act = lv && lv.a != null ? lv.a : items.filter(function (x) { return x.act; }).length;
-    var head = !r ? '매매법 표 대기' : r.primary ? '매매법 AI 주력 운용' : '검증 전 — 그림자 판정';
+    var head = !r ? '매매법 표 대기' : (r.brake && r.brake.on) ? '실전 손실 제동 — 신규 매수 멈춤' : r.primary ? '매매법 AI 주력 운용' : '검증 전 — 그림자 판정';
     var why = !r ? '학습기(GitHub Actions)가 아직 이 시장 표를 올리지 않았습니다.'
-      : r.primary ? '이 시장은 검증을 통과해 AI_PRIMARY 대신 매매법 AI 가 삽니다(크기 ×1.0).'
-      : '후보마다 무엇을 골랐을지 계산만 하고 사지 않습니다. 검증을 통과하면 자동으로 주력이 됩니다(그 전까지 AI_PRIMARY 유지).';
+      : (r.brake && r.brake.on) ? '최근 30일 실제 청산 ' + r.brake.n + '건 평균 ' + r.brake.mean + '% — 시뮬과 실전이 갈라져 새로 사지 않습니다(보유 청산은 그대로).'
+      : r.primary ? '이 시장은 검증을 2회 연속 통과해 AI_PRIMARY 대신 매매법 AI 가 삽니다(크기 ×1.0).'
+      : '후보마다 무엇을 골랐을지 계산만 하고 사지 않습니다. 검증을 2회 연속 통과하면 자동으로 주력이 됩니다(지금 연속 ' + (r.passStreak || 0) + '/2 · 그 전까지 AI_PRIMARY 유지).';
     return '<section class="k-panel k-brief"><div><span class="k-lab">PLAYBOOK · DECISION STATE</span><strong>' + esc(head) + '</strong><p>' + esc(why) + '</p></div>' +
       '<div><span class="k-lab">CANDIDATES</span><dd>' + ((lv && lv.n) || 0) + '</dd><small>OMNI-Q 상위 ' + candPct(j, mk) + '% 평가</small></div>' +
       '<div><span class="k-lab">FIRED</span><dd>' + fired + '</dd><small>지금 매매법 신호 뜸</small></div>' +
@@ -255,7 +256,7 @@
   function load() {
     if (busy || !root) return;
     busy = true;
-    fetch('/api/playbook', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) { data = j || {}; primaryMode(data); render(); })
+    fetch('/api/playbook', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) { data = j || {}; window.__pbState = data; primaryMode(data); render(); })
       .catch(function () { if (root && !data) root.innerHTML = '<section class="k-panel"><div class="k-empty">매매법 AI 상태를 불러오지 못했습니다. 잠시 뒤 다시 시도합니다.</div></section>'; })
       .then(function () { busy = false; });
   }

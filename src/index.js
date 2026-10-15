@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.620";
+const _BUILD_VER = "V33.621";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13543,12 +13543,33 @@ const PB_KEYS = { rsi: [30, 50, 70], gap20: [-5, 0, 5], ret5: [-3, 3], vr: [0.8,
    되돌리려면 false. 저장된 모델 파일은 지우지 않는다. */
 const COMMITTEE_RETIRED = true;
 const PB_PRIMARY_CAPS = { maxPerCycle: 2, maxPerDay: 6, maxOpen: 12, mult: 1.0 };
-function pbPrimaryOn(st, nowMs) { return !!(st && st.daily && _pbPass(st.daily.val) && (nowMs - _num(st.ts, 0)) <= STRAT_ROUTE.freshMs); }
-const PB_ROUTE = { candMin: 0.80, minWin: 0, intraMinToClose: 30, eodMin: 10, regMin: 390, intraFetchMax: 8, dailyEntryWin: 60, liveKeep: 60,
+/* [V33.621] ★주력 전환은 2회 연속 통과★ — 한 번의 검증 통과(판정 구간 t ≥ 2)는 운일 수 있다. 통과가 학습 회차 2번 연속(passStreak ≥ 2)일 때만
+   AI_PRIMARY 를 퇴역시키고 전 크기로 산다. 그 전엔 시험 크기(×0.5 · 하루 3 · 동시 6). */
+const PB_PRIMARY_STREAK = 2;
+function pbPrimaryOn(st, nowMs) { return !!(st && st.daily && _pbPass(st.daily.val) && _num(st.passStreak, 0) >= PB_PRIMARY_STREAK && (nowMs - _num(st.ts, 0)) <= STRAT_ROUTE.freshMs); }
+/* [V33.621] ★실전 손실 제동★ — 매매법 AI 실제 청산(원장 SELL · 사유 SR-*) 최근 30일이 표본 ≥ 12 · 평균 ≤ −0.4% 이면 그 시장 신규 매수를 멈춘다(보유 청산은 그대로).
+   시뮬과 실전이 갈라지는(체결가·시간·데이터) 손실을 시뮬이 못 본다 — 실제 돈 흐름으로 거는 마지막 안전장치. 30분마다 다시 잰다(상태 캐시). */
+const PB_BRAKE = { days: 30, minN: 12, mean: -0.4, everyMs: 30 * 60000 };
+async function pbLiveBrake(DB, market, nowMs) {
+  const key = "pb_brake:" + market;
+  let b = null;
+  try { b = await getState(DB, key, null); } catch (e) {}
+  if (b && nowMs - _num(b.ts, 0) < PB_BRAKE.everyMs) return b;
+  try {
+    const r = await DB.prepare("SELECT COUNT(*) AS n, AVG(pnl_pct) AS m FROM trades WHERE market = ? AND side = 'SELL' AND reason LIKE 'SR-%' AND ts > ?")
+      .bind(market, nowMs - PB_BRAKE.days * 86400000).first();
+    const n = _num(r && r.n, 0), m = _num(r && r.m, 0);
+    b = { ts: nowMs, n: n, mean: +m.toFixed(3), on: n >= PB_BRAKE.minN && m <= PB_BRAKE.mean };
+    await setState(DB, key, b);
+  } catch (e) { b = b || { ts: nowMs, n: 0, mean: 0, on: false, err: true }; }
+  return b;
+}
+const PB_SECTOR_MAX = 3;   // [V33.621] 같은 섹터(학습기 자동 배정) 매매법 보유 상한 — 한 섹터 급락에 몰려 맞지 않게
+const PB_ROUTE = { candMin: 0.80, minWin: 0, intraMinToClose: 30, eodMin: 10, regMin: 390, intraFetchMax: 8, dailyEntryWin: 30, liveKeep: 60,
                    promoteMax: 25, intraPreMax: 40,
                    candDailyWin: 80, candDailyMax: 8, candDailyMin: 20 };   // [V33.618] 마감 전 80분부터 후보 일봉을 사이클당 8개씩 · 20분 수명으로 갱신   // [V33.614] promoteMax: 살 수 있는 후보 앞당김 상한 · intraPreMax: 후보 분봉 선행 병렬 조회 상한   // dailyEntryWin: 일봉 매매법 진입 = 마감 전 60분 · liveKeep: 관측창에 남길 후보 수   // intraFetchMax: 사이클당 후보 분봉 조회 상한
 /* [V33.620] 후보 폭(OMNI-Q 상위 몇 %)도 학습기 검증이 고른다(상위 20·40·60% 중 검증 구간 성적이 가장 좋은 것) — 표에 없으면 상위 20% */
-function pbCandMin(st) { const q = st && st.daily && st.daily.val && st.daily.val.candQ; return (typeof q === "number" && q >= 0.3 && q <= 0.95) ? q : PB_ROUTE.candMin; }
+function pbCandMin(st) { const q = st && st.daily && st.daily.val && st.daily.val.candQ; return (typeof q === "number" && q >= 0 && q <= 0.95) ? q : PB_ROUTE.candMin; }   // [V33.621] 0 = OMNI-Q 거름 없음(검증이 고를 수 있다)
 function _pbBk(x, e) { if (!(typeof x === "number" && isFinite(x))) return e.length; let k = 0; while (k < e.length && x >= e[k]) k++; return k; }
 function pbDailyKeys(reg, rsi, gap20, ret5, vr, evNear) {
   const r = String(reg || "NEUTRAL");
@@ -24054,7 +24075,10 @@ async function runTradingCycle(env) {
       let __pbFetch = 0;   // [V33.608] 이번 사이클 후보 분봉 조회 수
       const __pbLive = [];   // [V33.610] 이번 사이클 후보별 매매법 판정(관측창)
       const __pbPrim = pbPrimaryOn(__sr, Date.now()), __pbCap = __pbPrim ? PB_PRIMARY_CAPS : STRAT_ROUTE;   // [V33.609] 주력 전환(이 시장 AI_PRIMARY 신규 진입 끔)
-      for (const _pk in positions) { const _pm = positions[_pk] && positions[_pk].meta; if (_pm && _pm.sr) __srOpen++; }
+      const __srSec = {};   // [V33.621] 섹터별 매매법 보유 수
+      for (const _pk in positions) { const _pm = positions[_pk] && positions[_pk].meta; if (_pm && _pm.sr) { __srOpen++; const _sc = __sr && __sr.sector && __sr.sector[positions[_pk].symbol]; if (_sc) __srSec[_sc] = (__srSec[_sc] || 0) + 1; } }
+      let __pbBrake = null;
+      try { if (__sr) __pbBrake = await pbLiveBrake(DB, market, Date.now()); } catch (e) { __pbBrake = null; }
       const feeRate = market === "us" ? mcfg.feeUS : mcfg.feeKR;
       const regime = regimes[market];
       // [V33.119] 국면 스냅샷을 남긴다 — AI 두뇌 창이 "폭등 레버리지가 왜 안 열리나" 를
@@ -24901,6 +24925,16 @@ async function runTradingCycle(env) {
             "종목 중 " + _trigPromoted + "종목 우선평가(나머지는 순환 순서 유지) — " + _trigTop.join(", "));
         } catch (e) {}
       }
+      /* [V33.621] ★보유 종목은 사이클마다 맨 먼저 평가★ — 손절은 fastWatch(8초)가 보지만 매매법 익절·평균회귀(마감 전 30분)·기간 청산은 이 루프에서만 본다.
+         라운드로빈(557종목 · 40초 예산)이면 보유 종목이 마감 창에 한 번도 안 걸려 청산을 놓칠 수 있었다(시뮬보다 오래 들고 손실). 순환 진도로는 세지 않는다. */
+      try {
+        const _hf = orderedEval.filter(function (it) { return it && heldSymbols.has(it.symbol); });
+        if (_hf.length) {
+          const _hs = new Set(_hf);
+          orderedEval = _hf.concat(orderedEval.filter(function (it) { return !_hs.has(it); }));
+          for (const it of _hf) _evalPromoted.add(it);
+        }
+      } catch (e) {}
       let evalProcessed = 0, evalTimedOut = false, _evalAdv = 0;
       // [V33.172] 부가조회 공용 지갑 — 기능별 개별 예산의 합이 예산을 넘던 문제를 총량으로 막는다.
       //   phase 는 '어디에 시간이 갔는지'를 사이클마다 한 줄로 남기기 위한 계측이다(D1 write 0).
@@ -26181,7 +26215,9 @@ async function runTradingCycle(env) {
             const _pbS = (__sr && omniqFresh(__omniq, Date.now())) ? _omqScore(__omniq, 5, symbol) : null;
             if (_pbS != null && _pbS >= pbCandMin(__sr) && daily && daily.closes) {
               const _held = heldSymbols.has(symbol);
-              const _canBuy = !_held && !crashGate.blockNew && canTrade && __srBought < __pbCap.maxPerCycle && __srOpen < __pbCap.maxOpen;
+              const _pbSec = __sr.sector && __sr.sector[symbol];
+              const _secFull = !!(_pbSec && (__srSec[_pbSec] || 0) >= PB_SECTOR_MAX), _braked = !!(__pbBrake && __pbBrake.on);
+              const _canBuy = !_held && !crashGate.blockNew && canTrade && __srBought < __pbCap.maxPerCycle && __srOpen < __pbCap.maxOpen && !_secFull && !_braked;
               let _pb5 = null;
               const _pbPreMb = (_canBuy && __pbMb) ? __pbMb.take(symbol) : null;   // [V33.614] 선행 병렬 조회분
               if (_canBuy && __sr.intra && _pbPass(__sr.intra.val) && __pbMtc != null && __pbMtc >= PB_ROUTE.intraMinToClose && (_pbPreMb || __pbFetch < PB_ROUTE.intraFetchMax)) {
@@ -26207,8 +26243,9 @@ async function runTradingCycle(env) {
                              act: null, why: null };
               pbRecExtra(_rec, _sh, _pbCtx.D);
               if (_held) _rec.why = "보유 중";
-              else if (!_sp) _rec.why = (_sh && _sh.why) || (_sh && _sh.pb ? (_sh.outWin && _sh.kind === "daily" && __sr.daily && _pbPass(__sr.daily.val) ? "마감 전 60분에 매수 판정" : "검증 미통과 — 기록만(그림자)") : "고를 매매법 없음");
-              else if (!_canBuy) _rec.why = crashGate.blockNew ? "폭락 관문 — 신규 매수 금지" : !canTrade ? "거래 불가 시간" : "매매법 AI 상한";
+              else if (!_sp) _rec.why = (_sh && _sh.why) || (_sh && _sh.pb ? (_sh.outWin && _sh.kind === "daily" && __sr.daily && _pbPass(__sr.daily.val) ? "마감 전 30분에 매수 판정" : "검증 미통과 — 기록만(그림자)") : "고를 매매법 없음");
+              else if (!_canBuy) _rec.why = crashGate.blockNew ? "폭락 관문 — 신규 매수 금지" : !canTrade ? "거래 불가 시간"
+                : _braked ? "실전 손실 제동(최근 30일 " + __pbBrake.n + "건 평균 " + __pbBrake.mean + "%)" : _secFull ? "같은 섹터 보유 상한(" + _pbSec + " " + PB_SECTOR_MAX + ")" : "매매법 AI 상한";
               if (_sp && _canBuy) {
                 if (__srToday == null) {
                   try { const _r = await DB.prepare("SELECT COUNT(*) AS n FROM trades WHERE market = ? AND side = 'BUY' AND ts > ? AND reason LIKE '[SROUTE]%'").bind(market, Date.now() - 18 * 3600000).first(); __srToday = _num(_r && _r.n, 0); } catch (e) { __srToday = STRAT_ROUTE.maxPerDay; }
@@ -27521,7 +27558,7 @@ async function runTradingCycle(env) {
                 bought++; __funBuy++;   // [V33.407] 깔때기 — 실제 체결
                 if (signal && signal.isOmniQ) { __omqBought++; __omqOpen++; }
                 if (signal && signal.isPair) { __prBought++; __prOpen++; }
-                if (signal && signal.isStratRoute) { __srBought++; __srOpen++; }   // [V33.603] 매매법 선택 AI 상한도 체결 기준   // [V33.594] 페어 경로 상한도 체결 기준   // [V33.578] OMNI-Q 경로 상한은 체결 기준
+                if (signal && signal.isStratRoute) { __srBought++; __srOpen++; const _sc2 = __sr && __sr.sector && __sr.sector[symbol]; if (_sc2) __srSec[_sc2] = (__srSec[_sc2] || 0) + 1; }   // [V33.603] 매매법 선택 AI 상한도 체결 기준   // [V33.594] 페어 경로 상한도 체결 기준   // [V33.578] OMNI-Q 경로 상한은 체결 기준
                 boughtThisSymbol = true;
                 heldSymbols.add(symbol);
                 strategiesHeldNow.add(strategy);
@@ -30860,8 +30897,10 @@ async function handleRequest(request, env, ctx, _inner) {
       /* [V33.620] cross(횡단면 3종 '오늘 뜬 종목') · gate(매매법 최근 성적) 도 남긴다 — 종전엔 cross 를 버려 상대강도·5일 낙폭·듀얼 모멘텀이 실전 판정에서 한 번도 안 떴다 */
       const part = function (x) { return (x && typeof x === "object") ? { val: x.val || {}, table: (x.table && typeof x.table === "object") ? x.table : {}, pb: x.pb || {},
                                                                           cross: (x.cross && typeof x.cross === "object") ? x.cross : {}, gate: (x.gate && typeof x.gate === "object") ? x.gate : null } : null; };
-      const rec = { ts: Date.now(), day: String(body.day || ""), regime: String(body.regime || "NEUTRAL"), daily: part(body.daily), intra: part(body.intra) };
+      const rec = { ts: Date.now(), day: String(body.day || ""), regime: String(body.regime || "NEUTRAL"), daily: part(body.daily), intra: part(body.intra),
+                    sector: (body.sector && typeof body.sector === "object") ? body.sector : null };   // [V33.621] 종목 → 섹터(학습기 자동 배정 · 섹터 보유 상한)
       rec.pass = { daily: _pbPass(rec.daily && rec.daily.val), intra: _pbPass(rec.intra && rec.intra.val) };
+      try { const _prev = await getState(env.DB, "playbook:" + mk, null); rec.passStreak = rec.pass.daily ? _num(_prev && _prev.passStreak, 0) + 1 : 0; } catch (e) { rec.passStreak = rec.pass.daily ? 1 : 0; }   // [V33.621] 연속 통과 수
       const _sz = JSON.stringify(rec).length;
       if (_sz > 1800000) return Response.json({ error: "표가 너무 크다(" + _sz + "B > 1.8MB) — 학습기 export 문턱을 올려라" }, { status: 413, headers: cors });
       await setState(env.DB, "playbook:" + mk, rec);
@@ -30873,7 +30912,8 @@ async function handleRequest(request, env, ctx, _inner) {
       const out = {};
       for (const mk of ["us", "kr"]) {
         const r = await getState(env.DB, "playbook:" + mk, null);
-        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, pass: r.pass, primary: pbPrimaryOn(r, Date.now()),
+        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, pass: r.pass, primary: pbPrimaryOn(r, Date.now()), passStreak: r.passStreak || 0,
+                        brake: await getState(env.DB, "pb_brake:" + mk, null).catch(function () { return null; }),
                         daily: r.daily && { val: r.daily.val, cells: Object.keys(r.daily.table || {}).length, pb: r.daily.pb, gate: r.daily.gate || null,
                                             cross: Object.fromEntries(Object.keys(r.daily.cross || {}).map(function (k) { return [k, (r.daily.cross[k] || []).length]; })) },
                         intra: r.intra && { val: r.intra.val, cells: Object.keys(r.intra.table || {}).length, pb: r.intra.pb } } : null;
