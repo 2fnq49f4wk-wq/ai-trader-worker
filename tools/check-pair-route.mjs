@@ -25,7 +25,7 @@ chk(!pairRoutePick(ext, "A", 100 * Math.exp(-0.12), 120, 100, now), "MA50×0.93 
 chk(!!pairRoutePick(ext, "A", 88, 90, null, now), "짝 시세가 없으면 종가 z(−2.5)로");
 chk(PAIR_ROUTE.mult === 0.5 && PAIR_ROUTE.maxPerDay === 2 && PAIR_ROUTE.maxOpen === 4 && PAIR_ROUTE.exitZ === 0 && PAIR_ROUTE.maxHoldCal === 14, "미리 고정 값(×0.5 · 하루 2 · 동시 4 · z≥0 · 14일)");
 chk(/\(signal && signal\.isPair\) \? "PAIR"/.test(S) && /reason: "\[" \+ _entryTag\(signal\) \+ "\]\[" \+ strategy\.toUpperCase\(\) \+ "\] "/.test(S), "원장 꼬리표 [PAIR][SNAP] — 실적 관문이 따로 센다");
-chk(/if \(signal\.isOmniQ \|\| signal\.isPair \|\| _regimeScalp\(signal\)\) \{/.test(S), "위원회는 막지도 키우지도 않는다(기록만)");
+chk(/if \(signal\.isOmniQ \|\| signal\.isPair( \|\| signal\.isStratRoute)? \|\| _regimeScalp\(signal\)\) \{/.test(S), "위원회는 막지도 키우지도 않는다(기록만)");
 chk(/if \(signal && signal\.isPair && PAIR_ROUTE\.mult > 0 && PAIR_ROUTE\.mult < 1\) \{/.test(S), "잠정 ×0.5 는 상한 뒤에 곱한다");
 chk(/"PAIR-REVERT z "/.test(S) && /"PAIR-TIME "/.test(S) && /_pairHeld = true; _omqHeld = true;/.test(S) && /!_pairHeld && daily/.test(S), "청산 z≥0 · 14일 · 관리 중 AI_EXIT·MODEL_EXIT 제외");
 chk(/pass: !!\(bt\.pass === true && _num\(bt\.n, 0\) >= 100 && _num\(bt\.meanEx, 0\) > 0 && _num\(bt\.t, 0\) >= 2\)/.test(S), "업로드 때 워커가 통과를 다시 판정");

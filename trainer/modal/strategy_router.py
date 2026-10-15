@@ -1,4 +1,4 @@
-"""[V33.602 · Phase B+C] 매매법 선택 AI(Strategy-Router) — 표본 생성 + 걷기 검증 · GitHub Actions(무료)에서 돈다. ★주문 영향 없음(그림자)★
+"""[V33.602 · Phase B+C] 매매법 선택 AI(Strategy-Router) — 표본 생성 + 걷기 검증 · GitHub Actions(무료)에서 돈다. [V33.603] 관문 통과 시장은 워커 STRAT_ROUTE 가 picks 를 실제로 산다
 
 Phase B  표본: 도감(strategy_catalog) 17개 매매법이 전 종목 일봉에서 낸 신호마다 '그 매매법의 청산 프로필대로 샀다면' 을 계산한다
          → [매매법 · 종목 · 날짜 · 국면 · 순초과수익(시장 동일가중 대비 · 왕복비용 차감) · 보유일].
@@ -13,7 +13,7 @@ Phase C  선택: 날짜 d 에는 d 이전에 ★끝난★ 표본만 보고 (매�
   수축   k = 30 (n 개 표본의 평균을 묶음 평균 쪽으로 k/(n+k) 만큼)
   걷기   21거래일마다 다시 추정 · 최근 500거래일
   관문   거래 ≥ 100 · 평균 순초과 > 0 · t ≥ 2.0 · 그리고 '도감 신호 전부 사기' 보다 평균이 높다 → pass.
-         pass 여도 이번 단계는 기록만 한다(그림자 4주 · 실전 연결은 사용자 결정).
+         pass 한 시장만 워커가 산다(잠정 ×0.5 · 관문은 워커가 다시 판정).
 """
 import math
 import time
@@ -206,7 +206,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             for j in np.nonzero(sig[s["id"]].values[-1])[0]:
                 sym = syms[j]
                 if sym not in picks or picks[sym]["mu"] < mu:
-                    picks[sym] = {"sid": s["id"], "mu": round(mu, 4), "n": n}
+                    picks[sym] = {"sid": s["id"], "mu": round(mu, 4), "n": n, "hold": s["exit"]["hold"], "horizon": s["horizon"]}
         sel = sorted(({"sid": k[0], "mu": round(v[0], 4), "n": v[1]} for k, v in est.items() if k[1] == now and v[1] >= MIN_N_SEL),
                      key=lambda r: -r["mu"])
         day = str(P["close"].index[-1])

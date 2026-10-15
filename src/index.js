@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.602";
+const _BUILD_VER = "V33.603";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13517,6 +13517,25 @@ function pairRoutePick(ext, symbol, price, ma50, pbNow, nowMs) {
   if (z == null || z > PAIR_ROUTE.entryZ) return null;
   return { b: pr.b, pr: pr, z: z };
 }
+/* [V33.603] ★매매법 선택 AI(STRAT_ROUTE) — 실전 경로★ (사용자 10/15: "리포트 말고 실제 제작")
+   외부(GHA · strategy_router.py)가 매일 도감 17종 × 국면별 기대수익(베이즈 수축 · 과거에 끝난 표본만)을 추정해
+   '지금 국면에서 기대수익 > 0 인 매매법' 의 오늘 신호를 종목마다 하나씩 고른다(picks). 워커는 그 종목을 그 매매법 이름으로 산다.
+   관문(미리 고정 · 워커가 다시 판정): 걷기 검증 n ≥ 100 · 평균 순초과 > 0 · t ≥ 2 · '도감 신호 전부 사기' 보다 높음 — 못 넘은 시장은 사지 않는다.
+   크기 잠정 ×0.5 · 사이클 1 · 하루 3 · 동시 6 · 신선도 36시간. 청산: 손절·트레일·EOD 는 그대로 + 그 매매법 최대 보유일(거래일×1.45 달력일) → SR-TIME.
+   위원회는 막지도 키우지도 않는다(페어와 같다) · 실적 관문은 자기 키(시장:SROUTE:전략)로 따로 본다 · 위험 관문은 전부 그대로. */
+const STRAT_ROUTE = { enabled: true, maxPerCycle: 1, maxPerDay: 3, maxOpen: 6, mult: 0.5, freshMs: 36 * 3600000, calPerTradingDay: 1.45 };
+function stratRoutePass(ext) {
+  const wf = ext && ext.wf, rt = wf && wf.router, bs = wf && wf.baseline;
+  return !!(rt && bs && _num(rt.n, 0) >= 100 && _num(rt.mean, 0) > 0 && _num(rt.t, 0) >= 2 && _num(rt.mean, -99) > _num(bs.mean, 99));
+}
+function stratRoutePick(ext, symbol, nowMs) {
+  if (!STRAT_ROUTE.enabled || !ext || !ext.picks || !stratRoutePass(ext)) return null;
+  if (!(nowMs - _num(ext.ts, 0) <= STRAT_ROUTE.freshMs)) return null;
+  const p = ext.picks[symbol];
+  if (!p || !p.sid || !(_num(p.mu, 0) > 0)) return null;
+  const hold = Math.max(1, Math.min(40, _num(p.hold, 10)));
+  return { sid: String(p.sid), mu: _num(p.mu, 0), n: _num(p.n, 0), hold: hold, horizon: p.horizon === "swing" ? "swing" : "snap" };
+}
 function _omqHeadOn(st, h) {
   if (!st) return null;
   const g = h === 20 ? st.gate20 : st.gate, sp = h === 20 ? st.speak20 : st.speak;
@@ -19756,7 +19775,7 @@ const PERF_GATE = { windowDays: 180, maxN: 40, minN: 15, blockPf: 0.8, coolDays:
    실적 관문 구역 안에 둔다 — 관문 검사(tools/check-perf-gate)가 이 구역만 떼어 돌리므로, 밖에 두면 참조 오류가 catch 에 삼켜져 '막지 않음' 으로 샌다. */
 function _entryTag(signal) {
   // [V33.582] 패닉 단타는 PANIC 으로 따로 센다 — 평시 규칙 단타(kr:RULE:SCALP 막힘)의 성적으로 폭락날 인버스 단타를 막지 않는다(자기 성적으로 판정)
-  return (signal && signal.isPanicScalp) ? "PANIC" : (signal && signal.isSurgeScalp) ? "SURGE" : (signal && signal.isAiScalp) ? "AI-SCALP" : (signal && signal.isOmniQ) ? "AI-Q" : (signal && signal.isPair) ? "PAIR" : (signal && signal.isAiPrimary) ? "AI" : "RULE";
+  return (signal && signal.isPanicScalp) ? "PANIC" : (signal && signal.isSurgeScalp) ? "SURGE" : (signal && signal.isAiScalp) ? "AI-SCALP" : (signal && signal.isOmniQ) ? "AI-Q" : (signal && signal.isPair) ? "PAIR" : (signal && signal.isStratRoute) ? "SROUTE" : (signal && signal.isAiPrimary) ? "AI" : "RULE";
 }
 function _pgTag(reason) {
   const s = String(reason || "");
@@ -19920,7 +19939,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
      (2배 상품의 밤사이 갭이 손절을 뛰어넘는다). 스냅은 이미 제외 · 규칙 추세는 ADX 로 축소 중 · 꼬리위험 헤지(hedge)는 그대로. */
   if (strategy !== "hedge" && ((typeof LEVERAGED_ETF !== "undefined" && LEVERAGED_ETF.has(symbol)) || (typeof INVERSE_ETF !== "undefined" && INVERSE_ETF.has(symbol)))
       && !_regimeScalp(signal)   // [V33.582·583 폭등 레버리지 롱 포함] 폭락날 인버스 단타(SC_PANIC_INV)는 설계상 이 ETF 를 쓴다 — 당일 청산 단타라 밤사이 갭(V33.506 의 근거)이 없다
-      && (strategy === "scalp" || (signal && (signal.isAiPrimary || signal.isAiScalp || signal.isOmniQ || signal.isPair))) && !(cfg && cfg.levEtfAiEntries === true)) {
+      && (strategy === "scalp" || (signal && (signal.isAiPrimary || signal.isAiScalp || signal.isOmniQ || signal.isPair || signal.isStratRoute))) && !(cfg && cfg.levEtfAiEntries === true)) {
     await log(DB, "INFO", symbol, "BUY 레버리지·인버스 ETF — AI·단타 진입 제외(" + strategy + ")");
     return cash;
   }
@@ -19928,6 +19947,9 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   /* [V33.578] OMNI-Q 잠정 크기 — 수량 상한·예산·실적 관문을 다 지난 ★뒤★ 곱한다(앞에서 곱하면 종목비중 상한에 눌려 반 크기가 사라진다). */
   if (signal && signal.isOmniQ && typeof signal.omqMult === "number" && signal.omqMult > 0 && signal.omqMult < 1) {
     qty = Math.floor(qty * signal.omqMult); if (qty <= 0) return cash;
+  }
+  if (signal && signal.isStratRoute && STRAT_ROUTE.mult > 0 && STRAT_ROUTE.mult < 1) {   // [V33.603] 매매법 선택 AI 잠정 크기
+    qty = Math.floor(qty * STRAT_ROUTE.mult); if (qty <= 0) return cash;
   }
   if (signal && signal.isPair && PAIR_ROUTE.mult > 0 && PAIR_ROUTE.mult < 1) {   // [V33.594] 페어 잠정 크기 — 같은 자리(상한 뒤)
     qty = Math.floor(qty * PAIR_ROUTE.mult); if (qty <= 0) return cash;
@@ -20100,7 +20122,8 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
           aiSetup: signal.setup || null,
           // [V33.578] OMNI-Q 가 관리하는 보유 — 머리(5·20일) · 진입 점수 · 상태 · 채점일. 있으면 보유/청산을 OMNI-Q 띠가 정한다(omniqHoldOf).
           omq: (signal && signal.isOmniQ && signal.omq) ? signal.omq : null,
-          pair: (signal && signal.isPair && signal.pair) ? signal.pair : null,   // [V33.594] 페어 관리 보유 — z ≥ 0 이면 PAIR-REVERT
+          pair: (signal && signal.isPair && signal.pair) ? signal.pair : null,
+          sr: (signal && signal.isStratRoute && signal.sr) ? signal.sr : null,   // [V33.603] 매매법 선택 AI 관리 보유 — 그 매매법의 최대 보유일이 지나면 SR-TIME   // [V33.594] 페어 관리 보유 — z ≥ 0 이면 PAIR-REVERT
           tp1Done: false, originalQty: qty,
           // [LUX-AI] 청산 시 학습용 — 진입 피처/사건키/모델확률/밴딧 컨텍스트
           entryFeatures: (signal && Array.isArray(signal.mlFeat)) ? signal.mlFeat : null,
@@ -21719,7 +21742,7 @@ function sigStatsByMarket(rows, perMkt) {
      실적 관문에 맡긴다(시험이면 반 크기 · 8건 뒤 여전히 지면 다시 7일 차단). 실적 관문에 기록이 없는 AI 키(예: 한국 AI 스냅)는 종전대로 막는다.
      규칙 신호는 그대로다. 문턱(30건 · 기대값 < 0 · 평균 < 0)도 실적 관문 문턱도 하나도 안 바꾼다. */
 function negExpDefersToPerfGate(pg, market, signal, strategy) {
-  if (!(signal && (signal.isAiPrimary || signal.isAiScalp || signal.isOmniQ || signal.isPair))) return false;
+  if (!(signal && (signal.isAiPrimary || signal.isAiScalp || signal.isOmniQ || signal.isPair || signal.isStratRoute))) return false;
   const e = pg && pg.keys && pg.keys[market + ":" + _entryTag(signal) + ":" + String(strategy || "").toUpperCase()];
   return !!(e && (e.mode === "probation" || (e.mode === "open" && _num(e.n, 0) >= PERF_GATE.minN)));
 }
@@ -23610,6 +23633,10 @@ async function runTradingCycle(env) {
       let __pairs = null, __prBought = 0, __prToday = null, __prOpen = 0;
       try { if (PAIR_ROUTE.enabled && (market === "us" || market === "kr")) __pairs = await getState(DB, "rv_pairs:" + market, null); } catch (e) { __pairs = null; }
       for (const _pk in positions) { const _pm = positions[_pk] && positions[_pk].meta; if (_pm && _pm.pair) __prOpen++; }
+      /* [V33.603] 매매법 선택 AI 경로 — 외부 선택 · 이번 사이클/오늘 체결 · 관리 중 보유 */
+      let __sr = null, __srBought = 0, __srToday = null, __srOpen = 0;
+      try { if (STRAT_ROUTE.enabled && (market === "us" || market === "kr")) __sr = await getState(DB, "strat_router:" + market, null); } catch (e) { __sr = null; }
+      for (const _pk in positions) { const _pm = positions[_pk] && positions[_pk].meta; if (_pm && _pm.sr) __srOpen++; }
       const feeRate = market === "us" ? mcfg.feeUS : mcfg.feeKR;
       const regime = regimes[market];
       // [V33.119] 국면 스냅샷을 남긴다 — AI 두뇌 창이 "폭등 레버리지가 왜 안 열리나" 를
@@ -25067,6 +25094,23 @@ async function runTradingCycle(env) {
               } catch (e) {}
             }
 
+            /* [V33.603] ★매매법 선택 AI 관리 보유★ — 그 매매법의 최대 보유일(거래일 × 1.45 달력일)이 지나면 SR-TIME.
+               관리 중엔 위원회 청산(AI_EXIT·ROTATE)을 안 건다 — 걷기 검증이 잰 보유와 다르다. 손절·트레일·EOD 갭은 그대로. */
+            if (held.meta && held.meta.sr && held.meta.sr.sid) {
+              try {
+                const _sm = held.meta.sr;
+                const _hd = (Date.now() - _num(held.opened_ts, Date.now())) / 86400000;
+                if (_hd >= _num(_sm.hold, 10) * STRAT_ROUTE.calPerTradingDay) {
+                  await executeSell(DB, market, symbol, held, held.qty, price, "SR-TIME " + _sm.sid + " " + _hd.toFixed(1) + "일", mcfg, cash);
+                  sold++;
+                  const _sk = Object.keys(positions).some(k => positions[k].symbol === symbol && k !== posKey);
+                  if (!_sk) { heldSymbols.delete(symbol); const _sc = SECTOR_MAP[symbol]; if (_sc && sectorCounts[_sc]) sectorCounts[_sc]--; }
+                  continue;
+                }
+                _omqHeld = true;
+              } catch (e) {}
+            }
+
             // [V22] 모델기반 청산(Learned Exit) — 보유 포지션을 기술예측기로 재평가.
             //   강한 약세전환(상승확률↓·신뢰도↑)이면 청산/이익실현. 저점 투매 방지 가드(minPnlForExit).
             // [V12.105] trend 전략 제외 — trendRules는 TP1(+1R)/TP2(+2.5R)/ATR트레일(3.0×)로 러너를
@@ -25653,6 +25697,26 @@ async function runTradingCycle(env) {
                 }
               }
             }
+            /* [V33.603] ★매매법 선택 AI 진입★(STRAT_ROUTE 주석) — 관문 통과 시장만 · 원장 꼬리표 [SROUTE] */
+            if (__sr && __sr.picks && __sr.picks[symbol] && !heldSymbols.has(symbol) && !crashGate.blockNew && canTrade
+                && __srBought < STRAT_ROUTE.maxPerCycle && __srOpen < STRAT_ROUTE.maxOpen) {
+              const _sp = stratRoutePick(__sr, symbol, Date.now());
+              if (_sp) {
+                if (__srToday == null) {
+                  try { const _r = await DB.prepare("SELECT COUNT(*) AS n FROM trades WHERE market = ? AND side = 'BUY' AND ts > ? AND reason LIKE '[SROUTE]%'").bind(market, Date.now() - 18 * 3600000).first(); __srToday = _num(_r && _r.n, 0); } catch (e) { __srToday = STRAT_ROUTE.maxPerDay; }
+                }
+                if (__srToday + __srBought < STRAT_ROUTE.maxPerDay) {
+                  const _st = _sp.horizon === "swing" ? "trend" : "snap";
+                  if (!strategiesHeldNow.has(_st)) {
+                    stratResults.unshift({ strategy: _st, weight: 1,
+                      signal: { name: "SR_" + _sp.sid, members: [_sp.sid], isStratRoute: true, weight: 1,
+                        sr: { sid: _sp.sid, mu: _sp.mu, hold: _sp.hold, regime: __sr.regime || null, day: __sr.day || null, at: Date.now() },
+                        detail: "매매법AI " + _sp.sid + " · 국면 " + (__sr.regime || "?") + " · 기대 +" + _sp.mu.toFixed(2) + "% (표본 " + _sp.n + ") · 검증 t" +
+                                (__sr.wf && __sr.wf.router && __sr.wf.router.t) + " · 최대 " + _sp.hold + "거래일 · 잠정 ×" + STRAT_ROUTE.mult } });
+                  }
+                }
+              }
+            }
           } catch (e) {}
 
           if (stratResults.length === 0) {
@@ -26093,7 +26157,7 @@ async function runTradingCycle(env) {
               const _ms = __mktStratStats && __mktStratStats[market + "/" + strategy];
               // [V33.578] OMNI-Q 진입도 같은 이유로 예외 — 남의 성적(규칙·위원회 추세)으로 새 모델을 막으면 검증이 불가능하다.
               //   OMNI-Q 자기 성적은 실적 관문(AI-Q:TREND)과 잠정 회수 규칙이 따로 본다.
-              const _isAiSc = !!(signal && (signal.isAiScalp || signal.isOmniQ || signal.isPair));   // [V33.594] 페어도 자기 성적(PAIR:SNAP)으로
+              const _isAiSc = !!(signal && (signal.isAiScalp || signal.isOmniQ || signal.isPair || signal.isStratRoute));   // [V33.594] 페어도 자기 성적(PAIR:SNAP)으로
               // [V33.116] 방향 조건 + ★유의성★ 을 모두 만족할 때만 막는다.
               //   pNeg 가 없는 구 스냅샷(2시간 캐시)에는 종전 동작을 유지한다 — 갱신되면 자동 전환.
               const _msSig = (_ms && typeof _ms.pNeg === "number")
@@ -26318,7 +26382,7 @@ async function runTradingCycle(env) {
               const _swc = mcfg.signalTypeWeights || {};
               if (_swc.perTradeKelly !== false) {
                 // [V33.578] OMNI-Q 경로는 위원회 p 로 크기를 정하지 않는다(OMNIQ_ROUTE — 크기는 잠정 ×0.5 가 정한다)
-                const _pK = (signal && typeof signal.mlMindP === "number" && !signal.isOmniQ && !signal.isPair) ? signal.mlMindP : null;
+                const _pK = (signal && typeof signal.mlMindP === "number" && !signal.isOmniQ && !signal.isPair && !signal.isStratRoute) ? signal.mlMindP : null;
                 if (_pK != null && stopDist > 0) {
                   // b = 목표거리/손절거리. 래칫 구조상 실현 목표는 트레일이 결정하므로
                   //   전략별 tp1AtR(도달 R배수)을 목표 대용치로 쓴다(보수적으로 1.0 하한).
@@ -26673,7 +26737,7 @@ async function runTradingCycle(env) {
                 //     기권·관망 건은 제외한다(그건 확률 판단 자체를 안 한 것이다).
                 try {
                   // [V33.578] OMNI-Q 후보는 넣지 않는다 — 다른 모델이 고른 집합이라 AI_PRIMARY 백분위 문턱의 분포를 비튼다.
-                  if (_md && typeof _md.p === "number" && isFinite(_md.p) && !_md.observe && !_md.abstain && !signal.isOmniQ && !signal.isPair && !_regimeScalp(signal)
+                  if (_md && typeof _md.p === "number" && isFinite(_md.p) && !_md.observe && !_md.abstain && !signal.isOmniQ && !signal.isPair && !signal.isStratRoute && !_regimeScalp(signal)
                       && !__candSyms.has(symbol + ":pdist")) {
                     __candSyms.add(symbol + ":pdist");
                     __pDistNew.push(+_md.p.toFixed(4));
@@ -26751,7 +26815,7 @@ async function runTradingCycle(env) {
                     continue;
                   }
                 }
-                if (signal.isOmniQ || signal.isPair || _regimeScalp(signal)) {   // [V33.594] 페어도 위원회가 막지도 키우지도 않는다(걷기 검증이 판정)
+                if (signal.isOmniQ || signal.isPair || signal.isStratRoute || _regimeScalp(signal)) {   // [V33.594] 페어도 위원회가 막지도 키우지도 않는다(걷기 검증이 판정)
                   /* [V33.582] 패닉 인버스 단타도 같다 — 위원회는 평시 롱 진입 표본으로 학습됐다(폭락날 인버스 ETF 는 학습 분포 밖). 기록만 한다.
                      [V33.578] ★OMNI-Q 경로는 위원회가 막지도 키우지도 않는다★(OMNIQ_ROUTE 주석) — 기록만 남긴다.
                      (ml_gate · 메타컷 · 열화 halt · 저확신 · 위원회 크기 배수 전부 미적용 · 크기는 잠정 ×0.5 가 정한다) */
@@ -26942,7 +27006,8 @@ async function runTradingCycle(env) {
                 else cycleSpent[market][_bk] += actuallySpent;
                 bought++; __funBuy++;   // [V33.407] 깔때기 — 실제 체결
                 if (signal && signal.isOmniQ) { __omqBought++; __omqOpen++; }
-                if (signal && signal.isPair) { __prBought++; __prOpen++; }   // [V33.594] 페어 경로 상한도 체결 기준   // [V33.578] OMNI-Q 경로 상한은 체결 기준
+                if (signal && signal.isPair) { __prBought++; __prOpen++; }
+                if (signal && signal.isStratRoute) { __srBought++; __srOpen++; }   // [V33.603] 매매법 선택 AI 상한도 체결 기준   // [V33.594] 페어 경로 상한도 체결 기준   // [V33.578] OMNI-Q 경로 상한은 체결 기준
                 boughtThisSymbol = true;
                 heldSymbols.add(symbol);
                 strategiesHeldNow.add(strategy);
@@ -30260,7 +30325,7 @@ async function handleRequest(request, env, ctx, _inner) {
       }
       return Response.json({ ok: true, route: PAIR_ROUTE, markets: out }, { headers: cors });
     }
-    /* [V33.602] 매매법 선택 AI(Strategy-Router · strategy_router.py · GHA) — ★그림자: 저장·표시만, 주문 영향 없음★ 관문은 워커가 다시 판정 */
+    /* [V33.602·603] 매매법 선택 AI(strategy_router.py · GHA) 업로드 — 진입은 STRAT_ROUTE(관문 통과 시장만) */
     if (path === "/api/strategy-router" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       let body = null; try { body = await request.json(); } catch (e) {}
@@ -30269,17 +30334,17 @@ async function handleRequest(request, env, ctx, _inner) {
       const rt = body.wf.router || {}, bs = body.wf.baseline || {};
       const pass = !!(_num(rt.n, 0) >= 100 && _num(rt.mean, 0) > 0 && _num(rt.t, 0) >= 2 && _num(rt.mean, -99) > _num(bs.mean, 99));
       const rec = { ts: Date.now(), day: String(body.day || ""), regime: String(body.regime || ""), nSamples: _num(body.nSamples, 0),
-                    wf: { router: rt, baseline: bs, pass: pass }, mode: "shadow", table: body.table || {},
+                    wf: { router: rt, baseline: bs, pass: pass }, mode: pass ? "live" : "record", table: body.table || {},
                     ranking: Array.isArray(body.ranking) ? body.ranking.slice(0, 20) : [],
                     picks: (body.picks && typeof body.picks === "object") ? body.picks : {} };
       await setState(env.DB, "strat_router:" + mk, rec);
-      try { await log(env.DB, "INFO", null, "[매매법AI] " + mk.toUpperCase() + " 국면 " + rec.regime + " · 걷기검증 n" + _num(rt.n, 0) + " 평균 " + rt.mean + "% t" + rt.t + " (전부사기 " + bs.mean + "%) → " + (pass ? "통과(그림자)" : "미통과") + " · 후보 " + Object.keys(rec.picks).length); } catch (e) {}
-      return Response.json({ ok: true, pass: pass, mode: "shadow" }, { headers: cors });
+      try { await log(env.DB, "INFO", null, "[매매법AI] " + mk.toUpperCase() + " 국면 " + rec.regime + " · 걷기검증 n" + _num(rt.n, 0) + " 평균 " + rt.mean + "% t" + rt.t + " (전부사기 " + bs.mean + "%) → " + (pass ? "통과 → 실전 매수" : "미통과 → 기록만") + " · 후보 " + Object.keys(rec.picks).length); } catch (e) {}
+      return Response.json({ ok: true, pass: pass, mode: rec.mode }, { headers: cors });
     }
     if (path === "/api/strategy-router") {
       const out = {};
       for (const mk of ["us", "kr"]) out[mk] = await getState(env.DB, "strat_router:" + mk, null);
-      return Response.json({ ok: true, mode: "shadow", markets: out }, { headers: cors });
+      return Response.json({ ok: true, route: STRAT_ROUTE, markets: out }, { headers: cors });
     }
     if (path === "/api/omni-q" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });

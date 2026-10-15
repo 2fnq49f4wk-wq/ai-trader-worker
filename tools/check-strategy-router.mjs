@@ -2,7 +2,7 @@
  *   ① 무작위 시세(우위 없음)에서는 걷기 검증이 통과하지 않는다(귀무)
  *   ② 한 매매법·국면에만 우위를 심으면 라우터가 그것을 골라 통과하고 '전부 사기'보다 낫다(양성 대조)
  *   ③ 선택은 그 전에 ★끝난★ 표본만 본다 — 미래 라벨을 뒤집어도 과거 선택이 같다
- *   ④ 그림자: 워커 진입 경로가 strat_router 를 읽지 않는다 */
+ *   ④ [V33.603] 실전 경로 STRAT_ROUTE — 워커 관문 재판정 · 신선도 · 잠정 크기 · 꼬리표 · 최대 보유 청산 */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 const dir = new URL("../trainer/modal/", import.meta.url).pathname;
@@ -34,7 +34,18 @@ if (o) {
   chk(o.leak === false, "미래 라벨 누출 없음");
 }
 const S = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
-chk((S.match(/strat_router:/g) || []).length === 2, "그림자: strat_router 는 업로드 저장·조회에서만 쓴다(진입 경로가 읽지 않음)");
+const fnSrc = S.slice(S.indexOf("const STRAT_ROUTE"), S.indexOf("function _omqHeadOn"));
+const M = new Function("_num", fnSrc + "; return { STRAT_ROUTE, stratRoutePass, stratRoutePick };")((v, d) => (typeof v === "number" && isFinite(v) ? v : (v != null && isFinite(+v) ? +v : d)));
+const now = Date.now(), good = { ts: now, wf: { router: { n: 150, mean: 0.4, t: 2.5 }, baseline: { mean: 0.1 } }, picks: { AAA: { sid: "SN_RSI2", mu: 0.5, n: 40, hold: 8, horizon: "snap" } } };
+chk(M.stratRoutePick(good, "AAA", now)?.sid === "SN_RSI2", "관문 통과 · 신선 → 고른 매매법으로 산다");
+chk(M.stratRoutePick({ ...good, wf: { router: { n: 150, mean: 0.4, t: 1.5 }, baseline: { mean: 0.1 } } }, "AAA", now) === null, "t < 2 → 안 산다");
+chk(M.stratRoutePick({ ...good, wf: { router: { n: 150, mean: 0.4, t: 2.5 }, baseline: { mean: 0.5 } } }, "AAA", now) === null, "전부 사기보다 못하면 안 산다");
+chk(M.stratRoutePick({ ...good, wf: { router: { n: 80, mean: 0.4, t: 2.5 }, baseline: { mean: 0.1 } } }, "AAA", now) === null, "n < 100 → 안 산다");
+chk(M.stratRoutePick({ ...good, ts: now - 40 * 3600000 }, "AAA", now) === null, "36시간 넘은 선택 → 안 산다");
+chk(M.STRAT_ROUTE.mult === 0.5 && /signal\.isStratRoute && STRAT_ROUTE\.mult/.test(S), "잠정 크기 ×0.5");
+chk(/\? "SROUTE"/.test(S) && /LIKE '\[SROUTE\]%'/.test(S), "원장 꼬리표 [SROUTE] · 하루 상한");
+chk(/"SR-TIME "/.test(S) && /sr: \(signal && signal\.isStratRoute/.test(S), "그 매매법 최대 보유일 → SR-TIME 청산");
+chk(/"hold": s\["exit"\]\["hold"\]/.test(readFileSync(dir + "strategy_router.py", "utf8")), "학습기가 picks 에 보유일·기간을 싣는다");
 chk(/strategy_router\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")), "GHA 회차에 연결");
 if (fails) { console.log("check-strategy-router: FAIL " + fails); process.exit(1); }
 console.log("check-strategy-router: ok");

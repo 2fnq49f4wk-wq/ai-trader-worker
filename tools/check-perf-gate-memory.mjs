@@ -37,7 +37,7 @@ Date.now = realNow;
 console.log("③ 레버리지/인버스 ETF");
 const eb = S.slice(S.indexOf("async function executeBuy("), S.indexOf("async function executeBuy(") + 6000);
 chk(/strategy !== "hedge" && \(\(typeof LEVERAGED_ETF !== "undefined" && LEVERAGED_ETF\.has\(symbol\)\) \|\| \(typeof INVERSE_ETF !== "undefined" && INVERSE_ETF\.has\(symbol\)\)\)/.test(eb)
-  && /strategy === "scalp" \|\| \(signal && \(signal\.isAiPrimary \|\| signal\.isAiScalp( \|\| signal\.isOmniQ)?( \|\| signal\.isPair)?\)\)/.test(eb), "executeBuy: 레버리지·인버스 → AI·단타 거절(헤지 제외)", "배선");
+  && /strategy === "scalp" \|\| \(signal && \(signal\.isAiPrimary \|\| signal\.isAiScalp( \|\| signal\.isOmniQ)?( \|\| signal\.isPair)?( \|\| signal\.isStratRoute)?\)\)/.test(eb), "executeBuy: 레버리지·인버스 → AI·단타 거절(헤지 제외)", "배선");
 chk(eb.indexOf("레버리지·인버스 ETF — AI·단타 진입 제외") > eb.indexOf("BUY 실적 관문 차단"), "실적 관문 바로 뒤(수량 계산 전)", "위치");
 console.log("④ 같은 전략 전 시장 합산(V33.514 · 막는 쪽만)");
 {

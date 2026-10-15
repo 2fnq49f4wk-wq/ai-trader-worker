@@ -61,10 +61,10 @@ chk(M._entryTag({ isOmniQ: true, isAiPrimary: true }) === "AI-Q" && M._entryTag(
     "꼬리표: AI-Q · AI · AI-SCALP · RULE");
 chk(/reason: "\[" \+ _entryTag\(signal\) \+ "\]\["/.test(S) && /const tag = _entryTag\(signal\) \+ ":"/.test(S) && M._pgTag("[AI-Q][TREND] OMNI_Q x") === "AI-Q:TREND",
     "원장 사유와 실적 관문이 같은 꼬리표 함수를 쓴다 · AI-Q:TREND 로 따로 센다");
-const com = S.slice(S.indexOf("if (signal.isOmniQ || signal.isPair || _regimeScalp(signal)) {"), S.indexOf("} else if (_md && (_md.observe || _md.abstain)) {"));   // [V33.582] 패닉 단타와 같은 갈래
+const com = S.slice(S.indexOf("if (signal.isOmniQ || signal.isPair || signal.isStratRoute || _regimeScalp(signal)) {"), S.indexOf("} else if (_md && (_md.observe || _md.abstain)) {"));   // [V33.582] 패닉 단타와 같은 갈래
 chk(com.length > 50 && !/continue/.test(com) && !/qty/.test(com) && /signal\.mlMindP = _md\.p/.test(com), "위원회: OMNI-Q 는 막지도(continue 없음) 키우지도(qty 없음) 않고 p 만 기록");
-chk(/&& !signal\.isOmniQ( && !signal\.isPair)?( && !signal\.isPanicScalp| && !_regimeScalp\(signal\))?\s*\n\s*&& !__candSyms\.has\(symbol \+ ":pdist"\)/.test(S), "OMNI-Q 후보는 AI_PRIMARY 백분위 분포에 안 들어간다");
-chk(/signal\.mlMindP === "number" && !signal\.isOmniQ( && !signal\.isPair)?\) \? signal\.mlMindP : null/.test(S), "켈리는 OMNI-Q 크기를 정하지 않는다");
+chk(/&& !signal\.isOmniQ( && !signal\.isPair)?( && !signal\.isStratRoute)?( && !signal\.isPanicScalp| && !_regimeScalp\(signal\))?\s*\n\s*&& !__candSyms\.has\(symbol \+ ":pdist"\)/.test(S), "OMNI-Q 후보는 AI_PRIMARY 백분위 분포에 안 들어간다");
+chk(/signal\.mlMindP === "number" && !signal\.isOmniQ( && !signal\.isPair)?( && !signal\.isStratRoute)?\) \? signal\.mlMindP : null/.test(S), "켈리는 OMNI-Q 크기를 정하지 않는다");
 const eb = S.slice(S.indexOf("async function executeBuy("), S.indexOf("// === [V8] 전략 룰 헬퍼 ==="));
 const iPg = eb.indexOf("if (_pg.mult < 1)"), iOq = eb.indexOf("signal.isOmniQ && typeof signal.omqMult === \"number\"");
 chk(iPg > 0 && iOq > iPg && /signal\.isAiPrimary \|\| signal\.isAiScalp \|\| signal\.isOmniQ/.test(eb) && /omq: \(signal && signal\.isOmniQ && signal\.omq\) \? signal\.omq : null/.test(eb),
@@ -98,7 +98,7 @@ chk(/_xc\.committeeExit && __aiReady && !_omqHeld/.test(S) && /if \(heldDays >= 
   const rCrash = M.evaluateBuyBlocks(82, 0, daily, cfg, Object.assign({}, regime, { worstDayPct: -5 }), { name: "OMNI_Q", isOmniQ: true }, ctx);
   chk(/^WEAK_RS/.test(rRule || "") && rOq === null && /^MARKET_CRASH/.test(rCrash || ""), "위험 관문: OMNI-Q 는 WEAK_RS 만 면제 · 폭락 차단은 그대로", JSON.stringify([rRule, rOq, rCrash]));
 }
-chk(/const _isAiSc = !!\(signal && \(signal\.isAiScalp \|\| signal\.isOmniQ( \|\| signal\.isPair)?\)\);/.test(S), "NEGEXP_MS: 남의 성적으로 OMNI-Q 를 막지 않는다(AI_SCALP 와 같은 예외)");
+chk(/const _isAiSc = !!\(signal && \(signal\.isAiScalp \|\| signal\.isOmniQ( \|\| signal\.isPair)?( \|\| signal\.isStratRoute)?\)\);/.test(S), "NEGEXP_MS: 남의 성적으로 OMNI-Q 를 막지 않는다(AI_SCALP 와 같은 예외)");
 const blk = S.slice(S.indexOf("/* [V33.530] ★추격 매수 차단★(DEFAULT_CFG.antiChase"), S.indexOf("let _spillMult = 1;"));
 chk(blk.length > 200 && /antiChaseWhy/.test(blk) && /incBlock\("OMNIQ_LOW"\)/.test(blk) && !/isOmniQ/.test(blk), "추격 차단·OMNIQ_LOW 블록은 OMNI-Q 를 예외로 두지 않는다(위험 관문 그대로)");
 

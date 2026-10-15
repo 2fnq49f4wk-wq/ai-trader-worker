@@ -56,7 +56,7 @@ chk(/const _invPri = _entryAllowed && \(\(_panicScalpOn && INVERSE_ETF\.has\(sym
 const eb = S.slice(S.indexOf("async function executeBuy("), S.indexOf("// === [V8] 전략 룰 헬퍼 ==="));
 chk(/!_regimeScalp\(signal\)/.test(eb) && M._entryTag({ isPanicScalp: true }) === "PANIC" && M._pgTag("[PANIC][SCALP] SC_PANIC_INV x") === "PANIC:SCALP",
     "⑤ 패닉 단타는 레버리지·인버스 금지 예외 · 실적 관문 PANIC:SCALP 로 따로(kr:RULE:SCALP 막힘과 무관)");
-chk(/if \(_scalpSig && _regimeScalp\(_scalpSig\)\) \{/.test(S) && /if \(signal\.isOmniQ( \|\| signal\.isPair)? \|\| _regimeScalp\(signal\)\) \{/.test(S) && /ctxScore < 0 && !_regimeScalp\(_sr\.signal\)/.test(S),
+chk(/if \(_scalpSig && _regimeScalp\(_scalpSig\)\) \{/.test(S) && /if \(signal\.isOmniQ( \|\| signal\.isPair)?( \|\| signal\.isStratRoute)? \|\| _regimeScalp\(signal\)\) \{/.test(S) && /ctxScore < 0 && !_regimeScalp\(_sr\.signal\)/.test(S),
     "AI 단타 거부권·위원회 게이트·CTX 단타 차단은 패닉 인버스에 안 걸린다(학습 분포 밖 · 순풍)");
 // ⑥ 헤지
 chk(/const tr = \(mcfg && mcfg\.tailRisk\) \|\| \(\(typeof AI_PARAMS !== "undefined"\) \? AI_PARAMS\.tailRisk : null\);/.test(S) && /crashGate\.panic = true;/.test(S) && /\{ panic: !!crashGate\.panic \}/.test(S),
