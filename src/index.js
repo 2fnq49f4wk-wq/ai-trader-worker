@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.621";
+const _BUILD_VER = "V33.622";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13552,15 +13552,15 @@ function pbPrimaryOn(st, nowMs) { return !!(st && st.daily && _pbPass(st.daily.v
 const PB_BRAKE = { days: 30, minN: 12, mean: -0.4, everyMs: 30 * 60000 };
 async function pbLiveBrake(DB, market, nowMs) {
   const key = "pb_brake:" + market;
-  let b = null;
-  try { b = await getState(DB, key, null); } catch (e) {}
+  let b = null, readOk = true;
+  try { b = await getState(DB, key, null, true); } catch (e) { readOk = false; }   // 엄격히 읽고, 못 읽으면 쓰지 않는다(check-rmw)
   if (b && nowMs - _num(b.ts, 0) < PB_BRAKE.everyMs) return b;
   try {
     const r = await DB.prepare("SELECT COUNT(*) AS n, AVG(pnl_pct) AS m FROM trades WHERE market = ? AND side = 'SELL' AND reason LIKE 'SR-%' AND ts > ?")
       .bind(market, nowMs - PB_BRAKE.days * 86400000).first();
     const n = _num(r && r.n, 0), m = _num(r && r.m, 0);
     b = { ts: nowMs, n: n, mean: +m.toFixed(3), on: n >= PB_BRAKE.minN && m <= PB_BRAKE.mean };
-    await setState(DB, key, b);
+    if (readOk) await setState(DB, key, b);
   } catch (e) { b = b || { ts: nowMs, n: 0, mean: 0, on: false, err: true }; }
   return b;
 }
@@ -13570,6 +13570,27 @@ const PB_ROUTE = { candMin: 0.80, minWin: 0, intraMinToClose: 30, eodMin: 10, re
                    candDailyWin: 80, candDailyMax: 8, candDailyMin: 20 };   // [V33.618] 마감 전 80분부터 후보 일봉을 사이클당 8개씩 · 20분 수명으로 갱신   // [V33.614] promoteMax: 살 수 있는 후보 앞당김 상한 · intraPreMax: 후보 분봉 선행 병렬 조회 상한   // dailyEntryWin: 일봉 매매법 진입 = 마감 전 60분 · liveKeep: 관측창에 남길 후보 수   // intraFetchMax: 사이클당 후보 분봉 조회 상한
 /* [V33.620] 후보 폭(OMNI-Q 상위 몇 %)도 학습기 검증이 고른다(상위 20·40·60% 중 검증 구간 성적이 가장 좋은 것) — 표에 없으면 상위 20% */
 function pbCandMin(st) { const q = st && st.daily && st.daily.val && st.daily.val.candQ; return (typeof q === "number" && q >= 0 && q <= 0.95) ? q : PB_ROUTE.candMin; }   // [V33.621] 0 = OMNI-Q 거름 없음(검증이 고를 수 있다)
+/* [V33.622] ★후보 순위 머리도 검증이 고른다★ — OMNI-Q 표본 밖 실측: 5일 머리 ① 미 51.2%(t 4) · 20일 머리 52.8%(t 10) · 한 54.1 / 54.7% ·
+   ② 20일 머리는 전 구간 양(미 +0.8~1.4%/20일). 매매법 보유는 대부분 8~30일인데 후보는 약한 5일 머리로 골랐다.
+   학습기가 5일·20일·평균 중 검증 구간 성적이 좋은 머리(val.candHead)를 고른다. 같은 날 종목 간 순위(0~1)로 다시 매겨 폭(candQ)과 비교한다. */
+function pbCandScoreMap(st, omniq) {
+  if (!omniq) return {};
+  const head = String((st && st.daily && st.daily.val && st.daily.val.candHead) || "5");
+  const key = head + ":" + _num(omniq.ts, 0) + ":" + _num(omniq.trainedAt, 0);
+  if (omniq.__pbMap && omniq.__pbMap.key === key) return omniq.__pbMap.m;
+  const s5 = omniq.scores || {}, s20 = (omniq.heads && omniq.heads.r20) || {};
+  const raw = {};
+  const syms = Object.keys(head === "20" ? s20 : s5);
+  for (const s0 of syms) {
+    const a = _num(s5[s0], NaN), b = _num(s20[s0], NaN);
+    const v = head === "20" ? b : head === "avg" ? (a === a && b === b ? (a + b) / 2 : NaN) : a;
+    if (v === v) raw[s0] = v;
+  }
+  const ks = Object.keys(raw).sort(function (x, y) { return raw[x] - raw[y]; }), m = {}, n = ks.length;
+  ks.forEach(function (s0, i) { m[s0] = n > 1 ? (i + 1) / n : 1; });   // pandas rank(pct=True) 와 같은 (순위)/n
+  omniq.__pbMap = { key: key, m: m };
+  return m;
+}
 function _pbBk(x, e) { if (!(typeof x === "number" && isFinite(x))) return e.length; let k = 0; while (k < e.length && x >= e[k]) k++; return k; }
 function pbDailyKeys(reg, rsi, gap20, ret5, vr, evNear) {
   const r = String(reg || "NEUTRAL");
@@ -13694,6 +13715,9 @@ function pbDailyFires(D) {
     if (_pbPsarFlipUp(h, l)) F.push("PSAR");
     const e65 = _pbEma(c, 65);
     if (e65[i] > e65[i - 5] && st1.k <= 30 && c[i] > h[i - 1]) F.push("TRIPLE_SCR");
+    // [V33.622] 조사 뒤 추가 — IBS 저점 반등 · 52주 고가 근접(George & Hwang 2004)
+    if (cpos <= 0.2 && ret1 < 0 && c[i] > ma200) F.push("IBS_LOW");
+    if (i >= 252) { const near = function (j) { return c[j] / _pbMax(h, j - 251, j) >= 0.97; }; if (near(i) && !near(i - 1) && c[i] > ma50 && ret1 > 0) F.push("HI52_NEAR"); }
   }
   { // SQUEEZE — 어제 볼린저 폭이 그 전 120일(60개 이상) 하위 10% 이하 · 오늘 상단 돌파
     const bw = function (j) { const m = _pbSma(c, 20, j), s0 = _pbStd0(c, 20, j); return 4 * s0 / m; };
@@ -13890,7 +13914,8 @@ function pbRecExtra(rec, sh, D) {
 /* [V33.616] 거래 창 밖 관측 스캔 — 후보(OMNI-Q 상위 20%) 일봉 캐시를 한 번에 읽고(getStates · 90개씩) 그림자 판정만 남긴다. 주문 없음. */
 async function pbObserveScan(DB, market, quotes, st, omniq) {
   if (!st || !omniqFresh(omniq, Date.now())) return 0;
-  const syms = Object.keys((omniq && omniq.scores) || {}).filter(function (s0) { return _num(omniq.scores[s0], 0) >= pbCandMin(st) && quotes && quotes[s0]; });
+  const cmap = pbCandScoreMap(st, omniq);
+  const syms = Object.keys(cmap).filter(function (s0) { return cmap[s0] >= pbCandMin(st) && quotes && quotes[s0]; });
   if (!syms.length) return 0;
   const dk = syms.map(function (s0) { return "daily:" + s0; }), daily = {};
   for (let j = 0; j < dk.length; j += 90) Object.assign(daily, await getStates(DB, dk.slice(j, j + 90)));
@@ -13904,7 +13929,7 @@ async function pbObserveScan(DB, market, quotes, st, omniq) {
     if (!(px > 0)) continue;
     const D0 = pbLiveDaily(d, px, pcl, mtc);
     const sh = pbRoutePick(st, { reg: st.regime, symbol: s0, D: D0, bars5: null, prevClose: pcl, evNear: ev, minToClose: mtc, shadow: true }, now);
-    items.push(pbRecExtra({ s: s0, nm: (typeof NAME_MAP !== "undefined" && NAME_MAP[s0]) || null, q: +_num(omniq.scores[s0], 0).toFixed(3), px: px,
+    items.push(pbRecExtra({ s: s0, nm: (typeof NAME_MAP !== "undefined" && NAME_MAP[s0]) || null, q: +_num(cmap[s0], 0).toFixed(3), px: px,
                  dp: pcl > 0 ? +((px / pcl - 1) * 100).toFixed(2) : null, sp: d.closes.slice(-30).map(function (x) { return +(+x).toPrecision(5); }),
                  fired: (sh && sh.fired) || [], pb: (sh && sh.pb) || null, kind: (sh && sh.kind) || null,
                  m: sh && sh.m != null ? +_num(sh.m, 0).toFixed(3) : null, w: sh && sh.w != null ? +_num(sh.w, 0).toFixed(3) : null, n: (sh && sh.n) || null,
@@ -24576,7 +24601,7 @@ async function runTradingCycle(env) {
       const __pbCandFresh = new Set();
       try {
         if (!extSessMkt && __sr && omniqFresh(__omniq, Date.now()) && __pbMtc != null && __pbMtc <= PB_ROUTE.candDailyWin) {
-          const _cs = Object.keys(__omniq.scores || {}).filter(function (s0) { return _num(__omniq.scores[s0], 0) >= pbCandMin(__sr); }).sort();
+          const _cm = pbCandScoreMap(__sr, __omniq), _cs = Object.keys(_cm).filter(function (s0) { return _cm[s0] >= pbCandMin(__sr); }).sort();
           if (_cs.length) {
             const _ck = "pb_cand_rr:" + market;
             let _co = await getState(DB, _ck, 0, true); if (!(typeof _co === "number" && _co >= 0)) _co = 0;
@@ -25322,7 +25347,7 @@ async function runTradingCycle(env) {
         if (__sr && omniqFresh(__omniq, Date.now())) {
           const _pc = [], _hot = [];
           for (const it of orderedEval) {
-            const sym = it && it.symbol, sc = sym ? _omqScore(__omniq, 5, sym) : null;
+            const sym = it && it.symbol, _cm2 = pbCandScoreMap(__sr, __omniq), sc = sym && _cm2[sym] != null ? _cm2[sym] : null;
             if (sc == null || sc < pbCandMin(__sr) || !it.daily || !Array.isArray(it.daily.closes) || !(it.intra && it.intra.price > 0)) continue;
             _pc.push(sym);
             const px = it.intra.price, pcl = it.intra.prevClose || px;
@@ -26212,7 +26237,7 @@ async function runTradingCycle(env) {
             }
             /* [V33.607·610] ★확률 높은 종목 → 그 종목에 맞는 매매법★(PB_ROUTE 주석) — 후보 = OMNI-Q 상위 20% · 매 분 지금 뜬 매매법 + 상황 칸 표 조회 · 원장 [SROUTE]
                [V33.610] 검증 미통과 시장도 후보마다 '무엇이 떴고 무엇을 골랐을지' 를 그림자로 계산해 관측창(pb_live)에 남긴다 — 매수는 통과 시장만. */
-            const _pbS = (__sr && omniqFresh(__omniq, Date.now())) ? _omqScore(__omniq, 5, symbol) : null;
+            const _pbS = (__sr && omniqFresh(__omniq, Date.now())) ? (pbCandScoreMap(__sr, __omniq)[symbol] != null ? pbCandScoreMap(__sr, __omniq)[symbol] : null) : null;   // [V33.622] 검증이 고른 머리
             if (_pbS != null && _pbS >= pbCandMin(__sr) && daily && daily.closes) {
               const _held = heldSymbols.has(symbol);
               const _pbSec = __sr.sector && __sr.sector[symbol];

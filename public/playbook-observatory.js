@@ -13,7 +13,8 @@
     OS_DEEP: '깊은 과매도 반등', CAPIT_REV: '투매 반등',
     ICHIMOKU: '이치모쿠 구름 돌파', KELTNER: '켈트너 채널 돌파', DONCHIAN: '돈치안 55일 돌파', MACD_X: 'MACD 교차', ENVELOPE: '이격도 반등',
     ELDER_RAY: '엘더 레이', WILLR: '윌리엄스 %R', CCI_REV: 'CCI 반등', PSAR: '파라볼릭 SAR', TRIPLE_SCR: '삼중창',
-    GAP_FILL: '갭 메우기', PIVOT_BNC: '피봇 지지 반등',
+    IBS_LOW: 'IBS 저가 마감 반등', HI52_NEAR: '52주 고가 근접',
+  GAP_FILL: '갭 메우기', PIVOT_BNC: '피봇 지지 반등',
     ORB: '시가 범위 돌파', DIP_REV: '장중 눌림 반등', STOCH5: '5분 스토캐스틱', MOM3: '5분 3봉 상승', VWAP_RE: 'VWAP 회복'
   };
   function nm(id) { return NAMES[id] || id || '—'; }

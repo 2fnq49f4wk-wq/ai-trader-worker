@@ -348,6 +348,21 @@ def e_triple_screen(P):
     return _and(e > e.shift(5), I["sk"].shift(1) <= 30, I["c"] > I["h"].shift(1))
 
 
+# ── [V33.622] 인터넷 조사 뒤 추가 2종 — 근거가 있는 것만(사용자 10/15 "필요하면 신규 매매법 찾아 분석해 추가") ──
+def e_ibs_low(P):
+    """IBS(내부 봉 강도) 저점 — (종가 − 저가)/(고가 − 저가) ≤ 0.2 · 하락일 · 200일선 위. Pagonidis(2014) 이후 ETF·지수에서 반복 확인 · 개별 종목은 약함 → 시뮬이 판정."""
+    I = _ind(P)
+    return _and(I["cpos"] <= 0.2, I["ret1"] < 0, I["c"] > I["ma200"])
+
+
+def e_hi52_near(P):
+    """52주 고가 근접 — 종가가 252일 최고가의 97% 이상으로 오늘 처음 들어섬 · 50일선 위 · 양봉. George & Hwang(2004, JF): 52주 고가 근접도가 과거 수익보다 미래 수익을 잘 예측 · 되돌림 없음."""
+    I = _ind(P)
+    hi = I["h"].rolling(252).max()
+    near = I["c"] / hi >= 0.97
+    return _and(near, ~near.shift(1, fill_value=True), I["c"] > I["ma50"], I["ret1"] > 0)
+
+
 def e_squeeze(P):
     """볼린저 폭이 최근 120일 하위 10% 로 수축한 뒤 상단 돌파."""
     I = _ind(P)
@@ -441,6 +456,8 @@ CATALOG = [
     _S("CCI_REV", "Rebound", "snap", e_cci, "snap", ALL, "new", "CCI −100 상향 복귀"),
     _S("PSAR", "Trend", "swing", e_psar, "trend", ALL, "new", "파라볼릭 SAR 상승 전환"),
     _S("TRIPLE_SCR", "Pullback", "swing", e_triple_screen, "pullbk", (R_BULL, R_NEUT), "new", "삼중창 — 큰 추세↑ · 눌림 · 어제 고가 돌파"),
+    _S("IBS_LOW", "Rebound", "snap", e_ibs_low, "snap", (R_BULL, R_NEUT), "new", "IBS ≤ 0.2 저가 마감 반등(200일선 위)"),
+    _S("HI52_NEAR", "Momentum", "swing", e_hi52_near, "mom", (R_BULL, R_NEUT), "new", "52주 고가 97% 진입(George & Hwang 2004)"),
 ]
 # 일봉으로 학습할 수 없는 것 — 도감에는 적되 후보에서 뺀다(분봉 매매법 · 보유 기간 충돌 방지)
 BLOCKED = [
@@ -449,8 +466,8 @@ BLOCKED = [
     {"id": "SC_PULLBACK", "family": "DayTrading", "status": "blocked", "why": "분봉 · 한국 막힘"},
 ]
 CLUSTERS = {   # 원칙: 표본이 적은 초기엔 3~4 개 큰 묶음으로 먼저 학습(Phase C)
-    "TREND": ["TREND_ALIGN", "TR_BREAKOUT", "RS_LEADER", "VT_TREND", "TR_PULLBACK", "MA_PULLBACK", "DUAL_MOM", "ICHIMOKU", "DONCHIAN", "MACD_X", "ELDER_RAY", "PSAR", "TRIPLE_SCR"],
-    "MEANREV": ["SN_RSI2", "HA_REV", "BB_LOW", "STOCH_CROSS", "STOCH_OS_EXIT", "VOL_REVERT", "XS_ARB", "OS_DEEP", "CAPIT_REV", "ENVELOPE", "WILLR", "CCI_REV"],
+    "TREND": ["TREND_ALIGN", "TR_BREAKOUT", "RS_LEADER", "VT_TREND", "TR_PULLBACK", "MA_PULLBACK", "DUAL_MOM", "ICHIMOKU", "DONCHIAN", "MACD_X", "ELDER_RAY", "PSAR", "TRIPLE_SCR", "HI52_NEAR"],
+    "MEANREV": ["SN_RSI2", "HA_REV", "BB_LOW", "STOCH_CROSS", "STOCH_OS_EXIT", "VOL_REVERT", "XS_ARB", "OS_DEEP", "CAPIT_REV", "ENVELOPE", "WILLR", "CCI_REV", "IBS_LOW"],
     "VOLVOL": ["VOL_BREAKOUT", "SQUEEZE", "HERD_REBOUND", "KELTNER"],
 }
 

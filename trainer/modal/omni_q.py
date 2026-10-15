@@ -803,6 +803,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         f20 = (C.shift(-(H20 + 1)) / C.shift(-1) - 1.0)
         y20 = f20.rank(axis=1, pct=True).values
         s20, t20 = cv(y20, diag="20일", diag_y=y20)
+        LAST_OOS[mk]["sc20"] = s20   # [V33.622] 20일 머리 표본 밖 점수 — 매매법 시뮬이 후보 머리(5일·20일·평균)를 검증으로 고른다
         br20, fx20, _, g2_20, pos20, need20 = judge(s20, t20, y20, f20.values, "20일 순위(발언 머리 2)", step=H20)
         g1_20 = gate1(br20)
         lab_rep = {}

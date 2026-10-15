@@ -9,7 +9,8 @@ const NAMES: Record<string, string> = {
   VOL_BREAKOUT: "거래량 돌파", VOL_REVERT: "거래량 급락 반등", SQUEEZE: "스퀴즈 돌파", XS_ARB: "5일 낙폭 과대", DUAL_MOM: "듀얼 모멘텀", HERD_REBOUND: "거래량 2차 파동",
   OS_DEEP: "깊은 과매도 반등", CAPIT_REV: "투매 반등", ICHIMOKU: "이치모쿠 구름 돌파", KELTNER: "켈트너 채널 돌파", DONCHIAN: "돈치안 55일 돌파", MACD_X: "MACD 교차",
   ENVELOPE: "이격도 반등", ELDER_RAY: "엘더 레이", WILLR: "윌리엄스 %R", CCI_REV: "CCI 반등", PSAR: "파라볼릭 SAR", TRIPLE_SCR: "삼중창",
-  ORB: "시가 범위 돌파", DIP_REV: "장중 눌림 반등", STOCH5: "5분 스토캐스틱", MOM3: "5분 3봉 상승", VWAP_RE: "VWAP 회복", GAP_FILL: "갭 메우기", PIVOT_BNC: "피봇 지지 반등",
+  ORB: "시가 범위 돌파", DIP_REV: "장중 눌림 반등", STOCH5: "5분 스토캐스틱", MOM3: "5분 3봉 상승", VWAP_RE: "VWAP 회복", IBS_LOW: "IBS 저가 마감 반등", HI52_NEAR: "52주 고가 근접",
+  GAP_FILL: "갭 메우기", PIVOT_BNC: "피봇 지지 반등",
 };
 /* 진입 조건(학습기 strategy_catalog · intra_fires 와 같은 뜻을 사람 말로) */
 const ENTRY: Record<string, string> = {
@@ -42,6 +43,8 @@ const ENTRY: Record<string, string> = {
   CCI_REV: "CCI(20) 가 −100 이하에서 위로",
   PSAR: "파라볼릭 SAR 이 가격 아래로 뒤집힘(상승 전환)",
   TRIPLE_SCR: "EMA65(≈13주) 상승 · 어제 %K ≤ 30 · 오늘 어제 고가 돌파",
+  IBS_LOW: "종가가 그날 고저 범위 아래 20% 안(IBS ≤ 0.2) · 하락일 · 200일선 위 — ETF·지수에서 반복 확인된 단기 반등(Pagonidis 2014)",
+  HI52_NEAR: "종가가 52주 최고가의 97% 이상으로 오늘 처음 들어섬 · 50일선 위 · 양봉 — George & Hwang(2004) 52주 고가 모멘텀",
   ORB: "개장 첫 30분 고가를 위로 돌파",
   DIP_REV: "당일 고점 −1% 아래에서 반등 봉",
   STOCH5: "5분 스토캐스틱 과매도(≤ 25)에서 %K 상향 교차",

@@ -197,14 +197,27 @@ def _sim_profile(O, H, L, C, atr, mcum, pr, cost, t0=250, mrx=None, t_max=None, 
 
 
 CAND_QS = (0.80, 0.60, 0.40, 0.0)   # [V33.620] 후보 폭 후보(상위 20·40·60%) — 검증 구간이 고른다 · [V33.621] 0.0 = OMNI-Q 거름 없음(전 종목) — 'OMNI 먼저' 가 유리한지 검증이 판정
+VAL_MIN_N = 60                     # [V33.622] 검증 구간에서 규칙·후보 설정을 고를 최소 거래 수
+CAND_HEADS = ("5", "20", "avg")   # [V33.622] 후보 순위 머리 — 5일 · 20일 · 평균(검증이 고른다)
+CAND_BUDGET_S = 1500               # 후보 비교(머리 3 × 폭 3 + 거름 없음) 시간 상한
 CAND_Q = 0.80        # 후보 = 그날 OMNI-Q 표본 밖 점수 상위 20%(워커 PB_ROUTE.candMin 과 같다)
 CAND_MIN_ROWS = 3000  # 후보로 거른 표본이 이보다 적으면 전 종목으로(기록에 남긴다)
 
 
-def cand_mask(P, oos, q=None):
-    """OMNI-Q 표본 밖 점수(날짜×종목) → P 와 같은 모양의 '그날 후보(상위 20%)' bool. 점수 없는 날은 전부 False."""
+def cand_mask(P, oos, q=None, head="5"):
+    """OMNI-Q 표본 밖 점수(날짜×종목) → P 와 같은 모양의 '그날 후보(상위 20%)' bool. 점수 없는 날은 전부 False.
+    [V33.622] head = "5"(5일 머리) · "20"(20일 머리) · "avg"(둘의 그날 순위 평균) — 워커 pbCandScoreMap 과 같다."""
     if not oos or oos.get("sc") is None:
         return None
+    if head in ("20", "avg"):
+        if oos.get("sc20") is None:
+            return None
+        if head == "20":
+            oos = dict(oos, sc=oos["sc20"])
+        else:
+            r5 = pd.DataFrame(oos["sc"]).rank(axis=1, pct=True).values
+            r20 = pd.DataFrame(oos["sc20"]).rank(axis=1, pct=True).values
+            oos = dict(oos, sc=(r5 + r20) / 2)
     di = {d: k for k, d in enumerate(oos["dates"])}
     si = {s_: k for k, s_ in enumerate(oos["syms"])}
     dates, syms = list(P["close"].index), list(P["close"].columns)
@@ -923,8 +936,10 @@ def validate(df, timecol, pbs=None):
         st_ = _stats(pk["ex"].values.astype(float), va["ex"].values.astype(float))
         st_["baseAll"], st_["base"] = st_["base"], vbase
         cmp_.append({"rule": rule, **st_})
-    elig = [c for c in cmp_ if c["n"] >= 30 and c["mean"] is not None]
-    best = max(elig, key=lambda c: c["mean"]) if elig else cmp_[1]
+    # [V33.622] 규칙은 평균이 아니라 ★t(평균 ÷ 불확실성)★ 로 고른다 · 표본 ≥ VAL_MIN_N — 후보 11개 중 '평균 최대' 는 표본 적은 우연을 고른다(무작위 시세에서 실측)
+    elig = [c for c in cmp_ if c["n"] >= VAL_MIN_N and c["mean"] is not None]
+    elig = elig or [c for c in cmp_ if c["n"] >= 30 and c["mean"] is not None]
+    best = max(elig, key=lambda c: (c.get("t") or 0.0)) if elig else cmp_[1]
     rule = best["rule"]
     tab2 = _shrunk_table(df[df[timecol] < c2], decay=rule.get("decay"), tcol=timecol, ref=c2)
     ho = df[df[timecol] >= c2]
@@ -973,26 +988,39 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             log("   ⚠️ [매매법조율] %s 실패 %s — 기본 프로필" % (market, e))
             dpb, tune_rep = {k: dict(v, prof="base", flt=None) for k, v in DAILY_PB.items()}, None
         # [V33.620] ★후보 폭도 검증이 고른다★ — OMNI-Q 상위 20·40·60%(사용자 10/15 "가장 유리한 방식 · 매수 신호가 나올 넉넉함").
-        #   폭마다 시뮬 → 3구간 검증. 검증 구간 [60,80%) 에서 고른 규칙 평균이 가장 높은 폭을 쓴다(판정 구간은 고르기에 안 쓴다).
-        best_q, cand_cmp = None, []
-        for q_ in CAND_QS:
-            cm_ = cand_mask(P, (oos or {}).get(market), q_)
-            if cm_ is None:
+        #   [V33.622] 머리(5일·20일·평균) × 폭 + 거름 없음 = 10 설정. 검증 구간 [60,80%) 에서 고른 규칙의 ★t★ 가 가장 큰(평균 > 0 · 거래 ≥ VAL_MIN_N) 설정 —
+        #   평균 최대로 고르면 무작위 시세에서 판정 구간 거래 0 인 설정을 골랐다(다중 비교의 함정). 판정 구간은 고르기에 안 쓴다.
+        best_q, cand_cmp, dflt = None, [], None
+        t_c = time.time()
+        for hd_, q_ in [(h_, q2) for h_ in CAND_HEADS for q2 in CAND_QS if q2 > 0] + [("5", 0.0)]:
+            if time.time() - t_c > CAND_BUDGET_S:
+                log("   · [매매법시뮬] %s 후보 비교 시간 상한 — 나머지 생략" % market)
                 break
+            cm_ = cand_mask(P, (oos or {}).get(market), q_, hd_)
+            if cm_ is None:
+                continue
             d_, reg_now, _ = sim_daily(P, market, ev_dates, sig=sig, cand=cm_, pbs=dpb)
             if len(d_) < CAND_MIN_ROWS:
                 continue
             d_ = _relevel(d_)
             st_, _ = validate(d_, "t")
-            el = [c_ for c_ in (st_.get("valCmp") or []) if c_.get("n", 0) >= 30 and c_.get("mean") is not None]
-            vm = max(c_["mean"] for c_ in el) if el else None
-            log("   · [매매법시뮬] %s 후보 OMNI-Q 상위 %d%% — 검증 구간 최고 %s%% · 판정 %s%%(n %s)" % (market, round((1 - q_) * 100), vm, st_.get("mean"), st_.get("n")))
-            cand_cmp.append({"q": q_, "val": vm, "n": st_.get("n"), "mean": st_.get("mean"), "base": st_.get("base"), "t": st_.get("t"), "win": st_.get("win")})   # 기록만(고르기는 val)
-            if vm is not None and (best_q is None or vm > best_q[0]):
-                best_q = (vm, q_, d_, st_)
+            rsel = st_.get("rule") or {}
+            vsel = next((c_ for c_ in (st_.get("valCmp") or []) if c_.get("rule") == rsel), None)   # 그 폭에서 고른 규칙의 검증 구간 성적
+            vm = vsel.get("mean") if vsel and vsel.get("n", 0) >= VAL_MIN_N else None
+            vt = (vsel.get("t") or 0.0) if vm is not None else None
+            log("   · [매매법시뮬] %s 후보 OMNI-Q %s일 머리 상위 %d%% — 검증 구간 최고 %s%% · 판정 %s%%(n %s)" % (market, hd_, round((1 - q_) * 100), vm, st_.get("mean"), st_.get("n")))
+            cand_cmp.append({"q": q_, "head": hd_ if q_ > 0 else None, "val": vm, "valT": vt, "n": st_.get("n"), "mean": st_.get("mean"), "base": st_.get("base"), "t": st_.get("t"), "win": st_.get("win")})   # 기록만(고르기는 val)
+            if hd_ == "5" and q_ == CAND_Q:
+                dflt = (vt, q_, d_, st_, hd_)   # 검증 구간에서 양수인 설정이 없을 때 쓰는 기본(종전과 같은 5일 상위 20%)
+            if vt is not None and vm > 0 and (best_q is None or vt > best_q[0]):   # [V33.622] 검증 구간 t 최대(평균 > 0 · 표본 ≥ VAL_MIN_N)
+                best_q = (vt, q_, d_, st_, hd_)
+        if best_q is None and dflt is not None:
+            log("   · [매매법시뮬] %s 검증 구간에서 양수인 후보 설정 없음 → 기본(5일 머리 상위 20%%)" % market)
+            best_q = dflt
         if best_q is not None:
-            _, q_, ddf, dst = best_q
-            cand_src = ("OMNI-Q 표본 밖 상위 %d%%" % round((1 - q_) * 100)) if q_ > 0 else "OMNI-Q 거름 없음(전 종목 · 검증이 고름)"
+            _, q_, ddf, dst, hd_ = best_q
+            dst["candHead"] = hd_
+            cand_src = ("OMNI-Q 표본 밖 %s일 머리 상위 %d%%" % (hd_, round((1 - q_) * 100))) if q_ > 0 else "OMNI-Q 거름 없음(전 종목 · 검증이 고름)"
             dst["candQ"] = q_
         else:
             log("   · [매매법시뮬] %s 후보 거름 불가(OMNI-Q 과거 점수 없음·부족) → 전 종목으로" % market)
@@ -1000,7 +1028,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             cand_src = "전 종목(OMNI-Q 과거 점수 없음·부족)"
             ddf = _relevel(ddf)
             dst, _ = validate(ddf, "t")
-        cm = cand_mask(P, (oos or {}).get(market), dst.get("candQ")) if dst.get("candQ") else None
+        cm = cand_mask(P, (oos or {}).get(market), dst.get("candQ"), dst.get("candHead") or "5") if dst.get("candQ") else None
         dst["cand"] = cand_src
         dst["candCmp"] = cand_cmp   # [V33.621] 폭별 판정 구간 성적(객관 비교 · 고르기엔 안 씀)
         dst["tune"] = tune_rep
