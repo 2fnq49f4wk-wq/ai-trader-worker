@@ -6,7 +6,7 @@
 const { CLOUDFLARE_API_TOKEN: TOK, CLOUDFLARE_ACCOUNT_ID: ACC } = process.env;
 const out = (k, v) => console.log("BILL " + k + " " + (typeof v === "string" ? v : JSON.stringify(v)));
 if (!TOK || !ACC) { out("skip", "시크릿 없음"); process.exit(0); }
-const start = process.argv[2] || "2026-09-07";
+const start = process.argv[2] || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);   // GraphQL 조회 폭 상한 ~31일
 const end = new Date().toISOString().slice(0, 10);
 async function gql(name, q) {
   try {
@@ -30,6 +30,10 @@ for (const r of (a && a.workersInvocationsAdaptive) || []) {
 out("scripts_cpu_ms", scripts);
 a = await gql("d1", A(`d1AnalyticsAdaptiveGroups(limit: 10000, filter: {date_geq: "${start}", date_leq: "${end}"}) { sum { readQueries writeQueries rowsRead rowsWritten } dimensions { date databaseId } }`));
 for (const r of (a && a.d1AnalyticsAdaptiveGroups) || []) { add(r.dimensions.date, "d1Read", r.sum.rowsRead); add(r.dimensions.date, "d1Write", r.sum.rowsWritten); add(r.dimensions.date, "d1Q", r.sum.readQueries + r.sum.writeQueries); }
+// D1 '읽은 행' 상위 쿼리(최근 3일) — 어떤 쿼리가 테이블을 훑는지
+const q0 = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
+a = await gql("d1q", A(`d1QueriesAdaptiveGroups(limit: 40, filter: {date_geq: "${q0}", date_leq: "${end}"}, orderBy: [sum_rowsRead_DESC]) { sum { rowsRead rowsWritten queryDurationMs } count dimensions { query } }`));
+for (const r of (a && a.d1QueriesAdaptiveGroups) || []) out("topq", { rowsRead: r.sum.rowsRead, rowsWritten: r.sum.rowsWritten, n: r.count, perCall: Math.round(r.sum.rowsRead / Math.max(1, r.count)), q: String(r.dimensions.query).slice(0, 220) });
 a = await gql("d1size", A(`d1StorageAdaptiveGroups(limit: 100, filter: {date_geq: "${end}"}) { max { databaseSizeBytes } dimensions { date databaseId } }`));
 out("d1_size_bytes", ((a && a.d1StorageAdaptiveGroups) || []).map((r) => r.max.databaseSizeBytes));
 a = await gql("r2", A(`r2OperationsAdaptiveGroups(limit: 10000, filter: {date_geq: "${start}", date_leq: "${end}"}) { sum { requests } dimensions { date actionType } }`));
