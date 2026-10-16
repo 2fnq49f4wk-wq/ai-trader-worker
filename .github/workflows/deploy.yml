@@ -834,6 +834,9 @@ jobs:
       # [V33.627] 시간외 시세 매분 두 시장 · 평가 차례 위상 고정 없음 · 장전 전일 종가 넘기기
       - name: 시간외 실시간 시세 검사
         run: node tools/check-ext-realtime.mjs
+      # [V33.637] D1 읽은 행 과금 — ml_samples 전체 집계는 6시간 기억 경유만
+      - name: D1 비용 검사
+        run: node tools/check-d1-cost.mjs
       # [V33.531] 포트폴리오 실험실 — Qlib TopK-Dropout + Vibe 부품(퍼지 전진·DSR·최적화기) · 귀무 0 · 양성 대조 통과
       - name: 포트폴리오 실험실 검사
         run: node tools/check-portfolio-lab.mjs

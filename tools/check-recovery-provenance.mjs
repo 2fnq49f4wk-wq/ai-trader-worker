@@ -75,7 +75,8 @@ let models, dispatched, saved;
 const recovery=vm.createContext({Date,JSON,Object,Math,isFinite,LUXML:{featVer:17},
  _num:(v,d)=>typeof v==='number'?v:d,
  getState:async()=>({fvDispatched:17}),getStates:async()=>models,setState:async(_db,_k,v)=>{saved=v;},log:async()=>{},
- fetch:async()=>{dispatched++;return {status:204};}});
+ fetch:async()=>{dispatched++;return {status:204};},
+ _mlAgg:async(db,sql,b)=>db.prepare(sql).bind(...(b||[])).first()});   // [V33.637] 표본 개수는 6시간 기억 경유
 const start=src.indexOf('async function _luxAutoRetrainModal(env) {');
 vm.runInContext(cut('function latestExternalReceipt(live, shadow) {','async function _luxAutoRetrainModal(env) {'),recovery);
 vm.runInContext(src.slice(start,src.indexOf('\n}',start)+2),recovery);
