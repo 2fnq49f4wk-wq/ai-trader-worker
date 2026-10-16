@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.636";
+const _BUILD_VER = "V33.637";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -14812,7 +14812,7 @@ async function mlSnapshotBuildStep(DB, deadline) {
      는 이유로 굶은 사진을 계속 내주는 것은, 캐시가 아니라 오답이다.
      살아 있는 풀과 사진이 크게 어긋나면 시각과 무관하게 다시 뜬다. */
   let _live = -1;
-  try { const _c0 = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(fv).first(); _live = (_c0 && _c0.c) || 0; } catch (e) {}
+  try { const _c0 = await _mlAgg(DB, "SELECT COUNT(*) c FROM ml_samples WHERE featver=?", [fv]); _live = (_c0 && _c0.c) || 0; } catch (e) {}
   const _drift = (st && st.done && _live >= 0)
     ? Math.abs(_live - _num(st.total, 0)) > Math.max(50, _num(st.total, 0) * 0.25) : false;
   if (_drift) {
@@ -14828,7 +14828,7 @@ async function mlSnapshotBuildStep(DB, deadline) {
   if (st && st.done && (nowT - (st.ts || 0)) < 12 * 3600000) return { done: true, fresh: true };
   if (!st || st.done) {
     const total = _live >= 0 ? _live
-      : (await (async function () { const c = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(fv).first(); return (c && c.c) || 0; })());
+      : (await (async function () { const c = await _mlAgg(DB, "SELECT COUNT(*) c FROM ml_samples WHERE featver=?", [fv]); return (c && c.c) || 0; })());
     /* [V33.365] bounds — 파트마다 ★마지막 (ts,id)★ 를 적는다.
        익스포트가 커서로 "이 다음 파트" 를 찾으려면 이 색인이 있어야 한다.
        없으면 커서 요청을 R2 로 못 받아 D1 로 떨어진다(느리지만 옳다). */
@@ -22319,6 +22319,26 @@ async function usNaverSweep(env, opts) {
   }
   for (let i = 0; i < stmts.length; i += 100) { try { await DB.batch(stmts.slice(i, i + 100)); } catch (e) {} }
   return stmts.length;
+}
+
+/* ══ [V33.637] ★D1 '읽은 행' 과금 주범 차단★ — 실측(Cloudflare D1 쿼리 분석 10/13~16): ml_samples(121만 행) 전체 COUNT/집계가
+   하루 ~2,900회 · 회당 121만 행 = 하루 40~50억 행 읽기 = 청구액의 ~100%(9/7 주기 $69 · 10/7 주기 $14+). 표본 개수는 관측·문턱용이라
+   몇 시간 묵어도 판단이 안 바뀐다 → 같은 질의(SQL+인자 키)를 6시간 동안 아이솔레이트 기억 + D1 상태 1행(mlagg:*)으로 재사용한다. */
+const ML_AGG_TTL_MS = 6 * 3600000;
+const __mlAggMem = new Map();
+function _mlAggKey(sql, binds) { let h = 0; const t = sql + "|" + JSON.stringify(binds || []); for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0; return "mlagg:" + (h >>> 0).toString(36); }
+async function _mlAgg(DB, sql, binds, opts) {
+  const key = (opts && opts.key) || _mlAggKey(sql, binds), now = Date.now(), all = !!(opts && opts.all);
+  const m = __mlAggMem.get(key);
+  if (m && now - m.ts < ML_AGG_TTL_MS) return m.v;
+  try { const c = await getState(DB, key, null); if (c && now - _num(c.ts, 0) < ML_AGG_TTL_MS) { __mlAggMem.set(key, c); return c.v; } } catch (e) {}
+  const st = DB.prepare(sql).bind.apply(DB.prepare(sql), binds || []);
+  const r = all ? await st.all() : await st.first();
+  const v = all ? { results: (r && r.results) || [] } : r;
+  const ent = { ts: now, v: v };
+  __mlAggMem.set(key, ent);
+  try { await setState(DB, key, ent); } catch (e) {}
+  return v;
 }
 
 /* [V33.631] OMNI-Q 구조 검증(순수 함수) — 모양이 틀리면 null(저장 안 함). 피처 ≤ 3000 · 나무 ≤ 400 · 나무당 분기 ≤ 512 · 피처 번호 범위 확인 */
@@ -29826,7 +29846,7 @@ async function handleRequest(request, env, ctx, _inner) {
             let _mnote = null;
             try { _mnote = await getState(env.DB, "train_note:memo_model", null); } catch (e) {}
             let _mn = 0;
-            try { const r = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver = ?").bind(LUXML.featVer).first(); _mn = _num(r && r.c, 0); } catch (e) {}
+            try { const r = await _mlAgg(env.DB, "SELECT COUNT(*) c FROM ml_samples WHERE featver = ?", [LUXML.featVer]); _mn = _num(r && r.c, 0); } catch (e) {}
             _alt.memo = { samples: _mn, minN: MEMOML.minTrainSamples,
               trained: !!(_mo && _mo.luxFeatVer === LUXML.featVer), trusted: !!(_mo && _mo.trusted),
               acc: _mo ? _num(_mo.valAcc, null) : null, ic: _mo ? _num(_mo.valIC, null) : null,
@@ -29850,7 +29870,7 @@ async function handleRequest(request, env, ctx, _inner) {
             const _dbm = await getState(env.DB, "dual_bull_model", null);
             const _drm = await getState(env.DB, "dual_bear_model", null);
             let _dn = 0;
-            try { const r = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver = ?").bind(LUXML.featVer).first(); _dn = _num(r && r.c, 0); } catch (e) {}
+            try { const r = await _mlAgg(env.DB, "SELECT COUNT(*) c FROM ml_samples WHERE featver = ?", [LUXML.featVer]); _dn = _num(r && r.c, 0); } catch (e) {}
             /* ══ [V33.280] ★사이드바와 두뇌 화면이 갈라진 자리★ ══════════════════════
                종전 _one 은 trusted / valIC(원시) 만 실었다. 그런데
                  · trusted 는 ★홀드아웃+전진검증 둘 다★ 통과해야 켜지는 엄격 플래그다
@@ -30878,7 +30898,7 @@ async function handleRequest(request, env, ctx, _inner) {
         try {
           const _AS = await getStates(env.DB, [DNNARCH.stateKey, "dnn_trust", "seq_arch"]);
           let _pn = 0;
-          try { const _c = await env.DB.prepare("SELECT COUNT(*) n FROM ml_samples WHERE featver = ?").bind(LUXML.featVer).first(); _pn = _num(_c && _c.n, 0); } catch (e) {}
+          try { const _c = await _mlAgg(env.DB, "SELECT COUNT(*) n FROM ml_samples WHERE featver = ?", [LUXML.featVer]); _pn = _num(_c && _c.n, 0); } catch (e) {}
           _arch = _dnnArchDecide(_AS[DNNARCH.stateKey], _AS["dnn_trust"], _pn);
           /* [V33.271] SEQ 스윕 승자 — ★판이 같을 때만★ 쓴다. 피처가 바뀌면 그때 잰 용량은
              다른 문제에 대한 답이라 근거가 아니다. */
@@ -31058,7 +31078,7 @@ async function handleRequest(request, env, ctx, _inner) {
       const limit = Math.min(20000, Math.max(1, Number(url.searchParams.get("limit")) || 10000));
       const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
       let total = 0;
-      try { const c = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples_st WHERE featver=?").bind(LUXML.featVer).first(); total = (c && c.c) || 0; } catch (e) {}
+      try { const c = await _mlAgg(env.DB, "SELECT COUNT(*) c FROM ml_samples_st WHERE featver=?", [LUXML.featVer]); total = (c && c.c) || 0; } catch (e) {}
       let rows = { results: [] };
       try {
         rows = await env.DB.prepare(
@@ -43412,7 +43432,7 @@ async function mlStatus(DB) {
   try {
     const m = await mlLoadModel(DB);
     let cnt = 0;
-    try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver = ?").bind(LUXML.featVer).first(); cnt = (r && r.c) || 0; } catch (e) {}
+    try { const r = await _mlAgg(DB, "SELECT COUNT(*) c FROM ml_samples WHERE featver = ?", [LUXML.featVer]); cnt = (r && r.c) || 0; } catch (e) {}
     if (!m) return { mode: "observe", samples: cnt, trained: false };
     const weights = LUXML.featNames.map(function(n, j){ return { f: n, w: +(m.w[j] || 0).toFixed(3) }; })
                      .filter(function(o){ return o.w !== 0; })
@@ -45971,7 +45991,7 @@ async function mlMindVizData(DB) {
     const fn = LUXML.featNames;
     if (!m) {
       const _if = fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", liveOnly: _LIVE_ONLY_FEATS.has(nm), strength: 0 }; });
-      let _sn = 0; try { const _r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first(); _sn = (_r && _r.c) || 0; } catch (e) {}
+      let _sn = 0; try { const _r = await _mlAgg(DB, "SELECT COUNT(*) c FROM ml_samples WHERE featver=?", [LUXML.featVer]); _sn = (_r && _r.c) || 0; } catch (e) {}
       return { kind: "mind", trained: false, samples: _sn, minTrainSamples: MIND.minTrainSamples, featVer: LUXML.featVer, featNames: fn, inputFeatures: _if, topFeatures: _if.slice(0, 20) };
     }
     const D = fn.length, K = m.fm ? m.fm.K : null;
@@ -46003,7 +46023,7 @@ async function mlMindVizData(DB) {
     const mindLB = (typeof m.valAccLB === "number") ? m.valAccLB : _wilsonLB(_num(m.valAcc, 0.5), _num(m.valN, 30));
     // [V12.100] 풀 전체 표본수도 함께 반환 — MIND는 FM 특성상 최근 trainWindow(15000)만 학습창으로 쓰므로
     //   n(=학습창)이 풀보다 작게 보여 "표본이 줄었나?" 오해가 있었다(사용자 지적). 둘을 구분 표시하기 위함.
-    let _pool = 0; try { const _r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first(); _pool = (_r && _r.c) || 0; } catch (e) {}
+    let _pool = 0; try { const _r = await _mlAgg(DB, "SELECT COUNT(*) c FROM ml_samples WHERE featver=?", [LUXML.featVer]); _pool = (_r && _r.c) || 0; } catch (e) {}
     return { kind: "mind", trained: true, n: m.n, poolSamples: _pool, trainWindow: MIND.trainWindow, valAcc: m.valAcc, valAccLB: +mindLB.toFixed(4), fmAcc: m.fmAcc, valLogLoss: m.valLogLoss,
       ruleAcc: (typeof m.ruleAcc === "number") ? m.ruleAcc : null, ruleAccLB: (typeof m.ruleAccLB === "number") ? m.ruleAccLB : null,   // [V12.39] 규칙엔진 전문가 정확도
       fmK: K, experts: experts, trainedAt: m.trainedAt, featNames: fn, inputFeatures: inputFeatures, topFeatures: topFeatures,
@@ -46152,7 +46172,7 @@ async function mlMemoVizData(DB) {
     const fn = LUXML.featNames;
     if (!m || !Array.isArray(m.protos) || !m.protos.length) {
       let sn = 0;
-      try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first(); sn = _num(r && r.c, 0); } catch (e) {}
+      try { const r = await _mlAgg(DB, "SELECT COUNT(*) c FROM ml_samples WHERE featver=?", [LUXML.featVer]); sn = _num(r && r.c, 0); } catch (e) {}
       return { kind: "memo", model: "MEMO (유사상황 기억)", trained: false, samples: sn,
                minTrainSamples: MEMOML.minTrainSamples, featNames: fn,
                note: note ? String(note.msg || "") : null };
@@ -46191,7 +46211,7 @@ async function mlTreeVizData(DB, name) {
     }
     if (!m || !Array.isArray(m.trees)) {
       const _if = fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", liveOnly: _LIVE_ONLY_FEATS.has(nm), strength: 0 }; });
-      let _sn = 0; try { const _r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first(); _sn = (_r && _r.c) || 0; } catch (e) {}
+      let _sn = 0; try { const _r = await _mlAgg(DB, "SELECT COUNT(*) c FROM ml_samples WHERE featver=?", [LUXML.featVer]); _sn = (_r && _r.c) || 0; } catch (e) {}
       return { kind: name, model: label, trained: false, shadow: shadow, samples: _sn, featVer: LUXML.featVer, featNames: fn, inputFeatures: _if, topFeatures: _if.slice(0, 20), trust: trust || null };
     }
     const imp = new Array(fn.length).fill(0);
@@ -49623,7 +49643,7 @@ async function mlMarketHarvestNightly(DB, opts) {
     //   구 featVer 표본이 이미 상한을 채워, 갓 수확한 신 featVer 표본까지 무작위로 삭제 → 학습(WHERE
     //   featver=현재)이 보는 풀이 계속 깎여 "표본이 이상하게 적은" 원인. 프루닝을 현재 featVer로 한정.
     try {
-      const c = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE strategy='hv' AND featver=?").bind(LUXML.featVer).first();
+      const c = await _mlAgg(DB, "SELECT COUNT(*) c FROM ml_samples WHERE strategy='hv' AND featver=?", [LUXML.featVer]);
       const over = ((c && c.c) || 0) - HARVEST.maxTotal;
       /* [V33.359] ★`ORDER BY RANDOM()` 은 이 규모에서 실행 자체가 불가능하다.★
          쿼리계획 실측: COVERING INDEX 로 후보를 찾은 뒤 ★USE TEMP B-TREE FOR ORDER BY★ —
@@ -53432,7 +53452,7 @@ async function _luxAutoRetrainModal(env) {
     /* [V33.352] 여기는 자가진단이 아니라 ★재학습 디스패치★ 경로다(야간 1회). 공유 캐시를
        끌어오면 의존만 늘고 얻는 게 없어 종전대로 둔다 — C-2 는 selfcheck 안의 중복이 문제였다.
        (처음엔 여기까지 바꿨다가 되돌렸다. 이 한 줄이 selfcheck 비용이라는 내 읽기가 틀렸다.) */
-    let nSamp = 0; try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind((typeof LUXML !== "undefined") ? LUXML.featVer : null).first(); nSamp = (r && r.c) || 0; } catch (e) {}
+    let nSamp = 0; try { const r = await _mlAgg(DB, "SELECT COUNT(*) c FROM ml_samples WHERE featver=?", [(typeof LUXML !== "undefined") ? LUXML.featVer : null]); nSamp = (r && r.c) || 0; } catch (e) {}
     if (nSamp < 200) { meta.lastSkip = "insufficient_samples:" + nSamp; try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }
     // 워크플로 디스패치(재배포+즉시 학습 1회)
     let ok = false, httpStatus = 0;
@@ -55750,7 +55770,7 @@ async function _mlCountsCached(DB) {
               cur24: null, cur7d: null };
   try {
     // 표본: featver×strategy 집계 1회 스캔으로 현재/구버전/전략별을 모두 도출
-    const rs = await DB.prepare("SELECT featver, strategy, COUNT(*) n, SUM(label) pos FROM ml_samples GROUP BY featver, strategy").all();
+    const rs = await _mlAgg(DB, "SELECT featver, strategy, COUNT(*) n, SUM(label) pos FROM ml_samples GROUP BY featver, strategy", [], { all: true });
     for (const r of ((rs && rs.results) || [])) {
       const fv = r.featver, st = r.strategy || "?", n = r.n || 0;
       if (fv === LUXML.featVer) {
@@ -55767,10 +55787,10 @@ async function _mlCountsCached(DB) {
        ts 로 세면 오늘 적재분이 거의 0 으로 나온다(실측 1 vs 249). 적재시각으로 센다. */
   try {
     const _t24 = Date.now() - 24 * 3600000, _t7 = Date.now() - 7 * 86400000;
-    const rr = await DB.prepare(
+    const rr = await _mlAgg(DB,
       "SELECT SUM(CASE WHEN COALESCE(ins_ts, ts) >= ? THEN 1 ELSE 0 END) d1, " +
       "SUM(CASE WHEN COALESCE(ins_ts, ts) >= ? THEN 1 ELSE 0 END) d7 " +
-      "FROM ml_samples WHERE featver = ?").bind(_t24, _t7, LUXML.featVer).first();
+      "FROM ml_samples WHERE featver = ?", [_t24, _t7, LUXML.featVer], { key: "mlagg:recent:" + LUXML.featVer });
     if (rr) { v.cur24 = _num(rr.d1, 0); v.cur7d = _num(rr.d7, 0); }
   } catch (e) {}
   try {
@@ -56498,7 +56518,7 @@ export default {
               const _cuDry = await getState(env.DB, "hv_catchup_dry", null);
               const _dryUntil = (_cuDry && _cuDry.until) || 0;
               if (Date.now() - _cuLock > _cuGap && Date.now() > _dryUntil) {
-              const _pr = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first();
+              const _pr = await _mlAgg(env.DB, "SELECT COUNT(*) c FROM ml_samples WHERE featver=?", [LUXML.featVer]);
               const _poolN = (_pr && _pr.c) || 0;
               const _target = HARVEST.rebuildTarget || 700000;
               // 장중엔 "심각한 부족(<60%)"일 때만 — 풀이 충분히 찼으면 장중 CPU를 거래에 양보.
@@ -56507,7 +56527,7 @@ export default {
                 await setState(env.DB, "hv_catchup_lock", Date.now());
                 try { resetFetchBudget(_mktOpen ? 40 : 120); } catch (e0) {}
                 const _cr = await mlMarketHarvestNightly(env.DB, { budgetMs: _mktOpen ? 8000 : 22000 });
-                const _pr2 = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first();
+                const _pr2 = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first();   // 수확 직후 증가분은 실제로 센다(퇴역 경로 · 드묾)
                 const _gained = ((_pr2 && _pr2.c) || 0) - _poolN;
                 if (_gained > 0) {
                   await setState(env.DB, "hv_catchup_dry", { n: 0, until: 0 });
@@ -56936,7 +56956,7 @@ export default {
             //   작아(25000, V12.38 이력) 풀 전체와 비교하면 항상 "늘었다"고 오판하므로 이 체크 대상에서 제외.
             try {
               if (!_trainKey) throw 0;   // [V33.584] 학습 창 밖에선 재학습 트리거도 없다(풀 COUNT 도 안 돈다)
-              const _poolChk = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first();
+              const _poolChk = await _mlAgg(env.DB, "SELECT COUNT(*) c FROM ml_samples WHERE featver=?", [LUXML.featVer]);
               const _poolNow = (_poolChk && _poolChk.c) || 0;
               if (_poolNow > 0 && _poolNow < (HARVEST.rebuildTarget || 700000)) {
                 const _gModel = await mlGBDTLoad(env.DB);
