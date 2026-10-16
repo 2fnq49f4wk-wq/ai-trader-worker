@@ -112,12 +112,15 @@ def _last_row(mk, C, D):
 
 def _lgb_params(seed=7, reg=False):
     import os
-    p = {"objective": "regression", "learning_rate": 0.05, "num_leaves": 31, "min_data_in_leaf": 200,
-         "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 1, "lambda_l2": 1.0,
+    # [V33.636] ★정규화 강화를 기본으로★ — 10년 퍼지 전진(한국 · 표본 밖 1,856일): 5일 ① 53.63% vs 지금 53.65%(같음) · 20일 ① 53.15% vs 52.97% ·
+    #   20일 ② 마지막 띠 −0.21% vs −0.60% · 적합 차(표본 안−밖) 5일 0.19→0.13 · 20일 0.26→0.19. 같거나 나은 성적에 덜 외운다(V33.558 연구 후보 lgb_reg 그대로).
+    p = {"objective": "regression", "learning_rate": 0.05, "num_leaves": 15, "min_data_in_leaf": 1000,
+         "feature_fraction": 0.6, "bagging_fraction": 0.8, "bagging_freq": 1, "lambda_l2": 10.0,
          "verbose": -1, "seed": seed, "num_threads": int(os.environ.get("OMNI_THREADS", "8"))}
     if reg:
         # [V33.558] 정규화 강화 후보(과적합 대응 · 연구 회차에서만 비교) — 잎 15 · 잎당 최소 1,000행 · L2 10 · 피처 60%
-        p.update({"num_leaves": 15, "min_data_in_leaf": 1000, "lambda_l2": 10.0, "feature_fraction": 0.6})
+        # (연구 비교) 더 강한 정규화 — 기본이 lgb_reg 가 됐으므로 연구 후보는 한 단계 더(V33.636)
+        p.update({"num_leaves": 7, "min_data_in_leaf": 3000, "lambda_l2": 30.0, "feature_fraction": 0.5, "bagging_fraction": 0.7, "learning_rate": 0.03})
     return p
 
 
