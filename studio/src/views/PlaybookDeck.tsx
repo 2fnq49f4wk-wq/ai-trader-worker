@@ -99,8 +99,8 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
         </div>
       </div>
 
-      <section aria-label="판정 요약" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12 }}>
-        <div style={{ ...card, gridColumn: "span 2", minWidth: 0, padding: "20px 22px", background: "linear-gradient(180deg," + PANEL2 + ",#080C13)", display: "flex", flexDirection: "column", gap: 10 }}>
+      <section aria-label="판정 요약" className="grid grid-cols-2 gap-3 md:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))]">
+        <div className="col-span-2 md:col-span-1" style={{ ...card, minWidth: 0, padding: "20px 22px", background: "linear-gradient(180deg," + PANEL2 + ",#080C13)", display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={kick}>판정 구간 · 고른 매매 평균(시장 대비 순초과)</div>
           <div style={{ display: "flex", alignItems: "baseline", gap: 16, flexWrap: "wrap" }}>
             <span style={{ fontFamily: MONO, fontSize: 46, fontWeight: 500, lineHeight: 1, letterSpacing: "-.02em", color: col(V.mean) }}>{sg(V.mean)}%</span>
@@ -128,7 +128,9 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
           <h3 style={{ fontSize: 16, fontWeight: 600, color: "#F2F6FC" }}>판단 흐름</h3>
           <span style={{ fontSize: 12, color: DIM }}>한 종목이 매수 후보가 되기까지 — 단계마다 지금 쓰는 실제 값</span>
         </div>
-        <ol style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+        {/* [V33.633] 7단계는 한 줄 — 좁으면 옆으로 넘긴다(혼자 떨어지는 칸 없게) */}
+        <div className="bs-rail" style={{ overflowX: "auto" }}>
+        <ol style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(140px, 1fr))", gap: 10 }}>
           {flow.map(([t, v, s], i) => (
             <li key={t} style={{ ...card, borderRadius: 10, position: "relative", padding: "14px 14px 16px", display: "flex", flexDirection: "column", gap: 7, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -139,6 +141,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
               <div style={{ fontSize: 12, lineHeight: 1.45, color: DIM }}>{s}</div>
             </li>))}
         </ol>
+        </div>
       </section>
 
       <section aria-label="실제 표" style={{ display: "flex", flexDirection: "column", gap: 12 }}>

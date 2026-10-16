@@ -12,6 +12,18 @@
 
 ## Current handoff
 
+- V33.634 (10/16) ★퇴역 모델 전용 매분 수집 끔(CPU 낭비)★ — 사용자: "다른 모델 확실히 퇴역했는지 · 불필요한 수집 CPU 낭비 · OMNI-Q 를 Modal GPU 로".
+  - 확인: 위원회 '학습' 은 COMMITTEE_RETIRED 로 꺼져 있었지만 매분 도는 수집 6개가 스위치 밖이었다(이번 달 단계별 CPU 대리값: ai.cflabel 1,234만 1위 ·
+    ai.omniShadow 412만 · ai.harvestCatchup 100만 · ai.krFlow 160만 · ai.deephist 73만 · sampleSnap 123만). 전부 위원회 학습 표본·라벨·옛 OMNI 용.
+    수급(omniflow)은 옛 OMNI(omni.py get_flows)만 받고 OMNI-Q(omniq_gha)는 안 받는다 → 끔. OMNI-Q 재료(봉·한국 뉴스·미국 실적)는 그대로.
+    AI_PRIMARY(위원회 '추론')는 아직 실전이라 추론 경로는 건드리지 않음. check-playbook 2개.
+  - Modal GPU 이전은 하지 않음(근거 보고): OMNI-Q 시간의 대부분은 피처 계산(pandas CPU · 시장당 400~550초)이고 LightGBM 300판은 GPU 이득이 작다 ·
+    성적(섀도우·잠정)은 하드웨어와 무관(관문 ② 비용 뺀 초과 · ③ 실전 장부 30일) · GHA 는 무료 무제한, Modal 은 월 크레딧.
+  - 매매법 '판정 구간이 양수 될 때까지' 조율은 판정 구간 과적합이라 대신 10년 데이터로: 앞 40% 조율 · 40~55% 확인 · 뒤 45%(≈4.5년) 시험(lab tune10.py · 진행 중).
+  - OMNI-Q 과적합 의심: 파라미터를 늘리면 과적합이 커진다 — 정규화 강화(reg · reg2)를 10년 퍼지 전진으로 비교(lab oqreg.py · 진행 예정).
+- V33.633 (10/16) ★모델 구조 — 왼쪽 세로 목록 → 위쪽 모델 탭★ — 사용자: "왼쪽 공백이 너무 많다". 모델이 둘(매매법 AI · OMNI-Q)뿐인데 220px 세로 목록 아래가
+  화면 끝까지 비었다. studio App.tsx: 위쪽 탭(이름 · 역할 · 상태 점 · 48px) · 본문 전체 폭. PlaybookDeck: 판정 요약 한 줄 4칸(md+) · 판단 흐름 7칸 한 줄(좁으면 가로 넘김).
+  시안 artifact BivLJqLmBbLNUsr2hTGCnY. Playwright(라이브 데이터 + 새 번들): 오류 0 · 가로 넘침 0.
 - V33.632 (10/16) ★매매법 AI 구조관측 새 디자인 — 사이트 적용 · 실시간 연결★ — 사용자: "그 디자인 사이트에 적용하고 실시간 연결해"(시안 artifact UxjbUWvVsqrZCXv2dagggo).
   studio/src/views/PlaybookDeck.tsx: /api/playbook 그대로 — 시장 전환 · 기준일·국면·표 나이·공황·제동 칩 · 판정 요약(평균 vs 무작위 양방향 막대 · t · 승률·표본 · 주력 전환 독립/연속) ·
   판단 흐름 7단계(후보 폭 · 신호 수 · 공황 차단 · 칸 수 · 고른 규칙 · 거부권 · 판정) · 표 탭: 매매법(tune 진단 판정 전/판정 · 고른 수 byPb · 거르개 · 정렬) ·

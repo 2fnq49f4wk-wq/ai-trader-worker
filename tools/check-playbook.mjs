@@ -374,5 +374,13 @@ print(json.dumps({"pb": sorted(PB.PANIC_PB), "calm": float(pn[250:400].mean()), 
   chk(JSON.stringify(Wp.pbPanicOff({ panic: true }, ["DUAL_MOM", "SN_RSI2", "KELTNER"])) === '["DUAL_MOM","KELTNER"]' && Wp.pbPanicOff({ panic: false }, ["DUAL_MOM"]).length === 0 && Wp.pbPanicOff({}, ["DUAL_MOM"]).length === 0,
       "[V33.625] 워커: 학습기가 공황이라 보낸 날만 추세·모멘텀을 쉰다");
   chk(/panic: body\.panic === true/.test(S) && /"panic": panic_now/.test(readFileSync(dir + "playbook_sim.py", "utf8")), "[V33.625] 학습기 업로드 → 워커 저장(panic)"); }
+{ // [V33.634] 퇴역 위원회·옛 OMNI 전용 매분 수집 끔(CPU 낭비) — OMNI-Q 가 쓰는 봉·뉴스·실적 수집은 그대로
+  chk(/if \(!COMMITTEE_RETIRED && HARVEST\.enabled && LUXML\.enabled\)/.test(S) && /if \(!COMMITTEE_RETIRED && Date\.now\(\) - _cfLock > 4 \* 3600000\)/.test(S)
+      && /if \(!COMMITTEE_RETIRED && Date\.now\(\) - _ofLock >/.test(S) && /if \(!COMMITTEE_RETIRED && Date\.now\(\) - _osLock >/.test(S)
+      && /__prof\.mark\("ai\.deephist"\);\s*if \(!COMMITTEE_RETIRED\) try \{/.test(S) && /if \(_bigR2\(\) && !COMMITTEE_RETIRED\) \{/.test(S),
+      "[V33.634] 표본 캐치업·반사실 라벨·한국 수급·옛 OMNI 채점·딥이력·표본 스냅샷 — 퇴역 스위치로 끔");
+  const o1 = S.indexOf('__prof.mark("ai.omniBars")'), o2 = S.indexOf('__prof.mark("ai.krNews")'), o3 = S.indexOf('__prof.mark("ai.earnings")');
+  chk(o1 > 0 && !/COMMITTEE_RETIRED/.test(S.slice(o1, o1 + 600)) && !/COMMITTEE_RETIRED/.test(S.slice(o2, o2 + 400)) && !/COMMITTEE_RETIRED/.test(S.slice(o3, o3 + 400)),
+      "[V33.634] OMNI-Q 재료(분·일봉 · 한국 뉴스 · 미국 실적) 수집은 그대로 돈다"); }
 if (fails) { console.log("check-playbook: FAIL " + fails); process.exit(1); }
 console.log("check-playbook: ok");

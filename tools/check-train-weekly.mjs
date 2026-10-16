@@ -116,7 +116,7 @@ chk(/actions\/cache\/restore@v4/.test(QG) && /if: steps\.omq\.outputs\.trained =
     && /cache=cache, mode=MODE/.test(QGP) && /trained=%s/.test(QGP), "GHA: 기본은 회차마다 학습 · 캐시 복원 → 실행 → 학습한 회차는 캐시 저장(채점만 선택지의 재료)");
 
 // ④ CPU
-chk(/if \(Date\.now\(\) - _cfLock > 4 \* 3600000\)/.test(S), "반사실 라벨 틱 30분 → 4시간(라벨은 주 1회 학습 때만 읽힌다)");
+chk(/if \(!COMMITTEE_RETIRED && Date\.now\(\) - _cfLock > 4 \* 3600000\)/.test(S), "반사실 라벨 틱 4시간 · [V33.634] 위원회 퇴역이면 아예 안 돈다");
 const OS = S.slice(S.indexOf("const OMNI_SHADOW = {"), S.indexOf("let _omniShadowReady"));
 chk(/gapOffMs: 60 \* 60000, gapInMs: 180 \* 60000/.test(OS), "OMNI 섀도우 채점 10/30분 → 60/180분(실력 0 머리의 전진 기록)");
 chk(/const ALT_CADENCE = \{ tradeMs: 3 \* 60000, quoteMs: 15 \* 60000 \};/.test(S) && /"alt_sleeve_ts"/.test(S) && /_altExec \? ALT_CADENCE\.tradeMs : ALT_CADENCE\.quoteMs/.test(S),

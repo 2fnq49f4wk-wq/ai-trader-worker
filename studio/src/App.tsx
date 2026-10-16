@@ -31,25 +31,23 @@ export default function App() {
   const st = (key: string) => stateOf(roster.find((r: any) => r.key === key));
   const groups = ["주력", "후보 선별"];   // [V33.617] 위원회 모델 목록 퇴역(주력 전환과 무관하게) · retired=${retired}
   void retired;
+  /* [V33.633] ★왼쪽 세로 목록 → 위쪽 모델 탭★ — 사용자(10/16): "모델 구조에서 왼쪽 공백이 너무 많다". 모델이 둘(매매법 AI · OMNI-Q)뿐이라
+     220px 세로 목록 아래가 화면 끝까지 비었다. 탭(이름 · 역할 · 상태 점)을 위에 두고 본문이 전체 폭을 쓴다. */
   return (
-    <div className="grid gap-5 md:grid-cols-[220px_minmax(0,1fr)] md:gap-8">
-      {/* phones: one compact strip · desktop: a quiet grouped list */}
-      <nav aria-label="모델" className="bs-rail flex gap-1.5 overflow-x-auto md:block md:overflow-visible">
-        {groups.map((g) => (
-          <div key={g} className="contents md:mb-4 md:block">
-            <div className="hidden px-2 pb-1 text-[10.5px] font-medium uppercase tracking-[.08em] text-ink-3 md:block">{g}</div>
-            {MODELS.filter((m) => m.group === g).map((m) => {
-              const s = m.roster ? st(m.roster) : m.key === "playbook" ? pbState(cached(nnPath("playbook")) || (model === "playbook" ? d : null)) : m.key === "omniq" ? oqState(cached(nnPath("omniq")) || (model === "omniq" ? d : null)) : null, on = m.key === model;
-              return (
-                <button key={m.key} onClick={() => setModel(m.key)} aria-pressed={on}
-                  className={"flex shrink-0 items-center gap-2 whitespace-nowrap rounded-sm px-2.5 py-1.5 text-[13px] transition-colors md:w-full md:py-2 " + (on ? "bg-bg-3 text-ink" : "text-ink-2 hover:text-ink")}>
-                  {s ? <Dot tone={s.tone} ring={s.tone === "shade"} /> : <span className="h-[7px] w-[7px] rounded-[1px] bg-rose" />}
-                  <span className="md:hidden">{m.short}</span><span className="hidden md:inline">{m.name}</span>
-                  {s && <span className="ml-auto hidden text-[11px] text-ink-3 md:inline">{s.label}</span>}
-                </button>);
-            })}
-          </div>
-        ))}
+    <div className="flex flex-col gap-5">
+      <nav aria-label="모델" role="tablist" className="bs-rail flex gap-1 self-start overflow-x-auto rounded-[12px] border border-line bg-bg-2 p-1 max-w-full">
+        {groups.flatMap((g) => MODELS.filter((m) => m.group === g).map((m) => {
+          const s = m.roster ? st(m.roster) : m.key === "playbook" ? pbState(cached(nnPath("playbook")) || (model === "playbook" ? d : null)) : m.key === "omniq" ? oqState(cached(nnPath("omniq")) || (model === "omniq" ? d : null)) : null, on = m.key === model;
+          return (
+            <button key={m.key} role="tab" aria-selected={on} onClick={() => setModel(m.key)}
+              className={"flex min-h-[48px] shrink-0 items-center gap-2.5 whitespace-nowrap rounded-[9px] py-1.5 pl-3 pr-4 text-left transition-colors " + (on ? "bg-bg-3 text-ink" : "text-ink-2 hover:text-ink")}>
+              {s ? <Dot tone={s.tone} ring={s.tone === "shade"} /> : <span className="h-[7px] w-[7px] rounded-[1px] bg-rose" />}
+              <span className="flex flex-col leading-tight">
+                <span className="text-[13.5px] font-semibold">{m.name}</span>
+                <span className="text-[11px] text-ink-3">{g}{s ? " · " + s.label : ""}</span>
+              </span>
+            </button>);
+        }))}
       </nav>
       <main className="min-w-0">
         {err && <p className="mb-3 rounded-sm bg-[color-mix(in_srgb,var(--bs-bad)_12%,transparent)] px-3 py-2 text-[12px] text-bad">{err}</p>}

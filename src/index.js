@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.632";
+const _BUILD_VER = "V33.634";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -56222,7 +56222,7 @@ export default {
       // 0.96) [V33.27] 학습표본 R2 스냅샷 — 트레이너가 D1을 17만 행 훑지 않게 미리 떠 둔다.
       //   장중엔 절대 돌리지 않는다(거래 우선). 장외에 파트 단위로 조금씩 쌓고 12시간마다 갱신.
       try {
-        if (_bigR2()) {
+        if (_bigR2() && !COMMITTEE_RETIRED) { /* [V33.634] 퇴역 위원회·옛 OMNI 전용 — 끔(사용자 "불필요한 수집으로 CPU 낭비") */
           let _mko = false; try { _mko = isMarketOpen("us") || isMarketOpen("kr"); } catch (e) {}
           if (!_mko) {
             const _sr = await mlSnapshotBuildStep(env.DB, Date.now() + 5000);
@@ -56467,7 +56467,7 @@ export default {
           //   방지, 거래윈도우 밖일 때만(시세 사이클 CPU 경쟁 회피).
           __prof.mark("ai.harvestCatchup");
           try {
-            if (HARVEST.enabled && LUXML.enabled) {
+            if (!COMMITTEE_RETIRED && HARVEST.enabled && LUXML.enabled) { /* [V33.634] 퇴역 위원회·옛 OMNI 전용 — 끔(사용자 "불필요한 수집으로 CPU 낭비") */
               // [V12.127] ★D1 부하 감소★ 종전엔 COUNT(*)(ml_samples 전체 스캔)가 락 체크보다 먼저 실행돼
               //   90s 락과 무관하게 '매 cron 틱'(1분마다=하루 1440회) 무조건 실행됐다. 값싼 락/장중 체크를
               //   먼저 걸러서, 실제로 캐치업을 실행할 가능성이 있을 때만 COUNT를 돌리도록 순서를 바꿨다
@@ -56566,7 +56566,7 @@ export default {
             /* [V33.584] 30분 → 4시간. 라벨은 학습 때만 읽힌다 — 외부(Modal) 학습은 12시간마다(V33.585 유지) · 워커 안 학습은 금요일. 4시간이면 매 회차 전에 다 편입된다.
                사용량 단계 ai.cflabel 11~20%(10/11~12).
                성숙 후보는 사라지지 않고 쌓여 있다가 다음 회차에 한꺼번에 편입된다(결과 동일 · 회차 고정비만 1/8). */
-            if (Date.now() - _cfLock > 4 * 3600000) {
+            if (!COMMITTEE_RETIRED && Date.now() - _cfLock > 4 * 3600000) { /* [V33.634] 퇴역 위원회·옛 OMNI 전용 — 끔(사용자 "불필요한 수집으로 CPU 낭비") */
               await setState(env.DB, "cf_label_lock", Date.now());
               // [V33.348] 야간 경로와 ★같은 공급자★ 를 쓴다 — 한쪽만 고치면 라벨이 갈린다(B-7).
               const _cfr = await mlLabelCandidates(env.DB, _cfPriceLookup(env.DB), {});
@@ -56599,7 +56599,7 @@ export default {
           try {
             const _ofLock = _num(await getState(env.DB, "omniflow_lock", 0), 0);
             const _ofOpen = (typeof isTradingWindow === "function") && isTradingWindow("kr");
-            if (Date.now() - _ofLock > (_ofOpen ? OMNIFLOW.gapInMs : OMNIFLOW.gapOffMs)) {
+            if (!COMMITTEE_RETIRED && Date.now() - _ofLock > (_ofOpen ? OMNIFLOW.gapInMs : OMNIFLOW.gapOffMs)) { /* [V33.634] 퇴역 위원회·옛 OMNI 전용 — 끔(사용자 "불필요한 수집으로 CPU 낭비") */ /* 수급은 옛 OMNI(omni.py get_flows)만 받았다 — OMNI-Q 는 안 받음 */
               await setState(env.DB, "omniflow_lock", Date.now());
               const _ofr = await omniFlowCollect(env.DB, {});
               await log(env.DB, "INFO", null, _ofr);
@@ -56639,7 +56639,7 @@ export default {
           try {
             const _osLock = _num(await getState(env.DB, "omniscore_lock", 0), 0);
             const _osOpen = (typeof isTradingWindow === "function") && (isTradingWindow("us") || isTradingWindow("kr"));
-            if (Date.now() - _osLock > (_osOpen ? OMNI_SHADOW.gapInMs : OMNI_SHADOW.gapOffMs)) {
+            if (!COMMITTEE_RETIRED && Date.now() - _osLock > (_osOpen ? OMNI_SHADOW.gapInMs : OMNI_SHADOW.gapOffMs)) { /* [V33.634] 퇴역 위원회·옛 OMNI 전용 — 끔(사용자 "불필요한 수집으로 CPU 낭비") */ /* 야간 omniscore 는 이미 퇴역 — 매분 길만 남아 있었다 */
               await setState(env.DB, "omniscore_lock", Date.now());
               const _osr = await omniShadowScore(env.DB, { budgetMs: _osOpen ? OMNI_SHADOW.budgetInMs : OMNI_SHADOW.budgetOffMs });
               await log(env.DB, "INFO", null, _osr);
@@ -56655,7 +56655,8 @@ export default {
           //   종전엔 이 수집이 야간 파이프라인 _stg("deephist") 안에만 있어 하루 1회로 제한됐다.
           //   커버리지 90% 미만인 동안엔 장외에 20분 주기로 추가 수집한다(외부 fetch 예산가드 내장).
           __prof.mark("ai.deephist");
-          try {
+          if (!COMMITTEE_RETIRED) try {
+            /* [V33.634] 퇴역 위원회·옛 OMNI 전용 — 끔(사용자 "불필요한 수집으로 CPU 낭비") */
             const _dhLock = _num(await getState(env.DB, "deephist_lock", 0), 0);
             const _mktOpen3 = (typeof isTradingWindow === "function") && (isTradingWindow("us") || isTradingWindow("kr"));
             // [V12.132] 장외에만 돌게 했더니 미국+한국 장을 합친 시간대에 막혀 실행 자체가 드물었고,
