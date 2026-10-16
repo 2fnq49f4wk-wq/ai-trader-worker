@@ -70,9 +70,9 @@ console.log("\n③ ★칸을 비우지 않는다★ — 한쪽에 자료가 없�
   const qs = [];
   for (let i = 0; i < 40; i++) qs.push(mkQ("US" + i, "us", (i % 21) - 10, 1, now));   // 미국만 있다
   const r = run(qs, now);
-  chk(r.up.length === 20, "한 시장뿐이어도 상승표 " + r.up.length + "줄이 찬다(종전과 같은 20줄)",
+  chk(r.up.length === 28, "한 시장뿐이어도 상승표 " + r.up.length + "줄이 찬다(V33.635 데스크톱 14×2 = 28줄)",
     "★한 시장만 있으면 칸이 " + r.up.length + "줄로 줄어든다 — 화면이 비어 보인다★");
-  chk(r.down.length === 20, "하락표도 " + r.down.length + "줄", "★하락표가 " + r.down.length + "줄★");
+  chk(r.down.length === 28, "하락표도 " + r.down.length + "줄", "★하락표가 " + r.down.length + "줄★");
 }
 
 console.log("\n④ ★줄 세우기가 맞는가★ (상승표는 내림차순 · 하락표는 오름차순)");
