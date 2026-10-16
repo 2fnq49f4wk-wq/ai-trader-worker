@@ -12,6 +12,9 @@
 
 ## Current handoff
 
+- V33.635 (10/16) ★TOP MOVERS 아래 빈칸 제거 · 종목 더 표시★ — 사용자: "탑무버 칸 안쪽 아래 공백 · 거기도 종목". 카드는 히트맵 줄 높이(≈418px)인데 표는 330px 고정
+  (기본 + terminal 밀도 두 줄) → flex 로 카드 끝까지 · 넘치면 안에서 스크롤 · 시장당 14종목(데스크톱 ≥1000px · 휴대폰은 10 유지). 좁은 화면 규칙엔 flex:none(0 으로 접힘 방지).
+  Playwright(로컬 index.html 주입): 1440·1920 표 끝 = 카드 끝(1px) · 390 정상 · 오류 0 · 가로 넘침 0. 남은 빈칸: 1920 에서 FOREX & BONDS 카드 아래(내용이 짧음 · 손대지 않음).
 - V33.634 (10/16) ★퇴역 모델 전용 매분 수집 끔(CPU 낭비)★ — 사용자: "다른 모델 확실히 퇴역했는지 · 불필요한 수집 CPU 낭비 · OMNI-Q 를 Modal GPU 로".
   - 확인: 위원회 '학습' 은 COMMITTEE_RETIRED 로 꺼져 있었지만 매분 도는 수집 6개가 스위치 밖이었다(이번 달 단계별 CPU 대리값: ai.cflabel 1,234만 1위 ·
     ai.omniShadow 412만 · ai.harvestCatchup 100만 · ai.krFlow 160만 · ai.deephist 73만 · sampleSnap 123만). 전부 위원회 학습 표본·라벨·옛 OMNI 용.
