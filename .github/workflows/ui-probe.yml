@@ -57,6 +57,10 @@ on:
         description: 'Cloudflare 실측 CPU — 이번 달 합계 + 최근 48시간 시간대별(tools/usage-sync.mjs --dry --hours) · 워커에 쓰지 않는다'
         type: boolean
         default: false
+      billing:
+        description: 'Cloudflare 청구 원인 — 상품별(워커 CPU·요청·D1 행·R2·Workers AI) 일별 사용량과 주기별 초과 요금(tools/billing-probe.mjs) · 읽기 전용'
+        type: boolean
+        default: false
       verify:
         description: '이번 변경 회귀 점검 — 상태 필드·현금·학습칩·위원회 모델 표·OMNI-Q·kr-halt·실적·차트(tools/probe-verify.mjs) · 브라우저 없음'
         type: boolean
@@ -187,6 +191,13 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: node tools/usage-sync.mjs --dry --hours || true
+
+      - name: 청구 원인 실측
+        if: inputs.billing
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node tools/billing-probe.mjs 2026-08-07 || true
 
       - name: 운영 상태 벤치 CPU 프로파일
         if: inputs.bench && steps.url.outputs.url != ''
