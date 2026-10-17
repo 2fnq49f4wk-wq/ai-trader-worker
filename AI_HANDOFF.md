@@ -6195,3 +6195,4 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
 - 감시: `.github/workflows/billing-probe.yml` 매일 03:17Z — 최근 24h 6억 초과면 실패. `tools/billing-probe.mjs`. 게이트 `check-d1-cost`.
 - 학습: OMNI-Q(GHA)는 R2 봉(/api/omni-bars) — D1 은 색인 1행. 옛 위원회 /api/ml-export(OFFSET 페이지) 는 D1 을 읽는다(퇴역 · 호출 시 1회 수천만 행).
 - 로빈후드 데이마켓 초안은 미적용(스크래치 wip637 패치).
+- V33.639: trades 읽기 = 원장 판(MAX(rowid)+trades_gen) 바뀔 때만(wrapD1 기억 10분 · 복사본) · 현금 체크포인트 새 거래마다 전진 · 로그 정리 15분·경계 id 삭제.

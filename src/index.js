@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.638";
+const _BUILD_VER = "V33.639";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -14406,9 +14406,45 @@ function _d1Blocked(sql) {
   const k = _d1SqlKey(sql);
   return !!(__d1Saver.heavy && __d1Saver.heavy[k]);
 }
+/* ══ [V33.639] ★거래 원장(trades) 읽기는 '거래가 일어났을 때만' 새로★ — 사용자(10/17): "trades 가 일어나면 하면 되잖아".
+   trades 를 읽는 SELECT(성과·리스크·화면·현금)는 결과를 아이솔레이트에 기억하고, 원장 판(=MAX(rowid) + 삭제 세대 trades_gen)이
+   바뀌었을 때만 다시 읽는다. 판 확인은 2행 읽기(색인) — 종전 회당 1,000~1,400행 전체 훑기를 대신한다.
+   같은 아이솔레이트의 쓰기(INSERT/UPDATE/DELETE trades)는 즉시 무효화 · DELETE 는 trades_gen 을 올려 다른 아이솔레이트도 안다.
+   안전 상한: 기억은 10분 · 최대 200개. 결과가 같으니 매매·화면 판단은 그대로다(성능 저하 없음 — 오히려 빨라진다). */
+const TRADES_CACHE_MS = 600000;
+let __trCache = new Map();
+let __trVer = { v: null, at: 0 };
+function _trIsRead(sql) { return /^\s*SELECT\b/i.test(sql) && /\bFROM\s+trades\b/i.test(sql) && !/\bMAX\(rowid\)/i.test(sql); }
+function _trIsWrite(sql) { return /^\s*(INSERT|UPDATE|DELETE|REPLACE)\b[^;]*\btrades\b/i.test(sql) && !/\bstate\b/i.test(sql.slice(0, 40)); }
+function _trClone(v) { try { return v == null ? v : structuredClone(v); } catch (e) { return JSON.parse(JSON.stringify(v)); } }
+async function _trVersion(realDB) {
+  if (__trVer.v !== null && Date.now() - __trVer.at < 1000) return __trVer.v;   // 같은 순간 몰린 질의는 판 확인 1번
+  const r = await realDB.prepare("SELECT (SELECT MAX(rowid) FROM trades) m, (SELECT v FROM state WHERE k = 'trades_gen') g").all();
+  _d1Meter("trades_ver", r && r.meta);
+  const row = r && r.results && r.results[0];
+  __trVer = { v: (row ? row.m : 0) + "|" + (row ? row.g : ""), at: Date.now() };
+  return __trVer.v;
+}
 function __d1Stmt(realDB, sql, binds) {
   const call = function (method, arg) {
     if (_d1Blocked(sql)) return Promise.reject(new Error("D1_SAVER: 하루 읽은 행 상한 초과 — 무거운 쿼리 차단"));
+    if (_trIsWrite(sql)) {
+      __trCache = new Map(); __trVer = { v: null, at: 0 };
+      if (/^\s*DELETE\b/i.test(sql)) { try { realDB.prepare("INSERT INTO state (k, v, updated_ts) VALUES ('trades_gen', ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts").bind(JSON.stringify(Date.now()), Date.now()).run().catch(function () {}); } catch (e) {} }
+    } else if ((method === "all" || method === "first") && _trIsRead(sql)) {
+      return (async function () {
+        let ver = null; try { ver = await _trVersion(realDB); } catch (e) {}
+        const key = method + "|" + (arg === undefined ? "" : arg) + "|" + sql + "|" + JSON.stringify(binds || []);
+        const c = __trCache.get(key);
+        if (ver !== null && c && c.ver === ver && Date.now() - c.at < TRADES_CACHE_MS) return _trClone(c.v);   // 호출부가 결과를 고쳐도 기억은 안 바뀌게 복사본
+        const v = await call0(method, arg);
+        if (ver !== null) { if (__trCache.size >= 200) __trCache = new Map(); __trCache.set(key, { ver: ver, at: Date.now(), v: _trClone(v) }); }
+        return v;
+      })();
+    }
+    return call0(method, arg);
+  };
+  const call0 = function (method, arg) {
     return __d1Attempt(async function () {
       const s = realDB.prepare(sql);
       const b = binds ? s.bind.apply(s, binds) : s;
@@ -14438,6 +14474,7 @@ function wrapD1(realDB) {
     prepare: function (sql) { return __d1Stmt(realDB, sql, null); },
     // batch()는 프록시 문장을 받으므로 매 시도마다 진짜 D1 문장으로 되살려 넘긴다.
     batch: function (stmts) {
+      try { if ((stmts || []).some(function (st) { return st && st.__d1sql && _trIsWrite(st.__d1sql); })) { __trCache = new Map(); __trVer = { v: null, at: 0 }; } } catch (e) {}   // [V33.639]
       return __d1Attempt(function () {
         return realDB.batch(stmts.map(function (st) {
           if (!st || !st.__d1sql) return st;   // 이미 진짜 D1 문장이면 그대로
@@ -16363,7 +16400,8 @@ async function computeCashFromTrades(DB, market, cfg) {
     if (t.rid > maxRowid) maxRowid = t.rid;
   }
   // 합산 건수가 많아지면 체크포인트 전진 (다음 호출부터 합산량 축소)
-  if (list.length >= 500 && maxRowid > sinceRowid) {
+  // [V33.639] 새 거래가 있으면 ★매번★ 전진(종전 500건마다) — 다음 호출은 새 거래만 읽는다(거래 없으면 0행). 값은 같은 재생이라 동일.
+  if (list.length > 0 && maxRowid > sinceRowid) {
     try { await setState(DB, ckptKey, { cashAfter: cash, lastRowid: maxRowid, ts: Date.now() }); } catch (e) {}
   }
   return cash;
@@ -28216,8 +28254,12 @@ async function runTradingCycle(env) {
     // [V32.1] 로그 보존 확대 — 종전 500행 상한은 매분 쏟아지는 INFO에 밀려 ERROR/WARN이
     //   금세 사라져 "에러가 안 보인다"던 문제. 이제 (1)전체 최근 1500행 유지 + (2)그와 별개로
     //   ERROR/WARN은 최근 1000행까지 추가 보존 → 오류 이력이 훨씬 오래 남는다.
-    try { await DB.prepare("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 1500) AND level NOT IN ('ERROR','WARN')").run(); } catch (e) {}
-    try { await DB.prepare("DELETE FROM logs WHERE level IN ('ERROR','WARN') AND id NOT IN (SELECT id FROM logs WHERE level IN ('ERROR','WARN') ORDER BY id DESC LIMIT 1000)").run(); } catch (e) {}
+    /* [V33.639] 로그 정리는 15분에 한 번(매분 → 하루 96회) · 경계 id 하나를 구해 그 아래만 지운다(종전: 매번 NOT IN 으로 ~5천 행 훑기).
+       보존량은 같다(최근 1500행 + 오류·경고 1000행) — 정리 사이 15분 동안 수십 행이 더 쌓일 뿐이다. */
+    if (new Date().getUTCMinutes() % 15 === 0) {
+      try { await DB.prepare("DELETE FROM logs WHERE id < (SELECT id FROM logs ORDER BY id DESC LIMIT 1 OFFSET 1499) AND level NOT IN ('ERROR','WARN')").run(); } catch (e) {}
+      try { await DB.prepare("DELETE FROM logs WHERE level IN ('ERROR','WARN') AND id < (SELECT id FROM logs WHERE level IN ('ERROR','WARN') ORDER BY id DESC LIMIT 1 OFFSET 999)").run(); } catch (e) {}
+    }
     // [통계] 일별 엔진 통계 누적 (KST 05:00 리셋). 신호=signalCount, 거래=buy+sell, 에러=직전 집계 이후 누적분.
     try {
       const _dk = kstTradingDayKey(new Date());
