@@ -1,0 +1,31 @@
+name: Cloudflare 청구 감시
+
+# [V33.638] D1 '읽은 행' 과금 재발 감시 — 매일 실측(시간대별 · 상위 쿼리 · 주기 초과 요금).
+#   하루 D1 읽은 행이 6억(포함량 250억/월 ÷ 31 × 0.75)을 넘으면 실패로 표시해 알린다. 읽기 전용.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+jobs:
+  bill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 청구 실측
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TOPQ_DAYS: "1"
+        run: node tools/billing-probe.mjs | tee bill.txt
+      - name: 하루 한도 판정(6억 행)
+        run: |
+          node -e '
+          const L=require("fs").readFileSync("bill.txt","utf8").split("\n").filter(l=>l.startsWith("BILL hour "));
+          const rows=L.map(l=>JSON.parse(l.slice(10)));
+          const last24=rows.slice(-24).reduce((s,r)=>s+r.rowsReadM,0);
+          console.log("최근 24시간 D1 읽은 행(백만):",Math.round(last24));
+          if(last24>600){console.log("::error::D1 읽은 행 하루 한도(6억) 초과 — 상위 쿼리(topq) 확인");process.exit(1);}'

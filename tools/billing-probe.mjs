@@ -31,7 +31,13 @@ out("scripts_cpu_ms", scripts);
 a = await gql("d1", A(`d1AnalyticsAdaptiveGroups(limit: 10000, filter: {date_geq: "${start}", date_leq: "${end}"}) { sum { readQueries writeQueries rowsRead rowsWritten } dimensions { date databaseId } }`));
 for (const r of (a && a.d1AnalyticsAdaptiveGroups) || []) { add(r.dimensions.date, "d1Read", r.sum.rowsRead); add(r.dimensions.date, "d1Write", r.sum.rowsWritten); add(r.dimensions.date, "d1Q", r.sum.readQueries + r.sum.writeQueries); }
 // D1 '읽은 행' 상위 쿼리(최근 3일) — 어떤 쿼리가 테이블을 훑는지
-const q0 = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
+// 시간대별 D1 읽은 행(최근 36시간) — 수정 전후 비교용
+{
+  const h0 = new Date(Date.now() - 36 * 3600000).toISOString();
+  const ah = await gql("d1hour", A(`d1AnalyticsAdaptiveGroups(limit: 100, filter: {datetimeHour_geq: "${h0}"}, orderBy: [datetimeHour_ASC]) { sum { rowsRead rowsWritten } dimensions { datetimeHour } }`));
+  for (const r of (ah && ah.d1AnalyticsAdaptiveGroups) || []) out("hour", { h: r.dimensions.datetimeHour, rowsReadM: Math.round(r.sum.rowsRead / 1e5) / 10, rowsWrittenK: Math.round(r.sum.rowsWritten / 100) / 10 });
+}
+const q0 = new Date(Date.now() - (Number(process.env.TOPQ_DAYS) || 3) * 86400000).toISOString().slice(0, 10);
 a = await gql("d1q", A(`d1QueriesAdaptiveGroups(limit: 40, filter: {date_geq: "${q0}", date_leq: "${end}"}, orderBy: [sum_rowsRead_DESC]) { sum { rowsRead rowsWritten queryDurationMs } count dimensions { query } }`));
 for (const r of (a && a.d1QueriesAdaptiveGroups) || []) out("topq", { rowsRead: r.sum.rowsRead, rowsWritten: r.sum.rowsWritten, n: r.count, perCall: Math.round(r.sum.rowsRead / Math.max(1, r.count)), q: String(r.dimensions.query).slice(0, 220) });
 a = await gql("d1size", A(`d1StorageAdaptiveGroups(limit: 100, filter: {date_geq: "${end}"}) { max { databaseSizeBytes } dimensions { date databaseId } }`));
