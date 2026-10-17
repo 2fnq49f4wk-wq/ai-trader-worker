@@ -8,6 +8,7 @@ on:
     - cron: "17 3 * * *"
 jobs:
   bill:
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.637";
+const _BUILD_VER = "V33.638";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -14381,12 +14381,45 @@ async function __d1Attempt(fn) {
   }
 }
 // 재시도하려면 매 시도마다 새로 prepare 해야 하므로 sql/바인딩을 기록해두는 얇은 프록시.
+/* ══ [V33.638] ★D1 '읽은 행' 계량기 + 하루 상한 차단기(하드코딩)★ ══════════════
+   사용자(10/17): "이런 일 다시 발생하지 않게 하드코딩". 9/7~10/16 청구의 ~100% 가 D1 읽은 행(하루 40~50억)이었다.
+   모든 D1 접근은 이 래퍼를 지난다 → 응답 meta.rows_read 를 실제로 센다(추정 아님).
+   · D1_DAY_CAP 6억 행/일(포함량 250억/월 ÷ 31 × 0.75) — 넘으면 그날 남은 시간 '무거운 쿼리'(1회 20만 행 이상 읽은 SQL)를 거부한다.
+   · 거부는 예외(D1_SAVER)로 — 호출부는 이미 try/catch(관측·통계용). 시세·주문·포지션 같은 가벼운 쿼리는 영향 없다.
+   · 집계는 아이솔레이트 메모리 → 크론 끝에 d1_meter(날짜별) 로 더한다. /api/data-health 에서 보인다. */
+const D1_DAY_CAP = 600000000;
+const D1_HEAVY_PER_CALL = 200000;
+let __d1Rows = 0;
+let __d1Heavy = {};
+let __d1Saver = { day: "", on: false, at: 0 };
+let __d1SinceRefresh = 0;
+function _d1Day(t) { return new Date(t || Date.now()).toISOString().slice(0, 10); }
+function _d1SqlKey(sql) { return String(sql).replace(/\s+/g, " ").slice(0, 160); }
+function _d1Meter(sql, meta) {
+  const n = meta && Number(meta.rows_read);
+  if (!(n > 0)) return;
+  __d1Rows += n; __d1SinceRefresh += n;
+  if (n >= D1_HEAVY_PER_CALL) { const k = _d1SqlKey(sql); const h = __d1Heavy[k] || (__d1Heavy[k] = { rows: 0, n: 0 }); h.rows += n; h.n++; }
+}
+function _d1Blocked(sql) {
+  if (!__d1Saver.on || __d1Saver.day !== _d1Day()) return false;
+  const k = _d1SqlKey(sql);
+  return !!(__d1Saver.heavy && __d1Saver.heavy[k]);
+}
 function __d1Stmt(realDB, sql, binds) {
   const call = function (method, arg) {
-    return __d1Attempt(function () {
+    if (_d1Blocked(sql)) return Promise.reject(new Error("D1_SAVER: 하루 읽은 행 상한 초과 — 무거운 쿼리 차단"));
+    return __d1Attempt(async function () {
       const s = realDB.prepare(sql);
       const b = binds ? s.bind.apply(s, binds) : s;
-      return (arg === undefined) ? b[method]() : b[method](arg);
+      if (method === "first") {   // first 도 all 로 받아 meta(rows_read)를 센다 — D1 first 는 SQL 을 바꾸지 않고 첫 행만 돌려준다(같은 비용)
+        const r = await b.all(); _d1Meter(sql, r && r.meta);
+        const row = r && r.results && r.results.length ? r.results[0] : null;
+        return (arg === undefined || row === null) ? row : (row[arg] === undefined ? null : row[arg]);
+      }
+      const r = (arg === undefined) ? await b[method]() : await b[method](arg);
+      if (method !== "raw") _d1Meter(sql, r && r.meta);
+      return r;
     });
   };
   return {
@@ -14410,12 +14443,47 @@ function wrapD1(realDB) {
           if (!st || !st.__d1sql) return st;   // 이미 진짜 D1 문장이면 그대로
           const s = realDB.prepare(st.__d1sql);
           return st.__d1binds ? s.bind.apply(s, st.__d1binds) : s;
-        }));
+        })).then(function (rs) { try { (rs || []).forEach(function (r, i) { _d1Meter(stmts[i] && stmts[i].__d1sql, r && r.meta); }); } catch (e) {} return rs; });
       });
     },
     dump: function () { return realDB.dump(); },
     exec: function (q) { return __d1Attempt(function () { return realDB.exec(q); }); }
   };
+}
+
+/* [V33.638] 계량 → d1_meter 에 더하고 · 상한 판정(차단기 켜기) · 차단기 상태를 5분마다 다시 읽는다. 실패해도 조용히(안전 쪽: 차단 안 함). */
+async function d1MeterFlush(realOrWrapped) {
+  const DB = realOrWrapped && realOrWrapped.__d1real ? realOrWrapped.__d1real : realOrWrapped;
+  if (!DB) return null;
+  const add = __d1Rows, heavy = __d1Heavy, day = _d1Day();
+  __d1Rows = 0; __d1Heavy = {};
+  try {
+    const row = await DB.prepare("SELECT v FROM state WHERE k = 'd1_meter'").first();
+    let m = null; try { m = row && row.v ? JSON.parse(row.v) : null; } catch (e) {}
+    if (!m || m.day !== day) m = { day: day, rows: 0, heavy: {}, saver: false, prev: m && m.day ? { day: m.day, rows: m.rows } : (m && m.prev) || null };
+    m.rows += add;
+    for (const k in heavy) { const h = m.heavy[k] || (m.heavy[k] = { rows: 0, n: 0 }); h.rows += heavy[k].rows; h.n += heavy[k].n; }
+    const ks = Object.keys(m.heavy).sort(function (a, b) { return m.heavy[b].rows - m.heavy[a].rows; }).slice(0, 30);
+    const hv = {}; for (const k of ks) hv[k] = m.heavy[k]; m.heavy = hv;
+    if (!m.saver && m.rows > D1_DAY_CAP) {
+      m.saver = true; m.saverAt = Date.now();
+      try { await DB.prepare("INSERT INTO logs (ts, level, symbol, message) VALUES (?, 'ERROR', NULL, ?)").bind(Date.now(), "[D1-SAVER] 오늘 D1 읽은 행 " + Math.round(m.rows / 1e6) + "백만 > 상한 " + (D1_DAY_CAP / 1e6) + "백만 — 무거운 쿼리 " + ks.length + "종 차단(자정 UTC 해제)").run(); } catch (e) {}
+    }
+    m.ts = Date.now();
+    await DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES ('d1_meter', ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts").bind(JSON.stringify(m), Date.now()).run();
+    __d1Saver = { day: m.day, on: !!m.saver, at: Date.now(), heavy: m.saver ? m.heavy : null };
+    return m;
+  } catch (e) { return null; }
+}
+async function d1SaverRefresh(DB) {
+  if (Date.now() - __d1Saver.at < 300000) return;
+  __d1Saver.at = Date.now(); __d1SinceRefresh = 0;
+  try {
+    const real = DB && DB.__d1real ? DB.__d1real : DB;
+    const row = await real.prepare("SELECT v FROM state WHERE k = 'd1_meter'").first();
+    const m = row && row.v ? JSON.parse(row.v) : null;
+    __d1Saver = { day: m ? m.day : "", on: !!(m && m.saver && m.day === _d1Day()), at: Date.now(), heavy: m && m.saver ? m.heavy : null };
+  } catch (e) {}
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -35143,7 +35211,8 @@ async function handleRequest(request, env, ctx, _inner) {
     }
     if (path === "/api/data-health") {   // [V33.628] 데이터 감시 상태(시세·환율·경제지표 나이 · 마지막 자가 복구)
       const h = await getState(env.DB, "data_health", null);
-      return Response.json(h || { ts: null, items: {}, bad: [] }, { headers: cors });
+      const d1m = await getState(env.DB, "d1_meter", null);   // [V33.638] D1 읽은 행 오늘 · 상한 · 차단기
+      return Response.json(Object.assign({}, h || { ts: null, items: {}, bad: [] }, { d1: d1m ? { day: d1m.day, rows: d1m.rows, cap: D1_DAY_CAP, saver: !!d1m.saver, prev: d1m.prev || null, heavy: d1m.heavy } : null }), { headers: cors });
     }
     if (path === "/api/macro" && request.method === "GET") {
       const data = await getState(env.DB, "macro_data", null);
@@ -55910,7 +55979,10 @@ export default {
   async fetch(request, env, ctx) {
     __R2 = env.MODELS || null; cycMemoReset();
     const _env = Object.assign({}, env, { DB: wrapD1(env.DB) });
+    // 요청 쪽은 이 아이솔레이트가 무거운 읽기를 하고 있을 때만 차단기 상태를 확인한다(가벼운 요청·캐시 적중은 D1 0회 유지)
+    try { if (__d1SinceRefresh >= D1_HEAVY_PER_CALL) await d1SaverRefresh(env.DB); } catch (e) {}
     const _res = await handleRequest(request, _env, ctx);
+    try { if (__d1Rows > 5000000) ctx.waitUntil(d1MeterFlush(env.DB)); } catch (e) {}   // 요청 쪽도 많이 읽었으면 바로 더한다
     // [V33.496] 공용 읽기 API 응답을 메모리에 담는다(본문 복제는 응답을 늦추지 않게 뒤에서)
     try { ctx.waitUntil(microCachePut(request, _res)); } catch (e) {}
     // [V33.172] 업로더가 아니면 즉시 반환된다(정규식 한 번) — 일반 요청에 부하가 없다.
@@ -55923,6 +55995,7 @@ export default {
   async scheduled(event, env, ctx) {
     __R2 = env.MODELS || null;   // [V33.13] 대형모델 저장소 바인딩(없으면 D1 청크 경로 유지)
     env = Object.assign({}, env, { DB: wrapD1(env.DB) });
+    try { await d1SaverRefresh(env.DB); } catch (e) {}
     __yAuthDB = env.DB;   // [V33.566] 옛 야후 경로 crumb 자동 첨부용
     // [FIX V8.8] 기존엔 runTradingCycle / refreshCommodityQuotes / runCommodityCycle을
     //   각각 ctx.waitUntil로 "동시" 실행했는데, 이들이 전역 __fetchBudget(yahoo fetch
@@ -57132,6 +57205,7 @@ export default {
         console.log("CRONPROF " + JSON.stringify({ s: _a, c: __cronCnt || {}, f: __fetchBudget.used || 0, pb: Object.keys(__pbNow || {}).reduce(function (t, k) { return t + (__pbNow[k] || 0); }, 0) })); } catch (e) {}
       try { await tickUsage(env.DB, __cronStart, __usageCalib, __fetchBudget.used || 0, __prof.acc, __pbNow); } catch (e) {}
       try { await fetchHealthFlush(env.DB, false); } catch (e) {}   // [V33.565] 원천 건강표(10분에 1회)
+      try { await d1MeterFlush(env.DB); } catch (e) {}   // [V33.638] D1 읽은 행 계량 · 하루 상한 차단기
     })());
   }
 };

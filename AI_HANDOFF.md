@@ -6187,3 +6187,11 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
 살릴지 정하는 시스템 ③GBDT 의 τ* 가 블록 하한을 되올리는 순서 결함.
 
 검사: 162종 전부 통과 · 돌연변이 7/7.
+
+## V33.637~638 — D1 '읽은 행' 과금 차단 (10/16~17)
+- 원인(Cloudflare GraphQL 실측): ml_samples(121만 행) 전체 COUNT/집계가 하루 ~2,900회 → 하루 40~50억 행 = 청구 거의 100%(9/7 주기 ~$95 · 10/7 주기 $14+).
+- V33.637: `_mlAgg` 6시간 기억 → 배포 뒤 시간당 150~500백만 → 1.5~2백만(약 1/100). 하루 ~4천만~5천만 행.
+- V33.638(하드코딩): `wrapD1` 안에서 meta.rows_read 실측 계량 · `d1_meter`(날짜별) · 하루 6억 초과 시 그날 무거운 쿼리(1회 20만+ 행) 자동 거부(D1_SAVER) + ERROR 로그. `/api/data-health` 의 `d1`.
+- 감시: `.github/workflows/billing-probe.yml` 매일 03:17Z — 최근 24h 6억 초과면 실패. `tools/billing-probe.mjs`. 게이트 `check-d1-cost`.
+- 학습: OMNI-Q(GHA)는 R2 봉(/api/omni-bars) — D1 은 색인 1행. 옛 위원회 /api/ml-export(OFFSET 페이지) 는 D1 을 읽는다(퇴역 · 호출 시 1회 수천만 행).
+- 로빈후드 데이마켓 초안은 미적용(스크래치 wip637 패치).
