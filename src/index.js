@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.640";
+const _BUILD_VER = "V33.641";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13563,6 +13563,7 @@ const PB_KEYS = { rsi: [30, 50, 70], gap20: [-5, 0, 5], ret5: [-3, 3], vr: [0.8,
    남기는 것: ★추론★(이미 저장된 모델로 AI_PRIMARY 가 매매법 AI 검증 통과 전까지 계속 판단) · OMNI-Q/매매법 AI 데이터(일봉·5분봉·실적·뉴스).
    되돌리려면 false. 저장된 모델 파일은 지우지 않는다. */
 const COMMITTEE_RETIRED = true;
+const MODAL_DISABLED = true;   // [V33.641] Modal 사용 중단(사용자 10/21) — 워커는 modal-deploy 를 절대 디스패치하지 않는다
 const PB_PRIMARY_CAPS = { maxPerCycle: 2, maxPerDay: 6, maxOpen: 12, mult: 1.0 };
 /* [V33.621] ★주력 전환은 2회 연속 통과★ — 한 번의 검증 통과(판정 구간 t ≥ 2)는 운일 수 있다. 통과가 학습 회차 2번 연속(passStreak ≥ 2)일 때만
    AI_PRIMARY 를 퇴역시키고 전 크기로 산다. 그 전엔 시험 크기(×0.5 · 하루 3 · 동시 6). */
@@ -32682,6 +32683,8 @@ async function handleRequest(request, env, ctx, _inner) {
     //   "Deploy Modal Trainer" workflow_dispatch를 Worker가 대리 호출(브라우저에 GitHub 토큰 미노출).
     //   사전 1회: wrangler secret put GITHUB_TOKEN  (fine-grained PAT — 이 저장소 Actions read&write)
     if (path === "/api/ops/redeploy" && request.method === "POST") {
+      /* [V33.641] Modal 사용 중단 — 화면의 '재학습·재배포' 버튼이 Modal(GPU)을 깨우지 않게 한다 */
+      if (MODAL_DISABLED) return Response.json({ ok: false, error: "Modal 사용 중단(V33.641) — OMNI-Q·매매법 AI 는 GitHub Actions 에서 학습한다" }, { status: 410, headers: cors });
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const gh = env.GITHUB_TOKEN;
       if (!gh) return Response.json({ error: "GITHUB_TOKEN 미설정 — 'wrangler secret put GITHUB_TOKEN' (fine-grained PAT, 이 저장소 Actions read&write 권한) 등록 후 사용" }, { status: 503, headers: cors });
@@ -53513,7 +53516,7 @@ async function _luxAutoRetrainModal(env) {
   /* [V33.640] ★위원회가 퇴역했으니 자동 재학습(GPU 52분 · /api/ml-export 로 D1 표본 121만 행 페이지 읽기)도 멈춘다★
      실측(10/17~20): 퇴역한 위원회 모델이 '낡음' 으로 보여 워커가 하루 1~2회 modal-deploy(run_now)를 던졌다 →
      D1 하루 최대 1.5억 행 · Modal GPU 비용. OMNI-Q·매매법 AI 는 GitHub Actions(R2 봉)로 따로 학습한다. */
-  if (COMMITTEE_RETIRED) return;
+  if (COMMITTEE_RETIRED || MODAL_DISABLED) return;
   try {
     const DB = env.DB;
     const meta = (await getState(DB, "modal_retrain_auto", null, true)) || {};

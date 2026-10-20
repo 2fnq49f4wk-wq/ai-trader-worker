@@ -64,7 +64,7 @@ chk(/const ML_AGG_TTL_MS = 6 \* 3600000;/.test(S) && /async function _mlAgg\(DB,
   chk(/if \(list\.length > 0 && maxRowid > sinceRowid\) \{/.test(S), "현금 체크포인트는 새 거래마다 전진");
 }
 // [V33.640] 퇴역 위원회 자동 GPU 재학습 정지 · 옛 OMNI 채점 대기 조회 정지 · 한국 지수 종가 · 쓰기 계량
-chk(/async function _luxAutoRetrainModal\(env\) \{[\s\S]{0,600}if \(COMMITTEE_RETIRED\) return;/.test(S), "퇴역 위원회 자동 재학습(GPU · ml-export D1) 안 던짐");
+chk(/async function _luxAutoRetrainModal\(env\) \{[\s\S]{0,600}if \(COMMITTEE_RETIRED \|\| MODAL_DISABLED\) return;/.test(S) && /const MODAL_DISABLED = true;/.test(S), "퇴역 위원회 자동 재학습(GPU · ml-export D1) 안 던짐 · Modal 사용 중단");
 chk(/if \(o\.prio !== false && !COMMITTEE_RETIRED\)/.test(S), "옛 OMNI 섀도우 채점 대기 우선순위 조회 끔");
 chk(/if \(krMarketHours \|\| \(krExtHours && new Date\(\)\.getUTCMinutes\(\) % 5 === 0\)\) \{\n\s+for \(const idx of KR_INDICES\)/.test(S), "한국 지수: 장 마감 뒤에도 5분마다 확정 종가");
 chk(/function _d1MeterW\(sql, binds, meta\)/.test(S) && /m\.w = m\.w \|\| \{\}/.test(S), "쓴 행 접두어별 계량");

@@ -6196,3 +6196,10 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
 - 학습: OMNI-Q(GHA)는 R2 봉(/api/omni-bars) — D1 은 색인 1행. 옛 위원회 /api/ml-export(OFFSET 페이지) 는 D1 을 읽는다(퇴역 · 호출 시 1회 수천만 행).
 - 로빈후드 데이마켓 초안은 미적용(스크래치 wip637 패치).
 - V33.639: trades 읽기 = 원장 판(MAX(rowid)+trades_gen) 바뀔 때만(wrapD1 기억 10분 · 복사본) · 현금 체크포인트 새 거래마다 전진 · 로그 정리 15분·경계 id 삭제.
+
+## V33.640~641 — Modal 사용 중단 (10/21 사용자 결정)
+- 원인: 퇴역 위원회 모델이 '낡음' → 워커 `_luxAutoRetrainModal` 이 하루 1~2회 modal-deploy(run_now) → Modal $70 초과 · D1 하루 최대 1.5억 행(/api/ml-export).
+- 사용자: Modal 사용 한도 $0 · 토큰/앱 삭제. 코드: `MODAL_DISABLED=true`(워커 자동·/api/ops/redeploy 410), modal-deploy.yml push 트리거 제거 + `modal_enable` 입력 필요, modal-watchdog Modal 단계 `if: false`.
+- 학습은 GitHub Actions `omniq-gha.yml`(OMNI-Q · 매매법 AI · 페어 · 라우터) — Modal 불필요.
+- Modal 되살리기: ①Modal Usage limit 올리기 ②API Token 새로 → GitHub 시크릿 MODAL_TOKEN_ID/SECRET ③Modal 시크릿 `lux-dnn`(BASE_URL·TRAIN_KEY) ④src `MODAL_DISABLED=false` ⑤modal-deploy 를 modal_enable=true 로 수동 실행.
+- V33.640: 옛 OMNI 채점 대기 조회 끔 · 한국 지수 장후 5분마다 확정 종가 · D1 쓰기 접두어 계량(d1_meter.w).

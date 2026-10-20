@@ -181,8 +181,9 @@ jobs:
 
       # ★시크릿이 없으면 실패시킨다.★ modal-deploy.yml 은 여기서 조용히 스킵하고 초록불을 켜서
       #   "8일째 학습이 안 돌고 있다" 를 아무도 모르게 만들었다. 워치독은 반대로 시끄러워야 한다.
+      # [V33.641] Modal 사용 중단 — 아래 Modal 단계는 돌지 않는다(실사용량 동기화만 남긴다)
       - name: 시크릿 없음 — 실패 처리
-        if: steps.sec.outputs.ok != 'true'
+        if: false && steps.sec.outputs.ok != 'true'
         run: |
           echo "::error::MODAL_TOKEN_ID/MODAL_TOKEN_SECRET 미설정 — 외부학습을 돌릴 수 없다."
           echo "### 🔴 Modal 시크릿 없음 — 외부학습 불가" >> "$GITHUB_STEP_SUMMARY"
@@ -190,11 +191,11 @@ jobs:
           exit 1
 
       - name: Install modal
-        if: steps.fresh.outputs.stale == 'true' || inputs.force
+        if: false && (steps.fresh.outputs.stale == 'true' || inputs.force)
         run: pip install modal
 
       - name: 학습 실행
-        if: steps.fresh.outputs.stale == 'true' || inputs.force
+        if: false && (steps.fresh.outputs.stale == 'true' || inputs.force)
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}

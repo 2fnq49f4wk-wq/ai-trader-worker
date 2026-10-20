@@ -8,13 +8,14 @@ name: Deploy Modal Trainer
 #     MODAL_TOKEN_ID / MODAL_TOKEN_SECRET 등록 (PC의 ~/.modal.toml 값 또는 `modal token new`)
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'trainer/modal/**'
+  # [V33.641] Modal 사용 중단(사용자 10/21 — 사용 한도 $0 · 토큰 삭제). OMNI-Q·매매법 AI 는 GitHub Actions(omniq-gha)에서 학습한다.
+  #   push 자동 배포를 끈다. 수동 실행도 modal_enable 을 켜야만 돈다(다시 살리는 법: AI_HANDOFF.md 'Modal 되살리기').
   workflow_dispatch:
     inputs:
+      modal_enable:
+        description: 'Modal 을 다시 쓴다(토큰·lux-dnn 시크릿·사용 한도를 먼저 복구했을 때만)'
+        type: boolean
+        default: false
       run_now:
         description: '배포 후 즉시 학습 1회 실행'
         type: boolean
@@ -116,6 +117,7 @@ on:
 jobs:
   # ── ① 배포 — ★동시성 그룹에 넣지 않는다.★ 학습이 돌든 말든 항상 올라가야 한다 ──
   deploy:
+    if: ${{ inputs.modal_enable }}
     runs-on: ubuntu-latest
     timeout-minutes: 20   # [V33.480] 자가검사에 시장분리(≈2분) 추가 — 종전 6.5분 + α 가 10분에 걸렸다
     name: modal deploy
