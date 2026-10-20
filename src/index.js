@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.639";
+const _BUILD_VER = "V33.640";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -11416,7 +11416,7 @@ async function omniBarsCollect(DB, opts) {
      → 라벨 안 달린 결정 중 지평이 끝났는데 그 뒤로 5분봉을 받은 적이 없는 종목을 이번 회차 몫의 앞(최대 3/4)에 둔다.
        그 종목은 5분봉 refreshH 를 건너뛰고 받는다(1일봉은 종전 규칙). 30분 안에 실패한 종목은 이번엔 건너뛴다. */
   const prio = [];
-  if (o.prio !== false) {
+  if (o.prio !== false && !COMMITTEE_RETIRED) {   // [V33.640] 옛 OMNI 섀도우 채점은 퇴역 — 채점 대기 우선순위 조회(하루 ~1,900만 행)도 끈다
     try {
       const nowS = Math.floor(nowMs / 1000);
       const rs = await DB.prepare(
@@ -14395,6 +14395,15 @@ let __d1Saver = { day: "", on: false, at: 0 };
 let __d1SinceRefresh = 0;
 function _d1Day(t) { return new Date(t || Date.now()).toISOString().slice(0, 10); }
 function _d1SqlKey(sql) { return String(sql).replace(/\s+/g, " ").slice(0, 160); }
+/* [V33.640] 쓴 행도 키 접두어별로 센다(D1 쓰기 포함량 5천만/월 — 실측 하루 ~130만 · 80% 선) — 무엇이 많이 쓰는지 d1_meter.w 에 */
+let __d1W = {};
+function _d1MeterW(sql, binds, meta) {
+  const w = meta && Number(meta.rows_written);
+  if (!(w > 0)) return;
+  let k = "sql:" + _d1SqlKey(sql).slice(0, 40);
+  if (/^\s*INSERT INTO state/i.test(sql) || /^\s*UPDATE state/i.test(sql)) { const key = String((binds && binds[0]) || ""); k = "state:" + key.replace(/[:_].*$/, ""); }
+  __d1W[k] = (__d1W[k] || 0) + w;
+}
 function _d1Meter(sql, meta) {
   const n = meta && Number(meta.rows_read);
   if (!(n > 0)) return;
@@ -14454,7 +14463,7 @@ function __d1Stmt(realDB, sql, binds) {
         return (arg === undefined || row === null) ? row : (row[arg] === undefined ? null : row[arg]);
       }
       const r = (arg === undefined) ? await b[method]() : await b[method](arg);
-      if (method !== "raw") _d1Meter(sql, r && r.meta);
+      if (method !== "raw") { _d1Meter(sql, r && r.meta); _d1MeterW(sql, binds, r && r.meta); }
       return r;
     });
   };
@@ -14480,7 +14489,7 @@ function wrapD1(realDB) {
           if (!st || !st.__d1sql) return st;   // 이미 진짜 D1 문장이면 그대로
           const s = realDB.prepare(st.__d1sql);
           return st.__d1binds ? s.bind.apply(s, st.__d1binds) : s;
-        })).then(function (rs) { try { (rs || []).forEach(function (r, i) { _d1Meter(stmts[i] && stmts[i].__d1sql, r && r.meta); }); } catch (e) {} return rs; });
+        })).then(function (rs) { try { (rs || []).forEach(function (r, i) { _d1Meter(stmts[i] && stmts[i].__d1sql, r && r.meta); _d1MeterW(stmts[i] && stmts[i].__d1sql, stmts[i] && stmts[i].__d1binds, r && r.meta); }); } catch (e) {} return rs; });
       });
     },
     dump: function () { return realDB.dump(); },
@@ -14492,14 +14501,16 @@ function wrapD1(realDB) {
 async function d1MeterFlush(realOrWrapped) {
   const DB = realOrWrapped && realOrWrapped.__d1real ? realOrWrapped.__d1real : realOrWrapped;
   if (!DB) return null;
-  const add = __d1Rows, heavy = __d1Heavy, day = _d1Day();
-  __d1Rows = 0; __d1Heavy = {};
+  const add = __d1Rows, heavy = __d1Heavy, day = _d1Day(), wadd = __d1W;
+  __d1Rows = 0; __d1Heavy = {}; __d1W = {};
   try {
     const row = await DB.prepare("SELECT v FROM state WHERE k = 'd1_meter'").first();
     let m = null; try { m = row && row.v ? JSON.parse(row.v) : null; } catch (e) {}
     if (!m || m.day !== day) m = { day: day, rows: 0, heavy: {}, saver: false, prev: m && m.day ? { day: m.day, rows: m.rows } : (m && m.prev) || null };
     m.rows += add;
     for (const k in heavy) { const h = m.heavy[k] || (m.heavy[k] = { rows: 0, n: 0 }); h.rows += heavy[k].rows; h.n += heavy[k].n; }
+    m.w = m.w || {}; for (const k in wadd) m.w[k] = (m.w[k] || 0) + wadd[k];
+    { const wk = Object.keys(m.w).sort(function (a, b) { return m.w[b] - m.w[a]; }).slice(0, 25); const w2 = {}; for (const k of wk) w2[k] = m.w[k]; m.w = w2; }
     const ks = Object.keys(m.heavy).sort(function (a, b) { return m.heavy[b].rows - m.heavy[a].rows; }).slice(0, 30);
     const hv = {}; for (const k of ks) hv[k] = m.heavy[k]; m.heavy = hv;
     if (!m.saver && m.rows > D1_DAY_CAP) {
@@ -24235,7 +24246,9 @@ async function runTradingCycle(env) {
         }
       }
     }
-    if (krMarketHours) {
+    /* [V33.640] 한국 지수 종가가 15:2x 값에 멈추던 것(실측 10/20: 코스피 우리 5539.05 vs 네이버 종가 5552.74 · 15:30 동시호가 종가를 못 받음).
+       정규장 뒤 시간외(넥스트레이드) 창에서도 5분마다 지수를 다시 받는다 — 확정 종가가 들어온다(지수 2건 · 가볍다). */
+    if (krMarketHours || (krExtHours && new Date().getUTCMinutes() % 5 === 0)) {
       for (const idx of KR_INDICES) {
         indexJobs.push(
           fetchIndexDaily(idx)
@@ -35254,7 +35267,7 @@ async function handleRequest(request, env, ctx, _inner) {
     if (path === "/api/data-health") {   // [V33.628] 데이터 감시 상태(시세·환율·경제지표 나이 · 마지막 자가 복구)
       const h = await getState(env.DB, "data_health", null);
       const d1m = await getState(env.DB, "d1_meter", null);   // [V33.638] D1 읽은 행 오늘 · 상한 · 차단기
-      return Response.json(Object.assign({}, h || { ts: null, items: {}, bad: [] }, { d1: d1m ? { day: d1m.day, rows: d1m.rows, cap: D1_DAY_CAP, saver: !!d1m.saver, prev: d1m.prev || null, heavy: d1m.heavy } : null }), { headers: cors });
+      return Response.json(Object.assign({}, h || { ts: null, items: {}, bad: [] }, { d1: d1m ? { day: d1m.day, rows: d1m.rows, w: d1m.w || null, cap: D1_DAY_CAP, saver: !!d1m.saver, prev: d1m.prev || null, heavy: d1m.heavy } : null }), { headers: cors });
     }
     if (path === "/api/macro" && request.method === "GET") {
       const data = await getState(env.DB, "macro_data", null);
@@ -53497,6 +53510,10 @@ const MODALAUTO = {
 };
 
 async function _luxAutoRetrainModal(env) {
+  /* [V33.640] ★위원회가 퇴역했으니 자동 재학습(GPU 52분 · /api/ml-export 로 D1 표본 121만 행 페이지 읽기)도 멈춘다★
+     실측(10/17~20): 퇴역한 위원회 모델이 '낡음' 으로 보여 워커가 하루 1~2회 modal-deploy(run_now)를 던졌다 →
+     D1 하루 최대 1.5억 행 · Modal GPU 비용. OMNI-Q·매매법 AI 는 GitHub Actions(R2 봉)로 따로 학습한다. */
+  if (COMMITTEE_RETIRED) return;
   try {
     const DB = env.DB;
     const meta = (await getState(DB, "modal_retrain_auto", null, true)) || {};
