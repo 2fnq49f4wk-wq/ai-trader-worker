@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.641";
+const _BUILD_VER = "V33.642";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13833,6 +13833,7 @@ function pbLiveDaily(daily, price, prevClose, minToClose) {
 /* [V33.624] 국면 거부권 — 학습기 _regime_ok 와 같다. 실측: 추세·모멘텀 매매법이 BULL·NEUTRAL 에선 벌고 CRASH·SURGE 에선 −2~−6%,
    그런데 '매매법 전체 성적' 규칙이 폭락장에서도 골랐다(판정 구간 미 −0.82% · 한 −1.96%). */
 const PB_REGIME_VETO_N = 30;
+const PB_GLOBAL_VETO_N = 100;   // [V33.642] playbook_sim.GLOBAL_VETO_N 과 같다
 function pbChoose(table, keys, fired, rule) {
   if (!table || !fired || !fired.length) return null;
   const sc = String((rule && rule.score) || "m");
@@ -13846,6 +13847,11 @@ function pbChoose(table, keys, fired, rule) {
     if (!v) { alts.push([pb, null, null, 0, null]); continue; }
     const rv = regKey && table[regKey] && Array.isArray(table[regKey][pb]) ? table[regKey][pb] : null;
     if (rv && _num(rv[0], 0) >= PB_REGIME_VETO_N && _num(rv[2], 0) < 0) { alts.push([pb, +_num(v[2], 0).toFixed(3), +_num(v[1], 0).toFixed(3), _num(v[0], 0), null, "국면 거부(" + _num(rv[2], 0).toFixed(2) + "%)"]); continue; }
+    /* [V33.642] 전체 칸 거부권(규칙에 gveto 가 있을 때만 · 학습기 playbook_sim._global_ok 와 같다) — 매매법 전체 평균(수축) ≤ 0 이면 거부 */
+    if (rule && rule.gveto) {
+      const gk = keys[keys.length - 1], gv = table[gk] && Array.isArray(table[gk][pb]) ? table[gk][pb] : null;
+      if (!gv || (_num(gv[0], 0) >= PB_GLOBAL_VETO_N && _num(gv[2], 0) <= 0)) { alts.push([pb, +_num(v[2], 0).toFixed(3), +_num(v[1], 0).toFixed(3), _num(v[0], 0), null, "전체 거부(" + (gv ? _num(gv[2], 0).toFixed(2) + "%" : "칸 없음") + ")"]); continue; }
+    }
     const n = _num(v[0], 0), w = _num(v[1], 0), m = _num(v[2], 0), lcb = _num(v[3], NaN), hd = Math.max(0.05, _num(v[4], 1));
     const s = sc === "lcb" ? lcb : sc === "mpd" ? m / hd : sc === "lcbpd" ? lcb / hd : m;
     alts.push([pb, +m.toFixed(3), +w.toFixed(3), n, +(+s).toFixed(4)]);
@@ -14388,6 +14394,13 @@ async function __d1Attempt(fn) {
    · D1_DAY_CAP 6억 행/일(포함량 250억/월 ÷ 31 × 0.75) — 넘으면 그날 남은 시간 '무거운 쿼리'(1회 20만 행 이상 읽은 SQL)를 거부한다.
    · 거부는 예외(D1_SAVER)로 — 호출부는 이미 try/catch(관측·통계용). 시세·주문·포지션 같은 가벼운 쿼리는 영향 없다.
    · 집계는 아이솔레이트 메모리 → 크론 끝에 d1_meter(날짜별) 로 더한다. /api/data-health 에서 보인다. */
+/* [V33.642] ★시세 행은 '바뀌었을 때만' 쓴다★ — D1 쓴 행의 ~95% 가 quote:* (실측 10/21 · 하루 ~130만 · 월 포함량 5천만의 80%).
+   값(가격·등락·세션·시간외·지표)이 같고 마지막 기록이 90초 안이면 덮어쓰지 않는다(업서트 WHERE 거짓 = 쓴 행 0).
+   90초마다는 반드시 다시 써서 ts 가 묵지 않는다(신선도 문턱 3~4분 안). 장전·장후처럼 체결이 드문 시간에 크게 준다. */
+const QUOTE_SAME_MS = 90000;
+const QUOTE_CHANGED_WHERE = " WHERE NOT json_valid(state.v) OR state.updated_ts < excluded.updated_ts - " + QUOTE_SAME_MS +
+  " OR " + ["price", "dayPct", "prevClose", "mstate", "pre", "post", "ovn", "extTs", "rsi", "ma", "atr"].map(function (f) {
+    return "json_extract(state.v, '$." + f + "') IS NOT json_extract(excluded.v, '$." + f + "')"; }).join(" OR ");
 const D1_DAY_CAP = 600000000;
 const D1_HEAVY_PER_CALL = 200000;
 let __d1Rows = 0;
@@ -22172,7 +22185,15 @@ async function refreshPriceShard(env, market, shard) {
           "'$.post', CASE WHEN ?13 = 1 THEN NULL ELSE COALESCE(?10, json_extract(v, '$.post')) END, " +
           "'$.postPct', CASE WHEN ?13 = 1 THEN NULL ELSE COALESCE(?11, json_extract(v, '$.postPct')) END, " +
           "'$.extTs', CASE WHEN ?15 = 1 THEN NULL ELSE COALESCE(?14, json_extract(v, '$.extTs')) END) " +
-          "ELSE ?2 END, updated_ts = ?6"
+          "ELSE ?2 END, updated_ts = ?6" +
+          // [V33.642] 값이 같고 90초 안이면 안 쓴다(쓴 행 0) — 지울 값(clr)이 남아 있거나 하나라도 바뀌면 쓴다
+          " WHERE NOT json_valid(state.v) OR state.updated_ts < ?6 - " + QUOTE_SAME_MS +
+          " OR json_extract(state.v, '$.price') IS NOT ?3 OR json_extract(state.v, '$.dayPct') IS NOT ?5 OR json_extract(state.v, '$.prevClose') IS NOT ?4" +
+          " OR (?7 IS NOT NULL AND json_extract(state.v, '$.mstate') IS NOT ?7)" +
+          " OR (?8 IS NOT NULL AND json_extract(state.v, '$.pre') IS NOT ?8) OR (?10 IS NOT NULL AND json_extract(state.v, '$.post') IS NOT ?10)" +
+          " OR (?14 IS NOT NULL AND json_extract(state.v, '$.extTs') IS NOT ?14)" +
+          " OR (?12 = 1 AND json_extract(state.v, '$.pre') IS NOT NULL) OR (?13 = 1 AND json_extract(state.v, '$.post') IS NOT NULL)" +
+          " OR (?15 = 1 AND json_extract(state.v, '$.extTs') IS NOT NULL)"
         ).bind("quote:" + r.symbol, JSON.stringify(fresh), r.price, r.prevClose, r.dayPct, nowTs,
           _m, _pre, _prePct, _post, _postPct, _clrPre, _clrPost, _extTs, _clrExt)
       );
@@ -24933,7 +24954,7 @@ async function runTradingCycle(env) {
           ts: nowTs
         };
         quoteStmts.push(
-          DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts")
+          DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts" + QUOTE_CHANGED_WHERE)
             .bind("quote:" + sym, JSON.stringify(merged), nowTs)
         );
       }
@@ -25902,7 +25923,7 @@ async function runTradingCycle(env) {
           // Codex V33.347: evaluation price may be extended; retain the original regular anchor for display.
           const _quoteSource = batchQuotes[symbol] || {};
           evalQuoteStmts.push(
-            DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts")
+            DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts" + QUOTE_CHANGED_WHERE)
               .bind("quote:" + symbol, JSON.stringify({
                 market: market, price: _quoteSource.price ?? price,
                 prevClose: _quoteSource.prevClose ?? prevClose, dayPct: _quoteSource.dayPct ?? dayPct,
@@ -57267,6 +57288,13 @@ export default {
         console.log("CRONPROF " + JSON.stringify({ s: _a, c: __cronCnt || {}, f: __fetchBudget.used || 0, pb: Object.keys(__pbNow || {}).reduce(function (t, k) { return t + (__pbNow[k] || 0); }, 0) })); } catch (e) {}
       try { await tickUsage(env.DB, __cronStart, __usageCalib, __fetchBudget.used || 0, __prof.acc, __pbNow); } catch (e) {}
       try { await fetchHealthFlush(env.DB, false); } catch (e) {}   // [V33.565] 원천 건강표(10분에 1회)
+      /* [V33.642] 크론 1회 = Analytics Engine 점 1개(월 ~4.3만 · D1·R2 안 씀). 값: D1 읽은 행 · 쓴 행 · 크론 벽시계 ms · 외부 fetch 수 */
+      try {
+        if (env.AE && typeof env.AE.writeDataPoint === "function") {
+          let _w = 0; for (const k in __d1W) _w += __d1W[k];
+          env.AE.writeDataPoint({ blobs: ["cron", _BUILD_VER], doubles: [__d1Rows, _w, Date.now() - __cronStart, (__fetchBudget && __fetchBudget.used) || 0], indexes: ["cron"] });
+        }
+      } catch (e) {}
       try { await d1MeterFlush(env.DB); } catch (e) {}   // [V33.638] D1 읽은 행 계량 · 하루 상한 차단기
     })());
   }

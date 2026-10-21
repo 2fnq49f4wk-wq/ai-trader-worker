@@ -812,6 +812,9 @@ GATE_MIN = 15
 RULES_ADAPT = [{"score": "lcb", "level": "fine", "decay": 120}, {"score": "lcb", "level": "global", "gate": 40},
                {"score": "lcb", "level": "fine", "decay": 120, "gate": 40}, {"score": "lcbpd", "level": "regime", "decay": 120, "gate": 40},
                {"score": "m", "level": "fine", "decay": 60, "gate": 20}]
+# [V33.642] 전체 칸 거부권 규칙 후보 — 매매법 자체의 전체 평균(수축) ≤ 0 이면 안 고른다. 쓸지 말지는 검증 구간 t 가 정한다.
+RULES_GV = [{"score": "m", "level": "fine", "gveto": True}, {"score": "lcb", "level": "fine", "gveto": True},
+            {"score": "lcb", "level": "global", "gate": 40, "gveto": True}, {"score": "lcb", "level": "fine", "decay": 120, "gate": 40, "gveto": True}]
 
 
 def score_of(v, score):
@@ -842,11 +845,23 @@ def _regime_ok(v):
     return v is None or v[0] < REGIME_VETO_N or v[2] >= 0
 
 
+# [V33.642] ★전체 칸 거부권★ — 10년 실측(판정 구간 = 마지막 45%): 앞 55% 의 매매법 평균 부호가 뒤 45% 부호와 한국 30/31 · 미국 27/31 일치.
+#   한국은 앞 구간 양수 매매법만 쓰면 뒤 구간 평균 +1.08%/거래(전체 −0.07%). 칸(국면·세부)이 양수여도 매매법 자체가 음수면 고르지 않는다.
+GLOBAL_VETO = False   # 전역 강제는 끔 — 규칙 후보(gveto)로만 쓰고 검증 구간이 고른다(10년: 한 +1.04→+0.98 · 미 +0.09→+0.29 — 시장마다 다르다)
+GLOBAL_VETO_N = 100
+
+
+def _global_ok(v):
+    return v is not None and (v[0] < GLOBAL_VETO_N or v[2] > 0)
+
+
 def choose(tab, keys, fired, score="m"):
     """뜬 매매법들 중 점수 > 0 이고 점수가 가장 큰 것 → (pb, n, w, m, lcb, hd) | None. [V33.618] 승률 조건 없음 · [V33.624] 국면 거부권(keys[-2] = 국면 칸)."""
     best, bs = None, None
     for pb in fired:
         if len(keys) >= 2 and not _regime_ok(tab.get((keys[-2], pb))):
+            continue
+        if GLOBAL_VETO and keys and not _global_ok(tab.get((keys[-1], pb))):   # [V33.642]
             continue
         v = lookup(tab, keys, pb)
         if v is None:
@@ -908,6 +923,8 @@ def _pick(tab, te, rule, hist=None):
     ok = sc > 0   # [V33.618] 승률 50% 조건 삭제
     if len(te) and "k1" in te.columns:   # [V33.624] 국면 거부권 — k1 = 국면 칸(정리 뒤)
         ok = ok & np.array([_regime_ok(tab.get(k)) for k in zip(te["k1"].values, te["pb"].values)], dtype=bool)
+    if (GLOBAL_VETO or rule.get("gveto")) and len(te) and "k0" in te.columns:   # [V33.642] 전체 칸 거부권 — 그 매매법의 전체 평균(수축)이 0 이하면 고르지 않는다
+        ok = ok & np.array([_global_ok(tab.get(k)) for k in zip(te["k0"].values, te["pb"].values)], dtype=bool)
     sel = te.assign(_s=sc)[ok].sort_values("_s", ascending=False).drop_duplicates("inst").sort_values("t")
     keep, busy = [], {}
     for r in sel[["j", "t", "x"]].itertuples(index=True):
@@ -959,7 +976,7 @@ def validate(df, timecol, pbs=None):
     if len(ts) < 30:
         return {"pass": False, "why": "기간 부족"}, None
     c1, c2 = ts[int(len(ts) * SPLIT[0])], ts[int(len(ts) * SPLIT[1])]
-    rules = RULES + (RULES_ADAPT if timecol == "t" else [])   # 최근 가중·성적 스위치는 일봉(거래일 축)만
+    rules = RULES + (RULES_ADAPT + RULES_GV if timecol == "t" else [])   # 최근 가중·성적 스위치는 일봉(거래일 축)만
     tabs1 = {}
     va = df[(df[timecol] >= c1) & (df[timecol] < c2)]
     cmp_ = []

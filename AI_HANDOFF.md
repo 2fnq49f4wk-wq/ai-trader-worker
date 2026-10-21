@@ -6203,3 +6203,5 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
 - 학습은 GitHub Actions `omniq-gha.yml`(OMNI-Q · 매매법 AI · 페어 · 라우터) — Modal 불필요.
 - Modal 되살리기: ①Modal Usage limit 올리기 ②API Token 새로 → GitHub 시크릿 MODAL_TOKEN_ID/SECRET ③Modal 시크릿 `lux-dnn`(BASE_URL·TRAIN_KEY) ④src `MODAL_DISABLED=false` ⑤modal-deploy 를 modal_enable=true 로 수동 실행.
 - V33.640: 옛 OMNI 채점 대기 조회 끔 · 한국 지수 장후 5분마다 확정 종가 · D1 쓰기 접두어 계량(d1_meter.w).
+- V33.642: 시세 업서트 3곳 '값 같고 90초 안이면 안 씀'(QUOTE_CHANGED_WHERE · 샤드 json_set WHERE) — D1 쓰기의 ~95% 가 quote:* · Analytics Engine(AE 바인딩 · 데이터셋 ai_trader_meter) 크론당 점 1개 · 매매법 AI 규칙 후보 RULES_GV(전체 칸 거부권 gveto · 워커 pbChoose 동일) — 10년: 한 검증이 gveto 를 골라 판정 +0.98%/t2.99 통과 · 미 +0.29%/t1.03 미통과.
+- KV 는 안 씀: 쓰기 포함량 월 100만(시세 쓰기 하루 ~100만이라 부적합) · 최종 일관성(최대 60초)이라 거래 상태엔 위험.

@@ -32,6 +32,11 @@ database_id = "77db8a94-9d85-473a-9f43-9659ee8374c0"
 binding = "MODELS"
 bucket_name = "ai-trader-models"
 
+# [V33.642] 계량·관측은 Analytics Engine 으로(D1 쓰기 0 · 워커는 쓰기만 · 읽기는 GitHub Actions 가 SQL API 로)
+[[analytics_engine_datasets]]
+binding = "AE"
+dataset = "ai_trader_meter"
+
 [triggers]
 crons = ["*/1 * * * *"]
 

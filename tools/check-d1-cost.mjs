@@ -68,5 +68,29 @@ chk(/async function _luxAutoRetrainModal\(env\) \{[\s\S]{0,600}if \(COMMITTEE_RE
 chk(/if \(o\.prio !== false && !COMMITTEE_RETIRED\)/.test(S), "옛 OMNI 섀도우 채점 대기 우선순위 조회 끔");
 chk(/if \(krMarketHours \|\| \(krExtHours && new Date\(\)\.getUTCMinutes\(\) % 5 === 0\)\) \{\n\s+for \(const idx of KR_INDICES\)/.test(S), "한국 지수: 장 마감 뒤에도 5분마다 확정 종가");
 chk(/function _d1MeterW\(sql, binds, meta\)/.test(S) && /m\.w = m\.w \|\| \{\}/.test(S), "쓴 행 접두어별 계량");
+// [V33.642] 시세 행은 바뀌었을 때만 쓴다 — 진짜 SQLite 로 쓴 행 수를 센다
+{
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE state (k TEXT PRIMARY KEY, v TEXT, updated_ts INTEGER)");
+  const a = S.indexOf("const QUOTE_SAME_MS = "), b = S.indexOf("const D1_DAY_CAP = ");
+  const C = new Function(S.slice(a, b) + "; return { QUOTE_SAME_MS, QUOTE_CHANGED_WHERE };")();
+  const up = db.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts" + C.QUOTE_CHANGED_WHERE);
+  const q = (px, extra) => JSON.stringify(Object.assign({ price: px, dayPct: 1.5, prevClose: 100, mstate: "REGULAR", rsi: 50, ts: 0 }, extra || {}));
+  const ch = (px, t, extra) => Number(up.run("quote:A", q(px, extra), t).changes);
+  chk(ch(101, 1000) === 1, "첫 기록은 쓴다");
+  chk(ch(101, 61000) === 0, "값 같고 90초 안 → 안 씀(쓴 행 0)");
+  chk(ch(101.5, 62000) === 1, "가격이 바뀌면 바로 쓴다");
+  chk(ch(101.5, 120000, { mstate: "POST", post: 102 }) === 1, "세션·시간외 값이 바뀌면 쓴다");
+  chk(ch(101.5, 125000, { mstate: "POST", post: 102 }) === 0 && ch(101.5, 215001, { mstate: "POST", post: 102 }) === 1, "같아도 90초 지나면 다시 쓴다(ts 신선도)");
+  // 샤드 json_set 업서트(원문 그대로)
+  const s0 = S.indexOf('"INSERT INTO state (k, v, updated_ts) VALUES (?1, ?2, ?6) " +'), s1 = S.indexOf(').bind("quote:" + r.symbol', s0);
+  const sql = new Function("QUOTE_SAME_MS", "return " + S.slice(s0, s1).replace(/\/\/[^\n]*\n/g, "\n") + ";")(C.QUOTE_SAME_MS);
+  const sh = db.prepare(sql);
+  const run = (px, t, pre, clrPre) => Number(sh.run("quote:B", JSON.stringify({ price: px, prevClose: 100, dayPct: 1, mstate: "PRE", pre: pre, extTs: pre ? 999 : null }), px, 100, 1, t, "PRE", pre, null, null, null, clrPre, 1, pre ? 999 : null, 0).changes);
+  chk(run(50, 1000, 51, 0) === 1 && run(50, 30000, 51, 0) === 0, "샤드 갱신: 값 같으면 안 씀");
+  chk(run(50, 40000, 51.2, 0) === 1, "샤드 갱신: 장전가가 바뀌면 씀");
+  chk(run(50, 50000, null, 1) === 1, "샤드 갱신: 지울 장전가가 남아 있으면 씀");
+}
 if (fails) { console.log("\n✗ D1 비용 " + fails + "건 실패"); process.exit(1); }
 console.log("\n✓ D1 비용 통과");
