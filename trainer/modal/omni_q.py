@@ -114,13 +114,15 @@ def _lgb_params(seed=7, reg=False):
     import os
     # [V33.636] ★정규화 강화를 기본으로★ — 10년 퍼지 전진(한국 · 표본 밖 1,856일): 5일 ① 53.63% vs 지금 53.65%(같음) · 20일 ① 53.15% vs 52.97% ·
     #   20일 ② 마지막 띠 −0.21% vs −0.60% · 적합 차(표본 안−밖) 5일 0.19→0.13 · 20일 0.26→0.19. 같거나 나은 성적에 덜 외운다(V33.558 연구 후보 lgb_reg 그대로).
-    p = {"objective": "regression", "learning_rate": 0.05, "num_leaves": 15, "min_data_in_leaf": 1000,
-         "feature_fraction": 0.6, "bagging_fraction": 0.8, "bagging_freq": 1, "lambda_l2": 10.0,
+    # [V33.642] ★더 강한 정규화(reg2)를 기본으로★ — 10년 퍼지 전진(로컬 회차 · 같은 피처·같은 분할):
+    #   한국 적합 차 5일 0.125→0.066 · 20일 0.192→0.114 · 20일 ② 띠 3/4→4/4 · ① 53.63%→53.53%(같은 수준).
+    #   미국 5일 ① 51.42%(t 3.34) ② 3/4 · 차 0.064 · 20일 ① 53.32%(t 8.34) ② 3/4 · 차 0.086. 덜 외우면서 성적은 유지.
+    p = {"objective": "regression", "learning_rate": 0.03, "num_leaves": 7, "min_data_in_leaf": 3000,
+         "feature_fraction": 0.5, "bagging_fraction": 0.7, "bagging_freq": 1, "lambda_l2": 30.0,
          "verbose": -1, "seed": seed, "num_threads": int(os.environ.get("OMNI_THREADS", "8"))}
     if reg:
-        # [V33.558] 정규화 강화 후보(과적합 대응 · 연구 회차에서만 비교) — 잎 15 · 잎당 최소 1,000행 · L2 10 · 피처 60%
-        # (연구 비교) 더 강한 정규화 — 기본이 lgb_reg 가 됐으므로 연구 후보는 한 단계 더(V33.636)
-        p.update({"num_leaves": 7, "min_data_in_leaf": 3000, "lambda_l2": 30.0, "feature_fraction": 0.5, "bagging_fraction": 0.7, "learning_rate": 0.03})
+        # (연구 비교) 한 단계 더 — 잎 5 · 잎당 최소 5,000행 · L2 60(V33.642 기본이 옛 reg 가 됐다)
+        p.update({"num_leaves": 5, "min_data_in_leaf": 5000, "lambda_l2": 60.0, "feature_fraction": 0.4})
     return p
 
 
@@ -321,6 +323,43 @@ def _struct(bst, names, max_trees=STRUCT_MAX_TREES):
                 "trees": trees, "nTrees": len(leaves), "leaves": round(float(np.mean(leaves)), 1) if leaves else None}
     except Exception:  # noqa: BLE001
         return None
+
+
+INSIDER = {}   # [V33.642] 시장별 {종목: [[공개 다음날 yyyymmdd, 매수 금액 $], ...]} — 미국 SEC Form 4 공개시장 매수(P). omniq_gha 가 넣는다(없으면 피처 없음)
+
+
+def _insider_feats(P, mk, log):
+    """[V33.642] ★내부자 공개시장 매수 피처★ — 10년 실측(2016~2026 · 미국 471종목 · 8,673건): 공시 다음날 진입 60일 초과 +1.97%(t 7.8) ·
+    20일 +0.58%(t 4.6) · 앞 55%/뒤 45% 둘 다 양수. 그날까지 공개된 것만(미래 안 봄). 이름 in_*: 최근 60·20 거래일 매수 금액(log) · 건수."""
+    import pandas as pd
+    ins = INSIDER.get(mk) or {}
+    if not ins:
+        return []
+    C = P["close"]
+    idx = [int(str(d)[:8]) for d in C.index]
+    V = pd.DataFrame(0.0, index=C.index, columns=C.columns)
+    N = pd.DataFrame(0.0, index=C.index, columns=C.columns)
+    import bisect
+    hit = 0
+    for s_, evs in ins.items():
+        if s_ not in V.columns:
+            continue
+        for d, val in evs:
+            i = bisect.bisect_left(idx, int(d))
+            if i >= len(idx):
+                continue
+            V.iat[i, V.columns.get_loc(s_)] += float(val or 0)
+            N.iat[i, N.columns.get_loc(s_)] += 1
+            hit += 1
+    if not hit:
+        return []
+    ok = C.notna()
+    out = []
+    for w in (60, 20):
+        out.append(("in_val%d" % w, np.log1p(V.rolling(w, min_periods=1).sum()).where(ok)))
+        out.append(("in_n%d" % w, N.rolling(w, min_periods=1).sum().where(ok)))
+    log("      내부자 매수 피처 %d개(사건 %d)" % (len(out), hit))
+    return out
 
 
 EVENTS = {}   # [V33.615] 시장별 {"earn": {...}, "news": {...}} — omniq_gha 가 학습 전에 넣는다(실적·뉴스 피처)
@@ -595,7 +634,7 @@ def _features_q(P, log, mk=None):
         except Exception as e:  # noqa: BLE001
             log("      ⚠️ 규칙 피처 실패: %s" % e)
     # [V33.615] 매매법 신호(34) · 실적·뉴스 — 다른 피처처럼 날짜별 횡단면 순위. 끄려면 OMNIQ_PBFEAT=0 · OMNIQ_EVFEAT=0
-    for flag, fn in (("OMNIQ_PBFEAT", lambda: _pb_feats(P)), ("OMNIQ_EVFEAT", lambda: _event_feats(P, mk, log)), ("OMNIQ_MACRO", lambda: _macro_feats(P, mk, log))):
+    for flag, fn in (("OMNIQ_PBFEAT", lambda: _pb_feats(P)), ("OMNIQ_EVFEAT", lambda: _event_feats(P, mk, log)), ("OMNIQ_MACRO", lambda: _macro_feats(P, mk, log)), ("OMNIQ_INSIDER", lambda: _insider_feats(P, mk, log))):
         if os.environ.get(flag, "1") == "0":
             continue
         try:
@@ -626,6 +665,8 @@ def _groups(names):
             g["실적·뉴스"] += 1
         elif n.startswith("mx_"):
             g["거시·섹터"] += 1
+        elif n.startswith("in_"):
+            g["내부자"] = g.get("내부자", 0) + 1
         else:
             g["동물원(Alpha158·101·학술)"] += 1
     return g
