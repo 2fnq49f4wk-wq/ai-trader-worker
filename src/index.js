@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.649";
+const _BUILD_VER = "V33.650";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -15272,6 +15272,15 @@ async function sellQtyDoubleCheck(DB, market, symbol, posQty, sellQty, tag) {
         " vs 원장 " + led + " → 작은 쪽 기준으로 매도");
     }
     if (q > led) q = led;
+    /* [V33.650] ★유령 포지션 정리★ — 원장 순보유 0 인데 포지션 표에 수량이 남은 경우(실측 006260.KS: 10/16 매수 6 · 10/19 손절 매도 6 →
+       포지션 6 이 남아 매 사이클 손절을 시도·0주로 막힘 · 107분에 37회). 원장(진실)은 다 팔았다 → 그 종목의 포지션 줄을 지운다.
+       현금은 원장에서 나오므로 돈은 바뀌지 않는다. 원장이 0 이 아닐 땐(부분 불일치) 종전처럼 자동 수정하지 않는다. */
+    if (led <= 1e-9 && posQty > 0) {
+      try {
+        await DB.prepare("DELETE FROM positions WHERE market=? AND symbol=?").bind(market, symbol).run();
+        await log(DB, "ERROR", symbol, "[정합성] 유령 포지션 정리 — 원장 순보유 0(이미 매도됨) · 포지션 " + posQty + " 삭제(현금 영향 없음)");
+      } catch (e) {}
+    }
   }
   if (!(q > 0)) return 0;
   return q;
