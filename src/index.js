@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.650";
+const _BUILD_VER = "V33.651";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13786,6 +13786,7 @@ function pbIntraFires(c, h, l, v, ctx) {
   // [V33.619] 갭 메우기 · 피봇 지지 반등 — ctx = { pc 전일 종가, ph 전일 고가, pl 전일 저가 }(학습기 intra_fires 와 같다)
   if (ctx && ctx.pc > 0) {
     if (i >= 1 && i <= 12 && c[0] / ctx.pc - 1 <= -0.015 && c[i] > h[0] && c[i - 1] <= h[0] && c[i] < ctx.pc) F.push("GAP_FILL");
+    if (i === 1 && c[0] / ctx.pc - 1 >= 0.02 && c[1] > h[0]) F.push("GAP_GO");   // [V33.651] 갭 앤 고(학습기 intra_fires 와 같다)
     if (ctx.ph > 0 && ctx.pl > 0) {
       const piv = (ctx.ph + ctx.pl + ctx.pc) / 3, s1 = 2 * piv - ctx.ph;
       if (Math.min(l[i - 2], l[i - 1], l[i]) <= s1 * 1.002 && c[i] > s1 && c[i] > c[i - 1] && c[i] < piv) F.push("PIVOT_BNC");
@@ -13926,8 +13927,12 @@ function pbRoutePick(st, ctx, nowMs) {
     const fired0 = pbDailyFires(D);
     const cr = st.daily.cross || {};
     for (const pb in cr) if (Array.isArray(cr[pb]) && cr[pb].indexOf(ctx.symbol) >= 0 && fired0.indexOf(pb) < 0) fired0.push(pb);   // 횡단면 조건은 학습기 판정(전일 종가 기준)
-    const fired = fired0.filter(function (pb) { return pbLiveFilterOk(pb, D, ctx.reg, st.daily.pb && st.daily.pb[pb]); });   // [V33.619] 자동 조율 거르개 포함
+    let fired = fired0.filter(function (pb) { return pbLiveFilterOk(pb, D, ctx.reg, st.daily.pb && st.daily.pb[pb]); });   // [V33.619] 자동 조율 거르개 포함
     const panicked = pbPanicOff(st, fired);   // [V33.625] 공황 국면 — 추세·모멘텀 쉼
+    { /* [V33.651] ★2순위 보조 매매법★ — 공황으로 쉬지 않는 1순위가 하나라도 뜨면 보조(수정판)는 뺀다(학습기 _tier 와 같다 · 시뮬은 공황 거르개 뒤에 2순위를 적용) */
+      const t2 = Array.isArray(st.daily.tier2) ? st.daily.tier2 : [];
+      if (t2.length && fired.some(function (pb) { return t2.indexOf(pb) < 0 && panicked.indexOf(pb) < 0; })) fired = fired.filter(function (pb) { return t2.indexOf(pb) < 0; });
+    }
     const benched = pbGateOff(st.daily, fired).filter(function (pb) { return panicked.indexOf(pb) < 0; }).concat(panicked);   // [V33.620] 최근 성적 스위치로 쉬는 매매법
     if (fired.length) {
       const ma20 = _pbSma(D.c, 20, i), rsi = _pbRsiEwm(D.c, 14)[i];

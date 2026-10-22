@@ -62,7 +62,14 @@ INTRA_PB = {
     # [V33.619] tpAt = 목표가가 % 가 아니라 가격(pc 전일 종가 · piv 피봇) — 진입 때 정해진다
     "GAP_FILL":  {"tpPct": None, "tpAt": "pc", "sl": 1.0, "bars": 0, "label": "갭 메우기 — 1.5%+ 하락 갭 뒤 첫 봉 고가 회복(첫 1시간) · 전일 종가까지"},
     "PIVOT_BNC": {"tpPct": None, "tpAt": "piv", "sl": 0.7, "bars": 24, "label": "피봇 지지 반등 — 전일 피봇 1차 지지(S1) 닿고 반등 봉 · 피봇까지 · 2시간"},
+    # [V33.651] 갭 앤 고 — +2% 이상 상승 갭 · 둘째 5분봉이 첫 봉 고가를 넘으면 산다 · 장 끝까지(손절 1%). lab 5분봉 60일(미국 150종목):
+    #   앞 60% +0.51%(t 2.7) · 60~80% +0.15% · 마지막 20% +0.16% — 시험한 단타 12종 중 세 구간 모두 양수인 유일한 것(근거 약함 · 실전은 5분 검증이 정한다).
+    "GAP_GO":    {"tpPct": None, "sl": 1.0, "bars": 0, "label": "갭 앤 고 — +2% 상승 갭 · 둘째 5분봉이 첫 봉 고가 돌파 · 장 끝까지"},
 }
+# [V33.651] ★성적 미달 단타 퇴출(시장별)★ — 일봉과 같은 규칙(앞 60%·60~80% 두 구간 모두 비용 뺀 평균 ≤ 0). lab 5분봉 60일:
+#   한국은 왕복 비용 0.30%(거래세)가 5분 신호의 우위보다 커서 전부 음수(새 후보 5종 포함) → 단타 없음. 미국은 갭 메우기·갭 앤 고만 남는다.
+INTRA_OFF = {"us": ("DIP_REV", "STOCH5", "MOM3", "VWAP_RE", "ORB", "PIVOT_BNC"),
+             "kr": ("DIP_REV", "STOCH5", "MOM3", "VWAP_RE", "ORB", "PIVOT_BNC", "GAP_FILL", "GAP_GO")}
 INTRA_MIN_LEFT = 6   # 장 끝까지 5분봉 6개(30분) 넘게 남아야 산다(워커 intraMinToClose 30분과 같다)
 
 
@@ -221,6 +228,38 @@ PB_OFF = {
            "PSAR", "ICHIMOKU", "MACD_X", "TRIPLE_SCR", "ELDER_RAY", "BB_LOW", "VOL_BREAKOUT", "IBS_LOW", "HA_REV", "WILLR",
            "SN_RSI2", "STOCH_OS_EXIT", "CCI_REV", "STOCH_CROSS", "ENVELOPE"),
 }
+# [V33.651] ★퇴출 매매법 수정판 = 보조 매매법(2순위)★ — 사용자 10/22 "음수 매매법은 산식 조정해 양수로 · 매매법 더 발전".
+#   퇴출 매매법마다 진입 거르개 6종(없음·추세 T·주도주 L·둘 다 TL·거래량 V·LV) × 청산 3종(원래·모멘텀 30일·60일)을 앞 60% 에서 t 로 고르고,
+#   60~80% 도 양수여야 채택 · 실전처럼 ★하루 늦은 진입★(학습기가 장 마감 뒤 목록을 보내고 워커는 다음 날 종가에 산다)으로 다시 확인.
+#   한국 10종 통과(마지막 20%: IBS_LOW+TL +1.62% · PSAR+TL +2.05% · KELTNER+TL +1.47% · HA_REV+TL +1.17% …) · 미국은 통과 4종 중 3종이 마지막 20% 음수 → 미국 적용 안 함.
+#   ★2순위★: 같은 종목에 기존(1순위) 매매법이 뜨면 보조는 뺀다 — 함께 경쟁시키면 판정 구간 +1.05% → +0.84% 로 내려갔고(좋은 거래를 밀어냄),
+#   2순위로 두면 판정 +1.05%(t 3.27) → +1.14%(t 3.40) · 최근 125일 +1.28% → +1.60%(검증 구간 t 는 3.19 → 2.33 · lab tier.py).
+#   거르개: T = 종가 > MA200 · MA50 > MA200 / TL = T + 6개월 수익 횡단면 상위 30% / V = 거래량 1.5배 이상.
+MOD_PB = {
+    "kr": {"ELDER_RAY+T": ("ELDER_RAY", "T", 60), "HA_REV+TL": ("HA_REV", "TL", 60), "IBS_LOW+TL": ("IBS_LOW", "TL", 60),
+           "KELTNER+TL": ("KELTNER", "TL", 60), "PSAR+TL": ("PSAR", "TL", 60), "SQUEEZE+T": ("SQUEEZE", "T", 30),
+           "TR_PULLBACK+TL": ("TR_PULLBACK", "TL", 60), "VT_TREND+TL": ("VT_TREND", "TL", 60), "TRIPLE_SCR+V": ("TRIPLE_SCR", "V", 30),
+           "VOL_BREAKOUT+T": ("VOL_BREAKOUT", "T", 60)},
+    "us": {},
+}
+
+
+def _mod_filters(P):
+    I = CAT._ind(P)
+    c = I["c"]
+    r6 = c.pct_change(126, fill_method=None)
+    t = CAT._and(c > I["ma200"], I["ma50"] > I["ma200"])
+    return {"T": t, "TL": CAT._and(t, CAT._xrank(r6) >= 0.7),
+            "V": (I["vr"] >= 1.5).fillna(False) if I["vr"] is not None else CAT._and(c != c)}
+
+
+def _tier(df, tier2):
+    """[V33.651] 2순위 — 같은 후보(inst)에 1순위 매매법 행이 있으면 보조 행을 뺀다(워커 pbRoutePick 과 같다)."""
+    if not tier2 or not len(df):
+        return df
+    is2 = df["pb"].isin(tier2)
+    t1 = set(df.loc[~is2, "inst"])
+    return df[~is2 | ~df["inst"].isin(t1)]
 CAND_Q = 0.80        # 후보 = 그날 OMNI-Q 표본 밖 점수 상위 20%(워커 PB_ROUTE.candMin 과 같다)
 CAND_MIN_ROWS = 3000  # 후보로 거른 표본이 이보다 적으면 전 종목으로(기록에 남긴다)
 
@@ -432,7 +471,7 @@ def _diag(ex, rc, S, reg, t0, t1):
     return d, pr_
 
 
-def tune_daily(P, market, sig, log=print, budget_s=TUNE_BUDGET_S):
+def tune_daily(P, market, sig, log=print, budget_s=TUNE_BUDGET_S, skip=()):
     """매매법별 한 칸씩 오르기 조율 → (조율된 DAILY_PB 사본, 보고). 보고에 진단(기본·조율)과 걸어온 길."""
     t_start = time.time()
     O, H, L, C = (P[k].values for k in ("open", "high", "low", "close"))
@@ -457,7 +496,7 @@ def tune_daily(P, market, sig, log=print, budget_s=TUNE_BUDGET_S):
             m = m & fm[f]
         return m
 
-    _off = set(PB_OFF.get(market, ()))   # [V33.650 학습기] 퇴출 매매법은 조율하지 않는다(시간 낭비 · 결과는 어차피 버린다)
+    _off = set(skip or ())   # [V33.650 학습기] 퇴출 매매법은 조율하지 않는다(run 이 PB_OFF 를 넘긴다 · 시간 낭비 · 결과는 어차피 버린다)
     order = sorted([k for k in DAILY_PB if k not in _off], key=lambda k: -int(sig[k].values.sum()) if k in sig else 0)
     skipped = []
     for pb in order:
@@ -689,6 +728,8 @@ def intra_fires(c, h, l, v, ctx=None):
         vw = np.where(cs > 0, cv / np.where(cs > 0, cs, 1), np.nan)
         i = np.arange(1, n)
         F["VWAP_RE"][i] = (c[i - 1] < vw[i - 1]) & (c[i] > vw[i])
+    if ctx and ctx.get("pc") and ctx["pc"] > 0 and c[0] / ctx["pc"] - 1 >= 0.02:   # [V33.651] 갭 앤 고 — 둘째 봉에서만
+        F["GAP_GO"][1] = c[1] > h[0]
     return F
 
 
@@ -1071,12 +1112,20 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             continue
         sig = CAT.signals(P)
         try:
-            dpb, tune_rep = tune_daily(P, market, sig, log=log)   # [V33.619] 매매법 자동 조율(앞 55% 만)
+            dpb, tune_rep = tune_daily(P, market, sig, log=log, skip=PB_OFF.get(market, ()))   # [V33.619] 매매법 자동 조율(앞 55% 만)
         except Exception as e:  # noqa: BLE001
             log("   ⚠️ [매매법조율] %s 실패 %s — 기본 프로필" % (market, e))
             dpb, tune_rep = {k: dict(v, prof="base", flt=None) for k, v in DAILY_PB.items()}, None
         _off = set(PB_OFF.get(market, ()))
         dpb = {k: v for k, v in dpb.items() if k not in _off}   # [V33.650 학습기] 퇴출 매매법은 시뮬·표·워커 목록에서 뺀다
+        mod_now, tier2 = {}, list(MOD_PB.get(market, {}))
+        if tier2:   # [V33.651] 보조 매매법 — 시뮬은 하루 늦게(실전과 같게) · 오늘 목록은 늦추지 않은 마지막 날
+            _fm = _mod_filters(P)
+            for nm, (b_, f_, hd_) in MOD_PB[market].items():
+                sm = (sig[b_] & _fm[f_]).fillna(False).astype(bool)
+                mod_now[nm] = sm.values[-1]
+                sig[nm] = sm.shift(1, fill_value=False)
+                dpb[nm] = dict(DAILY_PB["DUAL_MOM"], hold=hd_, family="Mod", label="%s 수정판(%s 거르개 · %d일 보유) — 2순위" % (b_, f_, hd_), prof="mod", flt=None)
         log("   · [매매법시뮬] %s 매매법 %d종 사용 · 퇴출 %d종(성적 미달)" % (market, len(dpb), len(_off)))
         # [V33.620] ★후보 폭도 검증이 고른다★ — OMNI-Q 상위 20·40·60%(사용자 10/15 "가장 유리한 방식 · 매수 신호가 나올 넉넉함").
         #   [V33.622] 머리(5일·20일·평균) × 폭 + 거름 없음 = 10 설정. 검증 구간 [60,80%) 에서 고른 규칙의 ★t★ 가 가장 큰(평균 > 0 · 거래 ≥ VAL_MIN_N) 설정 —
@@ -1091,6 +1140,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             if cm_ is None:
                 continue
             d_, reg_now, _ = sim_daily(P, market, ev_dates, sig=sig, cand=cm_, pbs=dpb)
+            d_ = _tier(d_, tier2)
             if len(d_) < CAND_MIN_ROWS:
                 continue
             d_ = _relevel(d_)
@@ -1116,6 +1166,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         else:
             log("   · [매매법시뮬] %s 후보 거름 불가(OMNI-Q 과거 점수 없음·부족) → 전 종목으로" % market)
             ddf, reg_now, sig = sim_daily(P, market, ev_dates, sig=sig, pbs=dpb)
+            ddf = _tier(ddf, tier2)
             cand_src = "전 종목(OMNI-Q 과거 점수 없음·부족)"
             ddf = _relevel(ddf)
             dst, _ = validate(ddf, "t")
@@ -1136,6 +1187,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             log("   ⚠️ [매매법시뮬] 손절 진단 실패 %s" % e)
         syms_all = list(P["close"].columns)
         cross = {pb: [syms_all[j] for j in np.nonzero(sig[pb].values[-1])[0]] for pb in CROSS_PB if pb in sig and pb in dpb}
+        for nm, row in mod_now.items():   # [V33.651] 보조 매매법 오늘 목록(워커는 다음 거래일 종가 무렵 산다)
+            cross[nm] = [syms_all[j] for j in np.nonzero(row)[0]]
         _r = dst.get("rule") or {}
         dtab = _shrunk_table(ddf, decay=_r.get("decay"), tcol="t", ref=int(ddf["t"].max()) + 1 if len(ddf) else None)   # 실전 표는 전 기간으로(고른 규칙의 최근 가중)
         gate_live = gate_now(ddf, _r["gate"], int(P["close"].shape[0]) - 1) if _r.get("gate") else None
@@ -1150,6 +1203,10 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         if b5:
             idf = sim_intra(b5, reg_by_day, market)
             if len(idf):
+                idf = idf[~idf["pb"].isin(INTRA_OFF.get(market, ()))]   # [V33.651] 성적 미달 단타 퇴출
+            if not len(idf):
+                ist = {"pass": False, "why": "단타 매매법 없음(전부 성적 미달)"}
+            if len(idf):
                 idf = _relevel(idf)
                 ist, _ = validate(idf, "day")
                 itab = _shrunk_table(idf)
@@ -1162,8 +1219,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             try:
                 import requests
                 body = {"mkt": market, "day": str(P["close"].index[-1]), "regime": reg_now, "sector": (sector or {}).get(market), "panic": panic_now,
-                        "daily": {"val": dst, "table": export(dtab, list(DAILY_PB)), "pb": dpb, "cross": cross, "gate": gate_live},
-                        "intra": {"val": ist, "table": export(itab, list(INTRA_PB)), "pb": INTRA_PB}}
+                        "daily": {"val": dst, "table": export(dtab, list(DAILY_PB)), "pb": dpb, "cross": cross, "gate": gate_live, "tier2": tier2},
+                        "intra": {"val": ist, "table": export(itab, list(INTRA_PB)), "pb": {k: v for k, v in INTRA_PB.items() if k not in INTRA_OFF.get(market, ())}}}
                 r = requests.post(BASE + "/api/playbook", headers=HDR, json=body, timeout=180)
                 log("   · [매매법시뮬] %s 업로드 %s" % (market, r.status_code))
             except Exception as e:  # noqa: BLE001
