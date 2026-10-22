@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.646";
+const _BUILD_VER = "V33.647";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -14405,7 +14405,7 @@ async function __d1Attempt(fn) {
    90초마다는 반드시 다시 써서 ts 가 묵지 않는다(신선도 문턱 3~4분 안). 장전·장후처럼 체결이 드문 시간에 크게 준다. */
 const QUOTE_SAME_MS = 90000;
 const QUOTE_CHANGED_WHERE = " WHERE NOT json_valid(state.v) OR state.updated_ts < excluded.updated_ts - " + QUOTE_SAME_MS +
-  " OR " + ["price", "dayPct", "prevClose", "mstate", "pre", "post", "ovn", "extTs", "rsi", "ma", "atr", "vol"].map(function (f) {
+  " OR " + ["price", "dayPct", "prevClose", "mstate", "pre", "post", "ovn", "extTs", "rsi", "ma", "atr", "vol", "avgVol20"].map(function (f) {
     return "json_extract(state.v, '$." + f + "') IS NOT json_extract(excluded.v, '$." + f + "')"; }).join(" OR ");
 const D1_DAY_CAP = 600000000;
 const D1_HEAVY_PER_CALL = 200000;
