@@ -6210,3 +6210,4 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
 - V33.643: 매매 사이클 시세 기록 — 값 같고 90초 안이면 JSON·D1 문장 자체를 안 만든다(로컬 벤치 사이클 CPU ~280→~210ms). 실측 tail(12크론): 평가 크론 950~1,890ms · 비평가 170~550ms — CPU 대부분은 매매 평가.
 - V33.644: 설정창 'Cloudflare 실측 청구' 경고(D1 읽은·쓴 행 · CPU · 요청: 주기 누적/주기 끝 예상/24시간 대비 일 한도 · 추가 요금 예상 · 워커 계량·차단기 상태). 데이터: billing-probe(하루 4회) → POST /api/billing/actual(TRAIN_KEY) → state billing_actual(1행) → /api/state 묶음 읽기(추가 왕복 0).
 - V33.645: ★한국 거래량 0 수리★ — 거래량을 일봉 캐시의 오늘 봉(장전에 받으면 0 · 최대 1시간+ 묵음)에서 쓰던 것을 네이버 실시간 누적 거래량(aq)으로(배치·단건 파서 · 사이클 기록 · 평가 기록 · 샤드 json_set). avgVol20 없으면 일봉에서 계산. 함께: 페어 짝 시세·백필 시세를 메모리/묶음 읽기로(사이클당 D1 −25% · 로컬 CPU −15%).
+- V33.646: 미국 거래량도 실시간 — Yahoo spark meta.regularMarketVolume · 나스닥 watchlist volume 을 시세에 실음(실측 AAPL 우리 2,060만 vs 실제 3,561만이었음). 히트맵은 시세(/api/state) 거래량을 먼저 쓰므로 함께 실시간.

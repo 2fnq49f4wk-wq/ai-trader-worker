@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.645";
+const _BUILD_VER = "V33.646";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8380,6 +8380,7 @@ function parseNasdaqWatch(j, chunk) {
     if (!(price > 0) || !(prev > 0)) continue;
     if (Math.abs(price / prev - 1) > 0.6) continue;   // 말이 안 되는 기준가(파싱 사고)는 버린다
     out[sym] = { price: price, prevClose: prev, dayPct: ((price - prev) / prev) * 100 };
+    { const v = _nqNum(r.volume); if (v > 0) out[sym].vol = v; }   // [V33.646] 정규장 누적 거래량(실시간)
   }
   return out;
 }
@@ -8494,6 +8495,9 @@ function parseSparkQuotes(j, chunk) {
     else if (cl.length === 1) { price = cl[0]; prev = cpc || price; }
     if (!(price > 0)) return;
     out[sym] = { price: price, prevClose: prev || price, dayPct: prev ? ((price - prev) / prev) * 100 : 0 };
+    /* [V33.646] 오늘 정규장 누적 거래량(실시간) — 일봉 캐시의 오늘 봉은 장중에 받은 그 순간 값에 멈춘다(실측 AAPL 우리 2,060만 vs 실제 3,561만) */
+    const rv = meta && Number(meta.regularMarketVolume);
+    if (rv > 0) out[sym].vol = rv;
   };
   const res = j.spark && Array.isArray(j.spark.result) ? j.spark.result : null;
   if (res) {
