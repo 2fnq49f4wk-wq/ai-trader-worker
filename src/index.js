@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.647";
+const _BUILD_VER = "V33.648";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -14592,7 +14592,9 @@ async function getState(DB, k, def, strict = false) {
 /* [V33.553] ★묶어 읽기(getStates)로 대형 모델의 나무까지 받지 않는다★ — 운영 파싱 계측: mind_model 이 파싱 바이트의 51~64%(11일 1.2GB).
    묶어 읽는 자리(상태 화면 빌드 · 자가진단 · 자동 재학습 판정 · AI 질문)는 전부 source·trainedAt·featVer 같은 ★머리★ 만 쓴다.
    나무는 D1(SQLite json_remove)이 떼고 보낸다 — 워커는 수 KB 만 푼다. 모델 전체가 필요한 곳은 getState/mlMindLoad 를 쓴다(그대로). */
-const _STATE_LITE = { mind_model: "$.trees" };
+const _STATE_LITE = { mind_model: "$.trees",
+  /* [V33.648] OMNI-Q 상태는 머리만(점수·머리·연구·구조를 떼고) — 상단 학습칩용 */
+  "omniq:us": "$.scores', '$.heads', '$.lab', '$.featTop", "omniq:kr": "$.scores', '$.heads', '$.lab', '$.featTop" };
 async function getStates(DB, keys) {
   const out = {};
   if (!keys || !keys.length) return out;
@@ -21949,7 +21951,7 @@ async function buildStatePayload(env) {
         "mkt_context", "sector_news_sentiment",
         // [V33.172] 외부(Modal) 학습이 ★커밋을 통과해 실제로 들어왔는지★ — 상단 상태칩용.
         EXTIMP_KEY, "modal_retrain_auto", "mind_model", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust",
-        "billing_actual", "d1_meter"   // [V33.644] 설정창 청구 경고(실측) — 같은 묶음 질의에 2행만 더(추가 D1 왕복 0)
+        "billing_actual", "d1_meter", "omniq:us", "omniq:kr"   // [V33.644] · [V33.648] 학습칩(OMNI-Q 머리만 — _STATE_LITE) 설정창 청구 경고(실측) — 같은 묶음 질의에 2행만 더(추가 D1 왕복 0)
       ]);
       const sectorGroupStats = __S["sector_group_stats"] || {};
       const sectorGroups = { stats: sectorGroupStats, weights: (cfg.sectorGroups && cfg.sectorGroups.weights) || {} };
@@ -34832,9 +34834,15 @@ async function handleRequest(request, env, ctx, _inner) {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       let cached = await getState(env.DB, "sector_news_sentiment", null);
       const _forceNews = url.searchParams.get("force") === "1";
-      if (_forceNews || !cached) {
+      /* [V33.648] ★새로고침이 90초를 넘겨 502★(라이브 점검 10/22) — 섹터 뉴스 피드 전부를 그 자리에서 모았다.
+         이제 있는 것을 바로 주고 갱신은 뒤에서(ctx.waitUntil) · 새로고침은 5분에 한 번(아이솔레이트) — CPU·외부 요청 낭비 방지. */
+      if (!cached) {
         resetFetchBudget(80);
-        cached = await updateSectorNewsSentiment(env.DB, cfg, _forceNews);
+        cached = await updateSectorNewsSentiment(env.DB, cfg, false);
+      } else if (_forceNews && Date.now() - (globalThis.__newsForceAt || 0) > 300000) {
+        globalThis.__newsForceAt = Date.now();
+        try { ctx.waitUntil((async function () { resetFetchBudget(80); await updateSectorNewsSentiment(env.DB, cfg, true); })().catch(function () {})); } catch (e) {}
+        return Response.json(Object.assign({}, cached, { refreshing: true }), { headers: cors });
       }
       return Response.json(cached || { empty: true }, { headers: cors });
     }
@@ -56025,6 +56033,17 @@ const EXTIMP_KEY = "ext_import_log";
 //   warn: 커밋은 되는데 오래됨(모델이 늙었다)
 //   fail: 마지막 커밋이 실패 — GPU 는 돌았는데 결과가 버려지고 있다(V33.170 이 그랬다)
 function _extTrainSummary(SS) {
+  /* [V33.648] 위원회 퇴역·Modal 중단 — 칩은 지금 실제로 도는 학습(GitHub Actions OMNI-Q·매매법 AI · 하루 2회)의 마지막 학습 시각을 말한다.
+     종전엔 퇴역 모델(mind/gbdt…)의 나이로 '외부학습 지연 75.9h' 를 띄웠다(라이브 점검 10/22). */
+  if (COMMITTEE_RETIRED) {
+    try {
+      let newest = null, n = 0;
+      for (const mk of ["us", "kr"]) { const q = SS["omniq:" + mk]; const t = q ? _num(q.trainedAt, 0) : 0; if (t > 0) { n++; if (newest == null || t > newest) newest = t; } }
+      const ageH = newest ? +((Date.now() - newest) / 3600000).toFixed(1) : null;
+      const state = ageH == null ? "unknown" : ageH <= 36 ? "ok" : "warn";
+      return { state: state, ageH: ageH, models: n, total: 2, label: "학습", why: "OMNI-Q·매매법 AI(GitHub Actions 하루 2회) 마지막 학습 " + (ageH == null ? "기록 없음" : ageH + "시간 전") + " · 시장 " + n + "/2" };
+    } catch (e) { return null; }
+  }
   try {
     const rec = SS[EXTIMP_KEY] || null;
     const names = { mind: "mind_model", gbdt: "gbdt_trust", xgb: "xgb_trust", lgb: "lgb_trust", cat: "cat_trust" };
