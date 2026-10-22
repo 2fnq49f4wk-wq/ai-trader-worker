@@ -244,6 +244,43 @@ MOD_PB = {
 }
 
 
+# [V33.652] ★문헌 전략 추가(2순위 보조 · 시장별)★ — 사용자 10/22 "인터넷에서 매매전략 더 찾아 추가 · 학습 · 좋은 것만 남겨".
+#   후보 16종(코너스 Double 7s·3일 저점 · Da-Gurun-Warachka 개구리 모멘텀 · Blitz 잔차 모멘텀 · Bali MAX 효과 · 고거래량 프리미엄 · 단기 반전 ·
+#   저변동성 · 야간 모멘텀 · 월말월초 · 갭하락 반전 · 래리 윌리엄스 변동성 돌파 · 52주 고가 돌파 · 상대강도 신고가 · 주도주 눌림 · NR7 추세)을
+#   10년 일봉 · 하루 늦은 진입 · 청산 3종으로 시험(lab strat.py): 앞 60% t 로 청산 고르고 60~80% 양수(t≥1) → 마지막 20% 양수 확인 →
+#   ★하나씩 넣어 검증 구간 평균을 낮추지 않는 것만★(sys3.py). 한국 4종 채택 · 주도주 눌림은 판정 +1.14→+0.86% 로 내려 탈락.
+#   미국: 통과한 단기 반전·갭하락 반전도 넣으면 판정 +0.46→+0.31·+0.34% 로 내려 탈락(내부자 매수도 손절 규칙 아래 마지막 20% −0.10% 로 탈락).
+NEW_PB = {"kr": {"FROG": 60, "RESID_MOM": 60, "RS_NEWHI": 60, "NR7_TREND": 60}, "us": {}}
+
+
+def _new_signals(P, names):
+    """[V33.652] 문헌 전략 신호(날짜×종목 bool · 늦추기 전)."""
+    I = CAT._ind(P)
+    c, h, l = I["c"], I["h"], I["l"]
+    A, X = CAT._and, CAT._xrank
+    first = lambda x: x.fillna(False) & ~x.fillna(False).shift(1, fill_value=False)
+    r1 = c.pct_change(fill_method=None)
+    mret = r1.mean(axis=1)
+    m12 = c.shift(21) / c.shift(252) - 1
+    out = {}
+    if "FROG" in names:   # 개구리 모멘텀 — 12−1개월 상위 20% 중 정보 분산도(ID) 하위 30%(작은 상승이 꾸준히 쌓인 것)
+        pos = (r1 > 0).astype(float).shift(21).rolling(231).mean()
+        neg = (r1 < 0).astype(float).shift(21).rolling(231).mean()
+        ID = np.sign(m12) * (neg - pos)
+        out["FROG"] = first(A(X(m12) >= 0.8, X(ID) <= 0.3, m12 > 0))
+    if "RESID_MOM" in names:   # 잔차 모멘텀 — 시장 평균을 뺀 12−1개월 수익 ÷ 그 변동성 상위 20% · 200일선 위
+        res = r1.sub(mret, axis=0)
+        z = res.shift(21).rolling(231).sum() / res.shift(21).rolling(231).std()
+        out["RESID_MOM"] = first(A(X(z) >= 0.8, c > I["ma200"]))
+    if "RS_NEWHI" in names:   # 상대강도 신고가 — (종가 ÷ 시장 지수) 126일 최고 · 50일선 위 · 12−1개월 양수
+        rr = c.div((1 + mret.fillna(0)).cumprod(), axis=0)
+        out["RS_NEWHI"] = first(A(rr >= rr.rolling(126, min_periods=120).max(), c > I["ma50"], m12 > 0))
+    if "NR7_TREND" in names:   # 7일 중 가장 좁은 봉 다음 날 전일 고가 돌파 · 정배열
+        rng = h - l
+        out["NR7_TREND"] = A((rng == rng.rolling(7).min()).shift(1, fill_value=False), c > h.shift(1), I["ma20"] > I["ma50"], I["ma50"] > I["ma200"])
+    return {k: v.fillna(False).astype(bool) for k, v in out.items()}
+
+
 def _mod_filters(P):
     I = CAT._ind(P)
     c = I["c"]
@@ -1118,7 +1155,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             dpb, tune_rep = {k: dict(v, prof="base", flt=None) for k, v in DAILY_PB.items()}, None
         _off = set(PB_OFF.get(market, ()))
         dpb = {k: v for k, v in dpb.items() if k not in _off}   # [V33.650 학습기] 퇴출 매매법은 시뮬·표·워커 목록에서 뺀다
-        mod_now, tier2 = {}, list(MOD_PB.get(market, {}))
+        mod_now, tier2 = {}, list(MOD_PB.get(market, {})) + list(NEW_PB.get(market, {}))
         if tier2:   # [V33.651] 보조 매매법 — 시뮬은 하루 늦게(실전과 같게) · 오늘 목록은 늦추지 않은 마지막 날
             _fm = _mod_filters(P)
             for nm, (b_, f_, hd_) in MOD_PB[market].items():
@@ -1126,6 +1163,13 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 mod_now[nm] = sm.values[-1]
                 sig[nm] = sm.shift(1, fill_value=False)
                 dpb[nm] = dict(DAILY_PB["DUAL_MOM"], hold=hd_, family="Mod", label="%s 수정판(%s 거르개 · %d일 보유) — 2순위" % (b_, f_, hd_), prof="mod", flt=None)
+            _ns = _new_signals(P, list(NEW_PB.get(market, {})))
+            for nm, hd_ in NEW_PB.get(market, {}).items():   # [V33.652] 문헌 전략(2순위)
+                if nm not in _ns:
+                    continue
+                mod_now[nm] = _ns[nm].values[-1]
+                sig[nm] = _ns[nm].shift(1, fill_value=False)
+                dpb[nm] = dict(DAILY_PB["DUAL_MOM"], hold=hd_, family="Lit", label="%s(문헌 전략 · %d일 보유) — 2순위" % (nm, hd_), prof="new", flt=None)
         log("   · [매매법시뮬] %s 매매법 %d종 사용 · 퇴출 %d종(성적 미달)" % (market, len(dpb), len(_off)))
         # [V33.620] ★후보 폭도 검증이 고른다★ — OMNI-Q 상위 20·40·60%(사용자 10/15 "가장 유리한 방식 · 매수 신호가 나올 넉넉함").
         #   [V33.622] 머리(5일·20일·평균) × 폭 + 거름 없음 = 10 설정. 검증 구간 [60,80%) 에서 고른 규칙의 ★t★ 가 가장 큰(평균 > 0 · 거래 ≥ VAL_MIN_N) 설정 —
