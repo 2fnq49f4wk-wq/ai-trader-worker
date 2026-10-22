@@ -38,6 +38,14 @@ const hourRows = [];
   const ah = await gql("d1hour", A(`d1AnalyticsAdaptiveGroups(limit: 100, filter: {datetimeHour_geq: "${h0}"}, orderBy: [datetimeHour_ASC]) { sum { rowsRead rowsWritten } dimensions { datetimeHour } }`));
   for (const r of (ah && ah.d1AnalyticsAdaptiveGroups) || []) { const x = { h: r.dimensions.datetimeHour, rowsReadM: Math.round(r.sum.rowsRead / 1e5) / 10, rowsWrittenK: Math.round(r.sum.rowsWritten / 100) / 10 }; hourRows.push(x); out("hour", x); }
 }
+// [V33.647] 시간대별 워커 CPU(최근 48시간) — CPU 절감 전후 비교
+{
+  const h0 = new Date(Date.now() - 48 * 3600000).toISOString();
+  const aw = await gql("cpuHour", A(`workersInvocationsAdaptive(limit: 2000, filter: {datetime_geq: "${h0}", scriptName: "ai-trader-app"}) { sum { cpuTimeUs requests } dimensions { datetimeHour } }`));
+  const H = {};
+  for (const r of (aw && aw.workersInvocationsAdaptive) || []) { const k = r.dimensions.datetimeHour; H[k] = H[k] || { cpu: 0, n: 0 }; H[k].cpu += r.sum.cpuTimeUs / 1000; H[k].n += r.sum.requests; }
+  for (const k of Object.keys(H).sort()) out("cpuHour", { h: k, cpuS: Math.round(H[k].cpu / 1000), n: H[k].n });
+}
 const q0 = new Date(Date.now() - (Number(process.env.TOPQ_DAYS) || 3) * 86400000).toISOString().slice(0, 10);
 a = await gql("d1q", A(`d1QueriesAdaptiveGroups(limit: 40, filter: {date_geq: "${q0}", date_leq: "${end}"}, orderBy: [sum_rowsRead_DESC]) { sum { rowsRead rowsWritten queryDurationMs } count dimensions { query } }`));
 for (const r of (a && a.d1QueriesAdaptiveGroups) || []) out("topq", { rowsRead: r.sum.rowsRead, rowsWritten: r.sum.rowsWritten, n: r.count, perCall: Math.round(r.sum.rowsRead / Math.max(1, r.count)), q: String(r.dimensions.query).slice(0, 220) });
