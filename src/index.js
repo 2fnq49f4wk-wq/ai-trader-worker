@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.642";
+const _BUILD_VER = "V33.643";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -24938,6 +24938,11 @@ async function runTradingCycle(env) {
           sharesUpd[sym] = { sh: (bq.shares > 0 ? bq.shares : null), mc: (bq.mcap > 0 ? bq.mcap : null) };
         }
         const prevQ = prevQuoteMap[sym] || null;
+        /* [V33.643] CPU — 값이 그대로이고 90초 안에 쓴 행이면 JSON 을 만들지도, D1 로 보내지도 않는다(어차피 업서트 WHERE 가 거른다) */
+        if (prevQ && nowTs - _num(prevQ.ts, 0) < QUOTE_SAME_MS && prevQ.price === bq.price && prevQ.dayPct === bq.dayPct && prevQ.prevClose === bq.prevClose) {
+          const _sf = quoteSessionFields(bq);
+          if (_sf.mstate === prevQ.mstate && (_sf.pre ?? null) === (prevQ.pre ?? null) && (_sf.post ?? null) === (prevQ.post ?? null) && (_sf.extTs || 0) === _num(prevQ.extTs, 0)) continue;
+        }
         const merged = {
           market: market, price: bq.price, prevClose: bq.prevClose, dayPct: bq.dayPct,
           rsi: prevQ ? prevQ.rsi : null, ma: prevQ ? prevQ.ma : null, atr: prevQ ? prevQ.atr : null,
