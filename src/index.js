@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.644";
+const _BUILD_VER = "V33.645";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8267,6 +8267,7 @@ async function fetchQuoteViaChart(symbol) {
       if (!(nv > 0)) return null;
       const prev = sv > 0 ? sv : nv;
       const nq = { price: nv, prevClose: prev, dayPct: prev ? ((nv - prev) / prev) * 100 : 0 };
+      { const aq = Number(d.aq); if (aq > 0) nq.vol = aq; }   // [V33.645] 실시간 누적 거래량
       applyKrOverMarket(nq, d);   // [프리/애프터마켓] KR 시간외 실시간
       return nq;
     } catch(e) { return null; }
@@ -8831,6 +8832,7 @@ async function fetchBatchQuotes(symbols, opts) {
           if (!(nv > 0)) continue;
           const prev = (sv > 0) ? sv : nv;
           const nq = { price: nv, prevClose: prev, dayPct: prev ? ((nv - prev) / prev) * 100 : 0, rt: 1 };
+          { const aq = Number(d.aq); if (aq > 0) nq.vol = aq; }   // [V33.645] 오늘 누적 거래량(실시간) — 일봉 캐시의 오늘 봉(장전엔 0)보다 정확
           applyKrOverMarket(nq, d);   // [프리/애프터마켓] KR 시간외 실시간(장전/장후)
           naverXV[sym] = nq;
         }
@@ -14399,7 +14401,7 @@ async function __d1Attempt(fn) {
    90초마다는 반드시 다시 써서 ts 가 묵지 않는다(신선도 문턱 3~4분 안). 장전·장후처럼 체결이 드문 시간에 크게 준다. */
 const QUOTE_SAME_MS = 90000;
 const QUOTE_CHANGED_WHERE = " WHERE NOT json_valid(state.v) OR state.updated_ts < excluded.updated_ts - " + QUOTE_SAME_MS +
-  " OR " + ["price", "dayPct", "prevClose", "mstate", "pre", "post", "ovn", "extTs", "rsi", "ma", "atr"].map(function (f) {
+  " OR " + ["price", "dayPct", "prevClose", "mstate", "pre", "post", "ovn", "extTs", "rsi", "ma", "atr", "vol"].map(function (f) {
     return "json_extract(state.v, '$." + f + "') IS NOT json_extract(excluded.v, '$." + f + "')"; }).join(" OR ");
 const D1_DAY_CAP = 600000000;
 const D1_HEAVY_PER_CALL = 200000;
@@ -22172,7 +22174,7 @@ async function refreshPriceShard(env, market, shard) {
       const _clrPre = _mask.pre ? 0 : 1;
       const _clrPost = _mask.post ? 0 : 1;
       const _clrExt = (_clrPre && _clrPost) ? 1 : 0;
-      const fresh = { market: market, price: r.price, prevClose: r.prevClose, dayPct: r.dayPct, ts: nowTs,
+      const fresh = { market: market, price: r.price, prevClose: r.prevClose, dayPct: r.dayPct, ts: nowTs, vol: (r.vol > 0 ? r.vol : null),
         mstate: _m, pre: _clrPre ? null : _pre, prePct: _clrPre ? null : _prePct,
         post: _clrPost ? null : _post, postPct: _clrPost ? null : _postPct,
         extTs: _clrExt ? null : _extTs };
@@ -22190,7 +22192,8 @@ async function refreshPriceShard(env, market, shard) {
           "'$.prePct', CASE WHEN ?12 = 1 THEN NULL ELSE COALESCE(?9, json_extract(v, '$.prePct')) END, " +
           "'$.post', CASE WHEN ?13 = 1 THEN NULL ELSE COALESCE(?10, json_extract(v, '$.post')) END, " +
           "'$.postPct', CASE WHEN ?13 = 1 THEN NULL ELSE COALESCE(?11, json_extract(v, '$.postPct')) END, " +
-          "'$.extTs', CASE WHEN ?15 = 1 THEN NULL ELSE COALESCE(?14, json_extract(v, '$.extTs')) END) " +
+          "'$.extTs', CASE WHEN ?15 = 1 THEN NULL ELSE COALESCE(?14, json_extract(v, '$.extTs')) END, " +
+          "'$.vol', COALESCE(?16, json_extract(v, '$.vol'))) " +   // [V33.645] 실시간 누적 거래량(있을 때만)
           "ELSE ?2 END, updated_ts = ?6" +
           // [V33.642] 값이 같고 90초 안이면 안 쓴다(쓴 행 0) — 지울 값(clr)이 남아 있거나 하나라도 바뀌면 쓴다
           " WHERE NOT json_valid(state.v) OR state.updated_ts < ?6 - " + QUOTE_SAME_MS +
@@ -22199,9 +22202,10 @@ async function refreshPriceShard(env, market, shard) {
           " OR (?8 IS NOT NULL AND json_extract(state.v, '$.pre') IS NOT ?8) OR (?10 IS NOT NULL AND json_extract(state.v, '$.post') IS NOT ?10)" +
           " OR (?14 IS NOT NULL AND json_extract(state.v, '$.extTs') IS NOT ?14)" +
           " OR (?12 = 1 AND json_extract(state.v, '$.pre') IS NOT NULL) OR (?13 = 1 AND json_extract(state.v, '$.post') IS NOT NULL)" +
-          " OR (?15 = 1 AND json_extract(state.v, '$.extTs') IS NOT NULL)"
+          " OR (?15 = 1 AND json_extract(state.v, '$.extTs') IS NOT NULL)" +
+          " OR (?16 IS NOT NULL AND json_extract(state.v, '$.vol') IS NOT ?16)"
         ).bind("quote:" + r.symbol, JSON.stringify(fresh), r.price, r.prevClose, r.dayPct, nowTs,
-          _m, _pre, _prePct, _post, _postPct, _clrPre, _clrPost, _extTs, _clrExt)
+          _m, _pre, _prePct, _post, _postPct, _clrPre, _clrPost, _extTs, _clrExt, (r.vol > 0 ? r.vol : null))
       );
       ok++;
     } else if (r) { fail++; }
@@ -24147,7 +24151,11 @@ function _ioDB(DB) {
     dump: function () { return DB.dump ? DB.dump() : null; }
   };
 }
+/* [V33.645] 20일 평균 거래량(오늘 봉 제외) — 일봉 캐시에 avgVol20 이 없을 때 */
+function _avgVol20Of(vs) { if (!Array.isArray(vs) || vs.length < 21) return null; let t = 0; for (let i = vs.length - 21; i < vs.length - 1; i++) t += (+vs[i] || 0); return t / 20; }
+let __cycQuote = null;   // [V33.645] 매매 사이클 시장 루프가 채우는 '이번 사이클 시세' 조회기(없으면 D1)
 async function runTradingCycle(env) {
+  __cycQuote = null;   // [V33.645] 지난 사이클·다른 시장의 조회기를 쓰지 않는다
   __ioMeter = { d1n: 0, d1ms: 0, fn: 0, fms: 0, q: {} };
   /* [V33.570] ★이 사이클의 계량기를 붙잡아 둔다★ — __ioMeter 는 전역이라, 같은 아이솔레이트에서 다음 크론이 겹쳐 시작하면(사이클 60s+ ·
      크론 1분) 새 계량기로 바뀐다. 그러면 EVAL-COST 가 ★겹친 호출(락에 막혀 D1 6회로 끝난)의 수치★ 를 찍었다 —
@@ -24925,6 +24933,13 @@ async function runTradingCycle(env) {
           }
         }
       } catch (e) { /* 일괄 로드 실패 시 빈 맵으로 진행 — 일봉값은 평가루프가 채움 */ }
+      /* [V33.645] 이 사이클이 이미 받은 시세(이번 배치 → 직전 저장본) — 페어 짝 가격을 종목마다 D1 에서 다시 읽던 것(사이클당 85~113회)을 대신한다 */
+      __cycQuote = function (sym) {
+        const b = batchQuotes[sym];
+        if (b && b.price > 0) return { price: b.price, ts: Date.now() };
+        const q = prevQuoteMap[sym];
+        return q && q.price > 0 ? q : null;
+      };
       // [V10 HOTFIX] setState를 종목마다 호출하면 수백 쿼리 → cron 타임아웃(503).
       //   D1 batch로 한 번에 커밋한다.
       const quoteStmts = [];
@@ -24960,7 +24975,7 @@ async function runTradingCycle(env) {
           return5: prevQ ? prevQ.return5 : null, return60: prevQ ? prevQ.return60 : null,
           spark: prevQ ? (prevQ.spark || null) : null,  // [V80] 스파크라인 보존
           ret1y: prevQ ? prevQ.ret1y : null, ret5y: prevQ ? prevQ.ret5y : null,
-          vol: prevQ ? prevQ.vol : null, avgVol20: prevQ ? prevQ.avgVol20 : null,
+          vol: (bq.vol > 0) ? bq.vol : (prevQ ? prevQ.vol : null), avgVol20: prevQ ? prevQ.avgVol20 : null,   // [V33.645] 실시간 누적 거래량 우선
           ...quoteSessionFields(bq),
           ts: nowTs
         };
@@ -25948,8 +25963,8 @@ async function runTradingCycle(env) {
                 spark: closes.slice(-23).map(function(v){ return Math.round(v * 100) / 100; }),  // [V85] 스파크라인(1달)
                 ret1y: (daily.ret1y != null ? daily.ret1y : getNDayReturn(closes, 252)),
                 ret5y: (daily.ret5y != null ? daily.ret5y : null),
-                vol: (daily.vol != null ? daily.vol : ((daily.volumes && daily.volumes.length) ? daily.volumes[daily.volumes.length - 1] : null)),
-                avgVol20: (daily.avgVol20 != null ? daily.avgVol20 : null),
+                vol: (_quoteSource.vol > 0) ? _quoteSource.vol : (daily.vol != null ? daily.vol : ((daily.volumes && daily.volumes.length) ? daily.volumes[daily.volumes.length - 1] : null)),   // [V33.645] 실시간 누적 우선
+                avgVol20: (daily.avgVol20 != null ? daily.avgVol20 : _avgVol20Of(daily.volumes)),
                 ts: _qts
               }), _qts)
           );
@@ -26062,7 +26077,7 @@ async function runTradingCycle(env) {
               try {
                 const _pm = held.meta.pair;
                 let _pb = null;
-                try { const _qb = await getState(DB, "quote:" + _pm.b, null); if (_qb && _qb.price > 0) _pb = _qb.price; } catch (e0) {}
+                try { const _qb = (__cycQuote && __cycQuote(_pm.b)) || await getState(DB, "quote:" + _pm.b, null); if (_qb && _qb.price > 0) _pb = _qb.price; } catch (e0) {}   // [V33.645] 메모리 먼저
                 const _zNow = pairZ(_pm, price, _pb);
                 const _hd = (Date.now() - _num(held.opened_ts, Date.now())) / 86400000;
                 const _why = (_zNow != null && _zNow >= PAIR_ROUTE.exitZ) ? "PAIR-REVERT z " + _zNow.toFixed(2) + " (짝 " + _pm.b + ")"
@@ -26664,7 +26679,7 @@ async function runTradingCycle(env) {
             if (__pairs && __pairs.pairs && __pairs.pairs[symbol] && !heldSymbols.has(symbol) && !crashGate.blockNew && canTrade && closes.length >= 55
                 && __prBought < PAIR_ROUTE.maxPerCycle && __prOpen < PAIR_ROUTE.maxOpen && !strategiesHeldNow.has("snap")) {
               let _pbNow = null;
-              try { const _qb = await getState(DB, "quote:" + __pairs.pairs[symbol].b, null); if (_qb && _qb.price > 0 && Date.now() - _num(_qb.ts, 0) < 3 * 86400000) _pbNow = _qb.price; } catch (e) {}
+              try { const _qb = (__cycQuote && __cycQuote(__pairs.pairs[symbol].b)) || await getState(DB, "quote:" + __pairs.pairs[symbol].b, null); if (_qb && _qb.price > 0 && Date.now() - _num(_qb.ts, 0) < 3 * 86400000) _pbNow = _qb.price; } catch (e) {}
               const _pp = pairRoutePick(__pairs, symbol, price, getMA(closes, 50), _pbNow, Date.now());
               if (_pp) {
                 if (__prToday == null) {
@@ -56513,10 +56528,11 @@ export default {
           const got = await fetchBatchQuotes(targets, { DB: env.DB, maxFallback: targets.length });
           const now2 = Date.now(); const stmts2 = [];
           let dailyBudget = 15;   // [V12.12] 스파크라인 백필 — 일봉 없는 신규종목, 사이클당 15개
+          let _pqm = {}; try { _pqm = await getStates(env.DB, targets.map(function (x) { return "quote:" + x; })); } catch (e) {}   // [V33.645] 종목마다 읽던 것을 한 번에
           for (const s of targets) {
             const q = got[s]; if (!q || q.price == null) continue;
             let prevQ = {};
-            try { const e2 = await getState(env.DB, "quote:" + s, null); if (e2 && typeof e2 === "object") prevQ = e2; } catch (e) {}
+            { const e2 = _pqm["quote:" + s]; if (e2 && typeof e2 === "object") prevQ = e2; }
             const merged = Object.assign({}, prevQ, {
               market: (s.endsWith(".KS") || s.endsWith(".KQ")) ? "kr" : "us",
               price: q.price, prevClose: q.prevClose, dayPct: q.dayPct, ts: now2
