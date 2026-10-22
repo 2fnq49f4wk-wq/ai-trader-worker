@@ -457,7 +457,8 @@ def tune_daily(P, market, sig, log=print, budget_s=TUNE_BUDGET_S):
             m = m & fm[f]
         return m
 
-    order = sorted(DAILY_PB, key=lambda k: -int(sig[k].values.sum()) if k in sig else 0)
+    _off = set(PB_OFF.get(market, ()))   # [V33.650 학습기] 퇴출 매매법은 조율하지 않는다(시간 낭비 · 결과는 어차피 버린다)
+    order = sorted([k for k in DAILY_PB if k not in _off], key=lambda k: -int(sig[k].values.sum()) if k in sig else 0)
     skipped = []
     for pb in order:
         base = DAILY_PB[pb]
