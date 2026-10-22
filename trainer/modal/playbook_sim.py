@@ -250,7 +250,13 @@ MOD_PB = {
 #   10년 일봉 · 하루 늦은 진입 · 청산 3종으로 시험(lab strat.py): 앞 60% t 로 청산 고르고 60~80% 양수(t≥1) → 마지막 20% 양수 확인 →
 #   ★하나씩 넣어 검증 구간 평균을 낮추지 않는 것만★(sys3.py). 한국 4종 채택 · 주도주 눌림은 판정 +1.14→+0.86% 로 내려 탈락.
 #   미국: 통과한 단기 반전·갭하락 반전도 넣으면 판정 +0.46→+0.31·+0.34% 로 내려 탈락(내부자 매수도 손절 규칙 아래 마지막 20% −0.10% 로 탈락).
-NEW_PB = {"kr": {"FROG": 60, "RESID_MOM": 60, "RS_NEWHI": 60, "NR7_TREND": 60}, "us": {}}
+# [V33.653] 문헌·실무 전략 55종 추가 시험(lab lib50.py · run50.py · sys50.py — 미너비니·VCP·포켓 피봇·와인스타인·슈퍼트렌드·ADX·다바스·컵앤핸들·
+#   캔들 8종·코너스 R3/CRSI/TPS·StochRSI·KDJ·MFI·홀리 그레일·터틀 수프·OBV·CMF·TRIX·KAMA …): 한국 13종이 세 구간 모두 양수였지만
+#   시스템에 하나씩 넣으면 11종은 고르는 AI 가 한 번도 안 골라 결과가 그대로(표본 적어 하한 ≤ 0) · 미너비니·거래량 마른 눌림은 판정을 낮춤.
+#   ★실제로 결과를 바꾸고 낮추지 않은 다바스 박스만 채택★(검증 t 2.33→2.46 · 최근 125일 +1.60→+1.62%).
+#   미국: 55종 중 세 구간 양수 3종(갭 메움 · 하이 타이트 플래그 · 거래량 마른 눌림) → 하나씩 넣어 검증 구간 평균을 안 낮춘 갭 메움·거래량 마른 눌림 채택.
+#   둘 다 넣으면 미국 판정 +0.46%(t 2.12) → +0.63%(t 2.20) · 최근 125일 +0.08% → +0.81%(무작위 +0.35%).
+NEW_PB = {"kr": {"FROG": 60, "RESID_MOM": 60, "RS_NEWHI": 60, "NR7_TREND": 60, "DARVAS": 30}, "us": {"GAP_FILL_D": 60, "VOL_DRYUP_PB": 60}}
 
 
 def _new_signals(P, names):
@@ -278,6 +284,13 @@ def _new_signals(P, names):
     if "NR7_TREND" in names:   # 7일 중 가장 좁은 봉 다음 날 전일 고가 돌파 · 정배열
         rng = h - l
         out["NR7_TREND"] = A((rng == rng.rolling(7).min()).shift(1, fill_value=False), c > h.shift(1), I["ma20"] > I["ma50"], I["ma50"] > I["ma200"])
+    if "DARVAS" in names:   # [V33.653] 다바스 박스 — 4~10일 전 7일 고가(상자 위)를 최근 3일이 못 넘다가 오늘 종가가 넘음 · 정배열 · 거래량 1.2배
+        boxtop = h.shift(4).rolling(7).max()
+        out["DARVAS"] = A(h.shift(1).rolling(3).max() < boxtop, c > boxtop, c > I["ma200"], I["ma50"] > I["ma200"], I["vr"] >= 1.2)
+    if "GAP_FILL_D" in names:   # [V33.653] 갭 메움(일봉) — 2% 이상 하락 갭으로 열고 종가가 전일 종가 위로 회복
+        out["GAP_FILL_D"] = A(I["o"] / c.shift(1) - 1 <= -0.02, c > c.shift(1))
+    if "VOL_DRYUP_PB" in names:   # [V33.653] 거래량 마른 눌림 — 정배열 · 3일 눌림(종가 < 3일 전) · 그 3일 최대 거래량 < 20일 평균 60% · 오늘 양봉
+        out["VOL_DRYUP_PB"] = A(c > I["ma200"], I["ma50"] > I["ma200"], c.shift(1) < c.shift(4), I["v"].shift(1).rolling(3).max() < 0.6 * I["vavg"].shift(1), I["ret1"] > 0)
     return {k: v.fillna(False).astype(bool) for k, v in out.items()}
 
 
