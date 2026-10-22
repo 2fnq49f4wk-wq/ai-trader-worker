@@ -208,6 +208,19 @@ PB_MAX_DAYS = 2600
 #   판정 구간 마지막 REC_DAYS 거래일의 고른 거래 평균이 그 조각의 공정 무작위 기준선보다 낮으면 미통과(거래 ≥ REC_MIN_N 일 때).
 REC_DAYS = 125
 REC_MIN_N = 30
+# [V33.650 학습기] ★성능 안 나오는 매매법 퇴출(시장별)★ — 사용자 10/22 "성능 안 나오는 것들 제거".
+#   미리 정한 규칙: 10년 일봉 시뮬(비용·시장 평균 뺀 순초과)에서 앞 60% 와 60~80% ★두 구간 모두★ 평균 ≤ 0 이면 퇴출(마지막 20% 판정 구간은 고르기에 안 씀).
+#   판정 구간 확인: 퇴출한 것 중 한국 21/24 · 미국 23/25 가 판정 구간에서도 음수. 평균회귀(RSI2·%R·CCI·HA·IBS·스토캐스틱…)는 두 시장 모두 전 구간 음수.
+#   전체(고르는 AI 포함) 판정 구간: 한국 +0.98%(t 2.99) → +1.05%(t 3.27) · 미국 +0.29%(t 1.03 미통과) → +0.46%(t 2.12 통과).
+#   새 후보 4종(52주 고가 거래량 돌파·상대강도 신고가·주도주 눌림·NR7 추세)은 개별로는 한국에서 양수였지만 넣으면 검증 구간 t 가 3.19 → 2.27~3.04 로 내려가 넣지 않았다(lab sysval.py).
+PB_OFF = {
+    "kr": ("CAPIT_REV", "VOL_REVERT", "TR_PULLBACK", "HERD_REBOUND", "TRIPLE_SCR", "OS_DEEP", "ENVELOPE", "MACD_X", "ELDER_RAY", "XS_ARB",
+           "STOCH_OS_EXIT", "WILLR", "BB_LOW", "STOCH_CROSS", "CCI_REV", "MA_PULLBACK", "HA_REV", "VT_TREND", "SQUEEZE", "SN_RSI2",
+           "VOL_BREAKOUT", "KELTNER", "IBS_LOW", "PSAR"),
+    "us": ("CAPIT_REV", "OS_DEEP", "HI52_NEAR", "DONCHIAN", "SQUEEZE", "TREND_ALIGN", "VT_TREND", "MA_PULLBACK", "KELTNER", "TR_PULLBACK",
+           "PSAR", "ICHIMOKU", "MACD_X", "TRIPLE_SCR", "ELDER_RAY", "BB_LOW", "VOL_BREAKOUT", "IBS_LOW", "HA_REV", "WILLR",
+           "SN_RSI2", "STOCH_OS_EXIT", "CCI_REV", "STOCH_CROSS", "ENVELOPE"),
+}
 CAND_Q = 0.80        # 후보 = 그날 OMNI-Q 표본 밖 점수 상위 20%(워커 PB_ROUTE.candMin 과 같다)
 CAND_MIN_ROWS = 3000  # 후보로 거른 표본이 이보다 적으면 전 종목으로(기록에 남긴다)
 
@@ -1061,6 +1074,9 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         except Exception as e:  # noqa: BLE001
             log("   ⚠️ [매매법조율] %s 실패 %s — 기본 프로필" % (market, e))
             dpb, tune_rep = {k: dict(v, prof="base", flt=None) for k, v in DAILY_PB.items()}, None
+        _off = set(PB_OFF.get(market, ()))
+        dpb = {k: v for k, v in dpb.items() if k not in _off}   # [V33.650 학습기] 퇴출 매매법은 시뮬·표·워커 목록에서 뺀다
+        log("   · [매매법시뮬] %s 매매법 %d종 사용 · 퇴출 %d종(성적 미달)" % (market, len(dpb), len(_off)))
         # [V33.620] ★후보 폭도 검증이 고른다★ — OMNI-Q 상위 20·40·60%(사용자 10/15 "가장 유리한 방식 · 매수 신호가 나올 넉넉함").
         #   [V33.622] 머리(5일·20일·평균) × 폭 + 거름 없음 = 10 설정. 검증 구간 [60,80%) 에서 고른 규칙의 ★t★ 가 가장 큰(평균 > 0 · 거래 ≥ VAL_MIN_N) 설정 —
         #   평균 최대로 고르면 무작위 시세에서 판정 구간 거래 0 인 설정을 골랐다(다중 비교의 함정). 판정 구간은 고르기에 안 쓴다.
@@ -1118,7 +1134,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         except Exception as e:  # noqa: BLE001
             log("   ⚠️ [매매법시뮬] 손절 진단 실패 %s" % e)
         syms_all = list(P["close"].columns)
-        cross = {pb: [syms_all[j] for j in np.nonzero(sig[pb].values[-1])[0]] for pb in CROSS_PB if pb in sig}
+        cross = {pb: [syms_all[j] for j in np.nonzero(sig[pb].values[-1])[0]] for pb in CROSS_PB if pb in sig and pb in dpb}
         _r = dst.get("rule") or {}
         dtab = _shrunk_table(ddf, decay=_r.get("decay"), tcol="t", ref=int(ddf["t"].max()) + 1 if len(ddf) else None)   # 실전 표는 전 기간으로(고른 규칙의 최근 가중)
         gate_live = gate_now(ddf, _r["gate"], int(P["close"].shape[0]) - 1) if _r.get("gate") else None
