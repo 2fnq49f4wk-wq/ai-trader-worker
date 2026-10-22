@@ -3046,7 +3046,12 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.648";
+/* [V33.649] ★신규 매수는 OMNI-Q(AI-Q) 와 매매법 AI(SROUTE) 두 경로만★ — 사용자(10/22): "AI_PRIMARY 잔재 전부 제거 · 신규진입 없애고 ·
+   CPU 낭비도 없게 · OMNI-Q 랑 매매법 AI 로만". 원장(6~10월): AI_PRIMARY 미 10월 −1.22%/승률 29% · 9월 −0.66% · 한 9월 −2.01% (퇴역 위원회 확률로 매수) ·
+   단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
+const ENTRY_ROUTES_ONLY = true;
+const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
+const _BUILD_VER = "V33.649";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13569,7 +13574,8 @@ const PB_KEYS = { rsi: [30, 50, 70], gap20: [-5, 0, 5], ret5: [-3, 3], vr: [0.8,
    남기는 것: ★추론★(이미 저장된 모델로 AI_PRIMARY 가 매매법 AI 검증 통과 전까지 계속 판단) · OMNI-Q/매매법 AI 데이터(일봉·5분봉·실적·뉴스).
    되돌리려면 false. 저장된 모델 파일은 지우지 않는다. */
 const COMMITTEE_RETIRED = true;
-const MODAL_DISABLED = true;   // [V33.641] Modal 사용 중단(사용자 10/21) — 워커는 modal-deploy 를 절대 디스패치하지 않는다
+const MODAL_DISABLED = true;
+   // [V33.641] Modal 사용 중단(사용자 10/21) — 워커는 modal-deploy 를 절대 디스패치하지 않는다
 const PB_PRIMARY_CAPS = { maxPerCycle: 2, maxPerDay: 6, maxOpen: 12, mult: 1.0 };
 /* [V33.621] ★주력 전환은 2회 연속 통과★ — 한 번의 검증 통과(판정 구간 t ≥ 2)는 운일 수 있다. 통과가 학습 회차 2번 연속(passStreak ≥ 2)일 때만
    AI_PRIMARY 를 퇴역시키고 전 크기로 산다. 그 전엔 시험 크기(×0.5 · 하루 3 · 동시 6). */
@@ -20564,6 +20570,9 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   }
   qty = Math.floor(qty);
   if (qty <= 0) { return cash; }
+  if (typeof ENTRY_ROUTES_ONLY !== "undefined" && ENTRY_ROUTES_ONLY && (market === "us" || market === "kr") && !ENTRY_ROUTES.has(_entryTag(signal))) {   // [V33.649] 마지막 관문(앞에서 이미 안 만든다)
+    await log(DB, "INFO", symbol, "BUY 거부 [V33.649 신규 매수는 OMNI-Q·매매법 AI 만] " + _entryTag(signal)); return cash;
+  }
 
   const _extGuard = await extBuyGuard(DB, market, qty, price, signal, cfg, opts, Date.now());
   if (!_extGuard.ok) { await log(DB, "INFO", symbol, "BUY 시간외 차단 [" + _extGuard.why + "]"); return cash; }
@@ -24545,7 +24554,7 @@ async function runTradingCycle(env) {
       for (const _pk in positions) { const _pm = positions[_pk] && positions[_pk].meta; if (_pm && _pm.omq) __omqOpen++; }
       /* [V33.594] 페어 경로 — 외부(GHA) 페어 · 이번 사이클/오늘 체결 · 관리 중 보유 */
       let __pairs = null, __prBought = 0, __prToday = null, __prOpen = 0;
-      try { if (PAIR_ROUTE.enabled && (market === "us" || market === "kr")) __pairs = await getState(DB, "rv_pairs:" + market, null); } catch (e) { __pairs = null; }
+      try { if (PAIR_ROUTE.enabled && !ENTRY_ROUTES_ONLY && (market === "us" || market === "kr")) __pairs = await getState(DB, "rv_pairs:" + market, null); } catch (e) { __pairs = null; }   // [V33.649] 페어 진입 정지
       for (const _pk in positions) { const _pm = positions[_pk] && positions[_pk].meta; if (_pm && _pm.pair) __prOpen++; }
       /* [V33.603] 매매법 선택 AI 경로 — 외부 선택 · 이번 사이클/오늘 체결 · 관리 중 보유 */
       let __sr = null, __srBought = 0, __srToday = null, __srOpen = 0;
@@ -25846,7 +25855,7 @@ async function runTradingCycle(env) {
       /* [V33.564] 한국 단타 분봉 선행 병렬 조회(위 MBPRE 주석) — 단타가 분봉을 볼 수 있는 상태(AI 단타 가동 또는 표본 관측)일 때만 */
       let __mbPre = null;
       try {
-        if (MBPRE.enabled && market === "kr" && (__scalpLive || __stinPend) && isMarketOpen("kr") && fetchBudgetLeft() > MBPRE.max + 10) {
+        if (!ENTRY_ROUTES_ONLY && MBPRE.enabled && market === "kr" && (__scalpLive || __stinPend) && isMarketOpen("kr") && fetchBudgetLeft() > MBPRE.max + 10) {
           __mbPre = mbPrefetchStart(orderedEval.map(function (it) { return it && it.symbol; }).filter(Boolean),
             function (sym) { return fetchMinuteBars(sym, { interval: SCALP_BAR_MIN + "m", range: "2d" }); });
         }
@@ -26364,9 +26373,9 @@ async function runTradingCycle(env) {
              (DEFAULT_CFG.scalpPanicRules 주석). 10/13 한국 BEAR/CRASH(지수 최악 −7%) 내내 scalp sig=0. 변동성 차단은 평시 단타(VWAP·눌림)의
              근거(고변동장 승률 24~35%)로 만든 것이라 그 대상만 막는다 — 당일 손실한도 차단은 패닉 단타에도 그대로 걸린다. */
           const _scVolOnly = scalpDailyBlocked && scalpVolBlocked;
-          const _scEntryOk = _scalpMarketOk && (_scalpOn || _regimeScalpOn) && (!scalpDailyBlocked || (_scVolOnly && _regimeScalpOn))
+          const _scEntryOk = !ENTRY_ROUTES_ONLY && _scalpMarketOk && (_scalpOn || _regimeScalpOn) && (!scalpDailyBlocked || (_scVolOnly && _regimeScalpOn))
                              && stratResults.length === 0 && !strategiesHeldNow.has("scalp");
-          const _scObsOk = !!__stinPend && stratResults.length === 0;   // 관측은 차단 플래그와 무관
+          const _scObsOk = !ENTRY_ROUTES_ONLY && !!__stinPend && stratResults.length === 0;   // [V33.649] 단타 관측 표본도 안 모은다(단타 퇴역)   // 관측은 차단 플래그와 무관
           if (_scEntryOk || _scObsOk) {
             const _entryAllowed = _scEntryOk;
             scalpEligible++;  // [진단] no-trend·미보유 → scalp 후보 도달
@@ -26600,7 +26609,8 @@ async function runTradingCycle(env) {
             //   __aiReady가 아니면 규칙엔진이 비상 폴백으로 매매(stratResults 유지). 후보는 AI 야간 스캔픽 우선,
             //   보조로 상승추세 사전필터 — 최종 허용/차단·사이즈는 아래 위원회(mlDeepDecide + metaHardFilter)가 결정.
             // Codex V33.329: the independently evaluated intraday path was being erased here.
-            if ((_ap && _ap.enabled && __aiReady) || __pbPrim) stratResults = stratResults.filter(function(sr){ return sr.strategy === "scalp"; });   // [V33.614] 매매법 AI 주력이면 위원회 가동과 무관하게 규칙 신호를 버린다
+            if ((_ap && _ap.enabled && __aiReady) || __pbPrim) stratResults = stratResults.filter(function(sr){ return sr.strategy === "scalp"; });
+            if (ENTRY_ROUTES_ONLY) stratResults = [];   // [V33.649] 규칙·단타 후보 없음 — OMNI-Q·매매법 AI 는 아래에서 따로 주입된다   // [V33.614] 매매법 AI 주력이면 위원회 가동과 무관하게 규칙 신호를 버린다
             /* ══ [V33.407] ★AI 가 못 서면 규칙엔진도 신규진입을 하지 않는다.★ ═══════════════
                종전엔 __aiReady 가 false 면 stratResults 를 ★그대로 두어★ 규칙엔진이 매수했다.
                그게 사용자가 관측한 "AI 없는 규칙 버전이 작동해 처참한 성적" 의 경로다.
@@ -26613,7 +26623,7 @@ async function runTradingCycle(env) {
               __ruleEntryBlocked += stratResults.length;
               stratResults = [];
             }
-            if (_ap && _ap.enabled && __aiReady && !__pbPrim && stratResults.length === 0 && !heldSymbols.has(symbol)
+            if (!ENTRY_ROUTES_ONLY && _ap && _ap.enabled && __aiReady && !__pbPrim && stratResults.length === 0 && !heldSymbols.has(symbol)
                 && !crashGate.blockNew && canTrade && aiPrimaryUsed < (_ap.maxPerCycle || 8)
                 && closes.length >= 55) {
               const _picked = !!(__aiPickPool && __aiPickPool.has(symbol));   // AI가 야간 전종목 스캔에서 스스로 고른 종목
@@ -27721,8 +27731,8 @@ async function runTradingCycle(env) {
                     if (__seqFeat) { signal.seqFeat = __seqFeat; _enrich.seqBuilt++; } else _enrich.seqSkip++;
                   } else if (__seqModel) _enrich.seqSkip++;
                 } catch (e) {}
-                try { _md = await _phaseRun("decide", async function () { return await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, portStats: __portStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, seqFeat: __seqFeat, seqModel: __seqModel, memoModel: __memoModel, dualBull: __dualBull, dualBear: __dualBear, dualShift: __dualShift, techK: __techK, finalCal: __finalCal }); }); } catch (e) {}
-                if (!_md) { try { _md = await mlMindDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble }); } catch (e) {} }
+                if (!(ENTRY_ROUTES_ONLY && (signal.isOmniQ || signal.isStratRoute || signal.isPair))) try { _md = await _phaseRun("decide", async function () { return await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, portStats: __portStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, seqFeat: __seqFeat, seqModel: __seqModel, memoModel: __memoModel, dualBull: __dualBull, dualBear: __dualBear, dualShift: __dualShift, techK: __techK, finalCal: __finalCal }); }); } catch (e) {}
+                if (!_md && !(ENTRY_ROUTES_ONLY && (signal.isOmniQ || signal.isStratRoute || signal.isPair))) { try { _md = await mlMindDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble }); } catch (e) {} }   // [V33.649] 위원회는 두 경로를 막지도 키우지도 않는다 — 계산도 안 한다
                 // [V5] AI 픽 수집 — 개입 여부와 무관하게 예측 자체는 기록(종목당 1회)
                 try {
                   if (_md && typeof _md.p === "number" && !__candSyms.has(symbol + ":pick")) {
@@ -56996,7 +57006,7 @@ export default {
             /* [V33.555] 주말(토 · 일 22시Z 전)엔 일봉이 안 바뀐다 — 같은 피처로 같은 픽을 10분마다 다시 매기던 것(운영 tail 205ms/회) → 60분.
                실적·수급 수집기는 주말에도 과거 이력을 채우는 일이 있어 그대로 둔다. */
             const _isD = new Date(), _isWkd = _isD.getUTCDay() === 6 || (_isD.getUTCDay() === 0 && _isD.getUTCHours() < 22);
-            if (Date.now() - _isLock > (_isWkd ? 60 : 10) * 60000) {
+            if (!ENTRY_ROUTES_ONLY && Date.now() - _isLock > (_isWkd ? 60 : 10) * 60000) {   // [V33.649] 위원회 픽 풀(AI_PRIMARY 전용) 증분 스캔 정지
               await setState(env.DB, "ai_incrscan_lock", Date.now());
               const _ir = await mlUniverseScanNightly(env.DB, { slice: 150 });
               if (_ir) await log(env.DB, "INFO", null, _ir);
