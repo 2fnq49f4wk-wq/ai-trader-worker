@@ -200,6 +200,14 @@ CAND_QS = (0.80, 0.60, 0.40, 0.0)   # [V33.620] 후보 폭 후보(상위 20·40�
 VAL_MIN_N = 60                     # [V33.622] 검증 구간에서 규칙·후보 설정을 고를 최소 거래 수
 CAND_HEADS = ("5", "20", "avg")   # [V33.622] 후보 순위 머리 — 5일 · 20일 · 평균(검증이 고른다)
 CAND_BUDGET_S = 1500               # 후보 비교(머리 3 × 폭 3 + 거름 없음) 시간 상한
+# [V33.650 학습기] ★10년 일봉으로 시뮬★ — 종전 strategy_router._panel 기본 760일(3년)이라 판정 구간 [80%,100%) 이 최근 ≈6개월뿐이었다.
+#   로컬 10년 비교(같은 시뮬·같은 규칙 후보·거름 없음): 한국 판정 −0.91%(t −2.51) → +0.98%(t 2.99) · 최근 125일 +0.27% → +1.95% /
+#   미국 −2.17%(t −6.29) → +0.29%(t 1.03 · 여전히 미통과) · 최근 125일 −0.44% → +0.10%. 표가 국면 여러 번을 보고 배운다.
+PB_MAX_DAYS = 2600
+# [V33.650 학습기] ★최근 구간 확인(관문 추가)★ — 판정 구간이 길어진 만큼 '옛날엔 벌었는데 요즘은 잃는' 규칙을 거른다:
+#   판정 구간 마지막 REC_DAYS 거래일의 고른 거래 평균이 그 조각의 공정 무작위 기준선보다 낮으면 미통과(거래 ≥ REC_MIN_N 일 때).
+REC_DAYS = 125
+REC_MIN_N = 30
 CAND_Q = 0.80        # 후보 = 그날 OMNI-Q 표본 밖 점수 상위 20%(워커 PB_ROUTE.candMin 과 같다)
 CAND_MIN_ROWS = 3000  # 후보로 거른 표본이 이보다 적으면 전 종목으로(기록에 남긴다)
 
@@ -1003,6 +1011,18 @@ def validate(df, timecol, pbs=None):
     st["baseAll"], st["base"], st["baseN"] = st["base"], hb, hn   # 판정 기준 = 공정한 무작위 기준선 · 옛 '전부 평균' 은 baseAll 로 남긴다
     st.update({"rule": rule, "cut": [str(c1), str(c2)], "valCmp": cmp_, "byPb": {k: int(v) for k, v in pk["pb"].value_counts().items()}})
     st["pass"] = bool(st["n"] >= 30 and st["mean"] > 0 and st["t"] >= PASS_T and st["base"] is not None and st["mean"] > st["base"])
+    try:   # [V33.650 학습기] 최근 구간 확인 — 같은 고른 거래 중 판정 구간 마지막 REC_DAYS 거래일 몫 vs 그 조각의 공정 무작위
+        tho = np.sort(ho[timecol].unique())
+        if len(tho) > REC_DAYS:
+            cr = tho[-REC_DAYS]
+            rx = pk[pk[timecol] >= cr]["ex"].values.astype(float)
+            rb, _ = fair_base(ho[ho[timecol] >= cr])
+            rec = {"days": REC_DAYS, "n": int(len(rx)), "mean": round(float(rx.mean()), 4) if len(rx) else None, "base": rb}
+            rec["ok"] = bool(len(rx) < REC_MIN_N or (rb is not None and rx.mean() > rb))
+            st["recent"] = rec
+            st["pass"] = bool(st["pass"] and rec["ok"])
+    except Exception:  # noqa: BLE001 — 확인 실패는 판정을 바꾸지 않는다
+        pass
     return st, tab2
 
 
@@ -1031,7 +1051,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
     import strategy_router as SR
     for market in ("us", "kr"):
         t0 = time.time()
-        P = SR._panel(daily, mkt_by_sym, market, day_key_of)
+        P = SR._panel(daily, mkt_by_sym, market, day_key_of, max_days=PB_MAX_DAYS)   # [V33.650 학습기] 10년
         if P is None:
             log("   · [매매법시뮬] %s 일봉 부족 — 건너뜀" % market)
             continue
@@ -1117,8 +1137,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 ist, _ = validate(idf, "day")
                 itab = _shrunk_table(idf)
             log("   · [매매법시뮬] %s 5분봉 %d종목 · 시뮬 %d건" % (market, len(b5), len(idf)))
-        log("   · [매매법시뮬] %s 국면 %s · 일봉 시뮬 %d건 · 검증 n=%s 평균 %s%% 승률 %s%% t=%s (아무거나 %s%%) → %s · 5분 검증 n=%s 평균 %s%% t=%s → %s (%.0fs)" % (
-            market, reg_now, len(ddf), dst.get("n"), dst.get("mean"), dst.get("win"), dst.get("t"), dst.get("base"),
+        log("   · [매매법시뮬] %s 국면 %s · 일봉 시뮬 %d건 · 검증 n=%s 평균 %s%% 승률 %s%% t=%s (아무거나 %s%%) · 최근 %s → %s · 5분 검증 n=%s 평균 %s%% t=%s → %s (%.0fs)" % (
+            market, reg_now, len(ddf), dst.get("n"), dst.get("mean"), dst.get("win"), dst.get("t"), dst.get("base"), (lambda r: ("%s일 n=%s 평균 %s%% vs 무작위 %s%% %s" % (r.get("days"), r.get("n"), r.get("mean"), r.get("base"), "통과" if r.get("ok") else "미달")) if r else "—")(dst.get("recent")),
             "통과" if dst.get("pass") else "미통과", ist.get("n"), ist.get("mean"), ist.get("t"), "통과" if ist.get("pass") else "미통과",
             time.time() - t0))
         if upload and BASE:
