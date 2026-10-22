@@ -3046,7 +3046,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.643";
+const _BUILD_VER = "V33.644";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -21942,7 +21942,8 @@ async function buildStatePayload(env) {
         "signal_stats", "budget_split_applied", "llm_daily:us", "llm_daily:kr",
         "mkt_context", "sector_news_sentiment",
         // [V33.172] 외부(Modal) 학습이 ★커밋을 통과해 실제로 들어왔는지★ — 상단 상태칩용.
-        EXTIMP_KEY, "modal_retrain_auto", "mind_model", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"
+        EXTIMP_KEY, "modal_retrain_auto", "mind_model", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust",
+        "billing_actual", "d1_meter"   // [V33.644] 설정창 청구 경고(실측) — 같은 묶음 질의에 2행만 더(추가 D1 왕복 0)
       ]);
       const sectorGroupStats = __S["sector_group_stats"] || {};
       const sectorGroups = { stats: sectorGroupStats, weights: (cfg.sectorGroups && cfg.sectorGroups.weights) || {} };
@@ -22074,6 +22075,11 @@ async function buildStatePayload(env) {
             const cr = _usageCpu(us) / Math.max(1, lim.monthlyCpuMs);
             return { data: us.data, actual: us.actual || null, cpuMsEff: _usageCpu(us), limits: { monthlyRequests: lim.monthlyRequests, monthlyCpuMs: lim.monthlyCpuMs }, reqPct: (rr*100).toFixed(1), cpuPct: (cr*100).toFixed(1), cpuPctIncluded: (_usageCpu(us) / Math.max(1, lim.includedCpuMs) * 100).toFixed(1), cpuAllow: +USAGE_CPU_ALLOW.toFixed(3), worstPct: (Math.max(rr,cr)*100).toFixed(1), shutdownAt: lim.shutdownAt, warnAt: lim.warnAt };
           } catch(e) { return null; }
+        })(),
+        /* [V33.644] Cloudflare 실측 청구(billing-probe 가 하루 4회 넣는다) + 워커 자체 D1 계량(오늘) — 설정창 경고용 */
+        billing: (function () {
+          const b = __S["billing_actual"] || null, m = __S["d1_meter"] || null;
+          return { actual: b, meter: m ? { day: m.day, rows: m.rows, w: m.w ? Object.values(m.w).reduce(function (a, x) { return a + (+x || 0); }, 0) : null, saver: !!m.saver, cap: D1_DAY_CAP } : null };
         })()
       };
       return __statePayload;
@@ -35354,6 +35360,7 @@ async function handleRequest(request, env, ctx, _inner) {
         monthKey: u.mk,
         usage: u.data,
         actual: u.actual || null, cpuMsEff: _usageCpu(u),
+        billing: await getState(env.DB, "billing_actual", null),   // [V33.644] Cloudflare 실측 청구 요약(설정창과 같은 값)
         cpuBasis: _usageCpu(u) !== (u.data.cpuMs || 0) ? "실측(Cloudflare)+이후 추정 증가분" : "추정(크론 벽시계×보정)",
         limits: lim,
         ratios: {
@@ -35366,6 +35373,19 @@ async function handleRequest(request, env, ctx, _inner) {
         note: "셧다운 임계 " + (lim.shutdownAt * 100).toFixed(0) + "% / 경고 " +
               (lim.warnAt * 100).toFixed(0) + "%. cfg.usageLimits로 조정 가능."
       }, { headers: cors });
+    }
+
+    /* [V33.644] Cloudflare 실측 청구 요약 — billing-probe 워크플로가 하루 4회 넣는다(TRAIN_KEY 필수 · D1 쓰기 1행/회) */
+    if (path === "/api/billing/actual" && request.method === "POST") {
+      const k = request.headers.get("x-train-key") || "";
+      if (!env.TRAIN_KEY || !_safeEq(k, env.TRAIN_KEY)) return Response.json({ error: "forbidden" }, { status: 403, headers: cors });
+      let b = {}; try { b = await request.json(); } catch (e) {}
+      const num = function (v) { const n = Number(v); return isFinite(n) ? n : null; };
+      const pick = function (o) { o = o || {}; return { d1Read: num(o.d1Read), d1Write: num(o.d1Write), cpuMs: num(o.cpuMs), req: num(o.req), r2A: num(o.r2A), r2B: num(o.r2B) }; };
+      const rec = { at: Date.now(), cycleStart: String(b.cycleStart || "").slice(0, 10), days: num(b.days), daysInCycle: num(b.daysInCycle),
+        cycle: pick(b.cycle), proj: pick(b.proj), last24: pick(b.last24), included: pick(b.included), overUSD: num(b.overUSD), projOverUSD: num(b.projOverUSD) };
+      await setState(env.DB, "billing_actual", rec);
+      return Response.json({ ok: true, rec: rec }, { headers: cors });
     }
 
     /* [V33.525] Cloudflare 실측 CPU 동기화 — modal-watchdog 워크플로가 6시간마다 넣는다(TRAIN_KEY 필수 · 페이지에서는 못 넣는다). */

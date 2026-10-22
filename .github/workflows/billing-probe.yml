@@ -5,7 +5,7 @@ name: Cloudflare 청구 감시
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 3 * * *"
+    - cron: "17 */6 * * *"   # [V33.644] 하루 4회 — 설정창 실측 경고를 갱신(워커 D1 쓰기 1행/회)
 jobs:
   bill:
     if: ${{ !github.event.repository.private }}
@@ -21,6 +21,8 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           TOPQ_DAYS: "1"
+          WORKER_URL: https://ai-trader-app.blauenacht08.workers.dev
+          TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
         run: node tools/billing-probe.mjs | tee bill.txt
       - name: 하루 한도 판정(6억 행)
         run: |

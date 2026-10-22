@@ -32,10 +32,11 @@ a = await gql("d1", A(`d1AnalyticsAdaptiveGroups(limit: 10000, filter: {date_geq
 for (const r of (a && a.d1AnalyticsAdaptiveGroups) || []) { add(r.dimensions.date, "d1Read", r.sum.rowsRead); add(r.dimensions.date, "d1Write", r.sum.rowsWritten); add(r.dimensions.date, "d1Q", r.sum.readQueries + r.sum.writeQueries); }
 // D1 '읽은 행' 상위 쿼리(최근 3일) — 어떤 쿼리가 테이블을 훑는지
 // 시간대별 D1 읽은 행(최근 36시간) — 수정 전후 비교용
+const hourRows = [];
 {
   const h0 = new Date(Date.now() - 36 * 3600000).toISOString();
   const ah = await gql("d1hour", A(`d1AnalyticsAdaptiveGroups(limit: 100, filter: {datetimeHour_geq: "${h0}"}, orderBy: [datetimeHour_ASC]) { sum { rowsRead rowsWritten } dimensions { datetimeHour } }`));
-  for (const r of (ah && ah.d1AnalyticsAdaptiveGroups) || []) out("hour", { h: r.dimensions.datetimeHour, rowsReadM: Math.round(r.sum.rowsRead / 1e5) / 10, rowsWrittenK: Math.round(r.sum.rowsWritten / 100) / 10 });
+  for (const r of (ah && ah.d1AnalyticsAdaptiveGroups) || []) { const x = { h: r.dimensions.datetimeHour, rowsReadM: Math.round(r.sum.rowsRead / 1e5) / 10, rowsWrittenK: Math.round(r.sum.rowsWritten / 100) / 10 }; hourRows.push(x); out("hour", x); }
 }
 const q0 = new Date(Date.now() - (Number(process.env.TOPQ_DAYS) || 3) * 86400000).toISOString().slice(0, 10);
 a = await gql("d1q", A(`d1QueriesAdaptiveGroups(limit: 40, filter: {date_geq: "${q0}", date_leq: "${end}"}, orderBy: [sum_rowsRead_DESC]) { sum { rowsRead rowsWritten queryDurationMs } count dimensions { query } }`));
@@ -75,4 +76,35 @@ for (const [c, u] of Object.entries(cyc)) {
   };
   for (const k in cost) cost[k] = Math.round(cost[k] * 100) / 100;
   out("cycle", { start: c + "-07", days: u.days, use: Object.fromEntries(Object.entries(u).map(([k, v]) => [k, Math.round(v)])), overUSD: cost, totalOverUSD: Math.round(Object.values(cost).reduce((s, x) => s + x, 0) * 100) / 100 });
+}
+
+// [V33.644] 설정창 경고용 요약을 워커에 넣는다(WORKER_URL·TRAIN_KEY 있을 때만 · D1 쓰기 1행)
+{
+  const { WORKER_URL, TRAIN_KEY } = process.env;
+  const keys = Object.keys(cyc).sort(), ck = keys[keys.length - 1];
+  if (WORKER_URL && TRAIN_KEY && ck) {
+    const u = cyc[ck], now = new Date();
+    const [cy, cm] = ck.split("-").map(Number);
+    const cStart = new Date(Date.UTC(cy, cm - 1, 7)), cEnd = new Date(Date.UTC(cm === 12 ? cy + 1 : cy, cm === 12 ? 0 : cm, 7));
+    const daysIn = Math.round((cEnd - cStart) / 86400000), el = Math.max(0.5, (now - cStart) / 86400000);
+    const included = { d1Read: 25e9, d1Write: 50e6, cpuMs: 30e6, req: 10e6, r2A: 1e6, r2B: 10e6 };
+    const cycle = {}, proj = {};
+    for (const k of Object.keys(included)) { cycle[k] = Math.round(u[k] || 0); }
+    // 예상 = 지금까지 + 최근 3일 평균 × 남은 날(주기 초반 폭주가 예상치를 부풀리지 않게)
+    const recent = days.slice(-4, -1).map((d) => byDay[d] || {});
+    for (const k of Object.keys(included)) {
+      const avg = recent.length ? recent.reduce((s, r) => s + (r[k] || 0), 0) / recent.length : (cycle[k] / el);
+      proj[k] = Math.round(cycle[k] + avg * Math.max(0, daysIn - el));
+    }
+    const H = hourRows.slice(-24);
+    const last24 = { d1Read: Math.round(H.reduce((s, r) => s + r.rowsReadM * 1e6, 0)), d1Write: Math.round(H.reduce((s, r) => s + r.rowsWrittenK * 1e3, 0)) };
+    const yd = byDay[days[days.length - 2]] || {}; last24.cpuMs = Math.round(yd.cpuMs || 0); last24.req = Math.round(yd.req || 0);
+    const over = (o) => Math.max(0, (o.d1Read - 25e9) / 1e6 * 0.001) + Math.max(0, (o.d1Write - 50e6) / 1e6) + Math.max(0, (o.cpuMs - 30e6) / 1e6 * 0.02) + Math.max(0, (o.req - 10e6) / 1e6 * 0.3);
+    const body = { cycleStart: cStart.toISOString().slice(0, 10), days: +el.toFixed(1), daysInCycle: daysIn, cycle, proj, last24, included,
+      overUSD: +over(cycle).toFixed(2), projOverUSD: +over(proj).toFixed(2) };
+    try {
+      const r = await fetch(WORKER_URL.replace(/\/$/, "") + "/api/billing/actual", { method: "POST", headers: { "content-type": "application/json", "x-train-key": TRAIN_KEY }, body: JSON.stringify(body) });
+      out("posted", { status: r.status, body });
+    } catch (e) { out("post_fail", String(e)); }
+  } else out("post_skip", "WORKER_URL/TRAIN_KEY 없음");
 }
