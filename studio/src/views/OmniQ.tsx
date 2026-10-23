@@ -1,4 +1,4 @@
-/* [V33.615] 후보 선별 · OMNI-Q — 매매법 AI 가 볼 종목(그날 상위 20%)을 고르는 순위 모델. 데이터 /api/omni-status(omniQ) 그대로. */
+/* [V33.615] 후보 선별 · OMNI-Q — 매매법 AI 가 볼 종목(학습기 검증이 고른 폭)을 고르는 순위 모델. 데이터 /api/omni-status(omniQ) 그대로. */
 import { type ReactNode } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import { type Tone, f1, n0, ago } from "../models";
@@ -11,7 +11,7 @@ import { omniqNet } from "../gl/netScenes";
 const MK: Record<string, string> = { us: "미국", kr: "한국" };
 export function oqState(j: any): { label: string; tone: Tone } {
   const q = (j && j.omniQ) || {};
-  const ss = ["us", "kr"].map((m) => q[m] && q[m].view && q[m].view.state).filter(Boolean);
+  const ss = ["us", "kr"].flatMap((m) => [q[m] && q[m].view && q[m].view.state, q[m] && q[m].view && q[m].view.state20]).filter(Boolean);   // [V33.656] 20일 머리 잠정도 반영
   if (ss.includes("speak")) return { label: "발언", tone: "ok" };
   if (ss.includes("prov")) return { label: "잠정", tone: "warn" };
   if (ss.length) return { label: "섀도우", tone: "shade" };
@@ -38,19 +38,27 @@ export function OmniQ({ d, head }: { d: any; head: ReactNode }) {
   const q = d.omniQ || {}, us = q.us, kr = q.kr;
   const [mk, setMk] = useState<"us" | "kr">(us ? "us" : "kr");
   const [oqs, setOqs] = useState<any>(null);   // [V33.631] 실제 모델 구조(/api/omniq-struct) — 없으면 요약 그림
+  const [pbv, setPbv] = useState<any>(() => cached("/api/playbook"));   // [V33.656] 매매법 AI 가 실제로 쓰는 후보 폭(학습기 검증이 고름)
+  useEffect(() => { let on = true; getJSON("/api/playbook").then((j) => { if (on && j) setPbv(j); }).catch(() => {}); return () => { on = false; }; }, []);
   useEffect(() => { let on = true; setOqs(cached("/api/omniq-struct?mkt=" + mk)); getJSON("/api/omniq-struct?mkt=" + mk).then((j) => { if (on) setOqs(j && !j.empty ? j : null); }).catch(() => {}); return () => { on = false; }; }, [mk]);
   const net = useMemo(() => omniqNet(d, mk, oqs && !oqs.empty ? oqs : null), [d, mk, oqs]);
   if (!us && !kr) return <div>{head}<Empty>OMNI-Q 가 아직 올라오지 않았습니다.</Empty></div>;
   const st = (r: any) => (r && r.view && ST[r.view.state]) || ["—", "idle"] as [string, Tone];
+  /* [V33.656] 시장 상태 = 5일·20일 머리 중 나은 쪽 · 5일/20일을 같이 적는다(20일 머리가 잠정인데 '섀도우' 로만 보이던 문제) */
+  const RK: Record<string, number> = { speak: 3, prov: 2, shadow: 1 };
+  const st2 = (r: any): [string, Tone] => { const v = r && r.view; if (!v) return ["—", "idle"];
+    const b = v.state20 && (RK[v.state20] || 0) > (RK[v.state] || 0) ? v.state20 : v.state; return [(ST[v.state] || ["—"])[0] + " / " + (ST[v.state20] || ["—"])[0], (ST[b] || ["—", "idle"])[1] as Tone]; };
+  const cd = (m: "us" | "kr") => { const v = pbv && pbv.markets && pbv.markets[m] && pbv.markets[m].daily && pbv.markets[m].daily.val; if (!v) return null;
+    return v.candQ ? (v.candHead && v.candHead !== "5" ? (v.candHead === "avg" ? "평균" : v.candHead + "일") : "5일") + " 상위 " + Math.round((1 - v.candQ) * 100) + "%" : "거름 없음"; };
   const groups = (us && us.featGroups) || (kr && kr.featGroups) || null;
   const top = (r: any) => ((r && r.featTop) || []).slice(0, 15).map((f: any) => ({ name: f.name, v: f.share }));
   return (
     <div>
       {head}
       <div className="mt-4"><Kpis items={[
-        { k: "미국 5일 머리", v: st(us)[0], hint: us ? "피처 " + n0(us.nFeat) + " · " + n0(us.n) + "종목 · " + ago(us.view && us.view.scoredAt) : undefined, tone: st(us)[1] },
-        { k: "한국 5일 머리", v: st(kr)[0], hint: kr ? "피처 " + n0(kr.nFeat) + " · " + n0(kr.n) + "종목 · " + ago(kr.view && kr.view.scoredAt) : undefined, tone: st(kr)[1] },
-        { k: "매매법 AI 후보", v: "상위 " + Math.round((1 - ((us || kr).cand ?? 0.8)) * 100) + "%", hint: "그날 5일 점수 순위" },
+        { k: "미국 5일 / 20일 머리", v: st2(us)[0], hint: us ? "피처 " + n0(us.nFeat) + " · " + n0(us.n) + "종목 · " + ago(us.view && us.view.scoredAt) : undefined, tone: st2(us)[1] },
+        { k: "한국 5일 / 20일 머리", v: st2(kr)[0], hint: kr ? "피처 " + n0(kr.nFeat) + " · " + n0(kr.n) + "종목 · " + ago(kr.view && kr.view.scoredAt) : undefined, tone: st2(kr)[1] },
+        { k: "매매법 AI 후보", v: cd("us") || cd("kr") ? "美 " + (cd("us") || "—") : "—", hint: cd("kr") ? "韓 " + cd("kr") + " · 학습기 검증이 고른 폭" : "학습기 검증이 고른 폭" },
         { k: "학습", v: ago((us || kr).trainedAt), hint: (us || kr).learner || "lgb" },
       ]} /></div>
       <Tabs.Root defaultValue="s" className="mt-5">
@@ -69,12 +77,13 @@ export function OmniQ({ d, head }: { d: any; head: ReactNode }) {
         </Tabs.Content>
         <Tabs.Content value="e" className="pt-1 outline-none">
           {["us", "kr"].map((m) => q[m] ? (
-            <Section key={m} title={MK[m]} aside={<Badge tone={st(q[m])[1]}>{st(q[m])[0]}</Badge>}>
+            <Section key={m} title={MK[m]} aside={<Badge tone={st2(q[m])[1]}>{st2(q[m])[0]}</Badge>}>
               <Gate g={q[m].view && q[m].view.gate} label="5일 머리" /><Gate g={q[m].view && q[m].view.gate20} label="20일 머리" />
             </Section>) : null)}
         </Tabs.Content>
         <Tabs.Content value="f" className="pt-4 outline-none"><Facts rows={[
-          ["역할", "매매법 AI 의 후보 선별 — 그날 5일 점수 상위 20% 종목만 매매법 AI 가 본다(단독 매수는 매매법 AI 주력 시장에서 퇴역)"],
+          ["역할", "① 매매법 AI 의 후보 선별(美 " + (cd("us") || "—") + " · 韓 " + (cd("kr") || "—") + ") ② 자체 진입 — 잠정·발언 머리의 상위 10% 를 산다(잠정은 절반 크기 · 하루 3건 · 동시 6종목)"],
+          ["상태 뜻", "섀도우 = 기록만 · 잠정 = 관문 ①② 통과(모든 구간 양수 · t ≥ 5) → 절반 크기로 매수 · 발언 = ③ 실전 장부 30일까지 통과 → 정규 크기"],
           ["미국 상위 10", us && (us.top10 || []).join(" · ")], ["한국 상위 10", kr && (kr.top10 || []).join(" · ")],
           ["미국 채점일", us && us.day], ["한국 채점일", kr && kr.day],
         ]} /></Tabs.Content>

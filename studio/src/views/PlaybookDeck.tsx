@@ -138,7 +138,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
         </div>
         {/* [V33.633] 7단계는 한 줄 — 좁으면 옆으로 넘긴다(혼자 떨어지는 칸 없게) */}
         <div className="bs-rail" style={{ overflowX: "auto" }}>
-        <ol style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+        <ol style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(128px, 1fr))", gap: 10 }}>
           {flow.map(([t, v, s], i) => (
             <li key={t} style={{ ...card, borderRadius: 10, position: "relative", padding: "14px 14px 16px", display: "flex", flexDirection: "column", gap: 7, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

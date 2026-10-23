@@ -167,16 +167,19 @@
     var lv = (j.live || {})[mk], r = (j.markets || {})[mk];
     var items = (lv && lv.items) || [];
     var fired = lv && lv.f != null ? lv.f : items.filter(function (x) { return x.fired && x.fired.length; }).length, chosen = lv && lv.c != null ? lv.c : items.filter(function (x) { return x.pb; }).length, act = lv && lv.a != null ? lv.a : items.filter(function (x) { return x.act; }).length;
-    var head = !r ? '매매법 표 대기' : (r.brake && r.brake.on) ? '실전 손실 제동 — 신규 매수 멈춤' : r.primary ? '매매법 AI 주력 운용' : '검증 전 — 그림자 판정';
+    /* [V33.656] 상태 4가지 — 종전엔 '검증 통과(시험 매수)' 칸이 없어 통과한 시장도 '검증 전 — 그림자 판정' 으로 보였다 · 퇴역한 AI_PRIMARY 문구 제거 */
+    var dPass = !!(r && r.pass && r.pass.daily);
+    var head = !r ? '매매법 표 대기' : (r.brake && r.brake.on) ? '실전 손실 제동 — 신규 매수 멈춤' : r.primary ? '매매법 AI 주력 운용' : dPass ? '검증 통과 — 시험 매수(절반 크기)' : '검증 미통과 — 그림자 판정';
     var why = !r ? '학습기(GitHub Actions)가 아직 이 시장 표를 올리지 않았습니다.'
       : (r.brake && r.brake.on) ? '최근 30일 실제 청산 ' + r.brake.n + '건 평균 ' + r.brake.mean + '% — 시뮬과 실전이 갈라져 새로 사지 않습니다(보유 청산은 그대로).'
-      : r.primary ? '이 시장은 겹치지 않는 판정 구간 두 곳에서 검증을 통과해 AI_PRIMARY 대신 매매법 AI 가 삽니다(크기 ×1.0).'
-      : '후보마다 무엇을 골랐을지 계산만 하고 사지 않습니다. 겹치지 않는 판정 구간 두 곳(약 5개월 간격)에서 통과하고 지금도 2회 연속 통과 중이면 주력이 됩니다(독립 통과 ' + (r.indep || 0) + '/2 · 연속 ' + (r.passStreak || 0) + '/2 · 그 전까지 AI_PRIMARY 유지).';
+      : r.primary ? '겹치지 않는 판정 구간 두 곳에서 검증을 통과해 매매법 AI 가 정규 크기(×1.0)로 삽니다.'
+      : dPass ? '최근 학습의 판정 구간을 통과해 마감 전 30분에 절반 크기로 삽니다(하루 최대 3건 · 동시 6종목). 겹치지 않는 판정 구간 두 곳에서 통과하면 주력(×1.0)이 됩니다 — 독립 통과 ' + (r.indep || 0) + '/2 · 연속 통과 ' + (r.passStreak || 0) + '회.'
+      : '최근 학습의 판정 구간을 통과하지 못해 후보마다 무엇을 골랐을지 계산만 하고 사지 않습니다(독립 통과 ' + (r.indep || 0) + '/2).';
     return '<section class="k-panel k-brief"><div><span class="k-lab">PLAYBOOK · DECISION STATE</span><strong>' + esc(head) + '</strong><p>' + esc(why) + '</p></div>' +
       '<div><span class="k-lab">CANDIDATES</span><dd>' + ((lv && lv.n) || 0) + '</dd><small>OMNI-Q 상위 ' + candPct(j, mk) + '% 평가</small></div>' +
       '<div><span class="k-lab">FIRED</span><dd>' + fired + '</dd><small>지금 매매법 신호 뜸</small></div>' +
       '<div><span class="k-lab">CHOSEN</span><dd>' + chosen + (act ? '<small class="pos"> · 매수 ' + act + '</small>' : '') + '</dd><small>고른 매매법 있음</small></div>' +
-      '<div><span class="k-lab">SCAN AGE</span><dd>' + esc(lv ? ago(lv.ts).replace(' 전', '') : '—') + '</dd><small>국면 ' + esc((lv && lv.regime) || (r && r.regime) || '—') + (r && r.panic ? ' · 공황 — 추세·모멘텀 쉼' : '') + '</small></div></section>';
+      '<div><span class="k-lab">SCAN AGE</span><dd>' + esc(lv ? ago(lv.ts).replace(' 전', '') : '—') + '</dd><small>국면 ' + esc((lv && lv.regime) || (r && r.regime) || '—') + (r && r.panic ? ' · 공황 — 1순위 추세·모멘텀 쉼(보조는 계속)' : '') + '</small></div></section>';
   }
 
   function strip(j, mk) {
