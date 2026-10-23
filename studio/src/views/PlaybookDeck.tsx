@@ -17,6 +17,7 @@ export const PB_NAMES: Record<string, string> = {
   // [V33.654] 문헌·실무 전략(2순위 보조) · 퇴출 매매법 수정판(+T 추세 · +TL 추세+주도주 · +V 거래량)
   FROG: "개구리 모멘텀", RESID_MOM: "잔차 모멘텀", RS_NEWHI: "상대강도 신고가", NR7_TREND: "NR7 추세 돌파", DARVAS: "다바스 박스",
   GAP_FILL_D: "갭 메움(일봉)", VOL_DRYUP_PB: "거래량 마른 눌림",
+  SECTOR_LAG: "주도주 일시 부진", DIP_IN_LEADER5: "주도주 급락 매수", GAP_UP_HOLD3: "갭 상승 3일 유지",
 };
 const pbName = (k: string) => { const i = k.indexOf("+"); if (i < 0) return PB_NAMES[k] || k;
   const b = k.slice(0, i), f = k.slice(i + 1); return (PB_NAMES[b] || b) + " 수정판(" + ({ T: "추세", TL: "추세+주도주", V: "거래량" } as Record<string, string>)[f] + ")"; };
@@ -61,7 +62,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
     const keys = Object.keys(pbDef).length ? Object.keys(pbDef) : ps ? Object.keys(ps) : Object.keys(t).filter((k) => t[k] && t[k].diag);
     const out = keys.map((k) => {
       const x = t[k] || {}, s_ = ps && ps[k], b = s_ ? s_.ho || [] : (x.test && x.test.base) || [], p0 = s_ ? s_.pre || [] : x.diag ? [x.diag.n, x.diag.mean, x.diag.win] : [];
-      return { id: k, name: pbName(k), fam: (pbDef[k] && pbDef[k].family) || "", tier: s_ ? s_.tier : /\+|^(FROG|RESID_MOM|RS_NEWHI|NR7_TREND|DARVAS|GAP_FILL_D|VOL_DRYUP_PB)$/.test(k) ? 2 : 1, preN: p0[0], preM: p0[1], preW: p0[2],
+      return { id: k, name: pbName(k), fam: (pbDef[k] && pbDef[k].family) || "", tier: s_ ? s_.tier : /\+|^(FROG|RESID_MOM|RS_NEWHI|NR7_TREND|DARVAS|GAP_FILL_D|VOL_DRYUP_PB|SECTOR_LAG|DIP_IN_LEADER5|GAP_UP_HOLD3)$/.test(k) ? 2 : 1, preN: p0[0], preM: p0[1], preW: p0[2],
                hoN: b[0], hoM: b[1], hoW: b[2], pick: by[k] || 0, flt: (pbDef[k] && pbDef[k].flt) || x.flt || "", tuned: x.test && x.test.tuned };
     });
     out.sort((a: any, b: any) => { const x = a[sk], y = b[sk];

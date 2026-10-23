@@ -257,7 +257,12 @@ MOD_PB = {
 #   ★실제로 결과를 바꾸고 낮추지 않은 다바스 박스만 채택★(검증 t 2.33→2.46 · 최근 125일 +1.60→+1.62%).
 #   미국: 55종 중 세 구간 양수 3종(갭 메움 · 하이 타이트 플래그 · 거래량 마른 눌림) → 하나씩 넣어 검증 구간 평균을 안 낮춘 갭 메움·거래량 마른 눌림 채택.
 #   둘 다 넣으면 미국 판정 +0.46%(t 2.12) → +0.63%(t 2.20) · 최근 125일 +0.08% → +0.81%(무작위 +0.35%).
-NEW_PB = {"kr": {"FROG": 60, "RESID_MOM": 60, "RS_NEWHI": 60, "NR7_TREND": 60, "DARVAS": 30}, "us": {"GAP_FILL_D": 60, "VOL_DRYUP_PB": 60}}
+# [V33.657] 추가 25종(lab lib25 · run25 · sys25 — 볼린저 상단·200일선 회복·TK 교차·헐·앨리게이터·프랙털·라쉬케 3봉·EMA21+ADX·포스 지수·EOM·
+#   헤스턴-사드카 계절성·연말·NR4·장대양봉·모멘텀 가속·주도주 급락·변동성 수축·갭 유지·피보나치 눌림·상승 거래량 우위·RSI50·2단계 거래량·주도주 일시 부진):
+#   세 구간 양수 한 11 · 미 4 → ★검증 구간 평균과 t 둘 다 낮추지 않는 것만★(강화한 규칙 — 포스 지수는 평균↑·t↓·판정 +1.17→+0.95% 라 탈락).
+#   한국: 주도주 일시 부진(검증 t 2.46→2.52) · 미국: 주도주 급락 매수·갭 상승 3일 유지·주도주 일시 부진 → 셋 다 넣으면 미 판정 +0.63%(t 2.20) → +0.88%(t 2.73) · 최근 125일 +0.64% vs 무작위 +0.36%.
+NEW_PB = {"kr": {"FROG": 60, "RESID_MOM": 60, "RS_NEWHI": 60, "NR7_TREND": 60, "DARVAS": 30, "SECTOR_LAG": 60},
+          "us": {"GAP_FILL_D": 60, "VOL_DRYUP_PB": 60, "DIP_IN_LEADER5": 30, "GAP_UP_HOLD3": 60, "SECTOR_LAG": 60}}
 
 
 def _new_signals(P, names):
@@ -292,6 +297,12 @@ def _new_signals(P, names):
         out["GAP_FILL_D"] = A(I["o"] / c.shift(1) - 1 <= -0.02, c > c.shift(1))
     if "VOL_DRYUP_PB" in names:   # [V33.653] 거래량 마른 눌림 — 정배열 · 3일 눌림(종가 < 3일 전) · 그 3일 최대 거래량 < 20일 평균 60% · 오늘 양봉
         out["VOL_DRYUP_PB"] = A(c > I["ma200"], I["ma50"] > I["ma200"], c.shift(1) < c.shift(4), I["v"].shift(1).rolling(3).max() < 0.6 * I["vavg"].shift(1), I["ret1"] > 0)
+    if "SECTOR_LAG" in names:   # [V33.657] 주도주 일시 부진 — 1년 수익 상위 20% 인데 최근 20일은 하위 20% · 200일선 위
+        out["SECTOR_LAG"] = A(X(c.pct_change(20, fill_method=None)) <= 0.2, X(c.pct_change(252, fill_method=None)) >= 0.8, c > I["ma200"])
+    if "DIP_IN_LEADER5" in names:   # [V33.657] 주도주 급락 매수 — 6개월 수익 상위 10% 가 5일 −7% 이하로 밀림 · 200일선 위(30일 보유)
+        out["DIP_IN_LEADER5"] = A(X(c.pct_change(126, fill_method=None)) >= 0.9, c.pct_change(5, fill_method=None) <= -0.07, c > I["ma200"])
+    if "GAP_UP_HOLD3" in names:   # [V33.657] 갭 상승 3일 유지 — 3일 전 +3% 이상 상승 갭 · 그 뒤 3일 저가가 갭 전 종가 위 · 갭 날보다 높게 마감 · 정배열
+        out["GAP_UP_HOLD3"] = A(I["o"].shift(3) / c.shift(4) - 1 >= 0.03, l.rolling(3).min() > c.shift(4), c > c.shift(3), c > I["ma200"], I["ma50"] > I["ma200"])
     return {k: v.fillna(False).astype(bool) for k, v in out.items()}
 
 

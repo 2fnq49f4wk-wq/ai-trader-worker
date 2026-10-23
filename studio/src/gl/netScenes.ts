@@ -142,7 +142,7 @@ export function omniqNet(d: any, mk: "us" | "kr" = "us", st?: any): NetScene | n
   // ── 머리 5(가운데 고리) · 출력(중심) ──
   const heads = ["5일 순위", "20일 순위", "1일 순위", "상승 확률", "위험"];
   const hIds = heads.map((h, k) => { const t = TAU * k / heads.length; return pt(Math.cos(t) * R_HD, 0, Math.sin(t) * R_HD, 3, k < 2 ? 1 : .5, "머리 · " + h); });
-  const out = pt(0, 0, 0, 3, null, "후보 상위 20% → 매매법 AI");
+  const out = pt(0, 0, 0, 3, null, "후보 선별 → 매매법 AI");
   hIds.forEach((h, k) => ln(h, out, k === 0 ? 1 : k === 1 ? .7 : .25, 2));
   gIds.forEach((g, gi) => hIds.forEach((h, k) => ln(g, h, (.25 + .5 * (+G[gk[gi]] / total)) * (k < 2 ? 1 : .5), 1)));
   // ── 나무: 기운 고리 위를 돈다 · 눈금(분기) → 피처(gain 비중 큰 피처일수록 자주) ──
@@ -182,13 +182,13 @@ export function omniqNet(d: any, mk: "us" | "kr" = "us", st?: any): NetScene | n
   gIds.forEach((g, gi) => { RL[g] = gk[gi] + " — 피처 " + G[gk[gi]] + "개(날짜마다 종목 간 순위로 바꿔 넣는다)"; });
   tIds.forEach((t) => { if (!RL[t]) RL[t] = "LightGBM 나무 — 피처 조건으로 종목을 갈라 앞 나무가 틀린 만큼 고친다(대표 " + nT + "그루 · 고리 위를 돈다)"; });
   hIds.forEach((h, k) => { RL[h] = heads[k] + (k === 0 ? " — 후보 선별에 쓰는 머리(" + (q.view?.state || "—") + ")" : k === 1 ? " — 20일 머리(" + (q.view?.state20 || "—") + ")" : " — 기록·관측용 머리"); });
-  RL[out] = "그날 5일 순위 상위 20% 종목 = 매매법 AI 가 지금 뜬 매매법을 확인할 후보";
+  RL[out] = "그날 순위 상위 종목(폭은 학습기 검증이 고름 — 지금 美 20일 상위 40% · 韓 20일 상위 60% 수준) = 매매법 AI 가 지금 뜬 매매법을 확인할 후보 · 잠정·발언 머리면 상위 10% 를 직접 산다";
   const sv = (id: number) => fin(V[id]) ? V[id] : -1;
   groups.push({ label: "피처", kind: 0, ids: inIds, desc: "바깥 구 — 피처 " + (q.nFeat || total) + "개(같은 묶음끼리 모여 앉는다) · 이름 있는 점 = gain 비중 상위", list: [...inIds].filter((i) => fin(V[i])).sort((a, b) => sv(b) - sv(a)) },
     { label: "피처 묶음", kind: 1, ids: gIds, desc: "안쪽 구 — 동물원(Alpha158·101·학술) · 규칙 전략 · 매매법 신호 · 실적·뉴스" },
     { label: "머리", kind: 3, ids: hIds, desc: "가운데 고리 — 5일·20일·1일 순위 · 상승 확률 · 위험" },
     { label: "나무", kind: 4, ids: tIds, desc: "구 둘레를 도는 고리 — LightGBM 나무(눈금 하나 = 분기 하나 → 그 피처로 선)" },
-    { label: "출력", kind: 3, ids: [out], desc: "후보 상위 20%" });
+    { label: "출력", kind: 3, ids: [out], desc: "후보 선별(폭은 검증이 고름)" });
   hIds.forEach((h, k) => labels.push({ id: h, text: "✳ " + heads[k] }));
   labels.push({ id: out, text: "후보" });
   // 뼈대(또렷한 선): 점마다 가장 센 들어오는·나가는 2줄 · 흐르는 빛: 가장 센 90줄
@@ -206,7 +206,7 @@ export function omniqNet(d: any, mk: "us" | "kr" = "us", st?: any): NetScene | n
     la: Int32Array.from(LA), lb: Int32Array.from(LB), ls: Float32Array.from(LS), lk: Uint8Array.from(LK), hi: HI, top: idx.slice(0, 90),
     groups, labels, role: Array.from({ length: n }, (_, i) => RL[i] || ""), shells: [R_IN, 208, 138], core: true, colorByAttr: false, alpha: [.02, .8, 1.6], yaw: .4, zoom: 1,
     tbody, bands: treeRings, hz: [],
-    info: { head: `피처 ${q.nFeat || total} → LightGBM 나무${real && st.nTrees ? " " + st.nTrees : ""} → 머리 5 → 후보 상위 20%`,
+    info: { head: `피처 ${q.nFeat || total} → LightGBM 나무${real && st.nTrees ? " " + st.nTrees : ""} → 머리 5 → 후보 선별`,
             note: (mk === "us" ? "미국" : "한국") + " 모델 · 바깥 구 = 피처" + (real ? " 전부(이름·gain·분기 실제 값" + (st.feat.length > 720 ? " · gain 상위 720" : "") + ")" : "") + " · 안쪽 구 = 피처 묶음 · 도는 고리 = 나무" +
               (real ? "(실제 " + nT + "그루 · 분기 " + nSplit + "개 = 실제 분기 피처로 선)" : "(대표 " + nT + "그루 · 분기 " + nSplit + "개는 gain 비중에 비례해 배치 — 실제 구조는 다음 학습부터)") + " · 가운데 = 머리", lines: LA.length },
   };
