@@ -764,6 +764,7 @@ def _score_only(mk, cached, C, X, y, req, BASE, HDR, log):
 
 
 def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=print, cache=None, mode="auto"):
+    import pandas as pd
     import lightgbm as lgb
     import factor_screen as fs
     import portfolio_lab as pl
@@ -814,18 +815,21 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             log("      ⚠️ [OMNI-Q %s] 채점만 실패 — 이번 회차는 학습한다" % mk)
         lab_end = np.arange(len(days)) + H + 1
         splits = list(purged_walk_forward_splits(len(days), label_end_times=lab_end, n_folds=FOLDS, embargo_fraction=0.02, expanding=True))
+        # [V33.656] ★20일 라벨은 20일로 퍼지★ — 종전엔 20일 머리도 5일 분할(lab_end = +H+1)을 써서 시험 구간 직전 15일치 학습 표본의 라벨이
+        #   시험 구간 수익을 품었다(누출 → 20일 머리 관문 ①② 가 부풀었을 수 있다). 시험 구간은 같고 학습 쪽만 더 깎는다.
+        splits20 = list(purged_walk_forward_splits(len(days), label_end_times=np.arange(len(days)) + H20 + 1, n_folds=FOLDS, embargo_fraction=0.02, expanding=True))
         F = X.shape[2]
 
         fitdiag = {}
 
-        def cv(lab, learner="lgb", objective="regression", diag=None, diag_y=None):
+        def cv(lab, learner="lgb", objective="regression", diag=None, diag_y=None, sps=None):
             """퍼지 전진 표본 밖 점수(날짜×종목) + 시험 날 목록.
             [V33.558] diag 이름을 주면 ★적합 진단★ — 마지막 구간 모델로 학습구간 끝 250일의 승률(표본 안)을 재서 표본 밖 승률과 나란히 둔다.
             표본 안 ≫ 표본 밖(차 > 0.08) = 과적합 · 둘 다 ≈ 0.5 = 과소적합. 판정에 쓰지 않는다(기록·관측)."""
             sc = np.full((D, S), np.nan, dtype=np.float32)
             tdays = []
             last = None
-            for sp in splits:
+            for sp in (sps or splits):
                 tr, te = days[sp.train], days[sp.test]
                 Xtr, ytr = X[tr].reshape(-1, F), lab[tr].reshape(-1)
                 mm = np.isfinite(ytr)
@@ -854,9 +858,9 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                     log("      [OMNI-Q 적합 진단 실패] %s" % e)
             return sc, tdays
 
-        def judge(sc, tdays, lab_rank, fwd_vals, tag, step=H):
+        def judge(sc, tdays, lab_rank, fwd_vals, tag, step=H, sps=None):
             fx, fx0 = [], []
-            for sp in splits:
+            for sp in (sps or splits):
                 te = [d for d in days[sp.test] if d in set(tdays)]
                 if not te:
                     continue
@@ -872,15 +876,19 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
 
         import os as _os
         LAB = _os.environ.get("OMNIQ_LAB") == "1"
-        scores, test_all = cv(y, LEARNER_5D, diag="5일")
-        LAST_OOS[mk] = {"sc": scores, "dates": list(C.index), "syms": list(C.columns)}   # [V33.610] 표본 밖 5일 점수 — 매매법 시뮬 후보를 실전과 같게
-        br, fold_x, fold_x0, g2, pos, need = judge(scores, test_all, y, fwdv, "5일 · " + LEARNER_5D)
-        # [V33.543] ★두 번째 발언 머리 — 20일 순위★(연구 회차 10/11: 미국 ① 53.3% t 12.9 · 한국 54.0% t 18.0 · ② 4/4). 관문 ①②③ 동일 · 20일마다 갈아탐.
         f20 = (C.shift(-(H20 + 1)) / C.shift(-1) - 1.0)
         y20 = f20.rank(axis=1, pct=True).values
-        s20, t20 = cv(y20, diag="20일", diag_y=y20)
+        # [V33.656] (실험 · OMNIQ_Y5=blend) 5일 머리를 5일·20일 순위 평균으로 학습 — 신호가 덜 출렁여 갈아타기 비용이 준다. 판정은 그대로 5일 수익.
+        Y5MODE = _os.environ.get("OMNIQ_Y5", "")
+        y5tr = (pd.DataFrame((y + y20) / 2.0).rank(axis=1, pct=True).values if Y5MODE == "blend" else y)
+        sp5 = splits20 if Y5MODE == "blend" else None
+        scores, test_all = cv(y5tr, LEARNER_5D, diag="5일", diag_y=y, sps=sp5)
+        LAST_OOS[mk] = {"sc": scores, "dates": list(C.index), "syms": list(C.columns)}   # [V33.610] 표본 밖 5일 점수 — 매매법 시뮬 후보를 실전과 같게
+        br, fold_x, fold_x0, g2, pos, need = judge(scores, test_all, y, fwdv, "5일 · " + LEARNER_5D + (" · blend" if Y5MODE == "blend" else ""), sps=sp5)
+        # [V33.543] ★두 번째 발언 머리 — 20일 순위★(연구 회차 10/11: 미국 ① 53.3% t 12.9 · 한국 54.0% t 18.0 · ② 4/4). 관문 ①②③ 동일 · 20일마다 갈아탐.
+        s20, t20 = cv(y20, diag="20일", diag_y=y20, sps=splits20)
         LAST_OOS[mk]["sc20"] = s20   # [V33.622] 20일 머리 표본 밖 점수 — 매매법 시뮬이 후보 머리(5일·20일·평균)를 검증으로 고른다
-        br20, fx20, _, g2_20, pos20, need20 = judge(s20, t20, y20, f20.values, "20일 순위(발언 머리 2)", step=H20)
+        br20, fx20, _, g2_20, pos20, need20 = judge(s20, t20, y20, f20.values, "20일 순위(발언 머리 2)", step=H20, sps=splits20)
         g1_20 = gate1(br20)
         lab_rep = {}
         if LAB:
@@ -953,7 +961,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             lab_rep["sizing"] = {"folds": sz, "wins": nwin, "ok": ok_sz}
         g1 = gate1(br)
         # 최종 모델: 라벨이 있는 모든 날로 학습 → 마지막 날(오늘 피처) 채점
-        Xa, ya = X[days].reshape(-1, F), y[days].reshape(-1)
+        Xa, ya = X[days].reshape(-1, F), y5tr[days].reshape(-1)
         m = np.isfinite(ya)
         bst = (DoubleEnsemble().fit(Xa[m], ya[m]) if LEARNER_5D == "de" else
                _fit_lgb(Xa[m], ya[m], rounds=(150 if LEARNER_5D == "lgb_reg" else 300), reg=(LEARNER_5D == "lgb_reg")))
