@@ -75,7 +75,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
   const day = String(R.day || "").replace(/(\d{4})(\d{2})(\d{2})/, "$1-$2-$3");
   const flow = [
     ["후보 선별 · OMNI-Q", V.candQ ? "상위 " + Math.round((1 - V.candQ) * 100) + "%" : "거름 없음", V.cand || "—"],
-    ["신호 · 일봉 매매법", rows.length + "종", (() => { const n2 = rows.filter((r: any) => r.tier === 2).length; return n2 ? "1순위 " + (rows.length - n2) + " · 보조 " + n2 + "(1순위가 안 뜬 종목에만)" : "오늘 조건이 맞은 매매법만 남긴다"; })()],
+    ["신호 · 일봉 매매법", rows.length + "종", (() => { const n2 = rows.filter((r: any) => r.tier === 2).length; return n2 ? "1순위 " + (rows.length - n2) + " · 보조 " + n2 + " — 보조는 1순위가 안 뜬 종목에만" : "오늘 조건이 맞은 매매법만 남긴다"; })()],
     ["구조 거르개", R.panic ? "공황 차단 켜짐" : "공황 차단 꺼짐", R.panic ? "1순위 추세·모멘텀·돌파 쉼(보조는 계속)" : "시장 60일 하락·고변동이면 1순위 추세 매매법 쉼"],
     ["상황 칸 표", n0(R.daily?.cells) + "칸", "국면 × RSI × 이격 × 수익 × 거래량 칸마다 수축 평균"],
     ["고르는 규칙", chosen, "검증 구간 t 가 가장 높은 규칙"],
@@ -138,7 +138,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
         </div>
         {/* [V33.633] 7단계는 한 줄 — 좁으면 옆으로 넘긴다(혼자 떨어지는 칸 없게) */}
         <div className="bs-rail" style={{ overflowX: "auto" }}>
-        <ol style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(140px, 1fr))", gap: 10 }}>
+        <ol style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
           {flow.map(([t, v, s], i) => (
             <li key={t} style={{ ...card, borderRadius: 10, position: "relative", padding: "14px 14px 16px", display: "flex", flexDirection: "column", gap: 7, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -171,7 +171,9 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
               </tr></thead>
               <tbody>{rows.map((r) => (
                 <tr key={r.id} style={{ borderTop: "1px solid " + ROWLINE }}>
-                  <td style={{ padding: "10px 14px", color: INK, whiteSpace: "nowrap" }}>{r.name}{r.tier === 2 && <span style={{ marginLeft: 8, fontSize: 10.5, color: HL, border: "1px solid #5A4A1A", borderRadius: 4, padding: "0 5px" }}>보조</span>}<span style={{ marginLeft: 8, fontSize: 11, color: FAINT }}>{r.id}{r.fam ? " · " + r.fam : ""}</span></td>
+                  <td style={{ padding: "9px 14px", color: INK, minWidth: 170, maxWidth: 300 }}>
+                    <span style={{ whiteSpace: "nowrap" }}>{r.name}</span>{r.tier === 2 && <span style={{ marginLeft: 8, fontSize: 10.5, color: HL, border: "1px solid #5A4A1A", borderRadius: 4, padding: "0 5px", whiteSpace: "nowrap" }}>보조</span>}
+                    <span style={{ display: "block", marginTop: 2, fontSize: 11, color: FAINT, fontFamily: MONO, whiteSpace: "nowrap" }}>{r.id}{r.fam ? " · " + r.fam : ""}</span></td>
                   <td style={{ ...td(null), color: MUTE }}>{n0(r.preN)}</td>
                   <td style={td(r.preM)}>{sg(r.preM, 3)}</td>
                   <td style={{ ...td(null), color: MUTE }}>{fin(r.preW) ? r.preW.toFixed(1) + "%" : "—"}</td>
@@ -237,7 +239,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
       </section>
 
       <footer style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 10, paddingTop: 14, borderTop: "1px solid #172131", fontSize: 12, color: FAINT }}>
-        <span>수치 = 학습기(GitHub Actions)가 올린 매매법 시뮬 표 · 판정 구간 = 최근 약 100거래일(학습·규칙 고르기에 안 쓴 구간)</span>
+        <span>수치 = 학습기(GitHub Actions)가 올린 매매법 시뮬 표(10년 일봉) · 판정 구간 = {V.hoFrom ? String(V.hoFrom).replace(/(\d{4})(\d{2})(\d{2})/, "$1-$2-$3") + " 이후 · " : ""}마지막 20%(학습·규칙 고르기에 안 쓴 구간)</span>
         <span style={{ fontFamily: MONO }}>평균 = 거래당 % · 시장(등가중) 대비 · 비용 뺀 값</span>
       </footer>
     </div>);
