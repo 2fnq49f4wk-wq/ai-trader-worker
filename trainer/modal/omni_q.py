@@ -36,6 +36,7 @@ ZOOS_Q = ("qlib158", "academic", "alpha101")   # [반복 2] alpha101 추가 — 
 #   ★미리 등록(데이터 보기 전)★: DE 는 두 시장 모두에서 ① 하한이 LGB 보다 ≥0.002 높고 ② 를 통과할 때만 5일 머리 학습기로 채택(LEARNER_5D).
 HEADS_RANK = (1, 5, 20)
 H20 = 20                    # [V33.543] 두 번째 발언 머리 지평
+Y5_BLEND_MKTS = ("kr",)     # [V33.658] 5일 머리를 5일·20일 순위 평균으로 학습하는 시장(판정은 그대로 5일 수익)
 LEARNER_5D = "lgb"          # 연구 회차(OMNIQ_LAB=1) 결과로만 바꾼다
 #   [V33.558] 후보 "lgb_reg"(정규화 강화 · 잎 15 · 잎당 1,000 · L2 10 · 피처 60% · 150판) — 같은 규칙(두 시장 ① 하한 +0.002 · ② 통과)일 때만 채택.
 DE_K = 4                    # DoubleEnsemble 하위 모델 수
@@ -879,7 +880,11 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         f20 = (C.shift(-(H20 + 1)) / C.shift(-1) - 1.0)
         y20 = f20.rank(axis=1, pct=True).values
         # [V33.656] (실험 · OMNIQ_Y5=blend) 5일 머리를 5일·20일 순위 평균으로 학습 — 신호가 덜 출렁여 갈아타기 비용이 준다. 판정은 그대로 5일 수익.
-        Y5MODE = _os.environ.get("OMNIQ_Y5", "")
+        # [V33.658] ★한국만 혼합 라벨 기본★ — 10년 퍼지 전진(lab oqreg · 20일 퍼지 분할): 한국 5일 ② 띠 1/4 → 3/4(통과) · ① t 11.3 → 8.9(통과 유지) /
+        #   미국 ① t 3.34 → 2.69(미달) 이라 미국은 종전 5일 라벨. OMNIQ_Y5=blend|off 로 두 시장 모두 강제 가능(실험).
+        Y5MODE = _os.environ.get("OMNIQ_Y5", "") or ("blend" if mk in Y5_BLEND_MKTS else "")
+        if Y5MODE == "off":
+            Y5MODE = ""
         y5tr = (pd.DataFrame((y + y20) / 2.0).rank(axis=1, pct=True).values if Y5MODE == "blend" else y)
         sp5 = splits20 if Y5MODE == "blend" else None
         scores, test_all = cv(y5tr, LEARNER_5D, diag="5일", diag_y=y, sps=sp5)
@@ -1027,7 +1032,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         speak20 = bool(g1_20 and g2_20 and g3_20["ok"])
         log("      [OMNI-Q %s · 20일] ③ 장부 채점 날 %d · 하한 %s → %s · 발언 %s" % (mk, g3_20["days"], g3_20["lb"], "통과" if g3_20["ok"] else "미달", "가능" if speak20 else "불가(섀도우)"))
         t_ms = int(time.time() * 1000)
-        body = {"mkt": mk, "day": day, "h": H, "q": Q, "trainedAt": t_ms, "scoredAt": t_ms, "scoreOnly": False, "nFeat": len(names), "n": len(sc),
+        body = {"mkt": mk, "day": day, "h": H, "q": Q, "trainedAt": t_ms, "scoredAt": t_ms, "scoreOnly": False, "nFeat": len(names), "n": len(sc), "y5": Y5MODE or "5d",
                 "scores": sc, "top": top, "heads": extra, "learner": LEARNER_5D, "lab": lab_rep or None,
                 "featGroups": FEAT_GROUPS.get(mk), "featTop": _imp_top(bst, names), "struct": _struct(bst, names),
                 "gate": {"g1": dict(br, ok=g1, needT=G1_T), "g2": {"folds": fold_x, "foldsFullSwap": fold_x0, "band": BAND, "pos": pos, "need": need, "ok": g2},

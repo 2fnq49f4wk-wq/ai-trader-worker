@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.657";
+const _BUILD_VER = "V33.658";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -31492,6 +31492,7 @@ async function handleRequest(request, env, ctx, _inner) {
                    /* [V33.539] 복합 머리(순위 1·20일 · 상승확률 · 위험) — 기록·관측용. 발언(매매 영향)은 5일 머리(scores)만 */
                    heads: (body.heads && typeof body.heads === "object") ? body.heads : null,
                    learner: String(body.learner || "lgb"), lab: (body.lab && typeof body.lab === "object") ? body.lab : null,
+                   y5: body.y5 === "blend" ? "blend" : "5d",   // [V33.658] 5일 머리 학습 라벨(한국 = 5일·20일 순위 혼합)
                    /* [V33.543] 두 번째 발언 머리(20일) — 자기 관문을 워커가 다시 판정 */
                    gate20: (body.gate20 && typeof body.gate20 === "object") ? body.gate20 : null,
                    speak20: omniqSpeakOf(body.gate20) };
@@ -31562,7 +31563,7 @@ async function handleRequest(request, env, ctx, _inner) {
           if (q) {
             const _top = Object.keys(q.scores || {}).sort(function (a, b) { return q.scores[b] - q.scores[a]; }).slice(0, 10);
             omniQ[_m] = { day: q.day, trainedAt: q.trainedAt, n: q.n, nFeat: q.nFeat, h: q.h, gate: q.gate, speak: q.speak, top10: _top,
-                          learner: q.learner || "lgb", heads: q.heads ? Object.keys(q.heads) : [], lab: q.lab || null,
+                          learner: q.learner || "lgb", heads: q.heads ? Object.keys(q.heads) : [], lab: q.lab || null, y5: q.y5 || "5d",
                           gate20: q.gate20 || null, speak20: !!q.speak20,
                           prov: !q.speak && omniqProvOf(q.gate), prov20: !q.speak20 && omniqProvOf(q.gate20),   // [V33.558] 잠정 발언
                           view: omniqView(q),   // [V33.562] 화면용 요약(상태·관문·적합)
