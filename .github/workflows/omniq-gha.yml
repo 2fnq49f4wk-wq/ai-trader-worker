@@ -19,10 +19,10 @@ on:
         default: train
         options: [auto, train, score]
       pb_variant:
-        description: '매매법 A/B 실험판(업로드 안 함) — 빈칸=정상 · no_new=문헌 전략 끈 판'
+        description: '매매법 A/B 실험판(업로드 안 함) — 빈칸=정상 · no_new=문헌 전략 끈 판 · y5_off=OMNI-Q 5일 혼합 라벨 끈 판'
         type: choice
         default: ''
-        options: ['', no_new]
+        options: ['', no_new, y5_off]
 concurrency: { group: omniq-gha, cancel-in-progress: false }
 jobs:
   train:
@@ -60,6 +60,7 @@ jobs:
           OMNIQ_LAB: ${{ inputs.lab && '1' || '0' }}
           OMNIQ_MODE: ${{ inputs.mode || 'train' }}
           PB_VARIANT: ${{ inputs.pb_variant || '' }}
+          OMNIQ_Y5: ${{ inputs.pb_variant == 'y5_off' && 'off' || '' }}
         run: |
           set -o pipefail
           python trainer/modal/omniq_gha.py 2>&1 | grep -v RuntimeWarning | tee omniq.log

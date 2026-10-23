@@ -56,15 +56,24 @@ try:
     print("   · 거시·섹터 ETF %d종" % len(_etf))
 except Exception as e:  # noqa: BLE001
     print("   ⚠️ 거시 자료 못 받음: %s" % e)
-omni_q.run(daily, mkt, omni.day_key_of_daily, BASE=BASE, HDR=HDR, upload=True, log=print, cache=cache, mode=MODE)
+# [V33.659] ★A/B 실험판(PB_VARIANT 있음)★ — OMNI-Q·페어·매매법AI 는 올리지 않고(실전 그대로) 매매법 시뮬 결과만 기록한다.
+#   y5_off = OMNI-Q 5일 머리 혼합 라벨을 끈 판(한국 매매법 후보 점수가 바뀌어 매매법 검증에 미치는 영향 측정).
+AB = bool(os.environ.get("PB_VARIANT"))
+if AB:
+    print("   · A/B 실험판(%s) — OMNI-Q·페어·매매법AI 업로드 안 함" % os.environ.get("PB_VARIANT"))
+omni_q.run(daily, mkt, omni.day_key_of_daily, BASE=BASE, HDR=HDR, upload=not AB, log=print, cache=cache, mode=MODE)
 # [V33.594] 페어(PR_OU) — 같은 일봉으로 전 종목 공적분 페어 + 표본 밖 걷기 검증(워커 CPU 0). 실패해도 OMNI-Q 는 살린다.
 try:
+    if AB:
+        raise RuntimeError("A/B 실험판 — 건너뜀")
     import pairs_ext  # noqa: E402
     pairs_ext.run(daily, mkt, omni.day_key_of_daily, BASE=BASE, HDR=HDR, upload=True, log=print)
 except Exception as e:  # noqa: BLE001
     print("   ⚠️ [페어] 실패: %s" % e)
 # [V33.602] 매매법 선택 AI(Strategy-Router) — 도감 17종 표본 + 걷기 검증 · 그림자(주문 영향 없음). 실패해도 OMNI-Q 는 살린다.
 try:
+    if AB:
+        raise RuntimeError("A/B 실험판 — 건너뜀")
     import strategy_router  # noqa: E402
     ev = EV   # [V33.615] 위에서 한 번 받은 실적·뉴스
     strategy_router.run(daily, mkt, omni.day_key_of_daily, BASE=BASE, HDR=HDR, upload=True, log=print, omni_x=omni_q.LAST_X, events=ev)
@@ -94,7 +103,7 @@ try:
                      ev_dates=sorted(set(_sr.FOMC) | set(_sr.CPI)), oos=omni_q.LAST_OOS, sector=omni_q.SECTOR_NOW)
 except Exception as e:  # noqa: BLE001
     print("   ⚠️ [매매법시뮬] 실패: %s" % e)
-trained = bool(cache.pop("_trained", False))
+trained = bool(cache.pop("_trained", False)) and not AB
 if trained:
     omni_q.save_cache(CACHE, cache)
     print("   · 금요일 모델을 캐시에 저장 — 다음 금요일까지 평일 회차가 이 모델로 채점한다")

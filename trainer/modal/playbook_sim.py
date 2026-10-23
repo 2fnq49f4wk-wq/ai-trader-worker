@@ -261,7 +261,12 @@ MOD_PB = {
 #   헤스턴-사드카 계절성·연말·NR4·장대양봉·모멘텀 가속·주도주 급락·변동성 수축·갭 유지·피보나치 눌림·상승 거래량 우위·RSI50·2단계 거래량·주도주 일시 부진):
 #   세 구간 양수 한 11 · 미 4 → ★검증 구간 평균과 t 둘 다 낮추지 않는 것만★(강화한 규칙 — 포스 지수는 평균↑·t↓·판정 +1.17→+0.95% 라 탈락).
 #   한국: 주도주 일시 부진(검증 t 2.46→2.52) · 미국: 주도주 급락 매수·갭 상승 3일 유지·주도주 일시 부진 → 셋 다 넣으면 미 판정 +0.63%(t 2.20) → +0.88%(t 2.73) · 최근 125일 +0.64% vs 무작위 +0.36%.
-NEW_PB = {"kr": {"FROG": 60, "RESID_MOM": 60, "RS_NEWHI": 60, "NR7_TREND": 60, "DARVAS": 30, "SECTOR_LAG": 60},
+# [V33.659] ★단타(2~5일 보유) 후보★ — 사용자 10/23 "미장 국장 단타 매매법 개발". 10년 일봉으로 당일·밤샘·2~10일 보유 후보 약 120종(lab daytrade·daytrade2·3·krshort):
+#   하루 포트폴리오(상위 5종목) · 실전과 같은 하루 늦은 진입으로 세 구간 + 최근 125일 모두 기준선 초과만 남기고(미 5 · 한 3) → 시스템에 하나씩(sysshort.py).
+#   한국 상한가 따라잡기는 잠긴 상한가(+28% 이상 · 종가에 못 산다)를 빼면 음수라 버림. 미국 단기 눌림 5종은 검증 구간은 올렸지만 시스템 최근 125일을 음수로 만들어 탈락.
+#   한국: 거래량 급등 유지(어제 거래량 3배 · +5% 이상 → 오늘 그 가격을 지킴 · 정배열 · 5일 보유) — 검증 t 2.52→2.56 · 평균 1.004→1.024% · 판정 그대로(+1.17% t 3.48) · 최근 125일 +1.38% vs 무작위 +0.20%.
+#   (폭락일 정배열 매수는 검증을 올렸지만 고르는 규칙을 바꿔 판정 +1.17→+0.96% · 최근 +1.62→+0.85% 로 내려 보수적으로 제외.)
+NEW_PB = {"kr": {"FROG": 60, "RESID_MOM": 60, "RS_NEWHI": 60, "NR7_TREND": 60, "DARVAS": 30, "SECTOR_LAG": 60, "VOL_SURGE_HOLD": 5},
           "us": {"GAP_FILL_D": 60, "VOL_DRYUP_PB": 60, "DIP_IN_LEADER5": 30, "GAP_UP_HOLD3": 60, "SECTOR_LAG": 60}}
 
 
@@ -303,6 +308,9 @@ def _new_signals(P, names):
         out["DIP_IN_LEADER5"] = A(X(c.pct_change(126, fill_method=None)) >= 0.9, c.pct_change(5, fill_method=None) <= -0.07, c > I["ma200"])
     if "GAP_UP_HOLD3" in names:   # [V33.657] 갭 상승 3일 유지 — 3일 전 +3% 이상 상승 갭 · 그 뒤 3일 저가가 갭 전 종가 위 · 갭 날보다 높게 마감 · 정배열
         out["GAP_UP_HOLD3"] = A(I["o"].shift(3) / c.shift(4) - 1 >= 0.03, l.rolling(3).min() > c.shift(4), c > c.shift(3), c > I["ma200"], I["ma50"] > I["ma200"])
+    if "VOL_SURGE_HOLD" in names:   # [V33.659] 거래량 급등 유지(단타 5일) — 어제 거래량 20일 평균 3배 · +5% 이상 → 오늘 어제 종가 −2% 이내 · 저가가 그제 종가 위 · 정배열
+        vr_ = I["v"] / I["v"].rolling(20).mean()
+        out["VOL_SURGE_HOLD"] = A(vr_.shift(1) >= 3, r1.shift(1) >= 0.05, c >= c.shift(1) * 0.98, l > c.shift(2), c > I["ma200"], I["ma50"] > I["ma200"])
     return {k: v.fillna(False).astype(bool) for k, v in out.items()}
 
 
@@ -1195,7 +1203,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                     continue
                 mod_now[nm] = _ns[nm].values[-1]
                 sig[nm] = _ns[nm].shift(1, fill_value=False)
-                dpb[nm] = dict(DAILY_PB["DUAL_MOM"], hold=hd_, family="Lit", label="%s(문헌 전략 · %d일 보유) — 2순위" % (nm, hd_), prof="new", flt=None)
+                dpb[nm] = dict(DAILY_PB["DUAL_MOM"], hold=hd_, family="Lit", label=("%s(단타 · %d일 보유) — 2순위" if hd_ <= 5 else "%s(문헌 전략 · %d일 보유) — 2순위") % (nm, hd_), prof="new", flt=None)
         log("   · [매매법시뮬] %s 매매법 %d종 사용 · 퇴출 %d종(성적 미달)" % (market, len(dpb), len(_off)))
         # [V33.620] ★후보 폭도 검증이 고른다★ — OMNI-Q 상위 20·40·60%(사용자 10/15 "가장 유리한 방식 · 매수 신호가 나올 넉넉함").
         #   [V33.622] 머리(5일·20일·평균) × 폭 + 거름 없음 = 10 설정. 검증 구간 [60,80%) 에서 고른 규칙의 ★t★ 가 가장 큰(평균 > 0 · 거래 ≥ VAL_MIN_N) 설정 —
