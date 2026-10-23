@@ -216,6 +216,12 @@ PB_MAX_DAYS = 2600
 #   판정 구간 마지막 REC_DAYS 거래일의 고른 거래 평균이 그 조각의 공정 무작위 기준선보다 낮으면 미통과(거래 ≥ REC_MIN_N 일 때).
 REC_DAYS = 125
 REC_MIN_N = 30
+# [V33.660] ★최근 구간은 '확실한 악화'만 막는다★ — 사용자 10/23 "최근 125일 변동이 심해 오히려 나쁜 표본일 수 있다".
+#   실측(lab gatelab·gateana · 표본 밖 고른 거래 · 21거래일 간격 25시점 · 다음 125일 실제 초과로 채점):
+#   종전 '최근 평균 > 무작위' 는 한국 판정 적중 52%(동전) — 막은 시점의 다음 125일 초과 +0.78% 가 통과 시점 +0.68% 보다 높았다.
+#   '초과의 t ≤ −2 일 때만 미달' 은 한국 적중 68%(막은 시점 다음 +0.12% vs 통과 +0.80%) · 미국 96%. 변동성 보정·250일 창은 나아지지 않았다.
+#   최근 125일 한국 시장 변동성 연 36%(10년 상위 9%) · 종목 간 흩어짐 상위 3% — 평균 한 점이 크게 출렁이므로 불확실성(t)으로 본다.
+REC_T = -2.0
 # [V33.650 학습기] ★성능 안 나오는 매매법 퇴출(시장별)★ — 사용자 10/22 "성능 안 나오는 것들 제거".
 #   미리 정한 규칙: 10년 일봉 시뮬(비용·시장 평균 뺀 순초과)에서 앞 60% 와 60~80% ★두 구간 모두★ 평균 ≤ 0 이면 퇴출(마지막 20% 판정 구간은 고르기에 안 씀).
 #   판정 구간 확인: 퇴출한 것 중 한국 21/24 · 미국 23/25 가 판정 구간에서도 음수. 평균회귀(RSI2·%R·CCI·HA·IBS·스토캐스틱…)는 두 시장 모두 전 구간 음수.
@@ -1143,7 +1149,10 @@ def validate(df, timecol, pbs=None):
             rx = pk[pk[timecol] >= cr]["ex"].values.astype(float)
             rb, _ = fair_base(ho[ho[timecol] >= cr])
             rec = {"days": REC_DAYS, "n": int(len(rx)), "mean": round(float(rx.mean()), 4) if len(rx) else None, "base": rb}
-            rec["ok"] = bool(len(rx) < REC_MIN_N or (rb is not None and rx.mean() > rb))
+            sd_ = float(rx.std(ddof=1)) if len(rx) > 2 else 0.0
+            rec["t"] = round(float((rx.mean() - rb) / (sd_ / math.sqrt(len(rx)))), 2) if (rb is not None and sd_ > 0) else None
+            rec["needT"] = REC_T
+            rec["ok"] = bool(len(rx) < REC_MIN_N or rb is None or rec["t"] is None or rec["t"] > REC_T)   # [V33.660] 확실한 악화(t ≤ −2)만 미달
             st["recent"] = rec
             st["pass"] = bool(st["pass"] and rec["ok"])
     except Exception:  # noqa: BLE001 — 확인 실패는 판정을 바꾸지 않는다

@@ -288,7 +288,9 @@ chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"
   chk(/위원회 학습 건너뜀/.test(readFileSync(dir + "train_gha.py", "utf8")), "미·한 둘 다 주력이면 위원회 학습(GitHub Actions) 퇴역"); }
 { const Q = readFileSync(dir + "playbook_sim.py", "utf8");
   chk(/SPLIT = \(0\.60, 0\.80\)/.test(Q) && /ho = df\[df\[timecol\] >= c2\]/.test(Q), "검증 3구간: 규칙은 [60,80%) 에서 고르고 판정은 손대지 않은 [80,100%) 에서만");
-  chk(/busy\.get\(r\.j, -1\) >= r\.t/.test(Q), "검증도 실전처럼 같은 종목은 앞 거래가 끝나야 다시 산다(겹친 표본으로 t 를 부풀리지 않는다)"); }
+  chk(/busy\.get\(r\.j, -1\) >= r\.t/.test(Q), "검증도 실전처럼 같은 종목은 앞 거래가 끝나야 다시 산다(겹친 표본으로 t 를 부풀리지 않는다)");
+  chk(/REC_T = -2\.0/.test(Q) && /rec\["t"\] > REC_T/.test(Q) && !/rx\.mean\(\) > rb\)\)/.test(Q),
+      "[V33.660] 최근 구간은 확실한 악화(초과 t ≤ −2)만 미달 — 평균 한 점 비교(적중 52%)로 되돌리지 않는다"); }
 { // [V33.609] 관측창 배선
   const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8"), U = readFileSync(new URL("../public/workspace-ui.js", import.meta.url), "utf8");
   const O = readFileSync(new URL("../public/playbook-observatory.js", import.meta.url), "utf8");

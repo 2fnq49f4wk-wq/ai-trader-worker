@@ -72,7 +72,9 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
     return out;
   }, [V, pbDef, sk, sd]);
   if (!R) return <p style={{ color: DIM, fontSize: 13, padding: "16px 0" }}>학습기가 아직 매매법 표를 올리지 않았습니다.</p>;
-  const pass = fin(V.n) && V.n >= 30 && V.mean > 0 && V.t >= 2 && V.mean > V.base;
+  /* [V33.660] 통과 = 학습기 판정(R.pass.daily — 최근 구간 검사 포함). 종전엔 화면이 다시 계산하며 최근 검사를 빼 '통과' 로 잘못 보였다. */
+  const RC = V.recent || null;
+  const pass = R.pass && typeof R.pass.daily === "boolean" ? R.pass.daily : fin(V.n) && V.n >= 30 && V.mean > 0 && V.t >= 2 && V.mean > V.base && (!RC || RC.ok !== false);
   const chosen = ruleName(V.rule);
   const day = String(R.day || "").replace(/(\d{4})(\d{2})(\d{2})/, "$1-$2-$3");
   const flow = [
@@ -83,6 +85,8 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
     ["고르는 규칙", chosen, "검증 구간 t 가 가장 높은 규칙"],
     ["국면 거부권", "칸 평균 < 0 · n ≥ 30", "지금 국면 칸이 손실이면 규칙과 무관하게 버린다"],
     ["판정 구간", sg(V.mean) + "%", "n " + n0(V.n) + " · 무작위 " + sg(V.base) + "% → " + (pass ? "통과" : "미통과")],
+    ["최근 " + ((RC && RC.days) || 125) + "일 악화 검사", RC ? sg(RC.mean) + "% vs " + sg(RC.base) + "%" : "—",
+     RC ? (fin(RC.t) ? "초과 t " + RC.t.toFixed(2) + " · " : "") + (RC.ok ? "통과" : "미달") + " — 확실한 악화(t ≤ " + (fin(RC.needT) ? RC.needT : -2) + ")만 막음" : "기록 없음"],
   ];
   const tabs: [string, string][] = [["pb", "매매법 " + rows.length + "종"], ["rules", "규칙 비교"], ["cand", "후보 폭 비교"], ["intra", "5분 단타"]].concat((extra || []).map((e, i) => ["x" + i, e.label] as [string, string])) as [string, string][];
   const note = tab === "pb" ? "판정 전 = 학습·검증 구간 · 판정 = 손대지 않은 최근 구간 · 고른 수 = 판정 구간에서 실제로 고른 거래 · 머리글을 누르면 정렬"
@@ -121,7 +125,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
             {fin(V.base) && <div style={{ position: "absolute", top: -2, bottom: -2, left: "calc(" + pos(V.base, 3) + "% - 1px)", width: 2, background: INK }} />}
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 11, color: FAINT }}><span>−3%</span><span>0</span><span>+3%</span></div>
-          <div style={{ fontSize: 13, color: pass ? POS : NEG }}>{pass ? "검증 통과 — 무작위보다 낫고 t ≥ 2" : "미통과 — 실전 매수 없이 관측만(그림자 판정)"}</div>
+          <div style={{ fontSize: 13, color: pass ? POS : NEG }}>{pass ? "검증 통과 — 무작위보다 낫고 t ≥ 2 · 최근 확실한 악화 없음" : RC && RC.ok === false && V.t >= 2 && V.mean > V.base ? "미통과 — 판정 구간은 좋지만 최근 " + (RC.days || 125) + "일이 확실히 나빠짐" : "미통과 — 실전 매수 없이 관측만(그림자 판정)"}</div>
         </div>
         {[["t 값", fin(V.t) ? V.t.toFixed(2) : "—", "통과 기준 ≥ 2.0", fin(V.t) ? (V.t >= 2 ? POS : V.t < 0 ? NEG : INK) : MUTE],
           ["승률 · 표본", fin(V.win) ? V.win.toFixed(1) + "%" : "—", "거래 " + n0(V.n) + "건 · 전부 평균 " + sg(V.baseAll) + "%", INK],

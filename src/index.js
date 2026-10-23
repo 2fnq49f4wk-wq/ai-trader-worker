@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.659";
+const _BUILD_VER = "V33.660";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
