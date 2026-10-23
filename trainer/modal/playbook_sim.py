@@ -23,6 +23,7 @@
   선택     뜬 매매법 중 (칸의 수축 평균 > 0 · 수축 성공확률 ≥ 50%) 이고 평균이 가장 큰 것 — 없으면 안 산다
 """
 import math
+import os
 import time
 
 import numpy as np
@@ -1168,7 +1169,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             dpb, tune_rep = {k: dict(v, prof="base", flt=None) for k, v in DAILY_PB.items()}, None
         _off = set(PB_OFF.get(market, ()))
         dpb = {k: v for k, v in dpb.items() if k not in _off}   # [V33.650 학습기] 퇴출 매매법은 시뮬·표·워커 목록에서 뺀다
-        mod_now, tier2 = {}, list(MOD_PB.get(market, {})) + list(NEW_PB.get(market, {}))
+        _newpb = {} if os.environ.get("PB_VARIANT") == "no_new" else NEW_PB.get(market, {})   # [V33.653] A/B 실험 — 문헌 전략 끈 판(업로드 안 함)
+        mod_now, tier2 = {}, list(MOD_PB.get(market, {})) + list(_newpb)
         if tier2:   # [V33.651] 보조 매매법 — 시뮬은 하루 늦게(실전과 같게) · 오늘 목록은 늦추지 않은 마지막 날
             _fm = _mod_filters(P)
             for nm, (b_, f_, hd_) in MOD_PB[market].items():
@@ -1176,8 +1178,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 mod_now[nm] = sm.values[-1]
                 sig[nm] = sm.shift(1, fill_value=False)
                 dpb[nm] = dict(DAILY_PB["DUAL_MOM"], hold=hd_, family="Mod", label="%s 수정판(%s 거르개 · %d일 보유) — 2순위" % (b_, f_, hd_), prof="mod", flt=None)
-            _ns = _new_signals(P, list(NEW_PB.get(market, {})))
-            for nm, hd_ in NEW_PB.get(market, {}).items():   # [V33.652] 문헌 전략(2순위)
+            _ns = _new_signals(P, list(_newpb))
+            for nm, hd_ in _newpb.items():   # [V33.652] 문헌 전략(2순위)
                 if nm not in _ns:
                     continue
                 mod_now[nm] = _ns[nm].values[-1]
@@ -1272,7 +1274,9 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             market, reg_now, len(ddf), dst.get("n"), dst.get("mean"), dst.get("win"), dst.get("t"), dst.get("base"), (lambda r: ("%s일 n=%s 평균 %s%% vs 무작위 %s%% %s" % (r.get("days"), r.get("n"), r.get("mean"), r.get("base"), "통과" if r.get("ok") else "미달")) if r else "—")(dst.get("recent")),
             "통과" if dst.get("pass") else "미통과", ist.get("n"), ist.get("mean"), ist.get("t"), "통과" if ist.get("pass") else "미통과",
             time.time() - t0))
-        if upload and BASE:
+        if upload and BASE and os.environ.get("PB_VARIANT"):
+            log("   · [매매법시뮬] %s A/B 실험판(%s) — 업로드 안 함(기록만)" % (market, os.environ.get("PB_VARIANT")))
+        elif upload and BASE:
             try:
                 import requests
                 body = {"mkt": market, "day": str(P["close"].index[-1]), "regime": reg_now, "sector": (sector or {}).get(market), "panic": panic_now,
