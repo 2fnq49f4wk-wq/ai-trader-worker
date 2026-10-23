@@ -1236,6 +1236,15 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         except Exception:  # noqa: BLE001
             dst["hoFrom"] = None
         dst["candCmp"] = cand_cmp   # [V33.621] 폭별 판정 구간 성적(객관 비교 · 고르기엔 안 씀)
+        try:   # [V33.654] ★매매법별 성적(전 매매법 · 보조 포함)★ — 화면이 조율 보고(1순위만) 대신 이걸로 전부 보인다. 같은 시뮬(고른 후보 폭)의 판정 전 / 판정 구간
+            _c2 = int((dst.get("cut") or [0, 0])[1])
+            def _nmw(x):
+                x = np.asarray(x, dtype=float)
+                return [int(len(x)), round(float(x.mean()), 3) if len(x) else None, round(float((x > 0).mean() * 100), 1) if len(x) else None]
+            dst["pbStat"] = {pb_: {"pre": _nmw(g_[g_["t"] < _c2]["ex"].values), "ho": _nmw(g_[g_["t"] >= _c2]["ex"].values), "tier": 2 if pb_ in tier2 else 1}
+                             for pb_, g_ in ddf.groupby("pb")}
+        except Exception as e:  # noqa: BLE001
+            log("   ⚠️ [매매법시뮬] 매매법별 성적 실패 %s" % e)
         dst["tune"] = tune_rep
         try:
             dst["exitDiag"] = exit_diag(P, market, sig, cm if cand_src.startswith("OMNI") else None, pbs=dpb)

@@ -1,5 +1,5 @@
 /* [V33.632] 매매법 AI 구조관측 — 새 디자인(관제실 톤 · 실제 표 수치). 데이터는 /api/playbook 그대로(값을 지어내지 않는다).
-   판정 요약 → 판단 흐름 7단계(지금 쓰는 실제 값) → 실제 표(매매법 31종 · 규칙 비교 · 후보 폭 비교 · 5분 단타). 시장 전환 · 표 정렬. */
+   판정 요약 → 판단 흐름 7단계(지금 쓰는 실제 값) → 실제 표(지금 쓰는 매매법 전부 · 규칙 비교 · 후보 폭 비교 · 5분 단타). 시장 전환 · 표 정렬. */
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 
 const POS = "#4FE3FF", NEG = "#FF9A4A", INK = "#E9F2FF", MUTE = "#8695AA", DIM = "#6F7E94", FAINT = "#56657A", HL = "#FFD166";
@@ -13,8 +13,13 @@ export const PB_NAMES: Record<string, string> = {
   OS_DEEP: "깊은 과매도 반등", CAPIT_REV: "투매 반등", ICHIMOKU: "이치모쿠 구름 돌파", KELTNER: "켈트너 채널 돌파", DONCHIAN: "돈치안 55일 돌파", MACD_X: "MACD 교차",
   ENVELOPE: "이격도 반등", ELDER_RAY: "엘더 레이", WILLR: "윌리엄스 %R", CCI_REV: "CCI 반등", PSAR: "파라볼릭 SAR", TRIPLE_SCR: "삼중창", IBS_LOW: "IBS 저가 마감 반등",
   HI52_NEAR: "52주 고가 근접", GAP_FILL: "갭 메우기", PIVOT_BNC: "피봇 지지 반등", ORB: "시가 범위 돌파", DIP_REV: "장중 눌림 반등", STOCH5: "5분 스토캐스틱",
-  MOM3: "5분 3봉 상승", VWAP_RE: "VWAP 회복",
+  MOM3: "5분 3봉 상승", VWAP_RE: "VWAP 회복", GAP_GO: "갭 앤 고(5분)",
+  // [V33.654] 문헌·실무 전략(2순위 보조) · 퇴출 매매법 수정판(+T 추세 · +TL 추세+주도주 · +V 거래량)
+  FROG: "개구리 모멘텀", RESID_MOM: "잔차 모멘텀", RS_NEWHI: "상대강도 신고가", NR7_TREND: "NR7 추세 돌파", DARVAS: "다바스 박스",
+  GAP_FILL_D: "갭 메움(일봉)", VOL_DRYUP_PB: "거래량 마른 눌림",
 };
+const pbName = (k: string) => { const i = k.indexOf("+"); if (i < 0) return PB_NAMES[k] || k;
+  const b = k.slice(0, i), f = k.slice(i + 1); return (PB_NAMES[b] || b) + " 수정판(" + ({ T: "추세", TL: "추세+주도주", V: "거래량" } as Record<string, string>)[f] + ")"; };
 const fin = (x: any): x is number => typeof x === "number" && Number.isFinite(x);
 const sg = (x: any, k = 2) => (fin(x) ? (x >= 0 ? "+" : "") + x.toFixed(k) : "—");
 const n0 = (x: any) => (fin(x) ? x.toLocaleString("ko-KR") : "—");
@@ -50,10 +55,13 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
   const R = d?.markets?.[mk], V = R?.daily?.val || {}, I = R?.intra?.val || null;
   const pbDef = R?.daily?.pb || {};
   const rows = useMemo(() => {
-    const t = V.tune || {}, by = V.byPb || {};
-    const out = Object.keys(t).filter((k) => t[k] && t[k].diag).map((k) => {
-      const x = t[k], b = (x.test && x.test.base) || [];
-      return { id: k, name: PB_NAMES[k] || k, fam: (pbDef[k] && pbDef[k].family) || "", preN: x.diag.n, preM: x.diag.mean, preW: x.diag.win,
+    const t = V.tune || {}, by = V.byPb || {}, ps = V.pbStat || null;
+    /* [V33.654] ★지금 쓰는 매매법 전부★ — 종전엔 조율 보고(1순위만 · 미 6 · 한 7)에서 줄을 만들어 보조(수정판·문헌 전략)가 안 보였다.
+       학습기가 보낸 pbStat(같은 시뮬의 판정 전·판정 구간)이 있으면 그것으로 전 매매법(daily.pb) · 없으면 옛 조율 보고. */
+    const keys = Object.keys(pbDef).length ? Object.keys(pbDef) : ps ? Object.keys(ps) : Object.keys(t).filter((k) => t[k] && t[k].diag);
+    const out = keys.map((k) => {
+      const x = t[k] || {}, s_ = ps && ps[k], b = s_ ? s_.ho || [] : (x.test && x.test.base) || [], p0 = s_ ? s_.pre || [] : x.diag ? [x.diag.n, x.diag.mean, x.diag.win] : [];
+      return { id: k, name: pbName(k), fam: (pbDef[k] && pbDef[k].family) || "", tier: s_ ? s_.tier : /\+|^(FROG|RESID_MOM|RS_NEWHI|NR7_TREND|DARVAS|GAP_FILL_D|VOL_DRYUP_PB)$/.test(k) ? 2 : 1, preN: p0[0], preM: p0[1], preW: p0[2],
                hoN: b[0], hoM: b[1], hoW: b[2], pick: by[k] || 0, flt: (pbDef[k] && pbDef[k].flt) || x.flt || "", tuned: x.test && x.test.tuned };
     });
     out.sort((a: any, b: any) => { const x = a[sk], y = b[sk];
@@ -67,8 +75,8 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
   const day = String(R.day || "").replace(/(\d{4})(\d{2})(\d{2})/, "$1-$2-$3");
   const flow = [
     ["후보 선별 · OMNI-Q", V.candQ ? "상위 " + Math.round((1 - V.candQ) * 100) + "%" : "거름 없음", V.cand || "—"],
-    ["신호 · 일봉 매매법", rows.length + "종", "오늘 조건이 맞은 매매법만 남긴다"],
-    ["구조 거르개", R.panic ? "공황 차단 켜짐" : "공황 차단 꺼짐", R.panic ? "추세·모멘텀·돌파 17종 쉼(평균회귀만)" : "시장 60일 하락·고변동이면 추세 17종 쉼"],
+    ["신호 · 일봉 매매법", rows.length + "종", (() => { const n2 = rows.filter((r: any) => r.tier === 2).length; return n2 ? "1순위 " + (rows.length - n2) + " · 보조 " + n2 + "(1순위가 안 뜬 종목에만)" : "오늘 조건이 맞은 매매법만 남긴다"; })()],
+    ["구조 거르개", R.panic ? "공황 차단 켜짐" : "공황 차단 꺼짐", R.panic ? "1순위 추세·모멘텀·돌파 쉼(보조는 계속)" : "시장 60일 하락·고변동이면 1순위 추세 매매법 쉼"],
     ["상황 칸 표", n0(R.daily?.cells) + "칸", "국면 × RSI × 이격 × 수익 × 거래량 칸마다 수축 평균"],
     ["고르는 규칙", chosen, "검증 구간 t 가 가장 높은 규칙"],
     ["국면 거부권", "칸 평균 < 0 · n ≥ 30", "지금 국면 칸이 손실이면 규칙과 무관하게 버린다"],
@@ -163,7 +171,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
               </tr></thead>
               <tbody>{rows.map((r) => (
                 <tr key={r.id} style={{ borderTop: "1px solid " + ROWLINE }}>
-                  <td style={{ padding: "10px 14px", color: INK, whiteSpace: "nowrap" }}>{r.name}<span style={{ marginLeft: 8, fontSize: 11, color: FAINT }}>{r.id}{r.fam ? " · " + r.fam : ""}</span></td>
+                  <td style={{ padding: "10px 14px", color: INK, whiteSpace: "nowrap" }}>{r.name}{r.tier === 2 && <span style={{ marginLeft: 8, fontSize: 10.5, color: HL, border: "1px solid #5A4A1A", borderRadius: 4, padding: "0 5px" }}>보조</span>}<span style={{ marginLeft: 8, fontSize: 11, color: FAINT }}>{r.id}{r.fam ? " · " + r.fam : ""}</span></td>
                   <td style={{ ...td(null), color: MUTE }}>{n0(r.preN)}</td>
                   <td style={td(r.preM)}>{sg(r.preM, 3)}</td>
                   <td style={{ ...td(null), color: MUTE }}>{fin(r.preW) ? r.preW.toFixed(1) + "%" : "—"}</td>
