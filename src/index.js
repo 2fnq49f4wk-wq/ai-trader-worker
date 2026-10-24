@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.662";
+const _BUILD_VER = "V33.663";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -15213,6 +15213,7 @@ function _rowsChanged(res) {
    체결 시각으로 marketSessionNow(특례일 포함 한 곳)를 본다. 칸이 생긴 뒤에만 쓴다(__tradesSessCol · ensureSchema) — 칸 없는 DB 에 넣다 원장이 막히지 않게. */
 let __tradesSessCol = false;
 function tradeSessionOf(market, ts) {
+  if (!MARKET_HOURS[market]) return null;   // 장 시간표가 없는 시장(원자재 선물 cm 등)은 프리·정규·애프터 구분이 없다 — '장외' 로 적지 않는다
   try { const s = marketSessionNow(market, new Date(_num(ts, Date.now()))); return s === "PRE" ? "pre" : s === "REGULAR" ? "regular" : s === "POST" ? "post" : "closed"; }
   catch (e) { return null; }
 }

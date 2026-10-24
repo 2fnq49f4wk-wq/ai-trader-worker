@@ -254,6 +254,7 @@ chk(W.pbRoutePick({ ...st, daily: { ...st.daily, table: { "*": { NOPE: [9000, 0.
       "[V33.662] 시간외 매매법 매수: 확률 바닥만 면제 · 크기 ×0.5 · 세션당 개수 · 체결시각 검증 가격은 그대로");
   chk(/ALTER TABLE trades ADD COLUMN session TEXT/.test(S) && (S.match(/INSERT INTO trades \(ts, market, symbol, side, qty, price, pnl, pnl_pct, reason, session\)/g) || []).length === 2 && /if \(__tradesSessCol\) return DB\.prepare/.test(S),
       "[V33.662] trades.session(프리·정규·애프터) — 두 기록 경로 모두 · 칸이 생긴 뒤에만 씀");
+  chk(/function tradeSessionOf\(market, ts\) \{\n  if \(!MARKET_HOURS\[market\]\) return null;/.test(S), "[V33.663] 장 시간표 없는 시장(cm 등)은 session 을 비운다('장외' 오표기 금지)");
   chk(/intra: \{ symbol: symbol, price: evPrice, prevClose: bq\.prevClose, regPrice: bq\.price/.test(S) && /session: extSessMkt \|\| null, extPx: price, refPx: _pbRef/.test(S),
       "[V33.662] 메인 루프가 시간외 세션·정규장 종가를 매매법 AI 에 넘긴다");
 }
