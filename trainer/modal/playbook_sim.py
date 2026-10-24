@@ -273,9 +273,14 @@ MOD_PB = {
 #   한국 상한가 따라잡기는 잠긴 상한가(+28% 이상 · 종가에 못 산다)를 빼면 음수라 버림. 미국 단기 눌림 5종은 검증 구간은 올렸지만 시스템 최근 125일을 음수로 만들어 탈락.
 #   한국: 거래량 급등 유지(어제 거래량 3배 · +5% 이상 → 오늘 그 가격을 지킴 · 정배열 · 5일 보유) — 검증 t 2.52→2.56 · 평균 1.004→1.024% · 판정 그대로(+1.17% t 3.48) · 최근 125일 +1.38% vs 무작위 +0.20%.
 #   (폭락일 정배열 매수는 검증을 올렸지만 고르는 규칙을 바꿔 판정 +1.17→+0.96% · 최근 +1.62→+0.85% 로 내려 보수적으로 제외.)
-NEW_PB = {"kr": {"FROG": 60, "RESID_MOM": 60, "RS_NEWHI": 60, "NR7_TREND": 60, "DARVAS": 30, "SECTOR_LAG": 60},
+NEW_PB = {"kr": {"FROG": 60, "RESID_MOM": 60, "RS_NEWHI": 60, "NR7_TREND": 60, "DARVAS": 30, "SECTOR_LAG": 60, "VOL_SURGE_HOLD": 5},
 # [V33.661] VOL_SURGE_HOLD 퇴출 — 실전 회차(OMNI-Q 후보로 거른 시뮬)에서 판정 전 n 203 평균 −0.76% · 판정 n 71 −0.82%(전 종목 lab 과 달리 음수).
-          "us": {"GAP_FILL_D": 60, "VOL_DRYUP_PB": 60, "DIP_IN_LEADER5": 30, "GAP_UP_HOLD3": 60, "SECTOR_LAG": 60}}
+          "us": {"GAP_FILL_D": 60, "VOL_DRYUP_PB": 60, "DIP_IN_LEADER5": 30, "GAP_UP_HOLD3": 60, "SECTOR_LAG": 60, "MA5_DIP_LEAD": 2}}
+# [V33.665] ★단타는 종목 그룹(변동성 3분위)을 한정★ — lab grpshort·sysgrp(10년 · 하루 늦은 진입): 미국 단기 눌림 4종·한국 거래량 급등 유지는
+#   고변동 그룹에서만 앞 60%·60~80%·마지막 20%·최근 125일 모두 기준선 초과(저·중변동은 손실 — 전 종목으로 넣으면 시스템을 낮춰 V33.659·661 에서 탈락).
+#   그룹은 앞 두 구간으로만 골랐다(사전 등록) → 시스템에 하나씩: 미 MA5_DIP_LEAD@고변동 검증 t 2.53→2.67 · 평균 2.44→2.61% · 판정 0.88→0.90% /
+#   한 VOL_SURGE_HOLD@고변동 t 2.52→2.57 · 평균 1.00→1.03% · 판정 그대로. 갭하락 반등(평균↓)·폭락일 매수(고르는 규칙을 바꿔 판정 1.17→0.98%)는 제외.
+NEW_PB_GRP = {"kr": {"VOL_SURGE_HOLD": 2}, "us": {"MA5_DIP_LEAD": 2}}
 
 
 def _new_signals(P, names):
@@ -316,6 +321,8 @@ def _new_signals(P, names):
         out["DIP_IN_LEADER5"] = A(X(c.pct_change(126, fill_method=None)) >= 0.9, c.pct_change(5, fill_method=None) <= -0.07, c > I["ma200"])
     if "GAP_UP_HOLD3" in names:   # [V33.657] 갭 상승 3일 유지 — 3일 전 +3% 이상 상승 갭 · 그 뒤 3일 저가가 갭 전 종가 위 · 갭 날보다 높게 마감 · 정배열
         out["GAP_UP_HOLD3"] = A(I["o"].shift(3) / c.shift(4) - 1 >= 0.03, l.rolling(3).min() > c.shift(4), c > c.shift(3), c > I["ma200"], I["ma50"] > I["ma200"])
+    if "MA5_DIP_LEAD" in names:   # [V33.665] 주도주 5일선 눌림(단타 2일) — 6개월 수익 상위 20% · 종가 < 5일선 × 0.97 · 50일선 위
+        out["MA5_DIP_LEAD"] = A(X(c.pct_change(126, fill_method=None)) >= 0.8, c < c.rolling(5).mean() * 0.97, c > I["ma50"])
     if "VOL_SURGE_HOLD" in names:   # [V33.659] 거래량 급등 유지(단타 5일) — 어제 거래량 20일 평균 3배 · +5% 이상 → 오늘 어제 종가 −2% 이내 · 저가가 그제 종가 위 · 정배열
         vr_ = I["v"] / I["v"].rolling(20).mean()
         out["VOL_SURGE_HOLD"] = A(vr_.shift(1) >= 3, r1.shift(1) >= 0.05, c >= c.shift(1) * 0.98, l > c.shift(2), c > I["ma200"], I["ma50"] > I["ma200"])
@@ -1331,16 +1338,25 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 sig[nm] = sm.shift(1, fill_value=False)
                 dpb[nm] = dict(DAILY_PB["DUAL_MOM"], hold=hd_, family="Mod", label="%s 수정판(%s 거르개 · %d일 보유) — 2순위" % (b_, f_, hd_), prof="mod", flt=None)
             _ns = _new_signals(P, list(_newpb))
+            _ng = NEW_PB_GRP.get(market, {})
+            if _ng:   # [V33.665] 그룹 한정 단타 — 그 그룹 종목만(오늘 목록도 같은 그룹)
+                if P.get("_grp") is None:
+                    P["_grp"] = PP.groups(P, PTUNE_GROUPS)
+                for nm, g_ in _ng.items():
+                    if nm in _ns:
+                        _ns[nm] = _ns[nm] & pd.DataFrame(P["_grp"] == g_, index=_ns[nm].index, columns=_ns[nm].columns)
             for nm, hd_ in _newpb.items():   # [V33.652] 문헌 전략(2순위)
                 if nm not in _ns:
                     continue
                 mod_now[nm] = _ns[nm].values[-1]
                 sig[nm] = _ns[nm].shift(1, fill_value=False)
-                dpb[nm] = dict(DAILY_PB["DUAL_MOM"], hold=hd_, family="Lit", label=("%s(단타 · %d일 보유) — 2순위" if hd_ <= 5 else "%s(문헌 전략 · %d일 보유) — 2순위") % (nm, hd_), prof="new", flt=None)
+                dpb[nm] = dict(DAILY_PB["DUAL_MOM"], hold=hd_, family="Lit", label=("%s(단타 · %d일 보유) — 2순위" if hd_ <= 5 else "%s(문헌 전략 · %d일 보유) — 2순위") % (nm, hd_), prof="new", flt=None,
+                               onlyGrp=_ng.get(nm))   # [V33.665] 화면: 그룹 한정
         log("   · [매매법시뮬] %s 매매법 %d종 사용 · 퇴출 %d종(성적 미달)" % (market, len(dpb), len(_off)))
         ptune_rep = None
         try:   # [V33.664] 미지수 조율(종목 특성 그룹별) → 시스템 검증 구간을 안 낮추는 것만 채택
-            P["_grp"] = PP.groups(P, PTUNE_GROUPS)
+            if P.get("_grp") is None:
+                P["_grp"] = PP.groups(P, PTUNE_GROUPS)
             act = [k for k in dpb if k in DAILY_PB]
             pc_, prep_ = param_tune(P, market, sig, dpb, act, log=log)
             ptune_rep = {"tune": prep_, "sys": [], "groups": PTUNE_GROUPS}
