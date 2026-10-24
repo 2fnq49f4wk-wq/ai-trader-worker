@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.663";
+const _BUILD_VER = "V33.664";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13715,74 +13715,87 @@ function _pbPsarFlipUp(h, l) {
   return cnt >= 3 && last === h.length - 1 && flip;
 }
 // D = { o, h, l, c, v } 일봉 배열(마지막 = 지금) → 지금 뜬 도감 매매법 id 배열(횡단면 3종 제외)
-function pbDailyFires(D) {
+/* [V33.664] ★진입 수식의 미지수★ — 학습기 playbook_params.ENTRY 의 기본값과 같다(check-playbook 이 무작위 미지수로 학습기 = 워커 대조).
+   학습기가 종목 특성 그룹(변동성 3분위)별로 조율해 시스템 검증을 통과한 미지수만 st.daily.pb[pb].ep[그룹] 으로 보낸다 — 없으면 기본값. */
+const PB_EP_DEF = {
+  TREND_ALIGN: { rsiLo: 45, rsiHi: 72 }, TR_BREAKOUT: { n: 20, vr: 1.5 }, VT_TREND: { atrMax: 4.0 }, TR_PULLBACK: { gap: 0.04, rsiLo: 37, rsiHi: 68 },
+  MA_PULLBACK: { touch: 1.003 }, SN_RSI2: { rsi2: 12, rsi14: 55 }, HA_REV: { f: 0.97 }, BB_LOW: { rsiHi: 38, rsiLo: 20 }, STOCH_CROSS: { k: 30 },
+  STOCH_OS_EXIT: { k: 20 }, VOL_BREAKOUT: { n: 20, vr: 2.0 }, VOL_REVERT: { vr: 3.0, r1: -4.0, rsi2: 8 }, OS_DEEP: { rsi2: 5, r5: -7, rsi14: 35 },
+  CAPIT_REV: { vr: 2.0, r1: -5.0, f: 0.90 }, ICHIMOKU: { thick: 0.05 }, KELTNER: { mult: 2.0 }, DONCHIAN: { n: 55 }, MACD_X: { fast: 12, slow: 26 },
+  ENVELOPE: { f: 0.93 }, ELDER_RAY: { n: 13 }, WILLR: { n: 14, lvl: -80 }, CCI_REV: { n: 20, lvl: -100 }, TRIPLE_SCR: { k: 30 }, IBS_LOW: { cpos: 0.2 },
+  HI52_NEAR: { near: 0.97 }, SQUEEZE: { q: 0.10 }, HERD_REBOUND: { vr: 2.5, ddHi: -5, ddLo: -12 },
+};
+function pbDailyFires(D, ep) {
   const c = D.c, h = D.h, l = D.l, o = D.o, v = D.v, i = c.length - 1;
   if (i < 210) return [];
+  const P_ = function (pb) { const d = PB_EP_DEF[pb], x = ep && ep[pb]; return x ? Object.assign({}, d, x) : d; };
   const ma5 = _pbSma(c, 5, i), ma20 = _pbSma(c, 20, i), ma50 = _pbSma(c, 50, i), ma200 = _pbSma(c, 200, i);
   const r14 = _pbRsiEwm(c, 14), rsi14 = r14[i], rsi2 = _pbRsi2(c, i);
   const ret = function (n, j) { j = j == null ? i : j; return c[j - n] > 0 ? (c[j] / c[j - n] - 1) * 100 : NaN; };
   const ret1 = ret(1), ret20 = ret(20);
-  const hi20p = _pbMax(c, i - 20, i - 1);
+  const hiP = function (n) { return _pbMax(c, i - n, i - 1); };
   const rg = h[i] - l[i], cpos = rg > 0 ? (c[i] - l[i]) / rg : 0.5;
   const vr = _pbVr(v, i), atr = _pbAtrPct(h, l, c, i);
   const sd20 = _pbStd0(c, 20, i), bbl = ma20 - 2 * sd20, bbu = ma20 + 2 * sd20;
   const st = _pbStoch(h, l, c, i), st1 = _pbStoch(h, l, c, i - 1);
   const bull = function (j) { return (o[j] + h[j] + l[j] + c[j]) / 4 > (o[j - 1] + c[j - 1]) / 2; };
   const F = [];
-  if (ma20 > ma50 && ma50 > ma200 && c[i] > ma20 && rsi14 >= 45 && rsi14 <= 72) F.push("TREND_ALIGN");
-  if (c[i] > hi20p && c[i] > ma50 && ret1 > 0 && vr >= 1.5) F.push("TR_BREAKOUT");
-  if (c[i] > ma50 && ma20 > ma50 && atr < 4.0 && ret20 > 0) F.push("VT_TREND");
-  if (ma20 > ma50 && Math.abs(c[i] / ma20 - 1) <= 0.04 && ret1 > 0 && rsi14 >= 37 && rsi14 <= 68) F.push("TR_PULLBACK");
-  if (ma50 > ma200 && ma20 > ma50 && l[i] <= ma20 * 1.003 && c[i] > ma20 && ret1 > 0) F.push("MA_PULLBACK");
-  if (c[i] > ma200 && ma50 > ma200 && rsi2 <= 12 && c[i] < ma5 && rsi14 <= 55 && (ret1 > 0 || cpos >= 0.5 || rsi2 <= 3)) F.push("SN_RSI2");
-  if (bull(i) && !bull(i - 1) && !bull(i - 2) && c[i] > ma50 * 0.97) F.push("HA_REV");
-  if (c[i] <= bbl && rsi14 < 38 && rsi14 > 20 && ret1 > 0) F.push("BB_LOW");
-  if (st.k > st.d && st1.k <= st1.d && st1.k <= 30 && c[i] > ma200 * 0.95) F.push("STOCH_CROSS");
-  if (st.k > 20 && st1.k <= 20 && ret1 > 0 && c[i] > ma200 * 0.95) F.push("STOCH_OS_EXIT");
-  if (vr >= 2.0 && c[i] > hi20p && ret1 > 0 && c[i] > ma50) F.push("VOL_BREAKOUT");
-  if (vr >= 3.0 && ret1 <= -4.0 && ret1 >= -18.0 && cpos <= 0.45 && rsi2 <= 8 && c[i] > ma200) F.push("VOL_REVERT");
+  let q;
+  q = P_("TREND_ALIGN"); if (ma20 > ma50 && ma50 > ma200 && c[i] > ma20 && rsi14 >= q.rsiLo && rsi14 <= q.rsiHi) F.push("TREND_ALIGN");
+  q = P_("TR_BREAKOUT"); if (c[i] > hiP(q.n) && c[i] > ma50 && ret1 > 0 && vr >= q.vr) F.push("TR_BREAKOUT");
+  q = P_("VT_TREND"); if (c[i] > ma50 && ma20 > ma50 && atr < q.atrMax && ret20 > 0) F.push("VT_TREND");
+  q = P_("TR_PULLBACK"); if (ma20 > ma50 && Math.abs(c[i] / ma20 - 1) <= q.gap && ret1 > 0 && rsi14 >= q.rsiLo && rsi14 <= q.rsiHi) F.push("TR_PULLBACK");
+  q = P_("MA_PULLBACK"); if (ma50 > ma200 && ma20 > ma50 && l[i] <= ma20 * q.touch && c[i] > ma20 && ret1 > 0) F.push("MA_PULLBACK");
+  q = P_("SN_RSI2"); if (c[i] > ma200 && ma50 > ma200 && rsi2 <= q.rsi2 && c[i] < ma5 && rsi14 <= q.rsi14 && (ret1 > 0 || cpos >= 0.5 || rsi2 <= 3)) F.push("SN_RSI2");
+  q = P_("HA_REV"); if (bull(i) && !bull(i - 1) && !bull(i - 2) && c[i] > ma50 * q.f) F.push("HA_REV");
+  q = P_("BB_LOW"); if (c[i] <= bbl && rsi14 < q.rsiHi && rsi14 > q.rsiLo && ret1 > 0) F.push("BB_LOW");
+  q = P_("STOCH_CROSS"); if (st.k > st.d && st1.k <= st1.d && st1.k <= q.k && c[i] > ma200 * 0.95) F.push("STOCH_CROSS");
+  q = P_("STOCH_OS_EXIT"); if (st.k > q.k && st1.k <= q.k && ret1 > 0 && c[i] > ma200 * 0.95) F.push("STOCH_OS_EXIT");
+  q = P_("VOL_BREAKOUT"); if (vr >= q.vr && c[i] > hiP(q.n) && ret1 > 0 && c[i] > ma50) F.push("VOL_BREAKOUT");
+  q = P_("VOL_REVERT"); if (vr >= q.vr && ret1 <= q.r1 && ret1 >= -18.0 && cpos <= 0.45 && rsi2 <= q.rsi2 && c[i] > ma200) F.push("VOL_REVERT");
   // [V33.618] 폭락장 반등 2종 — 추세 조건 없음(OMNI-Q 후보 = 급락주에 맞는 진입이 도감에 없었다)
-  if (rsi2 <= 5 && c[i] <= bbl && ret(5) <= -7 && rsi14 <= 35) F.push("OS_DEEP");
-  if (vr >= 2.0 && ret1 <= -5.0 && ret1 >= -25.0 && c[i] <= ma20 * 0.90) F.push("CAPIT_REV");
+  q = P_("OS_DEEP"); if (rsi2 <= q.rsi2 && c[i] <= bbl && ret(5) <= q.r5 && rsi14 <= q.rsi14) F.push("OS_DEEP");
+  q = P_("CAPIT_REV"); if (vr >= q.vr && ret1 <= q.r1 && ret1 >= -25.0 && c[i] <= ma20 * q.f) F.push("CAPIT_REV");
   { // [V33.619] 고전 기술적 10종(사용자 10/15 제안) — 학습기 strategy_catalog 와 같은 식
     const ich = function (j) { return { ten: (_pbMax(h, j - 8, j) + _pbMin(l, j - 8, j)) / 2, kij: (_pbMax(h, j - 25, j) + _pbMin(l, j - 25, j)) / 2 }; };
     const span = function (j) { const q = j - 26; if (q < 51) return null; const a = ich(q), sa = (a.ten + a.kij) / 2, sb = (_pbMax(h, q - 51, q) + _pbMin(l, q - 51, q)) / 2; return { sa: sa, sb: sb, top: sa > sb ? sa : sb }; };
     const s0 = span(i), s1 = span(i - 1), it = ich(i);
-    if (s0 && s1 && c[i] > s0.top && c[i - 1] <= s1.top && it.ten > it.kij && Math.abs(s0.sa - s0.sb) / c[i] <= 0.05) F.push("ICHIMOKU");
+    q = P_("ICHIMOKU"); if (s0 && s1 && c[i] > s0.top && c[i - 1] <= s1.top && it.ten > it.kij && Math.abs(s0.sa - s0.sb) / c[i] <= q.thick) F.push("ICHIMOKU");
     const e20 = _pbEma(c, 20);
     const tr = function (k) { return k < 1 ? h[0] - l[0] : Math.max(h[k] - l[k], Math.abs(h[k] - c[k - 1]), Math.abs(l[k] - c[k - 1])); };
-    const kup = function (j) { let s = 0; for (let k = j - 9; k <= j; k++) s += tr(k); return e20[j] + 2 * s / 10; };
+    const kmul = P_("KELTNER").mult, kup = function (j) { let s = 0; for (let k = j - 9; k <= j; k++) s += tr(k); return e20[j] + kmul * s / 10; };
     if (c[i] > kup(i) && c[i - 1] <= kup(i - 1) && ret1 > 0) F.push("KELTNER");
-    if (c[i] > _pbMax(h, i - 55, i - 1) && c[i - 1] <= _pbMax(h, i - 56, i - 2)) F.push("DONCHIAN");
-    const e12 = _pbEma(c, 12), e26 = _pbEma(c, 26), m = e12.map(function (x, k) { return x - e26[k]; }), sg = _pbEma(m, 9);
+    q = P_("DONCHIAN"); if (c[i] > _pbMax(h, i - q.n, i - 1) && c[i - 1] <= _pbMax(h, i - q.n - 1, i - 2)) F.push("DONCHIAN");
+    q = P_("MACD_X"); const e12 = _pbEma(c, q.fast), e26 = _pbEma(c, q.slow), m = e12.map(function (x, k) { return x - e26[k]; }), sg = _pbEma(m, 9);
     const xs = m[i] > sg[i] && m[i - 1] <= sg[i - 1], xz = m[i] > 0 && m[i - 1] <= 0;
     if ((xs && m[i] < 0) || (xz && m[i] > sg[i])) F.push("MACD_X");
-    if (c[i - 1] < _pbSma(c, 20, i - 1) * 0.93 && c[i] > ma20 * 0.93 && ret1 > 0) F.push("ENVELOPE");
-    const e13 = _pbEma(c, 13), bear = function (k) { return l[k] - e13[k]; };
+    q = P_("ENVELOPE"); if (c[i - 1] < _pbSma(c, 20, i - 1) * q.f && c[i] > ma20 * q.f && ret1 > 0) F.push("ENVELOPE");
+    const e13 = _pbEma(c, P_("ELDER_RAY").n), bear = function (k) { return l[k] - e13[k]; };
     if (e13[i] > e13[i - 1] && bear(i) < 0 && bear(i) > bear(i - 1) && bear(i - 1) <= bear(i - 2)) F.push("ELDER_RAY");
-    const wr = function (j) { const hh = _pbMax(h, j - 13, j), ll = _pbMin(l, j - 13, j), r = hh - ll; return r > 0 ? (hh - c[j]) / r * -100 : -50; };
-    if (wr(i - 1) <= -80 && wr(i) > -80) F.push("WILLR");
-    const cci = function (j) { const tp = []; for (let k = j - 19; k <= j; k++) tp.push((h[k] + l[k] + c[k]) / 3);
-      const mu = tp.reduce(function (s, x) { return s + x; }, 0) / 20, md = tp.reduce(function (s, x) { return s + Math.abs(x - mu); }, 0) / 20; return md > 0 ? (tp[19] - mu) / (0.015 * md) : NaN; };
-    if (cci(i - 1) <= -100 && cci(i) > -100) F.push("CCI_REV");
+    const qw = P_("WILLR"), wr = function (j) { const hh = _pbMax(h, j - qw.n + 1, j), ll = _pbMin(l, j - qw.n + 1, j), r = hh - ll; return r > 0 ? (hh - c[j]) / r * -100 : -50; };
+    if (wr(i - 1) <= qw.lvl && wr(i) > qw.lvl) F.push("WILLR");
+    const qc = P_("CCI_REV"), cci = function (j) { const tp = []; for (let k = j - qc.n + 1; k <= j; k++) tp.push((h[k] + l[k] + c[k]) / 3);
+      const mu = tp.reduce(function (s, x) { return s + x; }, 0) / qc.n, md = tp.reduce(function (s, x) { return s + Math.abs(x - mu); }, 0) / qc.n; return md > 0 ? (tp[qc.n - 1] - mu) / (0.015 * md) : NaN; };
+    if (cci(i - 1) <= qc.lvl && cci(i) > qc.lvl) F.push("CCI_REV");
     if (_pbPsarFlipUp(h, l)) F.push("PSAR");
     const e65 = _pbEma(c, 65);
-    if (e65[i] > e65[i - 5] && st1.k <= 30 && c[i] > h[i - 1]) F.push("TRIPLE_SCR");
+    if (e65[i] > e65[i - 5] && st1.k <= P_("TRIPLE_SCR").k && c[i] > h[i - 1]) F.push("TRIPLE_SCR");
     // [V33.622] 조사 뒤 추가 — IBS 저점 반등 · 52주 고가 근접(George & Hwang 2004)
-    if (cpos <= 0.2 && ret1 < 0 && c[i] > ma200) F.push("IBS_LOW");
-    if (i >= 252) { const near = function (j) { return c[j] / _pbMax(h, j - 251, j) >= 0.97; }; if (near(i) && !near(i - 1) && c[i] > ma50 && ret1 > 0) F.push("HI52_NEAR"); }
+    if (cpos <= P_("IBS_LOW").cpos && ret1 < 0 && c[i] > ma200) F.push("IBS_LOW");
+    if (i >= 252) { const nr = P_("HI52_NEAR").near, near = function (j) { return c[j] / _pbMax(h, j - 251, j) >= nr; }; if (near(i) && !near(i - 1) && c[i] > ma50 && ret1 > 0) F.push("HI52_NEAR"); }
   }
   { // SQUEEZE — 어제 볼린저 폭이 그 전 120일(60개 이상) 하위 10% 이하 · 오늘 상단 돌파
     const bw = function (j) { const m = _pbSma(c, 20, j), s0 = _pbStd0(c, 20, j); return 4 * s0 / m; };
     const w1 = bw(i - 1), past = [];
     for (let j = Math.max(0, i - 120); j <= i - 1; j++) past.push(bw(j));
-    if (past.filter(function (x) { return x === x; }).length >= 60 && w1 <= _pbQuant(past, 0.10) && c[i] > bbu && c[i] > ma50) F.push("SQUEEZE");
+    if (past.filter(function (x) { return x === x; }).length >= 60 && w1 <= _pbQuant(past, P_("SQUEEZE").q) && c[i] > bbu && c[i] > ma50) F.push("SQUEEZE");
   }
   { // HERD_REBOUND — 최근 6일(오늘 제외) 거래량 2.5배 양봉 · 그 6일 고점에서 −5~−12% · MA20×0.98 위 · 오늘 양봉
     let recent = false;
-    for (let j = i - 6; j <= i - 1; j++) if (_pbVr(v, j) >= 2.5 && ret(1, j) > 0) recent = true;
+    const qh = P_("HERD_REBOUND");
+    for (let j = i - 6; j <= i - 1; j++) if (_pbVr(v, j) >= qh.vr && ret(1, j) > 0) recent = true;
     const hi6 = _pbMax(c, i - 6, i - 1), dd = (c[i] / hi6 - 1) * 100;
-    if (recent && dd <= -5 && dd >= -12 && c[i] > ma20 * 0.98 && ret1 > 0) F.push("HERD_REBOUND");
+    if (recent && dd <= qh.ddHi && dd >= qh.ddLo && c[i] > ma20 * 0.98 && ret1 > 0) F.push("HERD_REBOUND");
   }
   return F;
 }
@@ -13937,7 +13950,10 @@ function pbRoutePick(st, ctx, nowMs) {
   const dWin = dWin0 || xOk;
   if (dOk && (dWin || ctx.shadow) && D && D.c.length >= 211) {   // 그림자(관측)는 시간 창 밖에서도 계산만 한다
     const i = D.c.length - 1, px = D.c[i];
-    const fired0 = pbDailyFires(D);
+    /* [V33.664] 종목 특성 그룹(변동성 3분위 · 학습기가 오늘 값을 보냄) → 그 그룹에서 검증을 통과한 진입 미지수 · 청산 미지수 */
+    const grp = st.daily.grp && st.daily.grp[ctx.symbol] != null ? st.daily.grp[ctx.symbol] : null, epm = {};
+    if (grp != null) for (const pb_ in (st.daily.pb || {})) { const e_ = st.daily.pb[pb_] && st.daily.pb[pb_].ep; if (e_ && e_[grp]) epm[pb_] = e_[grp]; }
+    const fired0 = pbDailyFires(D, epm);
     const cr = st.daily.cross || {};
     for (const pb in cr) if (Array.isArray(cr[pb]) && cr[pb].indexOf(ctx.symbol) >= 0 && fired0.indexOf(pb) < 0) fired0.push(pb);   // 횡단면 조건은 학습기 판정(전일 종가 기준)
     let fired = fired0.filter(function (pb) { return pbLiveFilterOk(pb, D, ctx.reg, st.daily.pb && st.daily.pb[pb]); });   // [V33.619] 자동 조율 거르개 포함
@@ -13952,11 +13968,12 @@ function pbRoutePick(st, ctx, nowMs) {
       const ret5 = D.c[i - 5] > 0 ? (px / D.c[i - 5] - 1) * 100 : null;
       const vr = _pbVr(D.v, i);   // [V33.610] 오늘 거래량(지난 시간 비율로 하루치 추정 · pbLiveDaily) — 시뮬 칸과 같은 날 기준
       const ch = pbChoose(st.daily.table, pbDailyKeys(ctx.reg, rsi, ma20 > 0 ? (px / ma20 - 1) * 100 : null, ret5, vr, ctx.evNear), fired.filter(function (pb) { return benched.indexOf(pb) < 0; }), st.daily.val && st.daily.val.rule);
-      const pr = ch && st.daily.pb && st.daily.pb[ch.pb];
+      const pr0 = ch && st.daily.pb && st.daily.pb[ch.pb];
+      const pr = pr0 && grp != null && pr0.grp && pr0.grp[grp] ? Object.assign({}, pr0, pr0.grp[grp]) : pr0;   // [V33.664] 그룹별 청산 미지수
       if (ch && pr) {
         const atr = _pbAtrPct(D.h, D.l, D.c, i);
         const stop = Math.min(_num(pr.stop, 5), atr === atr ? _num(pr.atr, 2) * atr : 99);
-        best = { kind: "daily", pb: ch.pb, fired: fired, n: ch.n, w: ch.w, m: ch.m, s: ch.s, stop: Math.max(1.5, stop), be: _num(pr.be, 0), tpR: pr.tpR == null ? null : _num(pr.tpR, null), hold: _num(pr.hold, 10), label: pr.label || "", alts: ch.alts || [], benched: benched,
+        best = { kind: "daily", pb: ch.pb, fired: fired, n: ch.n, w: ch.w, m: ch.m, s: ch.s, stop: Math.max(1.5, stop), grp: grp, tunedEp: epm[ch.pb] || null, tunedExit: !!(pr0 && pr0.grp && grp != null && pr0.grp[grp]), be: _num(pr.be, 0), tpR: pr.tpR == null ? null : _num(pr.tpR, null), hold: _num(pr.hold, 10), label: pr.label || "", alts: ch.alts || [], benched: benched,
                  mr: pr.mr === true, tpPct: pr.tpPct == null ? null : _num(pr.tpPct, null), bePct: pr.bePct == null ? null : _num(pr.bePct, null), tstop: _num(pr.tstop, 0), rsi2x: _num(pr.rsi2x, 65) };
       } else if (ctx.shadow) best = { kind: "daily", pb: null, fired: fired, benched: benched, alts: pbChoose.lastAlts || [],
                                       why: panicked.length && panicked.length === fired.length ? "공황 국면 — 추세·모멘텀 쉼(" + panicked.join("·") + ")"
@@ -31457,8 +31474,12 @@ async function handleRequest(request, env, ctx, _inner) {
       const mk = body && (body.mkt === "us" || body.mkt === "kr") ? body.mkt : null;
       if (!mk || !body.daily || typeof body.daily !== "object") return Response.json({ error: "mkt·daily 필요" }, { status: 400, headers: cors });
       /* [V33.620] cross(횡단면 3종 '오늘 뜬 종목') · gate(매매법 최근 성적) 도 남긴다 — 종전엔 cross 를 버려 상대강도·5일 낙폭·듀얼 모멘텀이 실전 판정에서 한 번도 안 떴다 */
+      /* [V33.664] tier2(2순위 보조 목록) · grp(종목 → 변동성 그룹) · ptune(미지수 조율 기록) · epDef·epLad(미지수 기본값·사다리)도 남긴다 —
+         ★종전엔 tier2 를 버렸다★(V33.651~) → 실전에서 '1순위가 뜨면 보조는 뺀다' 가 한 번도 적용되지 않아 시뮬과 어긋났다. */
+      const _obj = function (v) { return (v && typeof v === "object") ? v : null; };
       const part = function (x) { return (x && typeof x === "object") ? { val: x.val || {}, table: (x.table && typeof x.table === "object") ? x.table : {}, pb: x.pb || {},
-                                                                          cross: (x.cross && typeof x.cross === "object") ? x.cross : {}, gate: (x.gate && typeof x.gate === "object") ? x.gate : null } : null; };
+                                                                          cross: (x.cross && typeof x.cross === "object") ? x.cross : {}, gate: (x.gate && typeof x.gate === "object") ? x.gate : null,
+                                                                          tier2: Array.isArray(x.tier2) ? x.tier2.map(String) : [], grp: _obj(x.grp), ptune: _obj(x.ptune), epDef: _obj(x.epDef), epLad: _obj(x.epLad) } : null; };
       const rec = { ts: Date.now(), day: String(body.day || ""), regime: String(body.regime || "NEUTRAL"), daily: part(body.daily), intra: part(body.intra),
                     sector: (body.sector && typeof body.sector === "object") ? body.sector : null,
                     panic: body.panic === true };   // [V33.625] 공황 국면(학습기 _panic 마지막 날) — 추세·모멘텀 진입 차단   // [V33.621] 종목 → 섹터(학습기 자동 배정 · 섹터 보유 상한)
@@ -31483,6 +31504,8 @@ async function handleRequest(request, env, ctx, _inner) {
         out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, panic: r.panic === true, pass: r.pass, primary: pbPrimaryOn(r, Date.now()), passStreak: r.passStreak || 0, indep: pbIndepPasses(r.passLog),
                         brake: await getState(env.DB, "pb_brake:" + mk, null).catch(function () { return null; }),
                         daily: r.daily && { val: r.daily.val, cells: Object.keys(r.daily.table || {}).length, pb: r.daily.pb, gate: r.daily.gate || null,
+                                            tier2: r.daily.tier2 || [], ptune: r.daily.ptune || null, epDef: r.daily.epDef || null, epLad: r.daily.epLad || null,   // [V33.664]
+                                            grpN: r.daily.grp ? Object.values(r.daily.grp).reduce(function (a, g) { a[g] = (a[g] || 0) + 1; return a; }, {}) : null,
                                             cross: Object.fromEntries(Object.keys(r.daily.cross || {}).map(function (k) { return [k, (r.daily.cross[k] || []).length]; })) },
                         intra: r.intra && { val: r.intra.val, cells: Object.keys(r.intra.table || {}).length, pb: r.intra.pb } } : null;
       }

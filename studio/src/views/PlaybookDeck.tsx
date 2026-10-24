@@ -1,6 +1,7 @@
 /* [V33.632] 매매법 AI 구조관측 — 새 디자인(관제실 톤 · 실제 표 수치). 데이터는 /api/playbook 그대로(값을 지어내지 않는다).
    판정 요약 → 판단 흐름 7단계(지금 쓰는 실제 값) → 실제 표(지금 쓰는 매매법 전부 · 규칙 비교 · 후보 폭 비교 · 5분 단타). 시장 전환 · 표 정렬. */
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { ParamTab } from "./PlaybookFormula";
 
 const POS = "#4FE3FF", NEG = "#FF9A4A", INK = "#E9F2FF", MUTE = "#8695AA", DIM = "#6F7E94", FAINT = "#56657A", HL = "#FFD166";
 const PANEL = "#0A0F17", PANEL2 = "#0C121C", LINE = "#1B2738", ROWLINE = "#121B28", TRACK = "#111A27";
@@ -20,7 +21,7 @@ export const PB_NAMES: Record<string, string> = {
   SECTOR_LAG: "주도주 일시 부진", DIP_IN_LEADER5: "주도주 급락 매수", GAP_UP_HOLD3: "갭 상승 3일 유지",
   VOL_SURGE_HOLD: "거래량 급등 유지",   // [V33.659] 단타(5일 보유)
 };
-const pbName = (k: string) => { const i = k.indexOf("+"); if (i < 0) return PB_NAMES[k] || k;
+export const pbName = (k: string) => { const i = k.indexOf("+"); if (i < 0) return PB_NAMES[k] || k;
   const b = k.slice(0, i), f = k.slice(i + 1); return (PB_NAMES[b] || b) + " 수정판(" + ({ T: "추세", TL: "추세+주도주", V: "거래량" } as Record<string, string>)[f] + ")"; };
 const fin = (x: any): x is number => typeof x === "number" && Number.isFinite(x);
 const sg = (x: any, k = 2) => (fin(x) ? (x >= 0 ? "+" : "") + x.toFixed(k) : "—");
@@ -80,6 +81,8 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
   const flow = [
     ["후보 선별 · OMNI-Q", V.candQ ? "상위 " + Math.round((1 - V.candQ) * 100) + "%" : "거름 없음", V.cand || "—"],
     ["신호 · 일봉 매매법", rows.length + "종", (() => { const n2 = rows.filter((r: any) => r.tier === 2).length; return n2 ? "1순위 " + (rows.length - n2) + " · 보조 " + n2 + " — 보조는 1순위가 안 뜬 종목에만" : "오늘 조건이 맞은 매매법만 남긴다"; })()],
+    ["종목 그룹 · 미지수", (() => { const pt = R.daily?.ptune; if (!pt) return "기본 미지수"; const nA = Object.values(pbDef).reduce((a: number, x: any) => a + Object.keys((x && x.ep) || {}).length + Object.keys((x && x.grp) || {}).filter((g) => !(x.ep && x.ep[g])).length, 0); return nA ? "그룹 조율 " + nA + "칸" : "기본 미지수"; })(),
+      "변동성 3그룹마다 조율 · 시스템을 안 낮춘 것만 실전(‘미지수 · 조율’ 탭)"],
     ["구조 거르개", R.panic ? "공황 차단 켜짐" : "공황 차단 꺼짐", R.panic ? "1순위 추세·모멘텀·돌파 쉼(보조는 계속)" : "시장 60일 하락·고변동이면 1순위 추세 매매법 쉼"],
     ["상황 칸 표", n0(R.daily?.cells) + "칸", "국면 × RSI × 이격 × 수익 × 거래량 칸마다 수축 평균"],
     ["고르는 규칙", chosen, "검증 구간 t 가 가장 높은 규칙"],
@@ -88,8 +91,9 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
     ["최근 " + ((RC && RC.days) || 125) + "일 악화 검사", RC ? sg(RC.mean) + "% vs " + sg(RC.base) + "%" : "—",
      RC ? (fin(RC.t) ? "초과 t " + RC.t.toFixed(2) + " · " : "") + (RC.ok ? "통과" : "미달") + " — 확실한 악화(t ≤ " + (fin(RC.needT) ? RC.needT : -2) + ")만 막음" : "기록 없음"],
   ];
-  const tabs: [string, string][] = [["pb", "매매법 " + rows.length + "종"], ["rules", "규칙 비교"], ["cand", "후보 폭 비교"], ["intra", "5분 단타"]].concat((extra || []).map((e, i) => ["x" + i, e.label] as [string, string])) as [string, string][];
+  const tabs: [string, string][] = [["pb", "매매법 " + rows.length + "종"], ["param", "미지수 · 조율"], ["rules", "규칙 비교"], ["cand", "후보 폭 비교"], ["intra", "5분 단타"]].concat((extra || []).map((e, i) => ["x" + i, e.label] as [string, string])) as [string, string][];
   const note = tab === "pb" ? "판정 전 = 학습·검증 구간 · 판정 = 손대지 않은 최근 구간 · 고른 수 = 판정 구간에서 실제로 고른 거래 · 머리글을 누르면 정렬"
+    : tab === "param" ? "칩 = 미지수(초록 = 기본에서 바뀐 값) · 표 칸을 누르면 그룹별 수식"
     : tab === "rules" ? "검증 구간에서 규칙마다 고른 거래 · 노란 줄 = 실제로 고른 규칙"
     : tab === "cand" ? "후보 설정마다 판정 구간 성적(고르기엔 안 씀) · 노란 줄 = 검증이 고른 설정" : tab === "intra" ? "5분봉 단타 검증(같은 3구간 절차)" : "";
   const th = (k: SortKey | null, l: string, left = false) => (
@@ -193,6 +197,8 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
             </table>
             {!rows.length && <p style={{ padding: 16, fontSize: 12, color: DIM }}>매매법별 진단은 다음 학습 회차부터 표시됩니다.</p>}
           </div>)}
+
+        {tab === "param" && <ParamTab R={R} name={pbName} />}
 
         {tab === "rules" && (
           <div style={{ ...card, overflowX: "auto", background: "#080C13" }}>

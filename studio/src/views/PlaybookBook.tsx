@@ -2,6 +2,8 @@
    왼쪽(위) = 매매법 카드(지금 뜸·고름·조율·문제) · 오른쪽(아래) = 고른 매매법: 진입 → 거르개 → 매수 → 청산 흐름 · 진단(청산 사유·국면별) ·
    조율이 걸어온 길 · 판정 구간 기본 vs 조율. 값은 /api/playbook 그대로(지어내지 않는다). */
 import { useMemo, useState } from "react";
+import { FormulaLine, FORMULA, GRP } from "./PlaybookFormula";
+import { pbName } from "./PlaybookDeck";
 
 const NAMES: Record<string, string> = {
   TREND_ALIGN: "추세 정렬", TR_BREAKOUT: "20일 돌파", RS_LEADER: "상대강도 상위", VT_TREND: "저변동 추세", TR_PULLBACK: "추세 눌림목", MA_PULLBACK: "20일선 지지",
@@ -56,7 +58,7 @@ const ENTRY: Record<string, string> = {
 const FLT: Record<string, string> = { trend: "200일선 위만", noBear: "약세·폭락장 제외", calm: "ATR ≤ 4% · 당일 −4% 이상", up20: "20일선 > 50일선",
   notExt: "20일선 +8% 이내(과열 제외)", dip5: "5일 수익 ≤ 0(눌림 뒤)", rsiMid: "RSI14 40~65" };
 const RCC: Record<string, string> = { 손절: "var(--bs-bad)", 본전: "var(--bs-ink3)", 익절: "var(--bs-ok)", 평균회귀: "#39d0ff", "기간 손실": "#f5c451", "보유 만기": "#a78bfa" };
-const nm = (k: string) => NAMES[k] || k;
+const nm = (k: string) => NAMES[k] || pbName(k);   // [V33.664] 보조(수정판 +T/+TL/+V · 문헌 전략) 이름표는 구조관측과 같은 표
 const pc = (v: any, d = 2) => (v == null || isNaN(+v) ? "—" : (+v > 0 ? "+" : "") + (+v).toFixed(d) + "%");
 const tone = (v: any) => (v == null ? undefined : +v > 0 ? "var(--bs-ok)" : +v < 0 ? "var(--bs-bad)" : undefined);
 type Mk = "us" | "kr";
@@ -142,15 +144,18 @@ export function PlaybookBook({ d }: { d: any }) {
               </div>
             </button>))}
         </div>
-        {cur && <Detail r={cur} mk={mk} gate={gate[cur.k]} gateOn={!!rule.gate} />}
+        {cur && <Detail r={cur} mk={mk} gate={gate[cur.k]} gateOn={!!rule.gate} def={(M.daily?.epDef || {})[cur.k]} />}
       </div>
     </div>);
 }
 
-function Detail({ r, mk, gate, gateOn }: { r: any; mk: Mk; gate: any; gateOn: boolean }) {
+function Detail({ r, mk, gate, gateOn, def }: { r: any; mk: Mk; gate: any; gateOn: boolean; def?: any }) {
   const t = r.t || {}, p = r.p || {};
-  const steps: [string, string, string?][] = [
-    ["진입 조건", ENTRY[r.k] || p.label || "—"],
+  const steps: [string, any, string?][] = [
+    ["진입 조건", !r.isI && def && FORMULA[r.k] ? <span>
+        <FormulaLine pb={r.k} def={def} vals={def} size={12} />
+        {[0, 1, 2].filter((g) => p.ep && p.ep[g]).map((g) => <span key={g} style={{ display: "block" }}><b style={{ fontSize: 11 }}>{GRP[g]}</b> <FormulaLine pb={r.k} def={def} vals={Object.assign({}, def, p.ep[g])} size={12} /></span>)}
+      </span> : (ENTRY[r.k] || p.label || "—"), p.ep && Object.keys(p.ep).length ? "그룹 조율" : undefined],
     ["거르개", p.flt ? String(p.flt).split("+").map((x: string) => FLT[x] || x).join(" + ") : "없음(조율이 바꾸지 않음)", p.flt ? "조율" : undefined],
     ["매수", r.isI ? "5분봉 신호 봉 종가 · 마감 30분 전까지" : "정규장 마감 전 30분 · 프리·애프터마켓(종가 ±2% 안 · 시간외 크기 ×0.5) — 신호는 정규장 종가 봉"],
   ];

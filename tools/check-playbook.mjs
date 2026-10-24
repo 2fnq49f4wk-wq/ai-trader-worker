@@ -80,6 +80,14 @@ Pp = {"close": Pp["close"] * cum, "high": Pp["high"] * cum, "low": Pp["low"] * c
 _, tp_ = PB.tune_daily(Pp, "us", CAT.signals(Pp), log=lambda *a: None)
 tpos = tp_["ENVELOPE"]
 Pva = {k: Pv[k].values.round(6).tolist() for k in ("open","high","low","close","volume")}
+# [V33.664] 진입 미지수 — 기본값 = 지금 신호(도감 전부) · 무작위 미지수에서 학습기 = 워커
+import playbook_params as PPm
+svAll = CAT.signals(Pv)
+ppEq = [pb for pb in PPm.ENTRY if (PPm.sig(Pv, pb) != svAll[pb].fillna(False).values.astype(bool)).sum()]
+rr_ = np.random.default_rng(9)
+EPr = {pb: {k: lad[int(rr_.integers(len(lad)))] for k, lad in v[2].items()} for pb, v in PPm.ENTRY.items() if pb not in PB.CROSS_PB and v[2]}
+SvP = {pb: PPm.sig(Pv, pb, EPr[pb])[-120:].astype(int).tolist() for pb in EPr}
+GRv = PPm.groups(Pv)[-1].tolist()
 Sv = {k: sv[k].values[-120:].astype(int).tolist() for k in sv}
 # 5분 단타 진입 — 무작위 하루 30개(봉 78개)
 ib = []
@@ -95,7 +103,7 @@ dk = PB.daily_keys(["BULL"]*len(s), s[:,0], s[:,1], s[:,2], s[:,3], s[:,4].astyp
 I = np.array(${JSON.stringify(isamp)}, dtype=float)
 ik = PB.intra_keys(["CRASH"]*len(I), I[:,0], I[:,1], I[:,2].astype(int))
 print(json.dumps({"null": null_d.get("pass"), "pos": pos, "pick": ch and ch[0], "G": G, "Pa": Pa, "Sd": Sd, "K": K, "ib": ib, "dk": [[str(x) for x in lv] for lv in dk], "ik": [[str(x) for x in lv] for lv in ik],
-  "veto": veto, "Pva": Pva, "Sv": Sv, "FMv": FMv, "gok": gok, "dec": dec, "rulesA": PB.RULES_ADAPT, "cqs": list(PB.CAND_QS), "RGv": RGv, "tnull": tnull, "tpos": tpos, "INPB": sorted(PB.INTRA_PB), "LF": LF, "MR": MR, "RG": RG, "tab5len": len(next(iter(tab5.values()))), "snapMr": sorted(k for k, v in PB.DAILY_PB.items() if v.get("mr")),
+  "veto": veto, "Pva": Pva, "Sv": Sv, "ppEq": ppEq, "EPr": EPr, "SvP": SvP, "GRv": GRv, "FMv": FMv, "gok": gok, "dec": dec, "rulesA": PB.RULES_ADAPT, "cqs": list(PB.CAND_QS), "RGv": RGv, "tnull": tnull, "tpos": tpos, "INPB": sorted(PB.INTRA_PB), "LF": LF, "MR": MR, "RG": RG, "tab5len": len(next(iter(tab5.values()))), "snapMr": sorted(k for k, v in PB.DAILY_PB.items() if v.get("mr")),
   "rules": PB.RULES, "chLow": PB.choose({("*", "A"): (100, 0.3, 0.6, 0.4, 2.0)}, ["*"], ["A"]), "pbs": sorted(PB.DAILY_PB), "ipbs": sorted(PB.INTRA_PB), "B": [PB.B_RSI, PB.B_GAP20, PB.B_RET5, PB.B_VR, PB.B_DAYPCT, PB.B_TOD]}))
 `;
 const r = spawnSync("python3", ["-c", py], { encoding: "utf8", timeout: 300000, maxBuffer: 256 * 1024 * 1024 });
@@ -108,7 +116,7 @@ const getMA = (h, p) => { if (!Array.isArray(h) || h.length < p) return null; le
 const getRSI = () => 25;
 const STRAT_ROUTE = { enabled: true, freshMs: 36 * 3600000, calPerTradingDay: 1.45 };
 const MACRO_SCHED = { us: { fed_rate: ["2026-10-28"], cpi: ["2026-11-10"] } };
-const W = new Function("_num", "getMA", "getRSI", "STRAT_ROUTE", "MACRO_SCHED", fnSrc + "; return { PB_KEYS, PB_ROUTE, pbDailyKeys, pbIntraKeys, pbChoose, _pbPass, pbRoutePick, pbExitWhy, pbEvNear, pbDailyFires, pbIntraFires, pbAgg5, pbLiveDaily, pbLiveFilterOk };")(_num, getMA, getRSI, STRAT_ROUTE, MACRO_SCHED);
+const W = new Function("_num", "getMA", "getRSI", "STRAT_ROUTE", "MACRO_SCHED", fnSrc + "; return { PB_EP_DEF, PB_KEYS, PB_ROUTE, pbDailyKeys, pbIntraKeys, pbChoose, _pbPass, pbRoutePick, pbExitWhy, pbEvNear, pbDailyFires, pbIntraFires, pbAgg5, pbLiveDaily, pbLiveFilterOk };")(_num, getMA, getRSI, STRAT_ROUTE, MACRO_SCHED);
 
 if (o) {
   chk(o.tab5len === 5 && o.rules.some((x) => x.score === "mpd") && o.rules.some((x) => x.score === "lcbpd") && o.chLow && o.chLow[0] === "A", "[V33.618] 학습기: 표 = (n,w,m,lcb,hd) · 하루당 규칙 · 승률 30% 도 고른다");
@@ -134,6 +142,20 @@ if (o) {
       for (let q = 0; q < 120; q++) { const t = T - 120 + q, F = W.pbDailyFires({ o: A.o.slice(0, t + 1), h: A.h.slice(0, t + 1), l: A.l.slice(0, t + 1), c: A.c.slice(0, t + 1), v: A.v.slice(0, t + 1) });
         for (const pb of ["OS_DEEP","CAPIT_REV","ICHIMOKU","KELTNER","DONCHIAN","MACD_X","ENVELOPE","ELDER_RAY","WILLR","CCI_REV","PSAR","TRIPLE_SCR","IBS_LOW","HI52_NEAR"]) { const js = F.includes(pb) ? 1 : 0; cnt[pb] += js; if (js !== o.Sv[pb][q][j]) bad.push([pb, t, j, js]); } } }
     chk(!bad.length && Object.values(cnt).every((x) => x > 0), "[V33.618·619] 폭락장 반등 2종 + 고전 기술적 10종(이치모쿠·켈트너·돈치안·MACD·엔벨로프·엘더·%R·CCI·SAR·삼중창) 학습기 = 워커 " + JSON.stringify(cnt), JSON.stringify(bad.slice(0, 4))); }
+  { // [V33.664] 무작위 미지수 대조
+    const T = o.Pva.close.length, bad = [], cnt = {};
+    for (const pb in o.EPr) cnt[pb] = 0;
+    for (let j = 0; j < o.Pva.close[0].length; j++) {
+      const col = (k) => o.Pva[k].map((r) => r[j]);
+      const A = { o: col("open"), h: col("high"), l: col("low"), c: col("close"), v: col("volume") };
+      for (let q = 0; q < 120; q++) { const t = T - 120 + q, F = W.pbDailyFires({ o: A.o.slice(0, t + 1), h: A.h.slice(0, t + 1), l: A.l.slice(0, t + 1), c: A.c.slice(0, t + 1), v: A.v.slice(0, t + 1) }, o.EPr);
+        for (const pb in o.EPr) { const js = F.includes(pb) ? 1 : 0; cnt[pb] += js; if (js !== o.SvP[pb][q][j]) bad.push([pb, t, j, js, JSON.stringify(o.EPr[pb])]); } } }
+    const fired = Object.values(cnt).filter((x) => x > 0).length;
+    chk(!bad.length && fired >= 15, "[V33.664] 진입 미지수(무작위 값) — 학습기 = 워커 · " + Object.keys(o.EPr).length + "종 중 " + fired + "종 발화 " + JSON.stringify(cnt), JSON.stringify(bad.slice(0, 4)));
+    chk(Array.isArray(o.ppEq) && o.ppEq.length === 0, "[V33.664] 미지수 기본값 = 지금 도감 신호(31종)", JSON.stringify(o.ppEq));
+    const Wd = new Function("_num", "getMA", "getRSI", "STRAT_ROUTE", "MACRO_SCHED", fnSrc + "; return { PB_EP_DEF };")(_num, getMA, getRSI, STRAT_ROUTE, MACRO_SCHED);
+    chk(/"epDef": \{k: v\[1\] for k, v in PP\.ENTRY\.items\(\)\}/.test(readFileSync(dir + "playbook_sim.py", "utf8")) && Object.keys(Wd.PB_EP_DEF).length === 27,
+        "[V33.664] 워커 미지수 기본표 27종(횡단면 3종·SAR 은 학습기 목록) · 학습기가 기본표를 함께 보냄"); }
   chk(JSON.stringify(o.veto) === '["B","A"]', "[V33.624] 학습기 국면 거부권: 폭락 국면 칸이 음(−2%)인 A 는 전체 성적이 좋아도 폭락장에선 안 고르고 B · 강세장에선 A", JSON.stringify(o.veto));
   { const Tt = { "*": { A: [500, 0.6, 1.0, 0.8, 5], B: [500, 0.5, 0.3, 0.2, 5] }, "CRASH|*": { A: [80, 0.3, -2.0, -2.5, 5], B: [80, 0.5, 0.2, 0.1, 5] } };
     const c1 = W.pbChoose(Tt, ["CRASH|1|1|1|1|0", "CRASH|1|1|*", "CRASH|*", "*"], ["A", "B"], { score: "lcb", level: "global" }),
@@ -248,6 +270,15 @@ chk(W.pbRoutePick({ ...st, daily: { ...st.daily, table: { "*": { NOPE: [9000, 0.
   const e = W.pbRoutePick(stD, { ...base, session: "post", extPx: ref * 1.05, refPx: ref, shadow: true }, now);
   chk(a && a.kind === "daily" && a.session === "post" && b === null && c && c.session === "pre" && d === null && e && e.outWin === true && e.xGap === 5,
       "[V33.662] 애프터·프리: 종가 ±2% 안이면 일봉 매매법 매수(장 상태 표시) · 벗어나면 안 삼(관측엔 차이 %) · 정규장 중간은 그대로 안 삼", JSON.stringify([a && a.session, b, c && c.session, d, e && [e.outWin, e.xGap]]));
+}
+{ // [V33.664] 종목 그룹 → 그 그룹의 진입·청산 미지수(학습기가 시스템 검증을 통과시킨 것만 보냄)
+  const P0 = firedNow.find((x) => W.PB_EP_DEF && x in W.PB_EP_DEF) || firedNow[0], d0 = (W.PB_EP_DEF || {})[P0] || {}, k0 = Object.keys(d0)[0];
+  const ep2 = k0 ? { [k0]: d0[k0] } : {};
+  const stG = { ...st, intra: null, daily: { ...st.daily, grp: { AAA: 2 }, pb: { ...st.daily.pb, [P0]: { ...st.daily.pb[P0], ep: { "2": ep2 }, grp: { "2": { hold: 17 } } } } } };
+  const g2 = W.pbRoutePick(stG, { ...ctx, minToClose: 20, bars5: null }, now), g0 = W.pbRoutePick({ ...stG, daily: { ...stG.daily, grp: { AAA: 0 } } }, { ...ctx, minToClose: 20, bars5: null }, now);
+  chk(g2 && g2.grp === 2 && (g2.pb !== P0 || (g2.tunedExit === true && g2.hold === 17 && JSON.stringify(g2.tunedEp) === JSON.stringify(ep2))) && g0 && g0.grp === 0 && !g0.tunedExit && g0.hold === 8,
+      "[V33.664] 종목 그룹 2 → 그 그룹 진입 미지수·청산 미지수(보유 17일) · 그룹 0 → 기본", JSON.stringify([P0, g2 && [g2.pb, g2.grp, g2.hold, g2.tunedExit], g0 && [g0.pb, g0.grp, g0.hold]]));
+  chk(/tier2: Array\.isArray\(x\.tier2\) \? x\.tier2\.map\(String\) : \[\], grp: _obj\(x\.grp\)/.test(S), "[V33.664] 워커가 학습기 업로드의 tier2(보조 목록)·grp(종목 그룹)를 저장한다(종전엔 tier2 를 버려 보조 순위 규칙이 실전에 없었다)");
 }
 { // [V33.662] 시간외 공통 관문: 매매법 AI 는 위원회 확률 대신 검증 통과로 · trades.session 기록
   chk(/const _pbRoute = !!\(signal && signal\.isStratRoute && signal\.sr\);/.test(S) && /if \(!_pbRoute && !\(typeof p === "number"/.test(S) && /Math\.floor\(qty \* _clamp\(_num\(et\.sizeMult, 0\.5\)/.test(S),
