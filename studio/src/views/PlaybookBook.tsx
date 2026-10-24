@@ -152,7 +152,7 @@ function Detail({ r, mk, gate, gateOn }: { r: any; mk: Mk; gate: any; gateOn: bo
   const steps: [string, string, string?][] = [
     ["진입 조건", ENTRY[r.k] || p.label || "—"],
     ["거르개", p.flt ? String(p.flt).split("+").map((x: string) => FLT[x] || x).join(" + ") : "없음(조율이 바꾸지 않음)", p.flt ? "조율" : undefined],
-    ["매수", r.isI ? "5분봉 신호 봉 종가 · 마감 30분 전까지" : "마감 전 60분 안 · 신호 봉 종가"],
+    ["매수", r.isI ? "5분봉 신호 봉 종가 · 마감 30분 전까지" : "정규장 마감 전 30분 · 프리·애프터마켓(종가 ±2% 안 · 시간외 크기 ×0.5) — 신호는 정규장 종가 봉"],
   ];
   const tb = t.test?.base, tt = t.test?.tuned;
   return (

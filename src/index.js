@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.661";
+const _BUILD_VER = "V33.662";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -7415,6 +7415,12 @@ let __schemaReady = false;
 let __engineErrCount = 0;
 async function ensureSchema(DB) {
   if (__schemaReady) return;
+  try {   // [V33.662] trades.session(체결 장 상태) — 없으면 추가 · 있으면 기록 시작
+    const _tc = await DB.prepare("PRAGMA table_info(trades)").all();
+    const _tn = (_tc.results || []).map(function (c) { return c.name; });
+    if (_tn.length && _tn.indexOf("session") < 0) { await DB.prepare("ALTER TABLE trades ADD COLUMN session TEXT").run(); _tn.push("session"); }
+    __tradesSessCol = _tn.indexOf("session") >= 0;
+  } catch (e) { __tradesSessCol = false; }
   // [V28] positions 테이블 PK 강제 점검 — 기존 PK가 (symbol,strategy)면 savePosition의
   //   ON CONFLICT(symbol,strategy,market)와 안 맞아 D1_ERROR 발생. 한 번만 재생성한다.
   try {
@@ -13613,7 +13619,8 @@ async function pbLiveBrake(DB, market, nowMs) {
 const PB_SECTOR_MAX = 3;   // [V33.621] 같은 섹터(학습기 자동 배정) 매매법 보유 상한 — 한 섹터 급락에 몰려 맞지 않게
 const PB_ROUTE = { candMin: 0.80, minWin: 0, intraMinToClose: 30, eodMin: 10, regMin: 390, intraFetchMax: 8, dailyEntryWin: 30, liveKeep: 60,
                    promoteMax: 25, intraPreMax: 40,
-                   candDailyWin: 80, candDailyMax: 8, candDailyMin: 20 };   // [V33.618] 마감 전 80분부터 후보 일봉을 사이클당 8개씩 · 20분 수명으로 갱신   // [V33.614] promoteMax: 살 수 있는 후보 앞당김 상한 · intraPreMax: 후보 분봉 선행 병렬 조회 상한   // dailyEntryWin: 일봉 매매법 진입 = 마감 전 60분 · liveKeep: 관측창에 남길 후보 수   // intraFetchMax: 사이클당 후보 분봉 조회 상한
+                   candDailyWin: 80, candDailyMax: 8, candDailyMin: 20,
+                   extGapMax: 2 };   // [V33.662] 프리·애프터 진입 — 시간외 체결가가 기준 종가에서 ±2% 안일 때만(시뮬 '신호 봉 종가에 산다' 와 가깝게)   // [V33.618] 마감 전 80분부터 후보 일봉을 사이클당 8개씩 · 20분 수명으로 갱신   // [V33.614] promoteMax: 살 수 있는 후보 앞당김 상한 · intraPreMax: 후보 분봉 선행 병렬 조회 상한   // dailyEntryWin: 일봉 매매법 정규장 진입 = 마감 전 30분(+ 프리·애프터 전 구간 · V33.662) · liveKeep: 관측창에 남길 후보 수   // intraFetchMax: 사이클당 후보 분봉 조회 상한
 /* [V33.620] 후보 폭(OMNI-Q 상위 몇 %)도 학습기 검증이 고른다(상위 20·40·60% 중 검증 구간 성적이 가장 좋은 것) — 표에 없으면 상위 20% */
 function pbCandMin(st) { const q = st && st.daily && st.daily.val && st.daily.val.candQ; return (typeof q === "number" && q >= 0 && q <= 0.95) ? q : PB_ROUTE.candMin; }   // [V33.621] 0 = OMNI-Q 거름 없음(검증이 고를 수 있다)
 /* [V33.622] ★후보 순위 머리도 검증이 고른다★ — OMNI-Q 표본 밖 실측: 5일 머리 ① 미 51.2%(t 4) · 20일 머리 52.8%(t 10) · 한 54.1 / 54.7% ·
@@ -13921,7 +13928,13 @@ function pbRoutePick(st, ctx, nowMs) {
   const D = ctx.D;
   let best = null;
   const dOk = st.daily && (ctx.shadow || _pbPass(st.daily.val));
-  const dWin = ctx.minToClose != null && ctx.minToClose <= PB_ROUTE.dailyEntryWin;   // [V33.610] 일봉 매매법은 장 마지막 1시간에만 — 시뮬이 '신호 봉 종가에 산다'
+  const dWin0 = ctx.minToClose != null && ctx.minToClose <= PB_ROUTE.dailyEntryWin;   // [V33.610] 정규장은 마감 전 30분 — 시뮬이 '신호 봉 종가에 산다'
+  /* [V33.662] ★프리·애프터 진입★(사용자 10/24 "거래 시간은 정규장뿐 아니라 프리·애프터 포함") — 신호는 ★정규장 종가로 완성된 일봉★(애프터 = 오늘 · 프리 = 어제)으로 보고,
+     시간외 체결가가 그 종가에서 ±extGapMax% 안일 때만 산다(시뮬의 '신호 봉 종가 매수' 와 어긋나지 않게). 크기·세션당 개수는 공통 시간외 관문(extBuyGuard). */
+  const xSess = ctx.session === "pre" || ctx.session === "post" ? ctx.session : null;
+  const xGap = xSess && ctx.extPx > 0 && ctx.refPx > 0 ? Math.abs(ctx.extPx / ctx.refPx - 1) * 100 : null;
+  const xOk = xSess != null && xGap != null && xGap <= PB_ROUTE.extGapMax;
+  const dWin = dWin0 || xOk;
   if (dOk && (dWin || ctx.shadow) && D && D.c.length >= 211) {   // 그림자(관측)는 시간 창 밖에서도 계산만 한다
     const i = D.c.length - 1, px = D.c[i];
     const fired0 = pbDailyFires(D);
@@ -13950,7 +13963,8 @@ function pbRoutePick(st, ctx, nowMs) {
                                          : benched.length && benched.length === fired.length ? "최근 성적 스위치로 쉼(" + benched.join("·") + ")" : "뜬 매매법 성적 미달" };
     } else if (ctx.shadow) best = { kind: "daily", pb: null, fired: [], why: "뜬 매매법 없음" };
   }
-  if (ctx.shadow && best && best.kind === "daily" && !dWin) best.outWin = true;   // [V33.611] 창 밖 — 관측엔 보이되 '마감 전 60분에 매수' 로 표시
+  if (ctx.shadow && best && best.kind === "daily" && !dWin) { best.outWin = true; if (xSess && xGap != null) best.xGap = +xGap.toFixed(2); }   // [V33.611] 창 밖 — 관측엔 보이되 매수 창 안내
+  if (best && best.kind === "daily" && xSess) best.session = xSess;   // [V33.662] 어느 장에서 고른 것인가
   const mtc = ctx.minToClose, B = ctx.bars5;
   if (st.intra && (ctx.shadow || _pbPass(st.intra.val)) && mtc != null && mtc >= PB_ROUTE.intraMinToClose && ctx.prevClose > 0 && B && B.c.length >= 3 && D) {
     const nD = D.c.length, ictx = { pc: ctx.prevClose, ph: nD >= 2 ? D.h[nD - 2] : NaN, pl: nD >= 2 ? D.l[nD - 2] : NaN };   // [V33.619] 전일 고·저·종(갭·피봇)
@@ -15195,7 +15209,21 @@ function _rowsChanged(res) {
      서로 다른 진짜 체결이 ms 단위로 같은 종목·같은 방향·같은 수량·같은 가격이 될 수는 없다.
      비용은 EXISTS 서브쿼리 1회 — idx_trades_ts 를 탄다.
    ※ 매도 경로는 이미 조건부라 손대지 않는다(중복 조건을 두 벌 두지 않는다). */
+/* [V33.662] ★체결 장 상태 기록★(사용자 10/24 "trades 에 프리·정규·애프터 중 어디서 샀는지") — trades.session = pre | regular | post | closed.
+   체결 시각으로 marketSessionNow(특례일 포함 한 곳)를 본다. 칸이 생긴 뒤에만 쓴다(__tradesSessCol · ensureSchema) — 칸 없는 DB 에 넣다 원장이 막히지 않게. */
+let __tradesSessCol = false;
+function tradeSessionOf(market, ts) {
+  try { const s = marketSessionNow(market, new Date(_num(ts, Date.now()))); return s === "PRE" ? "pre" : s === "REGULAR" ? "regular" : s === "POST" ? "post" : "closed"; }
+  catch (e) { return null; }
+}
 function stmtRecordTrade(DB, t) {
+  if (__tradesSessCol) return DB.prepare(
+    "INSERT INTO trades (ts, market, symbol, side, qty, price, pnl, pnl_pct, reason, session) " +
+    "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (" +
+    "SELECT 1 FROM trades WHERE ts = ? AND market = ? AND symbol = ? AND side = ? AND qty = ? AND price = ?)"
+  ).bind(t.ts, t.market, t.symbol, t.side, t.qty, t.price,
+         t.pnl == null ? null : t.pnl, t.pnl_pct == null ? null : t.pnl_pct, t.reason, tradeSessionOf(t.market, t.ts),
+         t.ts, t.market, t.symbol, t.side, t.qty, t.price);
   return DB.prepare(
     "INSERT INTO trades (ts, market, symbol, side, qty, price, pnl, pnl_pct, reason) " +
     "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (" +
@@ -15224,6 +15252,13 @@ function stmtRecordTrade(DB, t) {
 //     배치는 원자적이라 "포지션만 지워지고 원장은 없는" 상태가 만들어질 수 없다.
 //     ★순서 주의★ — INSERT 가 먼저다. UPDATE/DELETE 가 먼저 돌면 EXISTS 가 이미 거짓이 된다.
 function stmtRecordTradeIfPos(DB, t, guard) {
+  if (__tradesSessCol) return DB.prepare(
+    "INSERT INTO trades (ts, market, symbol, side, qty, price, pnl, pnl_pct, reason, session) " +
+    "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (" +
+    "SELECT 1 FROM positions WHERE symbol = ? AND strategy = ? AND market = ? AND qty = ?)"
+  ).bind(t.ts, t.market, t.symbol, t.side, t.qty, t.price,
+         t.pnl == null ? null : t.pnl, t.pnl_pct == null ? null : t.pnl_pct, t.reason, tradeSessionOf(t.market, t.ts),
+         guard.symbol, guard.strategy, guard.market, guard.expectedQty);
   return DB.prepare(
     "INSERT INTO trades (ts, market, symbol, side, qty, price, pnl, pnl_pct, reason) " +
     "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (" +
@@ -20387,7 +20422,10 @@ async function extBuyGuard(DB, market, qty, price, signal, cfg, opts, now) {
   const px = extTradePrice(opts && opts.quote, session, cfg);
   if (px == null || Math.abs(px - price) > Math.max(1e-8, price * 1e-8)) return { ok: false, why: "quote_unverified" };
   const p = signal && signal.mlMindP;
-  if (!(typeof p === "number" && Number.isFinite(p) && p >= _num(et.minPickP, 0.62)))
+  /* [V33.662] 매매법 AI(isStratRoute)는 위원회 확률이 없다 — 그 대신 학습기 검증 통과(_pbPass)가 진입의 관문이다(pbRoutePick 이 이미 확인).
+     크기 ×sizeMult · 세션당 신규 수 · 체결시각 검증 가격은 아래에서 똑같이 건다. */
+  const _pbRoute = !!(signal && signal.isStratRoute && signal.sr);
+  if (!_pbRoute && !(typeof p === "number" && Number.isFinite(p) && p >= _num(et.minPickP, 0.62)))
     return { ok: false, why: "probability_floor" };
   /* [V33.351 · A-2] 세션 시작 시각도 marketWindows 한 곳에서 — 종전엔 여기에도 숫자가 박혀 있었다.
      반장이면 장후 시작이 16:00 이 아니라 13:00 이고, 수능일이면 장전이 09:00 부터다.
@@ -25244,7 +25282,7 @@ async function runTradingCycle(env) {
         }
         fetched.push({
           symbol: symbol,
-          intra: { symbol: symbol, price: evPrice, prevClose: bq.prevClose, closes: [] },
+          intra: { symbol: symbol, price: evPrice, prevClose: bq.prevClose, regPrice: bq.price, closes: [] },   // [V33.662] regPrice = 정규장 마지막 값(시간외 매매법 신호용)
           daily: daily, intraOk: true, intraErr: null, dailyErr: null
         });
       }
@@ -25840,7 +25878,9 @@ async function runTradingCycle(env) {
             if (sc == null || sc < pbCandMin(__sr) || !it.daily || !Array.isArray(it.daily.closes) || !(it.intra && it.intra.price > 0)) continue;
             _pc.push(sym);
             const px = it.intra.price, pcl = it.intra.prevClose || px;
-            const ctx = { reg: __sr.regime, symbol: sym, D: pbLiveDaily(it.daily, px, pcl, __pbMtc), bars5: null, prevClose: pcl, evNear: __pbEv, minToClose: __pbMtc };
+            const _ref = extSessMkt ? (it.intra.regPrice > 0 ? it.intra.regPrice : px) : px;   // [V33.662] 시간외엔 정규장 종가로 완성된 일봉에서 신호를 본다
+            const ctx = { reg: __sr.regime, symbol: sym, D: pbLiveDaily(it.daily, _ref, pcl, __pbMtc), bars5: null, prevClose: pcl, evNear: __pbEv, minToClose: __pbMtc,
+                          session: extSessMkt || null, extPx: px, refPx: _ref };
             const real = pbRoutePick(__sr, ctx, Date.now()), sh = real || pbRoutePick(__sr, Object.assign({}, ctx, { shadow: true }), Date.now());
             __pbSeen.set(sym, __pbLive.length);
             __pbLive.push(pbRecExtra({ s: sym, nm: (typeof NAME_MAP !== "undefined" && NAME_MAP[sym]) || null, q: +sc.toFixed(3), px: px,
@@ -26745,7 +26785,9 @@ async function runTradingCycle(env) {
                   _pb5 = pbAgg5(_mb);
                 } catch (e) { _pb5 = null; }
               }
-              const _pbCtx = { reg: __sr.regime, symbol: symbol, D: pbLiveDaily(daily, price, prevClose, __pbMtc), bars5: _pb5, prevClose: prevClose, evNear: __pbEv, minToClose: __pbMtc };
+              const _pbRef = extSessMkt ? (intra && intra.regPrice > 0 ? intra.regPrice : price) : price;   // [V33.662] 시간외 = 정규장 종가 일봉 + 시간외 체결가로 매수
+              const _pbCtx = { reg: __sr.regime, symbol: symbol, D: pbLiveDaily(daily, _pbRef, prevClose, __pbMtc), bars5: _pb5, prevClose: prevClose, evNear: __pbEv, minToClose: __pbMtc,
+                               session: extSessMkt || null, extPx: price, refPx: _pbRef };
               const _sp = pbRoutePick(__sr, _pbCtx, Date.now());
               const _sh = _sp || pbRoutePick(__sr, Object.assign({}, _pbCtx, { shadow: true }), Date.now());
               const _rec = { s: symbol, nm: (typeof NAME_MAP !== "undefined" && NAME_MAP[symbol]) || null, q: +_pbS.toFixed(3), px: price,
@@ -26758,7 +26800,7 @@ async function runTradingCycle(env) {
                              act: null, why: null };
               pbRecExtra(_rec, _sh, _pbCtx.D);
               if (_held) _rec.why = "보유 중";
-              else if (!_sp) _rec.why = (_sh && _sh.why) || (_sh && _sh.pb ? (_sh.outWin && _sh.kind === "daily" && __sr.daily && _pbPass(__sr.daily.val) ? "마감 전 30분에 매수 판정" : "검증 미통과 — 기록만(그림자)") : "고를 매매법 없음");
+              else if (!_sp) _rec.why = (_sh && _sh.why) || (_sh && _sh.pb ? (_sh.outWin && _sh.kind === "daily" && __sr.daily && _pbPass(__sr.daily.val) ? (_sh.xGap != null ? "시간외 가격이 종가에서 " + _sh.xGap + "% 벗어남(±" + PB_ROUTE.extGapMax + "% 안에서만 매수)" : "정규장 마감 전 30분 · 프리·애프터에 매수 판정") : "검증 미통과 — 기록만(그림자)") : "고를 매매법 없음");
               else if (!_canBuy) _rec.why = crashGate.blockNew ? "폭락 관문 — 신규 매수 금지" : !canTrade ? "거래 불가 시간"
                 : _braked ? "실전 손실 제동(최근 30일 " + __pbBrake.n + "건 평균 " + __pbBrake.mean + "%)" : _secFull ? "같은 섹터 보유 상한(" + _pbSec + " " + PB_SECTOR_MAX + ")" : "매매법 AI 상한";
               if (_sp && _canBuy) {
@@ -26774,8 +26816,8 @@ async function runTradingCycle(env) {
                     signal: { name: "PB_" + _sp.pb, members: [_sp.pb], isStratRoute: true, weight: 1,
                       sr: { sid: _sp.pb, kind: _sp.kind, stop: +_sp.stop.toFixed(2), be: _sp.be || 0, tpR: _sp.tpR == null ? null : _sp.tpR, tpPct: _sp.tpPct == null ? null : _sp.tpPct,
                             mr: _sp.mr === true, bePct: _sp.bePct == null ? null : _sp.bePct, tstop: _sp.tstop || 0, rsi2x: _sp.rsi2x || 65, tpPx: _sp.tpPx == null ? null : _sp.tpPx,
-                            hold: _sp.hold || null, bars: _sp.bars || 0, primary: __pbPrim, m: +_sp.m.toFixed(3), w: +_sp.w.toFixed(3), n: _sp.n, omq: +_pbS.toFixed(3), regime: __sr.regime || null, at: Date.now() },
-                      detail: "매매법AI " + _sp.pb + "(" + (_sp.kind === "intra" ? "5분 단타" : "일봉") + " · 지금 뜬 " + _sp.fired.join("·") + ") · OMNI-Q 상위 " + Math.max(1, Math.round((1 - _pbS) * 100)) + "% · 국면 " + (__sr.regime || "?") +
+                            hold: _sp.hold || null, bars: _sp.bars || 0, primary: __pbPrim, sess: _sp.session || "regular", m: +_sp.m.toFixed(3), w: +_sp.w.toFixed(3), n: _sp.n, omq: +_pbS.toFixed(3), regime: __sr.regime || null, at: Date.now() },
+                      detail: "매매법AI " + _sp.pb + "(" + (_sp.kind === "intra" ? "5분 단타" : "일봉") + (_sp.session ? " · " + (_sp.session === "pre" ? "프리마켓" : "애프터마켓") : "") + " · 지금 뜬 " + _sp.fired.join("·") + ") · OMNI-Q 상위 " + Math.max(1, Math.round((1 - _pbS) * 100)) + "% · 국면 " + (__sr.regime || "?") +
                               " · 모의 성공 " + (_sp.w * 100).toFixed(0) + "% 평균 +" + _sp.m.toFixed(2) + "% (표본 " + _sp.n + ") · 손절 −" + _sp.stop + "%" + (__pbPrim ? " · ★주력★" : " · 잠정 ×" + STRAT_ROUTE.mult) } });
                 }
               }
@@ -33530,7 +33572,8 @@ async function handleRequest(request, env, ctx, _inner) {
         //   거래 내역은 체결 시에만 바뀌므로 SWR로 접근 자체를 줄인다(limit별 캐시 키).
         return await swrJson("trades:" + limit, 15000, 600000, async function () {
           const res = await env.DB.prepare("SELECT * FROM trades ORDER BY ts DESC LIMIT ?").bind(limit).all();
-          return res.results;
+          /* [V33.662] 칸이 생기기 전 행은 체결 시각으로 장 상태를 계산해 붙인다(sessEst = 시각으로 추정) */
+          return (res.results || []).map(function (r) { if (r && !r.session) { r.session = tradeSessionOf(r.market, r.ts); r.sessEst = 1; } return r; });
         });
       } catch (e) {
         // [V12.126] /api/state와 같은 Promise.all에 묶여 있어, 여기 실패도 대시보드 전체를 500으로

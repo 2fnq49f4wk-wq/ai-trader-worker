@@ -239,6 +239,24 @@ chk(firedNow.length > 0 && firedI.indexOf("MOM3") >= 0 && pk && pk.kind === "int
 const pk2 = W.pbRoutePick(st, { ...ctx, minToClose: 20 }, now);
 chk(pk2 && pk2.kind === "daily" && firedNow.indexOf(pk2.pb) >= 0, "마감 30분 안엔 단타 대신 일봉 매매법", JSON.stringify(pk2));
 chk(W.pbRoutePick({ ...st, daily: { ...st.daily, table: { "*": { NOPE: [9000, 0.6, 0.9] } } }, intra: null }, ctx, now) === null, "뜬 매매법이 표에 없으면 안 산다(안 뜬 매매법으론 안 산다)");
+{ // [V33.662] 프리·애프터 진입 — 정규장 종가 일봉으로 신호 · 시간외 체결가가 종가 ±extGapMax% 안일 때만 · 정규장 중간(마감 30분 밖)은 그대로 안 삼
+  const stD = { ...st, intra: null }, ref = cs[N0 - 1], base = { ...ctx, minToClose: null, bars5: null };
+  const a = W.pbRoutePick(stD, { ...base, session: "post", extPx: ref * 1.01, refPx: ref }, now);
+  const b = W.pbRoutePick(stD, { ...base, session: "post", extPx: ref * 1.05, refPx: ref }, now);
+  const c = W.pbRoutePick(stD, { ...base, session: "pre", extPx: ref * 0.99, refPx: ref }, now);
+  const d = W.pbRoutePick(stD, { ...ctx, minToClose: 200, bars5: null }, now);
+  const e = W.pbRoutePick(stD, { ...base, session: "post", extPx: ref * 1.05, refPx: ref, shadow: true }, now);
+  chk(a && a.kind === "daily" && a.session === "post" && b === null && c && c.session === "pre" && d === null && e && e.outWin === true && e.xGap === 5,
+      "[V33.662] 애프터·프리: 종가 ±2% 안이면 일봉 매매법 매수(장 상태 표시) · 벗어나면 안 삼(관측엔 차이 %) · 정규장 중간은 그대로 안 삼", JSON.stringify([a && a.session, b, c && c.session, d, e && [e.outWin, e.xGap]]));
+}
+{ // [V33.662] 시간외 공통 관문: 매매법 AI 는 위원회 확률 대신 검증 통과로 · trades.session 기록
+  chk(/const _pbRoute = !!\(signal && signal\.isStratRoute && signal\.sr\);/.test(S) && /if \(!_pbRoute && !\(typeof p === "number"/.test(S) && /Math\.floor\(qty \* _clamp\(_num\(et\.sizeMult, 0\.5\)/.test(S),
+      "[V33.662] 시간외 매매법 매수: 확률 바닥만 면제 · 크기 ×0.5 · 세션당 개수 · 체결시각 검증 가격은 그대로");
+  chk(/ALTER TABLE trades ADD COLUMN session TEXT/.test(S) && (S.match(/INSERT INTO trades \(ts, market, symbol, side, qty, price, pnl, pnl_pct, reason, session\)/g) || []).length === 2 && /if \(__tradesSessCol\) return DB\.prepare/.test(S),
+      "[V33.662] trades.session(프리·정규·애프터) — 두 기록 경로 모두 · 칸이 생긴 뒤에만 씀");
+  chk(/intra: \{ symbol: symbol, price: evPrice, prevClose: bq\.prevClose, regPrice: bq\.price/.test(S) && /session: extSessMkt \|\| null, extPx: price, refPx: _pbRef/.test(S),
+      "[V33.662] 메인 루프가 시간외 세션·정규장 종가를 매매법 AI 에 넘긴다");
+}
 chk(W.pbRoutePick({ ...st, ts: now - 40 * 3600000 }, ctx, now) === null, "36시간 넘은 표 → 안 산다");
 chk(W.pbRoutePick({ ...st, daily: { ...st.daily, val: { ...val, pass: false } }, intra: null }, ctx, now) === null, "검증 미통과 봉은 안 쓴다");
 chk(W.pbRoutePick({ ...st, daily: { ...st.daily, table: { "*": { RS_LEADER: [9000, 0.6, 0.9] } }, pb: { RS_LEADER: { stop: 8, atr: 2.5, hold: 30, tpR: null } }, cross: { RS_LEADER: ["AAA"] } }, intra: null }, { ...ctx, minToClose: 20 }, now)?.pb === "RS_LEADER",
@@ -311,7 +329,7 @@ chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"
   chk(/^SR-BE/.test(M3.pbSellRule({ ...pos, meta: { ...pos.meta, peakPrice: 103.3 } }, 99.9).reason || "") && !M3.pbSellRule({ ...pos, meta: { ...pos.meta, peakPrice: 103 } }, 99.9).sell, "본전 이동: 고점이 0.8R(=+3.2%) 넘은 뒤 평단 아래면 SR-BE");
   chk(/if \(pos\.meta && pos\.meta\.sr && pos\.meta\.sr\.sid\) return pbSellRule\(pos, price\);/.test(S) && /!_pairHeld && !\(held\.meta && held\.meta\.sr\)/.test(S),
       "매매법 보유엔 공통 분할익절·트레일·타임스톱·MODEL_EXIT 를 걸지 않는다(시뮬에 없던 매도)");
-  chk(/dWin = ctx\.minToClose != null && ctx\.minToClose <= PB_ROUTE\.dailyEntryWin/.test(S) && M3.PB_ROUTE.dailyEntryWin === 30, "[V33.621] 일봉 매매법 진입은 마감 전 30분(시뮬 = 신호 봉 종가 체결 — 60분이면 그사이 신호가 꺼지는 괴리가 컸다)");
+  chk(/dWin0 = ctx\.minToClose != null && ctx\.minToClose <= PB_ROUTE\.dailyEntryWin/.test(S) && M3.PB_ROUTE.dailyEntryWin === 30, "[V33.621·662] 일봉 매매법 정규장 진입은 마감 전 30분(+ 프리·애프터는 종가 ±2% 안)(시뮬 = 신호 봉 종가 체결 — 60분이면 그사이 신호가 꺼지는 괴리가 컸다)");
   chk(/AVG\(pnl_pct\) AS m FROM trades WHERE market = \? AND side = 'SELL' AND reason LIKE 'SR-%'/.test(S) && /!_secFull && !_braked/.test(S) && /PB_BRAKE = \{ days: 30, minN: 12, mean: -0\.4/.test(S),
       "[V33.621] 실전 손실 제동(최근 30일 실제 청산 12건+ 평균 ≤ −0.4% → 신규 매수 멈춤) · 같은 섹터 보유 상한 3");
   chk(/const _hf = orderedEval\.filter\(function \(it\) \{ return it && heldSymbols\.has\(it\.symbol\); \}\)/.test(S), "[V33.621] 보유 종목은 사이클마다 맨 먼저 평가(마감 창 청산을 놓치지 않게)");

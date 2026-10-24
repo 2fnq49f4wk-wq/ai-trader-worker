@@ -12,6 +12,13 @@
 
 ## Current handoff
 
+- V33.662 (10/24) ★매매법 AI 프리·애프터 진입 · trades.session(체결 장 상태)★ — 사용자: "거래 시간은 정규장뿐 아니라 프리·애프터 포함 · trades 에 어떤 장에서 샀는지".
+  - 확인: 시간외 거래(미 07:00~09:30·16:00~20:00 ET · 한 08:00~08:50·15:40~20:00 KST · extBuyGuard 크기 ×0.5·세션당 신규 2) 는 이미 있었지만
+    매매법 AI(pbRoutePick)만 minToClose ≤ 30(정규장 마감 전 30분)에 묶여 시간외엔 한 번도 안 샀다 · extBuyGuard 의 위원회 확률(≥0.62) 바닥도 매매법 신호엔 값이 없어 막았을 것.
+  - 수정: 시간외 세션이면 ★정규장 종가로 완성된 일봉★(애프터 = 오늘 · 프리 = 어제)으로 신호를 보고 시간외 체결가가 그 종가 ±2%(PB_ROUTE.extGapMax) 안일 때만 매수.
+    extBuyGuard 는 isStratRoute 만 확률 바닥 면제(검증 통과가 관문) · 크기·개수·체결시각 검증은 그대로. 5분 단타는 정규장만(분봉 시뮬).
+  - trades.session TEXT(ALTER · ensureSchema) — pre | regular | post | closed · 체결 시각으로 marketSessionNow. 칸 없는 isolate 는 옛 INSERT(__tradesSessCol).
+    /api/trades 는 옛 행에 시각으로 계산한 session + sessEst=1. 거래 내역 표·CSV 에 '장' 칸. 게이트 check-playbook 4개.
 - V33.661 (10/23) ★실전 회차 결과 반영★ — V33.660 실전(run 39922822820): 한국 매매법 통과 복귀(판정 +1.19% t 3.09 vs 무작위 1.07 · 최근 125일 초과 t −0.17 → 통과) /
   미국 판정 +0.93% < 무작위 1.14% → 미통과(최근 t −1.12 은 통과). OMNI-Q: 미 5일 섀도우(t 3.96)·20일 잠정 · 한 5일 잠정(혼합 라벨 · ② 4/4)·20일 섀도우(마지막 띠 −0.05%).
   - VOL_SURGE_HOLD 퇴출: 실전 시뮬(OMNI-Q 후보 거름) 매매법별 성적 판정 전 −0.76%(n 203) · 판정 −0.82%(n 71) — 전 종목 lab 과 달리 음수.

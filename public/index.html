@@ -194,8 +194,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.661">
-<script src="/neural-observatory.js?v=33.661" defer></script>
+<meta name="lux-build" content="V33.662">
+<script src="/neural-observatory.js?v=33.662" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -3902,6 +3902,7 @@ html[data-theme="light"] .pz-tabs button[aria-selected="true"]{background:#fff;c
   window.LUXR = R;
 })();
 </script>
+<style>/* [V33.662] 체결 장 상태 */.sess-badge{display:inline-block;padding:0 6px;border-radius:4px;font-size:10.5px;border:1px solid var(--line,#2a3446);color:var(--dim,#8695aa)}.sess-pre,.sess-post{color:#ffd166;border-color:#5a4a1a}.sess-regular{color:#4fe3ff;border-color:#1d4a5a}</style>
 </head>
 <body>
 
@@ -10988,7 +10989,7 @@ window.LUX_NV = {
   // [다운로드] 메인 UI의 트레이드 기록을 CSV로 다운로드
   //   메인 화면 표와 동일한 데이터(/api/trades)를 그대로 CSV화한다.
   function tradesToCSV(trades) {
-    var header = ['시간', '시장', '종목', '종목명', '구분', '수량', '가격', 'PnL', 'PnL%', '사유'];
+    var header = ['시간', '시장', '장', '종목', '종목명', '구분', '수량', '가격', 'PnL', 'PnL%', '사유'];
     var lines = [header.join(',')];
     trades.forEach(function(t) {
       var name = (t.market === 'kr' ? krLabel(t.symbol) : usLabel(t.symbol)) || '';
@@ -10998,6 +10999,7 @@ window.LUX_NV = {
       var row = [
         csvCell(fmtTradeTime(t.ts, t.market)),
         csvCell((t.market || '').toUpperCase()),
+        csvCell(tradeSessLabel(t.session)),
         csvCell(t.symbol || ''),
         csvCell(name),
         csvCell(side),
@@ -11310,10 +11312,11 @@ window.LUX_NV = {
     });
   }
 
+  function tradeSessLabel(s) { return s === 'pre' ? '프리' : s === 'regular' ? '정규' : s === 'post' ? '애프터' : s === 'closed' ? '장외' : ''; }   // [V33.662]
   function renderTradesInto(trades, boxId, totalId, winId, avgId, sliceLimit) {
     var box = $(boxId);
     if (!trades || trades.length === 0) { box.innerHTML='<div class="empty">No trades yet</div>'; updateTradesSummaryInto([], totalId, winId, avgId); return; }
-    var html = '<div class="table-wrap"><table class="table"><thead><tr><th>TIME</th><th>MKT</th><th>SYMBOL</th><th>SIDE</th><th class="right">QTY</th><th class="right">PRICE</th><th class="right">PnL</th><th class="right">PnL%</th><th>REASON</th></tr></thead><tbody>';
+    var html = '<div class="table-wrap"><table class="table"><thead><tr><th>TIME</th><th>MKT</th><th>장</th><th>SYMBOL</th><th>SIDE</th><th class="right">QTY</th><th class="right">PRICE</th><th class="right">PnL</th><th class="right">PnL%</th><th>REASON</th></tr></thead><tbody>';
     var rows = sliceLimit ? trades.slice(0, sliceLimit) : trades;
     rows.forEach(function(t){
       var sc = t.side==='BUY'?'trade-buy':'trade-sell';
@@ -11325,7 +11328,10 @@ window.LUX_NV = {
       var name = t.market === 'kr' ? krLabel(t.symbol) : usLabel(t.symbol);
       var label = name ? '<b>'+escapeHtml(t.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(name)+'</span>' : '<b>'+escapeHtml(t.symbol)+'</b>';
       var atype = assetTypeOf(t.market);
-      html += '<tr data-asset-type="'+atype+'"><td style="white-space:nowrap;">'+fmtTradeTime(t.ts, t.market)+'</td><td><span class="market-badge mkt-'+atype+'">'+t.market.toUpperCase()+'</span></td><td>'+label+'</td><td class="'+sc+'">'+t.side+'</td><td class="right">'+fmtNum(t.qty)+'</td><td class="right">'+fmtNum(t.price)+'</td><td class="right '+pc+'">'+pnlText+'</td><td class="right '+pc+'">'+pct+'</td><td class="trade-reason" title="'+escapeHtml(t.reason||'')+'">'+escapeHtml(t.reason||'')+'</td></tr>';
+      /* [V33.662] 체결 장 상태(프리·정규·애프터) — sessEst = 칸 생기기 전 행(체결 시각으로 계산) */
+      var sx = tradeSessLabel(t.session);
+      var sCell = sx ? '<span class="sess-badge sess-'+escapeHtml(t.session)+'" title="'+(t.sessEst ? '체결 시각으로 계산' : '체결 때 기록')+'">'+sx+'</span>' : '-';
+      html += '<tr data-asset-type="'+atype+'"><td style="white-space:nowrap;">'+fmtTradeTime(t.ts, t.market)+'</td><td><span class="market-badge mkt-'+atype+'">'+t.market.toUpperCase()+'</span></td><td style="white-space:nowrap;">'+sCell+'</td><td>'+label+'</td><td class="'+sc+'">'+t.side+'</td><td class="right">'+fmtNum(t.qty)+'</td><td class="right">'+fmtNum(t.price)+'</td><td class="right '+pc+'">'+pnlText+'</td><td class="right '+pc+'">'+pct+'</td><td class="trade-reason" title="'+escapeHtml(t.reason||'')+'">'+escapeHtml(t.reason||'')+'</td></tr>';
     });
     box.innerHTML = html + '</tbody></table></div>';
     updateTradesSummaryInto(trades, totalId, winId, avgId);
@@ -21280,12 +21286,12 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.661">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.661">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.661">
-<link rel="stylesheet" href="/model-evidence.css?v=33.661">
+<link rel="stylesheet" href="/brain-console.css?v=33.662">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.662">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.662">
+<link rel="stylesheet" href="/model-evidence.css?v=33.662">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.661">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.662">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -21312,7 +21318,7 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
   setTimeout(reveal, 9500);
 })();
 </script>
-<script src="/model-evidence.js?v=33.661"></script>
-<script src="/workspace-ui.js?v=33.661"></script>
+<script src="/model-evidence.js?v=33.662"></script>
+<script src="/workspace-ui.js?v=33.662"></script>
 </body>
 </html>

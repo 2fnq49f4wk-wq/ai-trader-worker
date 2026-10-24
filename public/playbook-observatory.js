@@ -173,7 +173,7 @@
     var why = !r ? '학습기(GitHub Actions)가 아직 이 시장 표를 올리지 않았습니다.'
       : (r.brake && r.brake.on) ? '최근 30일 실제 청산 ' + r.brake.n + '건 평균 ' + r.brake.mean + '% — 시뮬과 실전이 갈라져 새로 사지 않습니다(보유 청산은 그대로).'
       : r.primary ? '겹치지 않는 판정 구간 두 곳에서 검증을 통과해 매매법 AI 가 정규 크기(×1.0)로 삽니다.'
-      : dPass ? '최근 학습의 판정 구간을 통과해 마감 전 30분에 절반 크기로 삽니다(하루 최대 3건 · 동시 6종목). 겹치지 않는 판정 구간 두 곳에서 통과하면 주력(×1.0)이 됩니다 — 독립 통과 ' + (r.indep || 0) + '/2 · 연속 통과 ' + (r.passStreak || 0) + '회.'
+      : dPass ? '최근 학습의 판정 구간을 통과해 정규장 마감 전 30분 · 프리·애프터마켓(종가 ±2% 안)에 절반 크기로 삽니다(하루 최대 3건 · 동시 6종목). 겹치지 않는 판정 구간 두 곳에서 통과하면 주력(×1.0)이 됩니다 — 독립 통과 ' + (r.indep || 0) + '/2 · 연속 통과 ' + (r.passStreak || 0) + '회.'
       : '최근 학습의 판정 구간을 통과하지 못해 후보마다 무엇을 골랐을지 계산만 하고 사지 않습니다(독립 통과 ' + (r.indep || 0) + '/2).';
     return '<section class="k-panel k-brief"><div><span class="k-lab">PLAYBOOK · DECISION STATE</span><strong>' + esc(head) + '</strong><p>' + esc(why) + '</p></div>' +
       '<div><span class="k-lab">CANDIDATES</span><dd>' + ((lv && lv.n) || 0) + '</dd><small>OMNI-Q 상위 ' + candPct(j, mk) + '% 평가</small></div>' +
