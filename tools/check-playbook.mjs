@@ -362,6 +362,9 @@ chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"
       "미·한 둘 다 주력이면 위원회 학습(워커) 퇴역");
   chk(/위원회 학습 건너뜀/.test(readFileSync(dir + "train_gha.py", "utf8")), "미·한 둘 다 주력이면 위원회 학습(GitHub Actions) 퇴역"); }
 { const Q = readFileSync(dir + "playbook_sim.py", "utf8");
+  chk(/LAG_FIX = os\.environ\.get\("PB_LAG_FIX", "1"\) != "0"/.test(Q) && /out = np\.vstack\(\[np\.zeros\(\(1, out\.shape\[1\]\), dtype=bool\), out\[:-1\]\]\)/.test(Q)
+      && /sig\[pb\] = sig\[pb\]\.shift\(1, fill_value=False\)/.test(Q) && /P\["_grp"\] = _lag1\(P\["_grp_now"\]\)/.test(Q) && /def _cross_now\(pb\)/.test(Q),
+      "[V33.671] 시뮬 = 실전 시점: 횡단면 3종 신호·OMNI-Q 후보·변동성 그룹을 하루 늦춤(워커는 학습기 목록을 다음 거래일에 씀) · 워커에 보내는 오늘 목록은 늦추기 전");
   chk(/SPLIT = \(0\.60, 0\.80\)/.test(Q) && /ho = df\[df\[timecol\] >= c2\]/.test(Q), "검증 3구간: 규칙은 [60,80%) 에서 고르고 판정은 손대지 않은 [80,100%) 에서만");
   chk(/busy\.get\(r\.j, -1\) >= r\.t/.test(Q), "검증도 실전처럼 같은 종목은 앞 거래가 끝나야 다시 산다(겹친 표본으로 t 를 부풀리지 않는다)");
   chk(/REC_T = -2\.0/.test(Q) && /rec\["t"\] > REC_T/.test(Q) && !/rx\.mean\(\) > rb\)\)/.test(Q),

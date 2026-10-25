@@ -53,6 +53,19 @@ for _id, _p in DAILY_PB.items():
     if _h == "snap":
         _p.update(SNAP_MR)
         _p["hold"] = max(_p["hold"], 8)
+# [V33.671] ★시뮬 = 실전 시점★ — 학습기가 장 마감 뒤 만든 목록·점수·그룹을 워커는 ★다음 거래일★ 에 쓴다.
+#   종전 시뮬은 횡단면 3종 신호 · OMNI-Q 후보 · 변동성 그룹을 '그날 값' 으로 써 실전보다 하루 빠른 정보를 봤다(자가 점검 10/25).
+#   LAG_FIX=1(기본): 셋 다 하루 늦춘다. PB_LAG_FIX=0 은 비교 실험용.
+LAG_FIX = os.environ.get("PB_LAG_FIX", "1") != "0"
+
+
+def _lag1(a):
+    """날짜×종목 bool/정수 배열을 하루 늦춘다(첫날은 거짓/−1)."""
+    a = np.asarray(a)
+    fill = -1 if a.dtype.kind in "iu" else False
+    return np.vstack([np.full((1,) + a.shape[1:], fill, dtype=a.dtype), a[:-1]])
+
+
 CROSS_PB = ("RS_LEADER", "XS_ARB", "DUAL_MOM")   # 횡단면(전 종목 순위) 조건 — 워커는 학습기가 보낸 '오늘 뜬 종목' 목록을 쓴다
 # 5분 단타: 진입 조건(오늘 5분봉) + tpPct/sl % · bars = 최대 5분봉 수(0 = 장 끝까지) · 장 끝에는 무조건 판다
 INTRA_PB = {
@@ -376,7 +389,10 @@ def cand_mask(P, oos, q=None, head="5"):
         return None
     M[np.ix_(ra, cb)] = oos["sc"][np.ix_(a[ra], b[cb])]
     rk = pd.DataFrame(M).rank(axis=1, pct=True).values
-    return np.nan_to_num(rk, nan=0.0) >= (CAND_Q if q is None else q)
+    out = np.nan_to_num(rk, nan=0.0) >= (CAND_Q if q is None else q)
+    if LAG_FIX:   # [V33.671] 실전 = 전날 학습기 점수로 오늘 후보 → 시뮬도 하루 늦은 점수
+        out = np.vstack([np.zeros((1, out.shape[1]), dtype=bool), out[:-1]])
+    return out
 
 
 def _mr_exit(P):
@@ -760,7 +776,10 @@ def param_tune(P, market, sig, dpb, pbs_list, cand=None, log=print, budget_s=PTU
             M = (G == g) & CM
 
             def S_of(ep, pr):
-                s_ = PP.sig(P, pb, ep) & M & np.isfinite(ex_of(pr))
+                s0_ = PP.sig(P, pb, ep)
+                if LAG_FIX and pb in CROSS_PB:
+                    s0_ = _lag1(s0_)   # [V33.671] 횡단면은 실전처럼 하루 늦게
+                s_ = s0_ & M & np.isfinite(ex_of(pr))
                 if lo is not None:
                     s_ = s_ & lo
                 for f_ in flt:
@@ -816,7 +835,8 @@ def grouped_sig(P, pb, ep_by_g, base_sig):
     for g_, ep in ep_by_g.items():
         if ep:
             m = G == int(g_)
-            out = np.where(m, PP.sig(P, pb, ep), out)
+            s_ = PP.sig(P, pb, ep)
+            out = np.where(m, _lag1(s_) if (LAG_FIX and pb in CROSS_PB) else s_, out)
     return pd.DataFrame(out, index=base_sig[pb].index, columns=base_sig[pb].columns)
 
 
@@ -1337,6 +1357,11 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             log("   · [매매법시뮬] %s 일봉 부족 — 건너뜀" % market)
             continue
         sig = CAT.signals(P)
+        sig_now = {pb: sig[pb].fillna(False).values[-1].astype(bool).copy() for pb in CROSS_PB if pb in sig}   # 워커에 보낼 '오늘 목록'(늦추기 전)
+        if LAG_FIX:
+            for pb in CROSS_PB:
+                if pb in sig:
+                    sig[pb] = sig[pb].shift(1, fill_value=False)
         try:
             dpb, tune_rep = tune_daily(P, market, sig, log=log, skip=PB_OFF.get(market, ()))   # [V33.619] 매매법 자동 조율(앞 55% 만)
         except Exception as e:  # noqa: BLE001
@@ -1357,7 +1382,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             _ng = NEW_PB_GRP.get(market, {})
             if _ng:   # [V33.665] 그룹 한정 단타 — 그 그룹 종목만(오늘 목록도 같은 그룹)
                 if P.get("_grp") is None:
-                    P["_grp"] = PP.groups(P, PTUNE_GROUPS)
+                    P["_grp_now"] = PP.groups(P, PTUNE_GROUPS)
+                    P["_grp"] = _lag1(P["_grp_now"]) if LAG_FIX else P["_grp_now"]
                 for nm, g_ in _ng.items():
                     if nm in _ns:
                         _ns[nm] = _ns[nm] & pd.DataFrame(P["_grp"] == g_, index=_ns[nm].index, columns=_ns[nm].columns)
@@ -1370,7 +1396,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                                onlyGrp=_ng.get(nm))   # [V33.665] 화면: 그룹 한정
         log("   · [매매법시뮬] %s 매매법 %d종 사용 · 퇴출 %d종(성적 미달)" % (market, len(dpb), len(_off)))
         if P.get("_grp") is None:
-            P["_grp"] = PP.groups(P, PTUNE_GROUPS)
+            P["_grp_now"] = PP.groups(P, PTUNE_GROUPS)
+            P["_grp"] = _lag1(P["_grp_now"]) if LAG_FIX else P["_grp_now"]   # [V33.671] 시뮬은 어제 그룹(워커는 학습기가 보낸 그룹을 다음 날 씀)
         # [V33.620] ★후보 폭도 검증이 고른다★ — OMNI-Q 상위 20·40·60%(사용자 10/15 "가장 유리한 방식 · 매수 신호가 나올 넉넉함").
         #   [V33.622] 머리(5일·20일·평균) × 폭 + 거름 없음 = 10 설정. 검증 구간 [60,80%) 에서 고른 규칙의 ★t★ 가 가장 큰(평균 > 0 · 거래 ≥ VAL_MIN_N) 설정 —
         #   평균 최대로 고르면 무작위 시세에서 판정 구간 거래 0 인 설정을 골랐다(다중 비교의 함정). 판정 구간은 고르기에 안 쓴다.
@@ -1477,7 +1504,13 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         except Exception as e:  # noqa: BLE001
             log("   ⚠️ [매매법시뮬] 손절 진단 실패 %s" % e)
         syms_all = list(P["close"].columns)
-        cross = {pb: [syms_all[j] for j in np.nonzero(sig[pb].values[-1])[0]] for pb in CROSS_PB if pb in sig and pb in dpb}
+        def _cross_now(pb):   # [V33.671] 오늘 목록 = 늦추기 전 신호(그룹 조율 채택분은 그 그룹의 미지수로)
+            row = sig_now[pb].copy()
+            for g_, ep in ((dpb.get(pb) or {}).get("ep") or {}).items():
+                m = P.get("_grp_now", P["_grp"])[-1] == int(g_)
+                row = np.where(m, PP.sig(P, pb, ep)[-1], row)
+            return row
+        cross = {pb: [syms_all[j] for j in np.nonzero(_cross_now(pb))[0]] for pb in CROSS_PB if pb in sig_now and pb in dpb}
         for nm, row in mod_now.items():   # [V33.651] 보조 매매법 오늘 목록(워커는 다음 거래일 종가 무렵 산다)
             cross[nm] = [syms_all[j] for j in np.nonzero(row)[0]]
         _r = dst.get("rule") or {}
@@ -1513,7 +1546,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 import requests
                 body = {"mkt": market, "day": str(P["close"].index[-1]), "regime": reg_now, "sector": (sector or {}).get(market), "panic": panic_now,
                         "daily": {"val": dst, "table": export(dtab, list(DAILY_PB)), "pb": dpb, "cross": cross, "gate": gate_live, "tier2": tier2,
-                                  "grp": ({syms_all[j]: int(g_) for j, g_ in enumerate(P["_grp"][-1]) if g_ >= 0} if P.get("_grp") is not None else None),   # [V33.664] 종목 → 변동성 그룹(오늘)
+                                  "grp": ({syms_all[j]: int(g_) for j, g_ in enumerate(P.get("_grp_now", P.get("_grp"))[-1]) if g_ >= 0} if P.get("_grp") is not None else None),   # [V33.664] 종목 → 변동성 그룹(오늘)
                                   "ptune": ptune_rep, "epDef": {k: v[1] for k, v in PP.ENTRY.items()}, "epLad": dict({k: v[2] for k, v in PP.ENTRY.items()}, _mods=PP.MODS),
                                   "rs6": {syms_all[j]: round(float(x), 3) for j, x in enumerate(PP.rs6(P).values[-1]) if x == x}},   # [V33.667] 6개월 순위(오늘 · 워커는 다음 거래일에 '어제 값' 으로 씀)
                         "intra": {"val": ist, "table": export(itab, list(INTRA_PB)), "pb": {k: v for k, v in INTRA_PB.items() if k not in INTRA_OFF.get(market, ())}}}
