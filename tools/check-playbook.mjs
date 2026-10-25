@@ -121,7 +121,7 @@ const getMA = (h, p) => { if (!Array.isArray(h) || h.length < p) return null; le
 const getRSI = () => 25;
 const STRAT_ROUTE = { enabled: true, freshMs: 36 * 3600000, calPerTradingDay: 1.45 };
 const MACRO_SCHED = { us: { fed_rate: ["2026-10-28"], cpi: ["2026-11-10"] } };
-const W = new Function("_num", "getMA", "getRSI", "STRAT_ROUTE", "MACRO_SCHED", fnSrc + "; return { PB_EP_DEF, PB_KEYS, PB_ROUTE, pbDailyKeys, pbIntraKeys, pbChoose, _pbPass, pbRoutePick, pbExitWhy, pbEvNear, pbDailyFires, pbIntraFires, pbAgg5, pbLiveDaily, pbLiveFilterOk };")(_num, getMA, getRSI, STRAT_ROUTE, MACRO_SCHED);
+const W = new Function("_num", "getMA", "getRSI", "STRAT_ROUTE", "MACRO_SCHED", fnSrc + "; return { PB_ABS_TRIAL, PB_EP_DEF, PB_KEYS, PB_ROUTE, pbDailyKeys, pbIntraKeys, pbChoose, _pbPass, pbRoutePick, pbExitWhy, pbEvNear, pbDailyFires, pbIntraFires, pbAgg5, pbLiveDaily, pbLiveFilterOk };")(_num, getMA, getRSI, STRAT_ROUTE, MACRO_SCHED);
 
 if (o) {
   chk(o.tab5len === 5 && o.rules.some((x) => x.score === "mpd") && o.rules.some((x) => x.score === "lcbpd") && o.chLow && o.chLow[0] === "A", "[V33.618] 학습기: 표 = (n,w,m,lcb,hd) · 하루당 규칙 · 승률 30% 도 고른다");
@@ -282,6 +282,15 @@ chk(W.pbRoutePick({ ...st, daily: { ...st.daily, table: { "*": { NOPE: [9000, 0.
   const e = W.pbRoutePick(stD, { ...base, session: "post", extPx: ref * 1.05, refPx: ref, shadow: true }, now);
   chk(a && a.kind === "daily" && a.session === "post" && b === null && c && c.session === "pre" && d === null && e && e.outWin === true && e.xGap === 5,
       "[V33.662] 애프터·프리: 종가 ±2% 안이면 일봉 매매법 매수(장 상태 표시) · 벗어나면 안 삼(관측엔 차이 %) · 정규장 중간은 그대로 안 삼", JSON.stringify([a && a.session, b, c && c.session, d, e && [e.outWin, e.xGap]]));
+}
+{ // [V33.669] 미국 절대 성적 기준 시험 매수(사용자 승인) — 미국만 · 주력은 종전 기준 · 최근 확실한 악화면 안 삼
+  const vA = { ...val, pass: false, n: 3000, mean: 0.75, t: 2.96, base: 0.94, recent: { ok: true } };
+  const stA = { ...st, intra: null, daily: { ...st.daily, val: vA } }, cU = { ...ctx, minToClose: 20, bars5: null, symbol: "AAA" }, cK = { ...cU, symbol: "005930.KS" };
+  const u1 = W.pbRoutePick({ ...stA, mkt: "us" }, cU, now), k1 = W.pbRoutePick({ ...stA, mkt: "kr" }, cK, now);
+  const u2 = W.pbRoutePick({ ...stA, mkt: "us", daily: { ...stA.daily, val: { ...vA, recent: { ok: false } } } }, cU, now);
+  const u3 = W.pbRoutePick({ ...stA, mkt: "us", daily: { ...stA.daily, val: { ...vA, t: 1.5 } } }, cU, now);
+  chk(u1 && u1.kind === "daily" && k1 === null && u2 === null && u3 === null && /pbPrimaryOn\(st, nowMs\) \{ return !!\(st && st\.daily && _pbPass\(st\.daily\.val\)/.test(S),
+      "[V33.669] 미국: 무작위 미달이어도 평균>0·t≥2·최근 악화 없음이면 시험 매수 / 한국은 안 삼 / t<2·최근 악화면 안 삼 / 주력은 종전 기준", JSON.stringify([u1 && u1.pb, k1, u2, u3]));
 }
 { // [V33.664] 종목 그룹 → 그 그룹의 진입·청산 미지수(학습기가 시스템 검증을 통과시킨 것만 보냄)
   const P0 = firedNow.find((x) => W.PB_EP_DEF && x in W.PB_EP_DEF) || firedNow[0], d0 = (W.PB_EP_DEF || {})[P0] || {}, k0 = Object.keys(d0)[0];

@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.668";
+const _BUILD_VER = "V33.669";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13961,12 +13961,20 @@ function pbGateOff(daily, fired) {
   return (fired || []).filter(function (pb) { const x = g[pb]; return Array.isArray(x) && _num(x[0], 0) >= PB_GATE_MIN && _num(x[1], 0) < 0; });
 }
 function _pbPass(v) { return !!(v && v.pass === true && _num(v.n, 0) >= 30 && _num(v.mean, 0) > 0 && _num(v.t, 0) >= 2 && _num(v.mean, -99) > _num(v.base, 99)); }
+/* [V33.669] ★미국 절대 성적 기준 시험 매수★ — 사용자 10/25 승인("미국 절대 성적 기준으로 시험 매수 적용").
+   미국 판정 구간은 수익(+0.75% · t 2.96)인데 '무작위로 골랐을 때보다 나음' 만 못 넘었다(+0.94% · 원인: 2016~23 로 배운 선택 기준이 2024~26 국면에 안 맞음 · AI_HANDOFF 10/25).
+   미국만: 판정 구간 거래 ≥ 30 · 평균 > 0 · t ≥ 2 · 최근 125일 확실한 악화 없음 → ★시험 매수(절반 크기)만★. 주력(정규 크기)은 종전대로 '무작위보다 나음' 2회 독립 통과(_pbPass).
+   실전 손실 제동(pbLiveBrake) · 하루·동시 상한 · 공황 차단은 그대로. 끄려면 PB_ABS_TRIAL.us = false. */
+const PB_ABS_TRIAL = { us: true, kr: false };
+function _pbAbsOk(v) { return !!(v && _num(v.n, 0) >= 30 && _num(v.mean, 0) > 0 && _num(v.t, 0) >= 2 && !(v.recent && v.recent.ok === false)); }
+function pbDailyTrialOk(st, mk) { const v = st && st.daily && st.daily.val; return _pbPass(v) || !!(PB_ABS_TRIAL[mk] && _pbAbsOk(v)); }
+function _pbMkOf(st, symbol) { return (st && (st.mkt === "us" || st.mkt === "kr")) ? st.mkt : (/\.(KS|KQ)$/.test(String(symbol || "")) ? "kr" : "us"); }
 // 실시간 선택(순수 함수) — ctx: { reg, symbol, D(pbLiveDaily), bars5(pbAgg5) | null, prevClose, evNear, minToClose }
 function pbRoutePick(st, ctx, nowMs) {
   if (!STRAT_ROUTE.enabled || !st || !(nowMs - _num(st.ts, 0) <= STRAT_ROUTE.freshMs)) return null;
   const D = ctx.D;
   let best = null;
-  const dOk = st.daily && (ctx.shadow || _pbPass(st.daily.val));
+  const dOk = st.daily && (ctx.shadow || pbDailyTrialOk(st, _pbMkOf(st, ctx.symbol)));   // [V33.669] 미국은 절대 성적 기준으로도 시험 매수
   const dWin0 = ctx.minToClose != null && ctx.minToClose <= PB_ROUTE.dailyEntryWin;   // [V33.610] 정규장은 마감 전 30분 — 시뮬이 '신호 봉 종가에 산다'
   /* [V33.662] ★프리·애프터 진입★(사용자 10/24 "거래 시간은 정규장뿐 아니라 프리·애프터 포함") — 신호는 ★정규장 종가로 완성된 일봉★(애프터 = 오늘 · 프리 = 어제)으로 보고,
      시간외 체결가가 그 종가에서 ±extGapMax% 안일 때만 산다(시뮬의 '신호 봉 종가 매수' 와 어긋나지 않게). 크기·세션당 개수는 공통 시간외 관문(extBuyGuard). */
@@ -26844,7 +26852,7 @@ async function runTradingCycle(env) {
                              act: null, why: null };
               pbRecExtra(_rec, _sh, _pbCtx.D);
               if (_held) _rec.why = "보유 중";
-              else if (!_sp) _rec.why = (_sh && _sh.why) || (_sh && _sh.pb ? (_sh.outWin && _sh.kind === "daily" && __sr.daily && _pbPass(__sr.daily.val) ? (_sh.xGap != null ? "시간외 가격이 종가에서 " + _sh.xGap + "% 벗어남(±" + PB_ROUTE.extGapMax + "% 안에서만 매수)" : "정규장 마감 전 30분 · 프리·애프터에 매수 판정") : "검증 미통과 — 기록만(그림자)") : "고를 매매법 없음");
+              else if (!_sp) _rec.why = (_sh && _sh.why) || (_sh && _sh.pb ? (_sh.outWin && _sh.kind === "daily" && __sr.daily && pbDailyTrialOk(__sr, market) ? (_sh.xGap != null ? "시간외 가격이 종가에서 " + _sh.xGap + "% 벗어남(±" + PB_ROUTE.extGapMax + "% 안에서만 매수)" : "정규장 마감 전 30분 · 프리·애프터에 매수 판정") : "검증 미통과 — 기록만(그림자)") : "고를 매매법 없음");
               else if (!_canBuy) _rec.why = crashGate.blockNew ? "폭락 관문 — 신규 매수 금지" : !canTrade ? "거래 불가 시간"
                 : _braked ? "실전 손실 제동(최근 30일 " + __pbBrake.n + "건 평균 " + __pbBrake.mean + "%)" : _secFull ? "같은 섹터 보유 상한(" + _pbSec + " " + PB_SECTOR_MAX + ")" : "매매법 AI 상한";
               if (_sp && _canBuy) {
@@ -31509,6 +31517,7 @@ async function handleRequest(request, env, ctx, _inner) {
       const rec = { ts: Date.now(), day: String(body.day || ""), regime: String(body.regime || "NEUTRAL"), daily: part(body.daily), intra: part(body.intra),
                     sector: (body.sector && typeof body.sector === "object") ? body.sector : null,
                     panic: body.panic === true };   // [V33.625] 공황 국면(학습기 _panic 마지막 날) — 추세·모멘텀 진입 차단   // [V33.621] 종목 → 섹터(학습기 자동 배정 · 섹터 보유 상한)
+      rec.mkt = mk;   // [V33.669] 시장 표시(절대 기준 시험 매수 판정)
       rec.pass = { daily: _pbPass(rec.daily && rec.daily.val), intra: _pbPass(rec.intra && rec.intra.val) };
       try { const _prev = await getState(env.DB, "playbook:" + mk, null); rec.passStreak = rec.pass.daily ? _num(_prev && _prev.passStreak, 0) + 1 : 0;
         /* [V33.626] 통과한 판정 구간 시작일 기록(최근 12개) — 실패가 끼어도 지우지 않는다(독립 구간 두 번 통과 · 지금 통과 중 · 연속 2회 셋 다 필요) */
@@ -31527,7 +31536,8 @@ async function handleRequest(request, env, ctx, _inner) {
       const out = {};
       for (const mk of ["us", "kr"]) {
         const r = await getState(env.DB, "playbook:" + mk, null);
-        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, panic: r.panic === true, pass: r.pass, primary: pbPrimaryOn(r, Date.now()), passStreak: r.passStreak || 0, indep: pbIndepPasses(r.passLog),
+        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, panic: r.panic === true,
+                        pass: Object.assign({}, r.pass || {}, { absTrial: !(r.pass && r.pass.daily) && !!(PB_ABS_TRIAL[mk] && _pbAbsOk(r.daily && r.daily.val)) }),   // [V33.669] primary: pbPrimaryOn(r, Date.now()), passStreak: r.passStreak || 0, indep: pbIndepPasses(r.passLog),
                         brake: await getState(env.DB, "pb_brake:" + mk, null).catch(function () { return null; }),
                         daily: r.daily && { val: r.daily.val, cells: Object.keys(r.daily.table || {}).length, pb: r.daily.pb, gate: r.daily.gate || null,
                                             tier2: r.daily.tier2 || [], ptune: r.daily.ptune || null, epDef: r.daily.epDef || null, epLad: r.daily.epLad || null,   // [V33.664]

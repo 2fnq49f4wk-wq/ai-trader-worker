@@ -168,12 +168,13 @@
     var items = (lv && lv.items) || [];
     var fired = lv && lv.f != null ? lv.f : items.filter(function (x) { return x.fired && x.fired.length; }).length, chosen = lv && lv.c != null ? lv.c : items.filter(function (x) { return x.pb; }).length, act = lv && lv.a != null ? lv.a : items.filter(function (x) { return x.act; }).length;
     /* [V33.656] 상태 4가지 — 종전엔 '검증 통과(시험 매수)' 칸이 없어 통과한 시장도 '검증 전 — 그림자 판정' 으로 보였다 · 퇴역한 AI_PRIMARY 문구 제거 */
-    var dPass = !!(r && r.pass && r.pass.daily);
-    var head = !r ? '매매법 표 대기' : (r.brake && r.brake.on) ? '실전 손실 제동 — 신규 매수 멈춤' : r.primary ? '매매법 AI 주력 운용' : dPass ? '검증 통과 — 시험 매수(절반 크기)' : '검증 미통과 — 그림자 판정';
+    var dPass = !!(r && r.pass && r.pass.daily), aPass = !dPass && !!(r && r.pass && r.pass.absTrial);   // [V33.669] 미국 절대 성적 기준 시험 매수
+    var head = !r ? '매매법 표 대기' : (r.brake && r.brake.on) ? '실전 손실 제동 — 신규 매수 멈춤' : r.primary ? '매매법 AI 주력 운용' : dPass ? '검증 통과 — 시험 매수(절반 크기)' : aPass ? '절대 성적 기준 — 시험 매수(절반 크기)' : '검증 미통과 — 그림자 판정';
     var why = !r ? '학습기(GitHub Actions)가 아직 이 시장 표를 올리지 않았습니다.'
       : (r.brake && r.brake.on) ? '최근 30일 실제 청산 ' + r.brake.n + '건 평균 ' + r.brake.mean + '% — 시뮬과 실전이 갈라져 새로 사지 않습니다(보유 청산은 그대로).'
       : r.primary ? '겹치지 않는 판정 구간 두 곳에서 검증을 통과해 매매법 AI 가 정규 크기(×1.0)로 삽니다.'
       : dPass ? '최근 학습의 판정 구간을 통과해 정규장 마감 전 30분 · 프리·애프터마켓(종가 ±2% 안)에 절반 크기로 삽니다(하루 최대 3건 · 동시 6종목). 겹치지 않는 판정 구간 두 곳에서 통과하면 주력(×1.0)이 됩니다 — 독립 통과 ' + (r.indep || 0) + '/2 · 연속 통과 ' + (r.passStreak || 0) + '회.'
+      : aPass ? '판정 구간에서 수익(평균 > 0 · t ≥ 2)이지만 무작위로 골랐을 때보다는 낫지 않아, 사용자 승인(10/25)에 따라 절대 성적 기준으로 절반 크기만 삽니다. 주력(×1.0)은 무작위보다 나음을 독립 구간 두 번 통과해야 합니다.'
       : '최근 학습의 판정 구간을 통과하지 못해 후보마다 무엇을 골랐을지 계산만 하고 사지 않습니다(독립 통과 ' + (r.indep || 0) + '/2).';
     return '<section class="k-panel k-brief"><div><span class="k-lab">PLAYBOOK · DECISION STATE</span><strong>' + esc(head) + '</strong><p>' + esc(why) + '</p></div>' +
       '<div><span class="k-lab">CANDIDATES</span><dd>' + ((lv && lv.n) || 0) + '</dd><small>OMNI-Q 상위 ' + candPct(j, mk) + '% 평가</small></div>' +

@@ -130,7 +130,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
             {fin(V.base) && <div style={{ position: "absolute", top: -2, bottom: -2, left: "calc(" + pos(V.base, 3) + "% - 1px)", width: 2, background: INK }} />}
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 11, color: FAINT }}><span>−3%</span><span>0</span><span>+3%</span></div>
-          <div style={{ fontSize: 13, color: pass ? POS : NEG }}>{pass ? "검증 통과 — 무작위보다 낫고 t ≥ 2 · 최근 확실한 악화 없음" : RC && RC.ok === false && V.t >= 2 && V.mean > V.base ? "미통과 — 판정 구간은 좋지만 최근 " + (RC.days || 125) + "일이 확실히 나빠짐" : "미통과 — 실전 매수 없이 관측만(그림자 판정)"}</div>
+          <div style={{ fontSize: 13, color: pass ? POS : R.pass && R.pass.absTrial ? HL : NEG }}>{pass ? "검증 통과 — 무작위보다 낫고 t ≥ 2 · 최근 확실한 악화 없음" : R.pass && R.pass.absTrial ? "절대 성적 기준 시험 매수(절반 크기) — 수익(평균 > 0 · t ≥ 2)이지만 무작위보다 낫지 않음 · 사용자 승인 10/25" : RC && RC.ok === false && V.t >= 2 && V.mean > V.base ? "미통과 — 판정 구간은 좋지만 최근 " + (RC.days || 125) + "일이 확실히 나빠짐" : "미통과 — 실전 매수 없이 관측만(그림자 판정)"}</div>
         </div>
         {[["t 값", fin(V.t) ? V.t.toFixed(2) : "—", "통과 기준 ≥ 2.0", fin(V.t) ? (V.t >= 2 ? POS : V.t < 0 ? NEG : INK) : MUTE],
           ["승률 · 표본", fin(V.win) ? V.win.toFixed(1) + "%" : "—", "거래 " + n0(V.n) + "건 · 전부 평균 " + sg(V.baseAll) + "%", INK],
