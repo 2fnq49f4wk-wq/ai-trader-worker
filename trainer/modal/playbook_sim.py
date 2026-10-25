@@ -1442,7 +1442,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                     pbs2 = dict(dpb)
                     pbs2[pb] = dict(dpb[pb], ep={g_: v[0] for g_, v in gmap.items() if v[0]}, grp={g_: v[1] for g_, v in gmap.items() if v[1]})
                     vm, vt, vp, st2, d2 = _vsys(sig2, pbs2)
-                    ok = bool(vm is not None and bm is not None and vm >= bm and vt >= bt and (vp or not bp))
+                    # [V33.668] 동률은 채택 안 함 — 실전 회차에서 미 RS_LEADER@저변동이 검증 1.628%·t 4.34 그대로(효과 0)인데 '채택' 됐다. 평균·t 중 하나는 실제로 올라야 한다
+                    ok = bool(vm is not None and bm is not None and vm >= bm and vt >= bt and (vm > bm or vt > bt) and (vp or not bp))
                     ptune_rep["sys"].append({"pb": pb, "groups": sorted(gmap), "val": [vm, vt, vp], "ok": ok})
                     log("   · [미지수조율] %s %s 시스템 검증 구간 평균 %s→%s · t %.2f→%.2f → %s" % (market, pb, bm, vm, bt, vt, "채택" if ok else "보류(시스템을 낮춤)"))
                     if ok:
