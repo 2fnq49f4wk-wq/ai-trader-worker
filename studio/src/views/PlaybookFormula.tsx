@@ -166,7 +166,7 @@ export function ParamTab({ R, name }: { R: any; name: (k: string) => string }) {
       </div>
       {D.meta && (
         <div style={{ ...card, padding: "12px 16px" }}>
-          <div style={{ fontSize: 12, color: DIM, marginBottom: 8 }}>고차원 수식 — 진입 날 지표 11개의 선형 수식으로 '이번 신호의 기대 수익' 예측 · 예측 하위 신호를 거름(계수는 검증 전 구간으로만)</div>
+          <div style={{ fontSize: 12, color: DIM, marginBottom: 8 }}>고차원 수식 — 진입 날 지표 11개의 선형 수식으로 '이번 신호의 기대 수익' 예측 · 예측 하위 신호를 거름(계수는 검증 전 구간으로만 · 검증 평균 +0.05%p 이상 · t 안 낮출 때만 채택)</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10, fontSize: 13 }}>
             {[{ q: 0, val: D.meta.base, ok: true, label: "안 거름(기준)" }].concat((D.meta.cmp || []).map((c: any) => ({ ...c, label: "하위 " + Math.round(c.q * 100) + "% 거름" }))).map((c: any, i: number) => {
               const on = D.meta.pick == null ? c.q === 0 : c.q === D.meta.pick;

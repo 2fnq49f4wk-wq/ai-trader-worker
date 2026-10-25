@@ -1559,7 +1559,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 st_m, _ = validate(d_m, "t")
                 vm_ = next((c_ for c_ in (st_m.get("valCmp") or []) if c_.get("rule") == st_m.get("rule")), {}) or {}
                 vm, vt, vp = vm_.get("mean"), vm_.get("t") or 0.0, bool(st_m.get("pass"))
-                ok = bool(vm is not None and bm is not None and vm >= bm and vt >= bt and (vm > bm or vt > bt) and (vp or not bp))
+                # [V33.673] 조율기와 같은 여유(TUNE_MARGIN) — 검증 평균 +0.045%p 같은 잡음 차이로는 안 쓴다(10/25 한국: 판정 1.32→0.94%)
+                ok = bool(vm is not None and bm is not None and vm >= bm + TUNE_MARGIN and vt >= bt and (vp or not bp))
                 meta_rep["cmp"].append({"q": q_, "val": [vm, vt, vp], "ok": ok, "ho": [st_m.get("mean"), st_m.get("t"), st_m.get("base")]})
                 log("   · [고차원수식] %s 하위 %d%% 거름 — 검증 평균 %s→%s · t %.2f→%.2f → %s" % (market, int(q_ * 100), bm, vm, bt, vt, "후보" if ok else "안 씀"))
                 if ok and (best is None or vt > best[0]):

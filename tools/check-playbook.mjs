@@ -390,7 +390,8 @@ chk(/playbook_sim\.run\(/.test(readFileSync(dir + "omniq_gha.py", "utf8")) && /"
       "[V33.660] 최근 구간은 확실한 악화(초과 t ≤ −2)만 미달 — 평균 한 점 비교(적중 52%)로 되돌리지 않는다"); }
 { const Q = readFileSync(dir + "playbook_sim.py", "utf8");
   chk(/\(t < t_fit\) & \(xe < t_fit\)/.test(Q),
-      "[V33.672] 메타 수식 학습은 청산까지 t_fit 전에 끝난 거래만 — 라벨이 검증 구간을 엿보지 않는다"); }
+      "[V33.672] 메타 수식 학습은 청산까지 t_fit 전에 끝난 거래만 — 라벨이 검증 구간을 엿보지 않는다");
+  chk(/vm >= bm \+ TUNE_MARGIN and vt >= bt and \(vp or not bp\)/.test(Q), "[V33.673] 고차원 수식 채택은 검증 평균 +0.05%p 이상 · t 안 낮춤 — 잡음 차이로 안 씀"); }
 { // [V33.609] 관측창 배선
   const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8"), U = readFileSync(new URL("../public/workspace-ui.js", import.meta.url), "utf8");
   const O = readFileSync(new URL("../public/playbook-observatory.js", import.meta.url), "utf8");
