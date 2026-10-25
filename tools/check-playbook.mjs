@@ -88,6 +88,11 @@ rr_ = np.random.default_rng(9)
 EPr = {pb: {k: lad[int(rr_.integers(len(lad)))] for k, lad in v[2].items()} for pb, v in PPm.ENTRY.items() if pb not in PB.CROSS_PB and v[2]}
 SvP = {pb: PPm.sig(Pv, pb, EPr[pb])[-120:].astype(int).tolist() for pb in EPr}
 GRv = PPm.groups(Pv)[-1].tolist()
+# [V33.667] 공통 수식 조건(무작위) — 학습기 = 워커(rs6 는 어제 순위)
+rr2 = np.random.default_rng(13)
+EPm = {pb: dict(EPr[pb], **{k: lad[int(rr2.integers(1, len(lad)))] for k, lad in PPm.MODS.items() if rr2.random() < 0.6}) for pb in EPr}
+SvM = {pb: PPm.sig(Pv, pb, EPm[pb])[-120:].astype(int).tolist() for pb in EPm}
+RS6 = np.round(PPm.rs6(Pv).shift(1).values[-120:], 6).tolist()
 Sv = {k: sv[k].values[-120:].astype(int).tolist() for k in sv}
 # 5분 단타 진입 — 무작위 하루 30개(봉 78개)
 ib = []
@@ -103,7 +108,7 @@ dk = PB.daily_keys(["BULL"]*len(s), s[:,0], s[:,1], s[:,2], s[:,3], s[:,4].astyp
 I = np.array(${JSON.stringify(isamp)}, dtype=float)
 ik = PB.intra_keys(["CRASH"]*len(I), I[:,0], I[:,1], I[:,2].astype(int))
 print(json.dumps({"null": null_d.get("pass"), "pos": pos, "pick": ch and ch[0], "G": G, "Pa": Pa, "Sd": Sd, "K": K, "ib": ib, "dk": [[str(x) for x in lv] for lv in dk], "ik": [[str(x) for x in lv] for lv in ik],
-  "veto": veto, "Pva": Pva, "Sv": Sv, "ppEq": ppEq, "EPr": EPr, "SvP": SvP, "GRv": GRv, "FMv": FMv, "gok": gok, "dec": dec, "rulesA": PB.RULES_ADAPT, "cqs": list(PB.CAND_QS), "RGv": RGv, "tnull": tnull, "tpos": tpos, "INPB": sorted(PB.INTRA_PB), "LF": LF, "MR": MR, "RG": RG, "tab5len": len(next(iter(tab5.values()))), "snapMr": sorted(k for k, v in PB.DAILY_PB.items() if v.get("mr")),
+  "veto": veto, "Pva": Pva, "Sv": Sv, "ppEq": ppEq, "EPr": EPr, "SvP": SvP, "GRv": GRv, "EPm": EPm, "SvM": SvM, "RS6": [[None if x != x else x for x in r] for r in RS6], "FMv": FMv, "gok": gok, "dec": dec, "rulesA": PB.RULES_ADAPT, "cqs": list(PB.CAND_QS), "RGv": RGv, "tnull": tnull, "tpos": tpos, "INPB": sorted(PB.INTRA_PB), "LF": LF, "MR": MR, "RG": RG, "tab5len": len(next(iter(tab5.values()))), "snapMr": sorted(k for k, v in PB.DAILY_PB.items() if v.get("mr")),
   "rules": PB.RULES, "chLow": PB.choose({("*", "A"): (100, 0.3, 0.6, 0.4, 2.0)}, ["*"], ["A"]), "pbs": sorted(PB.DAILY_PB), "ipbs": sorted(PB.INTRA_PB), "B": [PB.B_RSI, PB.B_GAP20, PB.B_RET5, PB.B_VR, PB.B_DAYPCT, PB.B_TOD]}))
 `;
 const r = spawnSync("python3", ["-c", py], { encoding: "utf8", timeout: 300000, maxBuffer: 256 * 1024 * 1024 });
@@ -152,6 +157,13 @@ if (o) {
         for (const pb in o.EPr) { const js = F.includes(pb) ? 1 : 0; cnt[pb] += js; if (js !== o.SvP[pb][q][j]) bad.push([pb, t, j, js, JSON.stringify(o.EPr[pb])]); } } }
     const fired = Object.values(cnt).filter((x) => x > 0).length;
     chk(!bad.length && fired >= 15, "[V33.664] 진입 미지수(무작위 값) — 학습기 = 워커 · " + Object.keys(o.EPr).length + "종 중 " + fired + "종 발화 " + JSON.stringify(cnt), JSON.stringify(bad.slice(0, 4)));
+    { const bad2 = [], cnt2 = {}; for (const pb in o.EPm) cnt2[pb] = 0;
+      for (let j = 0; j < o.Pva.close[0].length; j++) {
+        const col = (k) => o.Pva[k].map((r) => r[j]);
+        const A = { o: col("open"), h: col("high"), l: col("low"), c: col("close"), v: col("volume") };
+        for (let q = 0; q < 120; q++) { const t = T - 120 + q, F = W.pbDailyFires({ o: A.o.slice(0, t + 1), h: A.h.slice(0, t + 1), l: A.l.slice(0, t + 1), c: A.c.slice(0, t + 1), v: A.v.slice(0, t + 1) }, o.EPm, o.RS6[q][j]);
+          for (const pb in o.EPm) { const js = F.includes(pb) ? 1 : 0; cnt2[pb] += js; if (js !== o.SvM[pb][q][j]) bad2.push([pb, t, j, js, JSON.stringify(o.EPm[pb])]); } } }
+      chk(!bad2.length && Object.values(cnt2).filter((x) => x > 0).length >= 10, "[V33.667] 공통 수식 조건(추세·6개월 순위·거래량·ATR 무작위) — 학습기 = 워커 " + JSON.stringify(cnt2), JSON.stringify(bad2.slice(0, 4))); }
     chk(Array.isArray(o.ppEq) && o.ppEq.length === 0, "[V33.664] 미지수 기본값 = 지금 도감 신호(31종)", JSON.stringify(o.ppEq));
     const Wd = new Function("_num", "getMA", "getRSI", "STRAT_ROUTE", "MACRO_SCHED", fnSrc + "; return { PB_EP_DEF };")(_num, getMA, getRSI, STRAT_ROUTE, MACRO_SCHED);
     chk(/"epDef": \{k: v\[1\] for k, v in PP\.ENTRY\.items\(\)\}/.test(readFileSync(dir + "playbook_sim.py", "utf8")) && Object.keys(Wd.PB_EP_DEF).length === 27,

@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.666";
+const _BUILD_VER = "V33.667";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -5097,7 +5097,19 @@ function _tzOffsetHours(now, tz) {
     return diffH;
   } catch (e) { return null; }
 }
+/* [V33.667] ★정시 단위 기억★ — 서머타임 전환은 늘 UTC 정각(06:00·07:00Z)에 일어나므로 같은 UTC 시각(시간) 안에서는 오프셋이 같다.
+   Intl 시간대 계산이 호출당 ~13µs 라 거래 내역 1만 행에 장 상태를 붙이면 0.13초 CPU 였다(측정) — 결과는 같고 비용만 없앤다. */
+const __usOffMemo = new Map();
 function getUSEtOffset(now) {
+  const _hk = Math.floor(now.getTime() / 3600000);
+  const _hm = __usOffMemo.get(_hk);
+  if (_hm !== undefined) return _hm;
+  const _v = _getUSEtOffset0(now);
+  if (__usOffMemo.size > 4096) __usOffMemo.clear();
+  __usOffMemo.set(_hk, _v);
+  return _v;
+}
+function _getUSEtOffset0(now) {
   const _tz = _tzOffsetHours(now, "America/New_York");
   if (_tz != null) return _tz;                              // 표준시 DB 가 답하면 그대로 쓴다
   const year = now.getUTCFullYear();
@@ -13725,7 +13737,21 @@ const PB_EP_DEF = {
   ENVELOPE: { f: 0.93 }, ELDER_RAY: { n: 13 }, WILLR: { n: 14, lvl: -80 }, CCI_REV: { n: 20, lvl: -100 }, TRIPLE_SCR: { k: 30 }, IBS_LOW: { cpos: 0.2 },
   HI52_NEAR: { near: 0.97 }, SQUEEZE: { q: 0.10 }, HERD_REBOUND: { vr: 2.5, ddHi: -5, ddLo: -12 },
 };
-function pbDailyFires(D, ep) {
+/* [V33.667] ★공통 수식 조건★ — 학습기 playbook_params.MODS 와 같다. 값이 없으면 조건 없음.
+   trendMin: 종가/200일선 − 1 ≥ 값 · rs6Min: 6개월 수익 횡단면 순위(학습기가 보낸 어제 값 st.daily.rs6) ≥ 값 · vrMin: 거래량 배수 ≥ 값 · atrCap: ATR% ≤ 값 */
+function pbModOk(q, D, i, rs6) {
+  if (!q) return true;
+  if (q.trendMin != null) { const m = _pbSma(D.c, 200, i); if (!(m > 0 && D.c[i] / m - 1 >= q.trendMin)) return false; }
+  if (q.rs6Min != null) { if (!(typeof rs6 === "number" && rs6 >= q.rs6Min)) return false; }
+  if (q.vrMin != null) { const vr = _pbVr(D.v, i); if (!(vr >= q.vrMin)) return false; }
+  if (q.atrCap != null) { const a = _pbAtrPct(D.h, D.l, D.c, i); if (!(a <= q.atrCap)) return false; }
+  return true;
+}
+function pbDailyFires(D, ep, rs6) {
+  const F0 = _pbDailyFires0(D, ep);
+  return ep ? F0.filter(function (pb) { return pbModOk(ep[pb], D, D.c.length - 1, rs6); }) : F0;
+}
+function _pbDailyFires0(D, ep) {
   const c = D.c, h = D.h, l = D.l, o = D.o, v = D.v, i = c.length - 1;
   if (i < 210) return [];
   const P_ = function (pb) { const d = PB_EP_DEF[pb], x = ep && ep[pb]; return x ? Object.assign({}, d, x) : d; };
@@ -13953,7 +13979,7 @@ function pbRoutePick(st, ctx, nowMs) {
     /* [V33.664] 종목 특성 그룹(변동성 3분위 · 학습기가 오늘 값을 보냄) → 그 그룹에서 검증을 통과한 진입 미지수 · 청산 미지수 */
     const grp = st.daily.grp && st.daily.grp[ctx.symbol] != null ? st.daily.grp[ctx.symbol] : null, epm = {};
     if (grp != null) for (const pb_ in (st.daily.pb || {})) { const e_ = st.daily.pb[pb_] && st.daily.pb[pb_].ep; if (e_ && e_[grp]) epm[pb_] = e_[grp]; }
-    const fired0 = pbDailyFires(D, epm);
+    const fired0 = pbDailyFires(D, epm, st.daily.rs6 && st.daily.rs6[ctx.symbol]);
     const cr = st.daily.cross || {};
     for (const pb in cr) if (Array.isArray(cr[pb]) && cr[pb].indexOf(ctx.symbol) >= 0 && fired0.indexOf(pb) < 0) fired0.push(pb);   // 횡단면 조건은 학습기 판정(전일 종가 기준)
     let fired = fired0.filter(function (pb) { return pbLiveFilterOk(pb, D, ctx.reg, st.daily.pb && st.daily.pb[pb]); });   // [V33.619] 자동 조율 거르개 포함
@@ -31479,7 +31505,7 @@ async function handleRequest(request, env, ctx, _inner) {
       const _obj = function (v) { return (v && typeof v === "object") ? v : null; };
       const part = function (x) { return (x && typeof x === "object") ? { val: x.val || {}, table: (x.table && typeof x.table === "object") ? x.table : {}, pb: x.pb || {},
                                                                           cross: (x.cross && typeof x.cross === "object") ? x.cross : {}, gate: (x.gate && typeof x.gate === "object") ? x.gate : null,
-                                                                          tier2: Array.isArray(x.tier2) ? x.tier2.map(String) : [], grp: _obj(x.grp), ptune: _obj(x.ptune), epDef: _obj(x.epDef), epLad: _obj(x.epLad) } : null; };
+                                                                          tier2: Array.isArray(x.tier2) ? x.tier2.map(String) : [], grp: _obj(x.grp), rs6: _obj(x.rs6), ptune: _obj(x.ptune), epDef: _obj(x.epDef), epLad: _obj(x.epLad) } : null; };
       const rec = { ts: Date.now(), day: String(body.day || ""), regime: String(body.regime || "NEUTRAL"), daily: part(body.daily), intra: part(body.intra),
                     sector: (body.sector && typeof body.sector === "object") ? body.sector : null,
                     panic: body.panic === true };   // [V33.625] 공황 국면(학습기 _panic 마지막 날) — 추세·모멘텀 진입 차단   // [V33.621] 종목 → 섹터(학습기 자동 배정 · 섹터 보유 상한)

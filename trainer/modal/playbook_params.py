@@ -271,15 +271,47 @@ ENTRY = {
 }
 
 
+# [V33.667] ★공통 수식 조건(모든 매매법에 붙는 미지수)★ — 값이 None 이면 조건 없음(= 종전 수식).
+#   trendMin: 종가/200일선 − 1 ≥ 값 · rs6Min: 6개월 수익 횡단면 순위(★어제★ 값 — 워커는 학습기가 보낸 어제 순위를 쓰므로 시뮬도 하루 늦게) ≥ 값 ·
+#   vrMin: 거래량 / 20일 평균 ≥ 값 · atrCap: ATR14% ≤ 값. 워커 pbDailyFires 의 PB_MODS 와 같다(check-playbook 대조).
+MODS = {"trendMin": [None, -0.05, 0.0, 0.05, 0.10], "rs6Min": [None, 0.3, 0.5, 0.7], "vrMin": [None, 0.8, 1.0, 1.5], "atrCap": [None, 3.0, 4.0, 6.0]}
+
+
+def rs6(P):
+    """6개월 수익 횡단면 순위(0~1) — 어제 값(shift 1). 워커는 학습기가 보낸 마지막 날 값을 쓴다."""
+    I = _I(P)
+    return _cache(P, "rs6", lambda: X(I["c"].pct_change(126, fill_method=None)))
+
+
+def mod_mask(P, p):
+    I = _I(P)
+    m = None
+    def _and(a):
+        nonlocal m
+        a = a.fillna(False).values.astype(bool) if hasattr(a, "values") else a
+        m = a if m is None else (m & a)
+    if p.get("trendMin") is not None:
+        _and(I["c"] / I["ma200"] - 1 >= p["trendMin"])
+    if p.get("rs6Min") is not None:
+        _and(rs6(P).shift(1) >= p["rs6Min"])
+    if p.get("vrMin") is not None and I["vr"] is not None:
+        _and(I["vr"] >= p["vrMin"])
+    if p.get("atrCap") is not None:
+        _and(I["atr"] <= p["atrCap"])
+    return m
+
+
 def sig(P, pb, p=None):
     fn, d, _ = ENTRY[pb]
     q = dict(d, **(p or {}))
-    key = (pb,) + tuple(sorted(q.items()))
+    key = (pb,) + tuple(sorted((k, v) for k, v in q.items() if v is not None))
     c = P.setdefault("_ppsig", {})
     if key not in c:
-        if len(c) > 400:
+        if len(c) > 150:   # [V33.667] 한 칸 1.4MB(2600×560) — 400칸 상한이면 580MB 까지 컸다
             c.clear()
-        c[key] = fn(P, q).fillna(False).values.astype(bool)
+        base = fn(P, {k: v for k, v in q.items() if k not in MODS}).fillna(False).values.astype(bool)
+        mm = mod_mask(P, q)
+        c[key] = base if mm is None else (base & mm)
     return c[key]
 
 

@@ -67,6 +67,13 @@ const fv = (v: any, u?: string) => {
   return String(v);
 };
 
+/* [V33.667] 공통 수식 조건 — 모든 매매법에 붙는 미지수(값이 있으면 조건 추가) */
+const MODS: [string, string, (v: any) => string][] = [
+  ["trendMin", "200일선 대비 ", (v) => (v >= 0 ? "+" : "") + Math.round(v * 100) + "% 이상"],
+  ["rs6Min", "6개월 순위 ≥ ", (v) => String(v)],
+  ["vrMin", "거래량 ", (v) => v + "배 이상"],
+  ["atrCap", "ATR ≤ ", (v) => v + "%"],
+];
 export function FormulaLine({ pb, vals, def, size = 13 }: { pb: string; vals?: Record<string, any> | null; def?: Record<string, any> | null; size?: number }) {
   const f = FORMULA[pb];
   if (!f) return null;
@@ -81,6 +88,7 @@ export function FormulaLine({ pb, vals, def, size = 13 }: { pb: string; vals?: R
                    border: "1px solid " + (changed ? OK : "#2A3A52"), color: changed ? OK : POS, background: changed ? "rgba(91,228,155,.08)" : "rgba(79,227,255,.06)" }}>
           {fv(v, s.u)}{changed && <span style={{ color: FAINT, textDecoration: "line-through", marginLeft: 5 }}>{fv(def![s.k], s.u)}</span>}</span>;
       })}
+      {MODS.filter(([k]) => vals && vals[k] != null).map(([k, lbl, f]) => <span key={k}> · {lbl}<span style={{ display: "inline-block", fontFamily: MONO, fontSize: size - 0.5, padding: "0 6px", margin: "0 2px", borderRadius: 5, lineHeight: 1.55, border: "1px solid " + OK, color: OK, background: "rgba(91,228,155,.08)" }}>{f(vals![k])}</span></span>)}
     </span>);
 }
 
@@ -120,11 +128,11 @@ export function ParamTab({ R, name }: { R: any; name: (k: string) => string }) {
       <div style={{ ...card, padding: "16px 18px", display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
         <div>
           <div style={{ fontSize: 12, color: DIM, marginBottom: 6 }}>매매법 = 수식 + 미지수</div>
-          <div style={{ fontSize: 13, color: "#C9D4E3", lineHeight: 1.6 }}>진입 조건의 문턱(칩)과 청산 값(손절·익절·보유일)이 미지수입니다. 학습할 때마다 종목을 <b style={{ color: INK }}>변동성 3그룹</b>으로 나눠 그룹마다 미지수를 한 칸씩 바꿔 봅니다.</div>
+          <div style={{ fontSize: 13, color: "#C9D4E3", lineHeight: 1.6 }}>진입 조건의 문턱(칩) · 공통 조건 4개(추세·상대강도·거래량·변동성) · 청산 값(손절·익절·보유일)이 미지수입니다. 조율은 실전과 같은 OMNI-Q 후보 종목 안에서만 합니다. 학습할 때마다 종목을 <b style={{ color: INK }}>변동성 3그룹</b>으로 나눠 그룹마다 미지수를 한 칸씩 바꿔 봅니다.</div>
         </div>
         <div>
           <div style={{ fontSize: 12, color: DIM, marginBottom: 6 }}>두 번 거르는 채택</div>
-          <div style={{ fontSize: 13, color: "#C9D4E3", lineHeight: 1.6 }}>① 그 매매법만 놓고 앞 40% 월별 t ≥ 3 · 다음 15% 에서도 개선 → <span style={{ color: HL }}>조율안</span><br />② 시스템 전체 검증 구간을 안 낮출 때만 → <span style={{ color: OK }}>실전 채택</span></div>
+          <div style={{ fontSize: 13, color: "#C9D4E3", lineHeight: 1.6 }}>① 그 매매법만 놓고 앞 40% 월별 t ≥ 3 · 그 40% 를 4등분해 3곳 이상 개선 · 다음 15% 에서도 개선 → <span style={{ color: HL }}>조율안</span><br />② 시스템 전체 검증 구간을 안 낮출 때만 → <span style={{ color: OK }}>실전 채택</span></div>
         </div>
         <div>
           <div style={{ fontSize: 12, color: DIM, marginBottom: 6 }}>종목 그룹(지난 1년 평균 ATR% 3분위)</div>
@@ -174,7 +182,8 @@ export function ParamTab({ R, name }: { R: any; name: (k: string) => string }) {
             <div>
               <div style={{ fontSize: 11.5, color: DIM, marginBottom: 4 }}>기본 수식</div>
               <FormulaLine pb={cur.k} def={def[cur.k]} vals={def[cur.k]} />
-              {lad[cur.k] && Object.keys(lad[cur.k]).length > 0 && <div style={{ marginTop: 6, fontSize: 11.5, color: FAINT }}>조율이 시도하는 값 · {Object.entries(lad[cur.k]).map(([k, v]: any) => (v as any[]).map((x) => fv(x, unitOf(cur.k, k))).join(" / ")).join("  ·  ")} + 청산(손절·ATR·익절·본전·보유일)</div>}
+              {lad[cur.k] && Object.keys(lad[cur.k]).length > 0 && <div style={{ marginTop: 6, fontSize: 11.5, color: FAINT }}>조율이 시도하는 값 · {Object.entries(lad[cur.k]).map(([k, v]: any) => (v as any[]).map((x) => fv(x, unitOf(cur.k, k))).join(" / ")).join("  ·  ")}</div>}
+              <div style={{ marginTop: 4, fontSize: 11.5, color: FAINT }}>+ 공통 조건(모든 매매법) · 200일선 대비 추세 · 6개월 상대강도 순위 · 거래량 배수 · ATR 상한 — 비어 있으면 조건 없음 · + 청산(손절·ATR·익절·본전·보유일)</div>
             </div>
             {cur.cells.map((c, g) => (
               <div key={g} style={{ borderTop: "1px solid " + ROWLINE, paddingTop: 12 }}>

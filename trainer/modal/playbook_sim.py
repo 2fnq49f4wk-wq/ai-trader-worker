@@ -703,8 +703,12 @@ def _live_filters(P, reg, atr):
 PTUNE_BUDGET_S, PTUNE_SYS_MAX, PTUNE_GROUPS = 300, 4, 3
 
 
-def param_tune(P, market, sig, dpb, pbs_list, log=print, budget_s=PTUNE_BUDGET_S):
-    """→ (후보 {pb: {g: (ep 바뀐 것만, 청산 바뀐 것만, 사유)}}, 보고 {pb: {g: 사유}})."""
+def param_tune(P, market, sig, dpb, pbs_list, cand=None, log=print, budget_s=PTUNE_BUDGET_S):
+    """[V33.667] 조율기 v2 → (후보 {pb: {g: (ep 바뀐 것만, 청산 바뀐 것만, 사유, t)}}, 보고 {pb: {g: 사유 | {why, ep, ex}}}).
+    v1 의 문제(자가 평가): ① 전 종목으로 조율 → 실전 후보(OMNI-Q 상위)와 표본이 달라 lab 통과분이 실전에서 음수(단타 2종 퇴출 사례)
+    ② 기본값에서 ±1칸씩 · 걸음마다 t ≥ 1.5 → 대부분 0걸음에서 멈춤 ③ 고르기 한 번 + 확인 한 번(분할 운에 좌우) ④ 공통 조건이 없어 수식이 문턱 몇 개뿐.
+    v2: ★실전과 같은 후보 거름(cand)★ 안에서만 · 사다리 전체 좌표 탐색(진입 + 공통 조건 MODS + 청산 · 최대 3바퀴 · 바퀴마다 t 최대 한 칸) ·
+    최종 = 월 묶음 t ≥ TUNE_T · 차이 ≥ TUNE_MARGIN · ★고르기 구간 4등분 중 3곳 이상 개선★ · 확인 구간 + TUNE_MARGIN."""
     t0 = time.time()
     O, H, L, C = (P[k].values for k in ("open", "high", "low", "close"))
     T = C.shape[0]
@@ -715,6 +719,12 @@ def param_tune(P, market, sig, dpb, pbs_list, log=print, budget_s=PTUNE_BUDGET_S
     mrx, live_ok = _mr_exit(P), _live_filters(P, reg, atr)
     ca, cut = 250 + int((T - 250) * TUNE_PICK), 250 + int((T - 250) * TUNE_CUT)
     G = P["_grp"]
+    CM = cand if cand is not None else np.ones(C.shape, dtype=bool)
+    lo_t = max(250, int(np.argmax(CM.any(axis=1))) if CM.any() else 250)   # 후보 점수가 있는 첫날부터
+    if lo_t >= ca - 84:
+        log("   · [미지수조율] %s 후보 점수 기간이 짧아 조율 생략" % market)
+        return {}, {}
+    folds = np.linspace(lo_t, ca, 5).astype(int)
     cache = {}
 
     def ex_of(pr):
@@ -723,32 +733,31 @@ def param_tune(P, market, sig, dpb, pbs_list, log=print, budget_s=PTUNE_BUDGET_S
             cache[k] = _sim_profile(O, H, L, C, atr, mcum, pr, cost, mrx=mrx, t_max=cut)[0]
         return cache[k]
 
-    def nbrs(ep, pr, ladders):
-        out = []
-        for k, lad in ladders.items():
-            if ep.get(k) in lad:
-                i = lad.index(ep[k])
-                out += [(dict(ep, **{k: lad[j]}), pr) for j in (i - 1, i + 1) if 0 <= j < len(lad)]
-        for k, lad in LADDER.items():
-            if (k == "tpR" and pr.get("tpPct")) or (k == "tpPct" and pr.get("tpR")) or (k == "be" and pr.get("bePct")) or (k == "bePct" and pr.get("be")):
-                continue
-            out += [(ep, dict(pr, **{k: v})) for v in _ladder_nb(lad, pr.get(k, 0 if k in ("be", "tstop") else None))]
-        return out
+    def fold_wins(ea, Sa, eb, Sb):
+        w = 0
+        for a_, b_ in zip(folds[:-1], folds[1:]):
+            va, vb = ea[a_:b_][Sa[a_:b_]], eb[a_:b_][Sb[a_:b_]]
+            if len(va) >= 10 and len(vb) >= 10 and va.mean() > vb.mean():
+                w += 1
+        return w
 
     cands, rep_ = {}, {}
+    fmk = _flt_masks(P, reg, atr)
     for pb in pbs_list:
-        if pb not in PP.ENTRY or pb not in dpb or not PP.ENTRY[pb][2]:
+        if pb not in PP.ENTRY or pb not in dpb:
             continue
         _, d0, ladders = PP.ENTRY[pb]
-        pr0 = {k: v for k, v in dpb[pb].items() if k not in ("grp", "ep")}
+        lad = dict(ladders)
+        lad.update(PP.MODS)
+        ep0 = dict(d0, **{k: None for k in PP.MODS})
+        pr0 = {k: v for k, v in dpb[pb].items() if k not in ("grp", "ep", "onlyGrp")}
         lo, flt = live_ok.get(pb), (str(dpb[pb]["flt"]).split("+") if dpb[pb].get("flt") else [])
-        fmk = _flt_masks(P, reg, atr) if flt else None
         rep_[pb] = {}
         for g in range(PTUNE_GROUPS):
             if time.time() - t0 > budget_s:
                 rep_[pb][str(g)] = "시간 상한"
                 continue
-            M = G == g
+            M = (G == g) & CM
 
             def S_of(ep, pr):
                 s_ = PP.sig(P, pb, ep) & M & np.isfinite(ex_of(pr))
@@ -757,41 +766,46 @@ def param_tune(P, market, sig, dpb, pbs_list, log=print, budget_s=PTUNE_BUDGET_S
                 for f_ in flt:
                     s_ = s_ & fmk[f_]
                 return s_
-            eb, Sb = ex_of(pr0), S_of(d0, pr0)
-            if Sb[:ca].sum() < TUNE_MIN_N:
-                rep_[pb][str(g)] = "표본 부족(%d)" % int(Sb[:ca].sum())
+            eb, Sb = ex_of(pr0), S_of(ep0, pr0)
+            if Sb[lo_t:ca].sum() < TUNE_MIN_N:
+                rep_[pb][str(g)] = "표본 부족(%d)" % int(Sb[lo_t:ca].sum())
                 continue
-            cur, path = (dict(d0), dict(pr0)), []
-            for _ in range(MAX_STEPS):
+            cur = (dict(ep0), dict(pr0))
+            for _round in range(3):
                 ec, Sc, best = ex_of(cur[1]), S_of(*cur), None
-                for ep, pr in nbrs(cur[0], cur[1], ladders):
+                trial = [(dict(cur[0], **{k: v}), cur[1]) for k, L_ in lad.items() for v in L_ if v != cur[0].get(k)]
+                trial += [(cur[0], dict(cur[1], **{k: v})) for k, L_ in LADDER.items() for v in L_
+                          if v != cur[1].get(k, 0 if k in ("be", "tstop") else None)
+                          and not ((k == "tpR" and cur[1].get("tpPct")) or (k == "tpPct" and cur[1].get("tpR")) or (k == "be" and cur[1].get("bePct")) or (k == "bePct" and cur[1].get("be")))]
+                for ep, pr in trial:
+                    if time.time() - t0 > budget_s:
+                        break
                     Sq = S_of(ep, pr)
-                    if Sq[:ca].sum() < TUNE_MIN_N:
+                    if Sq[lo_t:ca].sum() < TUNE_MIN_N:
                         continue
-                    dm, tt, _n = _month_diff_t(ex_of(pr), Sq, ec, Sc, 250, ca)
-                    if dm is not None and tt >= STEP_T and dm >= STEP_MIN and (best is None or dm > best[0]):
-                        best = (dm, ep, pr)
+                    dm, tt, _n = _month_diff_t(ex_of(pr), Sq, ec, Sc, lo_t, ca)
+                    if dm is not None and tt >= 2.0 and dm >= STEP_MIN and (best is None or tt > best[0]):
+                        best = (tt, ep, pr)
                 if best is None:
                     break
                 cur = (best[1], best[2])
-                path.append(cur)
-            vb, pick = eb[ca:cut][Sb[ca:cut]], None
-            for ep, pr in reversed(path):
-                Sq, eq = S_of(ep, pr), ex_of(pr)
-                dm, tt, _n = _month_diff_t(eq, Sq, eb, Sb, 250, ca)
-                vq = eq[ca:cut][Sq[ca:cut]]
-                if (dm is not None and tt >= TUNE_T and dm >= TUNE_MARGIN and len(vq) >= 30 and len(vb) >= 30
-                        and float(vq.mean()) >= float(vb.mean()) + TUNE_MARGIN):
-                    pick = (ep, pr, "t %.1f · %+.2f%%p · 확인 %.2f→%.2f%%" % (tt, dm, float(vb.mean()), float(vq.mean())), dm)
-                    break
-            if pick is None:
-                rep_[pb][str(g)] = "기준 미달(%d걸음)" % len(path)
+            if cur == (ep0, pr0):
+                rep_[pb][str(g)] = "기준 미달(개선 이웃 없음)"
                 continue
-            epd = {k: v for k, v in pick[0].items() if d0.get(k) != v}
-            exd = {k: pick[1].get(k) for k in PROF_KEYS if pick[1].get(k) != pr0.get(k)}
-            cands.setdefault(pb, {})[str(g)] = (epd, exd, pick[2], pick[3])
-            rep_[pb][str(g)] = {"why": "조율 통과 " + pick[2], "ep": epd, "ex": exd}   # 화면이 '보류' 칸에도 조율안 값을 보인다
-    log("   · [미지수조율] %s %d종 × %d그룹 — 조율 통과 %d건(%.0fs)" % (market, len(rep_), PTUNE_GROUPS, sum(len(v) for v in cands.values()), time.time() - t0))
+            eq, Sq = ex_of(cur[1]), S_of(*cur)
+            dm, tt, _n = _month_diff_t(eq, Sq, eb, Sb, lo_t, ca)
+            fw = fold_wins(eq, Sq, eb, Sb)
+            vb, vq = eb[ca:cut][Sb[ca:cut]], eq[ca:cut][Sq[ca:cut]]
+            why = "t %.1f · %+.2f%%p · 4구간 중 %d · 확인 %s→%s%%" % (tt, dm or 0.0, fw, round(float(vb.mean()), 2) if len(vb) else None, round(float(vq.mean()), 2) if len(vq) else None)
+            epd = {k: v for k, v in cur[0].items() if ep0.get(k) != v}
+            exd = {k: cur[1].get(k) for k in PROF_KEYS if cur[1].get(k) != pr0.get(k)}
+            if not (dm is not None and tt >= TUNE_T and dm >= TUNE_MARGIN and fw >= 3 and len(vq) >= 30 and len(vb) >= 30
+                    and float(vq.mean()) >= float(vb.mean()) + TUNE_MARGIN):
+                rep_[pb][str(g)] = "기준 미달(" + why + ")"
+                continue
+            cands.setdefault(pb, {})[str(g)] = (epd, exd, why, tt)
+            rep_[pb][str(g)] = {"why": "조율 통과 " + why, "ep": epd, "ex": exd}   # 화면이 '보류' 칸에도 조율안 값을 보인다
+    log("   · [미지수조율] %s %d종 × %d그룹(실전 후보 안) — 조율 통과 %d건(%.0fs)" % (market, len(rep_), PTUNE_GROUPS, sum(len(v) for v in cands.values()), time.time() - t0))
     return cands, rep_
 
 
@@ -1355,40 +1369,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 dpb[nm] = dict(DAILY_PB["DUAL_MOM"], hold=hd_, family="Lit", label=("%s(단타 · %d일 보유) — 2순위" if hd_ <= 5 else "%s(문헌 전략 · %d일 보유) — 2순위") % (nm, hd_), prof="new", flt=None,
                                onlyGrp=_ng.get(nm))   # [V33.665] 화면: 그룹 한정
         log("   · [매매법시뮬] %s 매매법 %d종 사용 · 퇴출 %d종(성적 미달)" % (market, len(dpb), len(_off)))
-        ptune_rep = None
-        try:   # [V33.664] 미지수 조율(종목 특성 그룹별) → 시스템 검증 구간을 안 낮추는 것만 채택
-            if P.get("_grp") is None:
-                P["_grp"] = PP.groups(P, PTUNE_GROUPS)
-            act = [k for k in dpb if k in DAILY_PB]
-            pc_, prep_ = param_tune(P, market, sig, dpb, act, log=log)
-            ptune_rep = {"tune": prep_, "sys": [], "groups": PTUNE_GROUPS}
-            if pc_:
-                def _vsys(sg_, pbs_):
-                    d_, _, _ = sim_daily(P, market, ev_dates, sig=sg_, pbs=pbs_)
-                    st_, _ = validate(_relevel(_tier(d_, tier2)), "t")
-                    v_ = next((c_ for c_ in (st_.get("valCmp") or []) if c_.get("rule") == st_.get("rule")), {}) or {}
-                    return v_.get("mean"), v_.get("t") or 0.0, bool(st_.get("pass"))
-                t_s = time.time()
-                bm, bt, bp = _vsys(sig, dpb)
-                ptune_rep["base"] = [bm, bt, bp]
-                order = sorted(pc_, key=lambda k: -max(x[3] for x in pc_[k].values()))[:PTUNE_SYS_MAX]   # 조율 개선 폭이 큰 매매법부터
-                for pb in order:
-                    if time.time() - t_s > PTUNE_BUDGET_S:
-                        ptune_rep["sys"].append({"pb": pb, "ok": False, "why": "시간 상한"})
-                        continue
-                    gmap = pc_[pb]
-                    sig2 = dict(sig)
-                    sig2[pb] = grouped_sig(P, pb, {g_: v[0] for g_, v in gmap.items()}, sig)
-                    pbs2 = dict(dpb)
-                    pbs2[pb] = dict(dpb[pb], ep={g_: v[0] for g_, v in gmap.items() if v[0]}, grp={g_: v[1] for g_, v in gmap.items() if v[1]})
-                    vm, vt, vp = _vsys(sig2, pbs2)
-                    ok = bool(vm is not None and bm is not None and vm >= bm and vt >= bt and (vp or not bp))
-                    ptune_rep["sys"].append({"pb": pb, "groups": sorted(gmap), "val": [vm, vt, vp], "ok": ok})
-                    log("   · [미지수조율] %s %s 시스템 검증 구간 평균 %s→%s · t %.2f→%.2f → %s" % (market, pb, bm, vm, bt, vt, "채택" if ok else "보류(시스템을 낮춤)"))
-                    if ok:
-                        sig, dpb, bm, bt, bp = sig2, pbs2, vm, vt, vp
-        except Exception as e:  # noqa: BLE001
-            log("   ⚠️ [미지수조율] %s 실패 %s — 기본 미지수" % (market, e))
+        if P.get("_grp") is None:
+            P["_grp"] = PP.groups(P, PTUNE_GROUPS)
         # [V33.620] ★후보 폭도 검증이 고른다★ — OMNI-Q 상위 20·40·60%(사용자 10/15 "가장 유리한 방식 · 매수 신호가 나올 넉넉함").
         #   [V33.622] 머리(5일·20일·평균) × 폭 + 거름 없음 = 10 설정. 검증 구간 [60,80%) 에서 고른 규칙의 ★t★ 가 가장 큰(평균 > 0 · 거래 ≥ VAL_MIN_N) 설정 —
         #   평균 최대로 고르면 무작위 시세에서 판정 구간 거래 0 인 설정을 골랐다(다중 비교의 함정). 판정 구간은 고르기에 안 쓴다.
@@ -1434,6 +1416,43 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             dst, _ = validate(ddf, "t")
         cm = cand_mask(P, (oos or {}).get(market), dst.get("candQ"), dst.get("candHead") or "5") if dst.get("candQ") else None
         dst["cand"] = cand_src
+        ptune_rep = None
+        try:   # [V33.664·667] 미지수 조율 — ★실전과 같은 후보 거름(cm)★ 안에서 조율하고 같은 거름으로 시스템 검증(검증 구간 평균·t 안 낮추고 통과 유지만 채택)
+            act = [k for k in dpb if k in DAILY_PB]
+            pc_, prep_ = param_tune(P, market, sig, dpb, act, cand=cm, log=log)
+            ptune_rep = {"tune": prep_, "sys": [], "groups": PTUNE_GROUPS, "v": 2}
+            if pc_:
+                def _vsys(sg_, pbs_):
+                    d_, _, _ = sim_daily(P, market, ev_dates, sig=sg_, pbs=pbs_, cand=cm)
+                    d_ = _relevel(_tier(d_, tier2))
+                    st_, _ = validate(d_, "t")
+                    v_ = next((c_ for c_ in (st_.get("valCmp") or []) if c_.get("rule") == st_.get("rule")), {}) or {}
+                    return v_.get("mean"), v_.get("t") or 0.0, bool(st_.get("pass")), st_, d_
+                v0 = next((c_ for c_ in (dst.get("valCmp") or []) if c_.get("rule") == dst.get("rule")), {}) or {}
+                bm, bt, bp = v0.get("mean"), v0.get("t") or 0.0, bool(dst.get("pass"))   # 기준 = 지금 고른 설정의 검증 구간(같은 시뮬)
+                ptune_rep["base"] = [bm, bt, bp]
+                t_s, won = time.time(), None
+                for pb in sorted(pc_, key=lambda k: -max(x[3] for x in pc_[k].values()))[:PTUNE_SYS_MAX]:   # 조율 t 가 큰 매매법부터
+                    if time.time() - t_s > PTUNE_BUDGET_S:
+                        ptune_rep["sys"].append({"pb": pb, "ok": False, "why": "시간 상한"})
+                        continue
+                    gmap = pc_[pb]
+                    sig2 = dict(sig)
+                    sig2[pb] = grouped_sig(P, pb, {g_: v[0] for g_, v in gmap.items()}, sig)
+                    pbs2 = dict(dpb)
+                    pbs2[pb] = dict(dpb[pb], ep={g_: v[0] for g_, v in gmap.items() if v[0]}, grp={g_: v[1] for g_, v in gmap.items() if v[1]})
+                    vm, vt, vp, st2, d2 = _vsys(sig2, pbs2)
+                    ok = bool(vm is not None and bm is not None and vm >= bm and vt >= bt and (vp or not bp))
+                    ptune_rep["sys"].append({"pb": pb, "groups": sorted(gmap), "val": [vm, vt, vp], "ok": ok})
+                    log("   · [미지수조율] %s %s 시스템 검증 구간 평균 %s→%s · t %.2f→%.2f → %s" % (market, pb, bm, vm, bt, vt, "채택" if ok else "보류(시스템을 낮춤)"))
+                    if ok:
+                        sig, dpb, bm, bt, bp, won = sig2, pbs2, vm, vt, vp, (st2, d2)
+                if won is not None:   # 채택분이 있으면 판정·표를 그 시뮬로 다시(후보 설정 기록은 그대로)
+                    keep = {k: dst.get(k) for k in ("candHead", "candQ", "cand")}
+                    dst, ddf = won
+                    dst.update(keep)
+        except Exception as e:  # noqa: BLE001
+            log("   ⚠️ [미지수조율] %s 실패 %s — 기본 미지수" % (market, e))
         try:   # [V33.626] 판정 구간 시작 날짜 — 워커가 '겹치지 않는 판정 구간 두 번 통과' 를 셀 때 쓴다
             dst["hoFrom"] = str(P["close"].index[int((dst.get("cut") or [0, 0])[1])])
         except Exception:  # noqa: BLE001
@@ -1494,7 +1513,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 body = {"mkt": market, "day": str(P["close"].index[-1]), "regime": reg_now, "sector": (sector or {}).get(market), "panic": panic_now,
                         "daily": {"val": dst, "table": export(dtab, list(DAILY_PB)), "pb": dpb, "cross": cross, "gate": gate_live, "tier2": tier2,
                                   "grp": ({syms_all[j]: int(g_) for j, g_ in enumerate(P["_grp"][-1]) if g_ >= 0} if P.get("_grp") is not None else None),   # [V33.664] 종목 → 변동성 그룹(오늘)
-                                  "ptune": ptune_rep, "epDef": {k: v[1] for k, v in PP.ENTRY.items()}, "epLad": {k: v[2] for k, v in PP.ENTRY.items()}},
+                                  "ptune": ptune_rep, "epDef": {k: v[1] for k, v in PP.ENTRY.items()}, "epLad": dict({k: v[2] for k, v in PP.ENTRY.items()}, _mods=PP.MODS),
+                                  "rs6": {syms_all[j]: round(float(x), 3) for j, x in enumerate(PP.rs6(P).values[-1]) if x == x}},   # [V33.667] 6개월 순위(오늘 · 워커는 다음 거래일에 '어제 값' 으로 씀)
                         "intra": {"val": ist, "table": export(itab, list(INTRA_PB)), "pb": {k: v for k, v in INTRA_PB.items() if k not in INTRA_OFF.get(market, ())}}}
                 r = requests.post(BASE + "/api/playbook", headers=HDR, json=body, timeout=180)
                 log("   · [매매법시뮬] %s 업로드 %s" % (market, r.status_code))
