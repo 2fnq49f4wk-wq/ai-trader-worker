@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.669";
+const _BUILD_VER = "V33.670";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -31537,7 +31537,7 @@ async function handleRequest(request, env, ctx, _inner) {
       for (const mk of ["us", "kr"]) {
         const r = await getState(env.DB, "playbook:" + mk, null);
         out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, panic: r.panic === true,
-                        pass: Object.assign({}, r.pass || {}, { absTrial: !(r.pass && r.pass.daily) && !!(PB_ABS_TRIAL[mk] && _pbAbsOk(r.daily && r.daily.val)) }),   // [V33.669] primary: pbPrimaryOn(r, Date.now()), passStreak: r.passStreak || 0, indep: pbIndepPasses(r.passLog),
+                        pass: Object.assign({}, r.pass || {}, { absTrial: !(r.pass && r.pass.daily) && !!(PB_ABS_TRIAL[mk] && _pbAbsOk(r.daily && r.daily.val)) }), primary: pbPrimaryOn(r, Date.now()), passStreak: r.passStreak || 0, indep: pbIndepPasses(r.passLog),   // [V33.669] pass.absTrial(미국 절대 기준 시험 매수)
                         brake: await getState(env.DB, "pb_brake:" + mk, null).catch(function () { return null; }),
                         daily: r.daily && { val: r.daily.val, cells: Object.keys(r.daily.table || {}).length, pb: r.daily.pb, gate: r.daily.gate || null,
                                             tier2: r.daily.tier2 || [], ptune: r.daily.ptune || null, epDef: r.daily.epDef || null, epLad: r.daily.epLad || null,   // [V33.664]

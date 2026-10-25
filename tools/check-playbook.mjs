@@ -283,6 +283,10 @@ chk(W.pbRoutePick({ ...st, daily: { ...st.daily, table: { "*": { NOPE: [9000, 0.
   chk(a && a.kind === "daily" && a.session === "post" && b === null && c && c.session === "pre" && d === null && e && e.outWin === true && e.xGap === 5,
       "[V33.662] 애프터·프리: 종가 ±2% 안이면 일봉 매매법 매수(장 상태 표시) · 벗어나면 안 삼(관측엔 차이 %) · 정규장 중간은 그대로 안 삼", JSON.stringify([a && a.session, b, c && c.session, d, e && [e.outWin, e.xGap]]));
 }
+{ // [V33.669] /api/playbook 응답의 주력·연속 통과·독립 통과 칸이 줄 끝 주석에 묻히지 않았는가(실제 사고: 주석이 primary 를 삼킴)
+  const ln = S.split("\n").find((x) => x.includes("primary: pbPrimaryOn(r, Date.now())")) || "";
+  chk(ln && ln.indexOf("//") < 0 || (ln.indexOf("//") > ln.indexOf("indep: pbIndepPasses(r.passLog)")), "[V33.669] /api/playbook primary·passStreak·indep 가 코드로 살아 있다(주석 안 아님)", ln.slice(0, 160));
+}
 { // [V33.669] 미국 절대 성적 기준 시험 매수(사용자 승인) — 미국만 · 주력은 종전 기준 · 최근 확실한 악화면 안 삼
   const vA = { ...val, pass: false, n: 3000, mean: 0.75, t: 2.96, base: 0.94, recent: { ok: true } };
   const stA = { ...st, intra: null, daily: { ...st.daily, val: vA } }, cU = { ...ctx, minToClose: 20, bars5: null, symbol: "AAA" }, cK = { ...cU, symbol: "005930.KS" };

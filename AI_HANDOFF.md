@@ -12,6 +12,7 @@
 
 ## Current handoff
 
+- V33.670 (10/25) 핫픽스: V33.669 의 줄 끝 주석이 /api/playbook 의 primary·passStreak·indep 를 삼켜 화면 주력·연속 통과 표시가 빠짐(매매 판단은 영향 없음) → 복구 + 게이트.
 - V33.669 (10/25) ★미국 절대 성적 기준 시험 매수(사용자 승인)★ — "미국 절대 성적 기준으로 시험 매수 적용해".
   워커 PB_ABS_TRIAL.us · pbDailyTrialOk: 판정 구간 n ≥ 30 · 평균 > 0 · t ≥ 2 · 최근 확실한 악화 없음이면 미국만 시험 매수(절반 크기). 주력(정규 크기)은 종전(_pbPass 2회 독립).
   손실 제동·하루/동시 상한·공황 차단 그대로. /api/playbook pass.absTrial → 관측창·사이드바·두뇌구조창 '절대 기준 시험 매수'. 끄기: PB_ABS_TRIAL.us = false. 게이트 check-playbook.
