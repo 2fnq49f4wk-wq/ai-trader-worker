@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.671";
+const _BUILD_VER = "V33.672";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13747,6 +13747,21 @@ function pbModOk(q, D, i, rs6) {
   if (q.atrCap != null) { const a = _pbAtrPct(D.h, D.l, D.c, i); if (!(a <= q.atrCap)) return false; }
   return true;
 }
+/* [V33.672] ★고차원 수식(메타 라벨)★ — 학습기 playbook_sim.meta_features/meta_pred 와 같은 식. 진입 날 지표 11개 → 표준화 → 선형(능형 계수) 예측.
+   예측이 학습기가 정한 문턱(th) 미만이면 그 매매법 신호를 뺀다. 지표 하나라도 없으면(NaN) 거르지 않는다(학습기도 그 행은 그대로 둔다). */
+function pbMetaFeats(D, i, rs6) {
+  const c = D.c, ma20 = _pbSma(c, 20, i), ma50 = _pbSma(c, 50, i), ma200 = _pbSma(c, 200, i);
+  const vr = _pbVr(D.v, i), rg = D.h[i] - D.l[i];
+  const ret = function (n) { return c[i - n] > 0 ? (c[i] / c[i - n] - 1) * 100 : NaN; };
+  return [_pbRsiEwm(c, 14)[i], _pbRsi2(c, i), c[i] / ma20 - 1, ret(5), ret(20), Math.log(Math.min(50, Math.max(0.05, vr))), _pbAtrPct(D.h, D.l, c, i),
+          c[i] / ma200 - 1, ma50 / ma200 - 1, rg > 0 ? (c[i] - D.l[i]) / rg : 0.5, typeof rs6 === "number" ? rs6 : NaN];
+}
+function pbMetaScore(x, meta) {
+  if (!meta || !Array.isArray(meta.b) || !Array.isArray(x) || x.length + 1 !== meta.b.length) return null;
+  let s = meta.b[0];
+  for (let k = 0; k < x.length; k++) { if (!(typeof x[k] === "number" && isFinite(x[k]))) return null; s += meta.b[k + 1] * (x[k] - meta.mu[k]) / meta.sd[k]; }
+  return s;
+}
 function pbDailyFires(D, ep, rs6) {
   const F0 = _pbDailyFires0(D, ep);
   return ep ? F0.filter(function (pb) { return pbModOk(ep[pb], D, D.c.length - 1, rs6); }) : F0;
@@ -13991,6 +14006,18 @@ function pbRoutePick(st, ctx, nowMs) {
     const cr = st.daily.cross || {};
     for (const pb in cr) if (Array.isArray(cr[pb]) && cr[pb].indexOf(ctx.symbol) >= 0 && fired0.indexOf(pb) < 0) fired0.push(pb);   // 횡단면 조건은 학습기 판정(전일 종가 기준)
     let fired = fired0.filter(function (pb) { return pbLiveFilterOk(pb, D, ctx.reg, st.daily.pb && st.daily.pb[pb]); });   // [V33.619] 자동 조율 거르개 포함
+    const metaOff = [];
+    { /* [V33.672] 고차원 수식 거름(2순위 정리 전 · 학습기와 같은 순서) */
+      let mx = null;
+      fired = fired.filter(function (pb) {
+        const mt = st.daily.pb && st.daily.pb[pb] && st.daily.pb[pb].meta;
+        if (!mt) return true;
+        if (!mx) mx = pbMetaFeats(D, i, st.daily.rs6 && st.daily.rs6[ctx.symbol]);
+        const sc = pbMetaScore(mx, mt);
+        if (sc != null && sc < _num(mt.th, -1e9)) { metaOff.push(pb); return false; }
+        return true;
+      });
+    }
     const panicked = pbPanicOff(st, fired);   // [V33.625] 공황 국면 — 추세·모멘텀 쉼
     { /* [V33.651] ★2순위 보조 매매법★ — 공황으로 쉬지 않는 1순위가 하나라도 뜨면 보조(수정판)는 뺀다(학습기 _tier 와 같다 · 시뮬은 공황 거르개 뒤에 2순위를 적용) */
       const t2 = Array.isArray(st.daily.tier2) ? st.daily.tier2 : [];
@@ -31513,7 +31540,8 @@ async function handleRequest(request, env, ctx, _inner) {
       const _obj = function (v) { return (v && typeof v === "object") ? v : null; };
       const part = function (x) { return (x && typeof x === "object") ? { val: x.val || {}, table: (x.table && typeof x.table === "object") ? x.table : {}, pb: x.pb || {},
                                                                           cross: (x.cross && typeof x.cross === "object") ? x.cross : {}, gate: (x.gate && typeof x.gate === "object") ? x.gate : null,
-                                                                          tier2: Array.isArray(x.tier2) ? x.tier2.map(String) : [], grp: _obj(x.grp), rs6: _obj(x.rs6), ptune: _obj(x.ptune), epDef: _obj(x.epDef), epLad: _obj(x.epLad) } : null; };
+                                                                          tier2: Array.isArray(x.tier2) ? x.tier2.map(String) : [], grp: _obj(x.grp), rs6: _obj(x.rs6), ptune: _obj(x.ptune), epDef: _obj(x.epDef), epLad: _obj(x.epLad),
+                                                                          meta: _obj(x.meta), metaFeats: Array.isArray(x.metaFeats) ? x.metaFeats.map(String) : null } : null; };   // [V33.672] 고차원 수식 선택 기록
       const rec = { ts: Date.now(), day: String(body.day || ""), regime: String(body.regime || "NEUTRAL"), daily: part(body.daily), intra: part(body.intra),
                     sector: (body.sector && typeof body.sector === "object") ? body.sector : null,
                     panic: body.panic === true };   // [V33.625] 공황 국면(학습기 _panic 마지막 날) — 추세·모멘텀 진입 차단   // [V33.621] 종목 → 섹터(학습기 자동 배정 · 섹터 보유 상한)
@@ -31541,6 +31569,7 @@ async function handleRequest(request, env, ctx, _inner) {
                         brake: await getState(env.DB, "pb_brake:" + mk, null).catch(function () { return null; }),
                         daily: r.daily && { val: r.daily.val, cells: Object.keys(r.daily.table || {}).length, pb: r.daily.pb, gate: r.daily.gate || null,
                                             tier2: r.daily.tier2 || [], ptune: r.daily.ptune || null, epDef: r.daily.epDef || null, epLad: r.daily.epLad || null,   // [V33.664]
+                                            meta: r.daily.meta || null, metaFeats: r.daily.metaFeats || null,   // [V33.672]
                                             grpN: r.daily.grp ? Object.values(r.daily.grp).reduce(function (a, g) { a[g] = (a[g] || 0) + 1; return a; }, {}) : null,
                                             cross: Object.fromEntries(Object.keys(r.daily.cross || {}).map(function (k) { return [k, (r.daily.cross[k] || []).length]; })) },
                         intra: r.intra && { val: r.intra.val, cells: Object.keys(r.intra.table || {}).length, pb: r.intra.pb } } : null;

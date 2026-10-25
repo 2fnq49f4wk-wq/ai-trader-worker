@@ -716,7 +716,7 @@ def _live_filters(P, reg, atr):
 #   ★그다음 시스템 검증★: 통과 후보를 하나씩 시스템에 넣어 검증 구간(60~80%) 평균·t 둘 다 낮추지 않고 통과를 유지할 때만 실전에 쓴다.
 #   lab(ptune·psys 10년): 한국 조율 통과 9건 · 미국 1건 — 그중 시스템을 안 낮춘 건 한국 이치모쿠 저변동 그룹뿐
 #   (RS_LEADER 는 단독 +1.27%p 였지만 시스템 판정 +1.17→+0.71% — 한 매매법의 신호가 바뀌면 고르는 표가 흔들린다).
-PTUNE_BUDGET_S, PTUNE_SYS_MAX, PTUNE_GROUPS = 300, 4, 3
+PTUNE_BUDGET_S, PTUNE_SYS_MAX, PTUNE_GROUPS = 540, 4, 3   # [V33.672] 300→540초 — v2(사다리 전체 탐색)가 300초에 뒤쪽 매매법을 '시간 상한' 으로 못 봤다(로컬 run 실측)
 
 
 def param_tune(P, market, sig, dpb, pbs_list, cand=None, log=print, budget_s=PTUNE_BUDGET_S):
@@ -759,6 +759,9 @@ def param_tune(P, market, sig, dpb, pbs_list, cand=None, log=print, budget_s=PTU
 
     cands, rep_ = {}, {}
     fmk = _flt_masks(P, reg, atr)
+    if pbs_list:   # [V33.672] 날마다 시작 매매법을 돌린다 — 시간 상한에 걸려도 회차마다 다른 매매법이 먼저 조율된다
+        k0 = int(time.time() // 86400) % len(pbs_list)
+        pbs_list = list(pbs_list[k0:]) + list(pbs_list[:k0])
     for pb in pbs_list:
         if pb not in PP.ENTRY or pb not in dpb:
             continue
@@ -826,6 +829,64 @@ def param_tune(P, market, sig, dpb, pbs_list, cand=None, log=print, budget_s=PTU
             rep_[pb][str(g)] = {"why": "조율 통과 " + why, "ep": epd, "ex": exd}   # 화면이 '보류' 칸에도 조율안 값을 보인다
     log("   · [미지수조율] %s %d종 × %d그룹(실전 후보 안) — 조율 통과 %d건(%.0fs)" % (market, len(rep_), PTUNE_GROUPS, sum(len(v) for v in cands.values()), time.time() - t0))
     return cands, rep_
+
+
+# [V33.672] ★고차원 수식(메타 라벨 · López de Prado)★ — 사용자 10/25 "매매법 수식 더 고차원으로".
+#   매매법마다 진입 날 지표 11개(META_FEATS)의 선형 수식(능형 회귀 · 표준화)으로 '이번 신호의 기대 순초과' 를 예측하고, 예측이 학습 구간 예측의
+#   하위 q 분위 아래면 그 신호를 거른다. 계수는 표를 만드는 구간(검증 전)으로만 · q ∈ META_QS 와 '안 거름' 중 검증 구간 평균·t 둘 다 안 낮추고
+#   하나는 올리며 통과를 유지하는 것만(학습기가 회차마다 고른다). lab metalab2(시점 고친 시뮬 · 실전 후보 거름):
+#   한국 하위 40% 빼기 검증 t 2.36→3.14 · 평균 0.81→1.38% · 판정 0.51→0.87%(t 2.24 · 무작위 0.61 → 통과) / 미국은 세 거름 모두 검증 하락 → 안 거름.
+#   워커 pbMetaScore 가 같은 식(check-playbook 대조) · rs6 는 어제 순위(daily.rs6).
+META_FEATS = ("rsi14", "rsi2", "gap20", "ret5", "ret20", "lvr", "atr", "tr200", "ma50_200", "cpos", "rs6")
+META_QS = (0.2, 0.4)
+META_MIN_N = 300
+
+
+def meta_features(P):
+    I = CAT._ind(P)
+    c = I["c"]
+    vr = I["vr"] if I["vr"] is not None else c * np.nan
+    F = {"rsi14": I["rsi14"], "rsi2": I["rsi2"], "gap20": c / I["ma20"] - 1, "ret5": I["ret5"], "ret20": I["ret20"],
+         "lvr": np.log(vr.clip(0.05, 50)), "atr": I["atr"], "tr200": c / I["ma200"] - 1, "ma50_200": I["ma50"] / I["ma200"] - 1,
+         "cpos": I["cpos"], "rs6": PP.rs6(P).shift(1)}
+    return [F[k].values for k in META_FEATS]
+
+
+def meta_fit(X, y):
+    mu, sd = X.mean(axis=0), X.std(axis=0) + 1e-9
+    Z = (X - mu) / sd
+    A = np.c_[np.ones(len(Z)), Z]
+    lam = 10.0 * len(Z) / 1000
+    beta = np.linalg.solve(A.T @ A + lam * np.diag([0.0] + [1.0] * Z.shape[1]), A.T @ y)
+    return mu, sd, beta
+
+
+def meta_pred(m, X):
+    mu, sd, beta = m
+    return np.c_[np.ones(len(X)), (X - mu) / sd] @ beta
+
+
+def meta_filter(P, ddf, t_fit, q, Fm=None):
+    """ddf(이미 _relevel) → (거른 ddf, {pb: 수식}) — t < t_fit 행으로 매매법마다 수식을 맞추고 예측이 학습 예측 하위 q 분위 미만인 행을 뺀다."""
+    Fm = Fm if Fm is not None else meta_features(P)
+    t, j = ddf["t"].values.astype(int), ddf["j"].values.astype(int)
+    X = np.column_stack([f[t, j] for f in Fm]).astype(float)
+    y = np.clip(ddf["ex"].values.astype(float), -30, 30)
+    ok = np.isfinite(X).all(axis=1)
+    keep, models = np.ones(len(ddf), dtype=bool), {}
+    pbv = ddf["pb"].values
+    xe = ddf["x"].values.astype(int) if "x" in ddf else t
+    ok &= np.isfinite(y)
+    for pb in np.unique(pbv):
+        tr = (pbv == pb) & (t < t_fit) & (xe < t_fit) & ok   # 청산까지 t_fit 전에 끝난 거래만 — 학습 라벨이 검증 구간 값을 엿보지 않게
+        if tr.sum() < META_MIN_N:
+            continue
+        m = meta_fit(X[tr], y[tr])
+        th = float(np.quantile(meta_pred(m, X[tr]), q))
+        al = (pbv == pb) & ok
+        keep[np.nonzero(al)[0][meta_pred(m, X[al]) < th]] = False
+        models[pb] = {"mu": [round(float(x), 6) for x in m[0]], "sd": [round(float(x), 6) for x in m[1]], "b": [round(float(x), 6) for x in m[2]], "th": round(th, 6), "q": q, "n": int(tr.sum())}
+    return ddf[keep], models
 
 
 def grouped_sig(P, pb, ep_by_g, base_sig):
@@ -1481,6 +1542,43 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                     dst.update(keep)
         except Exception as e:  # noqa: BLE001
             log("   ⚠️ [미지수조율] %s 실패 %s — 기본 미지수" % (market, e))
+        meta_rep = None
+        try:   # [V33.672] 고차원 수식(메타 라벨) 거름 — 안 거름 / 하위 20% / 하위 40% 중 검증 구간이 고른다
+            Fm = meta_features(P)
+            # 2순위 정리 ★전★ 표본에 거름을 건다(워커도 같은 순서 — 1순위 신호가 걸러지면 그 종목의 보조가 살아난다)
+            ddf_pre = _relevel(sim_daily(P, market, ev_dates, sig=sig, pbs=dpb, cand=cm)[0])
+            ts_ = np.sort(ddf_pre["t"].unique())
+            t_fit = ts_[int(len(ts_) * SPLIT[0])]   # validate 와 같은 표 구간 끝(검증 전)
+            v0 = next((c_ for c_ in (dst.get("valCmp") or []) if c_.get("rule") == dst.get("rule")), {}) or {}
+            bm, bt, bp = v0.get("mean"), v0.get("t") or 0.0, bool(dst.get("pass"))
+            meta_rep = {"base": [bm, bt, bp], "cmp": [], "pick": None}
+            best = None
+            for q_ in META_QS:
+                d_m, _mods = meta_filter(P, ddf_pre, t_fit, q_, Fm)
+                d_m = _tier(d_m, tier2)
+                st_m, _ = validate(d_m, "t")
+                vm_ = next((c_ for c_ in (st_m.get("valCmp") or []) if c_.get("rule") == st_m.get("rule")), {}) or {}
+                vm, vt, vp = vm_.get("mean"), vm_.get("t") or 0.0, bool(st_m.get("pass"))
+                ok = bool(vm is not None and bm is not None and vm >= bm and vt >= bt and (vm > bm or vt > bt) and (vp or not bp))
+                meta_rep["cmp"].append({"q": q_, "val": [vm, vt, vp], "ok": ok, "ho": [st_m.get("mean"), st_m.get("t"), st_m.get("base")]})
+                log("   · [고차원수식] %s 하위 %d%% 거름 — 검증 평균 %s→%s · t %.2f→%.2f → %s" % (market, int(q_ * 100), bm, vm, bt, vt, "후보" if ok else "안 씀"))
+                if ok and (best is None or vt > best[0]):
+                    best = (vt, q_, st_m, d_m)
+            if best is not None:
+                _, q_, st_m, d_m = best
+                keep = {k: dst.get(k) for k in ("candHead", "candQ", "cand")}
+                dst, ddf = st_m, d_m
+                dst.update(keep)
+                # 실전 수식 = 판정 구간 전까지(표와 같게 [0,80%))로 다시 맞춘 계수 · 같은 q
+                t_live = ts_[int(len(ts_) * SPLIT[1])]
+                _, models_live = meta_filter(P, ddf_pre, t_live, q_, Fm)
+                for pb_, m_ in models_live.items():
+                    if pb_ in dpb:
+                        dpb[pb_] = dict(dpb[pb_], meta=m_)
+                meta_rep["pick"] = q_
+                log("   · [고차원수식] %s 채택 — 하위 %d%% 거름 · 수식 %d종" % (market, int(q_ * 100), len(models_live)))
+        except Exception as e:  # noqa: BLE001
+            log("   ⚠️ [고차원수식] %s 실패 %s — 안 거름" % (market, e))
         try:   # [V33.626] 판정 구간 시작 날짜 — 워커가 '겹치지 않는 판정 구간 두 번 통과' 를 셀 때 쓴다
             dst["hoFrom"] = str(P["close"].index[int((dst.get("cut") or [0, 0])[1])])
         except Exception:  # noqa: BLE001
@@ -1548,7 +1646,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                         "daily": {"val": dst, "table": export(dtab, list(DAILY_PB)), "pb": dpb, "cross": cross, "gate": gate_live, "tier2": tier2,
                                   "grp": ({syms_all[j]: int(g_) for j, g_ in enumerate(P.get("_grp_now", P.get("_grp"))[-1]) if g_ >= 0} if P.get("_grp") is not None else None),   # [V33.664] 종목 → 변동성 그룹(오늘)
                                   "ptune": ptune_rep, "epDef": {k: v[1] for k, v in PP.ENTRY.items()}, "epLad": dict({k: v[2] for k, v in PP.ENTRY.items()}, _mods=PP.MODS),
-                                  "rs6": {syms_all[j]: round(float(x), 3) for j, x in enumerate(PP.rs6(P).values[-1]) if x == x}},   # [V33.667] 6개월 순위(오늘 · 워커는 다음 거래일에 '어제 값' 으로 씀)
+                                  "rs6": {syms_all[j]: round(float(x), 3) for j, x in enumerate(PP.rs6(P).values[-1]) if x == x}, "meta": meta_rep, "metaFeats": list(META_FEATS)},   # [V33.667] 6개월 순위(오늘 · 워커는 다음 거래일에 '어제 값' 으로 씀)
                         "intra": {"val": ist, "table": export(itab, list(INTRA_PB)), "pb": {k: v for k, v in INTRA_PB.items() if k not in INTRA_OFF.get(market, ())}}}
                 r = requests.post(BASE + "/api/playbook", headers=HDR, json=body, timeout=180)
                 log("   · [매매법시뮬] %s 업로드 %s" % (market, r.status_code))

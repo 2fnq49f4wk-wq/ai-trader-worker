@@ -56,6 +56,24 @@ const exitTxt = (k: string, v: any) => {
 };
 const unitOf = (pb: string, k: string) => { const s = (FORMULA[pb] || []).find((x) => typeof x !== "string" && x.k === k) as any; return s && s.u; };
 export const GRP = ["저변동", "중간", "고변동"];
+/* [V33.672] 고차원 수식(메타 라벨) — 지표 11개 이름표 */
+const MF: Record<string, string> = { rsi14: "RSI14", rsi2: "RSI2", gap20: "20일선 이격", ret5: "5일 수익", ret20: "20일 수익", lvr: "거래량 배수(로그)", atr: "ATR%",
+  tr200: "200일선 대비", ma50_200: "50/200일선 간격", cpos: "종가 위치", rs6: "6개월 상대강도" };
+function MetaCoef({ m, feats }: { m: any; feats: string[] }) {
+  const b = (m && m.b ? m.b.slice(1) : []) as number[], mx = Math.max(0.001, ...b.map((x) => Math.abs(x)));
+  return (
+    <div style={{ display: "grid", gap: 4 }}>
+      {b.map((x, k) => ({ x, k })).sort((a, c) => Math.abs(c.x) - Math.abs(a.x)).map(({ x, k }) => (
+        <div key={k} style={{ display: "grid", gridTemplateColumns: "110px 1fr 60px", alignItems: "center", gap: 8, fontSize: 12 }}>
+          <span style={{ color: MUTE }}>{MF[feats[k]] || feats[k]}</span>
+          <div style={{ position: "relative", height: 8, background: "#111A27", borderRadius: 4 }}>
+            <div style={{ position: "absolute", left: "50%", top: -2, bottom: -2, width: 1, background: "#33445C" }} />
+            <div style={{ position: "absolute", top: 0, height: 8, borderRadius: 4, left: x >= 0 ? "50%" : (50 - (Math.abs(x) / mx) * 50) + "%", width: (Math.abs(x) / mx) * 50 + "%", background: x >= 0 ? OK : "#FF9A4A" }} />
+          </div>
+          <span style={{ fontFamily: MONO, color: x >= 0 ? OK : "#FF9A4A", textAlign: "right" }}>{(x >= 0 ? "+" : "") + x.toFixed(2)}</span>
+        </div>))}
+    </div>);
+}
 const GCOL = ["#7FB2FF", "#B49CFF", "#FF9A4A"];
 
 const fv = (v: any, u?: string) => {
@@ -146,6 +164,16 @@ export function ParamTab({ R, name }: { R: any; name: (k: string) => string }) {
           ["시스템 검증 구간(기준)", base ? (base[0] != null ? (base[0] >= 0 ? "+" : "") + (+base[0]).toFixed(2) + "% · t " + (+base[1]).toFixed(2) : "—") : "—", INK]].map(([k, v, c]) => (
           <div key={k} style={{ ...card, padding: "12px 14px" }}><div style={{ fontSize: 11.5, color: DIM }}>{k}</div><div style={{ fontFamily: MONO, fontSize: 18, color: c, marginTop: 4 }}>{v}</div></div>))}
       </div>
+      {D.meta && (
+        <div style={{ ...card, padding: "12px 16px" }}>
+          <div style={{ fontSize: 12, color: DIM, marginBottom: 8 }}>고차원 수식 — 진입 날 지표 11개의 선형 수식으로 '이번 신호의 기대 수익' 예측 · 예측 하위 신호를 거름(계수는 검증 전 구간으로만)</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, fontSize: 13 }}>
+            {[{ q: 0, val: D.meta.base, ok: true, label: "안 거름(기준)" }].concat((D.meta.cmp || []).map((c: any) => ({ ...c, label: "하위 " + Math.round(c.q * 100) + "% 거름" }))).map((c: any, i: number) => {
+              const on = D.meta.pick == null ? c.q === 0 : c.q === D.meta.pick;
+              return <span key={i} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid " + (on ? OK : LINE), color: on ? OK : MUTE, fontFamily: MONO, fontSize: 12 }}>
+                {c.label} · 검증 {c.val && c.val[0] != null ? (+c.val[0]).toFixed(2) + "%" : "—"} · t {c.val ? (+c.val[1]).toFixed(2) : "—"}{on ? " · 사용" : ""}</span>; })}
+          </div>
+        </div>)}
       {sys.length > 0 && (
         <div style={{ ...card, padding: "12px 16px" }}>
           <div style={{ fontSize: 12, color: DIM, marginBottom: 8 }}>시스템 검증(조율안을 하나씩 넣어 본 결과)</div>
@@ -185,6 +213,11 @@ export function ParamTab({ R, name }: { R: any; name: (k: string) => string }) {
               {lad[cur.k] && Object.keys(lad[cur.k]).length > 0 && <div style={{ marginTop: 6, fontSize: 11.5, color: FAINT }}>조율이 시도하는 값 · {Object.entries(lad[cur.k]).map(([k, v]: any) => (v as any[]).map((x) => fv(x, unitOf(cur.k, k))).join(" / ")).join("  ·  ")}</div>}
               <div style={{ marginTop: 4, fontSize: 11.5, color: FAINT }}>+ 공통 조건(모든 매매법) · 200일선 대비 추세 · 6개월 상대강도 순위 · 거래량 배수 · ATR 상한 — 비어 있으면 조건 없음 · + 청산(손절·ATR·익절·본전·보유일)</div>
             </div>
+            {pbDef[cur.k] && pbDef[cur.k].meta && D.metaFeats && (
+              <div style={{ borderTop: "1px solid " + ROWLINE, paddingTop: 12 }}>
+                <div style={{ fontSize: 11.5, color: DIM, marginBottom: 6 }}>고차원 수식 계수(초록 = 높을수록 좋은 신호 · 주황 = 낮을수록) · 예측 하위 {Math.round((pbDef[cur.k].meta.q || 0) * 100)}% 거름 · 학습 {pbDef[cur.k].meta.n}건</div>
+                <MetaCoef m={pbDef[cur.k].meta} feats={D.metaFeats} />
+              </div>)}
             {cur.cells.map((c, g) => (
               <div key={g} style={{ borderTop: "1px solid " + ROWLINE, paddingTop: 12 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
