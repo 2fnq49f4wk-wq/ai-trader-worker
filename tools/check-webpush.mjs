@@ -36,7 +36,7 @@ const kp = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" 
 const jwt = await M._pushJwt({ jwk: await crypto.subtle.exportKey("jwk", kp.privateKey) }, "https://fcm.googleapis.com");
 const [h, b, sg] = jwt.split(".");
 chk(await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, kp.publicKey, d(sg), te.encode(h + "." + b)) && JSON.parse(new TextDecoder().decode(d(b))).aud === "https://fcm.googleapis.com", "VAPID JWT ES256 서명 검증 · aud = 푸시 서비스 origin");
-chk(M.PUSH_HOSTS.test("https://fcm.googleapis.com/fcm/send/abc") && M.PUSH_HOSTS.test("https://web.push.apple.com/QG") && M.PUSH_HOSTS.test("https://updates.push.services.mozilla.com/wpush/v2/x")
+chk(M.PUSH_HOSTS.test("https://fcm.googleapis.com/fcm/send/abc") && M.PUSH_HOSTS.test("https://web.push.apple.com/QG") && M.PUSH_HOSTS.test("https://jmt17.google.com/fcm/send/x") && M.PUSH_HOSTS.test("https://updates.push.services.mozilla.com/wpush/v2/x")
     && !M.PUSH_HOSTS.test("https://evil.example.com/fcm.googleapis.com/") && !M.PUSH_HOSTS.test("http://fcm.googleapis.com/x"), "구독 주소는 알려진 푸시 서비스(https)만");
 chk(/addEventListener\('push'/.test(SW) && /addEventListener\('notificationclick'/.test(SW) && /showNotification/.test(SW), "서비스워커: push → 알림 · 누르면 앱으로");
 chk(/try \{ await pushNotifyTick\(env\); \} catch/.test(S) && /if \(!Array\.isArray\(subs\) \|\| !subs\.length\) return;/.test(S), "크론: 구독 없으면 상태 1건 읽고 끝(D1 낭비 없음)");

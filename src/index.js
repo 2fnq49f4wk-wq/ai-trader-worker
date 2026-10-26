@@ -56295,7 +56295,7 @@ async function extImportObserve(env, request, res) {
    구독은 상태 한 칸(push_subs · 최대 PUSH_MAX)에, 보낸 마지막 거래 id 는 push_last 에. 크론 1분마다: 구독이 없으면 상태 1건 읽고 끝,
    있으면 새 거래(최대 5건)를 알림으로 보낸다. 만료된 구독(404·410)은 지운다. 아이폰은 '홈 화면에 추가' 한 앱(iOS 16.4+)에서만 받는다. */
 const PUSH_MAX = 20;
-const PUSH_HOSTS = /^https:\/\/([a-z0-9-]+\.)*(fcm\.googleapis\.com|push\.services\.mozilla\.com|push\.apple\.com|notify\.windows\.com|windows\.com)\//i;
+const PUSH_HOSTS = /^https:\/\/([a-z0-9-]+\.)*(googleapis\.com|google\.com|push\.services\.mozilla\.com|push\.apple\.com|notify\.windows\.com)\//i;   // 크롬은 jmtNN.google.com 도 준다(실측)
 const _pb64 = {
   enc(buf) { const b = new Uint8Array(buf); let s = ""; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); },
   dec(str) { const s = String(str).replace(/-/g, "+").replace(/_/g, "/"); const p = s + "===".slice((s.length + 3) % 4); const bin = atob(p); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; },
@@ -56393,8 +56393,9 @@ async function pushApi(path, request, env, cors) {
   rest.push({ endpoint: sb.endpoint, keys: { p256dh: sb.keys.p256dh, auth: sb.keys.auth }, ts: Date.now() });
   const keep = rest.slice(-PUSH_MAX);
   await setState(env.DB, "push_subs", keep);
-  if (b.test) { try { const v = await pushVapid(env.DB); await pushSend(v, keep[keep.length - 1], { title: "LUX 알림 켜짐", body: "체결(매수·매도)이 나면 이렇게 알려 드립니다.", url: "/?p=trades", tag: "push-test" }); } catch (e) {} }
-  return Response.json({ ok: true, n: keep.length }, { headers: cors });
+  let test = null;
+  if (b.test) { try { const v = await pushVapid(env.DB); test = await pushSend(v, keep[keep.length - 1], { title: "LUX 알림 켜짐", body: "체결(매수·매도)이 나면 이렇게 알려 드립니다.", url: "/?p=trades", tag: "push-test" }); } catch (e) { test = "err"; } }
+  return Response.json({ ok: true, n: keep.length, test: test }, { headers: cors });   // test = 푸시 서비스 응답 코드(201 = 접수)
 }
 
 export default {
