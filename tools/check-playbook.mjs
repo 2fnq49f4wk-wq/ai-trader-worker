@@ -320,10 +320,23 @@ chk(W.pbRoutePick({ ...st, daily: { ...st.daily, table: { "*": { NOPE: [9000, 0.
   const stM = { ...st, intra: null, mkt: "kr", daily: { ...st.daily, val: vM } }, cK = { ...ctx, minToClose: 20, bars5: null, symbol: "005930.KS" };
   const k1 = W.pbRoutePick(stM, cK, now), k2 = W.pbRoutePick({ ...stM, daily: { ...stM.daily, val: { ...vM, passTrade: false } } }, cK, now);
   const k3 = W.pbRoutePick({ ...stM, daily: { ...stM.daily, val: { ...vM, passTrade: true, recent: { ok: false } } } }, cK, now);
-  const p1 = W._pbPass({ ...vM, pass: true, mx: 0.2, mT: 2.1 }), p2 = W._pbPass({ ...vM, pass: true, mx: 0.2, mT: 1.9 }), p3 = W._pbPass({ ...vM, pass: true, passMode: undefined, t: 2.4, mean: 0.9, base: 0.5 });
+  const p1 = W._pbPass({ ...vM, pass: true, mx: 0.2, mT: 2.1, fwd: { ok: true } }) && !W._pbPass({ ...vM, pass: true, mx: 0.2, mT: 2.1, fwd: { ok: false } }) && !W._pbPass({ ...vM, pass: true, mx: 0.2, mT: 2.1 }), p2 = W._pbPass({ ...vM, pass: true, mx: 0.2, mT: 1.9 }), p3 = W._pbPass({ ...vM, pass: true, passMode: undefined, t: 2.4, mean: 0.9, base: 0.5 });
   chk(k1 && k1.kind === "daily" && k2 === null && k3 === null && p1 && !p2 && p3 && /PASS_MODE = os\.environ\.get\("PB_PASS", "matched"\)/.test(readFileSync(dir + "playbook_sim.py", "utf8")),
       "[V33.674] 판정=월 맞춤(달 t≥2) · 시험 매수는 종전 기준으로도 유지 · 최근 악화·둘 다 미달이면 안 삼 · 옛 업로드는 종전 판정", JSON.stringify([k1 && k1.pb, k2, k3, p1, p2, p3]));
 }
+{ const Q = readFileSync(dir + "playbook_sim.py", "utf8");
+  chk(/FWD_START = int\(os\.environ\.get\("PB_FWD_START", "20261027"\)\)/.test(Q) && /FWD_MIN_DAYS = 60/.test(Q) && /out\["ok"\] = bool\(days >= FWD_MIN_DAYS and out\["n"\] >= 30 and \(out\.get\("wx"\) or 0\) > 0 and \(out\.get\("wT"\) or 0\) >= 2\)/.test(Q),
+      "[V33.675] 전진 구간 사전 등록: 2026-10-27 동결 · 거래일 ≥ 60 · 거래 ≥ 30 · 같은 주 무작위 초과 > 0 · 주 묶음 t ≥ 2 (주력 자격)");
+  chk(/CAP_ON = os\.environ\.get\("PB_CAP", "1"\) != "0"/.test(Q) && /if day_n >= CAP\["day"\] or len\(opn\) >= CAP\["open"\]/.test(Q) && /CAP\["on"\] = bool\(CAP_ON and timecol == "t"\)/.test(Q),
+      "[V33.675] 시뮬도 실전 상한(하루 6 · 동시 min(12, 시장 상한)) — 고른 것·무작위 둘 다");
+  chk(/def luck_level\(K\)/.test(Q) && /best_q\[0\] < luck\["level"\]/.test(Q), "[V33.675] 고르기 운 보정: 설정·규칙 K 개 최대의 기대(운 수준) 이하면 사전 등록 기본 설정");
+  chk(/PB_SEL = os\.environ\.get\("PB_SEL", "m"\)/.test(Q), "[V33.675] 고르기 잣대 = 판정과 같은 월 맞춤 달 묶음 t");
+  chk(/st\["legacy"\] = l0/.test(Q), "[V33.675] 시험 매수용 종전 표본(상한 없음) 판정을 legacy 로 함께 보낸다"); }
+{ // [V33.675] 시험 매수 = legacy(종전 표본) 기준 — 상한 표본이 작아 t 가 낮아도 시험 매수는 (나) 대로 유지
+  const v = { ...val, pass: false, passMode: "matched", passTrade: false, n: 150, mean: 1.2, t: 0.7, base: 3.3, legacy: { passTrade: false, n: 3000, mean: 0.78, t: 3.0, base: 0.98, recent: { ok: true } } };
+  const stU = { ...st, intra: null, mkt: "us", daily: { ...st.daily, val: v } }, cU = { ...ctx, minToClose: 20, bars5: null, symbol: "AAA" };
+  const u1 = W.pbRoutePick(stU, cU, now), u2 = W.pbRoutePick({ ...stU, daily: { ...stU.daily, val: { ...v, legacy: { ...v.legacy, t: 1.2 } } } }, cU, now);
+  chk(u1 && u1.kind === "daily" && u2 === null, "[V33.675] 미국 절대 시험은 legacy 표본으로 판정(t≥2) · legacy t<2 면 안 삼", JSON.stringify([u1 && u1.pb, u2])); }
 { // [V33.664] 종목 그룹 → 그 그룹의 진입·청산 미지수(학습기가 시스템 검증을 통과시킨 것만 보냄)
   const P0 = firedNow.find((x) => W.PB_EP_DEF && x in W.PB_EP_DEF) || firedNow[0], d0 = (W.PB_EP_DEF || {})[P0] || {}, k0 = Object.keys(d0)[0];
   const ep2 = k0 ? { [k0]: d0[k0] } : {};

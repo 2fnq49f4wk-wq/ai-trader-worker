@@ -1292,24 +1292,33 @@ def _pick(tab, te, rule, hist=None):
         ok = ok & np.array([_regime_ok(tab.get(k)) for k in zip(te["k1"].values, te["pb"].values)], dtype=bool)
     if (GLOBAL_VETO or rule.get("gveto")) and len(te) and "k0" in te.columns:   # [V33.642] 전체 칸 거부권 — 그 매매법의 전체 평균(수축)이 0 이하면 고르지 않는다
         ok = ok & np.array([_global_ok(tab.get(k)) for k in zip(te["k0"].values, te["pb"].values)], dtype=bool)
-    sel = te.assign(_s=sc)[ok].sort_values("_s", ascending=False).drop_duplicates("inst").sort_values("t")
-    keep, busy = [], {}
-    for r in sel[["j", "t", "x"]].itertuples(index=True):
-        if busy.get(r.j, -1) >= r.t:
-            continue
-        keep.append(r.Index)
-        busy[r.j] = r.x
-    return sel.loc[keep]
+    sel = te.assign(_s=sc)[ok].sort_values("_s", ascending=False).drop_duplicates("inst").sort_values("t", kind="mergesort")   # 같은 날 안은 점수 순(상한이 있으면 점수 높은 것부터 산다)
+    return _nonoverlap(sel)
 
 
 BASE_DRAWS = 30   # [V33.613] 공정한 '아무거나' — 후보마다 뜬 매매법 중 무작위 하나 · 같은 겹침 규칙 · 30번 평균
 
 
+CAP = {"on": False, "day": 6, "open": 12}   # [V33.675] 실전 상한(주력 PB_PRIMARY_CAPS 하루 6 · 동시 min(12, 시장 상한)) — validate(일봉)가 켠다
+
+
 def _nonoverlap(sel):
+    """같은 종목은 앞 거래가 끝나야 다시 산다. [V33.675] CAP.on 이면 실전처럼 하루 신규 ≤ CAP.day · 동시 보유 ≤ CAP.open(들어온 순서대로 — _pick 은 점수 순, 무작위는 무작위 순).
+    종전 시뮬은 뜬 신호를 전부 사서, 실전(상한 때문에 일부만 삼)과 다른 표본을 판정했다."""
     keep, busy = [], {}
+    cap = CAP["on"]
+    opn, day_t, day_n = [], None, 0
     for r in sel[["j", "t", "x"]].itertuples(index=True):
         if busy.get(r.j, -1) >= r.t:
             continue
+        if cap:
+            if r.t != day_t:
+                day_t, day_n = r.t, 0
+                opn = [x for x in opn if x >= r.t]
+            if day_n >= CAP["day"] or len(opn) >= CAP["open"]:
+                continue
+            day_n += 1
+            opn.append(r.x)
         keep.append(r.Index)
         busy[r.j] = r.x
     return sel.loc[keep]
@@ -1323,7 +1332,7 @@ def fair_base(te, draws=BASE_DRAWS, seed=11):
     rng = np.random.default_rng(seed)
     ms, ns = [], []
     for _ in range(draws):
-        sh = te.assign(_r=rng.random(len(te))).sort_values("_r").drop_duplicates("inst").sort_values("t")
+        sh = te.assign(_r=rng.random(len(te))).sort_values("_r").drop_duplicates("inst").sort_values("t", kind="mergesort")   # 같은 날 안은 무작위 순
         pk = _nonoverlap(sh)["ex"].values.astype(float)
         if len(pk):
             ms.append(pk.mean()); ns.append(len(pk))
@@ -1336,7 +1345,7 @@ def fair_base(te, draws=BASE_DRAWS, seed=11):
 TIME_MONTH = None   # run() 이 시장마다 채운다: t(거래일 번호) → yyyymm
 TIME_REG = None     # t → 국면(SURGE·BULL·NEUTRAL·BEAR·CRASH) — 화면 국면별 표시용
 MATCH_MIN = 3       # 그 달 고른 거래가 이보다 적으면 그 달은 비교에서 뺀다
-PB_SEL = os.environ.get("PB_SEL", "t")
+PB_SEL = os.environ.get("PB_SEL", "m")   # [V33.675] 고르기도 판정과 같은 잣대(월 맞춤 초과의 달 묶음 t)
 PASS_MODE = os.environ.get("PB_PASS", "matched")   # [V33.674] 사용자 10/26 (나) — 판정 = 월 맞춤 초과(주력 자격) · 종전 거래 t 판정은 passTrade 로 남아 시험 매수를 연다
 PASS_MT = float(os.environ.get("PB_PASS_MT", "2.0"))
 REG_KO = {"SURGE": "폭등", "BULL": "상승", "NEUTRAL": "보합", "BEAR": "하락", "CRASH": "폭락"}
@@ -1350,11 +1359,13 @@ def _month_base(w):
     return {int(m): fair_base(w[mo == m], draws=10)[0] for m in np.unique(mo)}
 
 
-def _matched(pk, mb):
-    """고른 거래 pk 의 달마다 초과 = 고른 평균 − 같은 달 무작위 → {mx: 거래 가중 초과, mT: 달 묶음 t, mWin/mN: 이긴 달/달 수, mAbsT: 달 묶음 절대 t}."""
-    if TIME_MONTH is None or not len(pk) or not mb:
+def _matched(pk, mb, per=None):
+    """고른 거래 pk 의 달마다 초과 = 고른 평균 − 같은 달 무작위 → {mx: 거래 가중 초과, mT: 달 묶음 t, mWin/mN: 이긴 달/달 수, mAbsT: 달 묶음 절대 t}.
+    per = 묶음 배열(기본 달 · 전진 구간은 주)."""
+    per = TIME_MONTH if per is None else per
+    if per is None or not len(pk) or not mb:
         return {}
-    mo = TIME_MONTH[pk["t"].values.astype(int)]
+    mo = per[pk["t"].values.astype(int)]
     ex = pk["ex"].values.astype(float)
     xs, ws, ps = [], [], []
     for m in np.unique(mo):
@@ -1385,6 +1396,54 @@ def _by_regime(pk, w):
     return out
 
 
+CAP_ON = os.environ.get("PB_CAP", "1") != "0"
+CAP_OPEN_MK = {"us": 10, "kr": 8}   # 워커 maxOpenPositions(추세) — 주력 maxOpen 12 보다 작으면 이것이 실제 상한
+# [V33.675] ★전진 구간(동결)★ — 이 날짜 이후 시세는 어떤 설계 결정에도 쓰이지 않았다(10/26 사용자 지시 시점에 동결 · 사전 등록).
+#   주력 전환 = 판정 통과 + 전진 구간 통과(거래일 ≥ FWD_MIN_DAYS · 거래 ≥ 30 · 같은 주 무작위 대비 초과 > 0 · 주 묶음 t ≥ 2).
+#   판정 구간은 여러 번 열어 본 탓에 '손대지 않은 표본' 이 아니게 됐다 — 전진 구간만이 아무도 본 적 없는 표본이다.
+FWD_START = int(os.environ.get("PB_FWD_START", "20261027"))
+FWD_MIN_DAYS = 60
+TIME_DATE = None   # t → yyyymmdd
+TIME_WEEK = None   # t → 주 번호(전진 구간은 달이 적어 주로 묶는다)
+
+
+def _ser_base(w, per):
+    if per is None or not len(w):
+        return {}
+    pv = per[w["t"].values.astype(int)]
+    return {int(m): fair_base(w[pv == m], draws=10)[0] for m in np.unique(pv)}
+
+
+def _forward(pk, ho):
+    """전진 구간(TIME_DATE ≥ FWD_START) — 고른 거래 vs 같은 주 무작위 · 주 묶음 t · 통과 여부(사전 등록 규칙)."""
+    if TIME_DATE is None:
+        return None
+    fh = ho[TIME_DATE[ho["t"].values.astype(int)] >= FWD_START]
+    days = int(fh["t"].nunique()) if len(fh) else 0
+    out = {"start": FWD_START, "days": days, "needDays": FWD_MIN_DAYS, "n": 0, "ok": False}
+    if not days:
+        return out
+    fp = pk[TIME_DATE[pk["t"].values.astype(int)] >= FWD_START]
+    out["n"] = int(len(fp))
+    if len(fp):
+        out["mean"] = round(float(fp["ex"].mean()), 4)
+        out["base"] = fair_base(fh)[0]
+    m = _matched(fp, _ser_base(fh, TIME_WEEK), per=TIME_WEEK)
+    out.update({"wx": m.get("mx"), "wT": m.get("mT"), "wWin": m.get("mWin"), "wN": m.get("mN")})
+    out["ok"] = bool(days >= FWD_MIN_DAYS and out["n"] >= 30 and (out.get("wx") or 0) > 0 and (out.get("wT") or 0) >= 2)
+    return out
+
+
+# [V33.675] ★고르기 운 보정★ — 후보 설정 × 규칙 K 개 중 최고는 실력이 없어도 높게 나온다. 귀무(실력 0)에서 K 개 최대값의 기대 ≈
+#   √(2lnK) − (ln lnK + ln4π) / (2√(2lnK))  (Bailey·López de Prado 'Deflated Sharpe' 의 근사). 검증에서 고른 1등이 이 '운 수준' 을 못 넘으면
+#   1등을 믿지 않고 사전에 정한 기본 설정(5일 머리 상위 20% · 그 안 규칙 고르기)으로 간다 — 회차마다 1등이 바뀌며 판정이 출렁이는 것(한국 1.32→0.23)을 줄인다.
+def luck_level(K):
+    if K < 2:
+        return 0.0
+    a = math.sqrt(2 * math.log(K))
+    return round(a - (math.log(math.log(K)) + math.log(4 * math.pi)) / (2 * a), 2) if K > 2 else round(a, 2)
+
+
 CV2 = os.environ.get("PB_CV", "0") == "1"
 CV_A = 0.40
 SEL_KEY = "cvT" if CV2 else {"ex": "exT", "m": "mT"}.get(PB_SEL, "t")   # [실험] 검증 고르기 기준: 절대 t · 무작위 대비 초과 t · 두 접기 평균 t
@@ -1406,6 +1465,14 @@ def _stats(pk, base):
 
 
 def validate(df, timecol, pbs=None):
+    CAP["on"] = bool(CAP_ON and timecol == "t")
+    try:
+        return _validate(df, timecol, pbs)
+    finally:
+        CAP["on"] = False
+
+
+def _validate(df, timecol, pbs=None):
     """3구간: 표 [0,60%) → 규칙 후보 4개를 [60,80%) 에서 비교해 하나 고름 → 표 [0,80%) → 손대지 않은 [80,100%) 에서만 판정."""
     ts = np.sort(df[timecol].unique())
     if len(ts) < 30:
@@ -1455,25 +1522,47 @@ def validate(df, timecol, pbs=None):
     if timecol == "t":
         st.update(_matched(pk, _month_base(ho)))
         st["byReg"] = _by_regime(pk, ho)
+        st["fwd"] = _forward(pk, ho)
+        st["cap"] = {"day": CAP["day"], "open": CAP["open"]} if CAP["on"] else None
     st["passMatched"] = bool(st["n"] >= 30 and st["mean"] > 0 and (st.get("mx") or 0) > 0 and (st.get("mT") or 0) >= PASS_MT)
     st["passMode"] = PASS_MODE if (timecol == "t" and TIME_MONTH is not None) else "trade"   # 달 정보가 없으면(단위 시험·5분) 종전 판정
     st["pass"] = st["passMatched"] if st["passMode"] == "matched" else st["passTrade"]
-    try:   # [V33.650 학습기] 최근 구간 확인 — 같은 고른 거래 중 판정 구간 마지막 REC_DAYS 거래일 몫 vs 그 조각의 공정 무작위
-        tho = np.sort(ho[timecol].unique())
-        if len(tho) > REC_DAYS:
-            cr = tho[-REC_DAYS]
-            rx = pk[pk[timecol] >= cr]["ex"].values.astype(float)
-            rb, _ = fair_base(ho[ho[timecol] >= cr])
-            rec = {"days": REC_DAYS, "n": int(len(rx)), "mean": round(float(rx.mean()), 4) if len(rx) else None, "base": rb}
-            sd_ = float(rx.std(ddof=1)) if len(rx) > 2 else 0.0
-            rec["t"] = round(float((rx.mean() - rb) / (sd_ / math.sqrt(len(rx)))), 2) if (rb is not None and sd_ > 0) else None
-            rec["needT"] = REC_T
-            rec["ok"] = bool(len(rx) < REC_MIN_N or rb is None or rec["t"] is None or rec["t"] > REC_T)   # [V33.660] 확실한 악화(t ≤ −2)만 미달
-            st["recent"] = rec
-            st["pass"] = bool(st["pass"] and rec["ok"])
-    except Exception:  # noqa: BLE001 — 확인 실패는 판정을 바꾸지 않는다
-        pass
+    rec = _recent(pk, ho, timecol)
+    if rec:
+        st["recent"] = rec
+        st["pass"] = bool(st["pass"] and rec["ok"])
+    if CAP["on"]:   # [V33.675] 시험 매수(사용자 (나) "시험 매수는 유지")는 종전 표본(상한 없이 뜬 신호 전부)으로 잰 종전 기준으로 연다 — 같은 고른 규칙
+        CAP["on"] = False
+        try:
+            pk0 = _pick(tab2, ho, rule, hist=df)
+            l0 = _stats(pk0["ex"].values.astype(float), ho["ex"].values.astype(float))
+            l0["base"] = fair_base(ho)[0]
+            l0["passTrade"] = bool(l0["n"] >= 30 and l0["mean"] > 0 and l0["t"] >= PASS_T and l0["base"] is not None and l0["mean"] > l0["base"])
+            r0 = _recent(pk0, ho, timecol)
+            l0["recent"] = r0
+            st["legacy"] = l0
+        finally:
+            CAP["on"] = True
     return st, tab2
+
+
+def _recent(pk, ho, timecol):
+    """[V33.650 학습기] 최근 구간 확인 — 같은 고른 거래 중 판정 구간 마지막 REC_DAYS 거래일 몫 vs 그 조각의 공정 무작위."""
+    try:
+        tho = np.sort(ho[timecol].unique())
+        if len(tho) <= REC_DAYS:
+            return None
+        cr = tho[-REC_DAYS]
+        rx = pk[pk[timecol] >= cr]["ex"].values.astype(float)
+        rb, _ = fair_base(ho[ho[timecol] >= cr])
+        rec = {"days": REC_DAYS, "n": int(len(rx)), "mean": round(float(rx.mean()), 4) if len(rx) else None, "base": rb}
+        sd_ = float(rx.std(ddof=1)) if len(rx) > 2 else 0.0
+        rec["t"] = round(float((rx.mean() - rb) / (sd_ / math.sqrt(len(rx)))), 2) if (rb is not None and sd_ > 0) else None
+        rec["needT"] = REC_T
+        rec["ok"] = bool(len(rx) < REC_MIN_N or rb is None or rec["t"] is None or rec["t"] > REC_T)   # [V33.660] 확실한 악화(t ≤ −2)만 미달
+        return rec
+    except Exception:  # noqa: BLE001 — 확인 실패는 판정을 바꾸지 않는다
+        return None
 
 
 def _relevel(df):
@@ -1508,6 +1597,10 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         global TIME_MONTH, TIME_REG
         TIME_MONTH = (np.asarray(P["close"].index).astype(np.int64) // 100).astype(np.int64)   # yyyymmdd → yyyymm
         TIME_REG = np.asarray(_regime(P["close"])[0])
+        global TIME_DATE, TIME_WEEK
+        TIME_DATE = np.asarray(P["close"].index).astype(np.int64)
+        TIME_WEEK = np.asarray(pd.to_datetime(TIME_DATE.astype(str), format="%Y%m%d").to_period("W").astype(np.int64))
+        CAP["open"] = min(12, CAP_OPEN_MK.get(market, 12))
         sig = CAT.signals(P)
         sig_now = {pb: sig[pb].fillna(False).values[-1].astype(bool).copy() for pb in CROSS_PB if pb in sig}   # 워커에 보낼 '오늘 목록'(늦추기 전)
         if LAG_FIX:
@@ -1581,11 +1674,17 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         if best_q is None and dflt is not None:
             log("   · [매매법시뮬] %s 검증 구간에서 양수인 후보 설정 없음 → 기본(5일 머리 상위 20%%)" % market)
             best_q = dflt
+        K_ = len(cand_cmp) * len(RULES + RULES_ADAPT + RULES_GV)
+        luck = {"K": K_, "level": luck_level(K_), "best": best_q[0] if best_q else None, "fallback": False}
+        if best_q is not None and dflt is not None and best_q is not dflt and (best_q[0] is None or best_q[0] < luck["level"]):   # [V33.675] 1등이 운 수준 이하 → 사전 등록 기본
+            log("   · [매매법시뮬] %s 검증 1등 %s 이 운 수준 %.2f(설정·규칙 %d개 중 최대의 기대) 이하 → 사전 등록 기본(5일 머리 상위 20%%)" % (market, best_q[0], luck["level"], K_))
+            best_q, luck["fallback"] = dflt, True
         if best_q is not None:
             _, q_, ddf, dst, hd_ = best_q
             dst["candHead"] = hd_
             cand_src = ("OMNI-Q 표본 밖 %s일 머리 상위 %d%%" % (hd_, round((1 - q_) * 100))) if q_ > 0 else "OMNI-Q 거름 없음(전 종목 · 검증이 고름)"
             dst["candQ"] = q_
+            dst["luck"] = luck
         else:
             log("   · [매매법시뮬] %s 후보 거름 불가(OMNI-Q 과거 점수 없음·부족) → 전 종목으로" % market)
             ddf, reg_now, sig = sim_daily(P, market, ev_dates, sig=sig, pbs=dpb)
@@ -1628,7 +1727,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                     if ok:
                         sig, dpb, bm, bt, bp, won = sig2, pbs2, vm, vt, vp, (st2, d2)
                 if won is not None:   # 채택분이 있으면 판정·표를 그 시뮬로 다시(후보 설정 기록은 그대로)
-                    keep = {k: dst.get(k) for k in ("candHead", "candQ", "cand")}
+                    keep = {k: dst.get(k) for k in ("candHead", "candQ", "cand", "luck")}
                     dst, ddf = won
                     dst.update(keep)
         except Exception as e:  # noqa: BLE001
@@ -1658,7 +1757,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                     best = (vt, q_, st_m, d_m)
             if best is not None:
                 _, q_, st_m, d_m = best
-                keep = {k: dst.get(k) for k in ("candHead", "candQ", "cand")}
+                keep = {k: dst.get(k) for k in ("candHead", "candQ", "cand", "luck")}
                 dst, ddf = st_m, d_m
                 dst.update(keep)
                 # 실전 수식 = 판정 구간 전까지(표와 같게 [0,80%))로 다시 맞춘 계수 · 같은 q
