@@ -16,6 +16,7 @@
   .github/workflows/android-app.yml(Build Android App): app/** 변경·수동 실행 때 debug APK 를 artifact(lux-android-debug)로 — 계정 없이 휴대폰 직접 설치 시험.
   화면: 네이티브 앱 안(window.Capacitor 또는 ?src=app)에선 '앱 설치' 버튼 숨김. 웹 푸시는 앱 웹뷰에서 안 됨(PushManager 없음 → 버튼 자동 숨김) — 네이티브 푸시는 Firebase(사용자 계정) 필요.
   남은 2단계: 네이티브 푸시(FCM) · 생체 잠금 · iOS(애플 계정·Mac) / 3단계: 스토어 서명·개인정보처리방침·'모의투자' 표기·시세 재배포 권리.
+  첫 빌드 실패(적응형 아이콘 배경 없음) → app/assets/icon-background.png 추가 후 성공 — APK artifact lux-android-debug(3.7MB) run 40381409566.
   웹 푸시 실전 확인(10/26): 헤드리스 크롬 구독 → 시험 알림 → 구글 푸시 서비스 201(접수) · 시험 구독은 지움.
 - V33.677 (10/26) ★앱 진화 1단계 ② 웹 푸시(체결 알림)★ — 앱이 닫혀 있어도 매수·매도 체결 알림.
   워커: RFC 8291 aes128gcm 암호화 + RFC 8292 VAPID(ES256) 를 WebCrypto 로 직접 구현(외부 라이브러리 없음) · VAPID 키는 워커가 처음 한 번 만들어 state push_vapid.
