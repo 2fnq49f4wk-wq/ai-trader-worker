@@ -1330,7 +1330,9 @@ def fair_base(te, draws=BASE_DRAWS, seed=11):
     return (round(float(np.mean(ms)), 4) if ms else None), (int(np.mean(ns)) if ns else None)
 
 
-SEL_KEY = "exT" if os.environ.get("PB_SEL", "t") == "ex" else "t"   # [실험] 검증 고르기 기준: 절대 t vs 무작위 대비 초과 t
+CV2 = os.environ.get("PB_CV", "0") == "1"
+CV_A = 0.40
+SEL_KEY = "cvT" if CV2 else ("exT" if os.environ.get("PB_SEL", "t") == "ex" else "t")   # [실험] 검증 고르기 기준: 절대 t · 무작위 대비 초과 t · 두 접기 평균 t
 
 
 def _ex_t(pk, b):
@@ -1357,6 +1359,9 @@ def validate(df, timecol, pbs=None):
     rules = RULES + (RULES_ADAPT + RULES_GV if timecol == "t" else [])   # 최근 가중·성적 스위치는 일봉(거래일 축)만
     tabs1 = {}
     va = df[(df[timecol] >= c1) & (df[timecol] < c2)]
+    if CV2:
+        c0 = ts[int(len(ts) * CV_A)]
+        vA = df[(df[timecol] >= c0) & (df[timecol] < c1)]
     cmp_ = []
     vbase, _vn = fair_base(va)
     for rule in rules:
@@ -1368,6 +1373,14 @@ def validate(df, timecol, pbs=None):
         st_ = _stats(pk["ex"].values.astype(float), va["ex"].values.astype(float))
         st_["baseAll"], st_["base"] = st_["base"], vbase
         st_["exT"] = _ex_t(pk["ex"].values.astype(float), vbase)
+        if CV2:   # [실험] 앞 접기 A — 표 [0,40%) → [40,60%) 에서도 같은 규칙 성적. 고르기 = 두 접기 t 평균(접기 하나의 국면 우연을 덜 탄다)
+            dkA = ("A", dk)
+            if dkA not in tabs1:
+                tabs1[dkA] = _shrunk_table(df[df[timecol] < c0], decay=dk, tcol=timecol, ref=c0)
+            pa = _pick(tabs1[dkA], vA, rule, hist=df)["ex"].values.astype(float)
+            st_["tA"] = round(float(pa.mean() / (pa.std(ddof=1) / math.sqrt(len(pa)))), 2) if len(pa) > 2 and pa.std() > 0 else 0.0
+            st_["nA"] = int(len(pa))
+            st_["cvT"] = round((st_["tA"] + (st_["t"] or 0.0)) / 2, 2) if st_["nA"] >= VAL_MIN_N else -9.0
         cmp_.append({"rule": rule, **st_})
     # [V33.622] 규칙은 평균이 아니라 ★t(평균 ÷ 불확실성)★ 로 고른다 · 표본 ≥ VAL_MIN_N — 후보 11개 중 '평균 최대' 는 표본 적은 우연을 고른다(무작위 시세에서 실측)
     elig = [c for c in cmp_ if c["n"] >= VAL_MIN_N and c["mean"] is not None]
