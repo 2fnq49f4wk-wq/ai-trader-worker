@@ -1,0 +1,13 @@
+{
+  "appId": "app.luxengine.trader",
+  "appName": "LUX",
+  "webDir": "www",
+  "server": {
+    "url": "https://ai-trader-app.blauenacht08.workers.dev/?src=app",
+    "androidScheme": "https",
+    "errorPath": "index.html"
+  },
+  "android": {
+    "backgroundColor": "#000000"
+  }
+}

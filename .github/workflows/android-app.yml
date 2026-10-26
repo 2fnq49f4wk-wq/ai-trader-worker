@@ -1,0 +1,40 @@
+# [V33.678] 앱 진화 2단계 — Capacitor 안드로이드 껍데기 시험판(APK) 빌드. 화면 = 워커 사이트 그대로(원격 URL).
+# 계정·서명 키 없이 debug APK 만 만든다(휴대폰에 직접 설치해 시험). 스토어용 서명 빌드는 3단계에서.
+name: Build Android App
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["app/**", ".github/workflows/android-app.yml"]
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: 의존성
+        run: npm install --no-audit --no-fund
+      - name: 안드로이드 프로젝트 만들기
+        run: npx cap add android
+      - name: 아이콘·스플래시
+        run: npm run assets || echo "아이콘 생성 실패 — 기본 아이콘으로 계속"
+      - name: 동기화
+        run: npx cap sync android
+      - name: debug APK 빌드
+        run: cd android && ./gradlew assembleDebug --no-daemon
+      - name: 결과물
+        uses: actions/upload-artifact@v4
+        with:
+          name: lux-android-debug
+          path: app/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30

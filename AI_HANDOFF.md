@@ -12,6 +12,11 @@
 
 ## Current handoff
 
+- V33.678 (10/26) ★앱 진화 2단계 시작 — 안드로이드 네이티브 껍데기(Capacitor 8.5.3)★ app/ — 화면 = 워커 사이트 원격 URL(?src=app) · 오프라인 안내 www/ · 플랫폼 폴더는 빌드 때 생성(저장소엔 설정만).
+  .github/workflows/android-app.yml(Build Android App): app/** 변경·수동 실행 때 debug APK 를 artifact(lux-android-debug)로 — 계정 없이 휴대폰 직접 설치 시험.
+  화면: 네이티브 앱 안(window.Capacitor 또는 ?src=app)에선 '앱 설치' 버튼 숨김. 웹 푸시는 앱 웹뷰에서 안 됨(PushManager 없음 → 버튼 자동 숨김) — 네이티브 푸시는 Firebase(사용자 계정) 필요.
+  남은 2단계: 네이티브 푸시(FCM) · 생체 잠금 · iOS(애플 계정·Mac) / 3단계: 스토어 서명·개인정보처리방침·'모의투자' 표기·시세 재배포 권리.
+  웹 푸시 실전 확인(10/26): 헤드리스 크롬 구독 → 시험 알림 → 구글 푸시 서비스 201(접수) · 시험 구독은 지움.
 - V33.677 (10/26) ★앱 진화 1단계 ② 웹 푸시(체결 알림)★ — 앱이 닫혀 있어도 매수·매도 체결 알림.
   워커: RFC 8291 aes128gcm 암호화 + RFC 8292 VAPID(ES256) 를 WebCrypto 로 직접 구현(외부 라이브러리 없음) · VAPID 키는 워커가 처음 한 번 만들어 state push_vapid.
   /api/push/key · /api/push/sub(test:true 면 확인 알림 1건) · /api/push/unsub — 구독은 state push_subs(최대 20 · 알려진 푸시 서비스 https 만). 크론마다 pushNotifyTick: 구독 0 이면 상태 1건 읽고 끝 · 있으면 trades id > push_last 새 거래 최대 5건 발송 · 404/410 구독 삭제 · 처음엔 기준점만 잡음(옛 거래 폭탄 방지).
