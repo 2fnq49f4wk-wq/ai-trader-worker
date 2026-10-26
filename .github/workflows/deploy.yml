@@ -829,6 +829,9 @@ jobs:
       # [V33.607] 매매법 모의 시뮬 — 귀무·양성 대조 · 상황 열쇠 학습기↔워커 일치 · 실시간 조회·청산
       - name: 매매법 모의 시뮬 검사
         run: node tools/check-playbook.mjs
+      # [V33.677] 웹 푸시 — RFC 8291 시험값 · VAPID 서명 · 서비스워커 · 구독 주소 제한
+      - name: 웹 푸시 검사
+        run: node tools/check-webpush.mjs
       - name: OMNI-Q 거시·섹터 피처 계약(섹터 배정 · 누출 없음 · 민감도 × 거시)
         run: node tools/check-omniq-macro.mjs
       # [V33.627] 시간외 시세 매분 두 시장 · 평가 차례 위상 고정 없음 · 장전 전일 종가 넘기기

@@ -12,6 +12,11 @@
 
 ## Current handoff
 
+- V33.677 (10/26) ★앱 진화 1단계 ② 웹 푸시(체결 알림)★ — 앱이 닫혀 있어도 매수·매도 체결 알림.
+  워커: RFC 8291 aes128gcm 암호화 + RFC 8292 VAPID(ES256) 를 WebCrypto 로 직접 구현(외부 라이브러리 없음) · VAPID 키는 워커가 처음 한 번 만들어 state push_vapid.
+  /api/push/key · /api/push/sub(test:true 면 확인 알림 1건) · /api/push/unsub — 구독은 state push_subs(최대 20 · 알려진 푸시 서비스 https 만). 크론마다 pushNotifyTick: 구독 0 이면 상태 1건 읽고 끝 · 있으면 trades id > push_last 새 거래 최대 5건 발송 · 404/410 구독 삭제 · 처음엔 기준점만 잡음(옛 거래 폭탄 방지).
+  서비스워커: push → showNotification · notificationclick → 거래 화면. 화면: 사이드바·모바일 메뉴 '🔕 체결 알림 받기'(켜짐/끄기 토글) · 아이폰 안내에 '홈 화면 앱에서만(16.4+)'.
+  게이트 tools/check-webpush.mjs: RFC 8291 부록 A 시험값 바이트 일치 · 왕복 복호 · JWT 서명 검증 · 구독 주소 제한 · SW 핸들러 · 크론 저비용.
 - V33.676 (10/26) ★앱 진화 1단계(PWA) — 설치 길★ 사용자: "사이트랑 진짜 어플리케이션 2개로 진화 · 단계별 계획 세워 하나씩".
   로드맵(이 순서로 진행): 1단계 PWA 다듬기 ① 설치 버튼·아이폰 안내(이 판) ② 웹 푸시(앱 닫혀도 체결·손절 알림 — VAPID 키 워커 자체 생성·D1 보관) ③ 오프라인·스플래시·앱 같은 전환
   → 2단계 Capacitor 네이티브 껍데기(app/ — iOS·안드로이드, 원격 URL 로 같은 화면 · 네이티브 푸시·생체 잠금 · ★사용자 Apple $99/년 · Google $25 계정 필요★)

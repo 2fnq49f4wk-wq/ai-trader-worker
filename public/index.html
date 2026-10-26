@@ -194,8 +194,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.676">
-<script src="/neural-observatory.js?v=33.676" defer></script>
+<meta name="lux-build" content="V33.677">
+<script src="/neural-observatory.js?v=33.677" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -3814,7 +3814,7 @@ html[data-theme="light"] .pz-tabs button[aria-selected="true"]{background:#fff;c
 })();
 </script>
 <script>
-/* [V33.676] ★앱 설치(PWA 1단계)★ — 사용자 10/26 "사이트를 진짜 앱처럼 · 단계별로". 설치형 앱(standalone)은 이미 된다(매니페스트·서비스워커·아이콘).
+/* [V33.677] ★앱 설치(PWA 1단계)★ — 사용자 10/26 "사이트를 진짜 앱처럼 · 단계별로". 설치형 앱(standalone)은 이미 된다(매니페스트·서비스워커·아이콘).
    빠진 것은 '설치하는 길' 이었다: 안드로이드·PC 크롬은 beforeinstallprompt 를 받아 버튼 한 번으로 설치, 아이폰(사파리)은 그 API 가 없어
    공유 → '홈 화면에 추가' 안내 시트를 띄운다. 이미 앱으로 열려 있으면 버튼을 숨긴다. 메인 스크립트와 분리(예외가 서로 번지지 않게). */
 (function(){
@@ -3836,12 +3836,44 @@ html[data-theme="light"] .pz-tabs button[aria-selected="true"]{background:#fff;c
       + '<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;"><img src="/icon-192.png" alt="" width="44" height="44" style="border-radius:10px;">'
       + '<div><div style="font-weight:600;font-size:16px;">LUX 앱 설치</div><div style="font-size:12px;opacity:.7;">'+(ios ? '아이폰·아이패드(사파리)' : '안드로이드·PC')+' · 무료 · 저장공간 거의 안 씀</div></div></div>'
       + '<ol style="margin:0 0 14px 18px;padding:0;">' + steps.map(function(x){ return '<li style="margin:4px 0;">'+x+'</li>'; }).join('') + '</ol>'
+      + (ios ? '<div style="font-size:12px;opacity:.75;margin-bottom:8px;">체결 알림(푸시)은 아이폰에선 <b>홈 화면에 추가한 앱</b>에서만 켤 수 있습니다(iOS 16.4 이상) — 앱으로 연 뒤 메뉴의 🔔 체결 알림.</div>' : '')
       + '<div style="font-size:12px;opacity:.65;margin-bottom:14px;">설치해도 내용은 같습니다 — 사이트를 고치면 앱도 바로 바뀝니다. 모의 매매(실제 주문 아님)입니다.</div>'
       + '<button type="button" id="luxInstallClose" style="width:100%;min-height:44px;border-radius:10px;border:1px solid rgba(255,255,255,.18);background:transparent;color:inherit;font-size:14px;">닫기</button></div>';
     d.addEventListener('click', function(e){ if(e.target === d || (e.target && e.target.id === 'luxInstallClose')) d.remove(); });
     document.body.appendChild(d);
     var c = document.getElementById('luxInstallClose'); if(c) c.focus();
   }
+  /* [V33.677] 체결 알림(웹 푸시) — 권한 → 서비스워커 구독 → 워커에 등록(테스트 알림 1건). 아이폰은 홈 화면 앱(16.4+)에서만 된다. */
+  function b64u(s){ s = s.replace(/-/g,'+').replace(/_/g,'/'); var p = s + '==='.slice((s.length+3)%4); var bin = atob(p), u = new Uint8Array(bin.length); for(var i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i); return u; }
+  function pushState(){ try{ return localStorage.getItem('luxPush') === '1'; }catch(e){ return false; } }
+  function pushSync(){ var b = document.getElementById('btnPush'); if(!b) return; var ok = ('serviceWorker' in navigator) && ('PushManager' in window); b.style.display = ok ? '' : 'none'; b.textContent = pushState() ? '🔔 체결 알림 켜짐' : '🔕 체결 알림 받기'; }
+  window.__luxPush = async function(){
+    try{
+      if(!('serviceWorker' in navigator) || !('PushManager' in window)){
+        if(isIOS() && !standalone()){ sheet(); return; }
+        alert('이 브라우저는 알림을 지원하지 않습니다.'); return;
+      }
+      var reg = await navigator.serviceWorker.ready;
+      var cur = await reg.pushManager.getSubscription();
+      if(cur && pushState()){   // 끄기
+        if(!confirm('체결 알림을 끌까요?')) return;
+        try{ await fetch('/api/push/unsub', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ sub: cur.toJSON() }) }); }catch(e){}
+        try{ await cur.unsubscribe(); }catch(e){}
+        try{ localStorage.removeItem('luxPush'); }catch(e){}
+        pushSync(); return;
+      }
+      var perm = await Notification.requestPermission();
+      if(perm !== 'granted'){ alert('알림 권한이 꺼져 있습니다 — 브라우저(또는 아이폰 설정 › 알림)에서 LUX 를 허용해 주세요.'); return; }
+      var k = await (await fetch('/api/push/key')).json();
+      var sub = cur || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64u(k.key) });
+      var r = await (await fetch('/api/push/sub', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ sub: sub.toJSON(), test: true }) })).json();
+      if(r && r.ok){ try{ localStorage.setItem('luxPush','1'); }catch(e){} }
+      else alert('알림 등록 실패: ' + (r && r.error || '알 수 없음'));
+      pushSync();
+    }catch(e){ alert('알림 설정 중 오류: ' + (e && e.message || e)); }
+  };
+  document.addEventListener('click', function(e){ var b = e.target && e.target.closest ? e.target.closest('#btnPush') : null; if(b){ e.preventDefault(); window.__luxPush(); } });
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', pushSync); else pushSync();
   window.__luxInstall = function(){
     if(deferred){ var p = deferred; deferred = null; try{ p.prompt(); p.userChoice.then(function(){ sync(); }); }catch(e){ sheet(); } return; }
     sheet();
@@ -4155,6 +4187,9 @@ window.LUX_NV = {
       </div>
       <div class="sb-btn-row">
         <button type="button" class="sb-btn btn" id="btnInstall" style="flex:1;" title="홈 화면에 앱으로 설치(주소창 없이 앱처럼 열림)">📲 앱 설치</button>
+      </div>
+      <div class="sb-btn-row">
+        <button type="button" class="sb-btn btn" id="btnPush" style="flex:1;display:none;" title="매수·매도 체결을 앱이 닫혀 있어도 알림으로 받습니다(웹 푸시)">🔕 체결 알림 받기</button>
       </div>
       <button type="button" class="sb-theme-btn" id="btnTheme">🌙 DARK</button>
     </div>
@@ -18258,6 +18293,7 @@ html:root .page > *{ flex-shrink:0; }
         +'<button type="button" data-proxy="btnSettings">⚙ 설정</button>'
         +'<button type="button" data-proxy="btnUpdate">↻ 새 버전</button>'
         +(window.__luxInstall && !((window.matchMedia && matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true) ? '<button type="button" onclick="window.__luxInstall()">📲 앱 설치</button>' : '')
+        +(window.__luxPush ? '<button type="button" onclick="window.__luxPush()">🔔 체결 알림</button>' : '')
         +'<button type="button" data-proxy="btnTheme">🌓 테마</button>'
       +'</div></div>'
       +'<div class="m-dr-sec"><div class="m-dr-sec-h">자동 운용</div>'
@@ -21327,12 +21363,12 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.676">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.676">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.676">
-<link rel="stylesheet" href="/model-evidence.css?v=33.676">
+<link rel="stylesheet" href="/brain-console.css?v=33.677">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.677">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.677">
+<link rel="stylesheet" href="/model-evidence.css?v=33.677">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.676">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.677">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -21359,7 +21395,7 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
   setTimeout(reveal, 9500);
 })();
 </script>
-<script src="/model-evidence.js?v=33.676"></script>
-<script src="/workspace-ui.js?v=33.676"></script>
+<script src="/model-evidence.js?v=33.677"></script>
+<script src="/workspace-ui.js?v=33.677"></script>
 </body>
 </html>

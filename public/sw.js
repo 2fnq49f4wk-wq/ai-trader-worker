@@ -114,3 +114,22 @@ self.addEventListener('fetch', (e) => {
     return hit || (await net) || new Response('', { status: 504 });
   })());
 });
+
+/* [V33.677] ★웹 푸시★ — 워커(pushNotifyTick)가 체결 때 보낸 알림을 앱이 닫혀 있어도 띄운다. 누르면 거래 화면으로(열린 창이 있으면 그 창으로). */
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) { d = { title: 'LUX', body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(self.registration.showNotification(d.title || 'LUX', {
+    body: d.body || '', tag: d.tag || undefined, icon: '/icon-192.png', badge: '/icon-192.png',
+    data: { url: d.url || '/?p=trades' }, renotify: !!d.tag,
+  }));
+});
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || '/';
+  e.waitUntil((async () => {
+    const cs = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of cs) { if ('focus' in c) { try { await c.navigate(url); } catch (err) {} return c.focus(); } }
+    return self.clients.openWindow(url);
+  })());
+});

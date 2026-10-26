@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.676";
+const _BUILD_VER = "V33.677";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -33662,6 +33662,9 @@ async function handleRequest(request, env, ctx, _inner) {
       }
       return Response.json(indices, { headers: cors });
     }
+    if (path === "/api/push/key" || path === "/api/push/sub" || path === "/api/push/unsub") {   // [V33.677] 웹 푸시 구독
+      try { return await pushApi(path, request, env, cors); } catch (e) { return Response.json({ ok: false, error: String(e && e.message || e) }, { status: 500, headers: cors }); }
+    }
     if (path === "/api/trades") {
       const limit = parseInt(url.searchParams.get("limit") || "100", 10);
       try {
@@ -56286,6 +56289,114 @@ async function extImportObserve(env, request, res) {
   } catch (e) {}
 }
 
+/* ══ [V33.677] ★웹 푸시 — 앱이 닫혀 있어도 체결 알림★(앱 진화 1단계 ②) ══════════════════════════════
+   표준 Web Push(RFC 8030) · 암호화 aes128gcm(RFC 8291) · 발신자 인증 VAPID(RFC 8292) 를 WebCrypto 로 직접 구현(외부 라이브러리·외부 AI 없음).
+   VAPID 키(ECDSA P-256)는 워커가 처음 한 번 만들어 D1 상태(push_vapid)에 둔다 — 비밀값 설정 없이 동작.
+   구독은 상태 한 칸(push_subs · 최대 PUSH_MAX)에, 보낸 마지막 거래 id 는 push_last 에. 크론 1분마다: 구독이 없으면 상태 1건 읽고 끝,
+   있으면 새 거래(최대 5건)를 알림으로 보낸다. 만료된 구독(404·410)은 지운다. 아이폰은 '홈 화면에 추가' 한 앱(iOS 16.4+)에서만 받는다. */
+const PUSH_MAX = 20;
+const PUSH_HOSTS = /^https:\/\/([a-z0-9-]+\.)*(fcm\.googleapis\.com|push\.services\.mozilla\.com|push\.apple\.com|notify\.windows\.com|windows\.com)\//i;
+const _pb64 = {
+  enc(buf) { const b = new Uint8Array(buf); let s = ""; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); },
+  dec(str) { const s = String(str).replace(/-/g, "+").replace(/_/g, "/"); const p = s + "===".slice((s.length + 3) % 4); const bin = atob(p); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; },
+};
+function _pcat() { let n = 0; for (const a of arguments) n += a.length; const o = new Uint8Array(n); let k = 0; for (const a of arguments) { o.set(a, k); k += a.length; } return o; }
+async function pushVapid(DB) {
+  let v = await getState(DB, "push_vapid", null, true);   // 엄격 — 읽기 실패 때 새 키로 덮어쓰면 기존 구독이 전부 무효가 된다
+  if (v && v.pub && v.jwk) return v;
+  const kp = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+  const raw = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey));
+  v = { pub: _pb64.enc(raw), jwk: await crypto.subtle.exportKey("jwk", kp.privateKey), ts: Date.now() };
+  await setState(DB, "push_vapid", v);
+  return v;
+}
+async function _pushJwt(v, aud) {
+  const te = new TextEncoder();
+  const h = _pb64.enc(te.encode(JSON.stringify({ typ: "JWT", alg: "ES256" })));
+  const b = _pb64.enc(te.encode(JSON.stringify({ aud: aud, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: "https://ai-trader-app.blauenacht08.workers.dev/" })));
+  const key = await crypto.subtle.importKey("jwk", v.jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
+  const sig = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, te.encode(h + "." + b)));   // WebCrypto = r||s(64바이트) 그대로 JWT 서명
+  return h + "." + b + "." + _pb64.enc(sig);
+}
+async function _hkdf(ikm, salt, info, bits) {
+  const k = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: salt, info: info }, k, bits));
+}
+/* RFC 8291 — 받는 쪽 공개키(p256dh) · 인증 비밀(auth) 로 본문을 암호화한 aes128gcm 레코드 하나 */
+async function pushEncrypt(sub, payload) {
+  const te = new TextEncoder();
+  const uaPub = _pb64.dec(sub.keys.p256dh), auth = _pb64.dec(sub.keys.auth);
+  const as = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+  const asPub = new Uint8Array(await crypto.subtle.exportKey("raw", as.publicKey));
+  const uaKey = await crypto.subtle.importKey("raw", uaPub, { name: "ECDH", namedCurve: "P-256" }, false, []);
+  const shared = new Uint8Array(await crypto.subtle.deriveBits({ name: "ECDH", public: uaKey }, as.privateKey, 256));
+  const ikm = await _hkdf(shared, auth, _pcat(te.encode("WebPush: info\0"), uaPub, asPub), 256);
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const cek = await _hkdf(ikm, salt, te.encode("Content-Encoding: aes128gcm\0"), 128);
+  const nonce = await _hkdf(ikm, salt, te.encode("Content-Encoding: nonce\0"), 96);
+  const k = await crypto.subtle.importKey("raw", cek, "AES-GCM", false, ["encrypt"]);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, k, _pcat(te.encode(payload), new Uint8Array([2]))));
+  const rs = new Uint8Array([0, 0, 16, 0]);   // 레코드 크기 4096
+  return _pcat(salt, rs, new Uint8Array([asPub.length]), asPub, ct);
+}
+async function pushSend(v, sub, obj) {
+  const u = new URL(sub.endpoint);
+  const body = await pushEncrypt(sub, JSON.stringify(obj));
+  const jwt = await _pushJwt(v, u.origin);
+  const r = await fetch(sub.endpoint, { method: "POST", body: body, headers: {
+    "Content-Encoding": "aes128gcm", "Content-Type": "application/octet-stream", "TTL": "3600", "Urgency": "high",
+    "Authorization": "vapid t=" + jwt + ", k=" + v.pub } });
+  return r.status;
+}
+function pushTradeMsg(t) {
+  const sideKo = t.side === "BUY" ? "매수" : t.side === "SELL" ? "매도" : String(t.side || "");
+  const sess = t.session === "pre" ? " · 프리마켓" : t.session === "post" ? " · 애프터" : "";
+  const pnl = t.side === "SELL" && t.pnl_pct != null && isFinite(+t.pnl_pct) ? " · " + (+t.pnl_pct >= 0 ? "+" : "") + (+t.pnl_pct).toFixed(2) + "%" : "";
+  const nm = (typeof NAME_MAP !== "undefined" && NAME_MAP[t.symbol]) || t.symbol;
+  return { title: "LUX " + sideKo + " · " + nm, body: (t.qty != null ? t.qty + "주 @ " + t.price : "") + sess + pnl + "\n" + String(t.reason || "").replace(/\s+/g, " ").slice(0, 110),
+           url: "/?p=trades", tag: "trade-" + t.id };
+}
+async function pushNotifyTick(env) {
+  const subs = await getState(env.DB, "push_subs", null, true);
+  if (!Array.isArray(subs) || !subs.length) return;
+  const last = await getState(env.DB, "push_last", null, true);
+  if (last == null || last.id == null) {   // 처음엔 지금까지의 거래를 건너뛰고 기준점만 잡는다(옛 거래 폭탄 방지)
+    const r0 = await env.DB.prepare("SELECT MAX(id) AS m FROM trades").first();
+    await setState(env.DB, "push_last", { id: (r0 && r0.m) || 0, ts: Date.now() });
+    return;
+  }
+  const rs = await env.DB.prepare("SELECT * FROM trades WHERE id > ? ORDER BY id ASC LIMIT 5").bind(last.id).all();
+  const rows = (rs && rs.results) || [];
+  if (!rows.length) return;
+  const v = await pushVapid(env.DB);
+  const dead = new Set();
+  for (const t of rows) {
+    const msg = pushTradeMsg(t);
+    for (const sb of subs) {
+      if (dead.has(sb.endpoint)) continue;
+      try { const st = await pushSend(v, sb, msg); if (st === 404 || st === 410) dead.add(sb.endpoint); } catch (e) {}
+    }
+  }
+  await setState(env.DB, "push_last", { id: rows[rows.length - 1].id, ts: Date.now() });
+  if (dead.size) await setState(env.DB, "push_subs", subs.filter(function (x) { return !dead.has(x.endpoint); }));
+}
+async function pushApi(path, request, env, cors) {
+  if (path === "/api/push/key") { const v = await pushVapid(env.DB); return Response.json({ ok: true, key: v.pub }, { headers: cors }); }
+  if (request.method !== "POST") return Response.json({ ok: false, error: "POST" }, { status: 405, headers: cors });
+  let b = null; try { b = await request.json(); } catch (e) {}
+  const sb = b && b.sub;
+  if (!sb || typeof sb.endpoint !== "string" || !PUSH_HOSTS.test(sb.endpoint) || sb.endpoint.length > 1000) return Response.json({ ok: false, error: "bad endpoint" }, { status: 400, headers: cors });
+  const subs = (await getState(env.DB, "push_subs", null, true)) || [];
+  const rest = subs.filter(function (x) { return x.endpoint !== sb.endpoint; });
+  if (path === "/api/push/unsub") { await setState(env.DB, "push_subs", rest); return Response.json({ ok: true, n: rest.length }, { headers: cors }); }
+  if (!sb.keys || typeof sb.keys.p256dh !== "string" || typeof sb.keys.auth !== "string" || sb.keys.p256dh.length > 200 || sb.keys.auth.length > 64) return Response.json({ ok: false, error: "bad keys" }, { status: 400, headers: cors });
+  rest.push({ endpoint: sb.endpoint, keys: { p256dh: sb.keys.p256dh, auth: sb.keys.auth }, ts: Date.now() });
+  const keep = rest.slice(-PUSH_MAX);
+  await setState(env.DB, "push_subs", keep);
+  if (b.test) { try { const v = await pushVapid(env.DB); await pushSend(v, keep[keep.length - 1], { title: "LUX 알림 켜짐", body: "체결(매수·매도)이 나면 이렇게 알려 드립니다.", url: "/?p=trades", tag: "push-test" }); } catch (e) {} }
+  return Response.json({ ok: true, n: keep.length }, { headers: cors });
+}
+
 export default {
   // [V12.128] 모든 D1 접근을 과부하 재시도 래퍼로 감싼다(호출부 160여 곳을 건드리지 않고 일괄 적용).
   async fetch(request, env, ctx) {
@@ -57504,6 +57615,8 @@ export default {
         }
       } catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] AI train fail: " + e.message); } catch (e2) {} }
 
+      __prof.mark("push");
+      try { await pushNotifyTick(env); } catch (e) {}   // [V33.677] 체결 웹 푸시(구독 없으면 상태 1건 읽고 끝)
       __prof.mark("subticks");
       // 8) [실시간] 분(分) 내 빠른 포지션 감시 — 남은 시간만큼 sleep 서브틱으로 손절/익절 점검
       try { await runFastWatch(env, __cronStart); }
