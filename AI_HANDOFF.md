@@ -12,6 +12,13 @@
 
 ## Current handoff
 
+- V33.679 (10/26) ★앱 2단계 이어서 — 네이티브 기능 · 앱 푸시(FCM) · 서명 빌드 · 개인정보처리방침★ 사용자: "앱 제작 이어서 · 다음 단계 내가 할 일".
+  사이트(index.html) 네이티브 연결(window.Capacitor 있을 때만): 안드로이드 뒤로 버튼 · 검정 상태표시줄 · 🔒 생체 잠금(@capgo/capacitor-native-biometric · 열 때·1분 넘게 나갔다 올 때) · 🔔 앱 푸시(FCM 토큰 → /api/push/sub {fcm}).
+  앱 푸시는 Firebase 설정이 들어간 빌드(UA 'LuxApp/1 fcm')에서만 버튼이 뜬다(설정 없이 register() 하면 앱이 죽음).
+  워커: FCM HTTP v1 발송(fcmToken RS256 JWT → OAuth → messages:send · UNREGISTERED 삭제) — 워커 비밀 FCM_SA 없으면 앱 구독은 저장만. deploy.yml: GitHub 비밀 FCM_SERVICE_ACCOUNT 있으면 wrangler secret put FCM_SA.
+  app/: 플러그인(app·push·status-bar·splash·biometric) · scripts-prepare.sh(google-services.json·versionCode=run_number) · android-release.yml(서명 AAB/APK — ANDROID_KEYSTORE_* 비밀값).
+  public/privacy.html: 개인정보처리방침 · '모의투자(실주문 아님)' 표기 — 메뉴 연결. check-webpush 에 FCM 서명·개인정보 페이지 검사 추가.
+  ★사용자 할 일★(app/README.md): Play 계정 · Firebase(GOOGLE_SERVICES_JSON · FCM_SERVICE_ACCOUNT) · 업로드 키(ANDROID_KEYSTORE_BASE64·PASSWORD·KEY_ALIAS·KEY_PASSWORD) · Play 내부 테스트 업로드 · (선택) Apple.
 - V33.678 (10/26) ★앱 진화 2단계 시작 — 안드로이드 네이티브 껍데기(Capacitor 8.5.3)★ app/ — 화면 = 워커 사이트 원격 URL(?src=app) · 오프라인 안내 www/ · 플랫폼 폴더는 빌드 때 생성(저장소엔 설정만).
   .github/workflows/android-app.yml(Build Android App): app/** 변경·수동 실행 때 debug APK 를 artifact(lux-android-debug)로 — 계정 없이 휴대폰 직접 설치 시험.
   화면: 네이티브 앱 안(window.Capacitor 또는 ?src=app)에선 '앱 설치' 버튼 숨김. 웹 푸시는 앱 웹뷰에서 안 됨(PushManager 없음 → 버튼 자동 숨김) — 네이티브 푸시는 Firebase(사용자 계정) 필요.

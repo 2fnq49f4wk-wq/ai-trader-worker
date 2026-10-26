@@ -1273,6 +1273,16 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # [V33.679] 앱 푸시(FCM) 서비스 계정 — GitHub 비밀 FCM_SERVICE_ACCOUNT 가 있으면 워커 비밀 FCM_SA 로 넣는다(없으면 건너뜀 · 웹 푸시는 그대로)
+      - name: 앱 푸시 비밀값(FCM_SA)
+        if: github.event_name == 'push'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FCM: ${{ secrets.FCM_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$FCM" ]; then echo "FCM_SERVICE_ACCOUNT 없음 — 건너뜀"; exit 0; fi
+          echo "$FCM" | wrangler secret put FCM_SA >/dev/null && echo "FCM_SA 설정됨" || echo "::warning::FCM_SA 설정 실패"
       # [V33.498] ★분할 빌드 연기 시험★ — 운영 HTML 이 부르는 /_b/ 파일이 전부 200 이고 내용이 같은가.
       #   하나라도 아니면 화면이 코드 없이 뜬다 → ★원본(인라인) index.html 로 즉시 재배포★ 하고 실패로 표시한다.
       - name: 분할 빌드 연기 시험(실패하면 원본 재배포)

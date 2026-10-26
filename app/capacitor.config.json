@@ -5,9 +5,27 @@
   "server": {
     "url": "https://ai-trader-app.blauenacht08.workers.dev/?src=app",
     "androidScheme": "https",
-    "errorPath": "index.html"
+    "errorPath": "index.html",
+    "allowNavigation": [
+      "ai-trader-app.blauenacht08.workers.dev"
+    ]
   },
   "android": {
     "backgroundColor": "#000000"
+  },
+  "appendUserAgent": "LuxApp/1",
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 800,
+      "backgroundColor": "#000000",
+      "showSpinner": false
+    },
+    "PushNotifications": {
+      "presentationOptions": [
+        "badge",
+        "sound",
+        "alert"
+      ]
+    }
   }
 }

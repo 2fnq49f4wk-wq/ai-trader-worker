@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.678";
+const _BUILD_VER = "V33.679";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -56348,6 +56348,41 @@ async function pushSend(v, sub, obj) {
     "Authorization": "vapid t=" + jwt + ", k=" + v.pub } });
   return r.status;
 }
+/* [V33.679] ★네이티브 앱 푸시(FCM HTTP v1)★ — 앱(Capacitor)은 웹 푸시가 안 되어 구글 FCM 으로 보낸다. 서비스 계정 JSON 은 워커 비밀값 FCM_SA
+   (GitHub 비밀 FCM_SERVICE_ACCOUNT → 배포 때 wrangler secret put). 없으면 앱 구독은 저장만 되고 보내지 않는다(웹 푸시는 그대로).
+   OAuth: 서비스 계정 키로 RS256 JWT → oauth2 토큰(55분 기억) → messages:send. UNREGISTERED·404 면 구독 삭제. */
+let __fcmTok = null;
+async function fcmToken(env) {
+  if (__fcmTok && __fcmTok.exp > Date.now() + 60000) return __fcmTok;
+  const sa = JSON.parse(env.FCM_SA);
+  const te = new TextEncoder(), now = Math.floor(Date.now() / 1000);
+  const h = _pb64.enc(te.encode(JSON.stringify({ alg: "RS256", typ: "JWT" })));
+  const c = _pb64.enc(te.encode(JSON.stringify({ iss: sa.client_email, scope: "https://www.googleapis.com/auth/firebase.messaging", aud: "https://oauth2.googleapis.com/token", iat: now, exp: now + 3600 })));
+  const pem = String(sa.private_key).replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
+  const der = Uint8Array.from(atob(pem), function (x) { return x.charCodeAt(0); });
+  const key = await crypto.subtle.importKey("pkcs8", der, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
+  const sig = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, te.encode(h + "." + c)));
+  const r = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "grant_type=" + encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer") + "&assertion=" + h + "." + c + "." + _pb64.enc(sig) });
+  const j = await r.json();
+  if (!j.access_token) throw new Error("fcm oauth " + r.status);
+  __fcmTok = { tok: j.access_token, pid: sa.project_id, exp: Date.now() + Math.min(3300, j.expires_in || 3300) * 1000 };
+  return __fcmTok;
+}
+async function fcmSend(env, token, obj) {
+  const t = await fcmToken(env);
+  const r = await fetch("https://fcm.googleapis.com/v1/projects/" + t.pid + "/messages:send", { method: "POST",
+    headers: { "Authorization": "Bearer " + t.tok, "Content-Type": "application/json" },
+    body: JSON.stringify({ message: { token: token, notification: { title: obj.title, body: obj.body }, data: { url: obj.url || "/?p=trades", tag: obj.tag || "" },
+      android: { priority: "high", notification: { tag: obj.tag || undefined, channel_id: "trades" } } } }) });
+  if (r.status === 404) return 410;
+  if (r.status >= 400) { let tx = ""; try { tx = await r.text(); } catch (e) {} if (/UNREGISTERED|registration-token-not-registered/i.test(tx)) return 410; }
+  return r.status;
+}
+async function pushOne(env, v, sb, msg) {
+  if (sb.fcm) return env.FCM_SA ? fcmSend(env, sb.fcm, msg) : 0;
+  return pushSend(v, sb, msg);
+}
 function pushTradeMsg(t) {
   const sideKo = t.side === "BUY" ? "매수" : t.side === "SELL" ? "매도" : String(t.side || "");
   const sess = t.session === "pre" ? " · 프리마켓" : t.session === "post" ? " · 애프터" : "";
@@ -56373,17 +56408,30 @@ async function pushNotifyTick(env) {
   for (const t of rows) {
     const msg = pushTradeMsg(t);
     for (const sb of subs) {
-      if (dead.has(sb.endpoint)) continue;
-      try { const st = await pushSend(v, sb, msg); if (st === 404 || st === 410) dead.add(sb.endpoint); } catch (e) {}
+      const id = sb.fcm || sb.endpoint;
+      if (dead.has(id)) continue;
+      try { const st = await pushOne(env, v, sb, msg); if (st === 404 || st === 410) dead.add(id); } catch (e) {}
     }
   }
   await setState(env.DB, "push_last", { id: rows[rows.length - 1].id, ts: Date.now() });
-  if (dead.size) await setState(env.DB, "push_subs", subs.filter(function (x) { return !dead.has(x.endpoint); }));
+  if (dead.size) await setState(env.DB, "push_subs", subs.filter(function (x) { return !dead.has(x.fcm || x.endpoint); }));
 }
 async function pushApi(path, request, env, cors) {
   if (path === "/api/push/key") { const v = await pushVapid(env.DB); return Response.json({ ok: true, key: v.pub }, { headers: cors }); }
   if (request.method !== "POST") return Response.json({ ok: false, error: "POST" }, { status: 405, headers: cors });
   let b = null; try { b = await request.json(); } catch (e) {}
+  if (b && typeof b.fcm === "string") {   // [V33.679] 네이티브 앱(FCM 토큰)
+    if (!/^[A-Za-z0-9:_\-]{20,4096}$/.test(b.fcm)) return Response.json({ ok: false, error: "bad token" }, { status: 400, headers: cors });
+    const subs0 = (await getState(env.DB, "push_subs", null, true)) || [];
+    const rest0 = subs0.filter(function (x) { return x.fcm !== b.fcm; });
+    if (path === "/api/push/unsub") { await setState(env.DB, "push_subs", rest0); return Response.json({ ok: true, n: rest0.length }, { headers: cors }); }
+    rest0.push({ fcm: b.fcm, ts: Date.now() });
+    const keep0 = rest0.slice(-PUSH_MAX);
+    await setState(env.DB, "push_subs", keep0);
+    let test0 = null;
+    if (b.test) { try { test0 = env.FCM_SA ? await fcmSend(env, b.fcm, { title: "LUX 알림 켜짐", body: "체결(매수·매도)이 나면 이렇게 알려 드립니다.", url: "/?p=trades", tag: "push-test" }) : "no-fcm-key"; } catch (e) { test0 = "err"; } }
+    return Response.json({ ok: true, n: keep0.length, test: test0 }, { headers: cors });
+  }
   const sb = b && b.sub;
   if (!sb || typeof sb.endpoint !== "string" || !PUSH_HOSTS.test(sb.endpoint) || sb.endpoint.length > 1000) return Response.json({ ok: false, error: "bad endpoint" }, { status: 400, headers: cors });
   const subs = (await getState(env.DB, "push_subs", null, true)) || [];

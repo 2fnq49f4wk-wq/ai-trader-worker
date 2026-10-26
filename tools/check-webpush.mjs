@@ -41,5 +41,23 @@ chk(M.PUSH_HOSTS.test("https://fcm.googleapis.com/fcm/send/abc") && M.PUSH_HOSTS
 chk(/addEventListener\('push'/.test(SW) && /addEventListener\('notificationclick'/.test(SW) && /showNotification/.test(SW), "서비스워커: push → 알림 · 누르면 앱으로");
 chk(/try \{ await pushNotifyTick\(env\); \} catch/.test(S) && /if \(!Array\.isArray\(subs\) \|\| !subs\.length\) return;/.test(S), "크론: 구독 없으면 상태 1건 읽고 끝(D1 낭비 없음)");
 chk(/id="btnPush"/.test(H) && /window\.__luxPush = async function/.test(H) && /id="btnInstall"/.test(H), "화면: 앱 설치 · 체결 알림 버튼");
+{ // [V33.679] 앱 푸시(FCM HTTP v1) — 서비스 계정 키로 만든 RS256 JWT 가 공개키로 검증되고, 토큰 → messages:send 로 이어진다(가짜 fetch)
+  const src2 = S.slice(S.indexOf("let __fcmTok = null;"), S.indexOf("function pushTradeMsg"));
+  const kp2 = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
+  const pk8 = Buffer.from(await crypto.subtle.exportKey("pkcs8", kp2.privateKey)).toString("base64").replace(/(.{64})/g, "$1\n");
+  const env = { FCM_SA: JSON.stringify({ client_email: "x@p.iam.gserviceaccount.com", project_id: "lux-test", private_key: "-----BEGIN PRIVATE KEY-----\n" + pk8 + "\n-----END PRIVATE KEY-----\n" }) };
+  const calls = [];
+  const fakeFetch = async (u, o) => { calls.push([u, o]); if (/oauth2/.test(u)) return { status: 200, json: async () => ({ access_token: "tok", expires_in: 3600 }) }; return { status: 200, text: async () => "" }; };
+  const F = new Function("fetch", "_pb64", "pushSend", src2 + "; return { fcmSend, pushOne };")(fakeFetch, M._pb64, async () => 201);
+  const st = await F.fcmSend(env, "tokABC", { title: "t", body: "b", url: "/x", tag: "g" });
+  const asr = new URLSearchParams(calls[0][1].body).get("assertion").split(".");
+  const okSig = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", kp2.publicKey, d(asr[2]), te.encode(asr[0] + "." + asr[1]));
+  const claim = JSON.parse(new TextDecoder().decode(d(asr[1]))), msg = JSON.parse(calls[1][1].body);
+  chk(st === 200 && okSig && claim.scope === "https://www.googleapis.com/auth/firebase.messaging" && /projects\/lux-test\/messages:send/.test(calls[1][0]) && calls[1][1].headers.Authorization === "Bearer tok" && msg.message.token === "tokABC",
+      "앱 푸시(FCM v1): 서비스 계정 RS256 서명 검증 · OAuth → messages:send · 토큰 전달");
+  chk(await F.pushOne({}, null, { fcm: "t" }, {}) === 0 && /if \(b && typeof b\.fcm === "string"\)/.test(S), "FCM 키가 없으면 앱 구독은 저장만(보내지 않음) · 웹 푸시는 그대로");
+}
+const P = readFileSync(new URL("../public/privacy.html", import.meta.url), "utf8");
+chk(/모의투자 서비스입니다/.test(P) && /생체 정보를 받거나 저장하지 않습니다/.test(P) && /href="\/privacy\.html"/.test(H), "개인정보처리방침 · 모의투자 표기 페이지 + 메뉴 연결");
 if (fails) { console.log("check-webpush: FAIL " + fails); process.exit(1); }
 console.log("check-webpush: ok");
