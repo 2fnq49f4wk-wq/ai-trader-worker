@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.673";
+const _BUILD_VER = "V33.674";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13975,14 +13975,23 @@ function pbGateOff(daily, fired) {
   if (!r || !r.gate || !g) return [];
   return (fired || []).filter(function (pb) { const x = g[pb]; return Array.isArray(x) && _num(x[0], 0) >= PB_GATE_MIN && _num(x[1], 0) < 0; });
 }
-function _pbPass(v) { return !!(v && v.pass === true && _num(v.n, 0) >= 30 && _num(v.mean, 0) > 0 && _num(v.t, 0) >= 2 && _num(v.mean, -99) > _num(v.base, 99)); }
+/* [V33.674] ★월 맞춤 초과 판정★(사용자 10/26 "기준 바꾸고 시험 매수는 유지" — (나)) — 학습기가 passMode "matched" 를 보내면 통과(=주력 전환 자격) =
+   같은 달 후보 안 무작위 대비 초과(mx) > 0 · 그 초과의 달 묶음 t(mT) ≥ 2 · 거래 ≥ 30 · 평균 > 0. 종전 '거래 하나하나 t' 는 같은 날·달 거래가 함께 움직여 부풀었다(미국 검증 2.68 → 달 묶음 0.91).
+   시험 매수(절반 크기)는 종전 기준(_pbTradeOk) 통과로도 그대로 연다 — 주력만 엄격해진다. */
+function _pbPass(v) {
+  if (!(v && v.pass === true && _num(v.n, 0) >= 30 && _num(v.mean, 0) > 0)) return false;
+  if (v.passMode === "matched") return _num(v.mx, -99) > 0 && _num(v.mT, 0) >= 2;
+  return _num(v.t, 0) >= 2 && _num(v.mean, -99) > _num(v.base, 99);
+}
+function _pbTradeOk(v) { return !!(v && v.passTrade === true && _num(v.n, 0) >= 30 && _num(v.mean, 0) > 0 && _num(v.t, 0) >= 2 && _num(v.mean, -99) > _num(v.base, 99) && !(v.recent && v.recent.ok === false)); }
 /* [V33.669] ★미국 절대 성적 기준 시험 매수★ — 사용자 10/25 승인("미국 절대 성적 기준으로 시험 매수 적용").
    미국 판정 구간은 수익(+0.75% · t 2.96)인데 '무작위로 골랐을 때보다 나음' 만 못 넘었다(+0.94% · 원인: 2016~23 로 배운 선택 기준이 2024~26 국면에 안 맞음 · AI_HANDOFF 10/25).
    미국만: 판정 구간 거래 ≥ 30 · 평균 > 0 · t ≥ 2 · 최근 125일 확실한 악화 없음 → ★시험 매수(절반 크기)만★. 주력(정규 크기)은 종전대로 '무작위보다 나음' 2회 독립 통과(_pbPass).
    실전 손실 제동(pbLiveBrake) · 하루·동시 상한 · 공황 차단은 그대로. 끄려면 PB_ABS_TRIAL.us = false. */
 const PB_ABS_TRIAL = { us: true, kr: false };
 function _pbAbsOk(v) { return !!(v && _num(v.n, 0) >= 30 && _num(v.mean, 0) > 0 && _num(v.t, 0) >= 2 && !(v.recent && v.recent.ok === false)); }
-function pbDailyTrialOk(st, mk) { const v = st && st.daily && st.daily.val; return _pbPass(v) || !!(PB_ABS_TRIAL[mk] && _pbAbsOk(v)); }
+function pbDailyTrialOk(st, mk) { const v = st && st.daily && st.daily.val; return _pbPass(v) || _pbTradeOk(v) || !!(PB_ABS_TRIAL[mk] && _pbAbsOk(v)); }
+function pbTrialWhy(v, mk) { return _pbPass(v) ? "pass" : _pbTradeOk(v) ? "trade" : (PB_ABS_TRIAL[mk] && _pbAbsOk(v)) ? "abs" : null; }   // 화면: 시험 매수가 열린 근거
 function _pbMkOf(st, symbol) { return (st && (st.mkt === "us" || st.mkt === "kr")) ? st.mkt : (/\.(KS|KQ)$/.test(String(symbol || "")) ? "kr" : "us"); }
 // 실시간 선택(순수 함수) — ctx: { reg, symbol, D(pbLiveDaily), bars5(pbAgg5) | null, prevClose, evNear, minToClose }
 function pbRoutePick(st, ctx, nowMs) {
@@ -31565,7 +31574,7 @@ async function handleRequest(request, env, ctx, _inner) {
       for (const mk of ["us", "kr"]) {
         const r = await getState(env.DB, "playbook:" + mk, null);
         out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, panic: r.panic === true,
-                        pass: Object.assign({}, r.pass || {}, { absTrial: !(r.pass && r.pass.daily) && !!(PB_ABS_TRIAL[mk] && _pbAbsOk(r.daily && r.daily.val)) }), primary: pbPrimaryOn(r, Date.now()), passStreak: r.passStreak || 0, indep: pbIndepPasses(r.passLog),   // [V33.669] pass.absTrial(미국 절대 기준 시험 매수)
+                        pass: Object.assign({}, r.pass || {}, { absTrial: !(r.pass && r.pass.daily) && !_pbTradeOk(r.daily && r.daily.val) && !!(PB_ABS_TRIAL[mk] && _pbAbsOk(r.daily && r.daily.val)), trialWhy: pbTrialWhy(r.daily && r.daily.val, mk) }), primary: pbPrimaryOn(r, Date.now()), passStreak: r.passStreak || 0, indep: pbIndepPasses(r.passLog),   // [V33.669] pass.absTrial(미국 절대 기준 시험 매수)
                         brake: await getState(env.DB, "pb_brake:" + mk, null).catch(function () { return null; }),
                         daily: r.daily && { val: r.daily.val, cells: Object.keys(r.daily.table || {}).length, pb: r.daily.pb, gate: r.daily.gate || null,
                                             tier2: r.daily.tier2 || [], ptune: r.daily.ptune || null, epDef: r.daily.epDef || null, epLad: r.daily.epLad || null,   // [V33.664]

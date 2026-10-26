@@ -77,6 +77,9 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
   /* [V33.660] 통과 = 학습기 판정(R.pass.daily — 최근 구간 검사 포함). 종전엔 화면이 다시 계산하며 최근 검사를 빼 '통과' 로 잘못 보였다. */
   const RC = V.recent || null;
   const pass = R.pass && typeof R.pass.daily === "boolean" ? R.pass.daily : fin(V.n) && V.n >= 30 && V.mean > 0 && V.t >= 2 && V.mean > V.base && (!RC || RC.ok !== false);
+  /* [V33.674] 월 맞춤 판정 — 같은 달 후보 안 무작위 대비 초과(mx) · 달 묶음 t(mT). trialWhy = 시험 매수가 열린 근거(pass 새 기준 · trade 종전 거래 t · abs 미국 절대) */
+  const MM = V.passMode === "matched";
+  const TW = R.pass && R.pass.trialWhy;
   const chosen = ruleName(V.rule);
   const day = String(R.day || "").replace(/(\d{4})(\d{2})(\d{2})/, "$1-$2-$3");
   const flow = [
@@ -89,6 +92,8 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
     ["고르는 규칙", chosen, "검증 구간 t 가 가장 높은 규칙"],
     ["국면 거부권", "칸 평균 < 0 · n ≥ 30", "지금 국면 칸이 손실이면 규칙과 무관하게 버린다"],
     ["판정 구간", sg(V.mean) + "%", "n " + n0(V.n) + " · 무작위 " + sg(V.base) + "% → " + (pass ? "통과" : "미통과")],
+    ...(MM ? [["월 맞춤 판정", (fin(V.mx) ? (V.mx >= 0 ? "+" : "") + V.mx.toFixed(2) + "%p" : "—"),
+      "같은 달 무작위 대비 · 달 묶음 t " + (fin(V.mT) ? V.mT.toFixed(2) : "—") + " (≥ 2) · 이긴 달 " + (V.mWin ?? "—") + "/" + (V.mN ?? "—")]] : []),
     ["최근 " + ((RC && RC.days) || 125) + "일 악화 검사", RC ? sg(RC.mean) + "% vs " + sg(RC.base) + "%" : "—",
      RC ? (fin(RC.t) ? "초과 t " + RC.t.toFixed(2) + " · " : "") + (RC.ok ? "통과" : "미달") + " — 확실한 악화(t ≤ " + (fin(RC.needT) ? RC.needT : -2) + ")만 막음" : "기록 없음"],
   ];
@@ -130,9 +135,10 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
             {fin(V.base) && <div style={{ position: "absolute", top: -2, bottom: -2, left: "calc(" + pos(V.base, 3) + "% - 1px)", width: 2, background: INK }} />}
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 11, color: FAINT }}><span>−3%</span><span>0</span><span>+3%</span></div>
-          <div style={{ fontSize: 13, color: pass ? POS : R.pass && R.pass.absTrial ? HL : NEG }}>{pass ? "검증 통과 — 무작위보다 낫고 t ≥ 2 · 최근 확실한 악화 없음" : R.pass && R.pass.absTrial ? "절대 성적 기준 시험 매수(절반 크기) — 수익(평균 > 0 · t ≥ 2)이지만 무작위보다 낫지 않음 · 사용자 승인 10/25" : RC && RC.ok === false && V.t >= 2 && V.mean > V.base ? "미통과 — 판정 구간은 좋지만 최근 " + (RC.days || 125) + "일이 확실히 나빠짐" : "미통과 — 실전 매수 없이 관측만(그림자 판정)"}</div>
+          <div style={{ fontSize: 13, color: pass ? POS : R.pass && R.pass.absTrial ? HL : NEG }}>{pass ? (MM ? "검증 통과 — 같은 달 무작위보다 낫고 달 묶음 t ≥ 2 · 최근 확실한 악화 없음" : "검증 통과 — 무작위보다 낫고 t ≥ 2 · 최근 확실한 악화 없음") : TW === "trade" ? "시험 매수(절반 크기) — 종전 기준(거래 t ≥ 2 · 무작위보다 나음)은 통과 · 새 월 맞춤 기준은 미달이라 주력 전환 안 됨 · 사용자 선택 (나) 10/26" : R.pass && R.pass.absTrial ? "절대 성적 기준 시험 매수(절반 크기) — 수익(평균 > 0 · t ≥ 2)이지만 무작위보다 낫지 않음 · 사용자 승인 10/25" : RC && RC.ok === false && V.t >= 2 && V.mean > V.base ? "미통과 — 판정 구간은 좋지만 최근 " + (RC.days || 125) + "일이 확실히 나빠짐" : "미통과 — 실전 매수 없이 관측만(그림자 판정)"}</div>
         </div>
-        {[["t 값", fin(V.t) ? V.t.toFixed(2) : "—", "통과 기준 ≥ 2.0", fin(V.t) ? (V.t >= 2 ? POS : V.t < 0 ? NEG : INK) : MUTE],
+        {[MM ? ["달 묶음 t (월 맞춤 초과)", fin(V.mT) ? V.mT.toFixed(2) : "—", "통과 ≥ 2.0 · 종전 거래 t " + (fin(V.t) ? V.t.toFixed(2) : "—") + "(부풀려짐)", fin(V.mT) ? (V.mT >= 2 ? POS : V.mT < 0 ? NEG : INK) : MUTE]
+            : ["t 값", fin(V.t) ? V.t.toFixed(2) : "—", "통과 기준 ≥ 2.0", fin(V.t) ? (V.t >= 2 ? POS : V.t < 0 ? NEG : INK) : MUTE],
           ["승률 · 표본", fin(V.win) ? V.win.toFixed(1) + "%" : "—", "거래 " + n0(V.n) + "건 · 전부 평균 " + sg(V.baseAll) + "%", INK],
           ["주력 전환", (R.indep || 0) + " / 2", "겹치지 않는 판정 구간 통과 · 연속 " + (R.passStreak || 0) + " / 2", R.primary ? POS : INK]].map(([k, v, h, c]) => (
           <div key={k} style={{ ...card, padding: 18, display: "flex", flexDirection: "column", gap: 6 }}>
@@ -141,6 +147,23 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
             <div style={{ fontSize: 12, color: DIM }}>{h}</div>
           </div>))}
       </section>
+
+      {Array.isArray(V.byReg) && V.byReg.length > 0 && (
+        <section aria-label="국면별 성적" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#F2F6FC" }}>국면별 성적 · 판정 구간</h3>
+            <span style={{ fontSize: 12, color: DIM }}>같은 국면 날의 후보 안 무작위와 비교 — 판정은 국면 이름표 대신 '같은 달' 로 맞춘다</span>
+          </div>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+            {(V.byReg as any[]).map((r) => { const d = fin(r.mean) && fin(r.base) ? r.mean - r.base : null; return (
+              <div key={r.reg} style={{ ...card, padding: 14, display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: MUTE }}><span>{r.ko}</span><span style={{ fontFamily: MONO }}>{n0(r.n)}건 · {r.share}%</span></div>
+                <div style={{ fontFamily: MONO, fontSize: 20, color: d == null ? MUTE : d >= 0 ? POS : NEG }}>{d == null ? "—" : (d >= 0 ? "+" : "") + d.toFixed(2) + "%p"}</div>
+                <div style={{ fontFamily: MONO, fontSize: 11.5, color: DIM }}>고른 {sg(r.mean)}% · 무작위 {sg(r.base)}%</div>
+                <div style={{ fontSize: 11, color: FAINT }}>국면 날 {r.dayShare}%</div>
+              </div>); })}
+          </div>
+        </section>)}
 
       <section aria-label="판단 흐름" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>

@@ -315,6 +315,15 @@ chk(W.pbRoutePick({ ...st, daily: { ...st.daily, table: { "*": { NOPE: [9000, 0.
   chk(u1 && u1.kind === "daily" && k1 === null && u2 === null && u3 === null && /pbPrimaryOn\(st, nowMs\) \{ return !!\(st && st\.daily && _pbPass\(st\.daily\.val\)/.test(S),
       "[V33.669] 미국: 무작위 미달이어도 평균>0·t≥2·최근 악화 없음이면 시험 매수 / 한국은 안 삼 / t<2·최근 악화면 안 삼 / 주력은 종전 기준", JSON.stringify([u1 && u1.pb, k1, u2, u3]));
 }
+{ // [V33.674] 월 맞춤 판정(사용자 (나)): 주력 자격 = 같은 달 무작위 초과 mx>0 · 달 t mT≥2 / 시험 매수는 종전 거래 t 통과(passTrade)로도 연다 · 둘 다 아니면 한국은 안 삼
+  const vM = { ...val, pass: false, passMode: "matched", passTrade: true, n: 3000, mean: 0.9, t: 2.4, base: 0.5, mx: -0.1, mT: -0.4, recent: { ok: true } };
+  const stM = { ...st, intra: null, mkt: "kr", daily: { ...st.daily, val: vM } }, cK = { ...ctx, minToClose: 20, bars5: null, symbol: "005930.KS" };
+  const k1 = W.pbRoutePick(stM, cK, now), k2 = W.pbRoutePick({ ...stM, daily: { ...stM.daily, val: { ...vM, passTrade: false } } }, cK, now);
+  const k3 = W.pbRoutePick({ ...stM, daily: { ...stM.daily, val: { ...vM, passTrade: true, recent: { ok: false } } } }, cK, now);
+  const p1 = W._pbPass({ ...vM, pass: true, mx: 0.2, mT: 2.1 }), p2 = W._pbPass({ ...vM, pass: true, mx: 0.2, mT: 1.9 }), p3 = W._pbPass({ ...vM, pass: true, passMode: undefined, t: 2.4, mean: 0.9, base: 0.5 });
+  chk(k1 && k1.kind === "daily" && k2 === null && k3 === null && p1 && !p2 && p3 && /PASS_MODE = os\.environ\.get\("PB_PASS", "matched"\)/.test(readFileSync(dir + "playbook_sim.py", "utf8")),
+      "[V33.674] 판정=월 맞춤(달 t≥2) · 시험 매수는 종전 기준으로도 유지 · 최근 악화·둘 다 미달이면 안 삼 · 옛 업로드는 종전 판정", JSON.stringify([k1 && k1.pb, k2, k3, p1, p2, p3]));
+}
 { // [V33.664] 종목 그룹 → 그 그룹의 진입·청산 미지수(학습기가 시스템 검증을 통과시킨 것만 보냄)
   const P0 = firedNow.find((x) => W.PB_EP_DEF && x in W.PB_EP_DEF) || firedNow[0], d0 = (W.PB_EP_DEF || {})[P0] || {}, k0 = Object.keys(d0)[0];
   const ep2 = k0 ? { [k0]: d0[k0] } : {};

@@ -1337,7 +1337,7 @@ TIME_MONTH = None   # run() 이 시장마다 채운다: t(거래일 번호) → 
 TIME_REG = None     # t → 국면(SURGE·BULL·NEUTRAL·BEAR·CRASH) — 화면 국면별 표시용
 MATCH_MIN = 3       # 그 달 고른 거래가 이보다 적으면 그 달은 비교에서 뺀다
 PB_SEL = os.environ.get("PB_SEL", "t")
-PASS_MODE = os.environ.get("PB_PASS", "trade")
+PASS_MODE = os.environ.get("PB_PASS", "matched")   # [V33.674] 사용자 10/26 (나) — 판정 = 월 맞춤 초과(주력 자격) · 종전 거래 t 판정은 passTrade 로 남아 시험 매수를 연다
 PASS_MT = float(os.environ.get("PB_PASS_MT", "2.0"))
 REG_KO = {"SURGE": "폭등", "BULL": "상승", "NEUTRAL": "보합", "BEAR": "하락", "CRASH": "폭락"}
 
@@ -1456,8 +1456,8 @@ def validate(df, timecol, pbs=None):
         st.update(_matched(pk, _month_base(ho)))
         st["byReg"] = _by_regime(pk, ho)
     st["passMatched"] = bool(st["n"] >= 30 and st["mean"] > 0 and (st.get("mx") or 0) > 0 and (st.get("mT") or 0) >= PASS_MT)
-    st["passMode"] = PASS_MODE
-    st["pass"] = st["passMatched"] if (PASS_MODE == "matched" and timecol == "t") else st["passTrade"]
+    st["passMode"] = PASS_MODE if (timecol == "t" and TIME_MONTH is not None) else "trade"   # 달 정보가 없으면(단위 시험·5분) 종전 판정
+    st["pass"] = st["passMatched"] if st["passMode"] == "matched" else st["passTrade"]
     try:   # [V33.650 학습기] 최근 구간 확인 — 같은 고른 거래 중 판정 구간 마지막 REC_DAYS 거래일 몫 vs 그 조각의 공정 무작위
         tho = np.sort(ho[timecol].unique())
         if len(tho) > REC_DAYS:
