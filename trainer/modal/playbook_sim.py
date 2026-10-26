@@ -1330,9 +1330,64 @@ def fair_base(te, draws=BASE_DRAWS, seed=11):
     return (round(float(np.mean(ms)), 4) if ms else None), (int(np.mean(ns)) if ns else None)
 
 
+# [V33.674] ★월 맞춤 초과 기준★ — 거래 하나하나를 독립 표본으로 센 t 는 같은 날·같은 달 거래가 함께 움직여 크게 부풀고(실측: 미국 검증 2.68 → 월 묶음 0.91),
+#   무작위 기준선을 판정 구간 전체로 잡으면 '어느 달(국면)에 샀나' 가 실력처럼 섞인다(폭등 달을 덜 사면 진다). 그래서
+#   같은 달 후보 안의 무작위와 비교한 초과(x_m = 고른 평균 − 그 달 무작위)를 달마다 구하고, 그 달들의 t 로 판단한다 — 국면 이름표 없이 국면을 맞춘다.
+TIME_MONTH = None   # run() 이 시장마다 채운다: t(거래일 번호) → yyyymm
+TIME_REG = None     # t → 국면(SURGE·BULL·NEUTRAL·BEAR·CRASH) — 화면 국면별 표시용
+MATCH_MIN = 3       # 그 달 고른 거래가 이보다 적으면 그 달은 비교에서 뺀다
+PB_SEL = os.environ.get("PB_SEL", "t")
+PASS_MODE = os.environ.get("PB_PASS", "trade")
+PASS_MT = float(os.environ.get("PB_PASS_MT", "2.0"))
+REG_KO = {"SURGE": "폭등", "BULL": "상승", "NEUTRAL": "보합", "BEAR": "하락", "CRASH": "폭락"}
+
+
+def _month_base(w):
+    """창 w 의 달마다 공정 무작위 기준선(달 안 후보에서만 뽑는다)."""
+    if TIME_MONTH is None or not len(w):
+        return {}
+    mo = TIME_MONTH[w["t"].values.astype(int)]
+    return {int(m): fair_base(w[mo == m], draws=10)[0] for m in np.unique(mo)}
+
+
+def _matched(pk, mb):
+    """고른 거래 pk 의 달마다 초과 = 고른 평균 − 같은 달 무작위 → {mx: 거래 가중 초과, mT: 달 묶음 t, mWin/mN: 이긴 달/달 수, mAbsT: 달 묶음 절대 t}."""
+    if TIME_MONTH is None or not len(pk) or not mb:
+        return {}
+    mo = TIME_MONTH[pk["t"].values.astype(int)]
+    ex = pk["ex"].values.astype(float)
+    xs, ws, ps = [], [], []
+    for m in np.unique(mo):
+        sel = mo == m
+        if sel.sum() < MATCH_MIN or mb.get(int(m)) is None:
+            continue
+        xs.append(ex[sel].mean() - mb[int(m)]); ws.append(sel.sum()); ps.append(ex[sel].mean())
+    if len(xs) < 3:
+        return {"mN": len(xs)}
+    xs, ws, ps = np.array(xs), np.array(ws, float), np.array(ps)
+    tt = lambda v: float(v.mean() / (v.std(ddof=1) / math.sqrt(len(v)))) if v.std(ddof=1) > 0 else 0.0
+    return {"mx": round(float((xs * ws).sum() / ws.sum()), 4), "mT": round(tt(xs), 2), "mWin": int((xs > 0).sum()), "mN": int(len(xs)), "mAbsT": round(tt(ps), 2)}
+
+
+def _by_regime(pk, w):
+    """국면 5종(폭등·상승·보합·하락·폭락)별 고른 평균 vs 같은 국면 무작위 — 기록·화면용(판정엔 안 쓴다)."""
+    if TIME_REG is None or not len(pk):
+        return []
+    rp, rw = TIME_REG[pk["t"].values.astype(int)], TIME_REG[w["t"].values.astype(int)]
+    out = []
+    for r in ("SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH"):
+        g = pk[rp == r]
+        if len(g) < 10:
+            continue
+        b_ = fair_base(w[rw == r], draws=10)[0]
+        out.append({"reg": r, "ko": REG_KO[r], "n": int(len(g)), "mean": round(float(g["ex"].mean()), 3), "base": b_,
+                    "share": round(len(g) / len(pk) * 100, 1), "dayShare": round(len(np.unique(w["t"].values[rw == r])) / max(1, w["t"].nunique()) * 100, 1)})
+    return out
+
+
 CV2 = os.environ.get("PB_CV", "0") == "1"
 CV_A = 0.40
-SEL_KEY = "cvT" if CV2 else ("exT" if os.environ.get("PB_SEL", "t") == "ex" else "t")   # [실험] 검증 고르기 기준: 절대 t · 무작위 대비 초과 t · 두 접기 평균 t
+SEL_KEY = "cvT" if CV2 else {"ex": "exT", "m": "mT"}.get(PB_SEL, "t")   # [실험] 검증 고르기 기준: 절대 t · 무작위 대비 초과 t · 두 접기 평균 t
 
 
 def _ex_t(pk, b):
@@ -1364,6 +1419,7 @@ def validate(df, timecol, pbs=None):
         vA = df[(df[timecol] >= c0) & (df[timecol] < c1)]
     cmp_ = []
     vbase, _vn = fair_base(va)
+    vmb = _month_base(va) if timecol == "t" else {}
     for rule in rules:
         dk = rule.get("decay")
         if dk not in tabs1:
@@ -1373,6 +1429,7 @@ def validate(df, timecol, pbs=None):
         st_ = _stats(pk["ex"].values.astype(float), va["ex"].values.astype(float))
         st_["baseAll"], st_["base"] = st_["base"], vbase
         st_["exT"] = _ex_t(pk["ex"].values.astype(float), vbase)
+        st_.update(_matched(pk, vmb))
         if CV2:   # [실험] 앞 접기 A — 표 [0,40%) → [40,60%) 에서도 같은 규칙 성적. 고르기 = 두 접기 t 평균(접기 하나의 국면 우연을 덜 탄다)
             dkA = ("A", dk)
             if dkA not in tabs1:
@@ -1385,7 +1442,7 @@ def validate(df, timecol, pbs=None):
     # [V33.622] 규칙은 평균이 아니라 ★t(평균 ÷ 불확실성)★ 로 고른다 · 표본 ≥ VAL_MIN_N — 후보 11개 중 '평균 최대' 는 표본 적은 우연을 고른다(무작위 시세에서 실측)
     elig = [c for c in cmp_ if c["n"] >= VAL_MIN_N and c["mean"] is not None]
     elig = elig or [c for c in cmp_ if c["n"] >= 30 and c["mean"] is not None]
-    best = max(elig, key=lambda c: (c.get(SEL_KEY) or 0.0)) if elig else cmp_[1]
+    best = max(elig, key=lambda c: (c.get(SEL_KEY) if c.get(SEL_KEY) is not None else -9.0)) if elig else cmp_[1]
     rule = best["rule"]
     tab2 = _shrunk_table(df[df[timecol] < c2], decay=rule.get("decay"), tcol=timecol, ref=c2)
     ho = df[df[timecol] >= c2]
@@ -1394,7 +1451,13 @@ def validate(df, timecol, pbs=None):
     hb, hn = fair_base(ho)
     st["baseAll"], st["base"], st["baseN"] = st["base"], hb, hn   # 판정 기준 = 공정한 무작위 기준선 · 옛 '전부 평균' 은 baseAll 로 남긴다
     st.update({"rule": rule, "cut": [str(c1), str(c2)], "valCmp": cmp_, "byPb": {k: int(v) for k, v in pk["pb"].value_counts().items()}})
-    st["pass"] = bool(st["n"] >= 30 and st["mean"] > 0 and st["t"] >= PASS_T and st["base"] is not None and st["mean"] > st["base"])
+    st["passTrade"] = bool(st["n"] >= 30 and st["mean"] > 0 and st["t"] >= PASS_T and st["base"] is not None and st["mean"] > st["base"])   # 종전(거래 t)
+    if timecol == "t":
+        st.update(_matched(pk, _month_base(ho)))
+        st["byReg"] = _by_regime(pk, ho)
+    st["passMatched"] = bool(st["n"] >= 30 and st["mean"] > 0 and (st.get("mx") or 0) > 0 and (st.get("mT") or 0) >= PASS_MT)
+    st["passMode"] = PASS_MODE
+    st["pass"] = st["passMatched"] if (PASS_MODE == "matched" and timecol == "t") else st["passTrade"]
     try:   # [V33.650 학습기] 최근 구간 확인 — 같은 고른 거래 중 판정 구간 마지막 REC_DAYS 거래일 몫 vs 그 조각의 공정 무작위
         tho = np.sort(ho[timecol].unique())
         if len(tho) > REC_DAYS:
@@ -1442,6 +1505,9 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         if P is None:
             log("   · [매매법시뮬] %s 일봉 부족 — 건너뜀" % market)
             continue
+        global TIME_MONTH, TIME_REG
+        TIME_MONTH = (np.asarray(P["close"].index).astype(np.int64) // 100).astype(np.int64)   # yyyymmdd → yyyymm
+        TIME_REG = np.asarray(_regime(P["close"])[0])
         sig = CAT.signals(P)
         sig_now = {pb: sig[pb].fillna(False).values[-1].astype(bool).copy() for pb in CROSS_PB if pb in sig}   # 워커에 보낼 '오늘 목록'(늦추기 전)
         if LAG_FIX:
@@ -1663,6 +1729,10 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             market, reg_now, len(ddf), dst.get("n"), dst.get("mean"), dst.get("win"), dst.get("t"), dst.get("base"), (lambda r: ("%s일 n=%s 평균 %s%% vs 무작위 %s%% %s" % (r.get("days"), r.get("n"), r.get("mean"), r.get("base"), "통과" if r.get("ok") else "미달")) if r else "—")(dst.get("recent")),
             "통과" if dst.get("pass") else "미통과", ist.get("n"), ist.get("mean"), ist.get("t"), "통과" if ist.get("pass") else "미통과",
             time.time() - t0))
+        log("   · [매매법시뮬] %s 월 맞춤 초과 %s%%p · 달 묶음 t %s · 이긴 달 %s/%s · 절대 달 t %s · 판정 방식 %s(거래 t %s · 월 맞춤 %s) · 국면별 %s" % (
+            market, dst.get("mx"), dst.get("mT"), dst.get("mWin"), dst.get("mN"), dst.get("mAbsT"), dst.get("passMode"),
+            "통과" if dst.get("passTrade") else "미통과", "통과" if dst.get("passMatched") else "미통과",
+            " · ".join("%s n%d %+.2f vs %s" % (r["ko"], r["n"], r["mean"], r["base"]) for r in (dst.get("byReg") or []))))
         if upload and BASE and os.environ.get("PB_VARIANT"):
             log("   · [매매법시뮬] %s A/B 실험판(%s) — 업로드 안 함(기록만)" % (market, os.environ.get("PB_VARIANT")))
         elif upload and BASE:
