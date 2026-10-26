@@ -13,6 +13,7 @@
 ## Current handoff
 
 - 10/27 사용자가 GitHub 비밀 FCM_SERVICE_ACCOUNT 등록 → 이 커밋 배포에서 워커 비밀 FCM_SA 동기화.
+- 10/27 사용자가 GitHub 비밀 FCM_SERVICE_ACCOUNT 등록 → 이 커밋 배포에서 워커 비밀 FCM_SA 동기화.
 - 10/27 사용자가 Firebase 앱 등록(프로젝트 blauenacht08-451c0 · 패키지 app.luxengine.trader) · google-services.json 을 app/ 에 커밋(공개 식별값) → scripts-prepare.sh 가 비밀값 없으면 이 파일 사용 · 앱 빌드 UA 'LuxApp/1 fcm' → 앱 안 🔔 버튼. 남은 것: 워커 발송용 서비스 계정 키(GitHub 비밀 FCM_SERVICE_ACCOUNT — 비밀이라 저장소 금지).
 - V33.679 (10/26) ★앱 2단계 이어서 — 네이티브 기능 · 앱 푸시(FCM) · 서명 빌드 · 개인정보처리방침★ 사용자: "앱 제작 이어서 · 다음 단계 내가 할 일".
   사이트(index.html) 네이티브 연결(window.Capacitor 있을 때만): 안드로이드 뒤로 버튼 · 검정 상태표시줄 · 🔒 생체 잠금(@capgo/capacitor-native-biometric · 열 때·1분 넘게 나갔다 올 때) · 🔔 앱 푸시(FCM 토큰 → /api/push/sub {fcm}).
