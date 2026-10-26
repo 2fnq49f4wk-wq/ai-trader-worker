@@ -58,6 +58,6 @@ chk(/id="btnPush"/.test(H) && /window\.__luxPush = async function/.test(H) && /i
   chk(await F.pushOne({}, null, { fcm: "t" }, {}) === 0 && /if \(b && typeof b\.fcm === "string"\)/.test(S), "FCM 키가 없으면 앱 구독은 저장만(보내지 않음) · 웹 푸시는 그대로");
 }
 const P = readFileSync(new URL("../public/privacy.html", import.meta.url), "utf8");
-chk(/모의투자 서비스입니다/.test(P) && /생체 정보를 받거나 저장하지 않습니다/.test(P) && /href="\/privacy\.html"/.test(H), "개인정보처리방침 · 모의투자 표기 페이지 + 메뉴 연결");
+chk(/모의투자 서비스입니다/.test(P) && /생체 정보를 받거나 저장하지 않습니다/.test(P) && /href="\/privacy"/.test(H), "개인정보처리방침 · 모의투자 표기 페이지 + 메뉴 연결");
 if (fails) { console.log("check-webpush: FAIL " + fails); process.exit(1); }
 console.log("check-webpush: ok");

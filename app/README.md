@@ -23,5 +23,5 @@
    - 비밀번호 → `ANDROID_KEYSTORE_PASSWORD` · `ANDROID_KEY_PASSWORD` · 별칭 `lux` → `ANDROID_KEY_ALIAS`
    - jks 파일과 비밀번호는 안전한 곳에 따로 보관(잃으면 Play 지원팀을 통해 업로드 키 재설정 필요)
 ④ Play Console 앱 만들기 → 내부 테스트 트랙에 AAB 업로드 → 스토어 등록정보(설명·스크린샷·아이콘 512) · 개인정보처리방침 URL
-   `https://ai-trader-app.blauenacht08.workers.dev/privacy.html` · 콘텐츠 등급 · 데이터 보안 양식(수집: 푸시 토큰만) · 앱 카테고리 '금융' — '모의투자(실주문 아님)' 명시
+   `https://ai-trader-app.blauenacht08.workers.dev/privacy` · 콘텐츠 등급 · 데이터 보안 양식(수집: 푸시 토큰만) · 앱 카테고리 '금융' — '모의투자(실주문 아님)' 명시
 ⑤ iOS(선택): Apple 개발자 계정($99/년) + Mac(Xcode) 또는 클라우드 빌드 — 계정이 생기면 ios 빌드 워크플로를 붙인다.
