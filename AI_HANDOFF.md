@@ -12,6 +12,15 @@
 
 ## Current handoff
 
+- 10/27 ★앱(네이티브) 작업 보류 — 사용자 지시: "구글 12명 테스터 요건 때문에 앱은 일단 보류 · 지금까지 한 것 기록 · 사이트 업그레이드만 지속"★
+  [완료·살아 있음 — 사이트에 그대로 유지] PWA: 📲 앱 설치(안드로이드·PC 설치 · 아이폰 홈 화면 안내) · 🔔 웹 푸시 체결 알림(V33.677 · RFC 8291/8292 · 구글 푸시 201 실측) · 📄 /privacy(개인정보처리방침·모의투자 표기).
+  [완료·대기 중 — 코드는 저장소에, 앱 출시 때 재개] app/(Capacitor 8.5.3 · 원격 URL 껍데기 · 플러그인 app/push/status-bar/splash/biometric) · app/google-services.json(Firebase 프로젝트 blauenacht08-451c0 · 패키지 app.luxengine.trader)
+    · 워크플로 android-app.yml(debug APK 자동 빌드 — 마지막 성공 run 40399265994 · Firebase 적용 확인) · android-release.yml(서명 AAB — 수동 · 비밀값 ANDROID_KEYSTORE_* 아직 없음)
+    · 사이트 네이티브 연결(window.Capacitor 일 때만: 뒤로 버튼 · 상태표시줄 · 생체 잠금 · FCM 앱 푸시) · 워커 FCM v1 발송(비밀 FCM_SA 연결 완료 — 10/27 가짜 토큰 시험 400 = OAuth 통과).
+  [사용자 진행 상황] Firebase 앱 등록 완료 · GitHub 비밀 FCM_SERVICE_ACCOUNT 등록 완료 · Google Play 개발자 계정 가입 진행 중(본인·주소 인증 단계 — 주민등록등본 등).
+  [재개할 때 남은 일] ① Play 신규 개인 계정 = 비공개 테스트 12명 × 14일 연속 후에야 정식 출시(사업자 계정은 면제) ② 업로드 키 만들기 → ANDROID_KEYSTORE_BASE64·PASSWORD·KEY_ALIAS·KEY_PASSWORD 비밀값 → Release Android App 실행 → 내부/비공개 테스트 업로드
+    ③ 스토어 등록정보(설명·스크린샷·카테고리 금융·데이터 보안: 푸시 토큰만 · 개인정보처리방침 https://ai-trader-app.blauenacht08.workers.dev/privacy · 연락 이메일 필요) ④ 실기기 푸시 수신 확인 ⑤ (선택) iOS — Apple $99/년 + Mac.
+  [주의] android-app.yml 은 app/** 가 바뀔 때만 돈다(평소 사이트 배포엔 영향 없음). 보류 중엔 app/ 를 건드리지 않는다. 자세한 절차 app/README.md.
 - 10/27 사용자가 GitHub 비밀 FCM_SERVICE_ACCOUNT 등록 → 이 커밋 배포에서 워커 비밀 FCM_SA 동기화.
 - 10/27 사용자가 GitHub 비밀 FCM_SERVICE_ACCOUNT 등록 → 이 커밋 배포에서 워커 비밀 FCM_SA 동기화.
 - 10/27 사용자가 Firebase 앱 등록(프로젝트 blauenacht08-451c0 · 패키지 app.luxengine.trader) · google-services.json 을 app/ 에 커밋(공개 식별값) → scripts-prepare.sh 가 비밀값 없으면 이 파일 사용 · 앱 빌드 UA 'LuxApp/1 fcm' → 앱 안 🔔 버튼. 남은 것: 워커 발송용 서비스 계정 키(GitHub 비밀 FCM_SERVICE_ACCOUNT — 비밀이라 저장소 금지).
