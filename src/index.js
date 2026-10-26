@@ -33310,6 +33310,8 @@ async function handleRequest(request, env, ctx, _inner) {
         try { await new Promise(function (res) { setTimeout(res, 1500); }); } catch (e) {}
         try { rpt = await mlMonthlyReport(env.DB, ym, force, env, ctx); } catch (e) {}
       }
+      // [V33.680] 주 단위 캐시에 남은 옛 문구 '-0만원'(1만원 미만 반올림) → '1만원 미만' — 새로 만드는 리포트는 _rptMoney 가 원 단위로 쓴다
+      try { if (rpt && typeof rpt === "object") { const _js = JSON.stringify(rpt); if (/[-+]0만원/.test(_js)) rpt = JSON.parse(_js.replace(/[-+]0만원/g, "1만원 미만")); } } catch (e) {}
       return Response.json(rpt, { headers: cors });
     }
 
