@@ -1330,6 +1330,17 @@ def fair_base(te, draws=BASE_DRAWS, seed=11):
     return (round(float(np.mean(ms)), 4) if ms else None), (int(np.mean(ns)) if ns else None)
 
 
+SEL_KEY = "exT" if os.environ.get("PB_SEL", "t") == "ex" else "t"   # [실험] 검증 고르기 기준: 절대 t vs 무작위 대비 초과 t
+
+
+def _ex_t(pk, b):
+    """무작위 기준(b) 대비 초과 t = (평균 − b) ÷ 표준오차 — 판정 기준(평균 > 무작위)과 같은 잣대."""
+    n = len(pk)
+    if n < 3 or b is None or not pk.std() > 0:
+        return 0.0
+    return round(float((pk.mean() - b) / (pk.std(ddof=1) / math.sqrt(n))), 2)
+
+
 def _stats(pk, base):
     n = len(pk)
     return {"n": int(n), "mean": round(float(pk.mean()), 4) if n else None, "win": round(float((pk > 0).mean() * 100), 1) if n else None,
@@ -1356,11 +1367,12 @@ def validate(df, timecol, pbs=None):
         pk = _pick(tab1, va, rule, hist=df)
         st_ = _stats(pk["ex"].values.astype(float), va["ex"].values.astype(float))
         st_["baseAll"], st_["base"] = st_["base"], vbase
+        st_["exT"] = _ex_t(pk["ex"].values.astype(float), vbase)
         cmp_.append({"rule": rule, **st_})
     # [V33.622] 규칙은 평균이 아니라 ★t(평균 ÷ 불확실성)★ 로 고른다 · 표본 ≥ VAL_MIN_N — 후보 11개 중 '평균 최대' 는 표본 적은 우연을 고른다(무작위 시세에서 실측)
     elig = [c for c in cmp_ if c["n"] >= VAL_MIN_N and c["mean"] is not None]
     elig = elig or [c for c in cmp_ if c["n"] >= 30 and c["mean"] is not None]
-    best = max(elig, key=lambda c: (c.get("t") or 0.0)) if elig else cmp_[1]
+    best = max(elig, key=lambda c: (c.get(SEL_KEY) or 0.0)) if elig else cmp_[1]
     rule = best["rule"]
     tab2 = _shrunk_table(df[df[timecol] < c2], decay=rule.get("decay"), tcol=timecol, ref=c2)
     ho = df[df[timecol] >= c2]
@@ -1480,9 +1492,9 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             rsel = st_.get("rule") or {}
             vsel = next((c_ for c_ in (st_.get("valCmp") or []) if c_.get("rule") == rsel), None)   # 그 폭에서 고른 규칙의 검증 구간 성적
             vm = vsel.get("mean") if vsel and vsel.get("n", 0) >= VAL_MIN_N else None
-            vt = (vsel.get("t") or 0.0) if vm is not None else None
-            log("   · [매매법시뮬] %s 후보 OMNI-Q %s일 머리 상위 %d%% — 검증 구간 최고 %s%% · 판정 %s%%(n %s)" % (market, hd_, round((1 - q_) * 100), vm, st_.get("mean"), st_.get("n")))
-            cand_cmp.append({"q": q_, "head": hd_ if q_ > 0 else None, "val": vm, "valT": vt, "n": st_.get("n"), "mean": st_.get("mean"), "base": st_.get("base"), "t": st_.get("t"), "win": st_.get("win")})   # 기록만(고르기는 val)
+            vt = (vsel.get(SEL_KEY) or 0.0) if vm is not None else None
+            log("   · [매매법시뮬] %s 후보 OMNI-Q %s일 머리 상위 %d%% — 검증 구간 %s%%(무작위 %s · 초과 t %s) · 판정 %s%% vs %s(n %s)" % (market, hd_, round((1 - q_) * 100), vm, (vsel or {}).get("base"), (vsel or {}).get("exT"), st_.get("mean"), st_.get("base"), st_.get("n")))
+            cand_cmp.append({"q": q_, "head": hd_ if q_ > 0 else None, "val": vm, "valT": vt, "valB": (vsel or {}).get("base"), "valExT": (vsel or {}).get("exT"), "n": st_.get("n"), "mean": st_.get("mean"), "base": st_.get("base"), "t": st_.get("t"), "win": st_.get("win")})   # 기록만(고르기는 val)
             if hd_ == "5" and q_ == CAND_Q:
                 dflt = (vt, q_, d_, st_, hd_)   # 검증 구간에서 양수인 설정이 없을 때 쓰는 기본(종전과 같은 5일 상위 20%)
             if vt is not None and vm > 0 and (best_q is None or vt > best_q[0]):   # [V33.622] 검증 구간 t 최대(평균 > 0 · 표본 ≥ VAL_MIN_N)

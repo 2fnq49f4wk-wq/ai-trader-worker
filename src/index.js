@@ -26897,7 +26897,7 @@ async function runTradingCycle(env) {
                             mr: _sp.mr === true, bePct: _sp.bePct == null ? null : _sp.bePct, tstop: _sp.tstop || 0, rsi2x: _sp.rsi2x || 65, tpPx: _sp.tpPx == null ? null : _sp.tpPx,
                             hold: _sp.hold || null, bars: _sp.bars || 0, primary: __pbPrim, sess: _sp.session || "regular", m: +_sp.m.toFixed(3), w: +_sp.w.toFixed(3), n: _sp.n, omq: +_pbS.toFixed(3), regime: __sr.regime || null, at: Date.now() },
                       detail: "매매법AI " + _sp.pb + "(" + (_sp.kind === "intra" ? "5분 단타" : "일봉") + (_sp.session ? " · " + (_sp.session === "pre" ? "프리마켓" : "애프터마켓") : "") + " · 지금 뜬 " + _sp.fired.join("·") + ") · OMNI-Q 상위 " + Math.max(1, Math.round((1 - _pbS) * 100)) + "% · 국면 " + (__sr.regime || "?") +
-                              " · 모의 성공 " + (_sp.w * 100).toFixed(0) + "% 평균 +" + _sp.m.toFixed(2) + "% (표본 " + _sp.n + ") · 손절 −" + _sp.stop + "%" + (__pbPrim ? " · ★주력★" : " · 잠정 ×" + STRAT_ROUTE.mult) } });
+                              " · 모의 성공 " + (_sp.w * 100).toFixed(0) + "% 평균 +" + _sp.m.toFixed(2) + "% (표본 " + _sp.n + ") · 손절 −" + (+_sp.stop).toFixed(1) + "%" + (__pbPrim ? " · ★주력★" : " · 잠정 ×" + STRAT_ROUTE.mult) } });
                 }
               }
               if (__pbSeen.has(symbol)) __pbLive[__pbSeen.get(symbol)] = _rec; else { __pbSeen.set(symbol, __pbLive.length); __pbLive.push(_rec); }   // [V33.614] 선행 판정을 루프 판정으로 덮어쓴다
