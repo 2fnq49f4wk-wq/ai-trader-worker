@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "LUX 네이티브 앱 껍데기(Capacitor) — 화면은 워커 사이트를 그대로 띄운다(사이트를 고치면 앱도 바뀜)",
   "scripts": {
-    "assets": "capacitor-assets generate --android --iconBackgroundColor '#000000' --splashBackgroundColor '#000000'",
+    "assets": "capacitor-assets generate --android --iconBackgroundColor '#000000' --iconBackgroundColorDark '#000000' --splashBackgroundColor '#000000' --splashBackgroundColorDark '#000000'",
     "android:debug": "cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
