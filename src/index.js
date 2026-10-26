@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.679";
+const _BUILD_VER = "V33.680";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -29819,8 +29819,9 @@ async function handleRequest(request, env, ctx, _inner) {
           // [V33.3] ★"표본 수확"이 항상 노란불(STALE)이던 버그★ — 수확기는
           //   "hv_offset:v" + LUXML.featVer 에 기록하는데(현재 v13) 여기만 v12로 굳어 있어
           //   존재하지 않는 키를 보고 있었다. featVer를 따라가도록 수정.
-          { key: "hv_offset:v" + LUXML.featVer, label: "표본 수확", staleMs: 24 * 3600000 },
-          { key: "cf_label_lock",       label: "반사실 라벨링", staleMs: 6 * 3600000 },
+          // [V33.680] 위원회 학습 퇴역(V33.634 COMMITTEE_RETIRED) 뒤로 이 두 단계는 일부러 멈춘다 — '낡음(STALE)' 노란불로 7/9 처럼 보이던 것을 '퇴역' 으로
+          { key: "hv_offset:v" + LUXML.featVer, label: "표본 수확", staleMs: 24 * 3600000, retired: COMMITTEE_RETIRED },
+          { key: "cf_label_lock",       label: "반사실 라벨링", staleMs: 6 * 3600000, retired: COMMITTEE_RETIRED },
           { key: "ai_trained_day",      label: "AI 학습",       staleMs: 36 * 3600000 }
         ];
         const _ph = SUBS.map(function () { return "?"; }).join(",");
@@ -29834,7 +29835,8 @@ async function handleRequest(request, env, ctx, _inner) {
         const steps = SUBS.map(function (s) {
           const ts = _tsMap[s.key] || 0;
           let status;
-          if (!ts) status = "NEVER";
+          if (s.retired) status = "RETIRED";
+          else if (!ts) status = "NEVER";
           else if ((now - ts) <= s.staleMs) status = "OK";
           else if (s.sessionOnly && !_mktOpen) status = "IDLE";   // 장외 — 안 도는 게 정상
           else status = "STALE";
@@ -52236,7 +52238,10 @@ function textRankTop(sentences, topK) {
 function _rptPct(v) { return (v >= 0 ? "+" : "") + v.toFixed(2) + "%"; }
 function _rptMoney(v, mkt) {
   const a = Math.abs(v), sg = v < 0 ? "-" : "+";
-  if (/kr$/.test(mkt)) return sg + (a >= 1e8 ? (a / 1e8).toFixed(1) + "억" : Math.round(a / 1e4).toLocaleString() + "만원");  // kr·bdkr = 원화
+  if (/kr$/.test(mkt)) {   // kr·bdkr = 원화 · [V33.680] 1만원 미만은 원 단위로(종전 '-0만원')
+    if (a < 1e4) return (Math.round(a) === 0 ? "" : sg) + Math.round(a).toLocaleString() + "원";
+    return sg + (a >= 1e8 ? (a / 1e8).toFixed(1) + "억" : Math.round(a / 1e4).toLocaleString() + "만원");
+  }
   return sg + "$" + (a >= 1e6 ? (a / 1e6).toFixed(2) + "M" : Math.round(a).toLocaleString());
 }
 
