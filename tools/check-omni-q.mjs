@@ -56,6 +56,10 @@ chk(!M.omniqProvOf(GS(SIMG({ ok: false, lateMx: -1 }))) && !M.omniqProvOf(GS(SIM
 const qvS = M.omniqView({ day: "20261027", trainedAt: now, scoredAt: now, speak: true, gate: GS(SIMG(), { days: 3, mx: 0.01 }), gate20: { g1: { ok: true }, g2: { ok: true }, g3: { days: 3, ok: false }, g3sim: SIMG({ ok: false, lateMx: -1 }) } }, now);
 chk(qvS.state === "speak" && qvS.gate.g3.kind === "sim" && qvS.gate.g3live.days === 3 && qvS.gate20.g3sim && qvS.gate20.g3sim.ok === false,
   "omniqView: 모의 ③ · 실시간 장부 · 종전 방식 회차의 모의 측정(g3sim)을 화면에 싣는다", JSON.stringify(qvS.gate20));
+chk(M.omniqView({ day: "1", trainedAt: now, scoredAt: now, gate: Object.assign(GS(SIMG()), { label: "matched" }) }, now).gate.label === "matched", "omniqView: 학습 라벨(맞춤) 표시");
+const QS = readFileSync(T + "omni_q.py", "utf8");
+chk(/\(not g3\["ok"\]\) and g3M\["ok"\] and gate1\(bM\) and g2M/.test(QS) && /\(not g3_20\["ok"\]\) and g3M20\["ok"\] and gate1\(bM20\) and g2M20/.test(QS),
+  "맞춤 라벨 채택 = 사전 등록 규칙(지금 ③ 미달 · 후보 ③①② 통과)일 때만");
 let r = M.omniqPicksAppend([], "20261007", ["A", "B"], now);
 r = M.omniqPicksAppend(r.picks, "20261007", ["X"], now + 1);
 chk(!r.added && r.picks.length === 1 && r.picks[0].top.join() === "A,B", "같은 날 장부는 덮어쓰지 않는다");

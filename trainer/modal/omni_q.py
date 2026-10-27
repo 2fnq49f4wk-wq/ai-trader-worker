@@ -246,6 +246,35 @@ def market_regime(C):
     return np.where(crash.values, "CRASH", np.where(surge.values, "SURGE", reg))
 
 
+# [V33.686] ★맞춤 라벨 후보★ — 지금 모델은 '그날 시장 전체 중앙값' 을 이기도록 배우는데, ③ 은 '같은 날 같은 위험 묶음' 대비로 잰다.
+#   배우는 목표와 재는 잣대가 다르다. 후보 = (수익 − 같은 날·같은 묶음 평균)의 그날 순위. ★사전 등록 채택★: 그 머리의 지금 모델이 ③ 미달이고
+#   후보가 ③ 통과(국면 규칙 포함) · ① 통과(종전 정의: 시장 전체 대비 상위 10% 승률) · ② 통과일 때만 그 머리를 후보로 바꾼다. 끄기 OMNIQ_MATCH=0.
+MATCH_CAND = os.environ.get("OMNIQ_MATCH", "1") != "0"
+
+
+def matched_rank(fwd, bk):
+    """날짜×종목: (수익 − 그날 같은 위험 묶음 평균)의 그날 백분위 순위. 묶음 종목 5개 미만이면 NaN."""
+    D, S = fwd.shape
+    out = np.full((D, S), np.nan, dtype=np.float32)
+    for d in range(D):
+        r, b = fwd[d], bk[d]
+        ok = np.isfinite(r) & np.isfinite(b)
+        if ok.sum() < 20:
+            continue
+        kb = b[ok].astype(int)
+        sm, ct = np.bincount(kb, weights=r[ok], minlength=N_BUCKET), np.bincount(kb, minlength=N_BUCKET)
+        x = np.full(S, np.nan)
+        good = ct[kb] >= SIM_MIN_CTRL
+        idx = np.where(ok)[0]
+        x[idx[good]] = r[ok][good] - (sm[kb] / np.maximum(ct[kb], 1))[good]
+        m = np.isfinite(x)
+        if m.sum() < 20:
+            continue
+        o = np.argsort(np.argsort(x[m]))
+        out[d, np.where(m)[0]] = (o + 0.5) / m.sum()
+    return out
+
+
 def regime_now(g3, reg_now):
     """오늘 국면으로 ③ 의 '오늘 국면' 판정을 다시 매긴다(평일 채점만 회차도). g3 는 sim_gate 결과."""
     if not g3 or g3.get("kind") != "sim":
@@ -1104,6 +1133,37 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         LAST_OOS[mk]["sc20"] = s20   # [V33.622] 20일 머리 표본 밖 점수 — 매매법 시뮬이 후보 머리(5일·20일·평균)를 검증으로 고른다
         br20, fx20, _, g2_20, pos20, need20 = judge(s20, t20, y20, f20.values, "20일 순위(발언 머리 2)", step=H20, sps=splits20)
         g1_20 = gate1(br20)
+        # [V33.684~686] ③ 모의 시뮬레이션 · 맞춤 기준 — 그리고 맞춤 라벨 후보(사전 등록 채택 규칙은 MATCH_CAND 주석)
+        bk = risk_buckets(C)
+        regs = market_regime(C)
+        g3 = sim_gate(scores, test_all, fwdv, bk, list(C.index), mk, H, COST_RT[mk], reg=regs)
+        g3_20 = sim_gate(s20, t20, f20.values, bk, list(C.index), mk, H20, COST_RT[mk], reg=regs)
+        labsel, yM20 = {"5": "base", "20": "base"}, None
+        if MATCH_CAND:
+            try:
+                yM5, yM20 = matched_rank(fwdv, bk), matched_rank(f20.values, bk)
+                sM, tM = cv(yM5, LEARNER_5D)
+                bM, fxM, fx0M, g2M, posM, needM = judge(sM, tM, y, fwdv, "5일 · 맞춤 라벨(후보)")
+                g3M = sim_gate(sM, tM, fwdv, bk, list(C.index), mk, H, COST_RT[mk], reg=regs)
+                sM20, tM20 = cv(yM20, sps=splits20)
+                bM20, fxM20, _, g2M20, posM20, needM20 = judge(sM20, tM20, y20, f20.values, "20일 · 맞춤 라벨(후보)", step=H20, sps=splits20)
+                g3M20 = sim_gate(sM20, tM20, f20.values, bk, list(C.index), mk, H20, COST_RT[mk], reg=regs)
+                for tg, a, b_ in (("5일", g3, g3M), ("20일", g3_20, g3M20)):
+                    log("      [OMNI-Q %s · %s] ③ 지금 라벨 %s(맞춤 %s · 앞 t %s · 뒤 %s · 국면 %s · 오늘 %s) vs 맞춤 라벨 %s(맞춤 %s · 앞 t %s · 뒤 %s · 국면 %s · 오늘 %s)" % (
+                        mk, tg, "통과" if a["ok"] else "미달", a.get("mx"), (a.get("early") or {}).get("mT"), a.get("lateMx"), a.get("regOk"), a.get("nowOk"),
+                        "통과" if b_["ok"] else "미달", b_.get("mx"), (b_.get("early") or {}).get("mT"), b_.get("lateMx"), b_.get("regOk"), b_.get("nowOk")))
+                if (not g3["ok"]) and g3M["ok"] and gate1(bM) and g2M:
+                    scores, test_all, br, fold_x, fold_x0, g2, pos, need, g3, y5tr = sM, tM, bM, fxM, fx0M, g2M, posM, needM, g3M, yM5
+                    LAST_OOS[mk]["sc"] = sM
+                    labsel["5"] = "matched"
+                if (not g3_20["ok"]) and g3M20["ok"] and gate1(bM20) and g2M20:
+                    s20, t20, br20, fx20, g2_20, pos20, need20, g3_20 = sM20, tM20, bM20, fxM20, g2M20, posM20, needM20, g3M20
+                    g1_20 = gate1(br20)
+                    LAST_OOS[mk]["sc20"] = sM20
+                    labsel["20"] = "matched"
+                log("      [OMNI-Q %s] 라벨 선택 — 5일 %s · 20일 %s (사전 등록: 지금 ③ 미달 · 후보 ③①② 통과일 때만 맞춤)" % (mk, labsel["5"], labsel["20"]))
+            except Exception as e:  # noqa: BLE001 — 후보 실패는 지금 모델을 그대로 둔다
+                log("      ⚠️ [OMNI-Q %s] 맞춤 라벨 후보 실패: %r — 지금 라벨 유지" % (mk, e))
         lab_rep = {}
         if LAB:
             # (연구) DoubleEnsemble vs LightGBM — 미리 등록한 채택 규칙의 재료
@@ -1206,18 +1266,15 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 return {s_: round(float(p_), 4) for s_, p_ in zip(syms, pv)}
             for Hh in (1, 20):
                 fh = (C.shift(-(Hh + 1)) / C.shift(-1) - 1.0)
-                extra["r%d" % Hh] = _pctmap(_final(fh.rank(axis=1, pct=True).values, key="r%d" % Hh))
+                lab_h = yM20 if (Hh == 20 and labsel["20"] == "matched") else fh.rank(axis=1, pct=True).values   # [V33.686] 20일 머리 맞춤 라벨 채택 시
+                extra["r%d" % Hh] = _pctmap(_final(lab_h, key="r%d" % Hh))
             ydir = np.where(np.isfinite(fwdv), (fwdv > 0).astype(np.float32), np.nan)
             extra["pUp"] = {s_: round(float(p_), 4) for s_, p_ in zip(syms, _final(ydir, "binary", key="pUp"))}
             vol = P["close"].pct_change(fill_method=None).rolling(5).std().shift(-5)
             extra["risk"] = _pctmap(_final(vol.rank(axis=1, pct=True).values, key="risk"))
         except Exception as e:  # noqa: BLE001
             log("      ⚠️ [OMNI-Q %s] 복합 머리 채점 실패: %r — 5일 머리만 올린다" % (mk, e))
-        # [V33.684] ③ 모의 시뮬레이션 · 맞춤 기준(표본 밖 점수 · 실전 상한) + 실시간 장부(같은 맞춤 기준 · 회수 장치)
-        bk = risk_buckets(C)
-        regs = market_regime(C)
-        g3 = sim_gate(scores, test_all, fwdv, bk, list(C.index), mk, H, COST_RT[mk], reg=regs)
-        g3_20 = sim_gate(s20, t20, f20.values, bk, list(C.index), mk, H20, COST_RT[mk], reg=regs)
+        # [V33.684] 실시간 장부(같은 맞춤 기준 · 회수 장치) — ③ 모의 판정은 위(라벨 선택과 함께)
         live = _ledger(req, BASE, HDR, mk, C, fwdv, bk, y, H, log)
         live20 = _ledger(req, BASE, HDR, mk, C, f20.values, bk, y20, H20, log)
         old3, old3_20 = _ledger_old(req, BASE, HDR, mk, C, y, H, log), _ledger_old(req, BASE, HDR, mk, C, y20, H20, log)
@@ -1247,10 +1304,10 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 "scores": sc, "top": top, "heads": extra, "learner": LEARNER_5D, "lab": lab_rep or None,
                 "featGroups": FEAT_GROUPS.get(mk), "featTop": _imp_top(bst, names), "struct": _struct(bst, names),
                 "gate": {"g1": dict(br, ok=g1, needT=G1_T), "g2": {"folds": fold_x, "foldsFullSwap": fold_x0, "band": BAND, "pos": pos, "need": need, "ok": g2},
-                         "g3": g3, "g3live": live, "g3sim": g3s, "speak": speak, "fit": fitdiag.get("5일")},
+                         "g3": g3, "g3live": live, "g3sim": g3s, "speak": speak, "fit": fitdiag.get("5일"), "label": labsel["5"]},
                 "top20": top20,
                 "gate20": {"g1": dict(br20, ok=g1_20, needT=G1_T), "g2": {"folds": fx20, "band": BAND, "step": H20, "pos": pos20, "need": need20, "ok": g2_20},
-                           "g3": g3_20, "g3live": live20, "g3sim": g3s_20, "speak": speak20, "fit": fitdiag.get("20일")}}
+                           "g3": g3_20, "g3live": live20, "g3sim": g3s_20, "speak": speak20, "fit": fitdiag.get("20일"), "label": labsel["20"]}}
         out[mk] = body["gate"]
         if isinstance(cache, dict):   # [V33.584] 다음 금요일까지 평일 회차가 이 모델로 채점한다
             cache[mk] = {"names": list(names), "trainedAt": t_ms, "learner": LEARNER_5D, "bst": bst, "heads": head_models,

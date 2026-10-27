@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.685";
+const _BUILD_VER = "V33.686";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13509,6 +13509,7 @@ function _omqGateView(g) {
     g3: g3.kind === "sim" ? _omqSimView(g3)
       : { ok: g3.ok === true, days: _num(g3.days, 0), mu: r4(g3.mu), lb: r4(g3.lb), needDays: _num(g3.needDays, OMNIQ_PROV.finalDays) },
     g3sim: (g.g3sim && g.g3sim.kind === "sim") ? _omqSimView(g.g3sim) : null,   // 종전 방식 회차의 모의 측정(판정엔 안 씀)
+    label: g.label === "matched" ? "matched" : "base",   // [V33.686] 학습 라벨(맞춤 = 같은 날·같은 위험 묶음 대비 순위)
     g3live: g.g3live ? { days: _num(g.g3live.days, 0), mx: r4(g.g3live.mx), mu: r4(g.g3live.mu), needDays: OMNIQ_LIVE.revokeDays, revoke: omniqLiveRevoked(g) } : null,
     fit: f ? { kind: f.kind || null, inMu: r4(f.inMu), outMu: r4(f.outMu), gap: r4(f.gap) } : null
   };
