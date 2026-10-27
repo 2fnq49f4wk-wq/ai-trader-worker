@@ -512,6 +512,9 @@ for (const k of reads) {
     for (const m of src.matchAll(/getState\([^,]+,\s*"([a-zA-Z0-9_:.]+)"/g)) r.add(m[1]);
     for (const m of src.matchAll(/getStates\([^,]+,\s*\[([^\]]*)\]/g))
       for (const k of m[1].matchAll(/"([a-zA-Z0-9_:.]+)"/g)) r.add(k[1]);
+    // V33.692 /api/playbook 는 state 키 목록(PBK)을 한 번의 D1 batch(PB_API_SQL … WHERE k IN)로 읽는다.
+    for (const m of src.matchAll(/const PBK = \[([^\]]*)\]/g))
+      for (const k of m[1].matchAll(/"([a-zA-Z0-9_.]+:?)([a-zA-Z0-9_.]*)"/g)) { r.add(k[1] + k[2]); r.add(k[1]); }
     const skip = /^(cash_ckpt|last_|equity_peak|ai_picks|daily|quote|hist|index|twr|cooldown|r2_status)/;
     const dead = [...w].filter((k) => !r.has(k) && !skip.test(k));
     if (dead.length) { console.error(`  FAIL 죽은 state 기록(쓰기만 하고 아무도 안 읽음): ${dead.join(", ")}`); bad += dead.length; }

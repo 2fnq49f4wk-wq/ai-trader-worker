@@ -40,7 +40,8 @@ function NetStage({ sc, title, lines, note, extra }: { sc: any; title: string; l
   useEffect(() => { setSel(-1); }, [sc]);
   const C = ({ on, children, onClick, label }: any) => <button onClick={onClick} aria-pressed={on} aria-label={label} className={"shrink-0 rounded-sm px-2.5 py-1.5 text-[12px] " + (on ? "bg-ink text-bg" : "bg-bg-3 text-ink-2")}>{children}</button>;
   return (
-    <div>
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_350px] xl:items-start">
+      <div className="min-w-0">
       <div className="relative overflow-hidden rounded-md border border-line" style={{ background: "radial-gradient(120% 70% at 50% 112%,rgba(196,40,84,.42),rgba(120,30,90,.14) 45%,transparent 70%),radial-gradient(90% 80% at 50% 42%,#20112f,#120a1f 55%,#09060f 100%)" }}>
         <div className={"bs-gl-inline relative aspect-square max-h-[460px] w-full sm:aspect-[16/10]" + (touch ? " bs-touch" : "")}>
           {!full && <GL sc={sc} interactive={false} sel={sel} onPick={setSel} apiRef={api} spin={spin} />}
@@ -64,10 +65,12 @@ function NetStage({ sc, title, lines, note, extra }: { sc: any; title: string; l
         <C onClick={() => { api.current?.reset(); setSel(-1); }}>맞춤</C>
       </div>
       {note && <p className="mt-2 text-[11px] leading-snug text-ink-3">{note}</p>}
-      <div className="mt-4">
-        <h4 className="mb-2 text-[12px] font-semibold tracking-tight text-ink-2">노드 역할 <span className="font-normal text-ink-3">— 층을 고르고 노드를 누르면 그림에서 그 연결만 밝게</span></h4>
-        <NodeRoles sc={sc} sel={sel} onSel={setSel} extra={extra} />
       </div>
+      {/* [V33.692] 노드 역할 = 그림 옆 살펴보기 칸(넓은 화면은 오른쪽에 붙어 스크롤해도 따라온다 · 폰은 그림 바로 아래) */}
+      <aside className="min-w-0 xl:sticky xl:top-3 xl:max-h-[calc(100vh-24px)] xl:overflow-y-auto xl:rounded-md xl:border xl:border-line xl:p-3" aria-label="노드 역할">
+        <h4 className="mb-2.5 flex items-baseline justify-between gap-2 text-[13px] font-semibold tracking-tight text-ink">노드 역할 <span className="text-[11px] font-normal text-ink-3">층 → 노드를 고르면 그 연결만 밝게</span></h4>
+        <NodeRoles sc={sc} sel={sel} onSel={setSel} extra={extra} />
+      </aside>
       {full && createPortal(<div id="bs-full-host"><FullView sc={sc} title={title} sel={sel} onSel={setSel} onClose={() => setFull(false)} extra={extra} /></div>, layer())}
     </div>
   );

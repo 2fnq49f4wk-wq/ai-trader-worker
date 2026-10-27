@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.691";
+const _BUILD_VER = "V33.692";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13430,6 +13430,10 @@ async function omniVizData(DB) {
    (워커 CPU ≈ 0 — 피처 166개를 JS 로 옮기지 않는다). 학습기 trainer/modal/omni_q.py · 게이트 tools/check-omni-q.mjs. */
 /* [V33.584] maxAgeMs 는 ★채점★ 나이(scoredAt) · maxModelAgeMs 는 ★모델★ 나이(trainedAt). 학습은 금요일 한 번(TRAIN_WEEKLY) — 평일에는
    GHA 가 금요일 모델로 그날 피처만 다시 채점해 올린다(omni_q.run score-only). 금요일 학습이 한 번 빠져도 10일 안이면 쓰고, 넘으면 낡음. */
+/* [V33.692] /api/playbook 상태 묶어 읽기 — 매매법 표(칸 수천)는 D1 이 떼고 칸 수만 센다 */
+const PB_API_SQL = "SELECT k, CASE WHEN k LIKE 'playbook:%' AND json_valid(v) THEN json_remove(v, '$.daily.table', '$.intra.table') ELSE v END AS v, " +
+  "CASE WHEN k LIKE 'playbook:%' AND json_valid(v) THEN (SELECT COUNT(*) FROM json_each(state.v, '$.daily.table')) END AS dc, " +
+  "CASE WHEN k LIKE 'playbook:%' AND json_valid(v) THEN (SELECT COUNT(*) FROM json_each(state.v, '$.intra.table')) END AS ic FROM state WHERE k IN ";
 const OMNIQ = { maxPicks: 260, maxAgeMs: 5 * 86400000, maxModelAgeMs: 10 * 86400000, lowPct: 0.5, minScores: 20 };
 function omniqFresh(st, nowMs) {
   if (!st || typeof st !== "object") return false;
@@ -31620,29 +31624,37 @@ async function handleRequest(request, env, ctx, _inner) {
       return Response.json({ ok: true, pass: rec.pass }, { headers: cors });
     }
     if (path === "/api/playbook") {
+      /* [V33.692] ★D1 한 왕복★ — 종전엔 순차 질의 9번(playbook·제동·장부·포지션·라이브 판정)이라 캐시가 빈 순간 4초까지 걸렸다(폰 실측 01 화면 4.8초).
+         매매법 표(daily.table · intra.table — 칸 수천 개)는 화면이 '칸 수' 만 쓰므로 D1(json_remove · json_each COUNT)이 떼고 센다 — 워커는 수십 KB 만 푼다. */
+      const PBK = ["playbook:us", "playbook:kr", "pb_brake:us", "pb_brake:kr", "pb_live:us", "pb_live:kr"];
+      const st0 = {}, cellN = {};
+      let recent = [], exits = [], open = [];
+      try {
+        const _pbSt = env.DB.prepare(PB_API_SQL + "(" + PBK.map(function () { return "?"; }).join(",") + ")");
+        const rs = await env.DB.batch([
+          _pbSt.bind.apply(_pbSt, PBK),
+          env.DB.prepare("SELECT ts, market, symbol, qty, price, reason FROM trades WHERE side = 'BUY' AND reason LIKE '[SROUTE]%' ORDER BY ts DESC LIMIT 15"),
+          env.DB.prepare("SELECT ts, market, symbol, qty, price, pnl, pnl_pct, reason FROM trades WHERE side = 'SELL' AND reason LIKE 'SR-%' ORDER BY ts DESC LIMIT 15"),
+          env.DB.prepare("SELECT symbol, market, strategy, qty, avg_price, opened_ts, meta FROM positions WHERE meta LIKE '%\"sr\":{%' LIMIT 30")
+        ]);
+        for (const r of ((rs[0] && rs[0].results) || [])) { try { st0[r.k] = JSON.parse(r.v); } catch (e) {} cellN[r.k] = { d: _num(r.dc, 0), i: _num(r.ic, 0) }; }
+        recent = (rs[1] && rs[1].results) || []; exits = (rs[2] && rs[2].results) || [];
+        open = ((rs[3] && rs[3].results) || []).map(function (p) { let m = null; try { m = JSON.parse(p.meta || "{}").sr; } catch (e) {} return { symbol: p.symbol, market: p.market, strategy: p.strategy, qty: p.qty, avg: p.avg_price, opened: p.opened_ts, sr: m }; }).filter(function (p) { return p.sr; });
+      } catch (e) {}
       const out = {};
       for (const mk of ["us", "kr"]) {
-        const r = await getState(env.DB, "playbook:" + mk, null);
+        const r = st0["playbook:" + mk] || null, cn = cellN["playbook:" + mk] || { d: 0, i: 0 };
         out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, panic: r.panic === true, panicBook: r.panicBook || null,
                         pass: Object.assign({}, r.pass || {}, { absTrial: !(r.pass && r.pass.daily) && !_pbTradeOk(r.daily && r.daily.val) && !!(PB_ABS_TRIAL[mk] && _pbAbsOk(r.daily && r.daily.val)), trialWhy: pbTrialWhy(r.daily && r.daily.val, mk) }), primary: pbPrimaryOn(r, Date.now()), passStreak: r.passStreak || 0, indep: pbIndepPasses(r.passLog),   // [V33.669] pass.absTrial(미국 절대 기준 시험 매수)
-                        brake: await getState(env.DB, "pb_brake:" + mk, null).catch(function () { return null; }),
-                        daily: r.daily && { val: r.daily.val, cells: Object.keys(r.daily.table || {}).length, pb: r.daily.pb, gate: r.daily.gate || null,
+                        brake: st0["pb_brake:" + mk] || null,
+                        daily: r.daily && { val: r.daily.val, cells: cn.d, pb: r.daily.pb, gate: r.daily.gate || null,
                                             tier2: r.daily.tier2 || [], ptune: r.daily.ptune || null, epDef: r.daily.epDef || null, epLad: r.daily.epLad || null,   // [V33.664]
                                             meta: r.daily.meta || null, metaFeats: r.daily.metaFeats || null,   // [V33.672]
                                             grpN: r.daily.grp ? Object.values(r.daily.grp).reduce(function (a, g) { a[g] = (a[g] || 0) + 1; return a; }, {}) : null,
                                             cross: Object.fromEntries(Object.keys(r.daily.cross || {}).map(function (k) { return [k, (r.daily.cross[k] || []).length]; })) },
-                        intra: r.intra && { val: r.intra.val, cells: Object.keys(r.intra.table || {}).length, pb: r.intra.pb } } : null;
+                        intra: r.intra && { val: r.intra.val, cells: cn.i, pb: r.intra.pb } } : null;
       }
-      /* [V33.609] 관측창 — 최근 매매법 AI 매수·청산 · 지금 들고 있는 매매법 AI 포지션(가벼운 조회 3개) */
-      let recent = [], exits = [], open = [];
-      try { const q = await env.DB.prepare("SELECT ts, market, symbol, qty, price, reason FROM trades WHERE side = 'BUY' AND reason LIKE '[SROUTE]%' ORDER BY ts DESC LIMIT 15").all(); recent = (q && q.results) || []; } catch (e) {}
-      try { const q = await env.DB.prepare("SELECT ts, market, symbol, qty, price, pnl, pnl_pct, reason FROM trades WHERE side = 'SELL' AND reason LIKE 'SR-%' ORDER BY ts DESC LIMIT 15").all(); exits = (q && q.results) || []; } catch (e) {}
-      try {
-        const q = await env.DB.prepare("SELECT symbol, market, strategy, qty, avg_price, opened_ts, meta FROM positions WHERE meta LIKE '%\"sr\":{%' LIMIT 30").all();
-        open = ((q && q.results) || []).map(function (p) { let m = null; try { m = JSON.parse(p.meta || "{}").sr; } catch (e) {} return { symbol: p.symbol, market: p.market, strategy: p.strategy, qty: p.qty, avg: p.avg_price, opened: p.opened_ts, sr: m }; }).filter(function (p) { return p.sr; });
-      } catch (e) {}
-      const live = {};
-      for (const mk of ["us", "kr"]) { try { live[mk] = await getState(env.DB, "pb_live:" + mk, null); } catch (e) { live[mk] = null; } }   // [V33.610] 이번 사이클 후보별 판정
+      const live = { us: st0["pb_live:us"] || null, kr: st0["pb_live:kr"] || null };   // [V33.610] 이번 사이클 후보별 판정
       return Response.json({ ok: true, route: PB_ROUTE, caps: { trial: STRAT_ROUTE, primary: PB_PRIMARY_CAPS }, keys: PB_KEYS, markets: out, recent: recent, exits: exits, open: open, live: live },
                            { headers: Object.assign({}, cors, { "Cache-Control": "public, max-age=30" }) });
     }
@@ -57749,7 +57761,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { trainWeekKey, TRAIN_STAGES, TRAIN_WEEKLY, omniqFresh, ALT_CADENCE, surgeScalpOn, _regimeScalp, evaluateScalpEntry, runTailRiskHedge, externalTrainAges, externalTrainRow, EXT_TRAIN_KEYS, OMNIQ_ROUTE, omniqRoutePick, omniqHoldOf, omniqRouteToday, _entryTag, negExpDefersToPerfGate, evaluateBuyBlocks, setStatesBatch, _ioTag, _setYAuthDB, yahooFetch, _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { PB_API_SQL, trainWeekKey, TRAIN_STAGES, TRAIN_WEEKLY, omniqFresh, ALT_CADENCE, surgeScalpOn, _regimeScalp, evaluateScalpEntry, runTailRiskHedge, externalTrainAges, externalTrainRow, EXT_TRAIN_KEYS, OMNIQ_ROUTE, omniqRoutePick, omniqHoldOf, omniqRouteToday, _entryTag, negExpDefersToPerfGate, evaluateBuyBlocks, setStatesBatch, _ioTag, _setYAuthDB, yahooFetch, _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { macroFromCalendar, macroSchedOf, _blsParse, MACRO_SCHED, getStates, _STATE_LITE, getADX, _getADXCore, getHolidaySet, _indexFreshOpen, isMarketTradingDay, KR_LUNAR_HOLIDAYS, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
