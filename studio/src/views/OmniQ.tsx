@@ -19,6 +19,10 @@ export function oqState(j: any): { label: string; tone: Tone } {
 }
 const ST: Record<string, [string, Tone]> = { speak: ["발언", "ok"], prov: ["잠정", "warn"], shadow: ["섀도우", "shade"] };
 
+/* [V33.684] ③ = 모의 시뮬레이션 · 맞춤 기준 — 실전 상한(하루 6 · 동시 10/8)으로 표본 밖 상위 10% 를 사고, 같은 날·같은 위험 묶음의 뽑히지 않은 종목과 비교 */
+const pp = (x: any) => (typeof x === "number" && isFinite(x) ? (x >= 0 ? "+" : "") + (x * 100).toFixed(2) + "%" : "—");
+const sim = (s: any, k: string) => { const e = s.early || {};
+  return { k, v: "맞춤 초과 " + pp(s.mx), hint: n0(s.n) + "건 · 앞 " + n0(e.mN) + "달 t " + f1(e.mT, 1) + " (≥ " + (s.needT ?? 2) + ") · 최근 20% " + pp(s.lateMx) + " · 비용 뺀 " + pp(s.net), tone: (s.ok ? "ok" : "bad") as Tone }; };
 function Gate({ g, label }: { g: any; label: string }) {
   if (!g) return <p className="py-2 text-[12px] text-ink-3">{label} — 없음</p>;
   const g1 = g.g1 || {}, g2 = g.g2 || {}, g3 = g.g3 || {}, fit = g.fit || {};
@@ -28,8 +32,10 @@ function Gate({ g, label }: { g: any; label: string }) {
       <Kpis items={[
         { k: "① 상위 10% 승률 하한", v: g1.lb != null ? (g1.lb * 100).toFixed(1) + "%" : "—", hint: "t " + f1(g1.t, 1) + " (≥ " + (g1.needT ?? 3) + ")", tone: g1.ok ? "ok" : "bad" },
         { k: "② 비용 뺀 초과 구간", v: (g2.pos ?? "—") + " / " + ((g2.folds || []).length || "—"), hint: "필요 " + (g2.need ?? "—"), tone: g2.ok ? "ok" : "bad" },
-        { k: "③ 실전 장부", v: n0(g3.days) + "일", hint: "필요 " + (g3.needDays ?? 30) + "일" + (g3.lb != null ? " · 하한 " + (g3.lb * 100).toFixed(1) + "%" : ""), tone: g3.ok ? "ok" : "shade" },
+        g3.kind === "sim" ? sim(g3, "③ 모의 시뮬레이션") : { k: "③ 실전 장부", v: n0(g3.days) + "일", hint: "필요 " + (g3.needDays ?? 30) + "일" + (g3.lb != null ? " · 하한 " + (g3.lb * 100).toFixed(1) + "%" : ""), tone: g3.ok ? "ok" : "shade" },
         { k: "적합 진단", v: fit.kind || "—", hint: fit.inMu != null ? "안 " + (fit.inMu * 100).toFixed(1) + "% · 밖 " + (fit.outMu * 100).toFixed(1) + "%" : undefined, tone: fit.kind === "정상 범위" ? "ok" : "warn" },
+        ...(g3.kind === "sim" && g.g3live ? [{ k: "실시간 장부(회수 감시)", v: n0(g.g3live.days) + "일 · " + pp(g.g3live.mx), hint: g.g3live.revoke ? "평균 초과 < 0 → 회수" : (g.g3live.needDays ?? 10) + "일부터 평균 초과 < 0 이면 회수", tone: (g.g3live.revoke ? "bad" : "ok") as Tone }] : []),
+        ...(g.g3sim ? [sim(g.g3sim, "③ 모의(측정 · 판정 전)")] : []),
       ]} />
     </div>);
 }
@@ -84,7 +90,7 @@ export function OmniQ({ d, head }: { d: any; head: ReactNode }) {
         <Tabs.Content value="f" className="pt-4 outline-none"><Facts rows={[
           ["역할", "① 매매법 AI 의 후보 선별(美 " + (cd("us") || "—") + " · 韓 " + (cd("kr") || "—") + ") ② 자체 진입 — 잠정·발언 머리의 상위 10% 를 산다(잠정은 절반 크기 · 하루 3건 · 동시 6종목)"],
           ["5일 머리 학습 라벨", "美 " + (us && us.y5 === "blend" ? "5일·20일 순위 혼합" : "5일 순위") + " · 韓 " + (kr && kr.y5 === "blend" ? "5일·20일 순위 혼합(갈아타기 비용 ↓ · 관문 ② 1/4 → 3/4)" : "5일 순위") + " — 판정은 둘 다 5일 수익"],
-          ["상태 뜻", "섀도우 = 기록만 · 잠정 = 관문 ①② 통과(모든 구간 양수 · t ≥ 5) → 절반 크기로 매수 · 발언 = ③ 실전 장부 30일까지 통과 → 정규 크기"],
+          ["상태 뜻", "섀도우 = 기록만 · 발언 = 관문 ①② + ③ 모의 시뮬레이션(같은 날·같은 위험 묶음 대비 초과 · 앞 80% 달 t ≥ 2 · 최근 20% 초과 > 0) 통과 → 정규 크기 · 실시간 장부 10일 이상 평균 초과 < 0 이면 회수 (종전 방식 회차는 잠정 = ①② 강함 → 절반 크기)"],
           ["미국 상위 10", us && (us.top10 || []).join(" · ")], ["한국 상위 10", kr && (kr.top10 || []).join(" · ")],
           ["미국 채점일", us && us.day], ["한국 채점일", kr && kr.day],
         ]} /></Tabs.Content>

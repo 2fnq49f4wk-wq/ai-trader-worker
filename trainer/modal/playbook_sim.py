@@ -1344,7 +1344,7 @@ def _pick(tab, te, rule, hist=None):
     if (GLOBAL_VETO or rule.get("gveto")) and len(te) and "k0" in te.columns:   # [V33.642] 전체 칸 거부권 — 그 매매법의 전체 평균(수축)이 0 이하면 고르지 않는다
         ok = ok & np.array([_global_ok(tab.get(k)) for k in zip(te["k0"].values, te["pb"].values)], dtype=bool)
     sel = te.assign(_s=sc)[ok].sort_values("_s", ascending=False).drop_duplicates("inst")
-    if CAND_RANK is not None and RANK_MODE == "omq" and len(sel):   # [V33.682] 상한이 찰 때 같은 날 안 순서 = OMNI-Q 순위(검증된 횡단면 실력) → 같으면 표 점수
+    if CAND_RANK is not None and RANK_MODE == "omq" and CAP.get("daily") and len(sel):   # [V33.684] 일봉(거래일 축)만 — 5분봉 t 는 봉 번호라 순위표(거래일×종목) 밖(실측: index 4137 / 2600 → 시뮬 전체 실패)   # [V33.682] 상한이 찰 때 같은 날 안 순서 = OMNI-Q 순위(검증된 횡단면 실력) → 같으면 표 점수
         sel = sel.assign(_o=CAND_RANK[sel["t"].values.astype(int), sel["j"].values.astype(int)]).sort_values(["_o", "_s"], ascending=False)
     sel = sel.sort_values("t", kind="mergesort")   # 같은 날 안은 위 순서 그대로(상한이 있으면 앞에서부터 산다)
     return _nonoverlap(sel)
@@ -1522,6 +1522,7 @@ def _stats(pk, base):
 
 def validate(df, timecol, pbs=None):
     CAP["on"] = bool(CAP_ON and timecol == "t")
+    CAP["daily"] = timecol == "t"
     try:
         return _validate(df, timecol, pbs)
     finally:

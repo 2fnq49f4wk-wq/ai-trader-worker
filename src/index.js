@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.683";
+const _BUILD_VER = "V33.684";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13436,8 +13436,23 @@ function omniqFresh(st, nowMs) {
   const now = _num(nowMs, Date.now()), tAt = _num(st.trainedAt, 0), sAt = _num(st.scoredAt, 0) || tAt;
   return (now - sAt) <= OMNIQ.maxAgeMs && (now - tAt) <= OMNIQ.maxModelAgeMs;
 }
+/* [V33.684] ★③ = 모의 시뮬레이션 · 맞춤 기준★(학습기 omni_q.sim_gate — 실전 상한으로 표본 밖 상위 10% 를 사고 같은 날·같은 위험 묶음의
+   뽑히지 않은 종목과 비교 · 달 묶음 t) — 사용자 10/27 "기준 표본이 전체 시장일 수 없다 · 모의 시뮬레이션으로 테스트". 실시간 장부는
+   ★회수 장치★(g3live: 같은 맞춤 기준 · 10일 이상인데 평균 초과 < 0 → 회수)로 남는다. 워커가 숫자에서 다시 판정한다(학습기 말을 그대로 믿지 않는다). */
+const OMNIQ_LIVE = { revokeDays: 10 };
+function omniqLiveRevoked(g) {
+  const L = g && g.g3live;
+  return !!(L && _num(L.days, 0) >= OMNIQ_LIVE.revokeDays && typeof L.mx === "number" && L.mx < 0);
+}
+function omniqSimOk(g3) {
+  if (!g3 || g3.kind !== "sim") return false;
+  const e = g3.early || {};
+  return g3.ok === true && _num(e.mN, 0) >= _num(g3.needMonths, 24) && _num(e.mx, 0) > 0 && _num(e.mT, 0) >= _num(g3.needT, 2) && _num(g3.lateMx, 0) > 0;
+}
 function omniqSpeakOf(g) {
-  return !!(g && g.g1 && g.g1.ok === true && g.g2 && g.g2.ok === true && g.g3 && g.g3.ok === true);
+  if (!(g && g.g1 && g.g1.ok === true && g.g2 && g.g2.ok === true && g.g3)) return false;
+  if (g.g3.kind === "sim") return omniqSimOk(g.g3) && !omniqLiveRevoked(g);
+  return g.g3.ok === true;   // 종전(V33.683 이전) 업로드 — 실시간 30일 관문
 }
 /* ══ [V33.558] ★잠정 발언 + 자동 회수★ — 사용자 결정(10/11 21:58Z): "잠정 발언 + 자동 회수".
    업계의 '소규모 실전 인큐베이션'(백테스트 통과 전략을 작은 규모로 실전에 넣고 실시간 기록으로 키우거나 거둔다)을 옮긴 것.
@@ -13454,6 +13469,7 @@ function omniqProvOf(g) {
   if (!(_num(g.g1.t, 0) >= OMNIQ_PROV.minT)) return false;
   const f = Array.isArray(g.g2.folds) ? g.g2.folds : [];
   if (!(f.length >= 3 && f.every(function (x) { return typeof x === "number" && x > 0; }))) return false;
+  if (g.g3 && g.g3.kind === "sim") return false;   // [V33.684] 모의 시뮬레이션이 정식 시험 — 통과면 발언 · 미달이면 정식 시험 실패(회수). 잠정 단계 없음
   const g3 = g.g3 || {}, d = _num(g3.days, 0);
   if (d >= OMNIQ_PROV.revokeDays && g3.mu != null && _num(g3.mu, 1) < OMNIQ_PROV.revokeMu) return false;   // 실시간 평균 < 50% → 회수
   if (d >= OMNIQ_PROV.finalDays && g3.ok !== true) return false;                                         // 30일 정식 시험 실패 → 회수
@@ -13462,6 +13478,14 @@ function omniqProvOf(g) {
 /* [V33.562] ★화면용 OMNI-Q 요약★ — 사이드바·두뇌관측이 "발언 / 잠정 발언 / 섀도우" 와 관문 ①②③·적합 진단을 같은 자로 읽는다.
    상태는 매매 경로(omniqBlocks)와 ★같은 술어★(omniqSpeakOf · omniqProvOf)로만 정한다 — 화면이 따로 판정하지 않는다.
    점수표(scores · heads)는 싣지 않는다(종목 수백 개 · 화면엔 필요 없다). */
+function _omqSimView(g3) {
+  const r4 = function (x) { return (typeof x === "number" && isFinite(x)) ? +x.toFixed(4) : null; };
+  const e = g3.early || {};
+  return { kind: "sim", ok: omniqSimOk(g3), n: _num(g3.n, 0), h: _num(g3.h, null), mx: r4(g3.mx), net: r4(g3.net), win: r4(g3.win),
+           early: { mN: _num(e.mN, 0), mx: r4(e.mx), mT: r4(e.mT), mWin: _num(e.mWin, null) },
+           lateMx: r4(g3.lateMx), lateN: _num(g3.lateN, 0), from: _num(g3.from, null), cut: _num(g3.cut, null), to: _num(g3.to, null),
+           needMonths: _num(g3.needMonths, 24), needT: _num(g3.needT, 2) };
+}
 function _omqGateView(g) {
   if (!g || typeof g !== "object") return null;
   const g1 = g.g1 || {}, g2 = g.g2 || {}, g3 = g.g3 || {}, f = g.fit || null;
@@ -13470,7 +13494,10 @@ function _omqGateView(g) {
     g1: { ok: g1.ok === true, mu: r4(g1.mu), lb: r4(g1.lb), t: r4(g1.t), needT: _num(g1.needT, null) },
     g2: { ok: g2.ok === true, pos: _num(g2.pos, null), need: _num(g2.need, null),
           folds: Array.isArray(g2.folds) ? g2.folds.slice(0, 12).map(r4) : null },
-    g3: { ok: g3.ok === true, days: _num(g3.days, 0), mu: r4(g3.mu), lb: r4(g3.lb), needDays: _num(g3.needDays, OMNIQ_PROV.finalDays) },
+    g3: g3.kind === "sim" ? _omqSimView(g3)
+      : { ok: g3.ok === true, days: _num(g3.days, 0), mu: r4(g3.mu), lb: r4(g3.lb), needDays: _num(g3.needDays, OMNIQ_PROV.finalDays) },
+    g3sim: (g.g3sim && g.g3sim.kind === "sim") ? _omqSimView(g.g3sim) : null,   // 종전 방식 회차의 모의 측정(판정엔 안 씀)
+    g3live: g.g3live ? { days: _num(g.g3live.days, 0), mx: r4(g.g3live.mx), mu: r4(g.g3live.mu), needDays: OMNIQ_LIVE.revokeDays, revoke: omniqLiveRevoked(g) } : null,
     fit: f ? { kind: f.kind || null, inMu: r4(f.inMu), outMu: r4(f.outMu), gap: r4(f.gap) } : null
   };
 }
@@ -31663,7 +31690,7 @@ async function handleRequest(request, env, ctx, _inner) {
         }
       } catch (e) {}
       try { await log(env.DB, "INFO", null, "[OMNI-Q] " + mk.toUpperCase() + " " + st.day + " " + nS + "종목 · ①" + (g.g1 && g.g1.ok ? "통과" : "미달") +
-        " ②" + (g.g2 && g.g2.ok ? "통과" : "미달") + " ③" + (g.g3 && g.g3.ok ? "통과" : "미달(장부 " + _num(g.g3 && g.g3.days, 0) + "일)") +
+        " ②" + (g.g2 && g.g2.ok ? "통과" : "미달") + " ③" + (g.g3 && g.g3.kind === "sim" ? ("모의" + (omniqSimOk(g.g3) ? "통과" : "미달") + "(맞춤 초과 " + _num(g.g3.mx, 0) + ")" + (omniqLiveRevoked(g) ? " · 실시간 회수" : "")) : (g.g3 && g.g3.ok ? "통과" : "미달(장부 " + _num(g.g3 && g.g3.days, 0) + "일)")) +
         " → " + (st.speak ? "★발언★(하위 절반 신규진입 차단)" : (omniqProvOf(g) ? "★잠정 발언★(①②강함 · 실시간 기록 쌓는 중 · 평균<50% 면 회수)" : "섀도우")) + (added ? " · 장부 +1(" + picksN + ")" : "")); } catch (e) {}
       return Response.json({ ok: true, speak: st.speak, picksN: picksN, added: added }, { headers: cors });
     }

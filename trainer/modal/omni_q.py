@@ -206,6 +206,140 @@ def gate3(picks, C, y_rank, dk_index):
     return {"days": int(len(v)), "mu": round(mu, 4), "lb": round(lb, 4), "ok": bool(len(v) >= G3_MIN_DAYS and lb > 0.5)}
 
 
+# ── [V33.684] ★③ = 모의 시뮬레이션 · 맞춤 기준★ (사용자 10/27: "매매법 AI 처럼 OMNI 도 기준을 바꿔 — 기준 표본이 전체 시장일 수는 없다 ·
+#   모의 시뮬레이션으로 테스트해"). 종전 ③(실시간 장부 30일 · 승률 하한 > 50%)은 백테스트 실력으로 30일 안에 넘을 확률이 미 5일 ≈7% ·
+#   미 20일 ≈16% — 학습을 다시 해도 달력이 지나야만, 그것도 운이 좋아야 열렸다. 그리고 기준이 '시장 전체 중앙값' 이라 하락장에서 위험 큰
+#   종목을 고르면 실력과 상관없이 졌다(실시간 미 5일 30.8%).
+#   ★규칙은 데이터를 보기 전에 여기 고정한다★(바꾸려면 사용자 결정):
+#     거래   퍼지 전진 표본 밖 점수의 그날 상위 10% 를 점수 순으로 산다 — 하루 신규 ≤ 6 · 동시 보유 ≤ 미 10 / 한 8 · 같은 종목은 앞 거래가
+#            끝나야 다시 · 다음 날 종가 진입 · H일 보유 · 왕복 비용 뺌(실전 경로와 같은 상한)
+#     기준   같은 날 · 같은 위험 묶음(20일 변동성 5분위 × 20일 수익 3분위 = 15칸, 그날까지 값만)에서 ★뽑히지 않은★ 종목 평균(5개 이상)
+#     초과   x = 고른 종목 수익 − 그 칸 평균 → 달마다 평균 → 달 묶음 t (같은 날·같은 달 거래가 함께 움직여 거래별 t 가 부푸는 것을 막는다)
+#     통과   앞 80% 달: 24달 이상 · 거래 가중 초과 > 0 · 달 묶음 t ≥ 2  그리고  뒤 20% 달: 초과 > 0
+#     회수   실시간 장부(같은 맞춤 기준) 10일 이상인데 평균 초과 < 0 → 발언 회수(워커가 다시 판정)
+SIM_CAP_DAY = 6
+SIM_CAP_OPEN = {"us": 10, "kr": 8}
+SIM_MIN_CTRL = 5
+SIM_MIN_MONTHS = 24
+SIM_T = 2.0
+SIM_LATE = 0.2
+SIM_MONTH_MIN = 3
+LIVE_REVOKE_DAYS = 10
+N_BUCKET = 15
+# 전환 스위치 — "sim": ③ = 모의 시뮬레이션(위) · 실시간 장부 = 회수 장치 / "live": 종전 ③(실시간 30일) · 모의 결과는 g3sim 으로 기록만
+G3_MODE = os.environ.get("OMNIQ_G3", "live")
+
+
+def risk_buckets(C):
+    """날짜×종목 위험 묶음 번호(0~14) — 20일 변동성 5분위 × 20일 수익 3분위. 그날 종가까지만 쓴다."""
+    r = C.pct_change(fill_method=None)
+    v = r.rolling(20, min_periods=15).std().rank(axis=1, pct=True).values
+    m = (C / C.shift(20) - 1.0).rank(axis=1, pct=True).values
+    return np.floor(np.clip(v, 0, 0.9999) * 5) * 3 + np.floor(np.clip(m, 0, 0.9999) * 3)
+
+
+def _ctrl(r, b, ok, picked):
+    """그날 칸마다 뽑히지 않은 종목의 (합, 수)."""
+    msk = ok.copy()
+    msk[picked] = False
+    kb = b[msk].astype(int)
+    return np.bincount(kb, weights=r[msk], minlength=N_BUCKET), np.bincount(kb, minlength=N_BUCKET)
+
+
+def _month_stats(xs, mo):
+    """거래 초과 xs 를 달 mo 로 묶어 {mx: 거래 가중 평균, mT: 달 묶음 t, mN: 달 수, mWin: 이긴 달}."""
+    ms, ws = [], []
+    for m_ in sorted(set(mo.tolist())):
+        sel = mo == m_
+        if sel.sum() < SIM_MONTH_MIN:
+            continue
+        ms.append(float(xs[sel].mean())); ws.append(float(sel.sum()))
+    if len(ms) < 3:
+        return {"mN": len(ms), "mx": None, "mT": None, "mWin": None}
+    a, w = np.array(ms), np.array(ws)
+    sd = float(a.std(ddof=1))
+    return {"mN": int(len(a)), "mx": round(float((a * w).sum() / w.sum()), 5), "mT": round(float(a.mean() / (sd / math.sqrt(len(a)))), 2) if sd > 0 else 0.0,
+            "mWin": int((a > 0).sum())}
+
+
+def sim_gate(scores, tdays, fwd, bk, dates, mk, h, cost):
+    """③ 모의 시뮬레이션 · 맞춤 기준(위 규칙) → 판정 dict. scores: 표본 밖 점수(날짜×종목) · fwd: 다음 날 종가 진입 H일 수익."""
+    busy, opn, rows = {}, [], []
+    for d in sorted(set(int(x) for x in tdays)):
+        a, r, b = scores[d], fwd[d], bk[d]
+        ok = np.isfinite(a) & np.isfinite(r) & np.isfinite(b)
+        if ok.sum() < 20:
+            continue
+        idx = np.where(ok)[0]
+        k = max(1, int(round(len(idx) * Q)))
+        top = idx[np.argsort(-a[idx])[:k]]
+        sums, cnt = _ctrl(r, b, ok, top)
+        opn = [x for x in opn if x > d]
+        n_day = 0
+        for j in top:
+            j = int(j)
+            if busy.get(j, -1) > d:
+                continue
+            if n_day >= SIM_CAP_DAY or len(opn) >= SIM_CAP_OPEN.get(mk, 10):
+                break
+            kk = int(b[j])
+            if cnt[kk] < SIM_MIN_CTRL:
+                continue
+            rows.append((d, float(r[j]) - cost, float(r[j]) - float(sums[kk] / cnt[kk])))
+            busy[j] = d + h + 1
+            opn.append(d + h + 1)
+            n_day += 1
+    out = {"kind": "sim", "ok": False, "n": len(rows), "h": h, "needMonths": SIM_MIN_MONTHS, "needT": SIM_T, "late": SIM_LATE}
+    if len(rows) < 30:
+        return out
+    arr = np.array(rows)
+    mo = np.array([int(str(dates[int(d)])[:6]) for d in arr[:, 0]])
+    months = sorted(set(mo.tolist()))
+    cut = months[int(len(months) * (1 - SIM_LATE))] if len(months) >= 5 else months[-1]
+    early, late = mo < cut, mo >= cut
+    es, ls = _month_stats(arr[early, 2], mo[early]), _month_stats(arr[late, 2], mo[late])
+    late_mx = round(float(arr[late, 2].mean()), 5) if late.sum() else None
+    out.update({"mx": _month_stats(arr[:, 2], mo).get("mx"), "net": round(float(arr[:, 1].mean()), 5), "win": round(float((arr[:, 2] > 0).mean()), 4),
+                "early": es, "lateMx": late_mx, "lateN": int(late.sum()), "lateMonths": ls.get("mN"), "from": int(months[0]), "cut": int(cut),
+                "to": int(months[-1])})
+    out["ok"] = bool((es.get("mN") or 0) >= SIM_MIN_MONTHS and (es.get("mx") or 0) > 0 and (es.get("mT") or 0) >= SIM_T and (late_mx or 0) > 0)
+    return out
+
+
+def live_matched(picks, C, fwd, bk, y_rank):
+    """실시간 장부(학습기가 올린 '그날 상위 10%')를 같은 맞춤 기준으로 채점 → {days, mx(평균 초과), mu/lb(종전 동료 승률 · 표시용)}.
+    아직 H일이 안 지난 날은 fwd 가 비어 빠진다."""
+    col = {s: j for j, s in enumerate(C.columns)}
+    dk = {str(k2): i for i, k2 in enumerate(C.index)}
+    per, beat = [], []
+    for p in picks or []:
+        d = dk.get(str(p.get("day")))
+        if d is None:
+            continue
+        r, b = fwd[d], bk[d]
+        ok = np.isfinite(r) & np.isfinite(b)
+        js = [col[s] for s in (p.get("top") or []) if s in col and ok[col[s]]]
+        if len(js) < 3:
+            continue
+        sums, cnt = _ctrl(r, b, ok, np.array(js, dtype=int))
+        xs = [float(r[j] - sums[int(b[j])] / cnt[int(b[j])]) for j in js if cnt[int(b[j])] >= SIM_MIN_CTRL]
+        if len(xs) < 3:
+            continue
+        per.append(float(np.mean(xs)))
+        yr = y_rank[d]
+        beat.append(float(np.mean([yr[j] > 0.5 for j in js if np.isfinite(yr[j])] or [np.nan])))
+    g = {"days": len(per), "mx": round(float(np.mean(per)), 5) if per else None, "needDays": LIVE_REVOKE_DAYS}
+    bv = np.array([x for x in beat if np.isfinite(x)])
+    g["mu"] = round(float(bv.mean()), 4) if len(bv) else None
+    g["revoke"] = bool(g["days"] >= LIVE_REVOKE_DAYS and g["mx"] is not None and g["mx"] < 0)
+    return g
+
+
+def speak_of(gate):
+    return bool((gate.get("g1") or {}).get("ok") and (gate.get("g2") or {}).get("ok") and (gate.get("g3") or {}).get("ok")
+                and not (gate.get("g3live") or {}).get("revoke"))
+
+
 def _fit_lgb(X, y, objective="regression", rounds=300, weight=None, seed=7, reg=False):
     import lightgbm as lgb
     p = _lgb_params(seed, reg=reg)
@@ -694,8 +828,8 @@ def _rule_feats(P):
             ("rule_off_hi20", -(c / hi20 - 1))]
 
 
-def _ledger(req, BASE, HDR, mk, C, ylab, h, log):
-    """③ 라이브 장부 채점(학습 아님) — 워커가 보관한 과거 '그날 상위 10%' 를 실제 가격으로 맞춰 본다."""
+def _ledger_old(req, BASE, HDR, mk, C, ylab, h, log):
+    """종전 ③(실시간 장부 · 동료 승률 하한 · 30일) — OMNIQ_G3=live 일 때 판정."""
     g = {"days": 0, "mu": None, "lb": None, "ok": False}
     if req is None:
         return g
@@ -706,6 +840,21 @@ def _ledger(req, BASE, HDR, mk, C, ylab, h, log):
         g = gate3(r.json().get("picks") or [], C, ylab, {str(k2): i for i, k2 in enumerate(C.index)})
     except Exception as e:  # noqa: BLE001
         log("      ⚠️ [OMNI-Q %s] %d일 장부 읽기 실패: %r — ③ 미달로 둔다" % (mk, h, e))
+    return g
+
+
+def _ledger(req, BASE, HDR, mk, C, fwd, bk, ylab, h, log):
+    """실시간 장부 채점(학습 아님) — 워커가 보관한 과거 '그날 상위 10%' 를 실제 가격 · [V33.684] 맞춤 기준으로 맞춰 본다(회수 장치)."""
+    g = {"days": 0, "mx": None, "mu": None, "needDays": LIVE_REVOKE_DAYS, "revoke": False}
+    if req is None:
+        return g
+    try:
+        params = {"mkt": mk} if h == H else {"mkt": mk, "h": str(h)}
+        r = req.get(BASE + "/api/omni-q-picks", params=params, headers=HDR, timeout=60)
+        r.raise_for_status()
+        g = live_matched(r.json().get("picks") or [], C, fwd, bk, ylab)
+    except Exception as e:  # noqa: BLE001
+        log("      ⚠️ [OMNI-Q %s] %d일 장부 읽기 실패: %r — 회수 판정 없이 둔다" % (mk, h, e))
     return g
 
 
@@ -738,22 +887,33 @@ def _score_only(mk, cached, C, X, y, req, BASE, HDR, log):
                 log("      ⚠️ [OMNI-Q %s] 머리 %s 채점 실패: %r" % (mk, hk, e))
         f20 = (C.shift(-(H20 + 1)) / C.shift(-1) - 1.0)
         y20 = f20.rank(axis=1, pct=True).values
-        g3 = _ledger(req, BASE, HDR, mk, C, y, H, log)
-        g3_20 = _ledger(req, BASE, HDR, mk, C, y20, H20, log)
+        fwd5 = (C.shift(-(H + 1)) / C.shift(-1) - 1.0).values
+        bk = risk_buckets(C)
+        # [V33.684] ③(모의 시뮬레이션)은 금요일 학습 결과 그대로 · 실시간 장부(회수 장치)만 다시 잰다
+        g3 = _ledger(req, BASE, HDR, mk, C, fwd5, bk, y, H, log)
+        g3_20 = _ledger(req, BASE, HDR, mk, C, f20.values, bk, y20, H20, log)
         gate = dict(cached.get("gate") or {})
-        gate["g3"] = dict(g3, needDays=G3_MIN_DAYS)
-        gate["speak"] = bool((gate.get("g1") or {}).get("ok") and (gate.get("g2") or {}).get("ok") and g3["ok"])
         gate20 = dict(cached.get("gate20") or {})
-        if gate20:
-            gate20["g3"] = dict(g3_20, needDays=G3_MIN_DAYS)
-            gate20["speak"] = bool((gate20.get("g1") or {}).get("ok") and (gate20.get("g2") or {}).get("ok") and g3_20["ok"])
+        if (gate.get("g3") or {}).get("kind") == "sim":
+            gate["g3live"] = g3
+            gate["speak"] = speak_of(gate)
+            if gate20:
+                gate20["g3live"] = g3_20
+                gate20["speak"] = speak_of(gate20)
+        else:   # 종전 ③ — 실시간 30일을 다시 잰다
+            o3, o3_20 = _ledger_old(req, BASE, HDR, mk, C, y, H, log), _ledger_old(req, BASE, HDR, mk, C, y20, H20, log)
+            gate["g3"] = dict(o3, needDays=G3_MIN_DAYS)
+            gate["speak"] = bool((gate.get("g1") or {}).get("ok") and (gate.get("g2") or {}).get("ok") and o3["ok"])
+            if gate20:
+                gate20["g3"] = dict(o3_20, needDays=G3_MIN_DAYS)
+                gate20["speak"] = bool((gate20.get("g1") or {}).get("ok") and (gate20.get("g2") or {}).get("ok") and o3_20["ok"])
         top20 = []
         r20 = extra.get("r20") or {}
         if r20:
             k20 = max(1, int(round(len(r20) * Q)))
             top20 = [s_ for s_, _ in sorted(r20.items(), key=lambda kv: -kv[1])[:k20]]
-        log("      [OMNI-Q %s] ③ 라이브 장부 날 %d · 하한 %s → %s · 20일 ③ 날 %d → %s" % (
-            mk, g3["days"], g3["lb"], "통과" if g3["ok"] else "미달", g3_20["days"], "통과" if g3_20["ok"] else "미달"))
+        log("      [OMNI-Q %s] 실시간 장부(맞춤) 5일 %d일 · 초과 %s%s · 20일 %d일 · 초과 %s%s" % (
+            mk, g3["days"], g3["mx"], " → 회수" if g3["revoke"] else "", g3_20["days"], g3_20["mx"], " → 회수" if g3_20["revoke"] else ""))
         return {"mkt": mk, "day": str(C.index[last]), "h": H, "q": Q, "trainedAt": int(cached["trainedAt"]),
                 "scoredAt": int(time.time() * 1000), "scoreOnly": True, "nFeat": int(cached.get("nFeat") or xl.shape[1]), "n": len(sc),
                 "featGroups": cached.get("featGroups"), "featTop": cached.get("featTop"), "struct": cached.get("struct"),
@@ -1004,42 +1164,40 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             extra["risk"] = _pctmap(_final(vol.rank(axis=1, pct=True).values, key="risk"))
         except Exception as e:  # noqa: BLE001
             log("      ⚠️ [OMNI-Q %s] 복합 머리 채점 실패: %r — 5일 머리만 올린다" % (mk, e))
-        # ③ 라이브 장부 채점(워커가 보관한 과거 '그날 상위 10%')
-        g3 = {"days": 0, "mu": None, "lb": None, "ok": False}
-        if req is not None:
-            try:
-                r = req.get(BASE + "/api/omni-q-picks", params={"mkt": mk}, headers=HDR, timeout=60)
-                r.raise_for_status()
-                dk_index = {str(k2): i for i, k2 in enumerate(C.index)}
-                g3 = gate3(r.json().get("picks") or [], C, y, dk_index)
-            except Exception as e:  # noqa: BLE001
-                log("      ⚠️ [OMNI-Q %s] 장부 읽기 실패: %r — ③ 미달로 둔다" % (mk, e))
-        log("      [OMNI-Q %s] ③ 라이브 장부 채점 날 %d · 승률 %s · 하한 %s (필요 %d일·하한>50%%) → %s" % (mk, g3["days"], g3["mu"], g3["lb"], G3_MIN_DAYS, "통과" if g3["ok"] else "미달"))
-        speak = bool(g1 and g2 and g3["ok"])
-        # [V33.543] 20일 머리 — 오늘 상위 10%(장부) · ③ 은 픽 뒤 21거래일이 지나야 채점된다(장부 h=20 · 덮어쓰기 금지)
-        top20, g3_20 = [], {"days": 0, "mu": None, "lb": None, "ok": False}
+        # [V33.684] ③ 모의 시뮬레이션 · 맞춤 기준(표본 밖 점수 · 실전 상한) + 실시간 장부(같은 맞춤 기준 · 회수 장치)
+        bk = risk_buckets(C)
+        g3 = sim_gate(scores, test_all, fwdv, bk, list(C.index), mk, H, COST_RT[mk])
+        g3_20 = sim_gate(s20, t20, f20.values, bk, list(C.index), mk, H20, COST_RT[mk])
+        live = _ledger(req, BASE, HDR, mk, C, fwdv, bk, y, H, log)
+        live20 = _ledger(req, BASE, HDR, mk, C, f20.values, bk, y20, H20, log)
+        old3, old3_20 = _ledger_old(req, BASE, HDR, mk, C, y, H, log), _ledger_old(req, BASE, HDR, mk, C, y20, H20, log)
+        for tg, gg, lv in (("5일", g3, live), ("20일", g3_20, live20)):
+            e_ = gg.get("early") or {}
+            log("      [OMNI-Q %s · %s] ③ 모의 시뮬 거래 %d · 맞춤 초과 %s(앞 %s달 t %s · 이긴 달 %s) · 뒤 20%% 초과 %s(%s건) · 순수익 %s → %s · 실시간 장부 %d일 초과 %s%s" % (
+                mk, tg, gg.get("n", 0), gg.get("mx"), e_.get("mN"), e_.get("mT"), e_.get("mWin"), gg.get("lateMx"), gg.get("lateN"), gg.get("net"),
+                "통과" if gg["ok"] else "미달", lv["days"], lv["mx"], " → 회수" if lv["revoke"] else ""))
+        speak = speak_of({"g1": {"ok": g1}, "g2": {"ok": g2}, "g3": g3, "g3live": live}) if G3_MODE == "sim" else bool(g1 and g2 and old3["ok"])
+        top20 = []
         r20 = extra.get("r20") or {}
         if r20:
             k20 = max(1, int(round(len(r20) * Q)))
             top20 = [s_ for s_, _ in sorted(r20.items(), key=lambda kv: -kv[1])[:k20]]
-        if req is not None:
-            try:
-                r = req.get(BASE + "/api/omni-q-picks", params={"mkt": mk, "h": "20"}, headers=HDR, timeout=60)
-                r.raise_for_status()
-                g3_20 = gate3(r.json().get("picks") or [], C, y20, {str(k2): i for i, k2 in enumerate(C.index)})
-            except Exception as e:  # noqa: BLE001
-                log("      ⚠️ [OMNI-Q %s] 20일 장부 읽기 실패: %r — ③ 미달로 둔다" % (mk, e))
-        speak20 = bool(g1_20 and g2_20 and g3_20["ok"])
-        log("      [OMNI-Q %s · 20일] ③ 장부 채점 날 %d · 하한 %s → %s · 발언 %s" % (mk, g3_20["days"], g3_20["lb"], "통과" if g3_20["ok"] else "미달", "가능" if speak20 else "불가(섀도우)"))
+        speak20 = (speak_of({"g1": {"ok": g1_20}, "g2": {"ok": g2_20}, "g3": g3_20, "g3live": live20}) if G3_MODE == "sim"
+                   else bool(g1_20 and g2_20 and old3_20["ok"]))
+        log("      [OMNI-Q %s] ③ 방식 %s — 종전 실시간 30일: 5일 %d일 하한 %s · 20일 %d일 하한 %s" % (mk, G3_MODE, old3["days"], old3["lb"], old3_20["days"], old3_20["lb"]))
+        if G3_MODE != "sim":   # 측정만 — 모의 결과는 g3sim 으로 싣고 판정은 종전대로
+            g3, g3_20, live, live20, g3s, g3s_20 = dict(old3, needDays=G3_MIN_DAYS), dict(old3_20, needDays=G3_MIN_DAYS), None, None, g3, g3_20
+        else:
+            g3s = g3s_20 = None
         t_ms = int(time.time() * 1000)
         body = {"mkt": mk, "day": day, "h": H, "q": Q, "trainedAt": t_ms, "scoredAt": t_ms, "scoreOnly": False, "nFeat": len(names), "n": len(sc), "y5": Y5MODE or "5d",
                 "scores": sc, "top": top, "heads": extra, "learner": LEARNER_5D, "lab": lab_rep or None,
                 "featGroups": FEAT_GROUPS.get(mk), "featTop": _imp_top(bst, names), "struct": _struct(bst, names),
                 "gate": {"g1": dict(br, ok=g1, needT=G1_T), "g2": {"folds": fold_x, "foldsFullSwap": fold_x0, "band": BAND, "pos": pos, "need": need, "ok": g2},
-                         "g3": dict(g3, needDays=G3_MIN_DAYS), "speak": speak, "fit": fitdiag.get("5일")},
+                         "g3": g3, "g3live": live, "g3sim": g3s, "speak": speak, "fit": fitdiag.get("5일")},
                 "top20": top20,
                 "gate20": {"g1": dict(br20, ok=g1_20, needT=G1_T), "g2": {"folds": fx20, "band": BAND, "step": H20, "pos": pos20, "need": need20, "ok": g2_20},
-                           "g3": dict(g3_20, needDays=G3_MIN_DAYS), "speak": speak20, "fit": fitdiag.get("20일")}}
+                           "g3": g3_20, "g3live": live20, "g3sim": g3s_20, "speak": speak20, "fit": fitdiag.get("20일")}}
         out[mk] = body["gate"]
         if isinstance(cache, dict):   # [V33.584] 다음 금요일까지 평일 회차가 이 모델로 채점한다
             cache[mk] = {"names": list(names), "trainedAt": t_ms, "learner": LEARNER_5D, "bst": bst, "heads": head_models,

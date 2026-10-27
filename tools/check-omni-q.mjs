@@ -38,6 +38,18 @@ chk(!M.omniqProvOf(P(9, [1, 1, 1, 1], { days: 30, mu: 0.51, lb: 0.49, ok: false 
   "30일 ③ 정식 시험 실패면 잠정도 회수");
 chk(!M.omniqBlocks(Object.assign(stP(P(9, [1, 1, 1])), { trainedAt: now - 6 * 86400000 }), "A", now), "잠정이어도 낡은 점수(5일+)로는 막지 않는다");
 chk(/omniq_picks20:/.test(S) && /url\.searchParams\.get\("h"\) === "20"/.test(S), "20일 머리 장부 · 학습기 채점용 조회(h=20)");
+// [V33.684] ③ = 모의 시뮬레이션 · 맞춤 기준(사용자 10/27) — 워커가 숫자로 다시 판정 · 실시간 장부(맞춤)는 회수 장치 · 잠정 단계 없음
+const SIMG = (o) => Object.assign({ kind: "sim", ok: true, n: 900, mx: 0.004, early: { mN: 80, mx: 0.004, mT: 3.1, mWin: 50 }, lateMx: 0.002, needMonths: 24, needT: 2 }, o || {});
+const GS = (g3, live) => ({ g1: { ok: true, t: 9 }, g2: { ok: true, folds: [1, 1, 1, 1] }, g3: g3, g3live: live || null });
+chk(M.omniqSpeakOf(GS(SIMG())) && !M.omniqSpeakOf(GS(SIMG({ early: { mN: 80, mx: 0.004, mT: 1.9 } }))) && !M.omniqSpeakOf(GS(SIMG({ lateMx: -0.001 }))) &&
+    !M.omniqSpeakOf(GS(SIMG({ early: { mN: 20, mx: 0.004, mT: 3 } }))) && !M.omniqSpeakOf(GS(SIMG({ early: { mN: 80, mx: -0.001, mT: 3 } }))),
+  "모의 ③: 앞 80% 24달+·초과>0·t≥2 · 뒤 20% 초과>0 — 학습기 ok 표시가 있어도 숫자가 미달이면 발언 안 함");
+chk(!M.omniqSpeakOf(GS(SIMG(), { days: 10, mx: -0.001 })) && M.omniqSpeakOf(GS(SIMG(), { days: 9, mx: -0.01 })) && M.omniqSpeakOf(GS(SIMG(), { days: 30, mx: 0.001 })),
+  "실시간 장부(맞춤 초과) 10일 이상 평균 < 0 이면 회수 · 10일 전엔 판단 안 함");
+chk(!M.omniqProvOf(GS(SIMG({ ok: false, lateMx: -1 }))) && !M.omniqProvOf(GS(SIMG())), "모의 방식에선 잠정 단계 없음(통과=발언 · 미달=정식 시험 실패)");
+const qvS = M.omniqView({ day: "20261027", trainedAt: now, scoredAt: now, speak: true, gate: GS(SIMG(), { days: 3, mx: 0.01 }), gate20: { g1: { ok: true }, g2: { ok: true }, g3: { days: 3, ok: false }, g3sim: SIMG({ ok: false, lateMx: -1 }) } }, now);
+chk(qvS.state === "speak" && qvS.gate.g3.kind === "sim" && qvS.gate.g3live.days === 3 && qvS.gate20.g3sim && qvS.gate20.g3sim.ok === false,
+  "omniqView: 모의 ③ · 실시간 장부 · 종전 방식 회차의 모의 측정(g3sim)을 화면에 싣는다", JSON.stringify(qvS.gate20));
 let r = M.omniqPicksAppend([], "20261007", ["A", "B"], now);
 r = M.omniqPicksAppend(r.picks, "20261007", ["X"], now + 1);
 chk(!r.added && r.picks.length === 1 && r.picks[0].top.join() === "A,B", "같은 날 장부는 덮어쓰지 않는다");
