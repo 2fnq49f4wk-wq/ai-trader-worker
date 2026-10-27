@@ -194,8 +194,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.682">
-<script src="/neural-observatory.js?v=33.682" defer></script>
+<meta name="lux-build" content="V33.683">
+<script src="/neural-observatory.js?v=33.683" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -483,7 +483,7 @@ html.lux-introfx *{-webkit-backdrop-filter:none!important;backdrop-filter:none!i
   filter:drop-shadow(0 0 6px rgba(255,255,255,0.3));
   animation:opticalGlimmer 3s ease-in-out infinite;
 }
-/* [V33.682] filter(drop-shadow) 를 매 프레임 바꾸면 화면이 가만있어도 매 프레임 다시 칠한다(실측 대기 CPU 13%) — 그림자는 고정, 빛남은 opacity(GPU 합성)로 */
+/* [V33.683] filter(drop-shadow) 를 매 프레임 바꾸면 화면이 가만있어도 매 프레임 다시 칠한다(실측 대기 CPU 13%) — 그림자는 고정, 빛남은 opacity(GPU 합성)로 */
 @keyframes opticalGlimmer{
   0%,100%{opacity:.82;}
   50%{opacity:1;}
@@ -543,7 +543,7 @@ html.lux-introfx *{-webkit-backdrop-filter:none!important;backdrop-filter:none!i
 .live-indicator.stale{color:var(--amber);}
 .live-indicator.dead .live-dot{background:var(--neg);}
 .live-indicator.dead{color:var(--neg);}
-/* [V33.682] box-shadow 애니메이션 = 매 프레임 다시 칠하기 → 그림자는 고정하고 opacity 로 숨쉬기(GPU 합성) */
+/* [V33.683] box-shadow 애니메이션 = 매 프레임 다시 칠하기 → 그림자는 고정하고 opacity 로 숨쉬기(GPU 합성) */
 @keyframes livePulse{0%,100%{opacity:1;}50%{opacity:.5;}}
 
 /* 점 */
@@ -3816,12 +3816,12 @@ html[data-theme="light"] .pz-tabs button[aria-selected="true"]{background:#fff;c
 })();
 </script>
 <script>
-/* [V33.682] ★앱 설치(PWA 1단계)★ — 사용자 10/26 "사이트를 진짜 앱처럼 · 단계별로". 설치형 앱(standalone)은 이미 된다(매니페스트·서비스워커·아이콘).
+/* [V33.683] ★앱 설치(PWA 1단계)★ — 사용자 10/26 "사이트를 진짜 앱처럼 · 단계별로". 설치형 앱(standalone)은 이미 된다(매니페스트·서비스워커·아이콘).
    빠진 것은 '설치하는 길' 이었다: 안드로이드·PC 크롬은 beforeinstallprompt 를 받아 버튼 한 번으로 설치, 아이폰(사파리)은 그 API 가 없어
    공유 → '홈 화면에 추가' 안내 시트를 띄운다. 이미 앱으로 열려 있으면 버튼을 숨긴다. 메인 스크립트와 분리(예외가 서로 번지지 않게). */
 (function(){
   var deferred = null;
-  function standalone(){ try{ if(/[?&]src=app\b/.test(location.search)) sessionStorage.setItem('luxNative','1'); if(window.Capacitor || sessionStorage.getItem('luxNative') === '1') return true;   // [V33.682] 네이티브 앱(Capacitor) 안 — 설치 버튼 숨김
+  function standalone(){ try{ if(/[?&]src=app\b/.test(location.search)) sessionStorage.setItem('luxNative','1'); if(window.Capacitor || sessionStorage.getItem('luxNative') === '1') return true;   // [V33.683] 네이티브 앱(Capacitor) 안 — 설치 버튼 숨김
     return (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true; }catch(e){ return false; } }
   function isIOS(){ var ua = navigator.userAgent || ''; return /iPhone|iPad|iPod/.test(ua) || (ua.indexOf('Macintosh') >= 0 && 'ontouchend' in document); }
   function sync(){ var b = document.getElementById('btnInstall'); if(b) b.style.display = standalone() ? 'none' : ''; }
@@ -3846,7 +3846,7 @@ html[data-theme="light"] .pz-tabs button[aria-selected="true"]{background:#fff;c
     document.body.appendChild(d);
     var c = document.getElementById('luxInstallClose'); if(c) c.focus();
   }
-  /* [V33.682] 체결 알림(웹 푸시) — 권한 → 서비스워커 구독 → 워커에 등록(테스트 알림 1건). 아이폰은 홈 화면 앱(16.4+)에서만 된다. */
+  /* [V33.683] 체결 알림(웹 푸시) — 권한 → 서비스워커 구독 → 워커에 등록(테스트 알림 1건). 아이폰은 홈 화면 앱(16.4+)에서만 된다. */
   function b64u(s){ s = s.replace(/-/g,'+').replace(/_/g,'/'); var p = s + '==='.slice((s.length+3)%4); var bin = atob(p), u = new Uint8Array(bin.length); for(var i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i); return u; }
   function pushState(){ try{ return localStorage.getItem('luxPush') === '1'; }catch(e){ return false; } }
   function pushSync(){ var b = document.getElementById('btnPush'); if(!b) return; if(window.__luxNative && window.__luxNative.on()) return; var ok = ('serviceWorker' in navigator) && ('PushManager' in window); b.style.display = ok ? '' : 'none'; b.textContent = pushState() ? '🔔 체결 알림 켜짐' : '🔕 체결 알림 받기'; }
@@ -3879,7 +3879,7 @@ html[data-theme="light"] .pz-tabs button[aria-selected="true"]{background:#fff;c
   document.addEventListener('click', function(e){ var b = e.target && e.target.closest ? e.target.closest('#btnPush') : null; if(b){ e.preventDefault(); window.__luxPush(); } });
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', pushSync); else pushSync();
   window.__luxIsApp = standalone;
-  /* [V33.682] ★네이티브 앱(Capacitor) 연결★ — 앱이 이 사이트를 띄우면 window.Capacitor 가 주입된다(원격 URL 모드). 앱 안에서만:
+  /* [V33.683] ★네이티브 앱(Capacitor) 연결★ — 앱이 이 사이트를 띄우면 window.Capacitor 가 주입된다(원격 URL 모드). 앱 안에서만:
      ① 안드로이드 뒤로 버튼 = 메뉴 닫기 → 뒤로 → 홈으로(앱 끄지 않고 내림) ② 상태표시줄 검정 ③ 🔒 지문·얼굴 잠금(켜면 앱 열 때·1분 넘게 나갔다 올 때)
      ④ 체결 알림 = FCM(빌드에 Firebase 설정이 있을 때 · 사용자 에이전트 'LuxApp fcm'). 웹 브라우저에선 아무것도 하지 않는다. */
   function natv(){ try{ return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); }catch(e){ return false; } }
@@ -6573,7 +6573,7 @@ window.LUX_NV = {
   function renderFvDeck(state) {
     try { renderAiModePanel(); } catch(e) {}
     try { bindAiAskPanel(); } catch(e) {}
-    /* [V33.682] ★이 함수는 상태 폴링(10초)마다 불린다★ — 종전엔 부를 때마다 위기·이슈·한국장 정지·알림을 다시 받아(각 분당 12회 실측)
+    /* [V33.683] ★이 함수는 상태 폴링(10초)마다 불린다★ — 종전엔 부를 때마다 위기·이슈·한국장 정지·알림을 다시 받아(각 분당 12회 실측)
        타이머(3분·4분·1분)가 무의미했다. 처음 한 번만 그리고 그 뒤는 타이머에 맡긴다. */
     try { if (!__crisisTimer) { renderCrisisPanel(); __crisisTimer = setInterval(function(){ if (!document.hidden) renderCrisisPanel(); }, 180000); } } catch(e) {}
     try { if (!__eventsTimer) { renderEventsPanel(); __eventsTimer = setInterval(function(){ if (!document.hidden) renderEventsPanel(); }, 240000); } } catch(e) {}
@@ -8147,7 +8147,7 @@ window.LUX_NV = {
         /* [V33.134] IDLE = 장외라 안 도는 게 정상인 단계. 종전엔 이걸 pl-never(빨강)로 칠해
            토·일에는 '거래 사이클'이 반드시 고장처럼 보였다. 오경보가 진짜 고장을 덮는다. */
         var cls = s.status === 'OK' ? 'pl-ok' : (s.status === 'IDLE' || s.status === 'RETIRED') ? 'pl-idle' : s.status === 'STALE' ? 'pl-stale' : 'pl-never';
-        if (s.status === 'OK' || s.status === 'IDLE' || s.status === 'RETIRED') okCnt++;   // [V33.682] 퇴역 = 일부러 멈춘 단계(정상)
+        if (s.status === 'OK' || s.status === 'IDLE' || s.status === 'RETIRED') okCnt++;   // [V33.683] 퇴역 = 일부러 멈춘 단계(정상)
         var ageStr = s.status === 'IDLE' ? '장외 대기' : s.status === 'RETIRED' ? '퇴역(정상)' : (s.ts ? fmtAgo(s.ts) : '미실행');
         var icon = s.status === 'OK' ? '●' : (s.status === 'IDLE' || s.status === 'RETIRED') ? '◌' : s.status === 'STALE' ? '◐' : '○';
         return '<div class="pl-step '+cls+'">'+
@@ -9983,7 +9983,7 @@ window.LUX_NV = {
       var picks = (d && d.picks || []).filter(function(p){ return !p.abstain; }).slice(0, 8);
       if (!picks.length) { el.innerHTML = '<span class="aipick-empty">위원회 학습 후 표시됩니다 (표본 축적 중)</span>'; return; }
       var mkIc = { us: '🇺🇸', kr: '🇰🇷', cm: '🛢' };
-      /* [V33.682] 픽 시각 — 위원회(보조) 픽은 후보가 위원회까지 올 때만 갱신(10/27 실측 마지막 10/22). 36시간 넘으면 '오래됨' 표시 */
+      /* [V33.683] 픽 시각 — 위원회(보조) 픽은 후보가 위원회까지 올 때만 갱신(10/27 실측 마지막 10/22). 36시간 넘으면 '오래됨' 표시 */
       var _at = d && d.ts, _aold = _at && (Date.now() - _at) > 36 * 3600000;
       var _ah = _at ? (function(m){ return m < 60 ? Math.max(m,0)+'분' : (m < 2880 ? Math.floor(m/60)+'시간' : Math.floor(m/1440)+'일'); })(Math.floor((Date.now()-_at)/60000)) : '';
       el.innerHTML = (_at ? '<span class="aipick-empty" style="margin-right:6px;'+(_aold?'color:#FFD166;':'')+'">' + _ah + ' 전' + (_aold ? ' · 오래됨' : '') + '</span>' : '') + picks.map(function(p) {
@@ -12360,7 +12360,7 @@ window.LUX_NV = {
        track 이 알아서 감싼다(약속이 아니면 그 자리에서 끝난 것으로 센다). */
     var _first = (window.LUXBOOT && !window.__luxPanelTracked);
     if (_first) window.__luxPanelTracked = 1;
-    /* [V33.682] 보조 패널은 자기 주기로만 — 종전엔 10초 폴링마다 원자재·파이프라인·국채·뉴스·시장심리를 전부 다시 받았다(분당 30회).
+    /* [V33.683] 보조 패널은 자기 주기로만 — 종전엔 10초 폴링마다 원자재·파이프라인·국채·뉴스·시장심리를 전부 다시 받았다(분당 30회).
        값이 분 단위로만 바뀌는 것들이라 주기를 늘린다(처음 한 번은 바로). */
     var _PANEL_MS = { '원자재': 30000, '파이프라인': 60000, '국채': 120000, '뉴스': 120000, '시장심리': 60000 };
     window.__panelAt = window.__panelAt || {};
@@ -13750,7 +13750,7 @@ window.LUX_NV = {
     // '/' 로 팔레트 열기
     if (e.key === '/') { e.preventDefault(); cmdkOpen(); return; }
     // 숫자키 페이지 전환
-    var pages = { '1': 'dashboard', '2': 'detail', '3': 'positions', '4': 'news', '5': 'trades', '6': 'nnviz' };   // [V33.682] 6 = AI 두뇌(옛 vision 은 없음)
+    var pages = { '1': 'dashboard', '2': 'detail', '3': 'positions', '4': 'news', '5': 'trades', '6': 'nnviz' };   // [V33.683] 6 = AI 두뇌(옛 vision 은 없음)
     if (pages[e.key]) { showPage(pages[e.key]); }
   });
   var _cfab = $('cmdkFab'); if (_cfab) _cfab.addEventListener('click', cmdkOpen);
@@ -13787,7 +13787,7 @@ window.LUX_NV = {
      같은 신호를 두 번 볼 위험이 있다. ★보는 행위가 거래를 일으켜서는 안 된다.★
      runNow 자체는 남긴다 — 숨겨진 btnTick 이 아직 그것을 쓴다(수동 경로는 사람이 누를 때만). */
   // (자동 RUN NOW 제거 — 서버 cron 이 매 1분 실행한다)
-  /* [V33.682] 탭이 숨겨져 있으면 쉰다(실측: 숨긴 탭도 분당 98회 요청) · 다시 보이면 바로 한 번 */
+  /* [V33.683] 탭이 숨겨져 있으면 쉰다(실측: 숨긴 탭도 분당 98회 요청) · 다시 보이면 바로 한 번 */
   timer = setInterval(function(){ if (!document.hidden) refreshAll(); }, REFRESH_MS);
   document.addEventListener('visibilitychange', function(){ if (!document.hidden && (Date.now() - (window.__lastVisRefresh || 0)) > 5000) { window.__lastVisRefresh = Date.now(); try { refreshAll(); } catch(e) {} } });
   // [V13] 가격: 60초마다 전 종목 fan-out (정규장 1분 갱신 목표)
@@ -13854,7 +13854,7 @@ window.LUX_NV = {
     }
     // [V9.12] 지표/환율/AI리포트/AI두뇌 팝업→페이지 전환: 나가는 페이지가 nnviz면 실시간 갱신 타이머 정지
     try { if (document.getElementById('page-nnviz') && document.getElementById('page-nnviz').classList.contains('active') && id !== 'nnviz' && typeof closeNnViz === 'function') closeNnViz(); } catch(e){}
-    // [V33.682] 없는 화면(옛 북마크·저장된 luxPage 'vision' 등)이면 빈 화면 대신 대시보드로
+    // [V33.683] 없는 화면(옛 북마크·저장된 luxPage 'vision' 등)이면 빈 화면 대신 대시보드로
     if(!document.getElementById('page-'+id)) id = 'dashboard';
     document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
     document.querySelectorAll('.nav-item').forEach(function(n){n.classList.remove('active');});
@@ -15971,7 +15971,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       /* [V33.621] 위원 좌석·결합기(퇴역한 위원회) → ★매매법 AI★ 시장별 상태(01 관측창과 같은 /api/playbook 자료를 나눠 쓴다) */
       var pbS = window.__pbState, pbTxt = function(m){ var r = pbS && pbS.markets && pbS.markets[m]; if(!r) return '—';
         /* [V33.656] '검증 3/2' 처럼 연속 통과 수를 분수로 찍던 표기 → 상태 이름(시험 매수 = 판정 통과 · 절반 크기) */
-        return (r.brake && r.brake.on) ? '<b style="color:#ff5d6c">제동</b>' : r.primary ? '<b>주력</b>' : (r.pass && r.pass.daily) ? '<b style="color:#4fe3ff">시험 매수</b>' : (r.pass && r.pass.absTrial) ? '<b style="color:#ffd166">시험 매수(절대)</b>' : (r.pass && r.pass.trialWhy === 'trade') ? '<b style="color:#ffd166">시험 매수(종전 기준)</b>' : '미통과'; };   // [V33.682] (나) 종전 기준 시험 매수
+        return (r.brake && r.brake.on) ? '<b style="color:#ff5d6c">제동</b>' : r.primary ? '<b>주력</b>' : (r.pass && r.pass.daily) ? '<b style="color:#4fe3ff">시험 매수</b>' : (r.pass && r.pass.absTrial) ? '<b style="color:#ffd166">시험 매수(절대)</b>' : (r.pass && r.pass.trialWhy === 'trade') ? '<b style="color:#ffd166">시험 매수(종전 기준)</b>' : '미통과'; };   // [V33.683] (나) 종전 기준 시험 매수
       if(!pbS && !window.__pbFetching && window.fetch){ window.__pbFetching = 1;
         fetch('/api/playbook').then(function(r){ return r.json(); }).then(function(j){ window.__pbState = j; window.__pbFetching = 0; try{ NNV_paintGlance(d); }catch(e2){} })['catch'](function(){ window.__pbFetching = 0; }); }
       el.innerHTML =
@@ -18270,7 +18270,7 @@ html:root .page > *{ flex-shrink:0; }
     { id:'report', ic:NV.doc, tx:'AI 리포트', brain:true },  { id:'nnviz', ic:NV.spark, tx:'AI 두뇌' },
     { id:'whatif', ic:NV.flask, tx:'WHAT-IF', brain:true },
     { id:'trades', ic:NV.clock, tx:'TRADES' }
-    // [V33.682] AI VISION 항목 제거 — page-vision 이 없어(옛 화면 퇴역) 누르면 빈 화면이었다. AI 화면은 'AI 두뇌'(nnviz) 하나.
+    // [V33.683] AI VISION 항목 제거 — page-vision 이 없어(옛 화면 퇴역) 누르면 빈 화면이었다. AI 화면은 'AI 두뇌'(nnviz) 하나.
     // [V33.316] NEWS 항목은 뺐다 — showPage('news')가 지표&환율의 뉴스 탭으로 아예 넘어간다
     // (Codex V33.315). 드로어에 둘 다 두면 뉴스를 눌러도 지표&환율만 켜진 채 보였다.
   ];
@@ -20127,7 +20127,7 @@ html:root .page > *{ flex-shrink:0; }
 
     // ⑥ AI 픽 — 없으면 빈 행
     var top = (picks || []).filter(function(p){ return !p.abstain; }).slice(0, 5);
-    /* [V33.682] 종목명 + 픽 시각 — 위원회(보조) 픽은 후보가 위원회까지 올 때만 갱신된다(매매법·OMNI-Q 경로는 위원회를 거치지 않음).
+    /* [V33.683] 종목명 + 픽 시각 — 위원회(보조) 픽은 후보가 위원회까지 올 때만 갱신된다(매매법·OMNI-Q 경로는 위원회를 거치지 않음).
        10/27 실측: 마지막 갱신 10/22 — 이름 없이 코드('01006…')만, 시각 없이 지금 것처럼 보였다. */
     var _pts = picks && picks.ts, _pold = _pts && (Date.now() - _pts) > 36 * 3600000;
     var _pago = function(ts){ var m = Math.floor((Date.now()-ts)/60000); if(m < 60) return Math.max(m,0)+'분'; var hh = Math.floor(m/60); return hh < 48 ? hh+'시간' : Math.floor(hh/24)+'일'; };
@@ -20287,7 +20287,7 @@ html:root .page > *{ flex-shrink:0; }
   }
 
   function pollFeed(){
-    if(LIVE.paused || document.hidden) return;   // [V33.682] 숨긴 탭은 쉰다
+    if(LIVE.paused || document.hidden) return;   // [V33.683] 숨긴 탭은 쉰다
     return fetch('/api/logs?limit=' + (FEED.booted ? 40 : 25))
       .then(function(r){ return r.json(); })
       .then(function(rows){
@@ -20705,7 +20705,7 @@ html:root .page > *{ flex-shrink:0; }
       if(PICKS.lastError){ liveHealth('picks', 'error'); try{ console.error('[AI 관제실] picks 조회 실패', PICKS.lastError); }catch(_){} }
       if(!pk){ liveHealth('picks', 'error'); return; }
       if(!PICKS.lastError){ LIVE.lastFresh = Date.now(); liveHealth('picks', 'ok'); }
-      acc.picks = pk.picks || []; acc.picks.ts = pk.ts || null;   // [V33.682] 픽 시각 — 화면이 오래된 픽을 지금 것처럼 보이지 않게
+      acc.picks = pk.picks || []; acc.picks.ts = pk.ts || null;   // [V33.683] 픽 시각 — 화면이 오래된 픽을 지금 것처럼 보이지 않게
       if(pk.scan) acc.scan = pk.scan;
       /* [V33.319] 랭크 가중치는 ★서버가 내려준 실제 엔진 값★ 을 쓴다. 프런트에 상수를
          베껴 두면 엔진 설정이 바뀌는 날 화면만 옛 수로 남아 근거가 틀려진다. */
@@ -21450,12 +21450,12 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.682">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.682">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.682">
-<link rel="stylesheet" href="/model-evidence.css?v=33.682">
+<link rel="stylesheet" href="/brain-console.css?v=33.683">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.683">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.683">
+<link rel="stylesheet" href="/model-evidence.css?v=33.683">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.682">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.683">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -21482,7 +21482,7 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
   setTimeout(reveal, 9500);
 })();
 </script>
-<script src="/model-evidence.js?v=33.682"></script>
-<script src="/workspace-ui.js?v=33.682"></script>
+<script src="/model-evidence.js?v=33.683"></script>
+<script src="/workspace-ui.js?v=33.683"></script>
 </body>
 </html>

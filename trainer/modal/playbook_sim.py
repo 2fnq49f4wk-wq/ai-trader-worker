@@ -364,6 +364,48 @@ CAND_Q = 0.80        # 후보 = 그날 OMNI-Q 표본 밖 점수 상위 20%(워�
 CAND_MIN_ROWS = 3000  # 후보로 거른 표본이 이보다 적으면 전 종목으로(기록에 남긴다)
 
 
+# [V33.683] ★공황 반등 바구니(관측 · 사전 등록)★ — 사용자 10/27 "한국 매매법 강화 · 어떤 상황에서도 그에 맞춰 작동".
+#   공황 중엔 개별 추세 매매법이 시장보다 못하다(한국 10년: 공황·반등일 −0.91% · 공황 전체 모든 매매법 음수) → 지금은 쉬는 게 맞다.
+#   대신 '공황(전날 학습기 값) 날 OMNI-Q 후보 상위를 바구니로 사서 10거래일' 은 앞 80% +3.1~3.5%(t 1.2~1.4) · 뒤 20% +1.7~2.2%(t 0.8~0.9) — 양쪽 양수지만 근거 약함.
+#   지수 ETF(KODEX200·KOSDAQ150)는 실전 하루 늦춤을 넣으면 효과 없음(+0.09% t 0.1) → 안 씀. 그래서 사람 손 없이 회차마다 다시 재고,
+#   규칙(사전 등록): 판정 전 구간(앞 80%) 바구니 거래 ≥ 20 · 평균 > 0 · t ≥ 2 그리고 판정 구간(뒤 20%) 평균 > 0 이면 'ok' → 워커 시험 매수 후보(그 전엔 화면 관측만).
+PANIC_BOOK_H, PANIC_BOOK_MIN = 10, 20
+
+
+def panic_book(P, oos, reg, head="5", q=0.8, mk="kr"):
+    """공황(하루 늦춤) 날 OMNI-Q 후보(머리 head · 상위 1−q) 동일가중 바구니 → H 일 뒤 종가(비용 차감) · 겹침 없이. 앞 80% · 뒤 20% 통계와 오늘 공황 여부."""
+    try:
+        pn = _panic(P["close"], reg)
+        lag = np.concatenate([[False], pn[:-1]])
+        cm = cand_mask(P, oos, q, head)
+        if cm is None:
+            return None
+        C = P["close"].values
+        T, H = C.shape[0], PANIC_BOOK_H
+        cut = int(T * SPLIT[1])
+        out = {"h": H, "head": head, "q": q, "panicNow": bool(pn[-1]), "rule": "앞80%% n≥%d·평균>0·t≥2 그리고 뒤20%% 평균>0" % PANIC_BOOK_MIN}
+        for nm, a, b in (("pre", 250, cut), ("post", cut, T - H)):
+            v, t = [], a
+            while t < b:
+                if lag[t] and cm[t].any():
+                    f = (C[t + H][cm[t]] / C[t][cm[t]] - 1) * 100 - COST_RT.get(mk, 0.3)
+                    f = f[np.isfinite(f)]
+                    if len(f):
+                        v.append(float(f.mean()))
+                        t += H
+                        continue
+                t += 1
+            v = np.array(v)
+            out[nm] = {"n": int(len(v)), "mean": round(float(v.mean()), 3) if len(v) else None,
+                       "t": round(float(v.mean() / (v.std(ddof=1) / math.sqrt(len(v)))), 2) if len(v) > 2 and v.std() > 0 else None,
+                       "win": round(float((v > 0).mean() * 100), 1) if len(v) else None}
+        pr, po = out["pre"], out["post"]
+        out["ok"] = bool(pr["n"] >= PANIC_BOOK_MIN and (pr["mean"] or 0) > 0 and (pr["t"] or 0) >= 2 and (po["mean"] or 0) > 0)
+        return out
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:200]}
+
+
 def cand_rank(P, oos, head="5"):
     """cand_mask 와 같은 순위(그날 백분위 · 하루 늦춤)를 bool 이 아닌 값으로 — 상한이 찰 때 같은 날 순서용. 점수 없으면 None."""
     m = cand_mask(P, oos, -1.0, head, _rank=True)
@@ -1825,6 +1867,10 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         reg_series, _ = _regime(P["close"])
         _pn = _panic(P["close"], reg_series)
         panic_now = bool(_pn[-1])   # [V33.625]
+        pbook = panic_book(P, (oos or {}).get(market), reg_series, dst.get("candHead") or "5", dst.get("candQ") or CAND_Q, market) if dst.get("candQ") is not None else None
+        if pbook and "pre" in pbook:
+            log("   · [공황바구니] %s 공황 날 OMNI-Q 후보 바구니 %d일 — 앞80%% n%d %+.2f%%(t %s) · 뒤20%% n%d %s%%(t %s) → %s" % (
+                market, PANIC_BOOK_H, pbook["pre"]["n"], pbook["pre"]["mean"] or 0, pbook["pre"]["t"], pbook["post"]["n"], pbook["post"]["mean"], pbook["post"]["t"], "통과(시험 후보)" if pbook["ok"] else "관측만"))
         log("   · [매매법시뮬] %s 공황 국면(추세·모멘텀 진입 차단) %s · 전 기간 %.1f%% · 최근 60일 %.1f%%" % (
             market, "켜짐" if panic_now else "꺼짐", float(_pn.mean() * 100), float(_pn[-60:].mean() * 100)))
         reg_by_day = {int(d): r for d, r in zip(P["close"].index, reg_series)}
@@ -1854,7 +1900,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         elif upload and BASE:
             try:
                 import requests
-                body = {"mkt": market, "day": str(P["close"].index[-1]), "regime": reg_now, "sector": (sector or {}).get(market), "panic": panic_now,
+                body = {"mkt": market, "day": str(P["close"].index[-1]), "regime": reg_now, "sector": (sector or {}).get(market), "panic": panic_now, "panicBook": pbook,
                         "daily": {"val": dst, "table": export(dtab, list(DAILY_PB)), "pb": dpb, "cross": cross, "gate": gate_live, "tier2": tier2,
                                   "grp": ({syms_all[j]: int(g_) for j, g_ in enumerate(P.get("_grp_now", P.get("_grp"))[-1]) if g_ >= 0} if P.get("_grp") is not None else None),   # [V33.664] 종목 → 변동성 그룹(오늘)
                                   "ptune": ptune_rep, "epDef": {k: v[1] for k, v in PP.ENTRY.items()}, "epLad": dict({k: v[2] for k, v in PP.ENTRY.items()}, _mods=PP.MODS),

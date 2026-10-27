@@ -333,7 +333,9 @@ chk(W.pbRoutePick({ ...st, daily: { ...st.daily, table: { "*": { NOPE: [9000, 0.
   chk(/PB_SEL = os\.environ\.get\("PB_SEL", "m"\)/.test(Q), "[V33.675] 고르기 잣대 = 판정과 같은 월 맞춤 달 묶음 t");
   chk(/st\["legacy"\] = l0/.test(Q), "[V33.675] 시험 매수용 종전 표본(상한 없음) 판정을 legacy 로 함께 보낸다");
   chk(/RANK_MODE = os\.environ\.get\("PB_RANK", "omq"\)/.test(Q) && /_hot\.sort\(function \(a, b\) \{ return b\[1\] - a\[1\]; \}\)/.test(S),
-      "[V33.682] 상한이 찰 때 OMNI-Q 순위 높은 후보부터 — 학습기 시뮬(PB_RANK=omq)과 워커 실전(_hot 정렬)이 같은 순서"); }
+      "[V33.682] 상한이 찰 때 OMNI-Q 순위 높은 후보부터 — 학습기 시뮬(PB_RANK=omq)과 워커 실전(_hot 정렬)이 같은 순서");
+  chk(/def panic_book\(P, oos, reg, head="5", q=0\.8, mk="kr"\)/.test(Q) && /lag = np\.concatenate\(\[\[False\], pn\[:-1\]\]\)/.test(Q) && /out\["ok"\] = bool\(pr\["n"\] >= PANIC_BOOK_MIN and \(pr\["mean"\] or 0\) > 0 and \(pr\["t"\] or 0\) >= 2 and \(po\["mean"\] or 0\) > 0\)/.test(Q)
+      && /panicBook: r\.panicBook \|\| null/.test(S), "[V33.683] 공황 반등 바구니 — 하루 늦은 공황 · 사전 등록 규칙(앞80% n≥20·평균>0·t≥2 · 뒤20% 양수) · API 전달"); }
 { // [V33.675] 시험 매수 = legacy(종전 표본) 기준 — 상한 표본이 작아 t 가 낮아도 시험 매수는 (나) 대로 유지
   const v = { ...val, pass: false, passMode: "matched", passTrade: false, n: 150, mean: 1.2, t: 0.7, base: 3.3, legacy: { passTrade: false, n: 3000, mean: 0.78, t: 3.0, base: 0.98, recent: { ok: true } } };
   const stU = { ...st, intra: null, mkt: "us", daily: { ...st.daily, val: v } }, cU = { ...ctx, minToClose: 20, bars5: null, symbol: "AAA" };

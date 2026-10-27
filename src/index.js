@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.682";
+const _BUILD_VER = "V33.683";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -31559,7 +31559,8 @@ async function handleRequest(request, env, ctx, _inner) {
                                                                           meta: _obj(x.meta), metaFeats: Array.isArray(x.metaFeats) ? x.metaFeats.map(String) : null } : null; };   // [V33.672] 고차원 수식 선택 기록
       const rec = { ts: Date.now(), day: String(body.day || ""), regime: String(body.regime || "NEUTRAL"), daily: part(body.daily), intra: part(body.intra),
                     sector: (body.sector && typeof body.sector === "object") ? body.sector : null,
-                    panic: body.panic === true };   // [V33.625] 공황 국면(학습기 _panic 마지막 날) — 추세·모멘텀 진입 차단   // [V33.621] 종목 → 섹터(학습기 자동 배정 · 섹터 보유 상한)
+                    panic: body.panic === true,
+                    panicBook: (body.panicBook && typeof body.panicBook === "object") ? body.panicBook : null };   // [V33.683] 공황 반등 바구니(관측 · 사전 등록 규칙 통과 여부)   // [V33.625] 공황 국면(학습기 _panic 마지막 날) — 추세·모멘텀 진입 차단   // [V33.621] 종목 → 섹터(학습기 자동 배정 · 섹터 보유 상한)
       rec.mkt = mk;   // [V33.669] 시장 표시(절대 기준 시험 매수 판정)
       rec.pass = { daily: _pbPass(rec.daily && rec.daily.val), intra: _pbPass(rec.intra && rec.intra.val) };
       try { const _prev = await getState(env.DB, "playbook:" + mk, null); rec.passStreak = rec.pass.daily ? _num(_prev && _prev.passStreak, 0) + 1 : 0;
@@ -31579,7 +31580,7 @@ async function handleRequest(request, env, ctx, _inner) {
       const out = {};
       for (const mk of ["us", "kr"]) {
         const r = await getState(env.DB, "playbook:" + mk, null);
-        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, panic: r.panic === true,
+        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, panic: r.panic === true, panicBook: r.panicBook || null,
                         pass: Object.assign({}, r.pass || {}, { absTrial: !(r.pass && r.pass.daily) && !_pbTradeOk(r.daily && r.daily.val) && !!(PB_ABS_TRIAL[mk] && _pbAbsOk(r.daily && r.daily.val)), trialWhy: pbTrialWhy(r.daily && r.daily.val, mk) }), primary: pbPrimaryOn(r, Date.now()), passStreak: r.passStreak || 0, indep: pbIndepPasses(r.passLog),   // [V33.669] pass.absTrial(미국 절대 기준 시험 매수)
                         brake: await getState(env.DB, "pb_brake:" + mk, null).catch(function () { return null; }),
                         daily: r.daily && { val: r.daily.val, cells: Object.keys(r.daily.table || {}).length, pb: r.daily.pb, gate: r.daily.gate || null,

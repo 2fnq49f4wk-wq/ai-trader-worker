@@ -88,6 +88,8 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
     ["종목 그룹 · 미지수", (() => { const pt = R.daily?.ptune; if (!pt) return "기본 미지수"; const nA = Object.values(pbDef).reduce((a: number, x: any) => a + Object.keys((x && x.ep) || {}).length + Object.keys((x && x.grp) || {}).filter((g) => !(x.ep && x.ep[g])).length, 0); return nA ? "그룹 조율 " + nA + "칸" : "기본 미지수"; })(),
       "변동성 3그룹마다 조율 · 시스템을 안 낮춘 것만 실전(‘미지수 · 조율’ 탭)"],
     ["구조 거르개", R.panic ? "공황 차단 켜짐" : "공황 차단 꺼짐", R.panic ? "1순위 추세·모멘텀·돌파 쉼(보조는 계속)" : "시장 60일 하락·고변동이면 1순위 추세 매매법 쉼"],
+    ...(R.panicBook && R.panicBook.pre ? [["공황 반등 바구니", R.panicBook.ok ? "규칙 통과" : "관측만",
+      "공황 날 OMNI-Q 후보 바구니 " + R.panicBook.h + "일 · 앞80% " + sg(R.panicBook.pre.mean) + "%(t " + (R.panicBook.pre.t ?? "—") + " · n " + R.panicBook.pre.n + ") · 뒤20% " + sg(R.panicBook.post.mean) + "%(t " + (R.panicBook.post.t ?? "—") + ") — 사전 등록: 앞80% t ≥ 2 · 뒤20% 양수면 시험 후보"]] : []),
     ["상황 칸 표", n0(R.daily?.cells) + "칸", "국면 × RSI × 이격 × 수익 × 거래량 칸마다 수축 평균"],
     ["고르는 규칙", chosen, V.luck ? (V.luck.fallback ? "검증 1등(t " + (fin(V.luck.best) ? (+V.luck.best).toFixed(2) : "—") + ")이 운 수준 " + V.luck.level + " 이하 → 사전 등록 기본 설정" : "검증 1등 t " + (fin(V.luck.best) ? (+V.luck.best).toFixed(2) : "—") + " > 운 수준 " + V.luck.level + "(설정·규칙 " + V.luck.K + "개)") : "검증 구간 t 가 가장 높은 규칙"],
     ["국면 거부권", "칸 평균 < 0 · n ≥ 30", "지금 국면 칸이 손실이면 규칙과 무관하게 버린다"],
