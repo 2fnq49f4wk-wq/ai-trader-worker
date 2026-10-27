@@ -287,7 +287,9 @@ def regime_now(g3, reg_now):
     g3["ok"] = bool(g3.get("allOk") and g3.get("regOk") and g3["nowOk"])
     return g3
 # 전환 스위치 — "sim": ③ = 모의 시뮬레이션(위) · 실시간 장부 = 회수 장치 / "live": 종전 ③(실시간 30일) · 모의 결과는 g3sim 으로 기록만
-G3_MODE = os.environ.get("OMNIQ_G3", "live")
+# [V33.687] "auto"(기본) = ★머리별★: 모의 ③ 통과 머리는 모의 판정(정식 발언 가능 · 회수 장치) · 미통과 머리는 종전 판정 그대로(잠정이 섀도우로 떨어지지 않게)
+#   — 측정 회차(V33.684 run 40454017140) 미 5일·20일 통과 · 한 5일·20일 미달 확인 뒤 전환.
+G3_MODE = os.environ.get("OMNIQ_G3", "auto")
 
 
 def risk_buckets(C):
@@ -972,19 +974,17 @@ def _score_only(mk, cached, C, X, y, req, BASE, HDR, log):
             for key in ("g3", "g3sim"):
                 if (gg_.get(key) or {}).get("kind") == "sim":
                     gg_[key] = regime_now(gg_[key], reg_today)
-        if (gate.get("g3") or {}).get("kind") == "sim":
-            gate["g3live"] = g3
-            gate["speak"] = speak_of(gate)
-            if gate20:
-                gate20["g3live"] = g3_20
-                gate20["speak"] = speak_of(gate20)
-        else:   # 종전 ③ — 실시간 30일을 다시 잰다
-            o3, o3_20 = _ledger_old(req, BASE, HDR, mk, C, y, H, log), _ledger_old(req, BASE, HDR, mk, C, y20, H20, log)
-            gate["g3"] = dict(o3, needDays=G3_MIN_DAYS)
-            gate["speak"] = bool((gate.get("g1") or {}).get("ok") and (gate.get("g2") or {}).get("ok") and o3["ok"])
-            if gate20:
-                gate20["g3"] = dict(o3_20, needDays=G3_MIN_DAYS)
-                gate20["speak"] = bool((gate20.get("g1") or {}).get("ok") and (gate20.get("g2") or {}).get("ok") and o3_20["ok"])
+        o3, o3_20 = None, None
+        for gg_, live_, h_, y_ in ((gate, g3, H, y), (gate20, g3_20, H20, y20)):   # [V33.687] 머리별 — 모의면 회수 장치만 · 종전이면 실시간 30일 다시
+            if not gg_:
+                continue
+            if (gg_.get("g3") or {}).get("kind") == "sim":
+                gg_["g3live"] = live_
+                gg_["speak"] = speak_of(gg_)
+            else:
+                o_ = _ledger_old(req, BASE, HDR, mk, C, y_, h_, log)
+                gg_["g3"] = dict(o_, needDays=G3_MIN_DAYS)
+                gg_["speak"] = bool((gg_.get("g1") or {}).get("ok") and (gg_.get("g2") or {}).get("ok") and o_["ok"])
         top20 = []
         r20 = extra.get("r20") or {}
         if r20:
@@ -1286,19 +1286,22 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             log("        국면별 맞춤 초과 %s · 확실히 지는 국면 없음 %s · 오늘 국면 %s → %s" % (
                 " · ".join("%s n%d %+.3f%%(t %s)" % (b["ko"], b["n"], b["mean"] * 100, b["t"]) for b in gg.get("byReg") or []),
                 "예" if gg.get("regOk") else "아니오", REG_KO.get(gg.get("regNow"), gg.get("regNow")), "통과" if gg.get("nowOk") else "미달"))
-        speak = speak_of({"g1": {"ok": g1}, "g2": {"ok": g2}, "g3": g3, "g3live": live}) if G3_MODE == "sim" else bool(g1 and g2 and old3["ok"])
         top20 = []
         r20 = extra.get("r20") or {}
         if r20:
             k20 = max(1, int(round(len(r20) * Q)))
             top20 = [s_ for s_, _ in sorted(r20.items(), key=lambda kv: -kv[1])[:k20]]
-        speak20 = (speak_of({"g1": {"ok": g1_20}, "g2": {"ok": g2_20}, "g3": g3_20, "g3live": live20}) if G3_MODE == "sim"
-                   else bool(g1_20 and g2_20 and old3_20["ok"]))
-        log("      [OMNI-Q %s] ③ 방식 %s — 종전 실시간 30일: 5일 %d일 하한 %s · 20일 %d일 하한 %s" % (mk, G3_MODE, old3["days"], old3["lb"], old3_20["days"], old3_20["lb"]))
-        if G3_MODE != "sim":   # 측정만 — 모의 결과는 g3sim 으로 싣고 판정은 종전대로
-            g3, g3_20, live, live20, g3s, g3s_20 = dict(old3, needDays=G3_MIN_DAYS), dict(old3_20, needDays=G3_MIN_DAYS), None, None, g3, g3_20
-        else:
-            g3s = g3s_20 = None
+        use5 = G3_MODE == "sim" or (G3_MODE == "auto" and g3["ok"])
+        use20 = G3_MODE == "sim" or (G3_MODE == "auto" and g3_20["ok"])
+        speak = speak_of({"g1": {"ok": g1}, "g2": {"ok": g2}, "g3": g3, "g3live": live}) if use5 else bool(g1 and g2 and old3["ok"])
+        speak20 = speak_of({"g1": {"ok": g1_20}, "g2": {"ok": g2_20}, "g3": g3_20, "g3live": live20}) if use20 else bool(g1_20 and g2_20 and old3_20["ok"])
+        log("      [OMNI-Q %s] ③ 방식 %s — 5일 %s · 20일 %s (종전 실시간 30일: 5일 %d일 하한 %s · 20일 %d일 하한 %s)" % (
+            mk, G3_MODE, "모의" if use5 else "종전", "모의" if use20 else "종전", old3["days"], old3["lb"], old3_20["days"], old3_20["lb"]))
+        g3s = g3s_20 = None
+        if not use5:   # 종전 판정 — 모의 결과는 g3sim 으로 기록만
+            g3, live, g3s = dict(old3, needDays=G3_MIN_DAYS), None, g3
+        if not use20:
+            g3_20, live20, g3s_20 = dict(old3_20, needDays=G3_MIN_DAYS), None, g3_20
         t_ms = int(time.time() * 1000)
         body = {"mkt": mk, "day": day, "h": H, "q": Q, "trainedAt": t_ms, "scoredAt": t_ms, "scoreOnly": False, "nFeat": len(names), "n": len(sc), "y5": Y5MODE or "5d",
                 "scores": sc, "top": top, "heads": extra, "learner": LEARNER_5D, "lab": lab_rep or None,
