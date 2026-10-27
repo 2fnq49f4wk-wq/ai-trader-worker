@@ -34,7 +34,7 @@ function Gate({ g, label }: { g: any; label: string }) {
         { k: "① 상위 10% 승률 하한", v: g1.lb != null ? (g1.lb * 100).toFixed(1) + "%" : "—", hint: "t " + f1(g1.t, 1) + " (≥ " + (g1.needT ?? 3) + ")", tone: g1.ok ? "ok" : "bad" },
         { k: "② 비용 뺀 초과 구간", v: (g2.pos ?? "—") + " / " + ((g2.folds || []).length || "—"), hint: "필요 " + (g2.need ?? "—"), tone: g2.ok ? "ok" : "bad" },
         g3.kind === "sim" ? sim(g3, "③ 모의 시뮬레이션") : { k: "③ 실전 장부", v: n0(g3.days) + "일", hint: "필요 " + (g3.needDays ?? 30) + "일" + (g3.lb != null ? " · 하한 " + (g3.lb * 100).toFixed(1) + "%" : ""), tone: g3.ok ? "ok" : "shade" },
-        { k: "적합 진단", v: fit.kind || "—", hint: (fit.inMu != null ? "안 " + (fit.inMu * 100).toFixed(1) + "% · 밖 " + (fit.outMu * 100).toFixed(1) + "%" : "") + (g.label === "matched" ? " · 학습 라벨 맞춤(같은 위험 묶음 대비)" : "") + (g.variant ? " · 점수 변형 " + ({ blend: "5·20일 혼합", neutral: "위험 묶음 중립", blendN: "혼합+중립" } as any)[g.variant] : ""), tone: fit.kind === "정상 범위" ? "ok" : "warn" },
+        { k: "적합 진단", v: fit.kind || "—", hint: (fit.inMu != null ? "안 " + (fit.inMu * 100).toFixed(1) + "% · 밖 " + (fit.outMu * 100).toFixed(1) + "%" : "") + (g.label === "matched" ? " · 학습 라벨 맞춤(같은 위험 묶음 대비)" : "") + (g.variant ? " · 점수 변형 " + ({ blend: "5·20일 혼합", neutral: "위험 묶음 중립", blendN: "혼합+중립", crash5: "폭락 날 5일 점수" } as any)[g.variant] : ""), tone: fit.kind === "정상 범위" ? "ok" : "warn" },
         ...(g3.kind === "sim" && g.g3live ? [{ k: "실시간 장부(회수 감시)", v: n0(g.g3live.days) + "일 · " + pp(g.g3live.mx), hint: g.g3live.revoke ? "평균 초과 < 0 → 회수" : (g.g3live.needDays ?? 10) + "일부터 평균 초과 < 0 이면 회수", tone: (g.g3live.revoke ? "bad" : "ok") as Tone }] : []),
         ...(g.g3sim ? [sim(g.g3sim, "③ 모의(측정 · 판정 전)")] : []),
       ]} />

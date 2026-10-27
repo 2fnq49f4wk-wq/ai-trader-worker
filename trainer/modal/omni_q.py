@@ -306,6 +306,19 @@ def _neutral_rows(a, bk):
     return out
 
 
+def bucket_recent(bk, last, look=5):
+    """오늘 행의 위험 묶음 — 오늘 봉이 아직 없는 종목은 최근 look 일 안의 마지막 묶음(V33.689: 한국 450 중 120종목만 채점된 것 수리)."""
+    row = bk[last].copy()
+    for b in range(1, look + 1):
+        if last - b < 0:
+            break
+        m = ~np.isfinite(row)
+        if not m.any():
+            break
+        row[m] = bk[last - b][m]
+    return row
+
+
 def score_variant(kind, a5, a20, bk):
     """날짜×종목 점수 행렬(또는 1행) → 변형. a5·a20 은 같은 모양."""
     if kind in ("blend", "blendN"):
@@ -1035,7 +1048,7 @@ def _score_only(mk, cached, C, X, y, req, BASE, HDR, log):
                 p5 = np.array([sc[s_] for s_ in syms], dtype=np.float32)[None, :]
                 p20 = np.array([extra["r20"].get(s_, np.nan) for s_ in syms], dtype=np.float32)[None, :]
                 colix = {c_: j for j, c_ in enumerate(C.columns)}
-                bl = bk[last][[colix[s_] for s_ in syms]][None, :]
+                bl = bucket_recent(bk, last)[[colix[s_] for s_ in syms]][None, :]
                 def _pm(v):
                     okv = np.isfinite(v); pv = np.full(len(v), np.nan)
                     pv[okv] = (np.argsort(np.argsort(v[okv])) + 0.5) / max(1, okv.sum())
@@ -1043,7 +1056,10 @@ def _score_only(mk, cached, C, X, y, req, BASE, HDR, log):
                 if v5k:
                     sc = _pm(score_variant(v5k, p5, p20, bl)[0])
                     top = [s_ for s_, _ in sorted(sc.items(), key=lambda kv: -kv[1])[:k]]
-                if v20k:
+                if v20k == "crash5":
+                    if reg_today == "CRASH":
+                        extra["r20"] = dict(sc)
+                elif v20k:
                     extra["r20"] = _pm(score_variant(v20k, p20, p5, bl)[0])
             except Exception as e:  # noqa: BLE001
                 log("      ⚠️ [OMNI-Q %s] 채점만 점수 변형 실패: %r" % (mk, e))
@@ -1233,8 +1249,14 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             for hk in ("5", "20"):
                 if (g3 if hk == "5" else g3_20)["ok"]:
                     continue
-                for kind in SCORE_VARIANTS:
-                    if hk == "5":
+                for kind in (SCORE_VARIANTS if hk == "5" else SCORE_VARIANTS + ("crash5",)):
+                    if kind == "crash5":   # [V33.689] 20일 머리 — 폭락 국면 날만 5일 머리(채택 변형 반영) 점수 · 사전 등록
+                        cv_ = _rank_rows(s20)
+                        cr = np.where(np.asarray(regs) == "CRASH")[0]
+                        cv_[cr] = _rank_rows(scores[cr])
+                        bV, fxV, fx0V, g2V, posV, needV = judge(cv_, both, y20, f20.values, "20일 · 점수 변형 crash5", step=H20, sps=splits20)
+                        g3V = sim_gate(cv_, both, f20.values, bk, list(C.index), mk, H20, COST_RT[mk], reg=regs)
+                    elif hk == "5":
                         cv_ = score_variant(kind, scores, s20, bk)
                         bV, fxV, fx0V, g2V, posV, needV = judge(cv_, both, y, fwdv, "5일 · 점수 변형 " + kind)
                         g3V = sim_gate(cv_, both, fwdv, bk, list(C.index), mk, H, COST_RT[mk], reg=regs)
@@ -1375,7 +1397,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 p5 = np.array([sc[s_] for s_ in syms], dtype=np.float32)[None, :]
                 p20 = np.array([extra["r20"].get(s_, np.nan) for s_ in syms], dtype=np.float32)[None, :]
                 colix = {c_: j for j, c_ in enumerate(C.columns)}
-                bl = bk[last][[colix[s_] for s_ in syms]][None, :]
+                bl = bucket_recent(bk, last)[[colix[s_] for s_ in syms]][None, :]
                 if varsel["5"]:
                     v5 = score_variant(varsel["5"], p5, p20, bl)[0]
                     okv = np.isfinite(v5)
@@ -1383,7 +1405,10 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                     pv[okv] = (np.argsort(np.argsort(v5[okv])) + 0.5) / okv.sum()
                     sc = {s_: round(float(p_), 4) for s_, p_ in zip(syms, pv) if np.isfinite(p_)}
                     top = [s_ for s_, _ in sorted(sc.items(), key=lambda kv: -kv[1])[:k]]
-                if varsel["20"]:
+                if varsel["20"] == "crash5":   # 오늘이 폭락 국면이면 20일 머리 = 5일 머리 점수(변형 반영)
+                    if str(regs[last]) == "CRASH":
+                        extra["r20"] = dict(sc)
+                elif varsel["20"]:
                     v20 = score_variant(varsel["20"], p20, p5, bl)[0]
                     okv = np.isfinite(v20)
                     pv = np.full(len(v20), np.nan)
