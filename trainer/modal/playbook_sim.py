@@ -364,7 +364,13 @@ CAND_Q = 0.80        # 후보 = 그날 OMNI-Q 표본 밖 점수 상위 20%(워�
 CAND_MIN_ROWS = 3000  # 후보로 거른 표본이 이보다 적으면 전 종목으로(기록에 남긴다)
 
 
-def cand_mask(P, oos, q=None, head="5"):
+def cand_rank(P, oos, head="5"):
+    """cand_mask 와 같은 순위(그날 백분위 · 하루 늦춤)를 bool 이 아닌 값으로 — 상한이 찰 때 같은 날 순서용. 점수 없으면 None."""
+    m = cand_mask(P, oos, -1.0, head, _rank=True)
+    return m
+
+
+def cand_mask(P, oos, q=None, head="5", _rank=False):
     """OMNI-Q 표본 밖 점수(날짜×종목) → P 와 같은 모양의 '그날 후보(상위 20%)' bool. 점수 없는 날은 전부 False.
     [V33.622] head = "5"(5일 머리) · "20"(20일 머리) · "avg"(둘의 그날 순위 평균) — 워커 pbCandScoreMap 과 같다."""
     if not oos or oos.get("sc") is None:
@@ -389,6 +395,9 @@ def cand_mask(P, oos, q=None, head="5"):
         return None
     M[np.ix_(ra, cb)] = oos["sc"][np.ix_(a[ra], b[cb])]
     rk = pd.DataFrame(M).rank(axis=1, pct=True).values
+    if _rank:
+        out = np.nan_to_num(rk, nan=0.0).astype(np.float32)
+        return np.vstack([np.zeros((1, out.shape[1]), dtype=np.float32), out[:-1]]) if LAG_FIX else out
     out = np.nan_to_num(rk, nan=0.0) >= (CAND_Q if q is None else q)
     if LAG_FIX:   # [V33.671] 실전 = 전날 학습기 점수로 오늘 후보 → 시뮬도 하루 늦은 점수
         out = np.vstack([np.zeros((1, out.shape[1]), dtype=bool), out[:-1]])
@@ -1292,13 +1301,18 @@ def _pick(tab, te, rule, hist=None):
         ok = ok & np.array([_regime_ok(tab.get(k)) for k in zip(te["k1"].values, te["pb"].values)], dtype=bool)
     if (GLOBAL_VETO or rule.get("gveto")) and len(te) and "k0" in te.columns:   # [V33.642] 전체 칸 거부권 — 그 매매법의 전체 평균(수축)이 0 이하면 고르지 않는다
         ok = ok & np.array([_global_ok(tab.get(k)) for k in zip(te["k0"].values, te["pb"].values)], dtype=bool)
-    sel = te.assign(_s=sc)[ok].sort_values("_s", ascending=False).drop_duplicates("inst").sort_values("t", kind="mergesort")   # 같은 날 안은 점수 순(상한이 있으면 점수 높은 것부터 산다)
+    sel = te.assign(_s=sc)[ok].sort_values("_s", ascending=False).drop_duplicates("inst")
+    if CAND_RANK is not None and RANK_MODE == "omq" and len(sel):   # [실험] 상한이 찰 때 같은 날 안 순서 = OMNI-Q 순위(검증된 횡단면 실력) → 같으면 표 점수
+        sel = sel.assign(_o=CAND_RANK[sel["t"].values.astype(int), sel["j"].values.astype(int)]).sort_values(["_o", "_s"], ascending=False)
+    sel = sel.sort_values("t", kind="mergesort")   # 같은 날 안은 위 순서 그대로(상한이 있으면 앞에서부터 산다)
     return _nonoverlap(sel)
 
 
 BASE_DRAWS = 30   # [V33.613] 공정한 '아무거나' — 후보마다 뜬 매매법 중 무작위 하나 · 같은 겹침 규칙 · 30번 평균
 
 
+CAND_RANK = None   # [실험] t×j OMNI-Q 그날 백분위(하루 늦춤) — run() 의 후보 고르기가 설정마다 채운다
+RANK_MODE = os.environ.get("PB_RANK", "score")
 CAP = {"on": False, "day": 6, "open": 12}   # [V33.675] 실전 상한(주력 PB_PRIMARY_CAPS 하루 6 · 동시 min(12, 시장 상한)) — validate(일봉)가 켠다
 
 
@@ -1655,6 +1669,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             cm_ = cand_mask(P, (oos or {}).get(market), q_, hd_)
             if cm_ is None:
                 continue
+            global CAND_RANK
+            CAND_RANK = cand_rank(P, (oos or {}).get(market), hd_) if RANK_MODE == "omq" else None
             d_, reg_now, _ = sim_daily(P, market, ev_dates, sig=sig, cand=cm_, pbs=dpb)
             d_ = _tier(d_, tier2)
             if len(d_) < CAND_MIN_ROWS:
@@ -1693,6 +1709,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             ddf = _relevel(ddf)
             dst, _ = validate(ddf, "t")
         cm = cand_mask(P, (oos or {}).get(market), dst.get("candQ"), dst.get("candHead") or "5") if dst.get("candQ") else None
+        CAND_RANK = cand_rank(P, (oos or {}).get(market), dst.get("candHead") or "5") if (RANK_MODE == "omq" and dst.get("candQ") is not None) else None
         dst["cand"] = cand_src
         ptune_rep = None
         try:   # [V33.664·667] 미지수 조율 — ★실전과 같은 후보 거름(cm)★ 안에서 조율하고 같은 거름으로 시스템 검증(검증 구간 평균·t 안 낮추고 통과 유지만 채택)
