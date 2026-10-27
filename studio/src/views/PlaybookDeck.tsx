@@ -83,7 +83,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
   const chosen = ruleName(V.rule);
   const day = String(R.day || "").replace(/(\d{4})(\d{2})(\d{2})/, "$1-$2-$3");
   const flow = [
-    ["후보 선별 · OMNI-Q", V.candQ ? "상위 " + Math.round((1 - V.candQ) * 100) + "%" : "거름 없음", V.cand || "—"],
+    ["후보 선별 · OMNI-Q", V.candQ ? "상위 " + Math.round((1 - V.candQ) * 100) + "%" : "거름 없음", (V.cand || "—") + " · 하루·동시 상한이 차면 OMNI-Q 순위 높은 후보부터 산다(시뮬·실전 같은 순서)"],
     ["신호 · 일봉 매매법", rows.length + "종", (() => { const n2 = rows.filter((r: any) => r.tier === 2).length; return n2 ? "1순위 " + (rows.length - n2) + " · 보조 " + n2 + " — 보조는 1순위가 안 뜬 종목에만" : "오늘 조건이 맞은 매매법만 남긴다"; })()],
     ["종목 그룹 · 미지수", (() => { const pt = R.daily?.ptune; if (!pt) return "기본 미지수"; const nA = Object.values(pbDef).reduce((a: number, x: any) => a + Object.keys((x && x.ep) || {}).length + Object.keys((x && x.grp) || {}).filter((g) => !(x.ep && x.ep[g])).length, 0); return nA ? "그룹 조율 " + nA + "칸" : "기본 미지수"; })(),
       "변동성 3그룹마다 조율 · 시스템을 안 낮춘 것만 실전(‘미지수 · 조율’ 탭)"],

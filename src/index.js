@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.681";
+const _BUILD_VER = "V33.682";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -25978,10 +25978,14 @@ async function runTradingCycle(env) {
                             stop: sh && sh.stop != null ? +_num(sh.stop, 0).toFixed(2) : null, hold: (sh && sh.hold) || null, bars: (sh && sh.bars) || null,
                             tpR: sh && sh.tpR != null ? sh.tpR : null, tpPct: sh && sh.tpPct != null ? sh.tpPct : null,
                             act: null, why: heldSymbols.has(sym) ? "보유 중" : real ? "평가 대기(앞으로 당김)" : ((sh && sh.why) || (sh && sh.pb ? "검증 미통과 — 기록만(그림자)" : "고를 매매법 없음")), pre: true }, sh, ctx.D));
-            if (real && !heldSymbols.has(sym)) _hot.push(it);
+            if (real && !heldSymbols.has(sym)) _hot.push([it, sc]);
           }
+          /* [V33.682] ★OMNI-Q 순위 높은 후보부터★ — 하루·사이클 상한(시험 3/일 · 1/사이클)이 차면 어느 후보를 사느냐가 성적을 가른다.
+             종전엔 순회 순서(사실상 무작위)로 앞에 붙였다. 학습기 시뮬도 같은 날 안을 OMNI-Q 순위로(PB_RANK=omq) — 실험실(10/15 일봉):
+             월 맞춤 초과 미국 −2.02→+1.42%p · 한국 −1.32→+0.49%p · 전진 미국 +0.61→+1.13 · 한국 −0.86→+1.90 · 검증 1등 t 도 둘 다 올라감. */
+          _hot.sort(function (a, b) { return b[1] - a[1]; });
           // 살 수 있는 후보를 맨 앞으로(상한 PB_ROUTE.promoteMax) — 원래 자리에서 빼고 앞에 붙인다
-          const _take = _hot.slice(0, PB_ROUTE.promoteMax);
+          const _take = _hot.slice(0, PB_ROUTE.promoteMax).map(function (x) { return x[0]; });
           if (_take.length) {
             const _ts = new Set(_take);
             orderedEval = _take.concat(orderedEval.filter(function (it) { return !_ts.has(it); }));

@@ -1302,7 +1302,7 @@ def _pick(tab, te, rule, hist=None):
     if (GLOBAL_VETO or rule.get("gveto")) and len(te) and "k0" in te.columns:   # [V33.642] 전체 칸 거부권 — 그 매매법의 전체 평균(수축)이 0 이하면 고르지 않는다
         ok = ok & np.array([_global_ok(tab.get(k)) for k in zip(te["k0"].values, te["pb"].values)], dtype=bool)
     sel = te.assign(_s=sc)[ok].sort_values("_s", ascending=False).drop_duplicates("inst")
-    if CAND_RANK is not None and RANK_MODE == "omq" and len(sel):   # [실험] 상한이 찰 때 같은 날 안 순서 = OMNI-Q 순위(검증된 횡단면 실력) → 같으면 표 점수
+    if CAND_RANK is not None and RANK_MODE == "omq" and len(sel):   # [V33.682] 상한이 찰 때 같은 날 안 순서 = OMNI-Q 순위(검증된 횡단면 실력) → 같으면 표 점수
         sel = sel.assign(_o=CAND_RANK[sel["t"].values.astype(int), sel["j"].values.astype(int)]).sort_values(["_o", "_s"], ascending=False)
     sel = sel.sort_values("t", kind="mergesort")   # 같은 날 안은 위 순서 그대로(상한이 있으면 앞에서부터 산다)
     return _nonoverlap(sel)
@@ -1312,7 +1312,7 @@ BASE_DRAWS = 30   # [V33.613] 공정한 '아무거나' — 후보마다 뜬 매�
 
 
 CAND_RANK = None   # [실험] t×j OMNI-Q 그날 백분위(하루 늦춤) — run() 의 후보 고르기가 설정마다 채운다
-RANK_MODE = os.environ.get("PB_RANK", "score")
+RANK_MODE = os.environ.get("PB_RANK", "omq")   # [V33.682] 상한이 찰 때 같은 날 순서 = OMNI-Q 순위(워커도 같은 순서로 산다) · 끄기 PB_RANK=score
 CAP = {"on": False, "day": 6, "open": 12}   # [V33.675] 실전 상한(주력 PB_PRIMARY_CAPS 하루 6 · 동시 min(12, 시장 상한)) — validate(일봉)가 켠다
 
 

@@ -331,7 +331,9 @@ chk(W.pbRoutePick({ ...st, daily: { ...st.daily, table: { "*": { NOPE: [9000, 0.
       "[V33.675] 시뮬도 실전 상한(하루 6 · 동시 min(12, 시장 상한)) — 고른 것·무작위 둘 다");
   chk(/def luck_level\(K\)/.test(Q) && /best_q\[0\] < luck\["level"\]/.test(Q), "[V33.675] 고르기 운 보정: 설정·규칙 K 개 최대의 기대(운 수준) 이하면 사전 등록 기본 설정");
   chk(/PB_SEL = os\.environ\.get\("PB_SEL", "m"\)/.test(Q), "[V33.675] 고르기 잣대 = 판정과 같은 월 맞춤 달 묶음 t");
-  chk(/st\["legacy"\] = l0/.test(Q), "[V33.675] 시험 매수용 종전 표본(상한 없음) 판정을 legacy 로 함께 보낸다"); }
+  chk(/st\["legacy"\] = l0/.test(Q), "[V33.675] 시험 매수용 종전 표본(상한 없음) 판정을 legacy 로 함께 보낸다");
+  chk(/RANK_MODE = os\.environ\.get\("PB_RANK", "omq"\)/.test(Q) && /_hot\.sort\(function \(a, b\) \{ return b\[1\] - a\[1\]; \}\)/.test(S),
+      "[V33.682] 상한이 찰 때 OMNI-Q 순위 높은 후보부터 — 학습기 시뮬(PB_RANK=omq)과 워커 실전(_hot 정렬)이 같은 순서"); }
 { // [V33.675] 시험 매수 = legacy(종전 표본) 기준 — 상한 표본이 작아 t 가 낮아도 시험 매수는 (나) 대로 유지
   const v = { ...val, pass: false, passMode: "matched", passTrade: false, n: 150, mean: 1.2, t: 0.7, base: 3.3, legacy: { passTrade: false, n: 3000, mean: 0.78, t: 3.0, base: 0.98, recent: { ok: true } } };
   const stU = { ...st, intra: null, mkt: "us", daily: { ...st.daily, val: v } }, cU = { ...ctx, minToClose: 20, bars5: null, symbol: "AAA" };
