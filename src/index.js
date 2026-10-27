@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.684";
+const _BUILD_VER = "V33.685";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13444,10 +13444,20 @@ function omniqLiveRevoked(g) {
   const L = g && g.g3live;
   return !!(L && _num(L.days, 0) >= OMNIQ_LIVE.revokeDays && typeof L.mx === "number" && L.mx < 0);
 }
+/* [V33.685] ★어떤 국면에서도★ — ③ 은 전체 규칙에 더해 ① 어느 국면도 확실히 지지 않고(거래 ≥ regMinN 인 국면 t > −2)
+   ② 오늘 국면(regNow)의 맞춤 초과 > 0(그 국면 거래 ≥ regMinN 일 때)이어야 한다. 학습기가 회차마다 오늘 국면을 다시 싣는다. */
+function omniqRegOk(g3) {
+  const by = Array.isArray(g3.byReg) ? g3.byReg : null;
+  if (!by) return false;   // 국면표 없는 모의 판정은 믿지 않는다
+  const minN = _num(g3.regMinN, 60);
+  if (by.some(function (b) { return _num(b.n, 0) >= minN && _num(b.t, 0) <= -2; })) return false;
+  const now = by.find(function (b) { return b.reg === g3.regNow; });
+  return !(now && _num(now.n, 0) >= minN && !(_num(now.mean, 0) > 0));
+}
 function omniqSimOk(g3) {
   if (!g3 || g3.kind !== "sim") return false;
   const e = g3.early || {};
-  return g3.ok === true && _num(e.mN, 0) >= _num(g3.needMonths, 24) && _num(e.mx, 0) > 0 && _num(e.mT, 0) >= _num(g3.needT, 2) && _num(g3.lateMx, 0) > 0;
+  return g3.ok === true && _num(e.mN, 0) >= _num(g3.needMonths, 24) && _num(e.mx, 0) > 0 && _num(e.mT, 0) >= _num(g3.needT, 2) && _num(g3.lateMx, 0) > 0 && omniqRegOk(g3);
 }
 function omniqSpeakOf(g) {
   if (!(g && g.g1 && g.g1.ok === true && g.g2 && g.g2.ok === true && g.g3)) return false;
@@ -13484,7 +13494,9 @@ function _omqSimView(g3) {
   return { kind: "sim", ok: omniqSimOk(g3), n: _num(g3.n, 0), h: _num(g3.h, null), mx: r4(g3.mx), net: r4(g3.net), win: r4(g3.win),
            early: { mN: _num(e.mN, 0), mx: r4(e.mx), mT: r4(e.mT), mWin: _num(e.mWin, null) },
            lateMx: r4(g3.lateMx), lateN: _num(g3.lateN, 0), from: _num(g3.from, null), cut: _num(g3.cut, null), to: _num(g3.to, null),
-           needMonths: _num(g3.needMonths, 24), needT: _num(g3.needT, 2) };
+           needMonths: _num(g3.needMonths, 24), needT: _num(g3.needT, 2),
+           byReg: Array.isArray(g3.byReg) ? g3.byReg.slice(0, 5).map(function (b) { return { reg: String(b.reg), ko: String(b.ko || b.reg), n: _num(b.n, 0), mean: r4(b.mean), t: r4(b.t) }; }) : null,
+           regNow: g3.regNow || null, regMinN: _num(g3.regMinN, 60), regOk: Array.isArray(g3.byReg) ? omniqRegOk(g3) : false };
 }
 function _omqGateView(g) {
   if (!g || typeof g !== "object") return null;

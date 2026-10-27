@@ -226,6 +226,37 @@ SIM_LATE = 0.2
 SIM_MONTH_MIN = 3
 LIVE_REVOKE_DAYS = 10
 N_BUCKET = 15
+# [V33.685] ★어떤 국면에서도★(사용자 10/27) — 국면 = 매매법 AI 와 같은 5종(폭등·상승·보합·하락·폭락 · 동일가중 지수 200/50일선 + 급변).
+#   사전 등록: ① 어느 국면도 '확실히 지지 않는다'(거래 ≥ REG_MIN_N 인 국면의 맞춤 초과 t > −2)
+#             ② ★오늘 국면★ 의 맞춤 초과 > 0(그 국면 거래 ≥ REG_MIN_N 일 때 · 적으면 전체 판정에 맡김) — 회차마다 오늘 국면을 다시 본다
+REG_MIN_N = 60
+REG_KO = {"SURGE": "폭등", "BULL": "상승", "NEUTRAL": "보합", "BEAR": "하락", "CRASH": "폭락"}
+
+
+def market_regime(C):
+    """매매법 AI(playbook_sim._regime)와 같은 정의 → 날짜별 국면 문자열 배열."""
+    r = C.pct_change(fill_method=None).mean(axis=1).fillna(0)
+    idx = (1 + r).cumprod()
+    m200, m50 = idx.rolling(200, min_periods=120).mean(), idx.rolling(50, min_periods=40).mean()
+    up = m50 > m50.shift(10)
+    reg = np.where((idx > m200) & up, "BULL", np.where((idx < m200) & ~up, "BEAR", "NEUTRAL"))
+    r5 = (1 + r).rolling(5).apply(np.prod, raw=True) - 1
+    crash = ((r <= -0.025) | (r5 <= -0.06)).astype(float).rolling(3, min_periods=1).max() > 0
+    surge = ((r >= 0.025) | (r5 >= 0.06)).astype(float).rolling(3, min_periods=1).max() > 0
+    return np.where(crash.values, "CRASH", np.where(surge.values, "SURGE", reg))
+
+
+def regime_now(g3, reg_now):
+    """오늘 국면으로 ③ 의 '오늘 국면' 판정을 다시 매긴다(평일 채점만 회차도). g3 는 sim_gate 결과."""
+    if not g3 or g3.get("kind") != "sim":
+        return g3
+    g3 = dict(g3)
+    by = {b["reg"]: b for b in (g3.get("byReg") or [])}
+    b = by.get(reg_now)
+    g3["regNow"] = reg_now
+    g3["nowOk"] = bool(b is None or b["n"] < REG_MIN_N or (b.get("mean") or 0) > 0)
+    g3["ok"] = bool(g3.get("allOk") and g3.get("regOk") and g3["nowOk"])
+    return g3
 # 전환 스위치 — "sim": ③ = 모의 시뮬레이션(위) · 실시간 장부 = 회수 장치 / "live": 종전 ③(실시간 30일) · 모의 결과는 g3sim 으로 기록만
 G3_MODE = os.environ.get("OMNIQ_G3", "live")
 
@@ -262,7 +293,7 @@ def _month_stats(xs, mo):
             "mWin": int((a > 0).sum())}
 
 
-def sim_gate(scores, tdays, fwd, bk, dates, mk, h, cost):
+def sim_gate(scores, tdays, fwd, bk, dates, mk, h, cost, reg=None):
     """③ 모의 시뮬레이션 · 맞춤 기준(위 규칙) → 판정 dict. scores: 표본 밖 점수(날짜×종목) · fwd: 다음 날 종가 진입 H일 수익."""
     busy, opn, rows = {}, [], []
     for d in sorted(set(int(x) for x in tdays)):
@@ -302,8 +333,21 @@ def sim_gate(scores, tdays, fwd, bk, dates, mk, h, cost):
     out.update({"mx": _month_stats(arr[:, 2], mo).get("mx"), "net": round(float(arr[:, 1].mean()), 5), "win": round(float((arr[:, 2] > 0).mean()), 4),
                 "early": es, "lateMx": late_mx, "lateN": int(late.sum()), "lateMonths": ls.get("mN"), "from": int(months[0]), "cut": int(cut),
                 "to": int(months[-1])})
-    out["ok"] = bool((es.get("mN") or 0) >= SIM_MIN_MONTHS and (es.get("mx") or 0) > 0 and (es.get("mT") or 0) >= SIM_T and (late_mx or 0) > 0)
-    return out
+    out["allOk"] = bool((es.get("mN") or 0) >= SIM_MIN_MONTHS and (es.get("mx") or 0) > 0 and (es.get("mT") or 0) >= SIM_T and (late_mx or 0) > 0)
+    by = []
+    if reg is not None:
+        rg = np.array([reg[int(d)] for d in arr[:, 0]])
+        for r_ in ("SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH"):
+            x = arr[rg == r_, 2]
+            if not len(x):
+                continue
+            sd = float(x.std(ddof=1)) if len(x) > 2 else 0.0
+            by.append({"reg": r_, "ko": REG_KO[r_], "n": int(len(x)), "mean": round(float(x.mean()), 5),
+                       "t": round(float(x.mean() / (sd / math.sqrt(len(x)))), 2) if sd > 0 else 0.0, "win": round(float((x > 0).mean()), 3)})
+    out["byReg"] = by
+    out["regMinN"] = REG_MIN_N
+    out["regOk"] = bool(not any(b["n"] >= REG_MIN_N and b["t"] <= -2 for b in by))
+    return regime_now(dict(out, ok=False), str(reg[-1]) if reg is not None and len(reg) else None)
 
 
 def live_matched(picks, C, fwd, bk, y_rank):
@@ -894,6 +938,11 @@ def _score_only(mk, cached, C, X, y, req, BASE, HDR, log):
         g3_20 = _ledger(req, BASE, HDR, mk, C, f20.values, bk, y20, H20, log)
         gate = dict(cached.get("gate") or {})
         gate20 = dict(cached.get("gate20") or {})
+        reg_today = str(market_regime(C)[-1])
+        for gg_ in (gate, gate20):   # [V33.685] 오늘 국면으로 ③ 다시(측정 단계면 g3sim)
+            for key in ("g3", "g3sim"):
+                if (gg_.get(key) or {}).get("kind") == "sim":
+                    gg_[key] = regime_now(gg_[key], reg_today)
         if (gate.get("g3") or {}).get("kind") == "sim":
             gate["g3live"] = g3
             gate["speak"] = speak_of(gate)
@@ -1166,8 +1215,9 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             log("      ⚠️ [OMNI-Q %s] 복합 머리 채점 실패: %r — 5일 머리만 올린다" % (mk, e))
         # [V33.684] ③ 모의 시뮬레이션 · 맞춤 기준(표본 밖 점수 · 실전 상한) + 실시간 장부(같은 맞춤 기준 · 회수 장치)
         bk = risk_buckets(C)
-        g3 = sim_gate(scores, test_all, fwdv, bk, list(C.index), mk, H, COST_RT[mk])
-        g3_20 = sim_gate(s20, t20, f20.values, bk, list(C.index), mk, H20, COST_RT[mk])
+        regs = market_regime(C)
+        g3 = sim_gate(scores, test_all, fwdv, bk, list(C.index), mk, H, COST_RT[mk], reg=regs)
+        g3_20 = sim_gate(s20, t20, f20.values, bk, list(C.index), mk, H20, COST_RT[mk], reg=regs)
         live = _ledger(req, BASE, HDR, mk, C, fwdv, bk, y, H, log)
         live20 = _ledger(req, BASE, HDR, mk, C, f20.values, bk, y20, H20, log)
         old3, old3_20 = _ledger_old(req, BASE, HDR, mk, C, y, H, log), _ledger_old(req, BASE, HDR, mk, C, y20, H20, log)
@@ -1176,6 +1226,9 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             log("      [OMNI-Q %s · %s] ③ 모의 시뮬 거래 %d · 맞춤 초과 %s(앞 %s달 t %s · 이긴 달 %s) · 뒤 20%% 초과 %s(%s건) · 순수익 %s → %s · 실시간 장부 %d일 초과 %s%s" % (
                 mk, tg, gg.get("n", 0), gg.get("mx"), e_.get("mN"), e_.get("mT"), e_.get("mWin"), gg.get("lateMx"), gg.get("lateN"), gg.get("net"),
                 "통과" if gg["ok"] else "미달", lv["days"], lv["mx"], " → 회수" if lv["revoke"] else ""))
+            log("        국면별 맞춤 초과 %s · 확실히 지는 국면 없음 %s · 오늘 국면 %s → %s" % (
+                " · ".join("%s n%d %+.3f%%(t %s)" % (b["ko"], b["n"], b["mean"] * 100, b["t"]) for b in gg.get("byReg") or []),
+                "예" if gg.get("regOk") else "아니오", REG_KO.get(gg.get("regNow"), gg.get("regNow")), "통과" if gg.get("nowOk") else "미달"))
         speak = speak_of({"g1": {"ok": g1}, "g2": {"ok": g2}, "g3": g3, "g3live": live}) if G3_MODE == "sim" else bool(g1 and g2 and old3["ok"])
         top20 = []
         r20 = extra.get("r20") or {}

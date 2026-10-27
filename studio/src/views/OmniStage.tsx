@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { createOmniGL, type OmniView } from "../gl/omniGL";
 import type { NetScene } from "../gl/netScenes";
 import { getJSON, cached } from "../data";
-import { NodeRoles, nodeRole, nodeTitle } from "./NodeRoles";
+import { NodeRoles, nodeRole, nodeTitle, type NodeExtra } from "./NodeRoles";
 
 /* Inline: a picture that turns by itself. On phones it never takes a touch (the page scrolls
    through it). "크게 보기" opens a full-screen explorer where one finger turns and two pinch. */
@@ -21,8 +21,8 @@ export function OmniStage({ d }: { d: any }) {
   return <NetStage sc={sc} title="OMNI 3D" lines={[(I.params || 0).toLocaleString("ko-KR") + " 가중치 · " + (I.splits || 0).toLocaleString("ko-KR") + " 분기", I.full ? "전부 한 줄씩" : "대표 연결만(구조 응답 대기)"]} />;
 }
 
-export function ModelNet({ sc, name }: { sc: NetScene; name: string }) {
-  return <NetStage sc={sc} title={name} lines={[sc.info.head, "선 " + sc.info.lines.toLocaleString("ko-KR") + "개"]} note={sc.info.note} />;
+export function ModelNet({ sc, name, extra }: { sc: NetScene; name: string; extra?: NodeExtra }) {
+  return <NetStage sc={sc} title={name} lines={[sc.info.head, "선 " + sc.info.lines.toLocaleString("ko-KR") + "개"]} note={sc.info.note} extra={extra} />;
 }
 
 /* The full-screen view lives in a body-level layer: inside the page it was trapped under the site's own
@@ -33,7 +33,7 @@ function layer() {
   return el;
 }
 
-function NetStage({ sc, title, lines, note }: { sc: any; title: string; lines: string[]; note?: string }) {
+function NetStage({ sc, title, lines, note, extra }: { sc: any; title: string; lines: string[]; note?: string; extra?: NodeExtra }) {
   const [full, setFull] = useState(false), [sel, setSel] = useState(-1), [touch, setTouch] = useState(false), [spin, setSpin] = useState(true);
   const api = useRef<OmniView | null>(null);
   const coarse = typeof window !== "undefined" && !!window.matchMedia && matchMedia("(pointer:coarse)").matches;
@@ -48,11 +48,16 @@ function NetStage({ sc, title, lines, note }: { sc: any; title: string; lines: s
         <div className="pointer-events-none absolute left-3 right-24 top-3 text-[11px] leading-tight text-[#e6cfe0]/70">
           {lines.map((t, i) => <div key={i} className={i ? "" : "bs-num"}>{t}</div>)}
         </div>
-        {touch && <div className="pointer-events-none absolute bottom-3 left-3 right-[104px] truncate rounded-sm bg-black/50 px-2 py-1 text-[10.5px] text-[#e6cfe0]/85">돌리기 · 두 손가락 확대 · 눌러서 고르기</div>}
+        {touch ? <div className="pointer-events-none absolute bottom-3 left-3 right-[104px] truncate rounded-sm bg-black/50 px-2 py-1 text-[10.5px] text-[#e6cfe0]/85">돌리기 · 두 손가락 확대 · 눌러서 고르기</div>
+          : <div aria-hidden className="pointer-events-none absolute bottom-3 left-3 right-[104px] flex gap-3 truncate text-[10.5px] text-[#e6cfe0]/60">
+              <span className="flex items-center gap-1.5"><i className="block h-1.5 w-1.5 rounded-full bg-[#bedeff]" />앞면</span>
+              <span className="flex items-center gap-1.5"><i className="block h-1.5 w-1.5 rounded-full bg-[#a1cfff]/35" />유리 뒤</span>
+              <span className="flex items-center gap-1.5"><i className="block h-[1.5px] w-2.5 bg-[#ffcfb5]" />고른 노드의 선</span>
+            </div>}
         <button onClick={() => setFull(true)} className="absolute bottom-3 right-3 rounded-sm bg-[#f4ecff] px-3 py-1.5 text-[12px] font-semibold text-[#1a0b24] shadow-[0_6px_20px_rgba(0,0,0,.35)]">크게 보기</button>
       </div>
       <div className="bs-rail mt-2 flex gap-1.5 overflow-x-auto">
-        {coarse ? <C on={touch} onClick={() => setTouch(!touch)}>{touch ? "돌리기 끝(스크롤로)" : "손가락으로 돌리기"}</C> : <span className="self-center pr-1 text-[11px] text-ink-3">끌어서 돌리기 · Ctrl+휠 확대 · 눌러서 고르기</span>}
+        {coarse ? <C on={touch} onClick={() => setTouch(!touch)}>{touch ? "돌리기 끝(스크롤로)" : "손가락으로 돌리기"}</C> : <span className="self-center pr-1 text-[11px] text-ink-3">끌어서 돌리기 · Ctrl+휠 확대 · 눌러서 고르기(정면으로 돈다)</span>}
         <C on={spin} onClick={() => { setSpin(!spin); api.current?.setSpin(!spin); }}>자동회전</C>
         <C onClick={() => api.current?.zoomBy(1 / 1.25)} label="축소">−</C>
         <C onClick={() => api.current?.zoomBy(1.25)} label="확대">+</C>
@@ -61,9 +66,9 @@ function NetStage({ sc, title, lines, note }: { sc: any; title: string; lines: s
       {note && <p className="mt-2 text-[11px] leading-snug text-ink-3">{note}</p>}
       <div className="mt-4">
         <h4 className="mb-2 text-[12px] font-semibold tracking-tight text-ink-2">노드 역할 <span className="font-normal text-ink-3">— 층을 고르고 노드를 누르면 그림에서 그 연결만 밝게</span></h4>
-        <NodeRoles sc={sc} sel={sel} onSel={setSel} />
+        <NodeRoles sc={sc} sel={sel} onSel={setSel} extra={extra} />
       </div>
-      {full && createPortal(<div id="bs-full-host"><FullView sc={sc} title={title} sel={sel} onSel={setSel} onClose={() => setFull(false)} /></div>, layer())}
+      {full && createPortal(<div id="bs-full-host"><FullView sc={sc} title={title} sel={sel} onSel={setSel} onClose={() => setFull(false)} extra={extra} /></div>, layer())}
     </div>
   );
 }
@@ -114,7 +119,7 @@ function StaticCore({ sc }: { sc: any }) {
   return <canvas ref={ref} className="absolute inset-0 h-full w-full" />;
 }
 
-function FullView({ sc, title, sel, onSel, onClose }: { sc: any; title: string; sel: number; onSel: (id: number) => void; onClose: () => void }) {
+function FullView({ sc, title, sel, onSel, onClose, extra }: { sc: any; title: string; sel: number; onSel: (id: number) => void; onClose: () => void; extra?: NodeExtra }) {
   const api = useRef<OmniView | null>(null);
   const [spin, setSpin] = useState(true), [motion, setMotion] = useState(true), [panel, setPanel] = useState(false);
   const [picked, setPicked] = useState<string>("선이 모인 자리를 누르면 그 뉴런의 역할과 연결이 나옵니다.");
@@ -134,7 +139,7 @@ function FullView({ sc, title, sel, onSel, onClose }: { sc: any; title: string; 
         <button onClick={onClose} className="rounded-sm bg-white/10 px-3 py-1.5 text-[13px]">닫기</button>
       </div>
       <div className="bs-gl-full relative min-h-0 flex-1"><GL sc={sc} interactive onPick={onPick} apiRef={api} sel={sel} /></div>
-      {panel && <div className="max-h-[42vh] overflow-y-auto border-t border-white/10 px-4 pt-3" style={{ overscrollBehavior: "contain", touchAction: "pan-y" }}><NodeRoles sc={sc} sel={sel} onSel={onSel} dark /></div>}
+      {panel && <div className="max-h-[42vh] overflow-y-auto border-t border-white/10 px-4 pt-3" style={{ overscrollBehavior: "contain", touchAction: "pan-y" }}><NodeRoles sc={sc} sel={sel} onSel={onSel} dark extra={extra} /></div>}
       <div className="px-4 pt-2" style={{ paddingBottom: "max(14px, env(safe-area-inset-bottom))" }}>
         {!panel && <p className="mb-2 line-clamp-2 min-h-[18px] text-[12px] leading-snug text-[#e6cfe0]/85">{info}</p>}
         <div className="flex flex-wrap gap-1.5">

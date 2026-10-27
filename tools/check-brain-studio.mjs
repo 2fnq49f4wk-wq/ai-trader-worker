@@ -48,7 +48,7 @@ chk(/opts\.interactive \? 2 : 1\.5/.test(GL), "화면 속 그림은 해상도 1.
 console.log("⑦ 노드 역할 · SEQ 블록");
 const NR = readFileSync(new URL("../studio/src/views/NodeRoles.tsx", import.meta.url), "utf8");
 chk(/role: Array\.from\(\{ length: n \}/.test(NS) && (NS.match(/S\.role\(/g) || []).length >= 15, "노드마다 역할 설명(입력·나무·전문가·머리·원형·채널·위원·출력)", "★노드 역할이 비었다★");
-chk(/<NodeRoles sc=\{sc\} sel=\{sel\} onSel=\{setSel\} \/>/.test(OS) && /<NodeRoles sc=\{sc\} sel=\{sel\} onSel=\{onSel\} dark \/>/.test(OS) && /노드 역할<\/B>/.test(OS), "구조 탭과 '크게 보기' 모두 노드 역할 패널(크게 보기엔 '노드 역할' 버튼)", "★노드 역할 패널이 빠졌다★");
+chk(/<NodeRoles sc=\{sc\} sel=\{sel\} onSel=\{setSel\}( extra=\{extra\})? \/>/.test(OS) && /<NodeRoles sc=\{sc\} sel=\{sel\} onSel=\{onSel\} dark( extra=\{extra\})? \/>/.test(OS) && /노드 역할<\/B>/.test(OS), "구조 탭과 '크게 보기' 모두 노드 역할 패널(크게 보기엔 '노드 역할' 버튼)", "★노드 역할 패널이 빠졌다★");
 chk(/select\(id\) \{ if \(v\.sel === id\) return;/.test(GL) && /me\.current\?\.select\(sel\)/.test(OS), "노드를 고르면 그 연결만 밝게 — 한 번만 다시 그린다", "★선택이 그림에 안 닿는다★");
 chk(/export function seqBlocks/.test(NS) && /<SeqBlocks d=\{d\} \/>/.test(DT) && /last\.forEach\(\(w, u\)/.test(NS), "SEQ 블록·헤드가 보는 봉(마지막 봉 기준 거리·집중도)", "★SEQ 블록 설명이 없다★");
 chk(!/Math\.random/.test(NR), "역할 패널은 응답 값만", "★역할 패널이 값을 지어낸다★");
@@ -56,7 +56,7 @@ console.log("⑧ 휴대폰 크게 보기 · 작은 그림 조작");
 chk(/createPortal\(/.test(OS) && /el\.id = "bs-layer"/.test(OS) && /z-index:2147483000/.test(OS), "크게 보기는 body 바로 아래 층(#bs-layer)에 — 사이트 머리·아래 탭 막대에 가리지 않는다", "★크게 보기가 페이지 안에 갇혀 사이트 막대에 가린다★");
 chk(/height: "100dvh"/.test(OS), "크게 보기 높이 = 실제 보이는 화면(100dvh · 아이폰 주소창)", "★100vh 로 아래 버튼이 화면 밖★");
 chk(/#brain-studio \.bs-gl-inline\.bs-touch canvas \{ pointer-events: auto; touch-action: none; \}/.test(CSS) && /손가락으로 돌리기/.test(OS), "작은 그림: '손가락으로 돌리기' 를 켤 때만 터치를 받는다(끄면 스크롤 그대로)", "★작은 그림 조작 스위치가 없다★");
-chk(/onPick=\{setSel\} apiRef=\{api\}/.test(OS) && /<NodeRoles sc=\{sc\} sel=\{sel\} onSel=\{setSel\} \/>/.test(OS), "작은 그림에서도 눌러서 노드 고르기 · 노드 역할 패널 기본으로 보임", "★작은 그림에서 노드 역할을 못 본다★");
+chk(/onPick=\{setSel\} apiRef=\{api\}/.test(OS) && /<NodeRoles sc=\{sc\} sel=\{sel\} onSel=\{setSel\}( extra=\{extra\})? \/>/.test(OS), "작은 그림에서도 눌러서 노드 고르기 · 노드 역할 패널 기본으로 보임", "★작은 그림에서 노드 역할을 못 본다★");
 console.log("⑤ 사이트 배선");
 const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8"), WU = readFileSync(new URL("../public/workspace-ui.js", import.meta.url), "utf8"), WL = readFileSync(new URL("../public/workspace-layout.css", import.meta.url), "utf8");
 chk(/<div id="brain-studio" class="bs-mount"><\/div>/.test(H), "index.html 에 #brain-studio 자리", "★붙일 자리가 없다★");

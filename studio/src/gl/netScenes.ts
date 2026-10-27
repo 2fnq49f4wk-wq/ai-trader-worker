@@ -6,7 +6,7 @@
  * Where the response does not say which exact node a line lands on (which tree a split sits in),
  * the line count is real and the placement is spread evenly — the caption says so. */
 
-type Lbl = { id: number; text: string; from?: number };
+type Lbl = { id: number; text: string; from?: number; soft?: boolean };
 /* a layer as the role panel shows it: desc = what the layer does · list = nodes to list (default ids) */
 export type Group = { label: string; kind: number; ids: number[]; desc?: string; list?: number[] };
 export type NetScene = {
@@ -191,6 +191,8 @@ export function omniqNet(d: any, mk: "us" | "kr" = "us", st?: any): NetScene | n
     { label: "출력", kind: 3, ids: [out], desc: "후보 선별(폭은 검증이 고름)" });
   hIds.forEach((h, k) => labels.push({ id: h, text: "✳ " + heads[k] }));
   labels.push({ id: out, text: "후보" });
+  // [V33.685] gain 상위 피처 이름표(앞면일 때만 보인다) — 바깥 구에서 무엇이 무거운지 그림에서 바로 읽게
+  if (real) [...F.keys()].filter((j) => F[j].gain! > 0).sort((a, b) => F[b].gain! - F[a].gain!).slice(0, 6).forEach((j) => labels.push({ id: inIds[j], text: F[j].name, from: out, soft: true }));
   // 뼈대(또렷한 선): 점마다 가장 센 들어오는·나가는 2줄 · 흐르는 빛: 가장 센 90줄
   const HI = new Uint8Array(LA.length), best = new Map<string, number[]>();
   const keep = (key: string, j: number, k: number) => { let a = best.get(key); if (!a) { a = []; best.set(key, a); }

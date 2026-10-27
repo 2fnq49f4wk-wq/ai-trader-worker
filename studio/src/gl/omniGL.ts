@@ -51,6 +51,7 @@ void main(){
   } else {
     a=.6; col=vec3(1.0,.81,.71);
   }
+  if(aK<8.5) a*=mix(1.0,.5,clamp(dp/260.0,0.0,1.0));   // [V33.685] 유리 뒤(먼 쪽)는 한 번 더 흐리게 — 앞뒤가 바로 읽히게
   if(uSel>-.5 && (abs(aAB.x-uSel)<.5 || abs(aAB.y-uSel)<.5)){ a=.85; col=vec3(1.0,.81,.71); }
   vC=vec4(col*a,a);
 }`;
@@ -151,10 +152,21 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
   let W = 1, H = 1, dpr = 1, raf = 0, last = 0, dead = false, visible = true, decoKey = "";
   const hz: string[] = sc.hz || [];
   const HZT: Record<string, string> = { "30m": "30분", "60m": "60분", "1d": "1일", "5d": "5일", "20d": "20일" };
-  const named: { id: number; text: string; from?: number }[] = sc.labels || (sc.groups.find((g: any) => g.kind === 3) || { ids: [] }).ids.map((id: number, k: number) => ({ id, text: "✳ " + (HZT[hz[k]] || hz[k] || "") }));
+  const named: { id: number; text: string; from?: number; soft?: boolean }[] = sc.labels || (sc.groups.find((g: any) => g.kind === 3) || { ids: [] }).ids.map((id: number, k: number) => ({ id, text: "✳ " + (HZT[hz[k]] || hz[k] || "") }));
   const heads = named.map((l) => l.id);
   const lab = named.map((l) => { const s = document.createElement("span"); s.textContent = l.text; s.style.cssText = "position:absolute;left:0;top:0;white-space:nowrap;will-change:transform;text-shadow:0 0 6px #0b0712"; labels.append(s); return s; });
 
+  const RG: any[] = sc.rings || [];
+  /* [V33.685] 노드의 지금 3D 위치 — 고리 위 노드(나무)는 P 가 0 이라 고리 각도로 계산(종전 고르기가 이들을 원점에서 찾았다) */
+  const pos = (i: number) => { const r = ring[i];
+    if (r > -.5 && RG[r]) { const R = RG[r], an = ang[i] + v.t * R.w, c = Math.cos(an) * R.R, s2 = Math.sin(an) * R.R;
+      return [R.e1[0] * c + R.e2[0] * s2, R.e1[1] * c + R.e2[1] * s2, R.e1[2] * c + R.e2[2] * s2]; }
+    return [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]; };
+  /* [V33.685] 고른 노드가 정면(관측자 쪽)으로 오게 yaw 를 돌린다 — 원점 근처(출력 · 머리 고리 안쪽)는 돌리지 않는다 */
+  let yawT: number | null = null;
+  const face = (i: number) => { if (i < 0) { yawT = null; return; } const q = pos(i);
+    if (Math.hypot(q[0], q[2]) < 40) { yawT = null; return; }
+    yawT = Math.PI - Math.atan2(q[0], q[2]); v.spin = false; last = 0; kick(); };
   const scale = () => Math.min(W, H) / 800 * v.zoom;
   const proj = (x: number, y: number, z: number) => {
     const cy = Math.cos(v.yaw), sy = Math.sin(v.yaw), cp = Math.cos(v.pitch), sp = Math.sin(v.pitch);
@@ -191,6 +203,7 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
       if (++seen > 12 && ema > (opts.interactive ? 90 : 75)) { v.spin = false; v.motion = false; if (opts.onSlow) opts.onSlow("slow"); } }
     const dt = last ? Math.min(.1, iv / 1000) : 0; last = now;
     if (v.spin) v.yaw += dt * .08;
+    if (yawT != null) { const d = Math.atan2(Math.sin(yawT - v.yaw), Math.cos(yawT - v.yaw)); if (Math.abs(d) < .004) { v.yaw = yawT; yawT = null; } else v.yaw += d * Math.min(1, dt * 6 || .12); }
     if (v.motion) v.t += dt;
     drawDeco();
     gl.viewport(0, 0, cv.width, cv.height); gl.clear(gl.COLOR_BUFFER_BIT);
@@ -206,8 +219,9 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
       gl.bindBuffer(gl.ARRAY_BUFFER, sb); gl.bufferSubData(gl.ARRAY_BUFFER, 0, sbuf); bindAttrs(sb); gl.drawArrays(gl.LINES, 0, top.length * 2);
     }
     heads.forEach((i, k) => { const q = proj(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]), f = named[k].from, o = f != null ? proj(P[f * 3], P[f * 3 + 1], P[f * 3 + 2]) : [W / 2 + v.panX, H / 2 + v.panY], dx = q[0] - o[0], dy = q[1] - o[1], l = Math.hypot(dx, dy) || 1;
-      lab[k].style.transform = `translate(${(q[0] + dx / l * 14 - 14).toFixed(1)}px,${(q[1] + dy / l * 14 - 7).toFixed(1)}px)`; });
-    if (v.spin || v.motion) kick();
+      lab[k].style.transform = `translate(${(q[0] + dx / l * 14 - 14).toFixed(1)}px,${(q[1] + dy / l * 14 - 7).toFixed(1)}px)`;
+      if (named[k].soft) lab[k].style.opacity = q[2] < 0 ? (v.sel >= 0 ? ".35" : ".62") : "0"; });   // [V33.685] 피처 이름표는 앞면일 때만
+    if (v.spin || v.motion || yawT != null) kick();
   }
   function kick() { if (scrolling) { owed = true; return; } if (!raf && !dead && visible && !document.hidden) raf = requestAnimationFrame(frame); }
 
@@ -230,8 +244,8 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
   function pick(cx: number, cy: number) {
     const r = cv.getBoundingClientRect(), x = cx - r.left, y = cy - r.top; let best = 196, hit = -1;
     const kind: Uint8Array = sc.kind;
-    for (let i = 0; i < sc.n; i++) { if (kind[i] > 4) continue; const q = proj(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]); const d = (q[0] - x) ** 2 + (q[1] - y) ** 2; if (d < best) { best = d; hit = i; } }
-    v.sel = hit; kick(); if (opts.onPick) opts.onPick(hit, sc);
+    for (let i = 0; i < sc.n; i++) { if (kind[i] > 4) continue; const p3 = pos(i), q = proj(p3[0], p3[1], p3[2]); const d = (q[0] - x) ** 2 + (q[1] - y) ** 2; if (d < best) { best = d; hit = i; } }
+    v.sel = hit; face(hit); kick(); if (opts.onPick) opts.onPick(hit, sc);
   }
 
   /* 페이지가 스크롤되는 동안 화면 속 그림은 멈춘다 — 그 사이 GPU·메인 스레드를 스크롤에 다 준다. 멈추면 200ms 뒤 이어서. */
@@ -255,6 +269,6 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
     setMotion(on) { v.motion = on; last = 0; kick(); },
     reset() { v.yaw = Y0; v.pitch = .32; v.zoom = Z0; v.panX = v.panY = 0; v.sel = -1; kick(); },
     zoomBy(f) { v.zoom = Math.max(.5, Math.min(6, v.zoom * f)); kick(); },
-    select(id) { if (v.sel === id) return; v.sel = id; kick(); },
+    select(id) { if (v.sel === id) return; v.sel = id; face(id); kick(); },
   };
 }
