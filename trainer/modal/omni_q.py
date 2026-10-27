@@ -404,10 +404,11 @@ def sim_gate(scores, tdays, fwd, bk, dates, mk, h, cost, reg=None):
             if cnt[kk] < SIM_MIN_CTRL:
                 continue
             rows.append((d, float(r[j]) - cost, float(r[j]) - float(sums[kk] / cnt[kk])))
-            busy[j] = d + h + 1
-            opn.append(d + h + 1)
+            hd = int(h[d]) if hasattr(h, "__len__") else h   # [V33.690] 날마다 보유 기간이 다를 수 있다(crashH5)
+            busy[j] = d + hd + 1
+            opn.append(d + hd + 1)
             n_day += 1
-    out = {"kind": "sim", "ok": False, "n": len(rows), "h": h, "needMonths": SIM_MIN_MONTHS, "needT": SIM_T, "late": SIM_LATE}
+    out = {"kind": "sim", "ok": False, "n": len(rows), "h": (h if not hasattr(h, "__len__") else "mix"), "needMonths": SIM_MIN_MONTHS, "needT": SIM_T, "late": SIM_LATE}
     if len(rows) < 30:
         return out
     arr = np.array(rows)
@@ -1056,9 +1057,11 @@ def _score_only(mk, cached, C, X, y, req, BASE, HDR, log):
                 if v5k:
                     sc = _pm(score_variant(v5k, p5, p20, bl)[0])
                     top = [s_ for s_, _ in sorted(sc.items(), key=lambda kv: -kv[1])[:k]]
-                if v20k == "crash5":
+                if v20k in ("crash5", "crashH5"):
                     if reg_today == "CRASH":
                         extra["r20"] = dict(sc)
+                    elif v20k == "crashH5":
+                        extra["r20"] = _pm(score_variant("neutral", p20, p5, bl)[0])
                 elif v20k:
                     extra["r20"] = _pm(score_variant(v20k, p20, p5, bl)[0])
             except Exception as e:  # noqa: BLE001
@@ -1249,8 +1252,18 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             for hk in ("5", "20"):
                 if (g3 if hk == "5" else g3_20)["ok"]:
                     continue
-                for kind in (SCORE_VARIANTS if hk == "5" else SCORE_VARIANTS + ("crash5",)):
-                    if kind == "crash5":   # [V33.689] 20일 머리 — 폭락 국면 날만 5일 머리(채택 변형 반영) 점수 · 사전 등록
+                for kind in (SCORE_VARIANTS if hk == "5" else SCORE_VARIANTS + ("crash5", "crashH5")):
+                    if kind == "crashH5":   # [V33.690] 20일 머리 — 평소 neutral(20일 보유) · 폭락 국면 날은 5일 머리 점수 + 5일 보유(국면 맞춤 보유 기간) · 사전 등록
+                        crm = np.asarray(regs) == "CRASH"
+                        cv_ = _rank_rows(score_variant("neutral", s20, scores, bk))
+                        cr = np.where(crm)[0]
+                        cv_[cr] = _rank_rows(scores[cr])
+                        fmix = np.where(crm[:, None], fwdv, f20.values)
+                        ymix = np.where(crm[:, None], y, y20)
+                        hmix = np.where(crm, H, H20)
+                        bV, fxV, fx0V, g2V, posV, needV = judge(cv_, both, ymix, fmix, "20일 · 점수 변형 crashH5", step=H20, sps=splits20)
+                        g3V = sim_gate(cv_, both, fmix, bk, list(C.index), mk, hmix, COST_RT[mk], reg=regs)
+                    elif kind == "crash5":   # [V33.689] 20일 머리 — 폭락 국면 날만 5일 머리(채택 변형 반영) 점수 · 사전 등록
                         cv_ = _rank_rows(s20)
                         cr = np.where(np.asarray(regs) == "CRASH")[0]
                         cv_[cr] = _rank_rows(scores[cr])
@@ -1405,9 +1418,15 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                     pv[okv] = (np.argsort(np.argsort(v5[okv])) + 0.5) / okv.sum()
                     sc = {s_: round(float(p_), 4) for s_, p_ in zip(syms, pv) if np.isfinite(p_)}
                     top = [s_ for s_, _ in sorted(sc.items(), key=lambda kv: -kv[1])[:k]]
-                if varsel["20"] == "crash5":   # 오늘이 폭락 국면이면 20일 머리 = 5일 머리 점수(변형 반영)
+                if varsel["20"] in ("crash5", "crashH5"):   # 오늘이 폭락 국면이면 20일 머리 = 5일 머리 점수(변형 반영) · crashH5 는 워커가 5일 보유
                     if str(regs[last]) == "CRASH":
                         extra["r20"] = dict(sc)
+                    elif varsel["20"] == "crashH5":
+                        v20 = score_variant("neutral", p20, p5, bl)[0]
+                        okv = np.isfinite(v20)
+                        pv = np.full(len(v20), np.nan)
+                        pv[okv] = (np.argsort(np.argsort(v20[okv])) + 0.5) / okv.sum()
+                        extra["r20"] = {s_: round(float(p_), 4) for s_, p_ in zip(syms, pv) if np.isfinite(p_)}
                 elif varsel["20"]:
                     v20 = score_variant(varsel["20"], p20, p5, bl)[0]
                     okv = np.isfinite(v20)

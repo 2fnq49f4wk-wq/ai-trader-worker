@@ -62,6 +62,14 @@ chk(/\(not g3\["ok"\]\) and g3M\["ok"\] and gate1\(bM\) and g2M/.test(QS) && /\(
   "맞춤 라벨 채택 = 사전 등록 규칙(지금 ③ 미달 · 후보 ③①② 통과)일 때만");
 chk(/SCORE_VARIANTS = \("blend", "neutral", "blendN"\)/.test(QS) && /if g3V\["ok"\] and gate1\(bV\) and g2V:/.test(QS) && /v5k, v20k = \(gate or \{\}\)\.get\("variant"\)/.test(QS),
   "점수 변형 후보: 사전 등록 순서 · ③①② 통과 첫 후보만 · 평일 채점도 같은 변형");
+{ // [V33.690] crashH5 — 폭락 국면 날 20일 머리 매수는 5일 보유로 연다(검증한 보유와 같게)
+  const g20 = Object.assign(GS(SIMG({ regNow: "CRASH", byReg: [{ reg: "BULL", n: 400, mean: 0.004, t: 3 }] })), { variant: "crashH5" });
+  const stC = { day: "1", trainedAt: now, scoredAt: now, speak: false, speak20: true, gate: { g1: { ok: false }, g2: { ok: false }, g3: { ok: false } }, gate20: g20, scores: { A: 0.95 }, heads: { r20: { A: 0.95 } } };
+  const pk = M.omniqRoutePick(stC, "A", now);
+  const stN = Object.assign({}, stC, { gate20: Object.assign({}, g20, { g3: Object.assign({}, g20.g3, { regNow: "BULL" }) }) });
+  const pkN = M.omniqRoutePick(stN, "A", now);
+  chk(pk && pk.h === 5 && pkN && pkN.h === 20, "crashH5: 폭락 국면 날 20일 머리 매수 = 5일 보유 · 평소 20일", JSON.stringify([pk, pkN]));
+}
 let r = M.omniqPicksAppend([], "20261007", ["A", "B"], now);
 r = M.omniqPicksAppend(r.picks, "20261007", ["X"], now + 1);
 chk(!r.added && r.picks.length === 1 && r.picks[0].top.join() === "A,B", "같은 날 장부는 덮어쓰지 않는다");

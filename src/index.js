@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.689";
+const _BUILD_VER = "V33.690";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13510,7 +13510,7 @@ function _omqGateView(g) {
       : { ok: g3.ok === true, days: _num(g3.days, 0), mu: r4(g3.mu), lb: r4(g3.lb), needDays: _num(g3.needDays, OMNIQ_PROV.finalDays) },
     g3sim: (g.g3sim && g.g3sim.kind === "sim") ? _omqSimView(g.g3sim) : null,   // 종전 방식 회차의 모의 측정(판정엔 안 씀)
     label: g.label === "matched" ? "matched" : "base",
-    variant: ["blend", "neutral", "blendN", "crash5"].indexOf(g.variant) >= 0 ? g.variant : null,   // [V33.688] 점수 변형(5·20일 혼합 · 위험 묶음 중립)   // [V33.686] 학습 라벨(맞춤 = 같은 날·같은 위험 묶음 대비 순위)
+    variant: ["blend", "neutral", "blendN", "crash5", "crashH5"].indexOf(g.variant) >= 0 ? g.variant : null,   // [V33.688] 점수 변형(5·20일 혼합 · 위험 묶음 중립)   // [V33.686] 학습 라벨(맞춤 = 같은 날·같은 위험 묶음 대비 순위)
     g3live: g.g3live ? { days: _num(g.g3live.days, 0), mx: r4(g.g3live.mx), mu: r4(g.g3live.mu), needDays: OMNIQ_LIVE.revokeDays, revoke: omniqLiveRevoked(g) } : null,
     fit: f ? { kind: f.kind || null, inMu: r4(f.inMu), outMu: r4(f.outMu), gap: r4(f.gap) } : null
   };
@@ -14224,6 +14224,8 @@ function omniqRoutePick(st, symbol, nowMs) {
   if (s5 != null && s5 >= OMNIQ_ROUTE.entryPct) { h = 5; s = s5; mode = on5; }
   else if (s20 != null && s20 >= OMNIQ_ROUTE.entryPct) { h = 20; s = s20; mode = on20; }
   if (h == null) return null;
+  /* [V33.690] 20일 머리 변형 crashH5 — 폭락 국면(학습기가 실은 오늘 국면) 날의 20일 머리 매수는 5일 보유로 검증됐다 → 5일 보유로 연다 */
+  if (h === 20 && st.gate20 && st.gate20.variant === "crashH5" && st.gate20.g3 && st.gate20.g3.regNow === "CRASH") h = 5;
   return { h: h, s: s, mode: mode, mult: mode === "speak" ? 1 : OMNIQ_ROUTE.provMult, day: st.day || null };
 }
 // 보유 판정(순수 함수) — om = 포지션 meta.omq · { mode: "drop" | "hold" | "release" | "none", why }
