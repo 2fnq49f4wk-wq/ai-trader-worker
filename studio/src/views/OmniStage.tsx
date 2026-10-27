@@ -36,14 +36,22 @@ function layer() {
 function NetStage({ sc, title, lines, note, extra }: { sc: any; title: string; lines: string[]; note?: string; extra?: NodeExtra }) {
   const [full, setFull] = useState(false), [sel, setSel] = useState(-1), [touch, setTouch] = useState(false), [spin, setSpin] = useState(true);
   const api = useRef<OmniView | null>(null);
+  /* [V33.693] 옆에 붙일지는 화면 폭이 아니라 이 칸의 폭으로 정한다 — 사이드바·AI 두뇌 칸이 있는 노트북(1280~1500px)에서도
+     노드 역할이 그림 옆에 바로 보이게(종전 xl 화면 폭 기준은 그런 화면에서 그림 한참 아래로 밀렸다) */
+  const box = useRef<HTMLDivElement>(null), [bw, setBw] = useState(0);
+  useEffect(() => { const el = box.current; if (!el) return; const ro = new ResizeObserver(() => setBw(el.clientWidth)); ro.observe(el); return () => ro.disconnect(); }, []);
+  /* 디자인 v5 비율 — 그림 880 : 신상서 472(≈ 1.86 : 1) · 신상서는 320px 아래로 줄지 않는다(아이패드 가로 774px 칸 → 그림 438 · 칸 320).
+     그림 칸이 좁으면(< 600px) 납작한 16:10 대신 정사각 — 구체가 작아지지 않게(아이패드 가로 종전 426×266). */
+  const wide = bw >= 700, panelW = wide ? Math.max(320, Math.round((bw - 16) / 2.86)) : 0, stageW = wide ? bw - 16 - panelW : bw;
+  const stageAR = stageW >= 600 ? "880 / 500" : wide ? "1 / 1" : undefined;
   const coarse = typeof window !== "undefined" && !!window.matchMedia && matchMedia("(pointer:coarse)").matches;
   useEffect(() => { setSel(-1); }, [sc]);
   const C = ({ on, children, onClick, label }: any) => <button onClick={onClick} aria-pressed={on} aria-label={label} className={"shrink-0 rounded-sm px-2.5 py-1.5 text-[12px] " + (on ? "bg-ink text-bg" : "bg-bg-3 text-ink-2")}>{children}</button>;
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_350px] xl:items-start">
+    <div ref={box} className={"grid gap-4" + (wide ? " items-start" : "")} style={wide ? { gridTemplateColumns: "minmax(0,1fr) " + panelW + "px" } : undefined}>
       <div className="min-w-0">
       <div className="relative overflow-hidden rounded-md border border-line" style={{ background: "radial-gradient(120% 70% at 50% 112%,rgba(196,40,84,.42),rgba(120,30,90,.14) 45%,transparent 70%),radial-gradient(90% 80% at 50% 42%,#20112f,#120a1f 55%,#09060f 100%)" }}>
-        <div className={"bs-gl-inline relative aspect-square max-h-[460px] w-full sm:aspect-[16/10]" + (touch ? " bs-touch" : "")}>
+        <div className={"bs-gl-inline relative w-full" + (stageAR ? "" : " aspect-square max-h-[460px] sm:aspect-[16/10]") + (touch ? " bs-touch" : "")} style={stageAR ? { aspectRatio: stageAR, maxHeight: "calc(100vh - 120px)" } : undefined}>
           {!full && <GL sc={sc} interactive={false} sel={sel} onPick={setSel} apiRef={api} spin={spin} />}
         </div>
         <div className="pointer-events-none absolute left-3 right-24 top-3 text-[11px] leading-tight text-[#e6cfe0]/70">
@@ -58,7 +66,7 @@ function NetStage({ sc, title, lines, note, extra }: { sc: any; title: string; l
         <button onClick={() => setFull(true)} className="absolute bottom-3 right-3 rounded-sm bg-[#f4ecff] px-3 py-1.5 text-[12px] font-semibold text-[#1a0b24] shadow-[0_6px_20px_rgba(0,0,0,.35)]">크게 보기</button>
       </div>
       <div className="bs-rail mt-2 flex gap-1.5 overflow-x-auto">
-        {coarse ? <C on={touch} onClick={() => setTouch(!touch)}>{touch ? "돌리기 끝(스크롤로)" : "손가락으로 돌리기"}</C> : <span className="self-center pr-1 text-[11px] text-ink-3">끌어서 돌리기 · Ctrl+휠 확대 · 눌러서 고르기(정면으로 돈다)</span>}
+        {coarse ? <C on={touch} onClick={() => setTouch(!touch)}>{touch ? "돌리기 끝(스크롤로)" : "손가락으로 돌리기"}</C> : <span className="self-center pr-1 text-[11px] text-ink-3">끌어서 어느 방향이든 360° 돌리기 · Ctrl+휠 확대 · 눌러서 고르기(정면으로 돈다)</span>}
         <C on={spin} onClick={() => { setSpin(!spin); api.current?.setSpin(!spin); }}>자동회전</C>
         <C onClick={() => api.current?.zoomBy(1 / 1.25)} label="축소">−</C>
         <C onClick={() => api.current?.zoomBy(1.25)} label="확대">+</C>
@@ -66,9 +74,9 @@ function NetStage({ sc, title, lines, note, extra }: { sc: any; title: string; l
       </div>
       {note && <p className="mt-2 text-[11px] leading-snug text-ink-3">{note}</p>}
       </div>
-      {/* [V33.692] 노드 역할 = 그림 옆 살펴보기 칸(넓은 화면은 오른쪽에 붙어 스크롤해도 따라온다 · 폰은 그림 바로 아래) */}
-      <aside className="min-w-0 xl:sticky xl:top-3 xl:max-h-[calc(100vh-24px)] xl:overflow-y-auto xl:rounded-md xl:border xl:border-line xl:p-3" aria-label="노드 역할">
-        <h4 className="mb-2.5 flex items-baseline justify-between gap-2 text-[13px] font-semibold tracking-tight text-ink">노드 역할 <span className="text-[11px] font-normal text-ink-3">층 → 노드를 고르면 그 연결만 밝게</span></h4>
+      {/* [V33.692] 노드 역할 = 그림 옆 살펴보기 칸 · [V33.693] 크게 보기 없이 늘 보이는 v3 신상서(넓으면 옆에 붙어 따라오고 · 좁으면 그림 바로 아래) */}
+      <aside className={"min-w-0" + (wide ? " sticky top-3 max-h-[calc(100vh-24px)] overflow-y-auto rounded-md" : "")} aria-label="노드 역할">
+        <h4 className="mb-2 flex items-baseline justify-between gap-2 text-[13px] font-semibold tracking-tight text-ink">노드 역할 <span className="text-[11px] font-normal text-ink-3">노드를 고르면 그 연결만 밝게 · 끌어서 360° 돌리기</span></h4>
         <NodeRoles sc={sc} sel={sel} onSel={setSel} extra={extra} />
       </aside>
       {full && createPortal(<div id="bs-full-host"><FullView sc={sc} title={title} sel={sel} onSel={setSel} onClose={() => setFull(false)} extra={extra} /></div>, layer())}

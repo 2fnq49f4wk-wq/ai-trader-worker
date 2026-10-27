@@ -16,6 +16,8 @@ module.exports = {
         warn: "var(--bs-warn)",
         bad: "var(--bs-bad)",
         shade: "var(--bs-shade)",
+        // [V33.693] 노드 신상서(두뇌관측 v3) 보라 판 — 클래스를 짧게(번들 상한)
+        dz: { 1: "#b9a6c9", 2: "#d2c1df", 3: "#f1e6f7", 4: "#d9c6e6", 5: "#f7eefb", c: "#c4a0ff", p: "#ffcfb6" },
       },
       fontFamily: {
         sans: ['-apple-system', 'BlinkMacSystemFont', '"Apple SD Gothic Neo"', '"Noto Sans KR"', '"Malgun Gothic"', 'system-ui', 'sans-serif'],

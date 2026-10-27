@@ -9,10 +9,11 @@
  * OMNI geometry comes from the site's own scene builder (NeuralObservatory.omniCore) so the values
  * drawn are exactly the real weights / tree splits — nothing here invents data.
  */
+/* [V33.685] 끝의 aK<8.5 줄 = 유리 뒤(먼 쪽)는 한 번 더 흐리게 · [V33.693] uM = 회전 3×3 행렬(각도 제한 없음) — 셰이더 문자열 안 주석은 번들에 남아 밖에 둔다 */
 const VS = `
 attribute vec3 aP; attribute float aRing; attribute float aAng; attribute float aS; attribute float aK; attribute vec2 aAB;
 uniform vec4 uR1[16]; uniform vec4 uR2[16];
-uniform float uT, uCy, uSy, uCp, uSp, uScale, uExpo, uSel, uDim, uGR, uCA, uA0, uA1, uAE;
+uniform mat3 uM; uniform float uT, uScale, uExpo, uSel, uDim, uGR, uCA, uA0, uA1, uAE;
 uniform vec2 uO; uniform vec2 uView;
 varying vec4 vC;
 vec3 dawn(float r){
@@ -32,7 +33,7 @@ void main(){
     float an=aAng+uT*b.w;
     p=a.xyz*cos(an)*a.w+b.xyz*sin(an)*a.w;
   }
-  float xr=p.x*uCy+p.z*uSy, zr=-p.x*uSy+p.z*uCy, yr=p.y*uCp-zr*uSp, dp=p.y*uSp+zr*uCp, k=900.0/(900.0+dp);
+  vec3 q=uM*p; float xr=q.x, yr=q.y, dp=q.z, k=900.0/(900.0+dp);
   vec2 s=vec2(xr*k*uScale, yr*k*uScale)+uO;
   gl_Position=vec4(s.x/uView.x*2.0-1.0, 1.0-s.y/uView.y*2.0, 0.0, 1.0);
   float df=clamp(.2+.8*(1.0-(dp+380.0)/760.0), .12, 1.0);
@@ -51,7 +52,7 @@ void main(){
   } else {
     a=.6; col=vec3(1.0,.81,.71);
   }
-  if(aK<8.5) a*=mix(1.0,.5,clamp(dp/260.0,0.0,1.0));   // [V33.685] 유리 뒤(먼 쪽)는 한 번 더 흐리게 — 앞뒤가 바로 읽히게
+  if(aK<8.5) a*=mix(1.0,.5,clamp(dp/260.0,0.0,1.0));
   if(uSel>-.5 && (abs(aAB.x-uSel)<.5 || abs(aAB.y-uSel)<.5)){ a=.85; col=vec3(1.0,.81,.71); }
   vC=vec4(col*a,a);
 }`;
@@ -134,11 +135,12 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
     gl.enableVertexAttribArray(at.K); gl.vertexAttribPointer(at.K, 1, gl.FLOAT, false, F, 24);
     gl.enableVertexAttribArray(at.AB); gl.vertexAttribPointer(at.AB, 2, gl.FLOAT, false, F, 28);
   };
-  const u = { CA: U("uCA"), A0: U("uA0"), A1: U("uA1"), AE: U("uAE"), R1: U("uR1"), R2: U("uR2"), T: U("uT"), Cy: U("uCy"), Sy: U("uSy"), Cp: U("uCp"), Sp: U("uSp"), Sc: U("uScale"), Ex: U("uExpo"), Sel: U("uSel"), Dim: U("uDim"), GR: U("uGR"), O: U("uO"), View: U("uView") };
+  const u = { CA: U("uCA"), A0: U("uA0"), A1: U("uA1"), AE: U("uAE"), R1: U("uR1"), R2: U("uR2"), T: U("uT"), M: U("uM"), Sc: U("uScale"), Ex: U("uExpo"), Sel: U("uSel"), Dim: U("uDim"), GR: U("uGR"), O: U("uO"), View: U("uView") };
   const r1 = new Float32Array(64), r2 = new Float32Array(64);
   (sc.rings || []).slice(0, 16).forEach((R: any, i: number) => { r1.set([R.e1[0], R.e1[1], R.e1[2], R.R], i * 4); r2.set([R.e2[0], R.e2[1], R.e2[2], R.w], i * 4); });
   gl.uniform4fv(u.R1, r1); gl.uniform4fv(u.R2, r2);
-  gl.uniform1f(u.Ex, Math.max(.3, Math.min(1, 15000 / Math.max(1, la.length))));
+  // [V33.693] 구체(sc.core) 는 선을 조금 낮춰 v5 노드 표지가 떠 보이게(선 모양·색은 그대로)
+  gl.uniform1f(u.Ex, Math.max(.3, Math.min(1, 15000 / Math.max(1, la.length))) * (sc.core ? .82 : 1));
   const al: number[] = sc.alpha || [.003, .6, 3.4];
   gl.uniform1f(u.CA, sc.colorByAttr ? 1 : 0); gl.uniform1f(u.A0, al[0]); gl.uniform1f(u.A1, al[1]); gl.uniform1f(u.AE, al[2]);
   gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE); gl.disable(gl.DEPTH_TEST); gl.clearColor(0, 0, 0, 0);
@@ -146,7 +148,18 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
   // ── view state ──
   const Y0 = typeof sc.yaw === "number" ? sc.yaw : .4;
   const Z0 = typeof sc.zoom === "number" ? sc.zoom : 1;
-  const v = { yaw: Y0, pitch: .32, zoom: Z0, panX: 0, panY: 0, sel: -1, spin: opts.spin && !soft, motion: opts.motion && !soft, t: 0 };
+  /* [V33.693] 회전은 yaw/pitch 각이 아니라 3×3 행렬로 누적한다 — 위·아래로 넘겨도 멈추지 않고 어느 방향이든 360° 돈다.
+     행 우선 M: [xr, yr(화면 아래 +), dp(먼 쪽 +)] = M·p. 처음 모습은 종전 yaw Y0 · pitch .32 와 같다. */
+  const M0 = (() => { const cy = Math.cos(Y0), sy = Math.sin(Y0), cp = Math.cos(.32), sp = Math.sin(.32); return [cy, 0, sy, sp * sy, cp, -sp * cy, -cp * sy, sp, cp * cy]; })();
+  const mm = (A: number[], B: number[]) => { const C: number[] = []; for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) C.push(A[r * 3] * B[c] + A[r * 3 + 1] * B[3 + c] + A[r * 3 + 2] * B[6 + c]); return C; };
+  const un = (a: number[]) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+  const ortho = (A: number[]) => { const a = un(A.slice(0, 3)); let b = A.slice(3, 6); const d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; b = un([b[0] - d * a[0], b[1] - d * a[1], b[2] - d * a[2]]);
+    return a.concat(b, [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]); };
+  const Ry = (a: number) => { const c = Math.cos(a), s = Math.sin(a); return [c, 0, s, 0, 1, 0, -s, 0, c]; };
+  const Rx = (a: number) => { const c = Math.cos(a), s = Math.sin(a); return [1, 0, 0, 0, c, -s, 0, s, c]; };
+  const Rk = (k: number[], a: number) => { const c = Math.cos(a), s = Math.sin(a), t = 1 - c, [x, y, z] = k;
+    return [c + t * x * x, t * x * y - s * z, t * x * z + s * y, t * x * y + s * z, c + t * y * y, t * y * z - s * x, t * x * z - s * y, t * y * z + s * x, c + t * z * z]; };
+  const v = { M: M0.slice(), zoom: Z0, panX: 0, panY: 0, sel: -1, spin: opts.spin && !soft, motion: opts.motion && !soft, t: 0 };
   if (soft && opts.onSlow) setTimeout(() => opts.onSlow && opts.onSlow("soft"), 0);
   let ema = 0, seen = 0;   // 자동 움직임 중 장면 간격(ms) — 느리면 스스로 멈춘다
   let W = 1, H = 1, dpr = 1, raf = 0, last = 0, dead = false, visible = true, decoKey = "";
@@ -155,6 +168,33 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
   const named: { id: number; text: string; from?: number; soft?: boolean }[] = sc.labels || (sc.groups.find((g: any) => g.kind === 3) || { ids: [] }).ids.map((id: number, k: number) => ({ id, text: "✳ " + (HZT[hz[k]] || hz[k] || "") }));
   const heads = named.map((l) => l.id);
   const lab = named.map((l) => { const s = document.createElement("span"); s.textContent = l.text; s.style.cssText = "position:absolute;left:0;top:0;white-space:nowrap;will-change:transform;text-shadow:0 0 6px #0b0712"; labels.append(s); return s; });
+  /* [V33.693] 디자인 v5 와 섞기(사용자 10/27) — 라이브 선 구체는 그대로 두고 v5 의 노드 표지를 위에 얹는다:
+     피처 묶음 = 속 빈 원 · 머리 = 마름모 · 나무 = 하늘색 점 · 출력 = 복숭아 핵. 유리 뒤(먼 쪽)는 흐리게 · 고른 노드는 복숭아 테.
+     구체 장면(sc.core)만 · 표지는 클릭을 받지 않는다(고르기는 종전처럼 캔버스). 오른쪽 위엔 지금 방향을 보이는 축 표지. */
+  type Mk = { id: number; el: HTMLSpanElement; sz: number; col: string; shape: number };
+  const marks: Mk[] = [];
+  let gizmo: SVGPathElement[] = [];
+  if (sc.core) {
+    const add = (id: number, shape: number, sz: number, col: string) => { const el = document.createElement("span"), ring = shape === 1 || shape === 3;
+      el.style.cssText = "position:absolute;left:0;top:0;box-sizing:border-box;width:" + sz + "px;height:" + sz + "px;border-radius:" + (shape === 3 ? "1px" : "50%") +
+        ";background:" + (ring ? "#0b0712cc;border:1.5px solid " + col : col) + ";box-shadow:0 0 " + (shape === 5 ? 14 : ring ? 8 : 6) + "px " + col;
+      labels.append(el); marks.push({ id, el, sz, col, shape }); };
+    for (const g of (sc.groups || []) as any[]) {
+      if (!g.ids) continue;
+      const out = g.kind === 3 && g.ids.length === 1 && /출력/.test(g.label || "");
+      if (g.kind === 1) g.ids.forEach((id: number) => add(id, 1, 9, "rgb(178,84,218)"));
+      else if (g.kind === 3 && !out) g.ids.forEach((id: number) => add(id, 3, 8, "rgb(244,80,132)"));
+      else if (g.kind === 4) g.ids.forEach((id: number) => add(id, 4, 5, "rgb(161,207,255)"));
+      else if (out) g.ids.forEach((id: number) => add(id, 5, 10, "rgb(255,207,181)"));
+    }
+    const NS = "http://www.w3.org/2000/svg", sv = document.createElementNS(NS, "svg");
+    sv.setAttribute("viewBox", "0 0 64 64"); sv.setAttribute("aria-hidden", "true");
+    sv.style.cssText = "position:absolute;right:10px;top:10px;width:56px;height:56px;pointer-events:none";
+    sv.innerHTML = '<circle cx="32" cy="32" r="27" fill="rgba(11,7,18,.55)" stroke="rgba(196,160,255,.25)"/>';
+    gizmo = ["rgb(255,104,146)", "rgb(255,206,182)", "rgb(161,207,255)"].map((c) => { const pth = document.createElementNS(NS, "path"); pth.setAttribute("stroke", c); pth.setAttribute("stroke-width", "2"); pth.setAttribute("stroke-linecap", "round"); sv.append(pth); return pth; });
+    const dot = document.createElementNS(NS, "circle"); dot.setAttribute("cx", "32"); dot.setAttribute("cy", "32"); dot.setAttribute("r", "2.5"); dot.setAttribute("fill", "#ffcfb6"); sv.append(dot);
+    labels.append(sv);
+  }
 
   const RG: any[] = sc.rings || [];
   /* [V33.685] 노드의 지금 3D 위치 — 고리 위 노드(나무)는 P 가 0 이라 고리 각도로 계산(종전 고르기가 이들을 원점에서 찾았다) */
@@ -162,15 +202,15 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
     if (r > -.5 && RG[r]) { const R = RG[r], an = ang[i] + v.t * R.w, c = Math.cos(an) * R.R, s2 = Math.sin(an) * R.R;
       return [R.e1[0] * c + R.e2[0] * s2, R.e1[1] * c + R.e2[1] * s2, R.e1[2] * c + R.e2[2] * s2]; }
     return [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]; };
-  /* [V33.685] 고른 노드가 정면(관측자 쪽)으로 오게 yaw 를 돌린다 — 원점 근처(출력 · 머리 고리 안쪽)는 돌리지 않는다 */
-  let yawT: number | null = null;
-  const face = (i: number) => { if (i < 0) { yawT = null; return; } const q = pos(i);
-    if (Math.hypot(q[0], q[2]) < 40) { yawT = null; return; }
-    yawT = Math.PI - Math.atan2(q[0], q[2]); v.spin = false; last = 0; kick(); };
+  /* [V33.685] 고른 노드가 정면(관측자 쪽)으로 오게 돌린다(V33.693: 위·아래 면도) — 원점 근처(출력 · 머리 고리 안쪽)는 돌리지 않는다 */
+  /* [V33.693] 어느 면(뒤·위·아래)에 있든 그 노드 방향을 관측자 쪽(dp = −1)으로 최단 회전 */
+  let faceV: number[] | null = null;
+  const face = (i: number) => { if (i < 0) { faceV = null; return; } const q = pos(i);
+    if (Math.hypot(q[0], q[1], q[2]) < 40) { faceV = null; return; }
+    faceV = q; v.spin = false; last = 0; kick(); };
   const scale = () => Math.min(W, H) / 800 * v.zoom;
   const proj = (x: number, y: number, z: number) => {
-    const cy = Math.cos(v.yaw), sy = Math.sin(v.yaw), cp = Math.cos(v.pitch), sp = Math.sin(v.pitch);
-    const xr = x * cy + z * sy, zr = -x * sy + z * cy, yr = y * cp - zr * sp, dp = y * sp + zr * cp, k = 900 / (900 + dp), s = scale();
+    const m = v.M, xr = m[0] * x + m[1] * y + m[2] * z, yr = m[3] * x + m[4] * y + m[5] * z, dp = m[6] * x + m[7] * y + m[8] * z, k = 900 / (900 + dp), s = scale();
     return [xr * k * s + W / 2 + v.panX, yr * k * s + H / 2 + v.panY, dp];
   };
   function drawDeco() {
@@ -202,12 +242,14 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
     if (iv > 0 && iv < 1000 && (v.spin || v.motion) && !ptr.size) { ema = ema ? ema * .85 + iv * .15 : iv;
       if (++seen > 12 && ema > (opts.interactive ? 90 : 75)) { v.spin = false; v.motion = false; if (opts.onSlow) opts.onSlow("slow"); } }
     const dt = last ? Math.min(.1, iv / 1000) : 0; last = now;
-    if (v.spin) v.yaw += dt * .08;
-    if (yawT != null) { const d = Math.atan2(Math.sin(yawT - v.yaw), Math.cos(yawT - v.yaw)); if (Math.abs(d) < .004) { v.yaw = yawT; yawT = null; } else v.yaw += d * Math.min(1, dt * 6 || .12); }
+    if (v.spin) v.M = ortho(mm(v.M, Ry(dt * .08)));   // 모델 자기 축으로 돈다 — 기울인 각은 그대로
+    if (faceV) { const m = v.M, q = faceV, d = un([m[0] * q[0] + m[1] * q[1] + m[2] * q[2], m[3] * q[0] + m[4] * q[1] + m[5] * q[2], m[6] * q[0] + m[7] * q[1] + m[8] * q[2]]);
+      const ang = Math.acos(Math.max(-1, Math.min(1, -d[2]))); let ax = [-d[1], d[0], 0]; if (Math.hypot(ax[0], ax[1]) < 1e-6) ax = [0, 1, 0]; ax = un(ax);
+      if (ang < .004) faceV = null; else v.M = ortho(mm(Rk(ax, ang * Math.min(1, dt * 6 || .12)), v.M)); }
     if (v.motion) v.t += dt;
     drawDeco();
     gl.viewport(0, 0, cv.width, cv.height); gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.uniform1f(u.T, v.t); gl.uniform1f(u.Cy, Math.cos(v.yaw)); gl.uniform1f(u.Sy, Math.sin(v.yaw)); gl.uniform1f(u.Cp, Math.cos(v.pitch)); gl.uniform1f(u.Sp, Math.sin(v.pitch));
+    gl.uniform1f(u.T, v.t); { const m = v.M; gl.uniformMatrix3fv(u.M, false, [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]]); }
     const s = scale(); gl.uniform1f(u.Sc, s); gl.uniform2f(u.O, W / 2 + v.panX, H / 2 + v.panY); gl.uniform2f(u.View, W, H);
     gl.uniform1f(u.GR, (sc.shells ? sc.shells[0] : 300) * 1.42 * s); gl.uniform1f(u.Sel, v.sel); gl.uniform1f(u.Dim, v.sel >= 0 ? .35 : 1);
     bindAttrs(vb); gl.drawArrays(gl.LINES, 0, nV);
@@ -221,7 +263,12 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
     heads.forEach((i, k) => { const q = proj(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]), f = named[k].from, o = f != null ? proj(P[f * 3], P[f * 3 + 1], P[f * 3 + 2]) : [W / 2 + v.panX, H / 2 + v.panY], dx = q[0] - o[0], dy = q[1] - o[1], l = Math.hypot(dx, dy) || 1;
       lab[k].style.transform = `translate(${(q[0] + dx / l * 14 - 14).toFixed(1)}px,${(q[1] + dy / l * 14 - 7).toFixed(1)}px)`;
       if (named[k].soft) lab[k].style.opacity = q[2] < 0 ? (v.sel >= 0 ? ".35" : ".62") : "0"; });   // [V33.685] 피처 이름표는 앞면일 때만
-    if (v.spin || v.motion || yawT != null) kick();
+    for (const m of marks) { const p3 = pos(m.id), q = proj(p3[0], p3[1], p3[2]), on = m.id === v.sel, front = q[2] < 0, sz = m.sz + (on ? 3 : 0);
+      m.el.style.transform = "translate(" + (q[0] - sz / 2).toFixed(1) + "px," + (q[1] - sz / 2).toFixed(1) + "px)" + (m.shape === 3 ? " rotate(45deg)" : "");
+      m.el.style.opacity = on ? "1" : v.sel >= 0 ? (front ? ".55" : ".22") : (front ? "1" : ".38");
+      if (on !== ((m.el as any).__on || false)) { (m.el as any).__on = on; m.el.style.width = m.el.style.height = sz + "px"; m.el.style.borderColor = on ? "#ffcfb6" : m.col; m.el.style.outline = on ? "3px solid rgba(255,207,182,.3)" : "none"; } }
+    if (gizmo.length) { const M = v.M; gizmo.forEach((pth, i) => { pth.setAttribute("d", "M32 32L" + (32 + M[i] * 22).toFixed(1) + " " + (32 + M[3 + i] * 22).toFixed(1)); pth.setAttribute("stroke-opacity", M[6 + i] <= 0 ? "1" : ".35"); }); }
+    if (v.spin || v.motion || faceV) kick();
   }
   function kick() { if (scrolling) { owed = true; return; } if (!raf && !dead && visible && !document.hidden) raf = requestAnimationFrame(frame); }
 
@@ -234,7 +281,7 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
     cv.addEventListener("pointermove", (e) => { const p0 = ptr.get(e.pointerId); if (!p0) return;
       const dx = e.clientX - p0.x, dy = e.clientY - p0.y, other = [...ptr.entries()].find(([k]) => k !== e.pointerId)?.[1];
       if (other) { const b0 = Math.hypot(p0.x - other.x, p0.y - other.y), b1 = Math.hypot(e.clientX - other.x, e.clientY - other.y); if (b0 > 4) v.zoom = Math.max(.5, Math.min(6, v.zoom * b1 / b0)); }
-      else { v.yaw -= dx * .006; v.pitch = Math.max(-1.3, Math.min(1.3, v.pitch + dy * .006)); }
+      else { v.M = ortho(mm(Rx(dy * .006), mm(Ry(-dx * .006), v.M))); faceV = null; }   // [V33.693] 화면 축 기준 — 상하 제한 없음
       if (Math.abs(dx) + Math.abs(dy) > 2) { moved = true; v.spin = false; }
       ptr.set(e.pointerId, { x: e.clientX, y: e.clientY }); kick(); });
     const up = (e: PointerEvent) => { ptr.delete(e.pointerId); if (moved || e.type === "pointercancel") return; pick(e.clientX, e.clientY); };
@@ -267,7 +314,7 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
       cv.width = cv.height = 0; deco.width = deco.height = 0; wrap.remove(); },
     setSpin(on) { v.spin = on; last = 0; kick(); },
     setMotion(on) { v.motion = on; last = 0; kick(); },
-    reset() { v.yaw = Y0; v.pitch = .32; v.zoom = Z0; v.panX = v.panY = 0; v.sel = -1; kick(); },
+    reset() { v.M = M0.slice(); faceV = null; v.zoom = Z0; v.panX = v.panY = 0; v.sel = -1; kick(); },
     zoomBy(f) { v.zoom = Math.max(.5, Math.min(6, v.zoom * f)); kick(); },
     select(id) { if (v.sel === id) return; v.sel = id; face(id); kick(); },
   };
