@@ -34,6 +34,8 @@
     if (window.PlaybookObs) { window.PlaybookObs.mount(el); return; }
     if (pbState) return;
     pbState = 1;
+    /* [V33.691] 스크립트를 받는 동안 자료도 같이 받는다(종전: 스크립트 → 그다음 /api/playbook 직렬 · 폰 실측 01 화면 3.1초) — 한 요청을 모두가 나눠 쓴다 */
+    try { if (!window.__pbFetchP && window.fetch) { window.__pbFetchP = fetch('/api/playbook').then(function (r) { return r.json(); }); window.__pbFetchAt = Date.now(); window.__pbFetchP['catch'](function () { window.__pbFetchP = null; }); } } catch (e) {}
     var meta = document.querySelector('meta[name="lux-build"]');
     var sc = document.createElement('script');
     sc.src = '/playbook-observatory.js?v=' + encodeURIComponent(meta ? meta.content : '');

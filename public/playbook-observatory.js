@@ -260,10 +260,17 @@
     var t = document.getElementById('nnvHeadcopy');
     if (t && on) t.textContent = '확률 높은 종목(OMNI-Q 상위)을 먼저 뽑고, 그 종목에서 지금 뜬 매매법 중 닮은 과거 성적이 가장 좋은 것으로 삽니다.';
   }
+  /* [V33.691] ★빨리 보이게★ — ① 지난번 자료(localStorage)로 바로 그리고 ② 진행 중인 같은 요청(window.__pbFetchP · 10초 안)이 있으면 그것을 나눠 쓴다
+     (종전: 01 화면 위 요약칸과 이 패널이 /api/playbook 을 동시에 두 번 받았다). 30초 주기 갱신은 새 요청. */
+  var LSK = 'pbObs:last';
   function load() {
     if (busy || !root) return;
     busy = true;
-    fetch('/api/playbook', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) { data = j || {}; window.__pbState = data; primaryMode(data); render(); })
+    if (!data) { try { var c = JSON.parse(localStorage.getItem(LSK) || 'null'); if (c && c.markets) { data = c; window.__pbState = window.__pbState || c; primaryMode(c); render(); } } catch (e) {} }
+    var fresh = window.__pbFetchP && (Date.now() - (window.__pbFetchAt || 0)) < 10000;
+    var pr = fresh ? window.__pbFetchP : fetch('/api/playbook', { cache: 'no-store' }).then(function (r) { return r.json(); });
+    if (!fresh) { window.__pbFetchP = pr; window.__pbFetchAt = Date.now(); }
+    pr.then(function (j) { data = j || {}; window.__pbState = data; primaryMode(data); render(); try { var t = JSON.stringify(j); if (t.length < 300000) localStorage.setItem(LSK, t); } catch (e) {} })
       .catch(function () { if (root && !data) root.innerHTML = '<section class="k-panel"><div class="k-empty">매매법 AI 상태를 불러오지 못했습니다. 잠시 뒤 다시 시도합니다.</div></section>'; })
       .then(function () { busy = false; });
   }

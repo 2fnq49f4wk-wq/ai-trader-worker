@@ -18,6 +18,9 @@ export default function App() {
   /* [V33.614] 매매법 AI 가 주력(한 시장 이상)이면 위원회(AI_PRIMARY) 모델들은 퇴역 — 목록에서 걷어내고 매매법 AI 만 남긴다 */
   const [pb, setPb] = useState<any>(() => cached(nnPath("playbook")));
   useEffect(() => { getJSON(nnPath("playbook")).then(setPb).catch(() => { /* */ }); }, []);
+  /* [V33.691] 목록의 OMNI-Q 상태칸 — 종전엔 OMNI-Q 를 열기 전까지 자료가 없어 '대기' 로 보였다(실제 4머리 발언). 10KB · 서버 캐시 */
+  const [, setOqTick] = useState(0);
+  useEffect(() => { getJSON(nnPath("omniq")).then(() => setOqTick((x) => x + 1)).catch(() => { /* */ }); }, []);
   const retired = pbState(pb).label === "주력";
   useEffect(() => { if (retired && model !== "playbook" && model !== "omniq") setModel("playbook"); }, [retired]);
   const load = (m: ModelKey, fresh = false) => {
