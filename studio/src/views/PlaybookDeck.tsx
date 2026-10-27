@@ -120,7 +120,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, fontFamily: MONO, fontSize: 12 }}>
           {[["기준일", day], ["국면", R.regime || "—"], ["표", ago(R.ts)]].map(([k, v]) => <span key={k} style={{ padding: "7px 10px", border: "1px solid " + LINE, borderRadius: 6, color: MUTE }}>{k} <b style={{ color: INK, fontWeight: 500 }}>{v}</b></span>)}
-          <span style={{ padding: "7px 10px", borderRadius: 6, border: "1px solid " + (R.panic ? NEG : LINE), color: R.panic ? NEG : MUTE }}>{R.panic ? "공황 · 추세 쉼" : "공황 아님"}</span>
+          <span title={R.panic ? "공황 = 시장(등가중)이 하루 −2.5%↓ 또는 5일 −6%↓ 폭락 뒤 3거래일, 또는 60일 하락 + 20일 변동성 상위 20%. 폭락 직후 반등일엔 추세·모멘텀이 반대로 움직인다 — 한국 10년: 공황 중 시장 +2%↑ 반등일에 추세 매매법 평균 −0.91%(n 18,837 · 평시 +0.10%). 평균회귀·반등(보조)은 계속." : undefined} style={{ padding: "7px 10px", borderRadius: 6, border: "1px solid " + (R.panic ? NEG : LINE), color: R.panic ? NEG : MUTE }}>{R.panic ? "공황 · 추세 쉼" : "공황 아님"}</span>
           {R.brake && R.brake.on && <span style={{ padding: "7px 10px", borderRadius: 6, border: "1px solid " + NEG, color: NEG }}>실전 손실 제동</span>}
         </div>
       </div>

@@ -182,7 +182,7 @@
       '<div><span class="k-lab">CANDIDATES</span><dd>' + ((lv && lv.n) || 0) + '</dd><small>OMNI-Q 상위 ' + candPct(j, mk) + '% 평가</small></div>' +
       '<div><span class="k-lab">FIRED</span><dd>' + fired + '</dd><small>지금 매매법 신호 뜸</small></div>' +
       '<div><span class="k-lab">CHOSEN</span><dd>' + chosen + (act ? '<small class="pos"> · 매수 ' + act + '</small>' : '') + '</dd><small>고른 매매법 있음</small></div>' +
-      '<div><span class="k-lab">SCAN AGE</span><dd>' + esc(lv ? ago(lv.ts).replace(' 전', '') : '—') + '</dd><small>국면 ' + esc((lv && lv.regime) || (r && r.regime) || '—') + (r && r.panic ? ' · 공황 — 1순위 추세·모멘텀 쉼(보조는 계속)' : '') + '</small></div></section>';
+      '<div><span class="k-lab">SCAN AGE</span><dd>' + esc(lv ? ago(lv.ts).replace(' 전', '') : '—') + '</dd><small>국면 ' + esc((lv && lv.regime) || (r && r.regime) || '—') + (r && r.panic ? ' · 공황 — 1순위 추세·모멘텀 쉼(보조는 계속) · 폭락 뒤 3거래일·60일 하락+고변동 — 폭락 직후 반등일엔 추세 매매법이 반대로 움직임(한국 10년 평균 −0.91% · 평시 +0.10%)' : '') + '</small></div></section>';
   }
 
   function strip(j, mk) {
