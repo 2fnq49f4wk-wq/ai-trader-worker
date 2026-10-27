@@ -275,6 +275,49 @@ def matched_rank(fwd, bk):
     return out
 
 
+# [V33.688] ★점수 변형 후보(재학습 없음)★ — 표본 밖 점수 행렬을 그대로 바꿔 ③①② 를 다시 잰다. ★사전 등록★: 그 머리가 아직 ③ 미달일 때만,
+#   정해진 순서(blend → neutral → blendN)로 재서 ③①② 모두 통과하는 첫 후보를 채택. 실전 점수도 같은 변형을 최종 모델 출력에 건다.
+#   blend  = 5일·20일 머리 그날 순위의 평균(매매법시뮬에서 한국 'avg 머리' 가 검증 상위였다)
+#   neutral = 점수 − 같은 날·같은 위험 묶음 평균 점수(묶음 안에서 고르기 — ③ 잣대와 같은 축)
+#   blendN = blend 뒤 neutral
+SCORE_VARIANTS = ("blend", "neutral", "blendN")
+
+
+def _rank_rows(a):
+    out = np.full(a.shape, np.nan, dtype=np.float32)
+    for d in range(a.shape[0]):
+        m = np.isfinite(a[d])
+        if m.sum() >= 2:
+            o = np.argsort(np.argsort(a[d, m]))
+            out[d, np.where(m)[0]] = (o + 0.5) / m.sum()
+    return out
+
+
+def _neutral_rows(a, bk):
+    out = np.full(a.shape, np.nan, dtype=np.float32)
+    for d in range(a.shape[0]):
+        x, b = a[d], bk[d]
+        ok = np.isfinite(x) & np.isfinite(b)
+        if ok.sum() < 20:
+            continue
+        kb = b[ok].astype(int)
+        sm, ct = np.bincount(kb, weights=x[ok], minlength=N_BUCKET), np.bincount(kb, minlength=N_BUCKET)
+        out[d, np.where(ok)[0]] = x[ok] - sm[kb] / np.maximum(ct[kb], 1)
+    return out
+
+
+def score_variant(kind, a5, a20, bk):
+    """날짜×종목 점수 행렬(또는 1행) → 변형. a5·a20 은 같은 모양."""
+    if kind in ("blend", "blendN"):
+        r5, r20 = _rank_rows(a5), _rank_rows(a20)
+        a = np.where(np.isfinite(r5) & np.isfinite(r20), (r5 + r20) / 2.0, np.nan).astype(np.float32)
+    else:
+        a = a5
+    if kind in ("neutral", "blendN"):
+        a = _neutral_rows(a, bk)
+    return a
+
+
 def regime_now(g3, reg_now):
     """오늘 국면으로 ③ 의 '오늘 국면' 판정을 다시 매긴다(평일 채점만 회차도). g3 는 sim_gate 결과."""
     if not g3 or g3.get("kind") != "sim":
@@ -985,6 +1028,25 @@ def _score_only(mk, cached, C, X, y, req, BASE, HDR, log):
                 o_ = _ledger_old(req, BASE, HDR, mk, C, y_, h_, log)
                 gg_["g3"] = dict(o_, needDays=G3_MIN_DAYS)
                 gg_["speak"] = bool((gg_.get("g1") or {}).get("ok") and (gg_.get("g2") or {}).get("ok") and o_["ok"])
+        # [V33.688] 금요일 학습에서 채택한 점수 변형을 평일 채점에도 똑같이(검증한 점수와 실전 점수가 같게)
+        v5k, v20k = (gate or {}).get("variant"), (gate20 or {}).get("variant")
+        if (v5k or v20k) and extra.get("r20"):
+            try:
+                p5 = np.array([sc[s_] for s_ in syms], dtype=np.float32)[None, :]
+                p20 = np.array([extra["r20"].get(s_, np.nan) for s_ in syms], dtype=np.float32)[None, :]
+                colix = {c_: j for j, c_ in enumerate(C.columns)}
+                bl = bk[last][[colix[s_] for s_ in syms]][None, :]
+                def _pm(v):
+                    okv = np.isfinite(v); pv = np.full(len(v), np.nan)
+                    pv[okv] = (np.argsort(np.argsort(v[okv])) + 0.5) / max(1, okv.sum())
+                    return {s_: round(float(p_), 4) for s_, p_ in zip(syms, pv) if np.isfinite(p_)}
+                if v5k:
+                    sc = _pm(score_variant(v5k, p5, p20, bl)[0])
+                    top = [s_ for s_, _ in sorted(sc.items(), key=lambda kv: -kv[1])[:k]]
+                if v20k:
+                    extra["r20"] = _pm(score_variant(v20k, p20, p5, bl)[0])
+            except Exception as e:  # noqa: BLE001
+                log("      ⚠️ [OMNI-Q %s] 채점만 점수 변형 실패: %r" % (mk, e))
         top20 = []
         r20 = extra.get("r20") or {}
         if r20:
@@ -1164,6 +1226,39 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 log("      [OMNI-Q %s] 라벨 선택 — 5일 %s · 20일 %s (사전 등록: 지금 ③ 미달 · 후보 ③①② 통과일 때만 맞춤)" % (mk, labsel["5"], labsel["20"]))
             except Exception as e:  # noqa: BLE001 — 후보 실패는 지금 모델을 그대로 둔다
                 log("      ⚠️ [OMNI-Q %s] 맞춤 라벨 후보 실패: %r — 지금 라벨 유지" % (mk, e))
+        # [V33.688] 점수 변형 후보(재학습 없음 · 사전 등록 순서) — 머리마다 ③ 미달일 때만
+        varsel = {"5": None, "20": None}
+        try:
+            both = sorted(set(int(d) for d in test_all) & set(int(d) for d in t20))
+            for hk in ("5", "20"):
+                if (g3 if hk == "5" else g3_20)["ok"]:
+                    continue
+                for kind in SCORE_VARIANTS:
+                    if hk == "5":
+                        cv_ = score_variant(kind, scores, s20, bk)
+                        bV, fxV, fx0V, g2V, posV, needV = judge(cv_, both, y, fwdv, "5일 · 점수 변형 " + kind)
+                        g3V = sim_gate(cv_, both, fwdv, bk, list(C.index), mk, H, COST_RT[mk], reg=regs)
+                    else:
+                        cv_ = score_variant(kind, s20, scores, bk)
+                        bV, fxV, fx0V, g2V, posV, needV = judge(cv_, both, y20, f20.values, "20일 · 점수 변형 " + kind, step=H20, sps=splits20)
+                        g3V = sim_gate(cv_, both, f20.values, bk, list(C.index), mk, H20, COST_RT[mk], reg=regs)
+                    e_ = g3V.get("early") or {}
+                    log("      [OMNI-Q %s · %s일 · 변형 %s] ③ %s(맞춤 %s · 앞 t %s · 뒤 %s · 국면 %s · 오늘 %s) · ① %s · ② %s" % (
+                        mk, hk, kind, "통과" if g3V["ok"] else "미달", g3V.get("mx"), e_.get("mT"), g3V.get("lateMx"), g3V.get("regOk"), g3V.get("nowOk"),
+                        "통과" if gate1(bV) else "미달", "통과" if g2V else "미달"))
+                    if g3V["ok"] and gate1(bV) and g2V:
+                        varsel[hk] = kind
+                        if hk == "5":
+                            scores, test_all, br, fold_x, fold_x0, g2, pos, need, g3 = cv_, both, bV, fxV, fx0V, g2V, posV, needV, g3V
+                            LAST_OOS[mk]["sc"] = cv_
+                        else:
+                            s20, t20, br20, fx20, g2_20, pos20, need20, g3_20 = cv_, both, bV, fxV, g2V, posV, needV, g3V
+                            g1_20 = gate1(br20)
+                            LAST_OOS[mk]["sc20"] = cv_
+                        break
+            log("      [OMNI-Q %s] 점수 변형 선택 — 5일 %s · 20일 %s" % (mk, varsel["5"] or "없음", varsel["20"] or "없음"))
+        except Exception as e:  # noqa: BLE001
+            log("      ⚠️ [OMNI-Q %s] 점수 변형 후보 실패: %r — 그대로" % (mk, e))
         lab_rep = {}
         if LAB:
             # (연구) DoubleEnsemble vs LightGBM — 미리 등록한 채택 규칙의 재료
@@ -1274,6 +1369,28 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             extra["risk"] = _pctmap(_final(vol.rank(axis=1, pct=True).values, key="risk"))
         except Exception as e:  # noqa: BLE001
             log("      ⚠️ [OMNI-Q %s] 복합 머리 채점 실패: %r — 5일 머리만 올린다" % (mk, e))
+        # [V33.688] 채택한 점수 변형을 오늘 점수에도 — 5일(sc·top) · 20일(heads.r20)
+        try:
+            if (varsel["5"] or varsel["20"]) and extra.get("r20"):
+                p5 = np.array([sc[s_] for s_ in syms], dtype=np.float32)[None, :]
+                p20 = np.array([extra["r20"].get(s_, np.nan) for s_ in syms], dtype=np.float32)[None, :]
+                colix = {c_: j for j, c_ in enumerate(C.columns)}
+                bl = bk[last][[colix[s_] for s_ in syms]][None, :]
+                if varsel["5"]:
+                    v5 = score_variant(varsel["5"], p5, p20, bl)[0]
+                    okv = np.isfinite(v5)
+                    pv = np.full(len(v5), np.nan)
+                    pv[okv] = (np.argsort(np.argsort(v5[okv])) + 0.5) / okv.sum()
+                    sc = {s_: round(float(p_), 4) for s_, p_ in zip(syms, pv) if np.isfinite(p_)}
+                    top = [s_ for s_, _ in sorted(sc.items(), key=lambda kv: -kv[1])[:k]]
+                if varsel["20"]:
+                    v20 = score_variant(varsel["20"], p20, p5, bl)[0]
+                    okv = np.isfinite(v20)
+                    pv = np.full(len(v20), np.nan)
+                    pv[okv] = (np.argsort(np.argsort(v20[okv])) + 0.5) / okv.sum()
+                    extra["r20"] = {s_: round(float(p_), 4) for s_, p_ in zip(syms, pv) if np.isfinite(p_)}
+        except Exception as e:  # noqa: BLE001
+            log("      ⚠️ [OMNI-Q %s] 오늘 점수 변형 실패: %r" % (mk, e))
         # [V33.684] 실시간 장부(같은 맞춤 기준 · 회수 장치) — ③ 모의 판정은 위(라벨 선택과 함께)
         live = _ledger(req, BASE, HDR, mk, C, fwdv, bk, y, H, log)
         live20 = _ledger(req, BASE, HDR, mk, C, f20.values, bk, y20, H20, log)
@@ -1307,10 +1424,10 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 "scores": sc, "top": top, "heads": extra, "learner": LEARNER_5D, "lab": lab_rep or None,
                 "featGroups": FEAT_GROUPS.get(mk), "featTop": _imp_top(bst, names), "struct": _struct(bst, names),
                 "gate": {"g1": dict(br, ok=g1, needT=G1_T), "g2": {"folds": fold_x, "foldsFullSwap": fold_x0, "band": BAND, "pos": pos, "need": need, "ok": g2},
-                         "g3": g3, "g3live": live, "g3sim": g3s, "speak": speak, "fit": fitdiag.get("5일"), "label": labsel["5"]},
+                         "g3": g3, "g3live": live, "g3sim": g3s, "speak": speak, "fit": fitdiag.get("5일"), "label": labsel["5"], "variant": varsel["5"]},
                 "top20": top20,
                 "gate20": {"g1": dict(br20, ok=g1_20, needT=G1_T), "g2": {"folds": fx20, "band": BAND, "step": H20, "pos": pos20, "need": need20, "ok": g2_20},
-                           "g3": g3_20, "g3live": live20, "g3sim": g3s_20, "speak": speak20, "fit": fitdiag.get("20일"), "label": labsel["20"]}}
+                           "g3": g3_20, "g3live": live20, "g3sim": g3s_20, "speak": speak20, "fit": fitdiag.get("20일"), "label": labsel["20"], "variant": varsel["20"]}}
         out[mk] = body["gate"]
         if isinstance(cache, dict):   # [V33.584] 다음 금요일까지 평일 회차가 이 모델로 채점한다
             cache[mk] = {"names": list(names), "trainedAt": t_ms, "learner": LEARNER_5D, "bst": bst, "heads": head_models,

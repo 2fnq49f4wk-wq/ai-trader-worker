@@ -60,6 +60,8 @@ chk(M.omniqView({ day: "1", trainedAt: now, scoredAt: now, gate: Object.assign(G
 const QS = readFileSync(T + "omni_q.py", "utf8");
 chk(/\(not g3\["ok"\]\) and g3M\["ok"\] and gate1\(bM\) and g2M/.test(QS) && /\(not g3_20\["ok"\]\) and g3M20\["ok"\] and gate1\(bM20\) and g2M20/.test(QS),
   "맞춤 라벨 채택 = 사전 등록 규칙(지금 ③ 미달 · 후보 ③①② 통과)일 때만");
+chk(/SCORE_VARIANTS = \("blend", "neutral", "blendN"\)/.test(QS) && /if g3V\["ok"\] and gate1\(bV\) and g2V:/.test(QS) && /v5k, v20k = \(gate or \{\}\)\.get\("variant"\)/.test(QS),
+  "점수 변형 후보: 사전 등록 순서 · ③①② 통과 첫 후보만 · 평일 채점도 같은 변형");
 let r = M.omniqPicksAppend([], "20261007", ["A", "B"], now);
 r = M.omniqPicksAppend(r.picks, "20261007", ["X"], now + 1);
 chk(!r.added && r.picks.length === 1 && r.picks[0].top.join() === "A,B", "같은 날 장부는 덮어쓰지 않는다");
