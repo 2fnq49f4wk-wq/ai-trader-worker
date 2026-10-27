@@ -219,7 +219,8 @@ html:not([data-theme="light"]) .sidebar-logo-text {
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: lm-sheen 9s linear infinite;
+  /* [V33.681] 무한 반복 → 처음 2바퀴만. background-position 은 GPU 합성이 안 돼 반복 내내 글씨를 매 프레임 다시 칠했다(대기 CPU 의 큰 몫) */
+  animation: lm-sheen 9s linear 2;
 }
 @keyframes lm-sheen { from { background-position: 0% 50%; } to { background-position: 260% 50%; } }
 

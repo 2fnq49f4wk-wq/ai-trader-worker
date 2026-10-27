@@ -12,6 +12,9 @@
 
 ## Current handoff
 
+- V33.681 (10/27) ★화면 렌더링 CPU·요청 낭비 정리★ 사용자: "렌더링에서 CPU 낭비 확인". 실측(헤드리스 · CDP Performance): 화면이 가만있어도 대기 CPU 6~19% · 스크립트는 0.1% — 원인은 무한 CSS 애니메이션이 매 프레임 다시 칠함(스타일 재계산 ~60/초 · AI 두뇌는 레이아웃도 ~60/초).
+  고침: 로고 빛남 filter→opacity · LIVE 점 box-shadow→opacity · 관측창 진행 막대 width→transform scaleX · 관측창 점 box-shadow→opacity · 로고 글씨 광택(background-position, 합성 불가) 무한→2바퀴.
+  요청: renderFvDeck(상태 폴링 10초마다 불림)이 위기·이슈·한국장 정지·알림을 매번 다시 받음(각 분당 12회) → 처음 한 번 + 각자 타이머 · 보조 패널(원자재 30초·파이프라인 60초·국채 120초·뉴스 120초·시장심리 60초) 자기 주기 · 숨긴 탭은 상태 폴링·작동 로그 폴링 쉼(실측 숨긴 탭 분당 98회) → 다시 보이면 즉시 1회.
 - V33.680 (10/27) ★사이트 전체 점검 — AI 관련부터★ 사용자: "사이트 전체 점검 · AI 문제부터 전부 해결". 헤드리스 전 페이지(10) 순회: JS 오류 0 · 실패 요청 0.
   고침: ① 'AI VISION' 메뉴·숫자키 6 → page-vision 없음(옛 화면 퇴역)이라 빈 화면 — 메뉴 제거 · 6 = AI 두뇌 · showPage 는 없는 화면이면 대시보드로(저장된 luxPage 'vision' 도).
   ② 파이프라인 '7/9 SUBSYSTEMS NOMINAL' — 표본 수확·반사실 라벨링은 위원회 퇴역(COMMITTEE_RETIRED)으로 일부러 멈춘 단계인데 '낡음' 노란불 → status RETIRED '퇴역(정상)' · 9/9.
