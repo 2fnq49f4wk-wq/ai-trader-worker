@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.696";
+const _BUILD_VER = "V33.697";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13968,6 +13968,13 @@ function pbRuleFor(st, grp) {
   if (!r || !r.cells || typeof r.cells !== "object") return r;
   const m = st.regime3 && st.regime3.M ? st.regime3.M : "FLAT";
   return r.cells[m + "|" + (grp != null ? String(grp) : "x")] || r.def || r;
+}
+/* [V33.697] 고른 규칙의 한글 이름 — 원장 이유·관측창용(점수 · 칸 단계 · 최근 가중 · 성적 스위치 · 거부권) */
+function pbRuleLabel(rule, sleeve) {
+  if (sleeve) return "국면 워크포워드(직전 3년 끝난 거래 · 평균−표준오차)";
+  if (!rule) return "—";
+  const SC = { m: "평균", lcb: "하한(평균−표준오차)", mpd: "하루당 평균", lcbpd: "하루당 하한" }, LV = { fine: "세부 칸", regime: "국면 칸", global: "매매법 전체" };
+  return [SC[rule.score] || rule.score, LV[rule.level] || rule.level].concat(rule.decay ? ["최근 " + rule.decay + "일 가중"] : []).concat(rule.gate ? ["성적 스위치 " + rule.gate + "일"] : []).concat(rule.gveto ? ["전체 거부권"] : []).join("·");
 }
 function pbChoose(table, keys, fired, rule) {
   if (!table || !fired || !fired.length) return null;
@@ -26999,7 +27006,10 @@ async function runTradingCycle(env) {
                       sr: { sid: _sp.pb, kind: _sp.kind, stop: +_sp.stop.toFixed(2), be: _sp.be || 0, tpR: _sp.tpR == null ? null : _sp.tpR, tpPct: _sp.tpPct == null ? null : _sp.tpPct,
                             mr: _sp.mr === true, bePct: _sp.bePct == null ? null : _sp.bePct, tstop: _sp.tstop || 0, rsi2x: _sp.rsi2x || 65, trail: _sp.trail || 0, trailAct: _sp.trailAct || 0, tpPx: _sp.tpPx == null ? null : _sp.tpPx,
                             hold: _sp.hold || null, bars: _sp.bars || 0, primary: __pbPrim, sess: _sp.session || "regular", m: +_sp.m.toFixed(3), w: +_sp.w.toFixed(3), n: _sp.n, omq: +_num(_pbS, 0).toFixed(3), regime: __sr.regime || null, crashX: _sp.crashExit === true, at: Date.now() },
-                      detail: "매매법AI " + _sp.pb + "(" + (_sp.kind === "intra" ? "5분 단타" : "일봉") + (_sp.session ? " · " + (_sp.session === "pre" ? "프리마켓" : "애프터마켓") : "") + " · 지금 뜬 " + _sp.fired.join("·") + ") · " + (_sp.sleeve ? "국면 전략(" + _sp.label + ")" : "OMNI-Q 상위 " + Math.max(1, Math.round((1 - _num(_pbS, 0)) * 100)) + "%") + " · 국면 " + (__sr.regime || "?") +
+                      /* [V33.697] 사용자 10/28 — 원장 이유를 실제 순서대로: ① 후보 거름(OMNI-Q 상위 x% · 국면 전략이면 그 전략) → ② 매매법 AI 진입(고른 매매법 · 그때 뜬 매매법) → ③ 고른 규칙 */
+                      detail: (_sp.sleeve ? "국면 전략(" + _sp.label + ")" : "OMNI-Q 상위 " + Math.max(1, Math.round((1 - _num(_pbS, 0)) * 100)) + "%") +
+                              " → 매매법AI 진입 " + _sp.pb + "(" + (_sp.kind === "intra" ? "5분 단타" : "일봉") + (_sp.session ? " · " + (_sp.session === "pre" ? "프리마켓" : "애프터마켓") : "") + " · 지금 뜬 " + _sp.fired.join("·") + ")" +
+                              " → 규칙 " + pbRuleLabel(_sp.sleeve ? null : (_sp.kind === "intra" ? (__sr.intra && __sr.intra.val && __sr.intra.val.rule) : pbRuleFor(__sr, _sp.grp)), _sp.sleeve) + " · 국면 " + (__sr.regime || "?") +
                               " · 모의 성공 " + (_sp.w * 100).toFixed(0) + "% 평균 +" + _sp.m.toFixed(2) + "% (표본 " + _sp.n + ") · 손절 −" + (+_sp.stop).toFixed(1) + "%" + (__pbPrim ? " · ★주력★" : " · 잠정 ×" + STRAT_ROUTE.mult) } });
                 }
               }
