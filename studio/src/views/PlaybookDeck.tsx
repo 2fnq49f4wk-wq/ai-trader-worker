@@ -184,7 +184,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
         <section aria-label="국면 전략" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
             <h3 style={{ fontSize: 16, fontWeight: 600, color: "#F2F6FC" }}>국면 전략 · 국면마다 전략 묶음을 통째로</h3>
-            <span style={{ fontSize: 12, color: DIM }}>분기마다 직전 3년에 ★끝난★ 거래만으로 국면별 최선 전략을 고른다 · 실전 = 그 국면 두 판정 구간 모두 거래당 ≥ +5%</span>
+            <span style={{ fontSize: 12, color: DIM }}>분기마다 직전 3년에 ★끝난★ 거래만으로 국면별 최선 전략(평균 − 표준오차)을 고른다 · 폭등·하락은 중기 방향으로 나눠 · 실전 = 그 국면 두 구간 모두 거래당 ≥ +5%</span>
           </div>
           <div style={{ ...card, padding: 16, display: "flex", flexWrap: "wrap", gap: 18, alignItems: "center" }}>
             <div><div style={kick}>지금 국면</div><div style={{ fontSize: 20, color: INK }}>{KO[SL.reg] || SL.reg}</div></div>
@@ -199,7 +199,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
               <tbody>{RG.map((r) => { const b = SL.by && SL.by[r]; return (
                 <tr key={r} style={{ borderTop: "1px solid " + ROWLINE, background: r === SL.reg ? "rgba(255,209,102,.07)" : undefined }}>
                   <td style={{ padding: "10px 14px", color: INK }}>{KO[r]}{r === SL.reg ? " ◂" : ""}</td>
-                  <td style={{ padding: "10px 14px", color: MUTE, fontSize: 12 }}>{b ? b.famKo + " · " + b.profKo + " (" + sg(b.mean) + "% · " + n0(b.n) + "건)" : "쉼"}</td>
+                  <td style={{ padding: "10px 14px", color: MUTE, fontSize: 12 }}>{b ? b.famKo + " · " + b.profKo + (b.cell ? " · 중기 " + (({ UP: "상승", FLAT: "보합", DOWN: "하락" } as any)[b.cell] || b.cell) + " 칸" : "") + " (" + sg(b.mean) + "% · " + n0(b.n) + "건)" : "쉼"}</td>
                   <td style={{ ...td(null) }}>{cell(SL.wf && SL.wf.V && SL.wf.V[r])}</td>
                   <td style={{ ...td(null) }}>{cell(SL.wf && SL.wf.H && SL.wf.H[r])}</td>
                 </tr>); })}</tbody>

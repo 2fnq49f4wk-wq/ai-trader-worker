@@ -16,6 +16,8 @@ import numpy as np
 import pandas as pd
 
 WIN, STEP, NMIN, TH = 750, 63, 20, 3.0
+CELL_REGS = ("SURGE", "BEAR")   # [V33.696] 이 국면은 중기 방향(M: 상승·보합·하락)으로 나눠 따로 고른다 — 하락장 속 반등 폭등 ≠ 상승장 속 폭등
+SCORE = "lcb"   # [V33.696] 고르기 점수 = 평균 − 표준오차(표본 적은 우연을 덜 탄다)
 CRASH_EXIT = False   # 국면 깨짐 청산 — 실험실 A/B(검증 구간만 비교)에서 우열 없음 → 단순한 쪽(끔). 켜면 워커도 cfg.crashExit 로 따른다
 CAP_DAY = 6
 REG5 = ("SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH")
@@ -102,32 +104,51 @@ def _trades(S, ex, xo, C, r60r, mcum, cost, S3, crash_start):
     return ti, raw, x
 
 
-def pick_at(TR, rg, q):
-    """q 날 직전 WIN 거래일에 ★끝난★ 거래만으로 국면 rg 의 최선(평균 실제 수익) — (키, 평균, 표본) · 문턱 미달이면 None."""
-    best, bm, bn = None, -1e9, 0
-    for k, (ti, rr, x, rg_) in TR.items():
+def pick_at(TR, rg, q, cell=None):
+    """q 날 직전 WIN 거래일에 ★끝난★ 거래만으로 국면 rg(· 중기 칸 cell)의 최선 — (키, 평균, 표본) · 문턱 미달이면 None.
+    점수 = SCORE(lcb: 평균 − 표준오차) · 평균 ≥ TH 인 후보만."""
+    best, bs, bm, bn = None, -1e9, None, 0
+    for k, (ti, rr, x, rg_, m3_) in TR.items():
         m = (rg_ == rg) & (ti >= q - WIN) & (x < q)
+        if cell is not None:
+            m &= (m3_ == cell)
         n = int(m.sum())
         if n < NMIN:
             continue
-        mu = float(rr[m].mean())
-        if mu > bm:
-            bm, best, bn = mu, k, n
-    if best is None or bm < TH:
+        v = rr[m]
+        mu = float(v.mean())
+        if mu < TH:
+            continue
+        sc = mu - float(v.std(ddof=1)) / np.sqrt(n) if SCORE == "lcb" else mu
+        if sc > bs:
+            best, bs, bm, bn = k, sc, mu, n
+    if best is None:
         return None
     return best, round(bm, 3), bn
+
+
+def pick_cell(TR, rg, q, cell):
+    """칸 국면이면 칸에서 먼저, 칸 표본이 모자라면 국면 전체."""
+    if rg in CELL_REGS:
+        p = pick_at(TR, rg, q, cell)
+        if p:
+            return p, cell
+    return pick_at(TR, rg, q), None
 
 
 def walk(TR, a0, b0):
     res = {r: [] for r in REG5}
     for q in range(a0, b0, STEP):
         for rg in REG5:
-            p = pick_at(TR, rg, q)
-            if not p:
-                continue
-            ti, rr, x, rg_ = TR[p[0]]
-            m = (rg_ == rg) & (ti >= q) & (ti < min(q + STEP, b0))
-            res[rg] += list(rr[m])
+            for cl in (("UP", "FLAT", "DOWN") if rg in CELL_REGS else (None,)):
+                p, used = pick_cell(TR, rg, q, cl) if cl else (pick_at(TR, rg, q), None)
+                if not p:
+                    continue
+                ti, rr, x, rg_, m3_ = TR[p[0]]
+                m = (rg_ == rg) & (ti >= q) & (ti < min(q + STEP, b0))
+                if cl is not None:
+                    m &= (m3_ == cl)
+                res[rg] += list(rr[m])
     return {r: ({"n": len(v), "mean": round(float(np.mean(v)), 3), "win": round(float(np.mean(np.array(v) > 0) * 100), 1)} if v else {"n": 0, "mean": None, "win": None}) for r, v in res.items()}
 
 
@@ -143,6 +164,7 @@ def run(P, mk, PB, log=print):
     mcum = np.concatenate([[1.0], np.cumprod(1 + np.nan_to_num(np.asarray(mret, dtype=float)))])
     L3, M3, S3, _ = PB.regime3(P["close"])
     S3 = np.asarray(S3).astype(str)
+    M3s = np.asarray(M3).astype(str)
     crash_start = (S3 == "CRASH") & np.concatenate([[False], S3[:-1] != "CRASH"])
     st = PB._daily_state(P, ())
     atr = st[4]
@@ -154,14 +176,16 @@ def run(P, mk, PB, log=print):
         for fn, S in F.items():
             r = _trades(S, ex, xo, C, r60r, mcum, cost, S3, crash_start)
             if r is not None and len(r[0]) >= 10:
-                TR[(fn, pn)] = (r[0], r[1], r[2], reg5[r[0]])
+                TR[(fn, pn)] = (r[0], r[1], r[2], reg5[r[0]], M3s[r[0]])
     c1, c2 = int(T * .6), int(T * .8)
     wfV, wfH = walk(TR, c1, c2), walk(TR, c2, T)
     q = T - 1
     by = {}
+    m_now = str(M3s[-1])
     for rg in REG5:
-        p = pick_at(TR, rg, q)
-        by[rg] = ({"fam": p[0][0], "prof": p[0][1], "mean": p[1], "n": p[2], "famKo": FAM_KO.get(p[0][0], p[0][0]), "profKo": PROF_KO.get(p[0][1], p[0][1])} if p else None)
+        p, used = pick_cell(TR, rg, q, m_now)
+        by[rg] = ({"fam": p[0][0], "prof": p[0][1], "mean": p[1], "n": p[2], "famKo": FAM_KO.get(p[0][0], p[0][0]), "profKo": PROF_KO.get(p[0][1], p[0][1]),
+                   "cell": used} if p else None)   # cell = 이 국면을 오늘 중기 방향 칸으로 골랐으면 그 칸
     rg_now = str(reg5[-1])
     cur = by.get(rg_now)
     syms = []
@@ -174,7 +198,7 @@ def run(P, mk, PB, log=print):
     ok = bool(cur) and all((w.get(rg_now) or {}).get("n", 0) >= NMIN and ((w.get(rg_now) or {}).get("mean") or -99) >= 5.0 for w in (wfV, wfH))
     pr = PROFS[cur["prof"]] if cur else None
     out = {"reg": rg_now, "regKo": REG_KO.get(rg_now, rg_now), "cur": cur, "syms": syms, "live": ok, "by": by, "wf": {"V": wfV, "H": wfH},
-           "prof": ({k: v for k, v in pr.items() if v is not None} if pr else None), "cfg": {"win": WIN, "step": STEP, "nmin": NMIN, "th": TH, "capDay": CAP_DAY, "target": 5.0, "crashExit": CRASH_EXIT},
+           "prof": ({k: v for k, v in pr.items() if v is not None} if pr else None), "cfg": {"win": WIN, "step": STEP, "nmin": NMIN, "th": TH, "capDay": CAP_DAY, "target": 5.0, "crashExit": CRASH_EXIT, "score": SCORE, "cellRegs": list(CELL_REGS)}, "mNow": m_now,
            "cut": [str(P["close"].index[c1]), str(P["close"].index[c2])]}
     log("   · [국면전략] %s 지금 %s → %s · 오늘 %d종 · 실전 %s · 워크포워드 판정 %s" % (
         mk, REG_KO.get(rg_now), (cur["famKo"] + " · " + cur["profKo"] + " (직전 3년 %+.2f%% n%d)" % (cur["mean"], cur["n"])) if cur else "쉼(근거 부족)", len(syms),
