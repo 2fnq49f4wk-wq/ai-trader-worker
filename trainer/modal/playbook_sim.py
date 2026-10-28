@@ -1588,7 +1588,9 @@ def _by_regime(pk, w):
     out = []
     for r in ("SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH"):
         g = pk[rp == r]
-        if len(g) < 10:
+        if len(g) < 10:   # [V33.698] 사용자 10/28 "미국은 폭등이 없다" — 정의는 같고 표본만 적다 → 숨기지 않고 '표본 부족' 으로 보낸다
+            out.append({"reg": r, "ko": REG_KO[r], "n": int(len(g)), "thin": True,
+                        "dayShare": round(len(np.unique(w["t"].values[rw == r])) / max(1, w["t"].nunique()) * 100, 1)})
             continue
         b_ = fair_base(w[rw == r], draws=10)[0]
         rw_ = _raw(w[rw == r])
@@ -2074,7 +2076,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         log("   · [매매법시뮬] %s 월 맞춤 초과 %s%%p · 달 묶음 t %s · 이긴 달 %s/%s · 절대 달 t %s · 판정 방식 %s(거래 t %s · 월 맞춤 %s) · 국면별 %s" % (
             market, dst.get("mx"), dst.get("mT"), dst.get("mWin"), dst.get("mN"), dst.get("mAbsT"), dst.get("passMode"),
             "통과" if dst.get("passTrade") else "미통과", "통과" if dst.get("passMatched") else "미통과",
-            " · ".join("%s n%d 초과 %+.2f vs %s · 실제 %+.2f%%(%s일)" % (r["ko"], r["n"], r["mean"], r["base"], r.get("raw") or 0, r.get("hd")) for r in (dst.get("byReg") or []))))
+            " · ".join("%s n%d 초과 %+.2f vs %s · 실제 %+.2f%%(%s일)" % (r["ko"], r["n"], r["mean"], r["base"], r.get("raw") or 0, r.get("hd")) for r in (dst.get("byReg") or []) if not r.get("thin"))))
         if upload and BASE and os.environ.get("PB_VARIANT"):
             log("   · [매매법시뮬] %s A/B 실험판(%s) — 업로드 안 함(기록만)" % (market, os.environ.get("PB_VARIANT")))
         elif upload and BASE:

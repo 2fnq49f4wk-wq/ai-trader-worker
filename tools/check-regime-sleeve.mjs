@@ -15,6 +15,8 @@ chk(/"sleeve": sleeve/.test(PB) && /import regime_sleeve as RSL/.test(PB), "학�
 chk(/rec\.sleeve = \(body\.sleeve/.test(S) && /sleeve: r\.sleeve \|\| null/.test(S), "워커 저장 · /api/playbook 노출", "★워커가 sleeve 를 버린다★");
 chk(/!\(SL\.live \|\| ctx\.shadow\)\) return null/.test(S) && /if \(slp && \(st\.sleeve\.live \|\| ctx\.shadow\)\) return slp/.test(S), "워커는 실전 자격(live)일 때만 실제로 고른다 · 아니면 관측", "★자격 없이 국면 전략으로 산다★");
 chk(/pbSleeveHas\(__sr, symbol\)/.test(S) && /!pbSleeveHas\(__sr, sym\)/.test(S), "국면 전략 종목은 OMNI-Q 후보 거름 밖에서도 평가(평가 루프 · 선행 판정)", "★국면 전략 종목이 평가되지 않는다★");
-chk(/aria-label="국면 전략"/.test(UI) && /SL\.wf && SL\.wf\.H/.test(UI), "두뇌관측 매매법 화면에 국면 전략(고른 전략 · 오늘 종목 · 국면별 두 구간)", "★화면에 국면 전략이 없다★");
+chk(/aria-label="국면별 한눈에"/.test(UI) && /SL\.wf && SL\.wf\.H/.test(UI), "두뇌관측 매매법 화면에 국면 전략(고른 전략 · 오늘 종목 · 국면별 두 구간)", "★화면에 국면 전략이 없다★");
+/* [V33.698] 사용자 10/28 "왜 한국만 폭등·폭락" — 다섯 국면을 늘 그린다(표본 부족도 숨기지 않음) · 학습기도 n<10 국면을 thin 으로 보낸다 */
+chk(/RG\.map\(\(r\) => \{ const b = BR\[r\]/.test(UI) && /"thin": True/.test(PB), "국면 다섯 칸 늘 표시(표본 부족 포함)", "★표본 적은 국면이 화면에서 사라진다★");
 if (fails) { console.log("✗ 국면 전략 계약 실패 " + fails); process.exit(1); }
 console.log("✓ 국면 전략 계약 통과");

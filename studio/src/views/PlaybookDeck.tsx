@@ -33,6 +33,10 @@ const ruleName = (r: any): string => (!r ? "—" : r.cells ? "칸별 " + Object.
 // [V33.694] 국면 3단 · 종목 칸(중기 국면 | 변동성 그룹) 한글 이름표
 const R3K: Record<string, Record<string, string>> = { L: { UP: "상승", DOWN: "하락", TURN: "전환" }, M: { UP: "상승", DOWN: "하락", FLAT: "보합" }, S: { SURGE: "폭등", UP: "상승", CALM: "보합", DOWN: "하락", CRASH: "폭락" } };
 const cellName = (c: string) => { const [m, g] = String(c).split("|"); return "중기 " + (R3K.M[m] || m) + " · " + ({ "0": "저변동", "1": "중변동", "2": "고변동" } as any)[g] || g; };
+// [V33.698] 규칙 한글 이름(원장 이유 pbRuleLabel 과 같은 말)
+const ruleKo = (r: any): string => { if (!r) return "—"; if (r.cells) return "종목 칸마다 다름(" + Object.keys(r.cells).length + "칸) · 기본 " + ruleKo(r.def);
+  const SC: any = { m: "평균", lcb: "하한(평균−표준오차)", mpd: "하루당 평균", lcbpd: "하루당 하한" }, LV: any = { fine: "세부 칸", regime: "국면 칸", global: "매매법 전체" };
+  return [SC[r.score] || r.score, LV[r.level] || r.level].concat(r.decay ? ["최근 " + r.decay + "일 가중"] : []).concat(r.gate ? ["성적 스위치 " + r.gate + "일"] : []).concat(r.gveto ? ["전체 거부권"] : []).join(" · "); };
 const ago = (ts: any) => { if (!fin(ts)) return "—"; const m = Math.round((Date.now() - ts) / 60000); return m < 60 ? m + "분 전" : m < 2880 ? Math.round(m / 60) + "시간 전" : Math.round(m / 1440) + "일 전"; };
 
 function TwoSided({ x, lim, h = 6 }: { x: any; lim: number; h?: number }) {
@@ -130,6 +134,35 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
         </div>
       </div>
 
+      {/* [V33.698] 지금 한눈에 — 실제 매수 경로(원장 이유와 같은 순서) · 실전 상태 */}
+      <section aria-label="지금 한눈에" className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <div style={{ ...card, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={kick}>실제 매수 경로</div>
+          <ol style={{ display: "flex", flexWrap: "wrap", alignItems: "stretch", gap: 8 }}>
+            {[["① 후보 거름", "OMNI-Q " + (V.candQ ? "상위 " + Math.round((1 - V.candQ) * 100) + "%" : "거름 없음")],
+              ["② 진입 신호", "매매법 AI " + rows.length + "종 중 뜬 것"],
+              ["③ 하나 고르기", ruleKo(V.rule)],
+              ["④ 청산", "매매법별 손절·보유일(트레일)"]].map(([k, v], i, A) => (
+              <li key={k} style={{ display: "flex", alignItems: "center", gap: 8, flex: "1 1 150px", minWidth: 0 }}>
+                <div style={{ flex: 1, minWidth: 0, border: "1px solid " + LINE, borderRadius: 8, padding: "8px 10px" }}>
+                  <div style={{ fontSize: 11, color: DIM }}>{k}</div>
+                  <div style={{ fontSize: 13, color: INK, overflowWrap: "anywhere" }}>{v}</div>
+                </div>
+                {i < A.length - 1 && <span aria-hidden="true" style={{ color: FAINT }}>→</span>}
+              </li>))}
+          </ol>
+          {R.sleeve && R.sleeve.live && <div style={{ fontSize: 12, color: POS }}>+ 국면 전략 실전 중 — 오늘 종목은 ① 거름 없이 국면 전략이 고른다({(R.sleeve.syms || []).join(" · ") || "—"})</div>}
+        </div>
+        <div style={{ ...card, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={kick}>실전 상태</div>
+          {[["매매법 AI", R.primary ? "주력(정상 크기)" : pass ? "검증 통과 · 주력 대기" : R.pass && (R.pass.absTrial || TW === "trade") ? "시험 매수(절반 크기)" : "관측만(매수 안 함)", R.primary || pass ? POS : R.pass && (R.pass.absTrial || TW === "trade") ? HL : NEG],
+            ["국면 전략", R.sleeve ? (R.sleeve.live ? "실전 매수" : "관측만") : "—", R.sleeve && R.sleeve.live ? POS : MUTE],
+            ["손실 제동", R.brake && R.brake.on ? "켜짐" : "꺼짐", R.brake && R.brake.on ? NEG : MUTE],
+            ["옛 매수 경로", "꺼짐(위원회·단타·규칙 V33.649)", MUTE]].map(([k, v, c]) => (
+            <div key={k} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13 }}><span style={{ color: DIM }}>{k}</span><b style={{ color: c, fontWeight: 500, textAlign: "right" }}>{v}</b></div>))}
+        </div>
+      </section>
+
       <section aria-label="판정 요약" className="grid grid-cols-2 gap-3 md:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))]">
         <div className="col-span-2 md:col-span-1" style={{ ...card, minWidth: 0, padding: "20px 22px", background: "linear-gradient(180deg," + PANEL2 + ",#080C13)", display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={kick}>판정 구간 · 고른 매매 평균(시장 대비 순초과)</div>
@@ -155,57 +188,58 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
           </div>))}
       </section>
 
-      {Array.isArray(V.byReg) && V.byReg.length > 0 && (
-        <section aria-label="국면별 성적" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* [V33.698] 사용자 10/28 "매매법 AI 두뇌관측 좀 더 보기 편하게 · 왜 한국만 폭등·폭락" — 국면별 성적 + 국면 전략 두 칸을 국면 5장 카드 하나로.
+          다섯 국면을 늘 다 그린다(표본이 적으면 '표본 부족') · 미국도 정의는 같다(등가중 하루 ±2.5% · 5일 ±6%) — 날이 적을 뿐. */}
+      {(() => { const SL = R.sleeve || null, RG = ["SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH"], KO: any = { SURGE: "폭등", BULL: "상승", NEUTRAL: "보합", BEAR: "하락", CRASH: "폭락" };
+        const BR: any = {}; (Array.isArray(V.byReg) ? V.byReg : []).forEach((r: any) => { BR[r.reg] = r; });
+        const now = SL ? SL.reg : R.regime;
+        const c5 = (x: any) => (!fin(x) ? MUTE : x >= 5 ? POS : x >= 0 ? HL : NEG);
+        const wfv = (w: any) => !w || !fin(w.mean) ? <span style={{ color: FAINT }}>—</span> : <span style={{ color: c5(w.mean) }}>{sg(w.mean, 1)}% <span style={{ color: FAINT }}>({n0(w.n)})</span></span>;
+        return (
+        <section aria-label="국면별 한눈에" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#F2F6FC" }}>국면별 성적 · 판정 구간</h3>
-            <span style={{ fontSize: 12, color: DIM }}>큰 숫자 = 거래당 ★실제 수익★(목표 +5%) · 아래 = 같은 기간 시장을 뺀 초과 vs 같은 국면 무작위</span>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#F2F6FC" }}>국면별 성적 · 거래당 실제 수익</h3>
+            <span style={{ fontSize: 12, color: DIM }}>초록 = 목표 +5% 이상 · 노랑 = 0~5% · 주황 = 손실 · 괄호 = 거래 수</span>
           </div>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-            {(V.byReg as any[]).map((r) => { const d = fin(r.mean) && fin(r.base) ? r.mean - r.base : null; return (
-              <div key={r.reg} style={{ ...card, padding: 14, display: "flex", flexDirection: "column", gap: 6 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: MUTE }}><span>{r.ko}</span><span style={{ fontFamily: MONO }}>{n0(r.n)}건 · {r.share}%</span></div>
-                {fin(r.raw) ? <>
-                  <div style={{ fontFamily: MONO, fontSize: 20, color: r.raw >= 5 ? POS : r.raw >= 0 ? HL : NEG }}>{sg(r.raw)}%</div>
-                  <div style={{ height: 4, borderRadius: 2, background: TRACK, position: "relative" }}><div style={{ height: 4, borderRadius: 2, width: Math.max(0, Math.min(100, r.raw / 10 * 100)) + "%", background: r.raw >= 5 ? POS : HL }} /><div style={{ position: "absolute", left: "50%", top: -3, bottom: -3, width: 2, background: INK }} title="목표 +5%" /></div>
-                  <div style={{ fontFamily: MONO, fontSize: 11.5, color: DIM }}>초과 {sg(r.mean)}% · 무작위 {sg(r.base)}%{fin(r.hd) ? " · " + r.hd + "일" : ""}</div>
-                </> : <>
-                  <div style={{ fontFamily: MONO, fontSize: 20, color: d == null ? MUTE : d >= 0 ? POS : NEG }}>{d == null ? "—" : (d >= 0 ? "+" : "") + d.toFixed(2) + "%p"}</div>
-                  <div style={{ fontFamily: MONO, fontSize: 11.5, color: DIM }}>고른 {sg(r.mean)}% · 무작위 {sg(r.base)}% (시장 뺀 초과)</div>
-                </>}
-                <div style={{ fontSize: 11, color: FAINT }}>국면 날 {r.dayShare}%</div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {RG.map((r) => { const b = BR[r], sb = SL && SL.by && SL.by[r], v = SL && SL.wf && SL.wf.V && SL.wf.V[r], h = SL && SL.wf && SL.wf.H && SL.wf.H[r], on = r === now;
+              const ok = !!(v && h && fin(v.mean) && fin(h.mean) && v.mean >= 5 && h.mean >= 5 && v.n >= 20 && h.n >= 20);
+              return (
+              <div key={r} style={{ ...card, padding: 14, display: "flex", flexDirection: "column", gap: 8, borderColor: on ? HL : LINE, background: on ? "rgba(255,209,102,.05)" : PANEL }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <span style={{ fontSize: 15, fontWeight: 600, color: INK }}>{KO[r]}{on && <span style={{ marginLeft: 6, fontSize: 11, color: HL }}>지금</span>}</span>
+                  <span style={{ fontSize: 11, color: FAINT }}>{b && fin(b.dayShare) ? "판정 구간 날 " + b.dayShare + "%" : ""}</span>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: DIM }}>매매법 AI(OMNI-Q 후보 · 일봉)</div>
+                  {b && !b.thin && fin(b.raw) ? <div style={{ fontFamily: MONO, fontSize: 20, color: c5(b.raw) }}>{sg(b.raw, 1)}% <span style={{ fontSize: 11, color: FAINT }}>({n0(b.n)})</span></div>
+                    : <div style={{ fontSize: 13, color: FAINT, padding: "4px 0" }}>{b ? "표본 부족(" + n0(b.n) + "건 < 10)" : "표본 부족"}</div>}
+                  {b && !b.thin && <div style={{ fontFamily: MONO, fontSize: 11, color: FAINT }}>시장 뺀 초과 {sg(b.mean)}% · 무작위 {sg(b.base)}%{fin(b.hd) ? " · 보유 " + b.hd + "일" : ""}</div>}
+                </div>
+                {SL && <div style={{ borderTop: "1px solid " + ROWLINE, paddingTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                  <div style={{ fontSize: 11, color: DIM }}>국면 전략</div>
+                  <div style={{ fontSize: 12, color: sb ? MUTE : FAINT, lineHeight: 1.4 }}>{sb ? sb.famKo + " · " + sb.profKo + (sb.cell ? " · 중기 " + (R3K.M[sb.cell] || sb.cell) : "") : "쉼(근거 부족)"}</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 12 }}><span style={{ color: DIM }}>검증</span>{wfv(v)}</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 12 }}><span style={{ color: DIM }}>판정</span>{wfv(h)}</div>
+                  <span style={{ alignSelf: "flex-start", marginTop: 2, fontSize: 11, padding: "2px 8px", borderRadius: 4, border: "1px solid " + (ok ? POS : "#33445C"), color: ok ? POS : DIM }}>{ok ? "실전 자격" : "관측만"}</span>
+                </div>}
               </div>); })}
           </div>
-        </section>)}
-
-      {R.sleeve && (() => { const SL = R.sleeve, RG = ["SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH"], KO: any = { SURGE: "폭등", BULL: "상승", NEUTRAL: "보합", BEAR: "하락", CRASH: "폭락" };
-        const cell = (w: any) => !w || !fin(w.mean) ? <span style={{ color: FAINT }}>—</span> : <span style={{ color: w.mean >= 5 ? POS : w.mean >= 0 ? HL : NEG, fontFamily: MONO }}>{sg(w.mean)}% <span style={{ color: FAINT }}>({n0(w.n)})</span></span>;
-        return (
-        <section aria-label="국면 전략" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#F2F6FC" }}>국면 전략 · 국면마다 전략 묶음을 통째로</h3>
-            <span style={{ fontSize: 12, color: DIM }}>분기마다 직전 3년에 ★끝난★ 거래만으로 국면별 최선 전략(평균 − 표준오차)을 고른다 · 폭등·하락은 중기 방향으로 나눠 · 실전 = 그 국면 두 구간 모두 거래당 ≥ +5%</span>
-          </div>
-          <div style={{ ...card, padding: 16, display: "flex", flexWrap: "wrap", gap: 18, alignItems: "center" }}>
-            <div><div style={kick}>지금 국면</div><div style={{ fontSize: 20, color: INK }}>{KO[SL.reg] || SL.reg}</div></div>
-            <div style={{ flex: "1 1 280px" }}><div style={kick}>고른 전략</div><div style={{ fontSize: 14, color: INK }}>{SL.cur ? SL.cur.famKo + " · " + SL.cur.profKo : "쉼 — 직전 3년 근거 부족(평균 < +3% 또는 표본 < 20)"}</div>
-              {SL.cur && <div style={{ fontSize: 12, color: DIM, fontFamily: MONO }}>직전 3년 거래당 {sg(SL.cur.mean)}% · {n0(SL.cur.n)}건</div>}</div>
-            <div><div style={kick}>상태</div><div style={{ fontSize: 14, color: SL.live ? POS : HL }}>{SL.live ? "실전 매수" : "관측만"}</div></div>
-            <div style={{ flex: "1 1 220px" }}><div style={kick}>오늘 종목</div><div style={{ fontSize: 12.5, color: MUTE, fontFamily: MONO }}>{(SL.syms || []).join(" · ") || "—"}</div></div>
-          </div>
-          <div style={{ ...card, overflowX: "auto", background: "#080C13" }}>
-            <table style={{ ...tbl, minWidth: 680 }}>
-              <thead><tr style={{ background: PANEL2, color: DIM }}>{th(null, "국면", true)}{th(null, "지금 고를 전략(직전 3년)", true)}{th(null, "검증 구간 [60,80%)")}{th(null, "판정 구간 [80,100%)")}</tr></thead>
-              <tbody>{RG.map((r) => { const b = SL.by && SL.by[r]; return (
-                <tr key={r} style={{ borderTop: "1px solid " + ROWLINE, background: r === SL.reg ? "rgba(255,209,102,.07)" : undefined }}>
-                  <td style={{ padding: "10px 14px", color: INK }}>{KO[r]}{r === SL.reg ? " ◂" : ""}</td>
-                  <td style={{ padding: "10px 14px", color: MUTE, fontSize: 12 }}>{b ? b.famKo + " · " + b.profKo + (b.cell ? " · 중기 " + (({ UP: "상승", FLAT: "보합", DOWN: "하락" } as any)[b.cell] || b.cell) + " 칸" : "") + " (" + sg(b.mean) + "% · " + n0(b.n) + "건)" : "쉼"}</td>
-                  <td style={{ ...td(null) }}>{cell(SL.wf && SL.wf.V && SL.wf.V[r])}</td>
-                  <td style={{ ...td(null) }}>{cell(SL.wf && SL.wf.H && SL.wf.H[r])}</td>
-                </tr>); })}</tbody>
-            </table>
-          </div>
-          <p style={{ fontSize: 11.5, color: FAINT }}>숫자 = 거래당 실제 수익(괄호 = 거래 수) · 초록 ≥ +5% 목표 · 하루 늦은 진입 · 하루 6건 · 같은 종목 겹침 없음 · 실전 = 지금 국면의 두 구간 모두 ≥ +5% · 표본 ≥ 20.</p>
+          {SL && <div style={{ ...card, padding: "12px 16px", display: "flex", flexWrap: "wrap", gap: 18, alignItems: "center", fontSize: 13 }}>
+            <span style={{ color: DIM }}>지금 국면 전략</span>
+            <b style={{ color: INK, fontWeight: 500 }}>{SL.cur ? SL.cur.famKo + " · " + SL.cur.profKo : "쉼"}</b>
+            <span style={{ color: SL.live ? POS : HL }}>{SL.live ? "실전 매수 중" : "관측만(지금 국면이 두 구간 모두 +5% 를 못 넘음)"}</span>
+            <span style={{ color: MUTE, fontFamily: MONO, fontSize: 12 }}>오늘 종목 {(SL.syms || []).join(" · ") || "—"}</span>
+          </div>}
+          <details style={{ ...card, padding: "10px 16px", background: "#080C13" }}>
+            <summary style={{ cursor: "pointer", fontSize: 12.5, color: MUTE }}>숫자 읽는 법 — 검증 구간 · 판정 구간 · +5%</summary>
+            <ul style={{ margin: "10px 0 4px", paddingLeft: 18, fontSize: 12, lineHeight: 1.7, color: DIM }}>
+              <li>10년 일봉을 시간 순서로 나눈다: 앞 60% 학습 · <b style={{ color: INK }}>[60,80%) 검증 구간</b> = 여러 설정 중 하나를 고르는 데 쓴 구간 · <b style={{ color: INK }}>[80,100%) 판정 구간</b> = 고르기에 안 쓴 마지막 20%(약 2년) — 처음 보는 시장에서의 성적.</li>
+              <li><b style={{ color: INK }}>+5%</b> = 판정 구간에서 고른 거래 하나를 사서 팔 때까지(평균 보유일은 카드에 표시) 비용 뺀 실제 수익률의 평균. 연 수익률이 아니다.</li>
+              <li>국면 = 그날 시장(전 종목 등가중) 상태. 폭등·폭락 = 최근 3거래일 안에 하루 ±2.5% 또는 5일 ±6% — 미국·한국 같은 정의. 미국은 이런 날이 적어(판정 구간 3% 안팎) 표본 부족으로 보일 수 있다.</li>
+              <li>국면 전략 실전 자격 = 지금 국면이 검증·판정 두 구간 모두 거래당 +5% 이상 · 각 20건 이상(미리 정한 기준).</li>
+            </ul>
+          </details>
         </section>); })()}
 
       <section aria-label="판단 흐름" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
