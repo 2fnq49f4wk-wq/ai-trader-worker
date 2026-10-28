@@ -22,6 +22,7 @@
   관문     그 결과 평균 > 0 · t ≥ 2 · '뜬 매매법 아무거나' 평균보다 높다 · 표본 ≥ 30 → 그 시장·그 봉(일봉/5분)만 실전
   선택     뜬 매매법 중 (칸의 수축 평균 > 0 · 수축 성공확률 ≥ 50%) 이고 평균이 가장 큰 것 — 없으면 안 산다
 """
+import json
 import math
 import os
 import time
@@ -217,6 +218,8 @@ RC_NAMES = {1: "손절", 2: "본전", 3: "익절", 4: "평균회귀", 5: "기간
 # [V33.694] 추세 타기(+R) 청산 — 사용자 10/28 "상승장·폭등장에서 돈 버는 게 중요". 실험실 r3/e4(10년 · 하루 늦은 진입 · OMNI-Q 상위 40%):
 #   후보 전체 실제 수익(판정 구간) 한국 상승 +1.48→+2.92% · 폭락 +0.29→+1.79% · 보합 +0.54→+2.54% / 미국 폭등 +3.71→+7.84% · 하락 +2.86→+5.01%.
 #   고정 보유·익절로 추세 중간에 내리던 것을 고점 −15% 까지 탄다(진입 뒤 +8% 를 넘긴 뒤부터). 손절(stop·ATR)은 원래 매매법 그대로.
+LEAD_ON = os.environ.get("PB_LEAD", "0") == "1"   # 실험실 A/B 확인 전엔 꺼 둔다
+LEAD_PB = {"LEAD60_HOLD": 60, "LEAD120_HOLD": 60}
 RIDE_ON = os.environ.get("PB_RIDE", "0") == "1"   # 실험실 A/B 확인 전엔 꺼 둔다
 RIDE_PROF = {"hold": 60, "trail": 15, "trailAct": 8, "tpR": None, "tpPct": None, "be": 0, "bePct": None, "mr": False, "tstop": 0}
 
@@ -407,6 +410,10 @@ def _new_signals(P, names):
     if "VOL_SURGE_HOLD" in names:   # [V33.659] 거래량 급등 유지(단타 5일) — 어제 거래량 20일 평균 3배 · +5% 이상 → 오늘 어제 종가 −2% 이내 · 저가가 그제 종가 위 · 정배열
         vr_ = I["v"] / I["v"].rolling(20).mean()
         out["VOL_SURGE_HOLD"] = A(vr_.shift(1) >= 3, r1.shift(1) >= 0.05, c >= c.shift(1) * 0.98, l > c.shift(2), c > I["ma200"], I["ma50"] > I["ma200"])
+    if "LEAD60_HOLD" in names:   # [V33.694] 주도주 보유 — 60일 수익 횡단면 상위 5% · 20일선 위 → 최대 60일(실험실 r3/e7: 상승장 한 +5.9·+6.0% / 미 +4.4·+7.3% 두 구간)
+        out["LEAD60_HOLD"] = first(A(X(c.pct_change(60, fill_method=None)) >= 0.95, c > I["ma20"]))
+    if "LEAD120_HOLD" in names:   # [V33.694] 주도주 보유(긴) — 120일 수익 상위 5% · 50일선 위 → 최대 60일(미 상승 +5.5·+7.9 · 보합 +8.0·+9.1 · 폭등 +9.6·+17.9)
+        out["LEAD120_HOLD"] = first(A(X(c.pct_change(120, fill_method=None)) >= 0.95, c > I["ma50"]))
     return {k: v.fillna(False).astype(bool) for k, v in out.items()}
 
 
@@ -1858,6 +1865,15 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                     mod_now[rn] = mod_now[nm]
                 if nm in tier2:
                     tier2.append(rn)
+        if LEAD_ON:   # [V33.694] ★주도주 보유(1순위)★ — 사용자 10/28 "상승장·폭등장에서 버는 게 중요 · 모든 국면 거래당 +5%". 2순위가 아니라 1순위로 겨룬다(칸·국면마다 표가 고른다)
+            _ls = _new_signals(P, list(LEAD_PB))
+            for nm, hd_ in LEAD_PB.items():
+                if nm not in _ls:
+                    continue
+                mod_now[nm] = _ls[nm].values[-1]
+                sig[nm] = _ls[nm].shift(1, fill_value=False)
+                dpb[nm] = dict(DAILY_PB["DUAL_MOM"], stop=12, atr=4, be=0, tpR=None, hold=hd_, family="Lead", prof="lead", flt=None,
+                               label="%s(주도주 보유 · 최대 %d일) — 1순위" % (nm, hd_))
         log("   · [매매법시뮬] %s 매매법 %d종 사용 · 퇴출 %d종(성적 미달)" % (market, len(dpb), len(_off)))
         if P.get("_grp") is None:
             P["_grp_now"] = PP.groups(P, PTUNE_GROUPS)
