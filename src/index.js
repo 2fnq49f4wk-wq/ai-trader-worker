@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.693";
+const _BUILD_VER = "V33.694";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13431,6 +13431,15 @@ async function omniVizData(DB) {
 /* [V33.584] maxAgeMs 는 ★채점★ 나이(scoredAt) · maxModelAgeMs 는 ★모델★ 나이(trainedAt). 학습은 금요일 한 번(TRAIN_WEEKLY) — 평일에는
    GHA 가 금요일 모델로 그날 피처만 다시 채점해 올린다(omni_q.run score-only). 금요일 학습이 한 번 빠져도 10일 안이면 쓰고, 넘으면 낡음. */
 /* [V33.692] /api/playbook 상태 묶어 읽기 — 매매법 표(칸 수천)는 D1 이 떼고 칸 수만 센다 */
+/* [V33.694] 학습기 국면 3단 검사·정리 — 장기 L(UP·DOWN·TURN) · 중기 M(UP·DOWN·FLAT) · 단기 S(SURGE·UP·CALM·DOWN·CRASH) · 근거 수치 · 전환 문장 */
+function _pbReg3(x) {
+  if (!x || typeof x !== "object") return null;
+  const ok = function (v, list) { v = String(v || ""); return list.indexOf(v) >= 0 ? v : null; };
+  const L = ok(x.L, ["UP", "DOWN", "TURN"]), M = ok(x.M, ["UP", "DOWN", "FLAT"]), S = ok(x.S, ["SURGE", "UP", "CALM", "DOWN", "CRASH"]);
+  if (!L || !M || !S) return null;
+  const xs = {}; if (x.x && typeof x.x === "object") for (const k of ["vs200", "r60", "r20", "r5", "r1"]) { const v = Number(x.x[k]); if (isFinite(v)) xs[k] = Math.round(v * 100) / 100; }
+  return { L: L, M: M, S: S, x: xs, turn: x.turn ? String(x.turn).slice(0, 60) : null, sDays: Math.max(0, Math.min(999, _num(x.sDays, 0))) };
+}
 const PB_API_SQL = "SELECT k, CASE WHEN k LIKE 'playbook:%' AND json_valid(v) THEN json_remove(v, '$.daily.table', '$.intra.table') ELSE v END AS v, " +
   "CASE WHEN k LIKE 'playbook:%' AND json_valid(v) THEN (SELECT COUNT(*) FROM json_each(state.v, '$.daily.table')) END AS dc, " +
   "CASE WHEN k LIKE 'playbook:%' AND json_valid(v) THEN (SELECT COUNT(*) FROM json_each(state.v, '$.intra.table')) END AS ic FROM state WHERE k IN ";
@@ -13953,6 +13962,13 @@ function pbLiveDaily(daily, price, prevClose, minToClose) {
    그런데 '매매법 전체 성적' 규칙이 폭락장에서도 골랐다(판정 구간 미 −0.82% · 한 −1.96%). */
 const PB_REGIME_VETO_N = 30;
 const PB_GLOBAL_VETO_N = 100;   // [V33.642] playbook_sim.GLOBAL_VETO_N 과 같다
+/* [V33.694] ★규칙을 종목마다★ — 학습기가 칸별 규칙(rule.cells: '중기 국면|변동성 그룹' → 규칙)을 고르면 그 종목 칸의 규칙, 없으면 기본(rule.def). 학습기 _rule_rows 와 같다. */
+function pbRuleFor(st, grp) {
+  const r = st && st.daily && st.daily.val && st.daily.val.rule;
+  if (!r || !r.cells || typeof r.cells !== "object") return r;
+  const m = st.regime3 && st.regime3.M ? st.regime3.M : "FLAT";
+  return r.cells[m + "|" + (grp != null ? String(grp) : "x")] || r.def || r;
+}
 function pbChoose(table, keys, fired, rule) {
   if (!table || !fired || !fired.length) return null;
   const sc = String((rule && rule.score) || "m");
@@ -14059,6 +14075,8 @@ function pbRoutePick(st, ctx, nowMs) {
     const fired0 = pbDailyFires(D, epm, st.daily.rs6 && st.daily.rs6[ctx.symbol]);
     const cr = st.daily.cross || {};
     for (const pb in cr) if (Array.isArray(cr[pb]) && cr[pb].indexOf(ctx.symbol) >= 0 && fired0.indexOf(pb) < 0) fired0.push(pb);   // 횡단면 조건은 학습기 판정(전일 종가 기준)
+    /* [V33.694] 추세 타기(+R) 변형 — 같은 신호 · 청산만 따라붙는 손절(학습기 RIDE_PROF). 원래 매매법이 뜨면 변형도 뜬 것으로(학습기 sig[pb+'+R'] = sig[pb]) */
+    for (const pb of fired0.slice()) { const rn = pb + "+R"; if (st.daily.pb && st.daily.pb[rn] && fired0.indexOf(rn) < 0) fired0.push(rn); }
     let fired = fired0.filter(function (pb) { return pbLiveFilterOk(pb, D, ctx.reg, st.daily.pb && st.daily.pb[pb]); });   // [V33.619] 자동 조율 거르개 포함
     const metaOff = [];
     { /* [V33.672] 고차원 수식 거름(2순위 정리 전 · 학습기와 같은 순서) */
@@ -14082,14 +14100,15 @@ function pbRoutePick(st, ctx, nowMs) {
       const ma20 = _pbSma(D.c, 20, i), rsi = _pbRsiEwm(D.c, 14)[i];
       const ret5 = D.c[i - 5] > 0 ? (px / D.c[i - 5] - 1) * 100 : null;
       const vr = _pbVr(D.v, i);   // [V33.610] 오늘 거래량(지난 시간 비율로 하루치 추정 · pbLiveDaily) — 시뮬 칸과 같은 날 기준
-      const ch = pbChoose(st.daily.table, pbDailyKeys(ctx.reg, rsi, ma20 > 0 ? (px / ma20 - 1) * 100 : null, ret5, vr, ctx.evNear), fired.filter(function (pb) { return benched.indexOf(pb) < 0; }), st.daily.val && st.daily.val.rule);
+      const ch = pbChoose(st.daily.table, pbDailyKeys(ctx.reg, rsi, ma20 > 0 ? (px / ma20 - 1) * 100 : null, ret5, vr, ctx.evNear), fired.filter(function (pb) { return benched.indexOf(pb) < 0; }), pbRuleFor(st, grp));
       const pr0 = ch && st.daily.pb && st.daily.pb[ch.pb];
       const pr = pr0 && grp != null && pr0.grp && pr0.grp[grp] ? Object.assign({}, pr0, pr0.grp[grp]) : pr0;   // [V33.664] 그룹별 청산 미지수
       if (ch && pr) {
         const atr = _pbAtrPct(D.h, D.l, D.c, i);
         const stop = Math.min(_num(pr.stop, 5), atr === atr ? _num(pr.atr, 2) * atr : 99);
         best = { kind: "daily", pb: ch.pb, fired: fired, n: ch.n, w: ch.w, m: ch.m, s: ch.s, stop: Math.max(1.5, stop), grp: grp, tunedEp: epm[ch.pb] || null, tunedExit: !!(pr0 && pr0.grp && grp != null && pr0.grp[grp]), be: _num(pr.be, 0), tpR: pr.tpR == null ? null : _num(pr.tpR, null), hold: _num(pr.hold, 10), label: pr.label || "", alts: ch.alts || [], benched: benched,
-                 mr: pr.mr === true, tpPct: pr.tpPct == null ? null : _num(pr.tpPct, null), bePct: pr.bePct == null ? null : _num(pr.bePct, null), tstop: _num(pr.tstop, 0), rsi2x: _num(pr.rsi2x, 65) };
+                 mr: pr.mr === true, tpPct: pr.tpPct == null ? null : _num(pr.tpPct, null), bePct: pr.bePct == null ? null : _num(pr.bePct, null), tstop: _num(pr.tstop, 0), rsi2x: _num(pr.rsi2x, 65),
+                 trail: _num(pr.trail, 0), trailAct: _num(pr.trailAct, 0) };   // [V33.694] 따라붙는 손절
       } else if (ctx.shadow) best = { kind: "daily", pb: null, fired: fired, benched: benched, alts: pbChoose.lastAlts || [],
                                       why: panicked.length && panicked.length === fired.length ? "공황 국면 — 추세·모멘텀 쉼(" + panicked.join("·") + ")"
                                          : benched.length && benched.length === fired.length ? "최근 성적 스위치로 쉼(" + benched.join("·") + ")" : "뜬 매매법 성적 미달" };
@@ -14190,6 +14209,12 @@ function pbSellRule(pos, price) {
   const pnl = (price / avg - 1) * 100;
   const sp = typeof pos.meta.stopPrice === "number" && pos.meta.stopPrice > 0 ? pos.meta.stopPrice : avg * (1 - _num(sm.stop, 5) / 100);
   if (price <= sp) return { sell: true, sellQty: pos.qty, reason: "SR-STOP " + sm.sid + " " + pnl.toFixed(2) + "%" };
+  /* [V33.694] 추세 타기(+R) — 고점이 진입가 +trailAct% 를 넘은 뒤 고점 × (1 − trail%) 아래면 판다(학습기 _sim_profile trail 과 같은 식) */
+  if (_num(sm.trail, 0) > 0) {
+    const pk = Math.max(_num(pos.meta.peakPrice, avg), price);
+    if (pk >= avg * (1 + _num(sm.trailAct, 0) / 100) && price <= pk * (1 - sm.trail / 100))
+      return { sell: true, sellQty: pos.qty, reason: "SR-TRAIL " + sm.sid + " 고점 −" + ((1 - price / pk) * 100).toFixed(1) + "% · " + (pnl >= 0 ? "+" : "") + pnl.toFixed(2) + "%" };
+  }
   if (sm.kind !== "intra" && (_num(sm.be, 0) > 0 || _num(sm.bePct, 0) > 0)) {   // [V33.618] bePct = 고정 % 에 본전(스냅 평균회귀)
     const peak = Math.max(_num(pos.meta.peakPrice, avg), price);
     const bel = _num(sm.bePct, 0) > 0 ? avg * (1 + sm.bePct / 100) : avg * (1 + _num(sm.be, 0) * _num(sm.stop, 5) / 100);
@@ -26954,7 +26979,7 @@ async function runTradingCycle(env) {
                   stratResults.unshift({ strategy: _st, weight: 1,
                     signal: { name: "PB_" + _sp.pb, members: [_sp.pb], isStratRoute: true, weight: 1,
                       sr: { sid: _sp.pb, kind: _sp.kind, stop: +_sp.stop.toFixed(2), be: _sp.be || 0, tpR: _sp.tpR == null ? null : _sp.tpR, tpPct: _sp.tpPct == null ? null : _sp.tpPct,
-                            mr: _sp.mr === true, bePct: _sp.bePct == null ? null : _sp.bePct, tstop: _sp.tstop || 0, rsi2x: _sp.rsi2x || 65, tpPx: _sp.tpPx == null ? null : _sp.tpPx,
+                            mr: _sp.mr === true, bePct: _sp.bePct == null ? null : _sp.bePct, tstop: _sp.tstop || 0, rsi2x: _sp.rsi2x || 65, trail: _sp.trail || 0, trailAct: _sp.trailAct || 0, tpPx: _sp.tpPx == null ? null : _sp.tpPx,
                             hold: _sp.hold || null, bars: _sp.bars || 0, primary: __pbPrim, sess: _sp.session || "regular", m: +_sp.m.toFixed(3), w: +_sp.w.toFixed(3), n: _sp.n, omq: +_pbS.toFixed(3), regime: __sr.regime || null, at: Date.now() },
                       detail: "매매법AI " + _sp.pb + "(" + (_sp.kind === "intra" ? "5분 단타" : "일봉") + (_sp.session ? " · " + (_sp.session === "pre" ? "프리마켓" : "애프터마켓") : "") + " · 지금 뜬 " + _sp.fired.join("·") + ") · OMNI-Q 상위 " + Math.max(1, Math.round((1 - _pbS) * 100)) + "% · 국면 " + (__sr.regime || "?") +
                               " · 모의 성공 " + (_sp.w * 100).toFixed(0) + "% 평균 +" + _sp.m.toFixed(2) + "% (표본 " + _sp.n + ") · 손절 −" + (+_sp.stop).toFixed(1) + "%" + (__pbPrim ? " · ★주력★" : " · 잠정 ×" + STRAT_ROUTE.mult) } });
@@ -30143,7 +30168,10 @@ async function handleRequest(request, env, ctx, _inner) {
         } catch (e) {}
         // [V33.44] 국면 위상(보합/추세/폭등) — 진입 문턱·사이즈·청산 규율이 이 값으로 갈린다.
         let _phase = null;
-        try { const _ps = await getState(env.DB, "mkt_phase", null); if (_ps) _phase = { us: _ps.us, kr: _ps.kr, erUs: _ps.erUs, erKr: _ps.erKr,
+        // [V33.694] 매매법 AI 국면(학습기 · 장기·중기·단기)도 같은 질의로 — 오른쪽 칸이 '오늘 지수 흐름' 과 '매매법 AI 국면' 을 따로 보인다(10/28 사용자: 폭등 vs 폭락 충돌)
+        let _pbReg = null;
+        try { const _pss = await getStates(env.DB, ["mkt_phase", "pb_regime"]); const _ps = _pss["mkt_phase"]; _pbReg = _pss["pb_regime"] || null;
+          if (_ps) _phase = { us: _ps.us, kr: _ps.kr, erUs: _ps.erUs, erKr: _ps.erKr,
           dayUs: _ps.dayUs, dayKr: _ps.dayKr, r5Us: _ps.r5Us, r5Kr: _ps.r5Kr, ts: _ps.ts }; } catch (e) {}
         // [V33.45] 미국 반도체 → 한국 기술주 선행지표(전이 감시).
         let _xmkt = null;
@@ -30506,7 +30534,7 @@ async function handleRequest(request, env, ctx, _inner) {
                  committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk, xgb: xgb, lgb: lgb, cat: cat },
                  alt: _alt, thr: _thr,
                  diag: _diag,
-                 phase: _phase, xmkt: _xmkt, sectors: _sect,
+                 phase: _phase, pbRegime: _pbReg, xmkt: _xmkt, sectors: _sect,
                  selfreview: review, scan: scan, samples: samples, degraded: false };
         // 마지막 정상 스냅샷 보관 — 다음에 조회가 실패해도 "규칙엔진 폴백"으로 오표시하지 않기 위해.
         try { ctx.waitUntil(setState(env.DB, "ai_mode_last_ok", _out)); } catch (e) {}
@@ -31609,6 +31637,7 @@ async function handleRequest(request, env, ctx, _inner) {
                     panic: body.panic === true,
                     panicBook: (body.panicBook && typeof body.panicBook === "object") ? body.panicBook : null };   // [V33.683] 공황 반등 바구니(관측 · 사전 등록 규칙 통과 여부)   // [V33.625] 공황 국면(학습기 _panic 마지막 날) — 추세·모멘텀 진입 차단   // [V33.621] 종목 → 섹터(학습기 자동 배정 · 섹터 보유 상한)
       rec.mkt = mk;   // [V33.669] 시장 표시(절대 기준 시험 매수 판정)
+      rec.regime3 = _pbReg3(body.regime3);   // [V33.694] 국면 3단(장기·중기·단기)
       rec.pass = { daily: _pbPass(rec.daily && rec.daily.val), intra: _pbPass(rec.intra && rec.intra.val) };
       try { const _prev = await getState(env.DB, "playbook:" + mk, null); rec.passStreak = rec.pass.daily ? _num(_prev && _prev.passStreak, 0) + 1 : 0;
         /* [V33.626] 통과한 판정 구간 시작일 기록(최근 12개) — 실패가 끼어도 지우지 않는다(독립 구간 두 번 통과 · 지금 통과 중 · 연속 2회 셋 다 필요) */
@@ -31619,6 +31648,10 @@ async function handleRequest(request, env, ctx, _inner) {
       const _sz = JSON.stringify(rec).length;
       if (_sz > 1800000) return Response.json({ error: "표가 너무 크다(" + _sz + "B > 1.8MB) — 학습기 export 문턱을 올려라" }, { status: 413, headers: cors });
       await setState(env.DB, "playbook:" + mk, rec);
+      /* [V33.694] 오른쪽 '시장 국면' 칸용 작은 요약 — ai-mode 가 mkt_phase 와 ★한 번의 D1 질의★ 로 같이 읽는다(큰 playbook 행을 읽지 않는다 · 학습 회차당 쓰기 1) */
+      try { const _pr = (await getState(env.DB, "pb_regime", null, true)) || {};   // 엄격 읽기 — 못 읽으면(예외) 덮지 않는다
+        _pr[mk] = { day: rec.day, regime: rec.regime, r3: rec.regime3, panic: rec.panic, ts: rec.ts };
+        await setState(env.DB, "pb_regime", _pr); } catch (e) {}
       try { await log(env.DB, "INFO", null, "[매매법시뮬] " + mk.toUpperCase() + " 국면 " + rec.regime + " · 일봉 표 " + Object.keys(rec.daily.table).length + "칸 검증 " + JSON.stringify(Object.assign({}, rec.daily.val, { tune: undefined, exitDiag: undefined, valCmp: undefined })) +
                       " · 5분 표 " + (rec.intra ? Object.keys(rec.intra.table).length : 0) + "칸 → 일봉 " + (rec.pass.daily ? "실전" : "기록만") + " · 5분 " + (rec.pass.intra ? "실전" : "기록만")); } catch (e) {}
       return Response.json({ ok: true, pass: rec.pass }, { headers: cors });
@@ -31644,7 +31677,7 @@ async function handleRequest(request, env, ctx, _inner) {
       const out = {};
       for (const mk of ["us", "kr"]) {
         const r = st0["playbook:" + mk] || null, cn = cellN["playbook:" + mk] || { d: 0, i: 0 };
-        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, panic: r.panic === true, panicBook: r.panicBook || null,
+        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, regime3: r.regime3 || null, panic: r.panic === true, panicBook: r.panicBook || null,
                         pass: Object.assign({}, r.pass || {}, { absTrial: !(r.pass && r.pass.daily) && !_pbTradeOk(r.daily && r.daily.val) && !!(PB_ABS_TRIAL[mk] && _pbAbsOk(r.daily && r.daily.val)), trialWhy: pbTrialWhy(r.daily && r.daily.val, mk) }), primary: pbPrimaryOn(r, Date.now()), passStreak: r.passStreak || 0, indep: pbIndepPasses(r.passLog),   // [V33.669] pass.absTrial(미국 절대 기준 시험 매수)
                         brake: st0["pb_brake:" + mk] || null,
                         daily: r.daily && { val: r.daily.val, cells: cn.d, pb: r.daily.pb, gate: r.daily.gate || null,

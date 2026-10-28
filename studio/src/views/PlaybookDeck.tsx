@@ -29,7 +29,10 @@ const sg = (x: any, k = 2) => (fin(x) ? (x >= 0 ? "+" : "") + x.toFixed(k) : "�
 const n0 = (x: any) => (fin(x) ? x.toLocaleString("ko-KR") : "—");
 const col = (x: any) => (!fin(x) ? MUTE : x > 0 ? POS : x < 0 ? NEG : INK);
 const pos = (x: number, lim: number) => Math.max(0, Math.min(100, 50 + (x / lim) * 50));
-const ruleName = (r: any) => (!r ? "—" : [r.score, r.level].concat(r.decay ? ["d" + r.decay] : []).concat(r.gate ? ["g" + r.gate] : []).join("·"));
+const ruleName = (r: any): string => (!r ? "—" : r.cells ? "칸별 " + Object.keys(r.cells).length + "칸 · 기본 " + ruleName(r.def) : [r.score, r.level].concat(r.decay ? ["d" + r.decay] : []).concat(r.gate ? ["g" + r.gate] : []).concat(r.gveto ? ["거부권"] : []).join("·"));
+// [V33.694] 국면 3단 · 종목 칸(중기 국면 | 변동성 그룹) 한글 이름표
+const R3K: Record<string, Record<string, string>> = { L: { UP: "상승", DOWN: "하락", TURN: "전환" }, M: { UP: "상승", DOWN: "하락", FLAT: "보합" }, S: { SURGE: "폭등", UP: "상승", CALM: "보합", DOWN: "하락", CRASH: "폭락" } };
+const cellName = (c: string) => { const [m, g] = String(c).split("|"); return "중기 " + (R3K.M[m] || m) + " · " + ({ "0": "저변동", "1": "중변동", "2": "고변동" } as any)[g] || g; };
 const ago = (ts: any) => { if (!fin(ts)) return "—"; const m = Math.round((Date.now() - ts) / 60000); return m < 60 ? m + "분 전" : m < 2880 ? Math.round(m / 60) + "시간 전" : Math.round(m / 1440) + "일 전"; };
 
 function TwoSided({ x, lim, h = 6 }: { x: any; lim: number; h?: number }) {
@@ -121,7 +124,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
           {ms.map((m) => <Btn key={m} on={m === mk} onClick={() => setMk(m)}>{m === "us" ? "미국" : "한국"}</Btn>)}
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, fontFamily: MONO, fontSize: 12 }}>
-          {[["기준일", day], ["국면", R.regime || "—"], ["표", ago(R.ts)]].map(([k, v]) => <span key={k} style={{ padding: "7px 10px", border: "1px solid " + LINE, borderRadius: 6, color: MUTE }}>{k} <b style={{ color: INK, fontWeight: 500 }}>{v}</b></span>)}
+          {[["기준일", day], ["국면", R.regime3 ? "장기 " + (R3K.L[R.regime3.L] || R.regime3.L) + " · 중기 " + (R3K.M[R.regime3.M] || R.regime3.M) + " · 단기 " + (R3K.S[R.regime3.S] || R.regime3.S) + (R.regime3.turn ? " (" + R.regime3.turn + ")" : "") : ({ SURGE: "폭등", BULL: "상승", NEUTRAL: "보합", BEAR: "하락", CRASH: "폭락" } as any)[R.regime] || R.regime || "—"], ["표", ago(R.ts)]].map(([k, v]) => <span key={k} style={{ padding: "7px 10px", border: "1px solid " + LINE, borderRadius: 6, color: MUTE }}>{k} <b style={{ color: INK, fontWeight: 500 }}>{v}</b></span>)}
           <span title={R.panic ? "공황 = 시장(등가중)이 하루 −2.5%↓ 또는 5일 −6%↓ 폭락 뒤 3거래일, 또는 60일 하락 + 20일 변동성 상위 20%. 폭락 직후 반등일엔 추세·모멘텀이 반대로 움직인다 — 한국 10년: 공황 중 시장 +2%↑ 반등일에 추세 매매법 평균 −0.91%(n 18,837 · 평시 +0.10%). 평균회귀·반등(보조)은 계속." : undefined} style={{ padding: "7px 10px", borderRadius: 6, border: "1px solid " + (R.panic ? NEG : LINE), color: R.panic ? NEG : MUTE }}>{R.panic ? "공황 · 추세 쉼" : "공황 아님"}</span>
           {R.brake && R.brake.on && <span style={{ padding: "7px 10px", borderRadius: 6, border: "1px solid " + NEG, color: NEG }}>실전 손실 제동</span>}
         </div>
@@ -156,14 +159,20 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
         <section aria-label="국면별 성적" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
             <h3 style={{ fontSize: 16, fontWeight: 600, color: "#F2F6FC" }}>국면별 성적 · 판정 구간</h3>
-            <span style={{ fontSize: 12, color: DIM }}>같은 국면 날의 후보 안 무작위와 비교 — 판정은 국면 이름표 대신 '같은 달' 로 맞춘다</span>
+            <span style={{ fontSize: 12, color: DIM }}>큰 숫자 = 거래당 ★실제 수익★(목표 +5%) · 아래 = 같은 기간 시장을 뺀 초과 vs 같은 국면 무작위</span>
           </div>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
             {(V.byReg as any[]).map((r) => { const d = fin(r.mean) && fin(r.base) ? r.mean - r.base : null; return (
               <div key={r.reg} style={{ ...card, padding: 14, display: "flex", flexDirection: "column", gap: 6 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: MUTE }}><span>{r.ko}</span><span style={{ fontFamily: MONO }}>{n0(r.n)}건 · {r.share}%</span></div>
-                <div style={{ fontFamily: MONO, fontSize: 20, color: d == null ? MUTE : d >= 0 ? POS : NEG }}>{d == null ? "—" : (d >= 0 ? "+" : "") + d.toFixed(2) + "%p"}</div>
-                <div style={{ fontFamily: MONO, fontSize: 11.5, color: DIM }}>고른 {sg(r.mean)}% · 무작위 {sg(r.base)}%</div>
+                {fin(r.raw) ? <>
+                  <div style={{ fontFamily: MONO, fontSize: 20, color: r.raw >= 5 ? POS : r.raw >= 0 ? HL : NEG }}>{sg(r.raw)}%</div>
+                  <div style={{ height: 4, borderRadius: 2, background: TRACK, position: "relative" }}><div style={{ height: 4, borderRadius: 2, width: Math.max(0, Math.min(100, r.raw / 10 * 100)) + "%", background: r.raw >= 5 ? POS : HL }} /><div style={{ position: "absolute", left: "50%", top: -3, bottom: -3, width: 2, background: INK }} title="목표 +5%" /></div>
+                  <div style={{ fontFamily: MONO, fontSize: 11.5, color: DIM }}>초과 {sg(r.mean)}% · 무작위 {sg(r.base)}%{fin(r.hd) ? " · " + r.hd + "일" : ""}</div>
+                </> : <>
+                  <div style={{ fontFamily: MONO, fontSize: 20, color: d == null ? MUTE : d >= 0 ? POS : NEG }}>{d == null ? "—" : (d >= 0 ? "+" : "") + d.toFixed(2) + "%p"}</div>
+                  <div style={{ fontFamily: MONO, fontSize: 11.5, color: DIM }}>고른 {sg(r.mean)}% · 무작위 {sg(r.base)}% (시장 뺀 초과)</div>
+                </>}
                 <div style={{ fontSize: 11, color: FAINT }}>국면 날 {r.dayShare}%</div>
               </div>); })}
           </div>
@@ -229,6 +238,15 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
         {tab === "param" && <ParamTab R={R} name={pbName} />}
 
         {tab === "rules" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {/* [V33.694] 규칙이 뜻하는 것(사용자 10/28 질문) · 칸별 규칙이면 종목 칸마다 무엇을 쓰는지 */}
+          <p style={{ fontSize: 12, lineHeight: 1.6, color: DIM }}>규칙 = 한 종목에 매매법이 여럿 뜰 때 하나를 고르는 방법. <b style={{ color: INK }}>점수</b>: m 평균 · lcb 하한(평균−표준오차) · mpd·lcbpd 하루당 · <b style={{ color: INK }}>칸 단계</b>: fine 세부 칸(국면+RSI·20일선·5일·거래량) · regime 국면 칸만 · global 매매법 전체 · d 최근 가중 · g 성적 스위치 · 거부권 전체 평균 ≤ 0 이면 제외. 검증 구간 [60,80%) 에서 같은 달 무작위 대비 초과의 달 묶음 t 로 고른다.</p>
+          {V.rule && V.rule.cells && (
+            <div style={{ ...card, padding: 14, background: "#080C13" }}>
+              <div style={{ fontSize: 12, color: MUTE, marginBottom: 8 }}>종목마다 다른 규칙 — 칸(중기 국면 × 종목 변동성)에서 [40,60%) 로 고른 규칙 · 나머지 칸은 기본 {ruleName(V.rule.def)}</div>
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">{Object.entries(V.rule.cells).map(([c, r]: any) => (
+                <div key={c} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12, padding: "6px 10px", border: "1px solid " + LINE, borderRadius: 6 }}><span style={{ color: MUTE }}>{cellName(c)}</span><b style={{ color: INK, fontFamily: MONO, fontWeight: 500 }}>{ruleName(r)}</b></div>))}</div>
+            </div>)}
           <div style={{ ...card, overflowX: "auto", background: "#080C13" }}>
             <table style={{ ...tbl, minWidth: 720 }}>
               <thead><tr style={{ background: PANEL2, color: DIM }}>{th(null, "규칙 (점수 · 칸 단계 · 최근 가중 · 성적 스위치)", true)}{th(null, "검증 n")}{th(null, "검증 평균")}{th(null, "검증 t")}{th(null, "t 막대", true)}{th(null, "상태", true)}</tr></thead>
@@ -243,7 +261,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
                     <td style={{ padding: "10px 14px", color: on ? HL : DIM, fontWeight: on ? 600 : 400 }}>{on ? "고른 규칙" : c.t >= 2 ? "t ≥ 2" : "—"}</td>
                   </tr>); })}</tbody>
             </table>
-          </div>)}
+          </div></div>)}
 
         {tab === "cand" && (
           <div style={{ ...card, overflowX: "auto", background: "#080C13" }}>

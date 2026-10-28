@@ -137,6 +137,58 @@ def _regime(close):
     return reg, r.values
 
 
+# [V33.694] ★국면 3단(장기·중기·단기)★ — 사용자 10/28 "국면을 장기·중기·단기로 나눠 대응 · 지금 국면이 전환된 상황".
+#   종전 5종(폭등·상승·보합·하락·폭락)은 장기(200일선)와 단기(3일 충격)를 한 칸에 섞어, 한 달 −22% 뒤 +3% 반등 같은 '전환' 을 못 그렸다.
+#   같은 등가중 시장 지수(학습기 _regime 과 같은 바탕)로 셋을 따로 낸다:
+#     장기 L = 200일선 위 + 200일선 20일 기울기 > 0 → UP · 아래 + 기울기 < 0 → DOWN · 그 밖 → TURN(전환 중)
+#     중기 M = 50일선 위 + 50일선 10일 상승 → UP · 아래 + 하락 → DOWN · 그 밖 FLAT
+#     단기 S = 3거래일 안 하루 ±2.5% 또는 5일 ±6% → SURGE/CRASH(폭락 우선) · 아니면 5일 ±2% → UP/DOWN · 그 밖 CALM
+REG3_KO = {"L": {"UP": "상승", "DOWN": "하락", "TURN": "전환"}, "M": {"UP": "상승", "DOWN": "하락", "FLAT": "보합"},
+           "S": {"SURGE": "폭등", "UP": "상승", "CALM": "보합", "DOWN": "하락", "CRASH": "폭락"}}
+
+
+def regime3(close):
+    r = close.pct_change(fill_method=None).mean(axis=1).fillna(0)
+    idx = (1 + r).cumprod()
+    m200, m50 = idx.rolling(200, min_periods=120).mean(), idx.rolling(50, min_periods=40).mean()
+    s200 = m200 / m200.shift(20) - 1
+    L = np.where((idx > m200) & (s200 > 0), "UP", np.where((idx < m200) & (s200 < 0), "DOWN", "TURN"))
+    up50 = m50 > m50.shift(10)
+    M = np.where((idx > m50) & up50, "UP", np.where((idx < m50) & ~up50, "DOWN", "FLAT"))
+    r5 = idx / idx.shift(5) - 1
+    crash = ((r <= -0.025) | (r5 <= -0.06)).astype(float).rolling(3, min_periods=1).max() > 0
+    surge = ((r >= 0.025) | (r5 >= 0.06)).astype(float).rolling(3, min_periods=1).max() > 0
+    S = np.where(crash.values, "CRASH", np.where(surge.values, "SURGE", np.where(r5.values >= 0.02, "UP", np.where(r5.values <= -0.02, "DOWN", "CALM"))))
+    num = {"vs200": (idx / m200 - 1) * 100, "r60": (idx / idx.shift(60) - 1) * 100, "r20": (idx / idx.shift(20) - 1) * 100, "r5": r5 * 100, "r1": r * 100}
+    return L, M, S, num
+
+
+def regime3_now(close):
+    """오늘(마지막 날) 국면 3단 + 전환 문장 — 워커·화면용."""
+    L, M, S, num = regime3(close)
+    l, m, s_ = str(L[-1]), str(M[-1]), str(S[-1])
+    f = lambda k: (round(float(num[k].iloc[-1]), 2) if num[k].iloc[-1] == num[k].iloc[-1] else None)
+    turn = None
+    if l == "UP" and m == "DOWN":
+        turn = "장기 상승 속 중기 조정"
+    elif l == "DOWN" and m == "UP":
+        turn = "장기 하락 속 중기 반등"
+    elif l == "TURN":
+        turn = "장기 추세 전환 중"
+    if s_ in ("UP", "SURGE") and m == "DOWN":
+        turn = (turn + " · " if turn else "") + "단기 반등"
+    elif s_ in ("DOWN", "CRASH") and m == "UP":
+        turn = (turn + " · " if turn else "") + "단기 되밀림"
+    # 단기가 바뀐 날(오늘 단기 ≠ 어제 단기)
+    since = 0
+    for k in range(len(S) - 1, 0, -1):
+        if S[k - 1] != S[-1]:
+            break
+        since += 1
+    return {"L": l, "M": m, "S": s_, "ko": {"L": REG3_KO["L"].get(l, l), "M": REG3_KO["M"].get(m, m), "S": REG3_KO["S"].get(s_, s_)},
+            "x": {k: f(k) for k in ("vs200", "r60", "r20", "r5", "r1")}, "turn": turn, "sDays": since + 1}
+
+
 def _daily_state(P, ev_dates):
     c = P["close"]
     d = c.diff()
@@ -162,6 +214,13 @@ def _daily_state(P, ev_dates):
 RC_NAMES = {1: "손절", 2: "본전", 3: "익절", 4: "평균회귀", 5: "기간 손실", 6: "보유 만기"}
 
 
+# [V33.694] 추세 타기(+R) 청산 — 사용자 10/28 "상승장·폭등장에서 돈 버는 게 중요". 실험실 r3/e4(10년 · 하루 늦은 진입 · OMNI-Q 상위 40%):
+#   후보 전체 실제 수익(판정 구간) 한국 상승 +1.48→+2.92% · 폭락 +0.29→+1.79% · 보합 +0.54→+2.54% / 미국 폭등 +3.71→+7.84% · 하락 +2.86→+5.01%.
+#   고정 보유·익절로 추세 중간에 내리던 것을 고점 −15% 까지 탄다(진입 뒤 +8% 를 넘긴 뒤부터). 손절(stop·ATR)은 원래 매매법 그대로.
+RIDE_ON = os.environ.get("PB_RIDE", "0") == "1"   # 실험실 A/B 확인 전엔 꺼 둔다
+RIDE_PROF = {"hold": 60, "trail": 15, "trailAct": 8, "tpR": None, "tpPct": None, "be": 0, "bePct": None, "mr": False, "tstop": 0}
+
+
 def _sim_profile(O, H, L, C, atr, mcum, pr, cost, t0=250, mrx=None, t_max=None, want_rc=False):
     """모든 (날짜 t ≥ t0 · 종목 j) 에서 t 종가에 샀다면 — 그 청산 프로필의 순초과 % (T×N · 시뮬 못 하는 칸 NaN).
     [V33.620] t_max = 이 날짜 전 진입만(조율 속도) · want_rc = 청산 사유 코드(RC_NAMES)도 돌려준다."""
@@ -183,6 +242,10 @@ def _sim_profile(O, H, L, C, atr, mcum, pr, cost, t0=250, mrx=None, t_max=None, 
     be_px = pe * (1 + pr["bePct"] / 100) if pr.get("bePct") else pe + pr["be"] * R if pr["be"] else np.full_like(pe, np.inf)
     tp_px = (pe * (1 + pr["tpPct"] / 100) if pr.get("tpPct") else pe + pr["tpR"] * R if pr["tpR"] else np.full_like(pe, np.inf))
     alive = np.isfinite(pe) & np.isfinite(stp) & (pe > 0)
+    # [V33.694] 따라붙는 손절(trail) — 고점(진입 뒤 최고가)이 진입가 +trailAct% 를 넘으면 손절선을 고점 × (1 − trail%) 까지 끌어올린다.
+    #   사용자 10/28 "상승장·폭등장에서 돈 버는 게 중요" — 고정 보유·익절로 추세 중간에 내리던 것을 추세가 꺾일 때까지 탄다(워커 pbSellRule 같은 식).
+    trail, tact = float(pr.get("trail") or 0), float(pr.get("trailAct") or 0)
+    peak = pe.copy() if trail > 0 else None
     px = np.full_like(pe, np.nan)
     xk = np.full(pe.shape, hold)
     rc = np.zeros(pe.shape, dtype=np.int8)
@@ -199,6 +262,9 @@ def _sim_profile(O, H, L, C, atr, mcum, pr, cost, t0=250, mrx=None, t_max=None, 
         rc = np.where(hit_tp, 3, rc)
         alive &= ~hit_tp
         sl = np.where(alive & (h >= be_px), np.maximum(sl, pe), sl)       # 본전으로
+        if peak is not None:                                              # [V33.694] 따라붙는 손절 — 다음 봉부터 적용
+            peak = np.where(alive, np.fmax(peak, h), peak)
+            sl = np.where(alive & (peak >= pe * (1 + tact / 100)), np.maximum(sl, peak * (1 - trail / 100)), sl)
         if pr.get("mr") and mrx is not None:                              # [V33.618] 평균회귀 청산(종가 > MA5 · RSI2 ≥ 65) — 그날 종가
             hit_mr = alive & mrx[ts + k]
             px = np.where(hit_mr, cl, px); xk = np.where(hit_mr, k, xk); rc = np.where(hit_mr, 4, rc); alive &= ~hit_mr
@@ -470,7 +536,7 @@ PROFILES = {
     "quick": {"stop": 3.0, "atr": 1.2, "be": 0.0, "tpR": None, "tpPct": 3.0, "bePct": 1.5, "hold": 5, "tstop": 3},
     "mr": dict(SNAP_MR, hold=8),
 }
-PROF_KEYS = ("stop", "atr", "be", "tpR", "hold", "mr", "tpPct", "bePct", "tstop", "rsi2x")
+PROF_KEYS = ("stop", "atr", "be", "tpR", "hold", "mr", "tpPct", "bePct", "tstop", "rsi2x", "trail", "trailAct")
 FILTERS = (None, "trend", "noBear", "calm", "up20")
 TUNE_CUT, TUNE_PICK, TUNE_MIN_N, TUNE_MARGIN, TUNE_T = 0.55, 0.40, 80, 0.05, 3.0
 #   고르기 [0,40%) → 확인 [40,55%). 같은 종목 연일 신호는 서로 겹쳐 거래 수만큼 독립이 아니다(무작위 시세 대조에서 29종 중 11종을 '개선' 으로 잘못 골랐다) →
@@ -998,6 +1064,11 @@ def sim_daily(P, market, ev_dates, sig=None, cand=None, pbs=None):
     ks = daily_keys(reg[t], rsi[t, j], gap20[t, j], ret5[t, j], vr[t, j], near[t])
     for lv, k in enumerate(ks):
         df["k%d" % lv] = k
+    # [V33.694] 종목 칸(규칙을 종목마다) = 중기 국면(M) | 종목 변동성 그룹(하루 늦춘 값 · 워커와 같다)
+    M3 = np.asarray(regime3(P["close"])[1]).astype(str)
+    G_ = P.get("_grp")
+    gv = np.asarray(G_)[t, j].astype(int).astype(str) if G_ is not None and len(t) else np.full(len(t), "x")
+    df["cell"] = np.char.add(np.char.add(M3[t], "|"), gv) if len(t) else np.array([], dtype=str)
     return df, str(reg[-1]), sig
 
 
@@ -1332,17 +1403,72 @@ def gate_now(df, G, t_now):
     return out
 
 
-def _pick(tab, te, rule, hist=None):
-    """후보(inst)마다 뜬 매매법 중 규칙이 고른 것 · 같은 종목은 앞 거래가 끝나야 다시 산다(실전과 같다).
-    [V33.620] rule.gate 면 최근 성적 스위치(hist 의 끝난 거래)로 쉬는 매매법을 먼저 뺀다."""
-    if rule.get("gate") and hist is not None and "x" in te.columns and len(te):
-        te = te[_gate_ok(hist, te, rule["gate"])]
+def _rule_rows(tab, te, rule):
+    """행마다 (점수, 고를 수 있나). [V33.694] rule.cells 면 ★종목 칸(cell)마다 그 칸의 규칙★ — 사용자 10/28 '규칙을 오늘 하나로 정하지 말고 종목마다'."""
+    if rule.get("cells") and "cell" in te.columns and len(te):
+        sc = np.full(len(te), np.nan); ok = np.zeros(len(te), dtype=bool)
+        cv = te["cell"].values.astype(str)
+        subs = {}
+        for c in np.unique(cv):
+            sub = rule["cells"].get(c) or rule["def"]
+            subs.setdefault(json.dumps(sub, sort_keys=True), (sub, []))[1].append(c)
+        for sub, cs in subs.values():
+            m = np.isin(cv, cs)
+            s_, o_ = _rule_rows(tab, te[m], sub)
+            sc[m], ok[m] = s_, o_
+        return sc, ok
     w, sc = _row_vals(tab, te, rule)
     ok = sc > 0   # [V33.618] 승률 50% 조건 삭제
     if len(te) and "k1" in te.columns:   # [V33.624] 국면 거부권 — k1 = 국면 칸(정리 뒤)
         ok = ok & np.array([_regime_ok(tab.get(k)) for k in zip(te["k1"].values, te["pb"].values)], dtype=bool)
     if (GLOBAL_VETO or rule.get("gveto")) and len(te) and "k0" in te.columns:   # [V33.642] 전체 칸 거부권 — 그 매매법의 전체 평균(수축)이 0 이하면 고르지 않는다
         ok = ok & np.array([_global_ok(tab.get(k)) for k in zip(te["k0"].values, te["pb"].values)], dtype=bool)
+    return sc, ok
+
+
+# [V33.694] ★규칙을 종목 칸마다★ — 칸 = 중기 국면(상승·보합·하락) × 종목 변동성 그룹(3분위). 칸마다 규칙을 고르는 일은 [40,60%) 에서만(표 [0,40%)) —
+#   그래야 [60,80%) 검증 구간에서 '칸별 규칙' 도 다른 규칙 후보와 같은 조건으로 겨룬다(고른 곳에서 다시 재지 않는다). 칸 표본 < CELL_MIN 이면 기본 규칙.
+CELL_ON = os.environ.get("PB_CELL", "0") == "1"   # 실험실 A/B 확인 전엔 꺼 둔다
+CELL_MIN = 30
+CELL_FIT = 0.40
+
+
+def _fit_cells(df, ts, c1, log=None):
+    c0 = ts[int(len(ts) * CELL_FIT)]
+    tabA = _shrunk_table(df[df["t"] < c0], tcol="t", ref=c0)
+    vA = df[(df["t"] >= c0) & (df["t"] < c1)]
+    subs = [r for r in RULES + RULES_GV if not r.get("gate") and not r.get("decay")]
+    res = []
+    for r in subs:
+        pk = _pick(tabA, vA, r)
+        if not len(pk):
+            continue
+        g = pk.groupby("cell")["ex"].agg(["mean", "size"])
+        res.append((r, float(pk["ex"].mean()), int(len(pk)), g))
+    res = [x for x in res if x[2] >= VAL_MIN_N]
+    if not res:
+        return None
+    dflt = max(res, key=lambda x: x[1])
+    cells = {}
+    for c in sorted(set().union(*[set(x[3].index) for x in res])):
+        cand = [(x[0], float(x[3].loc[c, "mean"])) for x in res if c in x[3].index and x[3].loc[c, "size"] >= CELL_MIN]
+        if not cand:
+            continue
+        best = max(cand, key=lambda y: y[1])
+        d0 = next((y[1] for y in cand if y[0] == dflt[0]), None)
+        if best[0] != dflt[0] and (d0 is None or best[1] > d0):
+            cells[c] = best[0]
+    if not cells:
+        return None
+    return {"score": dflt[0]["score"], "level": dflt[0]["level"], "gveto": bool(dflt[0].get("gveto")), "def": dflt[0], "cells": cells}
+
+
+def _pick(tab, te, rule, hist=None):
+    """후보(inst)마다 뜬 매매법 중 규칙이 고른 것 · 같은 종목은 앞 거래가 끝나야 다시 산다(실전과 같다).
+    [V33.620] rule.gate 면 최근 성적 스위치(hist 의 끝난 거래)로 쉬는 매매법을 먼저 뺀다."""
+    if rule.get("gate") and hist is not None and "x" in te.columns and len(te):
+        te = te[_gate_ok(hist, te, rule["gate"])]
+    sc, ok = _rule_rows(tab, te, rule)
     sel = te.assign(_s=sc)[ok].sort_values("_s", ascending=False).drop_duplicates("inst")
     if CAND_RANK is not None and RANK_MODE == "omq" and CAP.get("daily") and len(sel):   # [V33.684] 일봉(거래일 축)만 — 5분봉 t 는 봉 번호라 순위표(거래일×종목) 밖(실측: index 4137 / 2600 → 시뮬 전체 실패)   # [V33.682] 상한이 찰 때 같은 날 안 순서 = OMNI-Q 순위(검증된 횡단면 실력) → 같으면 표 점수
         sel = sel.assign(_o=CAND_RANK[sel["t"].values.astype(int), sel["j"].values.astype(int)]).sort_values(["_o", "_s"], ascending=False)
@@ -1400,6 +1526,16 @@ def fair_base(te, draws=BASE_DRAWS, seed=11):
 #   같은 달 후보 안의 무작위와 비교한 초과(x_m = 고른 평균 − 그 달 무작위)를 달마다 구하고, 그 달들의 t 로 판단한다 — 국면 이름표 없이 국면을 맞춘다.
 TIME_MONTH = None   # run() 이 시장마다 채운다: t(거래일 번호) → yyyymm
 TIME_REG = None     # t → 국면(SURGE·BULL·NEUTRAL·BEAR·CRASH) — 화면 국면별 표시용
+TIME_MCUM = None    # [V33.694] 등가중 시장 누적(1 + 0번 앞) — 거래 실제 수익(raw) = 초과(ex) + 그 보유 기간 시장 + 비용
+TIME_COST = 0.0
+
+
+def _raw(d):
+    """[V33.694] 거래의 ★실제 수익 %★ — ex 는 '같은 기간 시장(등가중) 을 뺀 초과' 라 상승장에서 작게 보인다(사용자 10/28 '폭락에서만 번다' 의 오해 원인)."""
+    if TIME_MCUM is None or not len(d):
+        return np.zeros(len(d))
+    t = d["t"].values.astype(int); x = np.clip(d["x"].values.astype(int), t, len(TIME_MCUM) - 2)
+    return d["ex"].values + (TIME_MCUM[x + 1] / TIME_MCUM[t + 1] - 1) * 100 + TIME_COST
 MATCH_MIN = 3       # 그 달 고른 거래가 이보다 적으면 그 달은 비교에서 뺀다
 PB_SEL = os.environ.get("PB_SEL", "m")   # [V33.675] 고르기도 판정과 같은 잣대(월 맞춤 초과의 달 묶음 t)
 PASS_MODE = os.environ.get("PB_PASS", "matched")   # [V33.674] 사용자 10/26 (나) — 판정 = 월 맞춤 초과(주력 자격) · 종전 거래 t 판정은 passTrade 로 남아 시험 매수를 연다
@@ -1447,7 +1583,10 @@ def _by_regime(pk, w):
         if len(g) < 10:
             continue
         b_ = fair_base(w[rw == r], draws=10)[0]
+        rw_ = _raw(w[rw == r])
         out.append({"reg": r, "ko": REG_KO[r], "n": int(len(g)), "mean": round(float(g["ex"].mean()), 3), "base": b_,
+                    "raw": round(float(_raw(g).mean()), 3), "rawAll": round(float(rw_.mean()), 3) if len(rw_) else None,   # [V33.694] 실제 수익(고른 · 후보 전체)
+                    "hd": round(float(g["hd"].mean()), 1) if "hd" in g else None,
                     "share": round(len(g) / len(pk) * 100, 1), "dayShare": round(len(np.unique(w["t"].values[rw == r])) / max(1, w["t"].nunique()) * 100, 1)})
     return out
 
@@ -1536,6 +1675,13 @@ def _validate(df, timecol, pbs=None):
         return {"pass": False, "why": "기간 부족"}, None
     c1, c2 = ts[int(len(ts) * SPLIT[0])], ts[int(len(ts) * SPLIT[1])]
     rules = RULES + (RULES_ADAPT + RULES_GV if timecol == "t" else [])   # 최근 가중·성적 스위치는 일봉(거래일 축)만
+    if CELL_ON and timecol == "t" and "cell" in df.columns:
+        try:
+            rc_ = _fit_cells(df, ts, c1)
+            if rc_:
+                rules = rules + [rc_]
+        except Exception as e:  # noqa: BLE001
+            print("   ⚠️ [매매법시뮬] 칸별 규칙 실패 %s" % e)
     tabs1 = {}
     va = df[(df[timecol] >= c1) & (df[timecol] < c2)]
     if CV2:
@@ -1653,7 +1799,11 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             continue
         global TIME_MONTH, TIME_REG
         TIME_MONTH = (np.asarray(P["close"].index).astype(np.int64) // 100).astype(np.int64)   # yyyymmdd → yyyymm
-        TIME_REG = np.asarray(_regime(P["close"])[0])
+        _rg_, _mr_ = _regime(P["close"])
+        TIME_REG = np.asarray(_rg_)
+        global TIME_MCUM, TIME_COST
+        TIME_MCUM = np.concatenate([[1.0], np.cumprod(1 + np.nan_to_num(np.asarray(_mr_, dtype=float)))])
+        TIME_COST = COST_RT[market]
         global TIME_DATE, TIME_WEEK
         TIME_DATE = np.asarray(P["close"].index).astype(np.int64)
         TIME_WEEK = np.asarray(pd.to_datetime(TIME_DATE.astype(str), format="%Y%m%d").to_period("W").astype(np.int64))
@@ -1696,6 +1846,18 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                 sig[nm] = _ns[nm].shift(1, fill_value=False)
                 dpb[nm] = dict(DAILY_PB["DUAL_MOM"], hold=hd_, family="Lit", label=("%s(단타 · %d일 보유) — 2순위" if hd_ <= 5 else "%s(문헌 전략 · %d일 보유) — 2순위") % (nm, hd_), prof="new", flt=None,
                                onlyGrp=_ng.get(nm))   # [V33.665] 화면: 그룹 한정
+        if RIDE_ON:   # [V33.694] ★추세 타기(+R) 변형★ — 같은 신호 · 청산만 '따라붙는 손절 · 길게'. 고르는 AI 가 칸(국면·종목 상태)마다 원래 청산과 겨룬다.
+            for nm in list(dpb):
+                if nm.endswith("+R") or nm not in sig:
+                    continue
+                rn = nm + "+R"
+                dpb[rn] = dict(dpb[nm], **RIDE_PROF, family=dpb[nm].get("family"), prof="ride", flt=dpb[nm].get("flt"), grp=None,
+                               label="%s 추세 타기(고점 −%d%% 따라붙는 손절 · 최대 %d일)" % (nm, RIDE_PROF["trail"], RIDE_PROF["hold"]))
+                sig[rn] = sig[nm]
+                if nm in mod_now:
+                    mod_now[rn] = mod_now[nm]
+                if nm in tier2:
+                    tier2.append(rn)
         log("   · [매매법시뮬] %s 매매법 %d종 사용 · 퇴출 %d종(성적 미달)" % (market, len(dpb), len(_off)))
         if P.get("_grp") is None:
             P["_grp_now"] = PP.groups(P, PTUNE_GROUPS)
@@ -1733,7 +1895,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         if best_q is None and dflt is not None:
             log("   · [매매법시뮬] %s 검증 구간에서 양수인 후보 설정 없음 → 기본(5일 머리 상위 20%%)" % market)
             best_q = dflt
-        K_ = len(cand_cmp) * len(RULES + RULES_ADAPT + RULES_GV)
+        K_ = len(cand_cmp) * (len(RULES + RULES_ADAPT + RULES_GV) + (1 if CELL_ON else 0))   # [V33.694] 칸별 규칙 후보 1개 더
         luck = {"K": K_, "level": luck_level(K_), "best": best_q[0] if best_q else None, "fallback": False}
         if best_q is not None and dflt is not None and best_q is not dflt and (best_q[0] is None or best_q[0] < luck["level"]):   # [V33.675] 1등이 운 수준 이하 → 사전 등록 기본
             log("   · [매매법시뮬] %s 검증 1등 %s 이 운 수준 %.2f(설정·규칙 %d개 중 최대의 기대) 이하 → 사전 등록 기본(5일 머리 상위 20%%)" % (market, best_q[0], luck["level"], K_))
@@ -1895,13 +2057,17 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         log("   · [매매법시뮬] %s 월 맞춤 초과 %s%%p · 달 묶음 t %s · 이긴 달 %s/%s · 절대 달 t %s · 판정 방식 %s(거래 t %s · 월 맞춤 %s) · 국면별 %s" % (
             market, dst.get("mx"), dst.get("mT"), dst.get("mWin"), dst.get("mN"), dst.get("mAbsT"), dst.get("passMode"),
             "통과" if dst.get("passTrade") else "미통과", "통과" if dst.get("passMatched") else "미통과",
-            " · ".join("%s n%d %+.2f vs %s" % (r["ko"], r["n"], r["mean"], r["base"]) for r in (dst.get("byReg") or []))))
+            " · ".join("%s n%d 초과 %+.2f vs %s · 실제 %+.2f%%(%s일)" % (r["ko"], r["n"], r["mean"], r["base"], r.get("raw") or 0, r.get("hd")) for r in (dst.get("byReg") or []))))
         if upload and BASE and os.environ.get("PB_VARIANT"):
             log("   · [매매법시뮬] %s A/B 실험판(%s) — 업로드 안 함(기록만)" % (market, os.environ.get("PB_VARIANT")))
         elif upload and BASE:
             try:
                 import requests
-                body = {"mkt": market, "day": str(P["close"].index[-1]), "regime": reg_now, "sector": (sector or {}).get(market), "panic": panic_now, "panicBook": pbook,
+                try:
+                    r3_now = regime3_now(P["close"])   # [V33.694] 국면 3단(장기·중기·단기) — 워커 오른쪽 칸·두뇌관측
+                except Exception:  # noqa: BLE001
+                    r3_now = None
+                body = {"mkt": market, "day": str(P["close"].index[-1]), "regime": reg_now, "regime3": r3_now, "sector": (sector or {}).get(market), "panic": panic_now, "panicBook": pbook,
                         "daily": {"val": dst, "table": export(dtab, list(DAILY_PB)), "pb": dpb, "cross": cross, "gate": gate_live, "tier2": tier2,
                                   "grp": ({syms_all[j]: int(g_) for j, g_ in enumerate(P.get("_grp_now", P.get("_grp"))[-1]) if g_ >= 0} if P.get("_grp") is not None else None),   # [V33.664] 종목 → 변동성 그룹(오늘)
                                   "ptune": ptune_rep, "epDef": {k: v[1] for k, v in PP.ENTRY.items()}, "epLad": dict({k: v[2] for k, v in PP.ENTRY.items()}, _mods=PP.MODS),
