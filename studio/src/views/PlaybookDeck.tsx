@@ -178,6 +178,36 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
           </div>
         </section>)}
 
+      {R.sleeve && (() => { const SL = R.sleeve, RG = ["SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH"], KO: any = { SURGE: "폭등", BULL: "상승", NEUTRAL: "보합", BEAR: "하락", CRASH: "폭락" };
+        const cell = (w: any) => !w || !fin(w.mean) ? <span style={{ color: FAINT }}>—</span> : <span style={{ color: w.mean >= 5 ? POS : w.mean >= 0 ? HL : NEG, fontFamily: MONO }}>{sg(w.mean)}% <span style={{ color: FAINT }}>({n0(w.n)})</span></span>;
+        return (
+        <section aria-label="국면 전략" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#F2F6FC" }}>국면 전략 · 국면마다 전략 묶음을 통째로</h3>
+            <span style={{ fontSize: 12, color: DIM }}>분기마다 직전 3년에 ★끝난★ 거래만으로 국면별 최선 전략을 고른다 · 실전 = 그 국면 두 판정 구간 모두 거래당 ≥ +5%</span>
+          </div>
+          <div style={{ ...card, padding: 16, display: "flex", flexWrap: "wrap", gap: 18, alignItems: "center" }}>
+            <div><div style={kick}>지금 국면</div><div style={{ fontSize: 20, color: INK }}>{KO[SL.reg] || SL.reg}</div></div>
+            <div style={{ flex: "1 1 280px" }}><div style={kick}>고른 전략</div><div style={{ fontSize: 14, color: INK }}>{SL.cur ? SL.cur.famKo + " · " + SL.cur.profKo : "쉼 — 직전 3년 근거 부족(평균 < +3% 또는 표본 < 20)"}</div>
+              {SL.cur && <div style={{ fontSize: 12, color: DIM, fontFamily: MONO }}>직전 3년 거래당 {sg(SL.cur.mean)}% · {n0(SL.cur.n)}건</div>}</div>
+            <div><div style={kick}>상태</div><div style={{ fontSize: 14, color: SL.live ? POS : HL }}>{SL.live ? "실전 매수" : "관측만"}</div></div>
+            <div style={{ flex: "1 1 220px" }}><div style={kick}>오늘 종목</div><div style={{ fontSize: 12.5, color: MUTE, fontFamily: MONO }}>{(SL.syms || []).join(" · ") || "—"}</div></div>
+          </div>
+          <div style={{ ...card, overflowX: "auto", background: "#080C13" }}>
+            <table style={{ ...tbl, minWidth: 680 }}>
+              <thead><tr style={{ background: PANEL2, color: DIM }}>{th(null, "국면", true)}{th(null, "지금 고를 전략(직전 3년)", true)}{th(null, "검증 구간 [60,80%)")}{th(null, "판정 구간 [80,100%)")}</tr></thead>
+              <tbody>{RG.map((r) => { const b = SL.by && SL.by[r]; return (
+                <tr key={r} style={{ borderTop: "1px solid " + ROWLINE, background: r === SL.reg ? "rgba(255,209,102,.07)" : undefined }}>
+                  <td style={{ padding: "10px 14px", color: INK }}>{KO[r]}{r === SL.reg ? " ◂" : ""}</td>
+                  <td style={{ padding: "10px 14px", color: MUTE, fontSize: 12 }}>{b ? b.famKo + " · " + b.profKo + " (" + sg(b.mean) + "% · " + n0(b.n) + "건)" : "쉼"}</td>
+                  <td style={{ ...td(null) }}>{cell(SL.wf && SL.wf.V && SL.wf.V[r])}</td>
+                  <td style={{ ...td(null) }}>{cell(SL.wf && SL.wf.H && SL.wf.H[r])}</td>
+                </tr>); })}</tbody>
+            </table>
+          </div>
+          <p style={{ fontSize: 11.5, color: FAINT }}>숫자 = 거래당 실제 수익(괄호 = 거래 수) · 초록 ≥ +5% 목표 · 하루 늦은 진입 · 하루 6건 · 같은 종목 겹침 없음 · 실전 = 지금 국면의 두 구간 모두 ≥ +5% · 표본 ≥ 20.</p>
+        </section>); })()}
+
       <section aria-label="판단 흐름" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
           <h3 style={{ fontSize: 16, fontWeight: 600, color: "#F2F6FC" }}>판단 흐름</h3>

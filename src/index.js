@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.694";
+const _BUILD_VER = "V33.695";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -14055,6 +14055,20 @@ function pbDailyTrialOk(st, mk) { const v = st && st.daily && st.daily.val; retu
 function pbTrialWhy(v, mk) { return _pbPass(v) ? "pass" : _pbTradeOk(v) ? "trade" : (PB_ABS_TRIAL[mk] && _pbAbsOk(v)) ? "abs" : null; }   // 화면: 시험 매수가 열린 근거
 function _pbMkOf(st, symbol) { return (st && (st.mkt === "us" || st.mkt === "kr")) ? st.mkt : (/\.(KS|KQ)$/.test(String(symbol || "")) ? "kr" : "us"); }
 // 실시간 선택(순수 함수) — ctx: { reg, symbol, D(pbLiveDaily), bars5(pbAgg5) | null, prevClose, evNear, minToClose }
+/* [V33.695] ★국면 전략(학습기 regime_sleeve)★ — 국면마다 분기 워크포워드로 고른 전략 묶음의 오늘 종목(OMNI-Q 후보 거름 밖에서도).
+   실전 자격(sleeve.live) = 지금 국면의 워크포워드 두 구간([60,80%)·[80,100%)) 거래당 실제 수익 ≥ +5% · 표본 ≥ 20(사전 등록). 아니면 관측만. */
+function pbSleeveHas(st, sym) { const SL = st && st.sleeve; return !!(SL && SL.cur && Array.isArray(SL.syms) && SL.syms.indexOf(sym) >= 0); }
+function pbSleevePick(st, ctx, dWin) {
+  const SL = st.sleeve, D = ctx.D;
+  if (!pbSleeveHas(st, ctx.symbol) || !D || !D.c || D.c.length < 61 || !(dWin || ctx.shadow) || !(SL.live || ctx.shadow)) return null;
+  const pr = SL.prof || {}, i = D.c.length - 1, atr = _pbAtrPct(D.h, D.l, D.c, i);
+  const stop = Math.min(_num(pr.stop, 12), atr === atr ? _num(pr.atr, 4) * atr : 99);
+  const wv = SL.wf && SL.wf.H && SL.wf.H[SL.reg] && SL.wf.H[SL.reg].win != null ? SL.wf.H[SL.reg].win / 100 : 0.5;
+  const nm = "RG:" + SL.cur.fam;
+  return { kind: "daily", pb: nm, sleeve: true, fired: [nm], n: _num(SL.cur.n, 0), w: wv, m: _num(SL.cur.mean, 0), s: _num(SL.cur.mean, 0), stop: Math.max(1.5, stop),
+           be: 0, tpR: null, tpPct: null, bePct: null, mr: false, tstop: 0, hold: _num(pr.hold, 60), trail: _num(pr.trail, 0), trailAct: _num(pr.trailAct, 0), crashExit: !!(SL.cfg && SL.cfg.crashExit === true),
+           label: (SL.cur.famKo || SL.cur.fam) + " · " + (SL.cur.profKo || SL.cur.prof), why: SL.live ? null : "국면 전략 관측(실전 자격 미달 — 워크포워드 두 구간 ≥ +5% 아님)" };
+}
 function pbRoutePick(st, ctx, nowMs) {
   if (!STRAT_ROUTE.enabled || !st || !(nowMs - _num(st.ts, 0) <= STRAT_ROUTE.freshMs)) return null;
   const D = ctx.D;
@@ -14067,6 +14081,7 @@ function pbRoutePick(st, ctx, nowMs) {
   const xGap = xSess && ctx.extPx > 0 && ctx.refPx > 0 ? Math.abs(ctx.extPx / ctx.refPx - 1) * 100 : null;
   const xOk = xSess != null && xGap != null && xGap <= PB_ROUTE.extGapMax;
   const dWin = dWin0 || xOk;
+  { const slp = pbSleevePick(st, ctx, dWin); if (slp && (st.sleeve.live || ctx.shadow)) return slp; }   // [V33.695] 국면 전략이 고른 종목이면 그것이 먼저
   if (dOk && (dWin || ctx.shadow) && D && D.c.length >= 211) {   // 그림자(관측)는 시간 창 밖에서도 계산만 한다
     const i = D.c.length - 1, px = D.c[i];
     /* [V33.664] 종목 특성 그룹(변동성 3분위 · 학습기가 오늘 값을 보냄) → 그 그룹에서 검증을 통과한 진입 미지수 · 청산 미지수 */
@@ -26035,7 +26050,7 @@ async function runTradingCycle(env) {
           const _pc = [], _hot = [];
           for (const it of orderedEval) {
             const sym = it && it.symbol, _cm2 = pbCandScoreMap(__sr, __omniq), sc = sym && _cm2[sym] != null ? _cm2[sym] : null;
-            if (sc == null || sc < pbCandMin(__sr) || !it.daily || !Array.isArray(it.daily.closes) || !(it.intra && it.intra.price > 0)) continue;
+            if (((sc == null || sc < pbCandMin(__sr)) && !pbSleeveHas(__sr, sym)) || !it.daily || !Array.isArray(it.daily.closes) || !(it.intra && it.intra.price > 0)) continue;   // [V33.695] 국면 전략 종목 포함
             _pc.push(sym);
             const px = it.intra.price, pcl = it.intra.prevClose || px;
             const _ref = extSessMkt ? (it.intra.regPrice > 0 ? it.intra.regPrice : px) : px;   // [V33.662] 시간외엔 정규장 종가로 완성된 일봉에서 신호를 본다
@@ -26043,14 +26058,14 @@ async function runTradingCycle(env) {
                           session: extSessMkt || null, extPx: px, refPx: _ref };
             const real = pbRoutePick(__sr, ctx, Date.now()), sh = real || pbRoutePick(__sr, Object.assign({}, ctx, { shadow: true }), Date.now());
             __pbSeen.set(sym, __pbLive.length);
-            __pbLive.push(pbRecExtra({ s: sym, nm: (typeof NAME_MAP !== "undefined" && NAME_MAP[sym]) || null, q: +sc.toFixed(3), px: px,
+            __pbLive.push(pbRecExtra({ s: sym, nm: (typeof NAME_MAP !== "undefined" && NAME_MAP[sym]) || null, q: +_num(sc, 0).toFixed(3), px: px,
                             dp: pcl > 0 ? +((px / pcl - 1) * 100).toFixed(2) : null, sp: it.daily.closes.slice(-30).map(function (x) { return +(+x).toPrecision(5); }),
                             fired: (sh && sh.fired) || [], pb: (sh && sh.pb) || null, kind: (sh && sh.kind) || null,
                             m: sh && sh.m != null ? +_num(sh.m, 0).toFixed(3) : null, w: sh && sh.w != null ? +_num(sh.w, 0).toFixed(3) : null, n: (sh && sh.n) || null,
                             stop: sh && sh.stop != null ? +_num(sh.stop, 0).toFixed(2) : null, hold: (sh && sh.hold) || null, bars: (sh && sh.bars) || null,
                             tpR: sh && sh.tpR != null ? sh.tpR : null, tpPct: sh && sh.tpPct != null ? sh.tpPct : null,
                             act: null, why: heldSymbols.has(sym) ? "보유 중" : real ? "평가 대기(앞으로 당김)" : ((sh && sh.why) || (sh && sh.pb ? "검증 미통과 — 기록만(그림자)" : "고를 매매법 없음")), pre: true }, sh, ctx.D));
-            if (real && !heldSymbols.has(sym)) _hot.push([it, sc]);
+            if (real && !heldSymbols.has(sym)) _hot.push([it, _num(sc, 0)]);
           }
           /* [V33.682] ★OMNI-Q 순위 높은 후보부터★ — 하루·사이클 상한(시험 3/일 · 1/사이클)이 차면 어느 후보를 사느냐가 성적을 가른다.
              종전엔 순회 순서(사실상 무작위)로 앞에 붙였다. 학습기 시뮬도 같은 날 안을 OMNI-Q 순위로(PB_RANK=omq) — 실험실(10/15 일봉):
@@ -26330,7 +26345,10 @@ async function runTradingCycle(env) {
                관리 중엔 위원회 청산(AI_EXIT·ROTATE)을 안 건다 — 모의 시뮬이 잰 보유와 다르다. 손절·트레일·EOD 갭은 그대로. */
             if (held.meta && held.meta.sr && held.meta.sr.sid) {
               try {
-                const _why = pbExitWhy(held.meta.sr, held.avg, price, held.opened_ts, Date.now(), __pbMtc, held.meta.sr.mr ? pbLiveDaily(daily, price, prevClose, __pbMtc) : null);   // [V33.618] 평균회귀 청산은 지금 일봉(MA5·RSI2)을 본다
+                let _why = pbExitWhy(held.meta.sr, held.avg, price, held.opened_ts, Date.now(), __pbMtc, held.meta.sr.mr ? pbLiveDaily(daily, price, prevClose, __pbMtc) : null);   // [V33.618] 평균회귀 청산은 지금 일봉(MA5·RSI2)을 본다
+                /* [V33.695] 국면 깨짐 청산 — 국면 전략 보유가 폭락 밖에서 산 뒤 단기 폭락(학습기 regime3.S = CRASH)을 만나면 판다(학습기 regime_sleeve 와 같은 규칙) */
+                if (!_why && held.meta.sr.crashX && held.meta.sr.regime !== "CRASH" && __sr && __sr.regime3 && __sr.regime3.S === "CRASH" && _num(__sr.ts, 0) > _num(held.opened_ts, 0))
+                  _why = "SR-REGIME " + held.meta.sr.sid + " 국면 깨짐(단기 폭락) " + ((price / held.avg - 1) * 100).toFixed(2) + "%";
                 if (_why) {
                   await executeSell(DB, market, symbol, held, held.qty, price, _why, mcfg, cash);
                   sold++;
@@ -26932,7 +26950,7 @@ async function runTradingCycle(env) {
             /* [V33.607·610] ★확률 높은 종목 → 그 종목에 맞는 매매법★(PB_ROUTE 주석) — 후보 = OMNI-Q 상위 20% · 매 분 지금 뜬 매매법 + 상황 칸 표 조회 · 원장 [SROUTE]
                [V33.610] 검증 미통과 시장도 후보마다 '무엇이 떴고 무엇을 골랐을지' 를 그림자로 계산해 관측창(pb_live)에 남긴다 — 매수는 통과 시장만. */
             const _pbS = (__sr && omniqFresh(__omniq, Date.now())) ? (pbCandScoreMap(__sr, __omniq)[symbol] != null ? pbCandScoreMap(__sr, __omniq)[symbol] : null) : null;   // [V33.622] 검증이 고른 머리
-            if (_pbS != null && _pbS >= pbCandMin(__sr) && daily && daily.closes) {
+            if (((_pbS != null && _pbS >= pbCandMin(__sr)) || (__sr && pbSleeveHas(__sr, symbol))) && daily && daily.closes) {   // [V33.695] 국면 전략 종목은 OMNI-Q 거름 밖에서도
               const _held = heldSymbols.has(symbol);
               const _pbSec = __sr.sector && __sr.sector[symbol];
               const _secFull = !!(_pbSec && (__srSec[_pbSec] || 0) >= PB_SECTOR_MAX), _braked = !!(__pbBrake && __pbBrake.on);
@@ -26954,7 +26972,7 @@ async function runTradingCycle(env) {
                                session: extSessMkt || null, extPx: price, refPx: _pbRef };
               const _sp = pbRoutePick(__sr, _pbCtx, Date.now());
               const _sh = _sp || pbRoutePick(__sr, Object.assign({}, _pbCtx, { shadow: true }), Date.now());
-              const _rec = { s: symbol, nm: (typeof NAME_MAP !== "undefined" && NAME_MAP[symbol]) || null, q: +_pbS.toFixed(3), px: price,
+              const _rec = { s: symbol, nm: (typeof NAME_MAP !== "undefined" && NAME_MAP[symbol]) || null, q: +_num(_pbS, 0).toFixed(3), px: price,
                              dp: prevClose > 0 ? +((price / prevClose - 1) * 100).toFixed(2) : null,
                              sp: daily.closes.slice(-30).map(function (x) { return +(+x).toPrecision(5); }),
                              stop: _sh && _sh.stop != null ? +_num(_sh.stop, 0).toFixed(2) : null, hold: (_sh && _sh.hold) || null, bars: (_sh && _sh.bars) || null,
@@ -26980,8 +26998,8 @@ async function runTradingCycle(env) {
                     signal: { name: "PB_" + _sp.pb, members: [_sp.pb], isStratRoute: true, weight: 1,
                       sr: { sid: _sp.pb, kind: _sp.kind, stop: +_sp.stop.toFixed(2), be: _sp.be || 0, tpR: _sp.tpR == null ? null : _sp.tpR, tpPct: _sp.tpPct == null ? null : _sp.tpPct,
                             mr: _sp.mr === true, bePct: _sp.bePct == null ? null : _sp.bePct, tstop: _sp.tstop || 0, rsi2x: _sp.rsi2x || 65, trail: _sp.trail || 0, trailAct: _sp.trailAct || 0, tpPx: _sp.tpPx == null ? null : _sp.tpPx,
-                            hold: _sp.hold || null, bars: _sp.bars || 0, primary: __pbPrim, sess: _sp.session || "regular", m: +_sp.m.toFixed(3), w: +_sp.w.toFixed(3), n: _sp.n, omq: +_pbS.toFixed(3), regime: __sr.regime || null, at: Date.now() },
-                      detail: "매매법AI " + _sp.pb + "(" + (_sp.kind === "intra" ? "5분 단타" : "일봉") + (_sp.session ? " · " + (_sp.session === "pre" ? "프리마켓" : "애프터마켓") : "") + " · 지금 뜬 " + _sp.fired.join("·") + ") · OMNI-Q 상위 " + Math.max(1, Math.round((1 - _pbS) * 100)) + "% · 국면 " + (__sr.regime || "?") +
+                            hold: _sp.hold || null, bars: _sp.bars || 0, primary: __pbPrim, sess: _sp.session || "regular", m: +_sp.m.toFixed(3), w: +_sp.w.toFixed(3), n: _sp.n, omq: +_num(_pbS, 0).toFixed(3), regime: __sr.regime || null, crashX: _sp.crashExit === true, at: Date.now() },
+                      detail: "매매법AI " + _sp.pb + "(" + (_sp.kind === "intra" ? "5분 단타" : "일봉") + (_sp.session ? " · " + (_sp.session === "pre" ? "프리마켓" : "애프터마켓") : "") + " · 지금 뜬 " + _sp.fired.join("·") + ") · " + (_sp.sleeve ? "국면 전략(" + _sp.label + ")" : "OMNI-Q 상위 " + Math.max(1, Math.round((1 - _num(_pbS, 0)) * 100)) + "%") + " · 국면 " + (__sr.regime || "?") +
                               " · 모의 성공 " + (_sp.w * 100).toFixed(0) + "% 평균 +" + _sp.m.toFixed(2) + "% (표본 " + _sp.n + ") · 손절 −" + (+_sp.stop).toFixed(1) + "%" + (__pbPrim ? " · ★주력★" : " · 잠정 ×" + STRAT_ROUTE.mult) } });
                 }
               }
@@ -31638,6 +31656,8 @@ async function handleRequest(request, env, ctx, _inner) {
                     panicBook: (body.panicBook && typeof body.panicBook === "object") ? body.panicBook : null };   // [V33.683] 공황 반등 바구니(관측 · 사전 등록 규칙 통과 여부)   // [V33.625] 공황 국면(학습기 _panic 마지막 날) — 추세·모멘텀 진입 차단   // [V33.621] 종목 → 섹터(학습기 자동 배정 · 섹터 보유 상한)
       rec.mkt = mk;   // [V33.669] 시장 표시(절대 기준 시험 매수 판정)
       rec.regime3 = _pbReg3(body.regime3);   // [V33.694] 국면 3단(장기·중기·단기)
+      rec.sleeve = (body.sleeve && typeof body.sleeve === "object" && JSON.stringify(body.sleeve).length < 30000)   // [V33.695] 국면 전략(작은 묶음)
+        ? Object.assign({}, body.sleeve, { syms: Array.isArray(body.sleeve.syms) ? body.sleeve.syms.map(String).slice(0, 12) : [], live: body.sleeve.live === true }) : null;
       rec.pass = { daily: _pbPass(rec.daily && rec.daily.val), intra: _pbPass(rec.intra && rec.intra.val) };
       try { const _prev = await getState(env.DB, "playbook:" + mk, null); rec.passStreak = rec.pass.daily ? _num(_prev && _prev.passStreak, 0) + 1 : 0;
         /* [V33.626] 통과한 판정 구간 시작일 기록(최근 12개) — 실패가 끼어도 지우지 않는다(독립 구간 두 번 통과 · 지금 통과 중 · 연속 2회 셋 다 필요) */
@@ -31677,7 +31697,7 @@ async function handleRequest(request, env, ctx, _inner) {
       const out = {};
       for (const mk of ["us", "kr"]) {
         const r = st0["playbook:" + mk] || null, cn = cellN["playbook:" + mk] || { d: 0, i: 0 };
-        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, regime3: r.regime3 || null, panic: r.panic === true, panicBook: r.panicBook || null,
+        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, regime3: r.regime3 || null, sleeve: r.sleeve || null, panic: r.panic === true, panicBook: r.panicBook || null,
                         pass: Object.assign({}, r.pass || {}, { absTrial: !(r.pass && r.pass.daily) && !_pbTradeOk(r.daily && r.daily.val) && !!(PB_ABS_TRIAL[mk] && _pbAbsOk(r.daily && r.daily.val)), trialWhy: pbTrialWhy(r.daily && r.daily.val, mk) }), primary: pbPrimaryOn(r, Date.now()), passStreak: r.passStreak || 0, indep: pbIndepPasses(r.passLog),   // [V33.669] pass.absTrial(미국 절대 기준 시험 매수)
                         brake: st0["pb_brake:" + mk] || null,
                         daily: r.daily && { val: r.daily.val, cells: cn.d, pb: r.daily.pb, gate: r.daily.gate || null,

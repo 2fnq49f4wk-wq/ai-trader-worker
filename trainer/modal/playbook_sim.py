@@ -218,6 +218,7 @@ RC_NAMES = {1: "손절", 2: "본전", 3: "익절", 4: "평균회귀", 5: "기간
 # [V33.694] 추세 타기(+R) 청산 — 사용자 10/28 "상승장·폭등장에서 돈 버는 게 중요". 실험실 r3/e4(10년 · 하루 늦은 진입 · OMNI-Q 상위 40%):
 #   후보 전체 실제 수익(판정 구간) 한국 상승 +1.48→+2.92% · 폭락 +0.29→+1.79% · 보합 +0.54→+2.54% / 미국 폭등 +3.71→+7.84% · 하락 +2.86→+5.01%.
 #   고정 보유·익절로 추세 중간에 내리던 것을 고점 −15% 까지 탄다(진입 뒤 +8% 를 넘긴 뒤부터). 손절(stop·ATR)은 원래 매매법 그대로.
+SLEEVE_ON = os.environ.get("PB_SLEEVE", "1") != "0"   # [V33.695] 국면 전략(regime_sleeve) — 실전 자격은 국면별 워크포워드 두 구간 ≥ +5%
 LEAD_ON = os.environ.get("PB_LEAD", "0") == "1"   # 실험실 A/B 확인 전엔 꺼 둔다
 LEAD_PB = {"LEAD60_HOLD": 60, "LEAD120_HOLD": 60}
 RIDE_ON = os.environ.get("PB_RIDE", "0") == "1"   # 실험실 A/B 확인 전엔 꺼 둔다
@@ -2083,7 +2084,15 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                     r3_now = regime3_now(P["close"])   # [V33.694] 국면 3단(장기·중기·단기) — 워커 오른쪽 칸·두뇌관측
                 except Exception:  # noqa: BLE001
                     r3_now = None
-                body = {"mkt": market, "day": str(P["close"].index[-1]), "regime": reg_now, "regime3": r3_now, "sector": (sector or {}).get(market), "panic": panic_now, "panicBook": pbook,
+                sleeve = None
+                if SLEEVE_ON:
+                    try:   # [V33.695] 국면 전략 — 국면마다 전략 묶음을 분기 워크포워드로 고름(regime_sleeve.py)
+                        import sys as _sys
+                        import regime_sleeve as RSL
+                        sleeve = RSL.run(P, market, _sys.modules[__name__], log=log)
+                    except Exception as e:  # noqa: BLE001
+                        log("   ⚠️ [국면전략] %s 실패 %s" % (market, e))
+                body = {"mkt": market, "day": str(P["close"].index[-1]), "regime": reg_now, "regime3": r3_now, "sleeve": sleeve, "sector": (sector or {}).get(market), "panic": panic_now, "panicBook": pbook,
                         "daily": {"val": dst, "table": export(dtab, list(DAILY_PB)), "pb": dpb, "cross": cross, "gate": gate_live, "tier2": tier2,
                                   "grp": ({syms_all[j]: int(g_) for j, g_ in enumerate(P.get("_grp_now", P.get("_grp"))[-1]) if g_ >= 0} if P.get("_grp") is not None else None),   # [V33.664] 종목 → 변동성 그룹(오늘)
                                   "ptune": ptune_rep, "epDef": {k: v[1] for k, v in PP.ENTRY.items()}, "epLad": dict({k: v[2] for k, v in PP.ENTRY.items()}, _mods=PP.MODS),
