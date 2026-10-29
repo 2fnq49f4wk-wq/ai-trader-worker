@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.704";
+const _BUILD_VER = "V33.705";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -31735,6 +31735,7 @@ async function handleRequest(request, env, ctx, _inner) {
                         daily: r.daily && { val: r.daily.val, cells: cn.d, pb: r.daily.pb, gate: r.daily.gate || null,
                                             tier2: r.daily.tier2 || [], ptune: r.daily.ptune || null, epDef: r.daily.epDef || null, epLad: r.daily.epLad || null,   // [V33.664]
                                             meta: r.daily.meta || null, metaFeats: r.daily.metaFeats || null,   // [V33.672]
+                                            flow: r.daily.flow || null,   // [V33.705] 한국 수급 과열 백분위(종목 → 0~1) — 화면 '수급 과열 거름' · 종전엔 빠져 화면에 안 보였다
                                             grpN: r.daily.grp ? Object.values(r.daily.grp).reduce(function (a, g) { a[g] = (a[g] || 0) + 1; return a; }, {}) : null,
                                             cross: Object.fromEntries(Object.keys(r.daily.cross || {}).map(function (k) { return [k, (r.daily.cross[k] || []).length]; })) },
                         intra: r.intra && { val: r.intra.val, cells: cn.i, pb: r.intra.pb } } : null;
