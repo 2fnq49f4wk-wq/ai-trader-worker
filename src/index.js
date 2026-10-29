@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.707";
+const _BUILD_VER = "V33.708";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -20520,24 +20520,31 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
   //   폭락·칼날·약세·분산·변동성 게이트를 면제한다. 리스크는 0.4~0.5%로 작고, 손절 1.2%·반등확인·
   //   거래량확인으로 자체 방어한다. 평시 trend/scalp 진입에는 영향 없음(isPanicScalp 신호 한정).
   const isPanicScalp = signal && signal.isPanicScalp === true;
-  const _exemptCrash = isInverse || isPanicScalp;
+  /* [V33.708] ★매매법 AI·국면 전략(SROUTE)은 옛 규칙엔진 신호 거르개 면제★ — 사용자 10/29 "한국장은 선택 기록만 · 바로 실전 투입".
+     실측(10/29 15:01~15:29 로그): 국면 전략 시험 투입 KODEX 코스닥150레버리지가 매 사이클 후보였지만 BEAR_WEAK·FALLING_KNIFE 로 막혀 0건.
+     이 거르개들(시장붕괴·칼날·변동성급등·분산매도·약세장·상대강도)은 학습기 시뮬에 없다 — 시뮬이 검증한 것과 다른 것을 사게(또는 못 사게) 만든다.
+     '급락 대형주 첫 양봉' 같은 검증된 전략은 칼날·약세 거르개와 정의상 충돌한다. 매매법 AI 는 자체 공황 차단·국면 게이트·국면 거부·실전 손실 제동을 쓴다.
+     포트폴리오 관문(재진입 쿨다운·인버스 페어·섹터 상한·동시 보유 상한·중복 보유·해외추종 ETF)은 그대로. */
+  const isSR = !!(signal && signal.isStratRoute === true && signal.sr);
+  const _exemptCrash = isInverse || isPanicScalp || isSR;
+  const _exemptSig = isPanicScalp || isSR;
 
   // 시장 붕괴 / 장중 급락 — 인버스·패닉단타는 면제
   if (!_exemptCrash && regime.worstDayPct <= cfg.marketCrashPct) return "MARKET_CRASH " + regime.worstDayPct.toFixed(2) + "%";
-  if (!isPanicScalp && dayPct <= -cfg.maxDailyDrop) return "FALLING_KNIFE " + dayPct.toFixed(2) + "%";
+  if (!_exemptSig && dayPct <= -cfg.maxDailyDrop) return "FALLING_KNIFE " + dayPct.toFixed(2) + "%";
 
   const highs = dailyData.highs || null;
   const lows = dailyData.lows || null;
   const atr14 = getATR(closes, cfg.atrPeriod, highs, lows);
   const atr30 = getATR(closes, 30, highs, lows);
-  if (!isPanicScalp && atr14 != null && atr30 != null && atr14 > atr30 * 2.0) {
+  if (!_exemptSig && atr14 != null && atr30 != null && atr14 > atr30 * 2.0) {
     return "VOLATILITY_SPIKE ATR14=" + atr14.toFixed(2) + " ATR30=" + atr30.toFixed(2);
   }
 
   // 대량거래+하락 = 기관 분산 매도 신호 — 신규 진입 차단 (ETF·인버스 면제)
   //   거래량이 20일 평균의 N배 이상이면서 당일 하락이면 기관 출구 가능성 높음.
   const _tr = cfg.trendRules || {};
-  if (!isInverse && !isPanicScalp && !(ctx && ctx.symbol && ETF_SYMBOLS.has(ctx.symbol)) && _tr.distDetectEnabled !== false) {
+  if (!isInverse && !_exemptSig && !(ctx && ctx.symbol && ETF_SYMBOLS.has(ctx.symbol)) && _tr.distDetectEnabled !== false) {
     const vols = dailyData.volumes;
     if (vols && vols.length >= 21) {
       const todayVol = vols[vols.length - 1];
@@ -20560,7 +20567,7 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
   // [V33.578] OMNI-Q 진입도 면제 — 추세추종 신호용 필터다. OMNI-Q 는 20일 상대수익을 피처로 이미 보고 순위를 매긴다
   //   (관문 ①② 는 이 필터 없이 상위 10% 전체로 쟀다 — 걸러 내면 잰 것과 다른 것을 사게 된다).
   const _isEtfRS = ctx && ctx.symbol && ETF_SYMBOLS.has(ctx.symbol);
-  if (cfg.rsFilterEnabled && !signal.isCounterTrend && !signal.isOmniQ && !isPanicScalp && !_isEtfRS && regime.idxReturn20 != null) {
+  if (cfg.rsFilterEnabled && !signal.isCounterTrend && !signal.isOmniQ && !_exemptSig && !_isEtfRS && regime.idxReturn20 != null) {
     const stockRet = getNDayReturn(closes, cfg.rsLookbackDays);
     if (stockRet != null) {
       const relPerf = stockRet - regime.idxReturn20;
