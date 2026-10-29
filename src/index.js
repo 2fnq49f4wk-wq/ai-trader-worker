@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.706";
+const _BUILD_VER = "V33.707";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -14093,7 +14093,8 @@ function pbSleevePick(st, ctx, dWin) {
   return { kind: "daily", pb: nm, sleeve: true, fired: [nm], n: _num(SL.cur.n, 0), w: wv, m: _num(SL.cur.mean, 0), s: _num(SL.cur.mean, 0), stop: Math.max(1.5, stop),
            be: 0, tpR: null, tpPct: null, bePct: null, mr: false, tstop: 0, hold: _num(pr.hold, 60), trail: _num(pr.trail, 0), trailAct: _num(pr.trailAct, 0), crashExit: !!(SL.cfg && SL.cfg.crashExit === true),
            label: (SL.cur.famKo || SL.cur.fam) + " · " + (SL.cur.profKo || SL.cur.prof) + (trial ? " · 시험 투입" : ""), trial: trial,
-           why: SL.live || trial ? null : "국면 전략 관측(실전 자격 미달 — 두 구간 모두 수익 아님)" };
+           outWin: !dWin,
+           why: SL.live || trial ? (dWin ? null : "국면 전략 " + (SL.live ? "실전" : "시험 투입") + " 대상 — 정규장 마감 전 30분에 매수 판정") : "국면 전략 관측(실전 자격 미달 — 두 구간 모두 수익 아님)" };
 }
 /* [V33.701] ★국면 게이트★(사용자 10/29 "성적 안 나오는 것 구조적으로 해결") — 학습기가 검증 구간 [60,80%) 에서 고른 규칙 그대로의 거래로
    국면별 거래당 실제 수익 평균 ≤ 0 · 표본 ≥ 20 인 국면을 off 로 보낸다(판정 구간은 고르기에 안 씀). 지금 국면이 off 면 매매법 AI 신규 매수만 쉰다. */
