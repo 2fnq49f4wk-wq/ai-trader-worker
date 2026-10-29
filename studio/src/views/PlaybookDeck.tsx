@@ -139,60 +139,60 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
   const barMax = Math.max(3, fin(V.mean) ? Math.abs(V.mean) : 0, fin(V.base) ? Math.abs(V.base) : 0);
 
   return (
-    <div style={{ color: AP.ink, display: "flex", flexDirection: "column", gap: 40, fontFamily: AP.font }}>
+    <div style={{ color: AP.ink, display: "flex", flexDirection: "column", gap: 24, fontFamily: AP.font }}>
       {/* [V33.699] 사용자 10/29 "애플 형식 · 용어는 살짝 전문적으로 · 성적은 % · 날씨 말고 시장 국면" — 개요(상태 → 표본 외 성과 → 신뢰도 → 시장 국면 → 국면별 성적 → 매매 프로세스 → 오늘 국면 전략).
           아래 '판단 흐름 · 실제 표' 는 상세 데이터로 그대로 둔다. 값은 /api/playbook 그대로. */}
       <header style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: 20 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0, flex: "1 1 420px" }}>
-          <p style={{ fontSize: 15, fontWeight: 600, color: AP.sub }}>매매법 AI · {mk === "us" ? "미국" : "한국"} · 기준일 {day} · 갱신 {ago(R.ts)}</p>
-          <h2 style={{ fontSize: 40, lineHeight: 1.1, fontWeight: 700, letterSpacing: "-.02em", color: ST.c }}>{ST.t}</h2>
-          <p style={{ fontSize: 17, lineHeight: 1.5, color: AP.sub, maxWidth: 720 }}>{ST.s}</p>
+          <p style={{ fontSize: 13, fontWeight: 600, color: AP.sub }}>매매법 AI · {mk === "us" ? "미국" : "한국"} · 기준일 {day} · 갱신 {ago(R.ts)}</p>
+          <h2 style={{ fontSize: 26, lineHeight: 1.1, fontWeight: 700, letterSpacing: "-.02em", color: ST.c }}>{ST.t}</h2>
+          <p style={{ fontSize: 14, lineHeight: 1.5, color: AP.sub, maxWidth: 720 }}>{ST.s}</p>
         </div>
         <div role="group" aria-label="시장" style={{ display: "flex", background: AP.bg2, borderRadius: 10, padding: 2, gap: 2 }}>
           {ms.map((m) => <button key={m} type="button" aria-pressed={m === mk} onClick={() => setMk(m)}
-            style={{ minWidth: 84, minHeight: 40, padding: "0 18px", borderRadius: 8, fontSize: 15, fontWeight: 600, background: m === mk ? "#636366" : "transparent", color: m === mk ? AP.ink : AP.sub }}>{m === "us" ? "미국" : "한국"}</button>)}
+            style={{ minWidth: 64, minHeight: 34, padding: "0 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: m === mk ? "#636366" : "transparent", color: m === mk ? AP.ink : AP.sub }}>{m === "us" ? "미국" : "한국"}</button>)}
         </div>
       </header>
 
-      <section aria-label="표본 외 성과" className="grid grid-cols-1 gap-8 lg:grid-cols-2" style={{ background: AP.bg1, borderRadius: 24, padding: "36px 36px", alignItems: "center" }}>
+      <section aria-label="표본 외 성과" className="grid grid-cols-1 gap-5 lg:grid-cols-2" style={{ background: AP.bg1, borderRadius: 16, padding: "22px 24px", alignItems: "center" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
-          <p style={{ fontSize: 15, fontWeight: 600, color: AP.sub }}>표본 외 검증 (최근 2년) · 거래당 평균 초과수익률</p>
-          <p style={{ fontSize: 72, lineHeight: 1, fontWeight: 700, letterSpacing: "-.03em", color: apc(V.mean, true) }}>{sg(V.mean)}%</p>
-          <p style={{ fontSize: 15, lineHeight: 1.5, color: AP.sub }}>시장(등가중 지수) 대비 · 거래비용 차감 · 거래 {n0(V.n)}건{fin(V.baseAll) ? " · 후보 전체 평균 " + sg(V.baseAll) + "%" : ""}</p>
+          <p style={{ fontSize: 13, fontWeight: 600, color: AP.sub }}>표본 외 검증 (최근 2년) · 거래당 평균 초과수익률</p>
+          <p style={{ fontSize: 44, lineHeight: 1, fontWeight: 700, letterSpacing: "-.03em", color: apc(V.mean, true) }}>{sg(V.mean)}%</p>
+          <p style={{ fontSize: 13, lineHeight: 1.5, color: AP.sub }}>시장(등가중 지수) 대비 · 거래비용 차감 · 거래 {n0(V.n)}건{fin(V.baseAll) ? " · 후보 전체 평균 " + sg(V.baseAll) + "%" : ""}</p>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
           {[["매매법 AI 선택", V.mean, AP.blue], ["무작위 선택 기준선", V.base, "#636366"]].map(([k, x, c]: any) => (
             <div key={k} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15 }}><span style={{ fontWeight: 600, color: c === AP.blue ? AP.ink : AP.sub }}>{k}</span><span style={{ fontWeight: 600, color: c === AP.blue ? AP.ink : AP.sub }}>{sg(x)}%</span></div>
-              <div style={{ height: 12, borderRadius: 6, background: AP.bg2 }}><div style={{ height: 12, borderRadius: 6, background: c, width: (fin(x) ? Math.max(1, Math.min(100, Math.max(0, x) / barMax * 100)) : 0) + "%" }} /></div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}><span style={{ fontWeight: 600, color: c === AP.blue ? AP.ink : AP.sub }}>{k}</span><span style={{ fontWeight: 600, color: c === AP.blue ? AP.ink : AP.sub }}>{sg(x)}%</span></div>
+              <div style={{ height: 8, borderRadius: 4, background: AP.bg2 }}><div style={{ height: 8, borderRadius: 4, background: c, width: (fin(x) ? Math.max(1, Math.min(100, Math.max(0, x) / barMax * 100)) : 0) + "%" }} /></div>
             </div>))}
-          <p style={{ fontSize: 13, lineHeight: 1.5, color: AP.sub }}>무작위 기준선 = 같은 날 같은 후보군에서 무작위로 골랐을 때의 평균. 기준선을 꾸준히 넘어야 선택 능력이 있다고 판단합니다.</p>
+          <p style={{ fontSize: 12, lineHeight: 1.5, color: AP.sub }}>무작위 기준선 = 같은 날 같은 후보군에서 무작위로 골랐을 때의 평균. 기준선을 꾸준히 넘어야 선택 능력이 있다고 판단합니다.</p>
         </div>
       </section>
 
       <section aria-label="신뢰도" className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {TL.map(([k, v, s, c]) => (
-          <div key={k} style={{ background: AP.bg1, borderRadius: 20, padding: "22px 22px", display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
-            <p style={{ fontSize: 13, fontWeight: 600, color: AP.sub }}>{k}</p>
-            <p style={{ fontSize: 30, lineHeight: 1.1, fontWeight: 700, color: c }}>{v}</p>
-            <p style={{ fontSize: 13, lineHeight: 1.5, color: AP.sub }}>{s}</p>
+          <div key={k} style={{ background: AP.bg1, borderRadius: 14, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+            <p style={{ fontSize: 12, fontWeight: 600, color: AP.sub }}>{k}</p>
+            <p style={{ fontSize: 20, lineHeight: 1.1, fontWeight: 700, color: c }}>{v}</p>
+            <p style={{ fontSize: 12, lineHeight: 1.5, color: AP.sub }}>{s}</p>
           </div>))}
       </section>
 
       {R.regime3 && R.regime3.x && (
         <section aria-label="시장 국면" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <h3 style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-.01em" }}>현재 시장 국면 · {RGN[R.regime] || R.regime}</h3>
-            <p style={{ fontSize: 15, color: AP.sub }}>시장 = 유니버스 전 종목 등가중 지수{R.regime3.turn ? " · " + R.regime3.turn : ""}</p>
+            <h3 style={{ fontSize: 19, fontWeight: 700, letterSpacing: "-.01em" }}>현재 시장 국면 · {RGN[R.regime] || R.regime}</h3>
+            <p style={{ fontSize: 13, color: AP.sub }}>시장 = 유니버스 전 종목 등가중 지수{R.regime3.turn ? " · " + R.regime3.turn : ""}</p>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             {[["장기 추세 (200일)", LTK[R.regime3.L] || R.regime3.L, "200일선 대비 " + sg(R.regime3.x.vs200) + "%", R.regime3.L === "UP" ? AP.green : AP.org],
               ["중기 추세 (50일)", MTK[R.regime3.M] || R.regime3.M, "20일 " + sg(R.regime3.x.r20) + "% · 60일 " + sg(R.regime3.x.r60) + "%", R.regime3.M === "UP" ? AP.green : R.regime3.M === "DOWN" ? AP.org : AP.ink],
               ["단기 모멘텀 (5일)", STK[R.regime3.S] || R.regime3.S, "5일 " + sg(R.regime3.x.r5) + "% · 전일 " + sg(R.regime3.x.r1) + "%" + (fin(R.regime3.sDays) ? " · " + R.regime3.sDays + "일째" : ""), R.regime3.S === "SURGE" || R.regime3.S === "UP" ? AP.green : R.regime3.S === "CALM" ? AP.ink : AP.org]].map(([k, v, s, c]) => (
-              <div key={k} style={{ background: AP.bg1, borderRadius: 20, padding: "20px 22px", display: "flex", flexDirection: "column", gap: 6 }}>
-                <p style={{ fontSize: 13, color: AP.sub }}>{k}</p>
-                <p style={{ fontSize: 24, fontWeight: 700, color: c }}>{v}</p>
-                <p style={{ fontSize: 13, color: AP.sub }}>{s}</p>
+              <div key={k} style={{ background: AP.bg1, borderRadius: 14, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
+                <p style={{ fontSize: 12, color: AP.sub }}>{k}</p>
+                <p style={{ fontSize: 18, fontWeight: 700, color: c }}>{v}</p>
+                <p style={{ fontSize: 12, color: AP.sub }}>{s}</p>
               </div>))}
           </div>
         </section>)}
@@ -205,10 +205,10 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
         <section aria-label="국면별 한눈에" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <h3 style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-.01em" }}>국면별 성적 · 거래당 실현수익률</h3>
-              <p style={{ fontSize: 15, color: AP.sub }}>표본 외 검증(최근 2년) · 비용 차감 · 목표 +5.00%</p>
+              <h3 style={{ fontSize: 19, fontWeight: 700, letterSpacing: "-.01em" }}>국면별 성적 · 거래당 실현수익률</h3>
+              <p style={{ fontSize: 13, color: AP.sub }}>표본 외 검증(최근 2년) · 비용 차감 · 목표 +5.00%</p>
             </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 13, color: AP.sub }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 12, color: AP.sub }}>
               {[["목표 달성", AP.green], ["수익 · 목표 미달", AP.yel], ["손실", AP.org]].map(([k, c]) => <span key={k} style={{ display: "flex", alignItems: "center", gap: 6 }}><span aria-hidden="true" style={{ width: 9, height: 9, borderRadius: 5, background: c }} />{k}</span>)}
             </div>
           </div>
@@ -216,59 +216,59 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
             {RG.map((r) => { const b = BR[r], sb = SL && SL.by && SL.by[r], v = SL && SL.wf && SL.wf.V && SL.wf.V[r], h = SL && SL.wf && SL.wf.H && SL.wf.H[r], on = r === now;
               const ok = !!(v && h && fin(v.mean) && fin(h.mean) && v.mean >= 5 && h.mean >= 5 && v.n >= 20 && h.n >= 20);
               return (
-              <div key={r} style={{ background: AP.bg1, borderRadius: 20, padding: 18, display: "flex", flexDirection: "column", gap: 10, boxShadow: on ? "inset 0 0 0 2px " + AP.blue : undefined, minWidth: 0 }}>
+              <div key={r} style={{ background: AP.bg1, borderRadius: 14, padding: 14, display: "flex", flexDirection: "column", gap: 10, boxShadow: on ? "inset 0 0 0 2px " + AP.blue : undefined, minWidth: 0 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 18, fontWeight: 700 }}>{RGN[r]}</span>
-                  {on ? <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", background: AP.blue, borderRadius: 9, padding: "2px 8px" }}>현재</span> : <span style={{ fontSize: 11, color: AP.sub }}>{b && fin(b.dayShare) ? "기간 비중 " + b.dayShare + "%" : ""}</span>}
+                  <span style={{ fontSize: 15, fontWeight: 700 }}>{RGN[r]}</span>
+                  {on ? <span style={{ fontSize: 10.5, fontWeight: 700, color: "#fff", background: AP.blue, borderRadius: 9, padding: "2px 8px" }}>현재</span> : <span style={{ fontSize: 10.5, color: AP.sub }}>{b && fin(b.dayShare) ? "기간 비중 " + b.dayShare + "%" : ""}</span>}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  <span style={{ fontSize: 12, color: AP.sub }}>매매법 AI</span>
+                  <span style={{ fontSize: 11, color: AP.sub }}>매매법 AI</span>
                   {b && !b.thin && fin(b.raw) ? <>
-                    <span style={{ fontSize: 26, fontWeight: 700, color: apc(b.raw) }}>{sg(b.raw)}%</span>
-                    <span style={{ fontSize: 12, color: AP.sub }}>{n0(b.n)}건 · 초과 {sg(b.mean)}% · 기준선 {sg(b.base)}%{fin(b.hd) ? " · 보유 " + b.hd + "일" : ""}</span>
-                  </> : <span style={{ fontSize: 15, color: AP.sub, padding: "6px 0" }}>{b ? "표본 부족 (" + n0(b.n) + "건 < 10)" : "표본 부족"}</span>}
+                    <span style={{ fontSize: 19, fontWeight: 700, color: apc(b.raw) }}>{sg(b.raw)}%</span>
+                    <span style={{ fontSize: 11, color: AP.sub }}>{n0(b.n)}건 · 초과 {sg(b.mean)}% · 기준선 {sg(b.base)}%{fin(b.hd) ? " · 보유 " + b.hd + "일" : ""}</span>
+                  </> : <span style={{ fontSize: 13, color: AP.sub, padding: "6px 0" }}>{b ? "표본 부족 (" + n0(b.n) + "건 < 10)" : "표본 부족"}</span>}
                 </div>
                 {SL && <div style={{ borderTop: "1px solid " + AP.sep, paddingTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
-                  <span style={{ fontSize: 12, color: AP.sub }}>국면 전략</span>
-                  <span style={{ fontSize: 13, lineHeight: 1.4, color: sb ? AP.ink : AP.sub }}>{sb ? sb.famKo + " · " + sb.profKo + (sb.cell ? " · 중기 " + (R3K.M[sb.cell] || sb.cell) : "") : "미운용 (근거 부족)"}</span>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}><span style={{ color: AP.sub }}>검증</span>{wfv(v)}</div>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}><span style={{ color: AP.sub }}>표본 외</span>{wfv(h)}</div>
-                  <span style={{ alignSelf: "flex-start", marginTop: 2, fontSize: 12, fontWeight: 600, padding: "3px 10px", borderRadius: 10, background: ok ? "rgba(48,209,88,.16)" : AP.bg2, color: ok ? AP.green : AP.sub }}>{ok ? "실전 투입" : "관찰"}</span>
+                  <span style={{ fontSize: 11, color: AP.sub }}>국면 전략</span>
+                  <span style={{ fontSize: 12, lineHeight: 1.4, color: sb ? AP.ink : AP.sub }}>{sb ? sb.famKo + " · " + sb.profKo + (sb.cell ? " · 중기 " + (R3K.M[sb.cell] || sb.cell) : "") : "미운용 (근거 부족)"}</span>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}><span style={{ color: AP.sub }}>검증</span>{wfv(v)}</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}><span style={{ color: AP.sub }}>표본 외</span>{wfv(h)}</div>
+                  <span style={{ alignSelf: "flex-start", marginTop: 2, fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 10, background: ok ? "rgba(48,209,88,.16)" : AP.bg2, color: ok ? AP.green : AP.sub }}>{ok ? "실전 투입" : "관찰"}</span>
                 </div>}
               </div>); })}
           </div>
-          <p style={{ fontSize: 13, lineHeight: 1.6, color: AP.sub }}>국면 = 등가중 지수 기준 · 급등/급락 = 최근 3거래일 안 하루 ±2.5% 또는 5일 ±6%(미국·한국 동일). 국면 전략 실전 투입 조건 = 해당 국면에서 검증·표본 외 두 구간 모두 거래당 +5% 이상, 각 20건 이상(사전 등록).</p>
+          <p style={{ fontSize: 12, lineHeight: 1.6, color: AP.sub }}>국면 = 등가중 지수 기준 · 급등/급락 = 최근 3거래일 안 하루 ±2.5% 또는 5일 ±6%(미국·한국 동일). 국면 전략 실전 투입 조건 = 해당 국면에서 검증·표본 외 두 구간 모두 거래당 +5% 이상, 각 20건 이상(사전 등록).</p>
         </section>); })()}
 
       <section aria-label="매매 프로세스" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <h3 style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-.01em" }}>매매 프로세스</h3>
+        <h3 style={{ fontSize: 19, fontWeight: 700, letterSpacing: "-.01em" }}>매매 프로세스</h3>
         <ol className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {[["유니버스 선별", "OMNI-Q " + (V.candQ ? "상위 " + Math.round((1 - V.candQ) * 100) + "%" : "필터 없음"), "종목별 상승 확률 상위 구간만 후보로 남깁니다."],
             ["진입 신호", "매매법 " + rows.length + "종", "당일 진입 조건이 충족된 매매법만 유효합니다."],
             ["매매법 선택", ruleKo(V.rule), "유사 국면·지표 구간의 과거 성과로 매매법 하나를 고릅니다."],
             ["청산", "손절 · 보유기간 · 트레일링", "매매법별로 사전에 정한 규칙으로만 청산합니다."]].map(([t, v, s], i) => (
-            <li key={t} style={{ background: AP.bg1, borderRadius: 20, padding: 20, display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
-              <span aria-hidden="true" style={{ width: 28, height: 28, borderRadius: 14, background: AP.blue, color: "#fff", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
-              <span style={{ fontSize: 13, color: AP.sub }}>{t}</span>
-              <span style={{ fontSize: 17, fontWeight: 700, overflowWrap: "anywhere" }}>{v}</span>
-              <span style={{ fontSize: 13, lineHeight: 1.5, color: AP.sub }}>{s}</span>
+            <li key={t} style={{ background: AP.bg1, borderRadius: 14, padding: 14, display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+              <span aria-hidden="true" style={{ width: 22, height: 22, borderRadius: 11, background: AP.blue, color: "#fff", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
+              <span style={{ fontSize: 12, color: AP.sub }}>{t}</span>
+              <span style={{ fontSize: 14, fontWeight: 700, overflowWrap: "anywhere" }}>{v}</span>
+              <span style={{ fontSize: 12, lineHeight: 1.5, color: AP.sub }}>{s}</span>
             </li>))}
         </ol>
-        {R.sleeve && <div style={{ background: AP.bg1, borderRadius: 20, padding: "18px 22px", display: "flex", flexWrap: "wrap", gap: 20, alignItems: "center" }}>
+        {R.sleeve && <div style={{ background: AP.bg1, borderRadius: 14, padding: "18px 22px", display: "flex", flexWrap: "wrap", gap: 20, alignItems: "center" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: "1 1 320px" }}>
-            <span style={{ fontSize: 13, color: AP.sub }}>오늘 국면 전략 · {RGN[R.sleeve.reg] || R.sleeve.reg}</span>
-            <span style={{ fontSize: 17, fontWeight: 700 }}>{R.sleeve.cur ? R.sleeve.cur.famKo + " · " + R.sleeve.cur.profKo : "미운용"}</span>
-            <span style={{ fontSize: 13, color: AP.sub }}>{R.sleeve.live ? "실전 투입 — 유니버스 선별을 거치지 않고 국면 전략이 직접 편입합니다." : "관찰 — 현재 국면이 실전 투입 조건을 충족하지 못했습니다."}</span>
+            <span style={{ fontSize: 12, color: AP.sub }}>오늘 국면 전략 · {RGN[R.sleeve.reg] || R.sleeve.reg}</span>
+            <span style={{ fontSize: 14, fontWeight: 700 }}>{R.sleeve.cur ? R.sleeve.cur.famKo + " · " + R.sleeve.cur.profKo : "미운용"}</span>
+            <span style={{ fontSize: 12, color: AP.sub }}>{R.sleeve.live ? "실전 투입 — 유니버스 선별을 거치지 않고 국면 전략이 직접 편입합니다." : "관찰 — 현재 국면이 실전 투입 조건을 충족하지 못했습니다."}</span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: 13, color: AP.sub }}>편입 후보</span>
-            <span style={{ fontSize: 17, fontWeight: 600, fontFamily: MONO }}>{(R.sleeve.syms || []).join(" · ") || "—"}</span>
+            <span style={{ fontSize: 12, color: AP.sub }}>편입 후보</span>
+            <span style={{ fontSize: 14, fontWeight: 600, fontFamily: MONO }}>{(R.sleeve.syms || []).join(" · ") || "—"}</span>
           </div>
-          <span style={{ fontSize: 13, fontWeight: 600, padding: "5px 12px", borderRadius: 12, background: R.sleeve.live ? "rgba(48,209,88,.16)" : AP.bg2, color: R.sleeve.live ? AP.green : AP.sub }}>{R.sleeve.live ? "실전 투입" : "관찰"}</span>
+          <span style={{ fontSize: 12, fontWeight: 600, padding: "5px 12px", borderRadius: 12, background: R.sleeve.live ? "rgba(48,209,88,.16)" : AP.bg2, color: R.sleeve.live ? AP.green : AP.sub }}>{R.sleeve.live ? "실전 투입" : "관찰"}</span>
         </div>}
         <details style={{ background: AP.bg1, borderRadius: 16, padding: "12px 18px" }}>
-          <summary style={{ cursor: "pointer", fontSize: 14, color: AP.ink }}>용어 안내</summary>
-          <ul style={{ margin: "10px 0 2px", paddingLeft: 18, fontSize: 13, lineHeight: 1.75, color: AP.sub }}>
+          <summary style={{ cursor: "pointer", fontSize: 12.5, color: AP.ink }}>용어 안내</summary>
+          <ul style={{ margin: "10px 0 2px", paddingLeft: 18, fontSize: 12, lineHeight: 1.75, color: AP.sub }}>
             <li><b style={{ color: AP.ink }}>검증 구간</b> = 10년 데이터의 60~80% 구간. 여러 설정 중 하나를 고르는 데 사용.</li>
             <li><b style={{ color: AP.ink }}>표본 외 검증</b> = 마지막 20%(약 2년). 학습·선택에 쓰지 않은 구간의 성과.</li>
             <li><b style={{ color: AP.ink }}>거래당 실현수익률</b> = 매수부터 청산까지 비용 차감 수익률의 평균(연환산 아님). <b style={{ color: AP.ink }}>초과수익률</b> = 같은 기간 시장 수익률을 뺀 값.</li>
@@ -277,7 +277,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
         </details>
       </section>
 
-      <h3 style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-.01em", marginBottom: -24 }}>상세 데이터</h3>
+      <h3 style={{ fontSize: 19, fontWeight: 700, letterSpacing: "-.01em", marginBottom: -24 }}>상세 데이터</h3>
       <section aria-label="판단 흐름" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
           <h3 style={{ fontSize: 16, fontWeight: 600, color: "#F2F6FC" }}>판단 흐름</h3>
