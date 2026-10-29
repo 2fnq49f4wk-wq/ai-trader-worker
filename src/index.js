@@ -3050,8 +3050,9 @@ async function applySignalTypeWeights(DB, cfg) {
    CPU 낭비도 없게 · OMNI-Q 랑 매매법 AI 로만". 원장(6~10월): AI_PRIMARY 미 10월 −1.22%/승률 29% · 9월 −0.66% · 한 9월 −2.01% (퇴역 위원회 확률로 매수) ·
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
+const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.702";
+const _BUILD_VER = "V33.703";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -27852,7 +27853,12 @@ async function runTradingCycle(env) {
             }
             // 리스크 기반 수량
             const riskDollar = equity * (riskPct / 100) * combW;
-            let qty = Math.floor(riskDollar / stopDist);
+            /* [V33.703] ★크기 계산용 손절폭 하한★(사용자 10/29 "손해 원인 찾고 다시는 안 나게") — 원장 6/3~10/29 매도 816건 실측:
+               손절폭이 좁은 거래(min(ATR 손절, % 손절) · 단타 분봉 손절)일수록 수량이 커졌고, 그 큰 거래가 더 자주 졌다
+               (한국 금액 4분위 승률 18% · 손실 거래 평균 금액이 이익 거래보다 큼 → % 평균 −0.02% 인데 금액 −539만 원).
+               실제 STOP 청산 손실 중앙값 −4.95%(계획한 손절보다 깊음 · 갭). 그래서 수량은 손절폭을 최소 SIZE_STOP_FLOOR_PCT 로 보고 정한다
+               (실제 손절가는 그대로 — 수량만 줄어든다). */
+            let qty = Math.floor(riskDollar / Math.max(stopDist, price * SIZE_STOP_FLOOR_PCT / 100));
             /* [V33.250] ★신호 자신이 요구하는 크기 배율★ — VT_TREND(변동성 타겟)가 쓴다.
                이 계열의 요점은 진입 조건이 아니라 크기다: 같은 신호라도 실현변동성이 두 배면
                절반만 산다(목표변동성/실현변동성). 아래 ML 사이징(_md.sizeMult, 켈리)과는
