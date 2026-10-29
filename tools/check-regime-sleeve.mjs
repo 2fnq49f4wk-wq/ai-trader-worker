@@ -13,7 +13,9 @@ chk(/all\(\(w\.get\(rg_now\) or \{\}\)\.get\("n", 0\) >= NMIN and \(\(w\.get\(rg
 chk(/NMIN, TH = 750, 63, 20, 3\.0/.test(SL), "WIN 750 · 분기 63 · 표본 20 · 근거 문턱 +3%(사전 등록)", "★워크포워드 설정이 바뀌었다★");
 chk(/"sleeve": sleeve/.test(PB) && /import regime_sleeve as RSL/.test(PB), "학습기 업로드에 sleeve", "★학습기가 국면 전략을 안 올린다★");
 chk(/rec\.sleeve = \(body\.sleeve/.test(S) && /sleeve: r\.sleeve \|\| null/.test(S), "워커 저장 · /api/playbook 노출", "★워커가 sleeve 를 버린다★");
-chk(/!\(SL\.live \|\| ctx\.shadow\)\) return null/.test(S) && /if \(slp && \(st\.sleeve\.live \|\| ctx\.shadow\)\) return slp/.test(S), "워커는 실전 자격(live)일 때만 실제로 고른다 · 아니면 관측", "★자격 없이 국면 전략으로 산다★");
+/* [V33.706] 사용자 10/29 명시 승인 — 시험 투입(검증 ≥ +5% · 판정 > 0 · 각 n ≥ 20) 추가. 문턱이 더 느슨해지면 막는다. */
+chk(/!\(SL\.live \|\| trial \|\| ctx\.shadow\)\) return null/.test(S) && /if \(slp && \(st\.sleeve\.live \|\| slp\.trial \|\| ctx\.shadow\)\) return slp/.test(S), "워커는 실전 자격(live) 또는 시험 투입일 때만 실제로 고른다 · 아니면 관측", "★자격 없이 국면 전략으로 산다★");
+chk(/const PB_SLEEVE_TRIAL = \{ vMin: 5, hMin: 0, nMin: 20 \};/.test(S), "시험 투입 문턱(검증 ≥ +5% · 판정 > 0 · n ≥ 20 · 사용자 승인 10/29)", "★시험 투입 문턱이 바뀌었다(사용자 승인 필요)★");
 chk(/pbSleeveHas\(__sr, symbol\)/.test(S) && /!pbSleeveHas\(__sr, sym\)/.test(S), "국면 전략 종목은 OMNI-Q 후보 거름 밖에서도 평가(평가 루프 · 선행 판정)", "★국면 전략 종목이 평가되지 않는다★");
 chk(/aria-label="국면별 한눈에"/.test(UI) && /SL\.wf && SL\.wf\.H/.test(UI), "두뇌관측 매매법 화면에 국면 전략(고른 전략 · 오늘 종목 · 국면별 두 구간)", "★화면에 국면 전략이 없다★");
 /* [V33.698] 사용자 10/28 "왜 한국만 폭등·폭락" — 다섯 국면을 늘 그린다(표본 부족도 숨기지 않음) · 학습기도 n<10 국면을 thin 으로 보낸다 */

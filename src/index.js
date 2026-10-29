@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.705";
+const _BUILD_VER = "V33.706";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -14074,16 +14074,26 @@ function _pbMkOf(st, symbol) { return (st && (st.mkt === "us" || st.mkt === "kr"
 /* [V33.695] ★국면 전략(학습기 regime_sleeve)★ — 국면마다 분기 워크포워드로 고른 전략 묶음의 오늘 종목(OMNI-Q 후보 거름 밖에서도).
    실전 자격(sleeve.live) = 지금 국면의 워크포워드 두 구간([60,80%)·[80,100%)) 거래당 실제 수익 ≥ +5% · 표본 ≥ 20(사전 등록). 아니면 관측만. */
 function pbSleeveHas(st, sym) { const SL = st && st.sleeve; return !!(SL && SL.cur && Array.isArray(SL.syms) && SL.syms.indexOf(sym) >= 0); }
+/* [V33.706] ★국면 전략 시험 투입★(사용자 10/29 "한국장은 선택 기록만 하고 매수가 안 일어난다 — 바로 실전 투입" · 명시 승인)
+   정식 실전(live) = 두 구간 모두 ≥ +5% 는 그대로. 그보다 약하지만 ★두 구간 모두 수익★ 인 국면은 시험 투입:
+   검증 [60,80%) ≥ +5% · 판정 [80,100%) > 0 · 각 표본 ≥ 20(사전 등록). 크기는 다른 매매법 AI 시험 매수와 같은 잠정 배수(STRAT_ROUTE.mult). */
+const PB_SLEEVE_TRIAL = { vMin: 5, hMin: 0, nMin: 20 };
+function pbSleeveTrial(SL) {
+  if (!SL || !SL.cur || SL.live) return false;
+  const v = SL.wf && SL.wf.V && SL.wf.V[SL.reg], h = SL.wf && SL.wf.H && SL.wf.H[SL.reg];
+  return !!(v && h && _num(v.n, 0) >= PB_SLEEVE_TRIAL.nMin && _num(h.n, 0) >= PB_SLEEVE_TRIAL.nMin && _num(v.mean, -99) >= PB_SLEEVE_TRIAL.vMin && _num(h.mean, -99) > PB_SLEEVE_TRIAL.hMin);
+}
 function pbSleevePick(st, ctx, dWin) {
-  const SL = st.sleeve, D = ctx.D;
-  if (!pbSleeveHas(st, ctx.symbol) || !D || !D.c || D.c.length < 61 || !(dWin || ctx.shadow) || !(SL.live || ctx.shadow)) return null;
+  const SL = st.sleeve, D = ctx.D, trial = pbSleeveTrial(SL);
+  if (!pbSleeveHas(st, ctx.symbol) || !D || !D.c || D.c.length < 61 || !(dWin || ctx.shadow) || !(SL.live || trial || ctx.shadow)) return null;
   const pr = SL.prof || {}, i = D.c.length - 1, atr = _pbAtrPct(D.h, D.l, D.c, i);
   const stop = Math.min(_num(pr.stop, 12), atr === atr ? _num(pr.atr, 4) * atr : 99);
   const wv = SL.wf && SL.wf.H && SL.wf.H[SL.reg] && SL.wf.H[SL.reg].win != null ? SL.wf.H[SL.reg].win / 100 : 0.5;
   const nm = "RG:" + SL.cur.fam;
   return { kind: "daily", pb: nm, sleeve: true, fired: [nm], n: _num(SL.cur.n, 0), w: wv, m: _num(SL.cur.mean, 0), s: _num(SL.cur.mean, 0), stop: Math.max(1.5, stop),
            be: 0, tpR: null, tpPct: null, bePct: null, mr: false, tstop: 0, hold: _num(pr.hold, 60), trail: _num(pr.trail, 0), trailAct: _num(pr.trailAct, 0), crashExit: !!(SL.cfg && SL.cfg.crashExit === true),
-           label: (SL.cur.famKo || SL.cur.fam) + " · " + (SL.cur.profKo || SL.cur.prof), why: SL.live ? null : "국면 전략 관측(실전 자격 미달 — 워크포워드 두 구간 ≥ +5% 아님)" };
+           label: (SL.cur.famKo || SL.cur.fam) + " · " + (SL.cur.profKo || SL.cur.prof) + (trial ? " · 시험 투입" : ""), trial: trial,
+           why: SL.live || trial ? null : "국면 전략 관측(실전 자격 미달 — 두 구간 모두 수익 아님)" };
 }
 /* [V33.701] ★국면 게이트★(사용자 10/29 "성적 안 나오는 것 구조적으로 해결") — 학습기가 검증 구간 [60,80%) 에서 고른 규칙 그대로의 거래로
    국면별 거래당 실제 수익 평균 ≤ 0 · 표본 ≥ 20 인 국면을 off 로 보낸다(판정 구간은 고르기에 안 씀). 지금 국면이 off 면 매매법 AI 신규 매수만 쉰다. */
@@ -14103,7 +14113,7 @@ function pbRoutePick(st, ctx, nowMs) {
   const xGap = xSess && ctx.extPx > 0 && ctx.refPx > 0 ? Math.abs(ctx.extPx / ctx.refPx - 1) * 100 : null;
   const xOk = xSess != null && xGap != null && xGap <= PB_ROUTE.extGapMax;
   const dWin = dWin0 || xOk;
-  { const slp = pbSleevePick(st, ctx, dWin); if (slp && (st.sleeve.live || ctx.shadow)) return slp; }   // [V33.695] 국면 전략이 고른 종목이면 그것이 먼저
+  { const slp = pbSleevePick(st, ctx, dWin); if (slp && (st.sleeve.live || slp.trial || ctx.shadow)) return slp; }   // [V33.695] 국면 전략이 고른 종목이면 그것이 먼저
   if (dOk && (dWin || ctx.shadow) && D && D.c.length >= 211) {   // 그림자(관측)는 시간 창 밖에서도 계산만 한다
     const i = D.c.length - 1, px = D.c[i];
     /* [V33.664] 종목 특성 그룹(변동성 3분위 · 학습기가 오늘 값을 보냄) → 그 그룹에서 검증을 통과한 진입 미지수 · 청산 미지수 */

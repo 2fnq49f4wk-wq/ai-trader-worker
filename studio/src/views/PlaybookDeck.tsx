@@ -195,6 +195,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
       {(() => { const SL = R.sleeve || null, RG = ["SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH"], KO: any = { SURGE: "급등장", BULL: "상승장", NEUTRAL: "횡보장", BEAR: "하락장", CRASH: "급락장" };
         const BR: any = {}; (Array.isArray(V.byReg) ? V.byReg : []).forEach((r: any) => { BR[r.reg] = r; });
         const now = SL ? SL.reg : R.regime;
+        const SLtr = !!(SL && !SL.live && SL.cur && SL.wf && SL.wf.V && SL.wf.H && SL.wf.V[SL.reg] && SL.wf.H[SL.reg] && SL.wf.V[SL.reg].mean >= 5 && SL.wf.H[SL.reg].mean > 0 && SL.wf.V[SL.reg].n >= 20 && SL.wf.H[SL.reg].n >= 20);
         const RGt = V.regGate || null, GO: string[] = (RGt && RGt.off) || [], GH = RGt && RGt.ho;   // [V33.701] 국면 게이트
         const c5 = (x: any) => (!fin(x) ? MUTE : x >= 5 ? POS : x >= 0 ? HL : NEG);
         const wfv = (w: any) => !w || !fin(w.mean) ? <span style={{ color: FAINT }}>—</span> : <span style={{ color: c5(w.mean) }}>{sg(w.mean, 1)}% <span style={{ color: FAINT }}>({n0(w.n)})</span></span>;
@@ -207,6 +208,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
             {RG.map((r) => { const b = BR[r], sb = SL && SL.by && SL.by[r], v = SL && SL.wf && SL.wf.V && SL.wf.V[r], h = SL && SL.wf && SL.wf.H && SL.wf.H[r], on = r === now;
               const ok = !!(v && h && fin(v.mean) && fin(h.mean) && v.mean >= 5 && h.mean >= 5 && v.n >= 20 && h.n >= 20);
+              const tr = !ok && !!(sb && v && h && fin(v.mean) && fin(h.mean) && v.mean >= 5 && h.mean > 0 && v.n >= 20 && h.n >= 20);   // [V33.706] 시험 투입(사용자 승인 10/29)
               return (
               <div key={r} style={{ ...card, padding: 11, display: "flex", flexDirection: "column", gap: 6, borderColor: on ? HL : LINE, background: on ? "rgba(255,209,102,.05)" : PANEL }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
@@ -224,14 +226,14 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
                   <div style={{ fontSize: 12, color: sb ? MUTE : FAINT, lineHeight: 1.4 }}>{sb ? sb.famKo + " · " + sb.profKo + (sb.cell ? " · 중기 " + (R3K.M[sb.cell] || sb.cell) : "") : "미운용(근거 부족)"}</div>
                   <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 12 }}><span style={{ color: DIM }}>검증</span>{wfv(v)}</div>
                   <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 12 }}><span style={{ color: DIM }}>표본 외</span>{wfv(h)}</div>
-                  <span style={{ alignSelf: "flex-start", marginTop: 2, fontSize: 11, padding: "2px 8px", borderRadius: 4, border: "1px solid " + (ok ? POS : "#33445C"), color: ok ? POS : DIM }}>{ok ? "실전 투입" : "관찰"}</span>
+                  <span style={{ alignSelf: "flex-start", marginTop: 2, fontSize: 11, padding: "2px 8px", borderRadius: 4, border: "1px solid " + (ok ? POS : tr ? HL : "#33445C"), color: ok ? POS : tr ? HL : DIM }}>{ok ? "실전 투입" : tr ? "시험 투입(비중 50%)" : "관찰"}</span>
                 </div>}
               </div>); })}
           </div>
           {SL && <div style={{ ...card, padding: "12px 16px", display: "flex", flexWrap: "wrap", gap: 18, alignItems: "center", fontSize: 13 }}>
             <span style={{ color: DIM }}>현재 국면 전략</span>
             <b style={{ color: INK, fontWeight: 500 }}>{SL.cur ? SL.cur.famKo + " · " + SL.cur.profKo : "미운용"}</b>
-            <span style={{ color: SL.live ? POS : HL }}>{SL.live ? "실전 투입 중" : "관찰 — 현재 국면이 검증·표본 외 +5% 기준 미달"}</span>
+            <span style={{ color: SL.live ? POS : SLtr ? HL : MUTE }}>{SL.live ? "실전 투입 중" : SLtr ? "시험 투입 중(비중 50%) — 검증 ≥ +5% · 표본 외 수익" : "관찰 — 현재 국면이 검증·표본 외 모두 수익은 아님"}</span>
             <span style={{ color: MUTE, fontFamily: MONO, fontSize: 12 }}>편입 후보 {(SL.syms || []).join(" · ") || "—"}</span>
           </div>}
           {RGt && <div style={{ ...card, padding: "10px 14px", display: "flex", flexWrap: "wrap", gap: 14, alignItems: "center", fontSize: 12 }}>
@@ -245,7 +247,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
               <li>10년 일봉을 시간순 분할: 앞 60% 학습 · <b style={{ color: INK }}>[60,80%) 검증 구간</b> = 설정 선택에 사용 · <b style={{ color: INK }}>[80,100%) 표본 외 구간</b> = 학습·선택에 쓰지 않은 마지막 20%(약 2년).</li>
               <li><b style={{ color: INK }}>+5%</b> = 표본 외 구간 거래당 실현수익률(비용 차감 · 매수~청산 · 연환산 아님) 목표.</li>
               <li>시장 국면 = 유니버스 등가중 지수 기준. 급등장·급락장 = 최근 3거래일 안 하루 ±2.5% 또는 5일 ±6%(미·한 동일 정의). 미국은 해당 일수가 적어 표본 부족이 나올 수 있음.</li>
-              <li>국면 전략 실전 투입 = 현재 국면이 검증·표본 외 두 구간 모두 거래당 +5% 이상 · 각 20건 이상(사전 등록).</li>
+              <li>국면 전략 실전 투입 = 현재 국면이 검증·표본 외 두 구간 모두 거래당 +5% 이상 · 각 20건 이상(사전 등록). 시험 투입(비중 50%) = 검증 ≥ +5% · 표본 외 플러스 · 각 20건 이상(사용자 승인 10/29).</li>
             </ul>
           </details>
         </section>); })()}
