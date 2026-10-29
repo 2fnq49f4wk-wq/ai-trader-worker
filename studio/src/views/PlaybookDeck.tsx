@@ -31,20 +31,12 @@ const col = (x: any) => (!fin(x) ? MUTE : x > 0 ? POS : x < 0 ? NEG : INK);
 const pos = (x: number, lim: number) => Math.max(0, Math.min(100, 50 + (x / lim) * 50));
 const ruleName = (r: any): string => (!r ? "—" : r.cells ? "칸별 " + Object.keys(r.cells).length + "칸 · 기본 " + ruleName(r.def) : [r.score, r.level].concat(r.decay ? ["d" + r.decay] : []).concat(r.gate ? ["g" + r.gate] : []).concat(r.gveto ? ["거부권"] : []).join("·"));
 // [V33.694] 국면 3단 · 종목 칸(중기 국면 | 변동성 그룹) 한글 이름표
-const R3K: Record<string, Record<string, string>> = { L: { UP: "상승", DOWN: "하락", TURN: "전환" }, M: { UP: "상승", DOWN: "하락", FLAT: "보합" }, S: { SURGE: "폭등", UP: "상승", CALM: "보합", DOWN: "하락", CRASH: "폭락" } };
+const R3K: Record<string, Record<string, string>> = { L: { UP: "상승", DOWN: "하락", TURN: "전환" }, M: { UP: "상승", DOWN: "하락", FLAT: "보합" }, S: { SURGE: "급등", UP: "상승", CALM: "안정", DOWN: "하락", CRASH: "급락" } };
 const cellName = (c: string) => { const [m, g] = String(c).split("|"); return "중기 " + (R3K.M[m] || m) + " · " + ({ "0": "저변동", "1": "중변동", "2": "고변동" } as any)[g] || g; };
 // [V33.698] 규칙 한글 이름(원장 이유 pbRuleLabel 과 같은 말)
 const ruleKo = (r: any): string => { if (!r) return "—"; if (r.cells) return "종목 칸마다 다름(" + Object.keys(r.cells).length + "칸) · 기본 " + ruleKo(r.def);
   const SC: any = { m: "평균", lcb: "하한(평균−표준오차)", mpd: "하루당 평균", lcbpd: "하루당 하한" }, LV: any = { fine: "세부 칸", regime: "국면 칸", global: "매매법 전체" };
   return [SC[r.score] || r.score, LV[r.level] || r.level].concat(r.decay ? ["최근 " + r.decay + "일 가중"] : []).concat(r.gate ? ["성적 스위치 " + r.gate + "일"] : []).concat(r.gveto ? ["전체 거부권"] : []).join(" · "); };
-// [V33.699] 애플 다크 팔레트 · 국면 이름(전문 용어)
-const AP = { bg1: "#1C1C1E", bg2: "#2C2C2E", ink: "#F5F5F7", sub: "#98989D", sep: "#38383A", blue: "#0A84FF", green: "#30D158", yel: "#FFD60A", org: "#FF9F0A",
-  font: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif' };
-const apc = (x: any, ex = false) => (!fin(x) ? AP.sub : ex ? (x > 0 ? AP.green : AP.org) : x >= 5 ? AP.green : x >= 0 ? AP.yel : AP.org);
-const RGN: Record<string, string> = { SURGE: "급등장", BULL: "상승장", NEUTRAL: "횡보장", BEAR: "하락장", CRASH: "급락장" };
-const LTK: Record<string, string> = { UP: "상승 추세", DOWN: "하락 추세", TURN: "추세 전환 중" };
-const MTK: Record<string, string> = { UP: "상승", FLAT: "횡보", DOWN: "하락" };
-const STK: Record<string, string> = { SURGE: "급등", UP: "상승", CALM: "안정", DOWN: "하락", CRASH: "급락" };
 const ago = (ts: any) => { if (!fin(ts)) return "—"; const m = Math.round((Date.now() - ts) / 60000); return m < 60 ? m + "분 전" : m < 2880 ? Math.round(m / 60) + "시간 전" : Math.round(m / 1440) + "일 전"; };
 
 function TwoSided({ x, lim, h = 6 }: { x: any; lim: number; h?: number }) {
@@ -58,6 +50,10 @@ function TwoSided({ x, lim, h = 6 }: { x: any; lim: number; h?: number }) {
 const card: CSSProperties = { background: PANEL, border: "1px solid " + LINE, borderRadius: 12 };
 const kick: CSSProperties = { fontFamily: MONO, fontSize: 11, letterSpacing: ".14em", color: DIM };
 
+function Btn({ on, onClick, children, label }: { on: boolean; onClick: () => void; children: ReactNode; label?: string }) {
+  return <button type="button" aria-pressed={on} aria-label={label} onClick={onClick}
+    style={{ minHeight: 40, padding: "0 16px", borderRadius: 8, fontWeight: 600, fontSize: 13.5, border: "1px solid " + (on ? POS : "#22324A"), background: on ? POS : "transparent", color: on ? "#04121A" : "#C9D4E3" }}>{children}</button>;
+}
 
 type SortKey = "id" | "preN" | "preM" | "preW" | "hoN" | "hoM" | "hoW" | "pick";
 
@@ -99,24 +95,24 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
     ["종목 그룹 · 미지수", (() => { const pt = R.daily?.ptune; if (!pt) return "기본 미지수"; const nA = Object.values(pbDef).reduce((a: number, x: any) => a + Object.keys((x && x.ep) || {}).length + Object.keys((x && x.grp) || {}).filter((g) => !(x.ep && x.ep[g])).length, 0); return nA ? "그룹 조율 " + nA + "칸" : "기본 미지수"; })(),
       "변동성 3그룹마다 조율 · 시스템을 안 낮춘 것만 실전(‘미지수 · 조율’ 탭)"],
     ["구조 거르개", R.panic ? "공황 차단 켜짐" : "공황 차단 꺼짐", R.panic ? "1순위 추세·모멘텀·돌파 쉼(보조는 계속)" : "시장 60일 하락·고변동이면 1순위 추세 매매법 쉼"],
-    ...(R.panicBook && R.panicBook.pre ? [["공황 반등 바구니", R.panicBook.ok ? "규칙 통과" : "관측만",
+    ...(R.panicBook && R.panicBook.pre ? [["공황 반등 바구니", R.panicBook.ok ? "규칙 통과" : "관찰",
       "공황 날 OMNI-Q 후보 바구니 " + R.panicBook.h + "일 · 앞80% " + sg(R.panicBook.pre.mean) + "%(t " + (R.panicBook.pre.t ?? "—") + " · n " + R.panicBook.pre.n + ") · 뒤20% " + sg(R.panicBook.post.mean) + "%(t " + (R.panicBook.post.t ?? "—") + ") — 사전 등록: 앞80% t ≥ 2 · 뒤20% 양수면 시험 후보"]] : []),
     ["상황 칸 표", n0(R.daily?.cells) + "칸", "국면 × RSI × 이격 × 수익 × 거래량 칸마다 수축 평균"],
     ["고르는 규칙", chosen, V.luck ? (V.luck.fallback ? "검증 1등(t " + (fin(V.luck.best) ? (+V.luck.best).toFixed(2) : "—") + ")이 운 수준 " + V.luck.level + " 이하 → 사전 등록 기본 설정" : "검증 1등 t " + (fin(V.luck.best) ? (+V.luck.best).toFixed(2) : "—") + " > 운 수준 " + V.luck.level + "(설정·규칙 " + V.luck.K + "개)") : "검증 구간 t 가 가장 높은 규칙"],
     ["국면 거부권", "칸 평균 < 0 · n ≥ 30", "지금 국면 칸이 손실이면 규칙과 무관하게 버린다"],
-    ["판정 구간", sg(V.mean) + "%", "n " + n0(V.n) + " · 무작위 " + sg(V.base) + "% → " + (pass ? "통과" : "미통과")],
-    ...(MM ? [["월 맞춤 판정", (fin(V.mx) ? (V.mx >= 0 ? "+" : "") + V.mx.toFixed(2) + "%p" : "—"),
-      "같은 달 무작위 대비 · 달 묶음 t " + (fin(V.mT) ? V.mT.toFixed(2) : "—") + " (≥ 2) · 이긴 달 " + (V.mWin ?? "—") + "/" + (V.mN ?? "—") + (V.cap ? " · 실전 상한(하루 " + V.cap.day + " · 동시 " + V.cap.open + ")" : "")]] : []),
+    ["표본 외 검증", sg(V.mean) + "%", "n " + n0(V.n) + " · 기준선 " + sg(V.base) + "% → " + (pass ? "통과" : "미통과")],
+    ...(MM ? [["월별 초과 판정", (fin(V.mx) ? (V.mx >= 0 ? "+" : "") + V.mx.toFixed(2) + "%p" : "—"),
+      "동월 기준선 대비 · 월별 t " + (fin(V.mT) ? V.mT.toFixed(2) : "—") + " (≥ 2) · 이긴 달 " + (V.mWin ?? "—") + "/" + (V.mN ?? "—") + (V.cap ? " · 실전 상한(하루 " + V.cap.day + " · 동시 " + V.cap.open + ")" : "")]] : []),
     ...(V.fwd ? [["전진 구간 · 최종", (V.fwd.days || 0) + " / " + (V.fwd.needDays || 60) + "일",
       String(V.fwd.start).replace(/(\d{4})(\d{2})(\d{2})/, "$1-$2-$3") + " 동결 이후(아무도 본 적 없는 표본) · 거래 " + (V.fwd.n || 0) + (fin(V.fwd.wT) ? " · 주 묶음 t " + (+V.fwd.wT).toFixed(2) : "") + " → " + (V.fwd.ok ? "통과" : (V.fwd.days || 0) < (V.fwd.needDays || 60) ? "쌓는 중 — 주력 전환은 이것까지 통과해야" : "미달")]] : []),
     ["최근 " + ((RC && RC.days) || 125) + "일 악화 검사", RC ? sg(RC.mean) + "% vs " + sg(RC.base) + "%" : "—",
      RC ? (fin(RC.t) ? "초과 t " + RC.t.toFixed(2) + " · " : "") + (RC.ok ? "통과" : "미달") + " — 확실한 악화(t ≤ " + (fin(RC.needT) ? RC.needT : -2) + ")만 막음" : "기록 없음"],
   ];
   const tabs: [string, string][] = [["pb", "매매법 " + rows.length + "종"], ["param", "미지수 · 조율"], ["rules", "규칙 비교"], ["cand", "후보 폭 비교"], ["intra", "5분 단타"]].concat((extra || []).map((e, i) => ["x" + i, e.label] as [string, string])) as [string, string][];
-  const note = tab === "pb" ? "판정 전 = 학습·검증 구간 · 판정 = 손대지 않은 최근 구간 · 고른 수 = 판정 구간에서 실제로 고른 거래 · 머리글을 누르면 정렬"
+  const note = tab === "pb" ? "표본 내 = 학습·검증 구간 · 표본 외 = 학습·선택에 쓰지 않은 최근 구간 · 선택 수 = 표본 외 구간에서 실제 선택된 거래 · 머리글을 누르면 정렬"
     : tab === "param" ? "칩 = 미지수(초록 = 기본에서 바뀐 값) · 표 칸을 누르면 그룹별 수식"
     : tab === "rules" ? "검증 구간에서 규칙마다 고른 거래 · 노란 줄 = 실제로 고른 규칙"
-    : tab === "cand" ? "후보 설정마다 판정 구간 성적(고르기엔 안 씀) · 노란 줄 = 검증이 고른 설정" : tab === "intra" ? "5분봉 단타 검증(같은 3구간 절차)" : "";
+    : tab === "cand" ? "후보 설정별 표본 외 성과(선택엔 미사용) · 노란 줄 = 검증이 고른 설정" : tab === "intra" ? "5분봉 단타 검증(같은 3구간 절차)" : "";
   const th = (k: SortKey | null, l: string, left = false) => (
     <th key={l} scope="col" style={{ padding: left ? "12px 14px" : "12px", textAlign: left ? "left" : "right", fontWeight: 500, whiteSpace: "nowrap" }}>
       {k ? <button type="button" onClick={() => { setSd(k === sk ? -sd : -1); setSk(k); }} aria-label={l + " 기준 정렬"} style={{ color: k === sk ? INK : DIM }}>{l}{k === sk ? (sd < 0 ? " ↓" : " ↑") : ""}</button> : l}
@@ -125,165 +121,133 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
   const tbl: CSSProperties = { width: "100%", borderCollapse: "collapse", fontFamily: MONO, fontSize: 12.5 };
   const tMax = Math.max(4, ...((V.valCmp || []) as any[]).map((c) => Math.abs(+c.t || 0)));
 
-  /* [V33.699] 애플 다크 톤 · 상태 · 신뢰도 */
-  const ST = R.primary ? { t: "본운용", s: "독립 검증 구간 2회 통과 · 정상 비중으로 운용합니다.", c: AP.green }
-    : pass ? { t: "검증 통과 · 본운용 승격 대기", s: "독립 검증 구간을 2회 통과하면 정상 비중으로 전환합니다.", c: AP.green }
-    : R.pass && (R.pass.absTrial || TW === "trade") ? { t: "시험 운용 · 비중 50%", s: "표본 외 수익은 플러스이지만 무작위 기준선 대비 우위가 통계적으로 확정되지 않아 절반 비중으로 운용합니다.", c: AP.yel }
-    : { t: "관찰 모드 · 매수 없음", s: "무작위 기준선 대비 유의성이 기준에 못 미쳐 실매수 없이 신호만 기록합니다.", c: AP.org };
-  const tv = MM ? V.mT : V.t;
-  const TL: [string, string, string, string][] = [
-    ["승률", fin(V.win) ? V.win.toFixed(1) + "%" : "—", "표본 외 " + n0(V.n) + "건 중 수익 거래 비율", AP.ink],
-    ["통계적 유의성 (t)", fin(tv) ? (+tv).toFixed(2) : "—", "통과 기준 2.00 · " + (fin(tv) && tv >= 2 ? "충족" : "미달") + (MM ? " (월 단위)" : ""), fin(tv) ? (tv >= 2 ? AP.green : tv >= 1.5 ? AP.yel : AP.org) : AP.sub],
-    ["본운용 승격", (R.indep || 0) + " / 2", "독립 검증 구간 통과 · 연속 " + (R.passStreak || 0) + "회", R.primary ? AP.green : AP.ink],
-    ["최근 " + ((RC && RC.days) || 125) + "일 점검", RC ? (RC.ok ? "정상" : "악화") : "—", RC ? "최근 " + sg(RC.mean) + "% · 기준선 " + sg(RC.base) + "%" : "기록 없음", RC ? (RC.ok ? AP.green : AP.org) : AP.sub]];
-  const barMax = Math.max(3, fin(V.mean) ? Math.abs(V.mean) : 0, fin(V.base) ? Math.abs(V.base) : 0);
-
   return (
-    <div style={{ color: AP.ink, display: "flex", flexDirection: "column", gap: 24, fontFamily: AP.font }}>
-      {/* [V33.699] 사용자 10/29 "애플 형식 · 용어는 살짝 전문적으로 · 성적은 % · 날씨 말고 시장 국면" — 개요(상태 → 표본 외 성과 → 신뢰도 → 시장 국면 → 국면별 성적 → 매매 프로세스 → 오늘 국면 전략).
-          아래 '판단 흐름 · 실제 표' 는 상세 데이터로 그대로 둔다. 값은 /api/playbook 그대로. */}
-      <header style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: 20 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0, flex: "1 1 420px" }}>
-          <p style={{ fontSize: 13, fontWeight: 600, color: AP.sub }}>매매법 AI · {mk === "us" ? "미국" : "한국"} · 기준일 {day} · 갱신 {ago(R.ts)}</p>
-          <h2 style={{ fontSize: 26, lineHeight: 1.1, fontWeight: 700, letterSpacing: "-.02em", color: ST.c }}>{ST.t}</h2>
-          <p style={{ fontSize: 14, lineHeight: 1.5, color: AP.sub, maxWidth: 720 }}>{ST.s}</p>
+    <div style={{ color: "#C9D4E3", display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <div role="group" aria-label="시장" style={{ display: "flex", gap: 6 }}>
+          {ms.map((m) => <Btn key={m} on={m === mk} onClick={() => setMk(m)}>{m === "us" ? "미국" : "한국"}</Btn>)}
         </div>
-        <div role="group" aria-label="시장" style={{ display: "flex", background: AP.bg2, borderRadius: 10, padding: 2, gap: 2 }}>
-          {ms.map((m) => <button key={m} type="button" aria-pressed={m === mk} onClick={() => setMk(m)}
-            style={{ minWidth: 64, minHeight: 34, padding: "0 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: m === mk ? "#636366" : "transparent", color: m === mk ? AP.ink : AP.sub }}>{m === "us" ? "미국" : "한국"}</button>)}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, fontFamily: MONO, fontSize: 12 }}>
+          {[["기준일", day], ["시장 국면", R.regime3 ? "장기 " + (R3K.L[R.regime3.L] || R.regime3.L) + " · 중기 " + (R3K.M[R.regime3.M] || R.regime3.M) + " · 단기 " + (R3K.S[R.regime3.S] || R.regime3.S) + (R.regime3.turn ? " (" + R.regime3.turn + ")" : "") : ({ SURGE: "급등장", BULL: "상승장", NEUTRAL: "횡보장", BEAR: "하락장", CRASH: "급락장" } as any)[R.regime] || R.regime || "—"], ["표", ago(R.ts)]].map(([k, v]) => <span key={k} style={{ padding: "7px 10px", border: "1px solid " + LINE, borderRadius: 6, color: MUTE }}>{k} <b style={{ color: INK, fontWeight: 500 }}>{v}</b></span>)}
+          <span title={R.panic ? "공황 = 시장(등가중)이 하루 −2.5%↓ 또는 5일 −6%↓ 폭락 뒤 3거래일, 또는 60일 하락 + 20일 변동성 상위 20%. 폭락 직후 반등일엔 추세·모멘텀이 반대로 움직인다 — 한국 10년: 공황 중 시장 +2%↑ 반등일에 추세 매매법 평균 −0.91%(n 18,837 · 평시 +0.10%). 평균회귀·반등(보조)은 계속." : undefined} style={{ padding: "7px 10px", borderRadius: 6, border: "1px solid " + (R.panic ? NEG : LINE), color: R.panic ? NEG : MUTE }}>{R.panic ? "공황 · 추세 쉼" : "공황 아님"}</span>
+          {R.brake && R.brake.on && <span style={{ padding: "7px 10px", borderRadius: 6, border: "1px solid " + NEG, color: NEG }}>실전 손실 제동</span>}
         </div>
-      </header>
+      </div>
 
-      <section aria-label="표본 외 성과" className="grid grid-cols-1 gap-5 lg:grid-cols-2" style={{ background: AP.bg1, borderRadius: 16, padding: "22px 24px", alignItems: "center" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
-          <p style={{ fontSize: 13, fontWeight: 600, color: AP.sub }}>표본 외 검증 (최근 2년) · 거래당 평균 초과수익률</p>
-          <p style={{ fontSize: 44, lineHeight: 1, fontWeight: 700, letterSpacing: "-.03em", color: apc(V.mean, true) }}>{sg(V.mean)}%</p>
-          <p style={{ fontSize: 13, lineHeight: 1.5, color: AP.sub }}>시장(등가중 지수) 대비 · 거래비용 차감 · 거래 {n0(V.n)}건{fin(V.baseAll) ? " · 후보 전체 평균 " + sg(V.baseAll) + "%" : ""}</p>
+      {/* [V33.698] 지금 한눈에 — 실제 매수 경로(원장 이유와 같은 순서) · 실전 상태 */}
+      <section aria-label="지금 한눈에" className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <div style={{ ...card, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={kick}>매매 프로세스</div>
+          <ol style={{ display: "flex", flexWrap: "wrap", alignItems: "stretch", gap: 8 }}>
+            {[["① 유니버스 선별", "OMNI-Q " + (V.candQ ? "상위 " + Math.round((1 - V.candQ) * 100) + "%" : "거름 없음")],
+              ["② 진입 신호", "매매법 " + rows.length + "종 중 신호 발생"],
+              ["③ 매매법 선택", ruleKo(V.rule)],
+              ["④ 청산", "손절 · 보유기간 · 트레일링"]].map(([k, v], i, A) => (
+              <li key={k} style={{ display: "flex", alignItems: "center", gap: 8, flex: "1 1 150px", minWidth: 0 }}>
+                <div style={{ flex: 1, minWidth: 0, border: "1px solid " + LINE, borderRadius: 8, padding: "8px 10px" }}>
+                  <div style={{ fontSize: 11, color: DIM }}>{k}</div>
+                  <div style={{ fontSize: 13, color: INK, overflowWrap: "anywhere" }}>{v}</div>
+                </div>
+                {i < A.length - 1 && <span aria-hidden="true" style={{ color: FAINT }}>→</span>}
+              </li>))}
+          </ol>
+          {R.sleeve && R.sleeve.live && <div style={{ fontSize: 12, color: POS }}>+ 국면 전략 실전 투입 — 유니버스 선별 없이 직접 편입({(R.sleeve.syms || []).join(" · ") || "—"})</div>}
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
-          {[["매매법 AI 선택", V.mean, AP.blue], ["무작위 선택 기준선", V.base, "#636366"]].map(([k, x, c]: any) => (
-            <div key={k} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}><span style={{ fontWeight: 600, color: c === AP.blue ? AP.ink : AP.sub }}>{k}</span><span style={{ fontWeight: 600, color: c === AP.blue ? AP.ink : AP.sub }}>{sg(x)}%</span></div>
-              <div style={{ height: 8, borderRadius: 4, background: AP.bg2 }}><div style={{ height: 8, borderRadius: 4, background: c, width: (fin(x) ? Math.max(1, Math.min(100, Math.max(0, x) / barMax * 100)) : 0) + "%" }} /></div>
-            </div>))}
-          <p style={{ fontSize: 12, lineHeight: 1.5, color: AP.sub }}>무작위 기준선 = 같은 날 같은 후보군에서 무작위로 골랐을 때의 평균. 기준선을 꾸준히 넘어야 선택 능력이 있다고 판단합니다.</p>
+        <div style={{ ...card, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={kick}>실전 상태</div>
+          {[["매매법 AI", R.primary ? "본운용(정상 비중)" : pass ? "검증 통과 · 본운용 승격 대기" : R.pass && (R.pass.absTrial || TW === "trade") ? "시험 운용(비중 50%)" : "관찰 모드(매수 없음)", R.primary || pass ? POS : R.pass && (R.pass.absTrial || TW === "trade") ? HL : NEG],
+            ["국면 전략", R.sleeve ? (R.sleeve.live ? "실전 투입" : "관찰") : "—", R.sleeve && R.sleeve.live ? POS : MUTE],
+            ["손실 제동", R.brake && R.brake.on ? "켜짐" : "꺼짐", R.brake && R.brake.on ? NEG : MUTE],
+            ["레거시 진입 경로", "비활성(위원회·단타·규칙)", MUTE]].map(([k, v, c]) => (
+            <div key={k} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13 }}><span style={{ color: DIM }}>{k}</span><b style={{ color: c, fontWeight: 500, textAlign: "right" }}>{v}</b></div>))}
         </div>
       </section>
 
-      <section aria-label="신뢰도" className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {TL.map(([k, v, s, c]) => (
-          <div key={k} style={{ background: AP.bg1, borderRadius: 14, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
-            <p style={{ fontSize: 12, fontWeight: 600, color: AP.sub }}>{k}</p>
-            <p style={{ fontSize: 20, lineHeight: 1.1, fontWeight: 700, color: c }}>{v}</p>
-            <p style={{ fontSize: 12, lineHeight: 1.5, color: AP.sub }}>{s}</p>
+      <section aria-label="판정 요약" className="grid grid-cols-2 gap-3 md:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))]">
+        <div className="col-span-2 md:col-span-1" style={{ ...card, minWidth: 0, padding: "14px 16px", background: "linear-gradient(180deg," + PANEL2 + ",#080C13)", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={kick}>표본 외 검증 · 거래당 평균 초과수익률(시장 대비)</div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 16, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: MONO, fontSize: 34, fontWeight: 500, lineHeight: 1, letterSpacing: "-.02em", color: col(V.mean) }}>{sg(V.mean)}%</span>
+            <span style={{ fontFamily: MONO, fontSize: 14, color: MUTE }}>무작위 기준선 <b style={{ color: INK, fontWeight: 500 }}>{sg(V.base)}%</b></span>
+          </div>
+          <div style={{ position: "relative" }}>
+            <TwoSided x={V.mean} lim={3} h={8} />
+            {fin(V.base) && <div style={{ position: "absolute", top: -2, bottom: -2, left: "calc(" + pos(V.base, 3) + "% - 1px)", width: 2, background: INK }} />}
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 11, color: FAINT }}><span>−3%</span><span>0</span><span>+3%</span></div>
+          <div style={{ fontSize: 13, color: pass ? POS : (R.pass && (R.pass.absTrial || TW === "trade")) ? HL : NEG }}>{pass ? (MM ? "검증 통과 — 같은 달 무작위보다 낫고 달 묶음 t ≥ 2 · 최근 확실한 악화 없음" : "검증 통과 — 무작위보다 낫고 t ≥ 2 · 최근 확실한 악화 없음") : TW === "trade" ? "시험 매수(절반 크기) — 종전 기준(거래 t ≥ 2 · 무작위보다 나음)은 통과 · 새 월 맞춤 기준은 미달이라 주력 전환 안 됨 · 사용자 선택 (나) 10/26" : R.pass && R.pass.absTrial ? "절대 성적 기준 시험 매수(절반 크기) — 수익(평균 > 0 · t ≥ 2)이지만 무작위보다 낫지 않음 · 사용자 승인 10/25" : RC && RC.ok === false && V.t >= 2 && V.mean > V.base ? "미통과 — 표본 외 구간은 양호하나 최근 " + (RC.days || 125) + "일이 확실히 나빠짐" : "미통과 — 관찰 모드(실매수 없음)"}</div>
+        </div>
+        {[MM ? ["월별 유의성 t (동월 초과)", fin(V.mT) ? V.mT.toFixed(2) : "—", "통과 ≥ 2.0 · 종전 거래 t " + (fin(V.t) ? V.t.toFixed(2) : "—") + "(부풀려짐)", fin(V.mT) ? (V.mT >= 2 ? POS : V.mT < 0 ? NEG : INK) : MUTE]
+            : ["통계적 유의성 (t)", fin(V.t) ? V.t.toFixed(2) : "—", "통과 기준 ≥ 2.0", fin(V.t) ? (V.t >= 2 ? POS : V.t < 0 ? NEG : INK) : MUTE],
+          ["승률 · 거래 수", fin(V.win) ? V.win.toFixed(1) + "%" : "—", "거래 " + n0(V.n) + "건 · 전부 평균 " + sg(V.baseAll) + "%", INK],
+          ["본운용 승격", (R.indep || 0) + " / 2", "독립 표본 외 구간 통과 · 연속 " + (R.passStreak || 0) + " / 2", R.primary ? POS : INK]].map(([k, v, h, c]) => (
+          <div key={k} style={{ ...card, padding: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={kick}>{k}</div>
+            <div style={{ fontFamily: MONO, fontSize: 22, fontWeight: 500, color: c }}>{v}</div>
+            <div style={{ fontSize: 12, color: DIM }}>{h}</div>
           </div>))}
       </section>
 
-      {R.regime3 && R.regime3.x && (
-        <section aria-label="시장 국면" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <h3 style={{ fontSize: 19, fontWeight: 700, letterSpacing: "-.01em" }}>현재 시장 국면 · {RGN[R.regime] || R.regime}</h3>
-            <p style={{ fontSize: 13, color: AP.sub }}>시장 = 유니버스 전 종목 등가중 지수{R.regime3.turn ? " · " + R.regime3.turn : ""}</p>
-          </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            {[["장기 추세 (200일)", LTK[R.regime3.L] || R.regime3.L, "200일선 대비 " + sg(R.regime3.x.vs200) + "%", R.regime3.L === "UP" ? AP.green : AP.org],
-              ["중기 추세 (50일)", MTK[R.regime3.M] || R.regime3.M, "20일 " + sg(R.regime3.x.r20) + "% · 60일 " + sg(R.regime3.x.r60) + "%", R.regime3.M === "UP" ? AP.green : R.regime3.M === "DOWN" ? AP.org : AP.ink],
-              ["단기 모멘텀 (5일)", STK[R.regime3.S] || R.regime3.S, "5일 " + sg(R.regime3.x.r5) + "% · 전일 " + sg(R.regime3.x.r1) + "%" + (fin(R.regime3.sDays) ? " · " + R.regime3.sDays + "일째" : ""), R.regime3.S === "SURGE" || R.regime3.S === "UP" ? AP.green : R.regime3.S === "CALM" ? AP.ink : AP.org]].map(([k, v, s, c]) => (
-              <div key={k} style={{ background: AP.bg1, borderRadius: 14, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
-                <p style={{ fontSize: 12, color: AP.sub }}>{k}</p>
-                <p style={{ fontSize: 18, fontWeight: 700, color: c }}>{v}</p>
-                <p style={{ fontSize: 12, color: AP.sub }}>{s}</p>
-              </div>))}
-          </div>
-        </section>)}
-
-      {(() => { const SL = R.sleeve || null, RG = ["SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH"];
+      {/* [V33.698] 사용자 10/28 "매매법 AI 두뇌관측 좀 더 보기 편하게 · 왜 한국만 폭등·폭락" — 국면별 성적 + 국면 전략 두 칸을 국면 5장 카드 하나로.
+          다섯 국면을 늘 다 그린다(표본이 적으면 '표본 부족') · 미국도 정의는 같다(등가중 하루 ±2.5% · 5일 ±6%) — 날이 적을 뿐. */}
+      {(() => { const SL = R.sleeve || null, RG = ["SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH"], KO: any = { SURGE: "급등장", BULL: "상승장", NEUTRAL: "횡보장", BEAR: "하락장", CRASH: "급락장" };
         const BR: any = {}; (Array.isArray(V.byReg) ? V.byReg : []).forEach((r: any) => { BR[r.reg] = r; });
         const now = SL ? SL.reg : R.regime;
-        const RGt = V.regGate || null, GO: string[] = (RGt && RGt.off) || [], GH = RGt && RGt.ho;
-        const wfv = (w: any) => !w || !fin(w.mean) ? <span style={{ color: AP.sub }}>—</span> : <span style={{ color: apc(w.mean) , fontWeight: 600 }}>{sg(w.mean)}% <span style={{ color: AP.sub, fontWeight: 400 }}>({n0(w.n)}건)</span></span>;
+        const RGt = V.regGate || null, GO: string[] = (RGt && RGt.off) || [], GH = RGt && RGt.ho;   // [V33.701] 국면 게이트
+        const c5 = (x: any) => (!fin(x) ? MUTE : x >= 5 ? POS : x >= 0 ? HL : NEG);
+        const wfv = (w: any) => !w || !fin(w.mean) ? <span style={{ color: FAINT }}>—</span> : <span style={{ color: c5(w.mean) }}>{sg(w.mean, 1)}% <span style={{ color: FAINT }}>({n0(w.n)})</span></span>;
         return (
-        <section aria-label="국면별 한눈에" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <h3 style={{ fontSize: 19, fontWeight: 700, letterSpacing: "-.01em" }}>국면별 성적 · 거래당 실현수익률</h3>
-              <p style={{ fontSize: 13, color: AP.sub }}>표본 외 검증(최근 2년) · 비용 차감 · 목표 +5.00%</p>
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 12, color: AP.sub }}>
-              {[["목표 달성", AP.green], ["수익 · 목표 미달", AP.yel], ["손실", AP.org]].map(([k, c]) => <span key={k} style={{ display: "flex", alignItems: "center", gap: 6 }}><span aria-hidden="true" style={{ width: 9, height: 9, borderRadius: 5, background: c }} />{k}</span>)}
-            </div>
+        <section aria-label="국면별 한눈에" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#F2F6FC" }}>국면별 성적 · 거래당 실현수익률</h3>
+            <span style={{ fontSize: 12, color: DIM }}>초록 = 목표 +5% 이상 · 노랑 = 0~5% · 주황 = 손실 · 괄호 = 거래 수</span>
           </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
             {RG.map((r) => { const b = BR[r], sb = SL && SL.by && SL.by[r], v = SL && SL.wf && SL.wf.V && SL.wf.V[r], h = SL && SL.wf && SL.wf.H && SL.wf.H[r], on = r === now;
               const ok = !!(v && h && fin(v.mean) && fin(h.mean) && v.mean >= 5 && h.mean >= 5 && v.n >= 20 && h.n >= 20);
               return (
-              <div key={r} style={{ background: AP.bg1, borderRadius: 14, padding: 14, display: "flex", flexDirection: "column", gap: 10, boxShadow: on ? "inset 0 0 0 2px " + AP.blue : undefined, minWidth: 0 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 15, fontWeight: 700 }}>{RGN[r]}</span>
-                  {on ? <span style={{ fontSize: 10.5, fontWeight: 700, color: "#fff", background: AP.blue, borderRadius: 9, padding: "2px 8px" }}>현재</span> : <span style={{ fontSize: 10.5, color: AP.sub }}>{b && fin(b.dayShare) ? "기간 비중 " + b.dayShare + "%" : ""}</span>}
+              <div key={r} style={{ ...card, padding: 11, display: "flex", flexDirection: "column", gap: 6, borderColor: on ? HL : LINE, background: on ? "rgba(255,209,102,.05)" : PANEL }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <span style={{ fontSize: 15, fontWeight: 600, color: INK }}>{KO[r]}{on && <span style={{ marginLeft: 6, fontSize: 11, color: HL }}>지금</span>}</span>
+                  <span style={{ fontSize: 11, color: FAINT }}>{b && fin(b.dayShare) ? "표본 외 기간 " + b.dayShare + "%" : ""}</span>
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  <span style={{ fontSize: 11, color: AP.sub, display: "flex", justifyContent: "space-between", gap: 6 }}>매매법 AI{GO.indexOf(r) >= 0 && <b style={{ color: AP.org, fontWeight: 600 }}>국면 게이트 · 매수 쉼</b>}</span>
-                  {b && !b.thin && fin(b.raw) ? <>
-                    <span style={{ fontSize: 19, fontWeight: 700, color: apc(b.raw) }}>{sg(b.raw)}%</span>
-                    <span style={{ fontSize: 11, color: AP.sub }}>{n0(b.n)}건 · 초과 {sg(b.mean)}% · 기준선 {sg(b.base)}%{fin(b.hd) ? " · 보유 " + b.hd + "일" : ""}</span>
-                  </> : <span style={{ fontSize: 13, color: AP.sub, padding: "6px 0" }}>{b ? "표본 부족 (" + n0(b.n) + "건 < 10)" : "표본 부족"}</span>}
+                <div>
+                  <div style={{ fontSize: 11, color: DIM, display: "flex", justifyContent: "space-between", gap: 6 }}>매매법 AI(OMNI-Q 후보 · 일봉){GO.indexOf(r) >= 0 && <b style={{ color: NEG, fontWeight: 600 }}>국면 게이트 · 매수 쉼</b>}</div>
+                  {b && !b.thin && fin(b.raw) ? <div style={{ fontFamily: MONO, fontSize: 17, color: c5(b.raw) }}>{sg(b.raw, 1)}% <span style={{ fontSize: 11, color: FAINT }}>({n0(b.n)})</span></div>
+                    : <div style={{ fontSize: 13, color: FAINT, padding: "4px 0" }}>{b ? "표본 부족(" + n0(b.n) + "건 < 10)" : "표본 부족"}</div>}
+                  {b && !b.thin && <div style={{ fontFamily: MONO, fontSize: 11, color: FAINT }}>초과수익 {sg(b.mean)}% · 기준선 {sg(b.base)}%{fin(b.hd) ? " · 보유 " + b.hd + "일" : ""}</div>}
                 </div>
-                {SL && <div style={{ borderTop: "1px solid " + AP.sep, paddingTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
-                  <span style={{ fontSize: 11, color: AP.sub }}>국면 전략</span>
-                  <span style={{ fontSize: 12, lineHeight: 1.4, color: sb ? AP.ink : AP.sub }}>{sb ? sb.famKo + " · " + sb.profKo + (sb.cell ? " · 중기 " + (R3K.M[sb.cell] || sb.cell) : "") : "미운용 (근거 부족)"}</span>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}><span style={{ color: AP.sub }}>검증</span>{wfv(v)}</div>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}><span style={{ color: AP.sub }}>표본 외</span>{wfv(h)}</div>
-                  <span style={{ alignSelf: "flex-start", marginTop: 2, fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 10, background: ok ? "rgba(48,209,88,.16)" : AP.bg2, color: ok ? AP.green : AP.sub }}>{ok ? "실전 투입" : "관찰"}</span>
+                {SL && <div style={{ borderTop: "1px solid " + ROWLINE, paddingTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                  <div style={{ fontSize: 11, color: DIM }}>국면 전략</div>
+                  <div style={{ fontSize: 12, color: sb ? MUTE : FAINT, lineHeight: 1.4 }}>{sb ? sb.famKo + " · " + sb.profKo + (sb.cell ? " · 중기 " + (R3K.M[sb.cell] || sb.cell) : "") : "미운용(근거 부족)"}</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 12 }}><span style={{ color: DIM }}>검증</span>{wfv(v)}</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 12 }}><span style={{ color: DIM }}>표본 외</span>{wfv(h)}</div>
+                  <span style={{ alignSelf: "flex-start", marginTop: 2, fontSize: 11, padding: "2px 8px", borderRadius: 4, border: "1px solid " + (ok ? POS : "#33445C"), color: ok ? POS : DIM }}>{ok ? "실전 투입" : "관찰"}</span>
                 </div>}
               </div>); })}
           </div>
-          {RGt && <div style={{ background: AP.bg1, borderRadius: 14, padding: "12px 16px", display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center", fontSize: 12.5 }}>
-            <b style={{ fontWeight: 600 }}>국면 게이트</b>
-            <span style={{ color: AP.sub }}>검증 구간에서 거래당 손실(표본 {RGt.nmin || 20}건 이상)인 국면은 매매법 AI 신규 매수를 쉽니다 · 대상: <b style={{ color: GO.length ? AP.org : AP.ink, fontWeight: 600 }}>{GO.length ? GO.map((g) => RGN[g] || g).join(" · ") : "없음"}</b></span>
-            {GH && GH.all && <span style={{ color: AP.sub }}>표본 외 거래당 실현 {sg(GH.all.mean)}% ({n0(GH.all.n)}건) → 게이트 적용 {GH.gated && fin(GH.gated.mean) ? sg(GH.gated.mean) + "% (" + n0(GH.gated.n) + "건)" : "—"}</span>}
+          {SL && <div style={{ ...card, padding: "12px 16px", display: "flex", flexWrap: "wrap", gap: 18, alignItems: "center", fontSize: 13 }}>
+            <span style={{ color: DIM }}>현재 국면 전략</span>
+            <b style={{ color: INK, fontWeight: 500 }}>{SL.cur ? SL.cur.famKo + " · " + SL.cur.profKo : "미운용"}</b>
+            <span style={{ color: SL.live ? POS : HL }}>{SL.live ? "실전 투입 중" : "관찰 — 현재 국면이 검증·표본 외 +5% 기준 미달"}</span>
+            <span style={{ color: MUTE, fontFamily: MONO, fontSize: 12 }}>편입 후보 {(SL.syms || []).join(" · ") || "—"}</span>
           </div>}
-          <p style={{ fontSize: 12, lineHeight: 1.6, color: AP.sub }}>국면 = 등가중 지수 기준 · 급등/급락 = 최근 3거래일 안 하루 ±2.5% 또는 5일 ±6%(미국·한국 동일). 국면 전략 실전 투입 조건 = 해당 국면에서 검증·표본 외 두 구간 모두 거래당 +5% 이상, 각 20건 이상(사전 등록).</p>
+          {RGt && <div style={{ ...card, padding: "10px 14px", display: "flex", flexWrap: "wrap", gap: 14, alignItems: "center", fontSize: 12 }}>
+            <b style={{ color: INK, fontWeight: 600 }}>국면 게이트</b>
+            <span style={{ color: MUTE }}>검증 구간 거래당 손실 국면(≥ {RGt.nmin || 20}건)은 매매법 AI 신규 매수 중단 · 대상 <b style={{ color: GO.length ? NEG : INK, fontWeight: 500 }}>{GO.length ? GO.map((g: string) => KO[g] || g).join(" · ") : "없음"}</b></span>
+            {GH && GH.all && <span style={{ color: MUTE, fontFamily: MONO }}>표본 외 거래당 {sg(GH.all.mean)}%({n0(GH.all.n)}) → 적용 후 {GH.gated && fin(GH.gated.mean) ? sg(GH.gated.mean) + "%(" + n0(GH.gated.n) + ")" : "—"}</span>}
+          </div>}
+          <details style={{ ...card, padding: "10px 16px", background: "#080C13" }}>
+            <summary style={{ cursor: "pointer", fontSize: 12.5, color: MUTE }}>용어 안내 — 검증 구간 · 표본 외 구간 · +5%</summary>
+            <ul style={{ margin: "10px 0 4px", paddingLeft: 18, fontSize: 12, lineHeight: 1.7, color: DIM }}>
+              <li>10년 일봉을 시간순 분할: 앞 60% 학습 · <b style={{ color: INK }}>[60,80%) 검증 구간</b> = 설정 선택에 사용 · <b style={{ color: INK }}>[80,100%) 표본 외 구간</b> = 학습·선택에 쓰지 않은 마지막 20%(약 2년).</li>
+              <li><b style={{ color: INK }}>+5%</b> = 표본 외 구간 거래당 실현수익률(비용 차감 · 매수~청산 · 연환산 아님) 목표.</li>
+              <li>시장 국면 = 유니버스 등가중 지수 기준. 급등장·급락장 = 최근 3거래일 안 하루 ±2.5% 또는 5일 ±6%(미·한 동일 정의). 미국은 해당 일수가 적어 표본 부족이 나올 수 있음.</li>
+              <li>국면 전략 실전 투입 = 현재 국면이 검증·표본 외 두 구간 모두 거래당 +5% 이상 · 각 20건 이상(사전 등록).</li>
+            </ul>
+          </details>
         </section>); })()}
 
-      <section aria-label="매매 프로세스" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <h3 style={{ fontSize: 19, fontWeight: 700, letterSpacing: "-.01em" }}>매매 프로세스</h3>
-        <ol className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {[["유니버스 선별", "OMNI-Q " + (V.candQ ? "상위 " + Math.round((1 - V.candQ) * 100) + "%" : "필터 없음"), "종목별 상승 확률 상위 구간만 후보로 남깁니다."],
-            ["진입 신호", "매매법 " + rows.length + "종", "당일 진입 조건이 충족된 매매법만 유효합니다."],
-            ["매매법 선택", ruleKo(V.rule), "유사 국면·지표 구간의 과거 성과로 매매법 하나를 고릅니다."],
-            ["청산", "손절 · 보유기간 · 트레일링", "매매법별로 사전에 정한 규칙으로만 청산합니다."]].map(([t, v, s], i) => (
-            <li key={t} style={{ background: AP.bg1, borderRadius: 14, padding: 14, display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
-              <span aria-hidden="true" style={{ width: 22, height: 22, borderRadius: 11, background: AP.blue, color: "#fff", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
-              <span style={{ fontSize: 12, color: AP.sub }}>{t}</span>
-              <span style={{ fontSize: 14, fontWeight: 700, overflowWrap: "anywhere" }}>{v}</span>
-              <span style={{ fontSize: 12, lineHeight: 1.5, color: AP.sub }}>{s}</span>
-            </li>))}
-        </ol>
-        {R.sleeve && <div style={{ background: AP.bg1, borderRadius: 14, padding: "18px 22px", display: "flex", flexWrap: "wrap", gap: 20, alignItems: "center" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: "1 1 320px" }}>
-            <span style={{ fontSize: 12, color: AP.sub }}>오늘 국면 전략 · {RGN[R.sleeve.reg] || R.sleeve.reg}</span>
-            <span style={{ fontSize: 14, fontWeight: 700 }}>{R.sleeve.cur ? R.sleeve.cur.famKo + " · " + R.sleeve.cur.profKo : "미운용"}</span>
-            <span style={{ fontSize: 12, color: AP.sub }}>{R.sleeve.live ? "실전 투입 — 유니버스 선별을 거치지 않고 국면 전략이 직접 편입합니다." : "관찰 — 현재 국면이 실전 투입 조건을 충족하지 못했습니다."}</span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: 12, color: AP.sub }}>편입 후보</span>
-            <span style={{ fontSize: 14, fontWeight: 600, fontFamily: MONO }}>{(R.sleeve.syms || []).join(" · ") || "—"}</span>
-          </div>
-          <span style={{ fontSize: 12, fontWeight: 600, padding: "5px 12px", borderRadius: 12, background: R.sleeve.live ? "rgba(48,209,88,.16)" : AP.bg2, color: R.sleeve.live ? AP.green : AP.sub }}>{R.sleeve.live ? "실전 투입" : "관찰"}</span>
-        </div>}
-        <details style={{ background: AP.bg1, borderRadius: 16, padding: "12px 18px" }}>
-          <summary style={{ cursor: "pointer", fontSize: 12.5, color: AP.ink }}>용어 안내</summary>
-          <ul style={{ margin: "10px 0 2px", paddingLeft: 18, fontSize: 12, lineHeight: 1.75, color: AP.sub }}>
-            <li><b style={{ color: AP.ink }}>검증 구간</b> = 10년 데이터의 60~80% 구간. 여러 설정 중 하나를 고르는 데 사용.</li>
-            <li><b style={{ color: AP.ink }}>표본 외 검증</b> = 마지막 20%(약 2년). 학습·선택에 쓰지 않은 구간의 성과.</li>
-            <li><b style={{ color: AP.ink }}>거래당 실현수익률</b> = 매수부터 청산까지 비용 차감 수익률의 평균(연환산 아님). <b style={{ color: AP.ink }}>초과수익률</b> = 같은 기간 시장 수익률을 뺀 값.</li>
-            <li><b style={{ color: AP.ink }}>통계적 유의성(t)</b> = 성과가 우연이 아닐 정도. 2.0 이상을 통과 기준으로 사용.</li>
-          </ul>
-        </details>
-      </section>
-
-      <h3 style={{ fontSize: 19, fontWeight: 700, letterSpacing: "-.01em", marginBottom: -24 }}>상세 데이터</h3>
       <section aria-label="판단 흐름" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
           <h3 style={{ fontSize: 16, fontWeight: 600, color: "#F2F6FC" }}>판단 흐름</h3>
@@ -319,8 +283,8 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
           <div style={{ ...card, overflowX: "auto", background: "#080C13" }}>
             <table style={{ ...tbl, minWidth: 1000 }}>
               <thead><tr style={{ background: PANEL2, color: DIM }}>
-                {th("id", "매매법", true)}{th("preN", "판정 전 n")}{th("preM", "판정 전 평균")}{th("preW", "승률")}{th("hoN", "판정 n")}{th("hoM", "판정 평균")}{th("hoW", "승률")}
-                {th(null, "판정 평균 막대", true)}{th("pick", "고른 수")}{th(null, "거르개", true)}
+                {th("id", "매매법", true)}{th("preN", "표본 내 n")}{th("preM", "표본 내 평균")}{th("preW", "승률")}{th("hoN", "표본 외 n")}{th("hoM", "표본 외 평균")}{th("hoW", "승률")}
+                {th(null, "표본 외 평균 막대", true)}{th("pick", "선택 수")}{th(null, "거르개", true)}
               </tr></thead>
               <tbody>{rows.map((r) => (
                 <tr key={r.id} style={{ borderTop: "1px solid " + ROWLINE }}>
@@ -372,7 +336,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
         {tab === "cand" && (
           <div style={{ ...card, overflowX: "auto", background: "#080C13" }}>
             <table style={{ ...tbl, minWidth: 820 }}>
-              <thead><tr style={{ background: PANEL2, color: DIM }}>{th(null, "후보 설정 (OMNI-Q 머리 · 폭)", true)}{th(null, "검증 평균")}{th(null, "검증 t")}{th(null, "판정 n")}{th(null, "판정 평균")}{th(null, "무작위")}{th(null, "판정 t")}{th(null, "상태", true)}</tr></thead>
+              <thead><tr style={{ background: PANEL2, color: DIM }}>{th(null, "후보 설정 (OMNI-Q 머리 · 폭)", true)}{th(null, "검증 평균")}{th(null, "검증 t")}{th(null, "표본 외 n")}{th(null, "표본 외 평균")}{th(null, "기준선")}{th(null, "표본 외 t")}{th(null, "상태", true)}</tr></thead>
               <tbody>{(V.candCmp || []).map((c: any, i: number) => {
                 const on = (V.candQ || 0) === c.q && (c.q === 0 || String(V.candHead) === String(c.head));
                 const cfg = c.q === 0 ? "OMNI-Q 거름 없음(전 종목)" : (c.head === "avg" ? "5·20일 평균" : (c.head || "5") + "일") + " 머리 · 상위 " + Math.round((1 - c.q) * 100) + "%";
@@ -394,8 +358,8 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
 
         {tab === "intra" && (
           <div style={{ ...card, padding: 18, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14 }}>
-            {!I || !fin(I.n) || I.n === 0 ? <p style={{ fontSize: 13, color: DIM }}>{(I && I.why) || "5분봉 단타 표본이 아직 없습니다(판정 구간 거래 0건)."}</p> :
-              [["판정 평균", sg(I.mean) + "%", col(I.mean)], ["무작위", sg(I.base) + "%", INK], ["t", fin(I.t) ? I.t.toFixed(2) : "—", INK], ["거래 · 승률", n0(I.n) + " · " + (fin(I.win) ? I.win + "%" : "—"), INK], ["규칙", ruleName(I.rule), INK]].map(([k, v, c]) => (
+            {!I || !fin(I.n) || I.n === 0 ? <p style={{ fontSize: 13, color: DIM }}>{(I && I.why) || "5분봉 단타 표본이 아직 없습니다(표본 외 거래 0건)."}</p> :
+              [["표본 외 평균", sg(I.mean) + "%", col(I.mean)], ["기준선", sg(I.base) + "%", INK], ["t", fin(I.t) ? I.t.toFixed(2) : "—", INK], ["거래 · 승률", n0(I.n) + " · " + (fin(I.win) ? I.win + "%" : "—"), INK], ["규칙", ruleName(I.rule), INK]].map(([k, v, c]) => (
                 <div key={k}><div style={kick}>{k}</div><div style={{ fontFamily: MONO, fontSize: 20, color: c, marginTop: 4 }}>{v}</div></div>))}
           </div>)}
 
@@ -403,7 +367,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
       </section>
 
       <footer style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 10, paddingTop: 14, borderTop: "1px solid #172131", fontSize: 12, color: FAINT }}>
-        <span>수치 = 학습기(GitHub Actions)가 올린 매매법 시뮬 표(10년 일봉) · 판정 구간 = {V.hoFrom ? String(V.hoFrom).replace(/(\d{4})(\d{2})(\d{2})/, "$1-$2-$3") + " 이후 · " : ""}마지막 20%(학습·규칙 고르기에 안 쓴 구간)</span>
+        <span>수치 = 학습기(GitHub Actions)가 올린 매매법 시뮬 표(10년 일봉) · 표본 외 구간 = {V.hoFrom ? String(V.hoFrom).replace(/(\d{4})(\d{2})(\d{2})/, "$1-$2-$3") + " 이후 · " : ""}마지막 20%(학습·규칙 고르기에 안 쓴 구간)</span>
         <span style={{ fontFamily: MONO }}>평균 = 거래당 % · 시장(등가중) 대비 · 비용 뺀 값</span>
       </footer>
     </div>);
