@@ -200,6 +200,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
       {(() => { const SL = R.sleeve || null, RG = ["SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH"];
         const BR: any = {}; (Array.isArray(V.byReg) ? V.byReg : []).forEach((r: any) => { BR[r.reg] = r; });
         const now = SL ? SL.reg : R.regime;
+        const RGt = V.regGate || null, GO: string[] = (RGt && RGt.off) || [], GH = RGt && RGt.ho;
         const wfv = (w: any) => !w || !fin(w.mean) ? <span style={{ color: AP.sub }}>—</span> : <span style={{ color: apc(w.mean) , fontWeight: 600 }}>{sg(w.mean)}% <span style={{ color: AP.sub, fontWeight: 400 }}>({n0(w.n)}건)</span></span>;
         return (
         <section aria-label="국면별 한눈에" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -222,7 +223,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
                   {on ? <span style={{ fontSize: 10.5, fontWeight: 700, color: "#fff", background: AP.blue, borderRadius: 9, padding: "2px 8px" }}>현재</span> : <span style={{ fontSize: 10.5, color: AP.sub }}>{b && fin(b.dayShare) ? "기간 비중 " + b.dayShare + "%" : ""}</span>}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  <span style={{ fontSize: 11, color: AP.sub }}>매매법 AI</span>
+                  <span style={{ fontSize: 11, color: AP.sub, display: "flex", justifyContent: "space-between", gap: 6 }}>매매법 AI{GO.indexOf(r) >= 0 && <b style={{ color: AP.org, fontWeight: 600 }}>국면 게이트 · 매수 쉼</b>}</span>
                   {b && !b.thin && fin(b.raw) ? <>
                     <span style={{ fontSize: 19, fontWeight: 700, color: apc(b.raw) }}>{sg(b.raw)}%</span>
                     <span style={{ fontSize: 11, color: AP.sub }}>{n0(b.n)}건 · 초과 {sg(b.mean)}% · 기준선 {sg(b.base)}%{fin(b.hd) ? " · 보유 " + b.hd + "일" : ""}</span>
@@ -237,6 +238,11 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
                 </div>}
               </div>); })}
           </div>
+          {RGt && <div style={{ background: AP.bg1, borderRadius: 14, padding: "12px 16px", display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center", fontSize: 12.5 }}>
+            <b style={{ fontWeight: 600 }}>국면 게이트</b>
+            <span style={{ color: AP.sub }}>검증 구간에서 거래당 손실(표본 {RGt.nmin || 20}건 이상)인 국면은 매매법 AI 신규 매수를 쉽니다 · 대상: <b style={{ color: GO.length ? AP.org : AP.ink, fontWeight: 600 }}>{GO.length ? GO.map((g) => RGN[g] || g).join(" · ") : "없음"}</b></span>
+            {GH && GH.all && <span style={{ color: AP.sub }}>표본 외 거래당 실현 {sg(GH.all.mean)}% ({n0(GH.all.n)}건) → 게이트 적용 {GH.gated && fin(GH.gated.mean) ? sg(GH.gated.mean) + "% (" + n0(GH.gated.n) + "건)" : "—"}</span>}
+          </div>}
           <p style={{ fontSize: 12, lineHeight: 1.6, color: AP.sub }}>국면 = 등가중 지수 기준 · 급등/급락 = 최근 3거래일 안 하루 ±2.5% 또는 5일 ±6%(미국·한국 동일). 국면 전략 실전 투입 조건 = 해당 국면에서 검증·표본 외 두 구간 모두 거래당 +5% 이상, 각 20건 이상(사전 등록).</p>
         </section>); })()}
 

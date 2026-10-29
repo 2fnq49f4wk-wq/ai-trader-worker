@@ -3051,7 +3051,7 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.700";
+const _BUILD_VER = "V33.701";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -14076,11 +14076,17 @@ function pbSleevePick(st, ctx, dWin) {
            be: 0, tpR: null, tpPct: null, bePct: null, mr: false, tstop: 0, hold: _num(pr.hold, 60), trail: _num(pr.trail, 0), trailAct: _num(pr.trailAct, 0), crashExit: !!(SL.cfg && SL.cfg.crashExit === true),
            label: (SL.cur.famKo || SL.cur.fam) + " · " + (SL.cur.profKo || SL.cur.prof), why: SL.live ? null : "국면 전략 관측(실전 자격 미달 — 워크포워드 두 구간 ≥ +5% 아님)" };
 }
+/* [V33.701] ★국면 게이트★(사용자 10/29 "성적 안 나오는 것 구조적으로 해결") — 학습기가 검증 구간 [60,80%) 에서 고른 규칙 그대로의 거래로
+   국면별 거래당 실제 수익 평균 ≤ 0 · 표본 ≥ 20 인 국면을 off 로 보낸다(판정 구간은 고르기에 안 씀). 지금 국면이 off 면 매매법 AI 신규 매수만 쉰다. */
+function pbRegGateOff(st) {
+  const g = st && st.daily && st.daily.val && st.daily.val.regGate;
+  return !!(g && Array.isArray(g.off) && st.regime && g.off.indexOf(String(st.regime)) >= 0);
+}
 function pbRoutePick(st, ctx, nowMs) {
   if (!STRAT_ROUTE.enabled || !st || !(nowMs - _num(st.ts, 0) <= STRAT_ROUTE.freshMs)) return null;
   const D = ctx.D;
   let best = null;
-  const dOk = st.daily && (ctx.shadow || pbDailyTrialOk(st, _pbMkOf(st, ctx.symbol)));   // [V33.669] 미국은 절대 성적 기준으로도 시험 매수
+  const dOk = st.daily && (ctx.shadow || (!pbRegGateOff(st) && pbDailyTrialOk(st, _pbMkOf(st, ctx.symbol))));   // [V33.701] 국면 게이트: 검증 구간 손실 국면이면 신규 매수 쉼(관측은 계속)   // [V33.669] 미국은 절대 성적 기준으로도 시험 매수
   const dWin0 = ctx.minToClose != null && ctx.minToClose <= PB_ROUTE.dailyEntryWin;   // [V33.610] 정규장은 마감 전 30분 — 시뮬이 '신호 봉 종가에 산다'
   /* [V33.662] ★프리·애프터 진입★(사용자 10/24 "거래 시간은 정규장뿐 아니라 프리·애프터 포함") — 신호는 ★정규장 종가로 완성된 일봉★(애프터 = 오늘 · 프리 = 어제)으로 보고,
      시간외 체결가가 그 종가에서 ±extGapMax% 안일 때만 산다(시뮬의 '신호 봉 종가 매수' 와 어긋나지 않게). 크기·세션당 개수는 공통 시간외 관문(extBuyGuard). */

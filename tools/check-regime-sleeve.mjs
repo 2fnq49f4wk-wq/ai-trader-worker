@@ -18,5 +18,9 @@ chk(/pbSleeveHas\(__sr, symbol\)/.test(S) && /!pbSleeveHas\(__sr, sym\)/.test(S)
 chk(/aria-label="국면별 한눈에"/.test(UI) && /SL\.wf && SL\.wf\.H/.test(UI), "두뇌관측 매매법 화면에 국면 전략(고른 전략 · 오늘 종목 · 국면별 두 구간)", "★화면에 국면 전략이 없다★");
 /* [V33.698] 사용자 10/28 "왜 한국만 폭등·폭락" — 다섯 국면을 늘 그린다(표본 부족도 숨기지 않음) · 학습기도 n<10 국면을 thin 으로 보낸다 */
 chk(/RG\.map\(\(r\) => \{ const b = BR\[r\]/.test(UI) && /"thin": True/.test(PB), "국면 다섯 칸 늘 표시(표본 부족 포함)", "★표본 적은 국면이 화면에서 사라진다★");
+/* [V33.701] 국면 게이트 — 고르기는 검증 구간(va)만 · 문턱 평균 ≤ 0 · 표본 ≥ 20(사전 등록) · 워커는 매수만 쉬고 관측(shadow)은 계속 */
+chk(/st\["regGate"\] = _reg_gate\(_pick\(tabs1\[rule\.get\("decay"\)\], va, rule, hist=df\), pk\)/.test(PB) && /REG_GATE_N = 20/.test(PB) && /if n >= REG_GATE_N and mu is not None and mu <= 0:/.test(PB),
+    "국면 게이트: 검증 구간 손실 국면만(판정 구간 안 봄 · 사전 등록 문턱)", "★국면 게이트가 판정 구간을 보거나 문턱이 바뀌었다★");
+chk(/ctx\.shadow \|\| \(!pbRegGateOff\(st\) && pbDailyTrialOk/.test(S) && /GO\.indexOf\(r\) >= 0/.test(UI), "워커 매수 게이트 · 화면 표시", "★국면 게이트가 워커·화면에 안 이어졌다★");
 if (fails) { console.log("✗ 국면 전략 계약 실패 " + fails); process.exit(1); }
 console.log("✓ 국면 전략 계약 통과");

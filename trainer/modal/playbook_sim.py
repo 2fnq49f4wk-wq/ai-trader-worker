@@ -1580,6 +1580,33 @@ def _matched(pk, mb, per=None):
     return {"mx": round(float((xs * ws).sum() / ws.sum()), 4), "mT": round(tt(xs), 2), "mWin": int((xs > 0).sum()), "mN": int(len(xs)), "mAbsT": round(tt(ps), 2)}
 
 
+
+REG_GATE_N = 20   # [V33.701] 국면 게이트(사전 등록): 검증 구간 [60,80%) 에서 고른 규칙의 그 국면 거래당 실제 수익 평균 ≤ 0 · 표본 ≥ 20 → 그 국면에선 매매법 AI 신규 매수 쉼
+
+
+def _reg_gate(pkV, pkH):
+    """[V33.701] 사용자 10/29 "성적 안 나오는 것 구조적으로 해결" — 손실 국면에서 쉬기.
+    고르기 = 검증 구간만(pkV) · 판정 구간(pkH)은 결과 보고만(게이트 전/후 거래당 실제 수익). 판정(pass)은 바꾸지 않는다."""
+    if TIME_REG is None or not len(pkV):
+        return None
+    rv, rawV = TIME_REG[pkV["t"].values.astype(int)], _raw(pkV)
+    v, off = {}, []
+    for r in ("SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH"):
+        m = rv == r
+        n = int(m.sum())
+        mu = round(float(rawV[m].mean()), 3) if n else None
+        v[r] = {"n": n, "mean": mu}
+        if n >= REG_GATE_N and mu is not None and mu <= 0:
+            off.append(r)
+    out = {"off": off, "v": v, "nmin": REG_GATE_N}
+    if len(pkH):
+        rh, rawH = TIME_REG[pkH["t"].values.astype(int)], _raw(pkH)
+        keep = ~np.isin(rh, off)
+        out["ho"] = {"all": {"n": int(len(rawH)), "mean": round(float(rawH.mean()), 3)},
+                     "gated": {"n": int(keep.sum()), "mean": round(float(rawH[keep].mean()), 3) if keep.any() else None},
+                     "off": {"n": int((~keep).sum()), "mean": round(float(rawH[~keep].mean()), 3) if (~keep).any() else None}}
+    return out
+
 def _by_regime(pk, w):
     """국면 5종(폭등·상승·보합·하락·폭락)별 고른 평균 vs 같은 국면 무작위 — 기록·화면용(판정엔 안 쓴다)."""
     if TIME_REG is None or not len(pk):
@@ -1735,6 +1762,10 @@ def _validate(df, timecol, pbs=None):
     if timecol == "t":
         st.update(_matched(pk, _month_base(ho)))
         st["byReg"] = _by_regime(pk, ho)
+        try:   # [V33.701] 국면 게이트 — 검증 구간에서 고른 규칙 그대로의 거래(pkV)로만 정한다
+            st["regGate"] = _reg_gate(_pick(tabs1[rule.get("decay")], va, rule, hist=df), pk)
+        except Exception as e:  # noqa: BLE001
+            print("   ⚠️ [매매법시뮬] 국면 게이트 실패 %s" % e)
         st["fwd"] = _forward(pk, ho)
         st["cap"] = {"day": CAP["day"], "open": CAP["open"]} if CAP["on"] else None
     st["passMatched"] = bool(st["n"] >= 30 and st["mean"] > 0 and (st.get("mx") or 0) > 0 and (st.get("mT") or 0) >= PASS_MT)
@@ -2077,6 +2108,11 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             market, dst.get("mx"), dst.get("mT"), dst.get("mWin"), dst.get("mN"), dst.get("mAbsT"), dst.get("passMode"),
             "통과" if dst.get("passTrade") else "미통과", "통과" if dst.get("passMatched") else "미통과",
             " · ".join("%s n%d 초과 %+.2f vs %s · 실제 %+.2f%%(%s일)" % (r["ko"], r["n"], r["mean"], r["base"], r.get("raw") or 0, r.get("hd")) for r in (dst.get("byReg") or []) if not r.get("thin"))))
+        _g = dst.get("regGate") or {}
+        if _g:
+            log("   · [매매법시뮬] %s 국면 게이트(검증 구간 손실 국면 쉼) 끔 %s · 판정 구간 거래당 실제 전체 %s → 게이트 후 %s(n %s) · 쉰 국면 %s(n %s)" % (
+                market, ",".join(_g.get("off") or []) or "없음", ((_g.get("ho") or {}).get("all") or {}).get("mean"), ((_g.get("ho") or {}).get("gated") or {}).get("mean"),
+                ((_g.get("ho") or {}).get("gated") or {}).get("n"), ((_g.get("ho") or {}).get("off") or {}).get("mean"), ((_g.get("ho") or {}).get("off") or {}).get("n")))
         if upload and BASE and os.environ.get("PB_VARIANT"):
             log("   · [매매법시뮬] %s A/B 실험판(%s) — 업로드 안 함(기록만)" % (market, os.environ.get("PB_VARIANT")))
         elif upload and BASE:
