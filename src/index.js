@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.703";
+const _BUILD_VER = "V33.704";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13975,7 +13975,15 @@ function pbRuleLabel(rule, sleeve) {
   if (sleeve) return "국면 워크포워드(직전 3년 끝난 거래 · 평균−표준오차)";
   if (!rule) return "—";
   const SC = { m: "평균", lcb: "하한(평균−표준오차)", mpd: "하루당 평균", lcbpd: "하루당 하한" }, LV = { fine: "세부 칸", regime: "국면 칸", global: "매매법 전체" };
-  return [SC[rule.score] || rule.score, LV[rule.level] || rule.level].concat(rule.decay ? ["최근 " + rule.decay + "일 가중"] : []).concat(rule.gate ? ["성적 스위치 " + rule.gate + "일"] : []).concat(rule.gveto ? ["전체 거부권"] : []).join("·");
+  return [SC[rule.score] || rule.score, LV[rule.level] || rule.level].concat(rule.decay ? ["최근 " + rule.decay + "일 가중"] : []).concat(rule.gate ? ["성적 스위치 " + rule.gate + "일"] : []).concat(rule.gveto ? ["전체 거부권"] : []).concat(rule.fveto ? ["수급 과열 상위 " + Math.round((1 - _num(rule.fveto, 1)) * 100) + "% 제외"] : []).join("·");
+}
+/* [V33.704] ★수급 과열 제외★ — 규칙에 fveto 가 있으면, 학습기가 보낸 그 종목의 수급 과열 백분위(지난 20일 (외국인+기관)/거래량 · 한국)가
+   fveto 보다 높으면 매매법 AI 가 고르지 않는다. 값이 없으면 거르지 않는다(학습기 _rule_rows 와 같다). */
+function pbFlowVetoed(st, symbol, rule) {
+  if (!rule || !rule.fveto) return false;
+  const f = st && st.daily && st.daily.flow;
+  const v = f && f[symbol];
+  return typeof v === "number" && isFinite(v) && v > _num(rule.fveto, 1);
 }
 function pbChoose(table, keys, fired, rule) {
   if (!table || !fired || !fired.length) return null;
@@ -14129,7 +14137,9 @@ function pbRoutePick(st, ctx, nowMs) {
       const ma20 = _pbSma(D.c, 20, i), rsi = _pbRsiEwm(D.c, 14)[i];
       const ret5 = D.c[i - 5] > 0 ? (px / D.c[i - 5] - 1) * 100 : null;
       const vr = _pbVr(D.v, i);   // [V33.610] 오늘 거래량(지난 시간 비율로 하루치 추정 · pbLiveDaily) — 시뮬 칸과 같은 날 기준
-      const ch = pbChoose(st.daily.table, pbDailyKeys(ctx.reg, rsi, ma20 > 0 ? (px / ma20 - 1) * 100 : null, ret5, vr, ctx.evNear), fired.filter(function (pb) { return benched.indexOf(pb) < 0; }), pbRuleFor(st, grp));
+      const _rl = pbRuleFor(st, grp);
+      const ch = pbFlowVetoed(st, ctx.symbol, _rl) ? null   // [V33.704] 수급 과열 제외(규칙에 fveto 가 있을 때만 · 학습기와 같다)
+        : pbChoose(st.daily.table, pbDailyKeys(ctx.reg, rsi, ma20 > 0 ? (px / ma20 - 1) * 100 : null, ret5, vr, ctx.evNear), fired.filter(function (pb) { return benched.indexOf(pb) < 0; }), _rl);
       const pr0 = ch && st.daily.pb && st.daily.pb[ch.pb];
       const pr = pr0 && grp != null && pr0.grp && pr0.grp[grp] ? Object.assign({}, pr0, pr0.grp[grp]) : pr0;   // [V33.664] 그룹별 청산 미지수
       if (ch && pr) {
@@ -31671,7 +31681,7 @@ async function handleRequest(request, env, ctx, _inner) {
       const part = function (x) { return (x && typeof x === "object") ? { val: x.val || {}, table: (x.table && typeof x.table === "object") ? x.table : {}, pb: x.pb || {},
                                                                           cross: (x.cross && typeof x.cross === "object") ? x.cross : {}, gate: (x.gate && typeof x.gate === "object") ? x.gate : null,
                                                                           tier2: Array.isArray(x.tier2) ? x.tier2.map(String) : [], grp: _obj(x.grp), rs6: _obj(x.rs6), ptune: _obj(x.ptune), epDef: _obj(x.epDef), epLad: _obj(x.epLad),
-                                                                          meta: _obj(x.meta), metaFeats: Array.isArray(x.metaFeats) ? x.metaFeats.map(String) : null } : null; };   // [V33.672] 고차원 수식 선택 기록
+                                                                          meta: _obj(x.meta), metaFeats: Array.isArray(x.metaFeats) ? x.metaFeats.map(String) : null, flow: _obj(x.flow) } : null; };   // [V33.704] flow = 한국 수급 과열 백분위   // [V33.672] 고차원 수식 선택 기록
       const rec = { ts: Date.now(), day: String(body.day || ""), regime: String(body.regime || "NEUTRAL"), daily: part(body.daily), intra: part(body.intra),
                     sector: (body.sector && typeof body.sector === "object") ? body.sector : null,
                     panic: body.panic === true,

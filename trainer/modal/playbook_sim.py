@@ -1313,6 +1313,15 @@ RULES_ADAPT = [{"score": "lcb", "level": "fine", "decay": 120}, {"score": "lcb",
 RULES_GV = [{"score": "m", "level": "fine", "gveto": True}, {"score": "lcb", "level": "fine", "gveto": True},
             {"score": "lcb", "level": "global", "gate": 40, "gveto": True}, {"score": "lcb", "level": "fine", "decay": 120, "gate": 40, "gveto": True}]
 
+# [V33.704] ★수급 과열 제외 규칙 후보(한국만)★ — 사용자 10/29 "수급 데이터부터 넣어서 한국장 성능". fveto = 지난 20일 (외국인+기관)/거래량
+#   횡단면 백분위(하루 늦춤)가 이보다 높은 후보는 고르지 않는다. 쓸지 말지는 다른 규칙과 똑같이 검증 구간 [60,80%) 이 정한다(판정 구간 안 봄).
+#   실험실(flow_kr.py 머리말): 이미 몰린 종목은 다음 20일 덜 오른다(2016~2024 연 +0.3~+1.0%p).
+FLOW_ON = os.environ.get("PB_FLOW", "1") != "0"
+FLOW_RANK = None   # run() 이 한국 회차에 채운다(t×j) · 미국·5분봉은 None
+FLOW_VETO = 0.9
+RULES_FLOW = [{"score": "m", "level": "fine", "fveto": FLOW_VETO}, {"score": "lcb", "level": "fine", "fveto": FLOW_VETO},
+              {"score": "lcb", "level": "fine", "decay": 120, "gate": 40, "fveto": FLOW_VETO}, {"score": "m", "level": "fine", "gveto": True, "fveto": FLOW_VETO}]
+
 
 def score_of(v, score):
     """표 값 (n, w, m, lcb, hd) → 규칙 점수. 워커 pbChoose 와 같은 식."""
@@ -1429,6 +1438,9 @@ def _rule_rows(tab, te, rule):
     ok = sc > 0   # [V33.618] 승률 50% 조건 삭제
     if len(te) and "k1" in te.columns:   # [V33.624] 국면 거부권 — k1 = 국면 칸(정리 뒤)
         ok = ok & np.array([_regime_ok(tab.get(k)) for k in zip(te["k1"].values, te["pb"].values)], dtype=bool)
+    if rule.get("fveto") and FLOW_RANK is not None and len(te) and "j" in te.columns:   # [V33.704] 수급 과열 제외(값 없으면 거르지 않음)
+        fr = FLOW_RANK[np.clip(te["t"].values.astype(int), 0, FLOW_RANK.shape[0] - 1), te["j"].values.astype(int)]
+        ok = ok & ~(np.nan_to_num(fr, nan=0.0) > float(rule["fveto"]))
     if (GLOBAL_VETO or rule.get("gveto")) and len(te) and "k0" in te.columns:   # [V33.642] 전체 칸 거부권 — 그 매매법의 전체 평균(수축)이 0 이하면 고르지 않는다
         ok = ok & np.array([_global_ok(tab.get(k)) for k in zip(te["k0"].values, te["pb"].values)], dtype=bool)
     return sc, ok
@@ -1712,6 +1724,8 @@ def _validate(df, timecol, pbs=None):
         return {"pass": False, "why": "기간 부족"}, None
     c1, c2 = ts[int(len(ts) * SPLIT[0])], ts[int(len(ts) * SPLIT[1])]
     rules = RULES + (RULES_ADAPT + RULES_GV if timecol == "t" else [])   # 최근 가중·성적 스위치는 일봉(거래일 축)만
+    if timecol == "t" and FLOW_RANK is not None:
+        rules = rules + RULES_FLOW   # [V33.704] 한국 수급 과열 제외 후보
     if CELL_ON and timecol == "t" and "cell" in df.columns:
         try:
             rc_ = _fit_cells(df, ts, c1)
@@ -1838,7 +1852,17 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         if P is None:
             log("   · [매매법시뮬] %s 일봉 부족 — 건너뜀" % market)
             continue
-        global TIME_MONTH, TIME_REG
+        global TIME_MONTH, TIME_REG, FLOW_RANK
+        FLOW_RANK, flow_now = None, None
+        if market == "kr" and FLOW_ON:
+            try:   # [V33.704] 한국 수급(학습기가 네이버에서 직접 · GHA 캐시) → 수급 과열 백분위
+                import flow_kr as FK
+                FLOW_RANK, flow_now = FK.crowd_rank(P, FK.update(list(P["close"].columns), log=log))
+                if not np.isfinite(FLOW_RANK).any():
+                    FLOW_RANK, flow_now = None, None
+            except Exception as e:  # noqa: BLE001
+                FLOW_RANK, flow_now = None, None
+                log("   ⚠️ [수급] 실패 — 수급 규칙 후보 없이 진행 %s" % e)
         TIME_MONTH = (np.asarray(P["close"].index).astype(np.int64) // 100).astype(np.int64)   # yyyymmdd → yyyymm
         _rg_, _mr_ = _regime(P["close"])
         TIME_REG = np.asarray(_rg_)
@@ -1945,7 +1969,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         if best_q is None and dflt is not None:
             log("   · [매매법시뮬] %s 검증 구간에서 양수인 후보 설정 없음 → 기본(5일 머리 상위 20%%)" % market)
             best_q = dflt
-        K_ = len(cand_cmp) * (len(RULES + RULES_ADAPT + RULES_GV) + (1 if CELL_ON else 0))   # [V33.694] 칸별 규칙 후보 1개 더
+        K_ = len(cand_cmp) * (len(RULES + RULES_ADAPT + RULES_GV) + (1 if CELL_ON else 0) + (len(RULES_FLOW) if FLOW_RANK is not None else 0))   # [V33.694] 칸별 규칙 후보 1개 더
         luck = {"K": K_, "level": luck_level(K_), "best": best_q[0] if best_q else None, "fallback": False}
         if best_q is not None and dflt is not None and best_q is not dflt and (best_q[0] is None or best_q[0] < luck["level"]):   # [V33.675] 1등이 운 수준 이하 → 사전 등록 기본
             log("   · [매매법시뮬] %s 검증 1등 %s 이 운 수준 %.2f(설정·규칙 %d개 중 최대의 기대) 이하 → 사전 등록 기본(5일 머리 상위 20%%)" % (market, best_q[0], luck["level"], K_))
@@ -2134,7 +2158,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                         "daily": {"val": dst, "table": export(dtab, list(DAILY_PB)), "pb": dpb, "cross": cross, "gate": gate_live, "tier2": tier2,
                                   "grp": ({syms_all[j]: int(g_) for j, g_ in enumerate(P.get("_grp_now", P.get("_grp"))[-1]) if g_ >= 0} if P.get("_grp") is not None else None),   # [V33.664] 종목 → 변동성 그룹(오늘)
                                   "ptune": ptune_rep, "epDef": {k: v[1] for k, v in PP.ENTRY.items()}, "epLad": dict({k: v[2] for k, v in PP.ENTRY.items()}, _mods=PP.MODS),
-                                  "rs6": {syms_all[j]: round(float(x), 3) for j, x in enumerate(PP.rs6(P).values[-1]) if x == x}, "meta": meta_rep, "metaFeats": list(META_FEATS)},   # [V33.667] 6개월 순위(오늘 · 워커는 다음 거래일에 '어제 값' 으로 씀)
+                                  "rs6": {syms_all[j]: round(float(x), 3) for j, x in enumerate(PP.rs6(P).values[-1]) if x == x}, "meta": meta_rep, "metaFeats": list(META_FEATS),
+                                  "flow": ({syms_all[j]: round(float(x), 3) for j, x in enumerate(flow_now) if x == x} if flow_now is not None else None)},   # [V33.704] 수급 과열 백분위(오늘 · 워커는 다음 거래일에 씀)   # [V33.667] 6개월 순위(오늘 · 워커는 다음 거래일에 '어제 값' 으로 씀)
                         "intra": {"val": ist, "table": export(itab, list(INTRA_PB)), "pb": {k: v for k, v in INTRA_PB.items() if k not in INTRA_OFF.get(market, ())}}}
                 r = requests.post(BASE + "/api/playbook", headers=HDR, json=body, timeout=180)
                 log("   · [매매법시뮬] %s 업로드 %s" % (market, r.status_code))

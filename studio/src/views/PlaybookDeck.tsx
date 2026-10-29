@@ -29,7 +29,7 @@ const sg = (x: any, k = 2) => (fin(x) ? (x >= 0 ? "+" : "") + x.toFixed(k) : "�
 const n0 = (x: any) => (fin(x) ? x.toLocaleString("ko-KR") : "—");
 const col = (x: any) => (!fin(x) ? MUTE : x > 0 ? POS : x < 0 ? NEG : INK);
 const pos = (x: number, lim: number) => Math.max(0, Math.min(100, 50 + (x / lim) * 50));
-const ruleName = (r: any): string => (!r ? "—" : r.cells ? "칸별 " + Object.keys(r.cells).length + "칸 · 기본 " + ruleName(r.def) : [r.score, r.level].concat(r.decay ? ["d" + r.decay] : []).concat(r.gate ? ["g" + r.gate] : []).concat(r.gveto ? ["거부권"] : []).join("·"));
+const ruleName = (r: any): string => (!r ? "—" : r.cells ? "칸별 " + Object.keys(r.cells).length + "칸 · 기본 " + ruleName(r.def) : [r.score, r.level].concat(r.decay ? ["d" + r.decay] : []).concat(r.gate ? ["g" + r.gate] : []).concat(r.gveto ? ["거부권"] : []).concat(r.fveto ? ["수급과열 제외"] : []).join("·"));
 // [V33.694] 국면 3단 · 종목 칸(중기 국면 | 변동성 그룹) 한글 이름표
 const R3K: Record<string, Record<string, string>> = { L: { UP: "상승", DOWN: "하락", TURN: "전환" }, M: { UP: "상승", DOWN: "하락", FLAT: "보합" }, S: { SURGE: "급등", UP: "상승", CALM: "안정", DOWN: "하락", CRASH: "급락" } };
 const cellName = (c: string) => { const [m, g] = String(c).split("|"); return "중기 " + (R3K.M[m] || m) + " · " + ({ "0": "저변동", "1": "중변동", "2": "고변동" } as any)[g] || g; };
@@ -97,6 +97,8 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
     ["구조 거르개", R.panic ? "공황 차단 켜짐" : "공황 차단 꺼짐", R.panic ? "1순위 추세·모멘텀·돌파 쉼(보조는 계속)" : "시장 60일 하락·고변동이면 1순위 추세 매매법 쉼"],
     ...(R.panicBook && R.panicBook.pre ? [["공황 반등 바구니", R.panicBook.ok ? "규칙 통과" : "관찰",
       "공황 날 OMNI-Q 후보 바구니 " + R.panicBook.h + "일 · 앞80% " + sg(R.panicBook.pre.mean) + "%(t " + (R.panicBook.pre.t ?? "—") + " · n " + R.panicBook.pre.n + ") · 뒤20% " + sg(R.panicBook.post.mean) + "%(t " + (R.panicBook.post.t ?? "—") + ") — 사전 등록: 앞80% t ≥ 2 · 뒤20% 양수면 시험 후보"]] : []),
+    ...(R.daily?.flow ? [["수급 과열 거름", V.rule && V.rule.fveto ? "켜짐 · 상위 " + Math.round((1 - V.rule.fveto) * 100) + "% 제외" : "후보만(검증 미채택)",
+      "지난 20일 외국인+기관 순매수 ÷ 거래량 백분위 · " + Object.keys(R.daily.flow).length + "종목 · 쓸지 말지는 검증 구간이 정함"]] : []),
     ["상황 칸 표", n0(R.daily?.cells) + "칸", "국면 × RSI × 이격 × 수익 × 거래량 칸마다 수축 평균"],
     ["고르는 규칙", chosen, V.luck ? (V.luck.fallback ? "검증 1등(t " + (fin(V.luck.best) ? (+V.luck.best).toFixed(2) : "—") + ")이 운 수준 " + V.luck.level + " 이하 → 사전 등록 기본 설정" : "검증 1등 t " + (fin(V.luck.best) ? (+V.luck.best).toFixed(2) : "—") + " > 운 수준 " + V.luck.level + "(설정·규칙 " + V.luck.K + "개)") : "검증 구간 t 가 가장 높은 규칙"],
     ["국면 거부권", "칸 평균 < 0 · n ≥ 30", "지금 국면 칸이 손실이면 규칙과 무관하게 버린다"],
@@ -310,7 +312,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
         {tab === "rules" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {/* [V33.694] 규칙이 뜻하는 것(사용자 10/28 질문) · 칸별 규칙이면 종목 칸마다 무엇을 쓰는지 */}
-          <p style={{ fontSize: 12, lineHeight: 1.6, color: DIM }}>규칙 = 한 종목에 매매법이 여럿 뜰 때 하나를 고르는 방법. <b style={{ color: INK }}>점수</b>: m 평균 · lcb 하한(평균−표준오차) · mpd·lcbpd 하루당 · <b style={{ color: INK }}>칸 단계</b>: fine 세부 칸(국면+RSI·20일선·5일·거래량) · regime 국면 칸만 · global 매매법 전체 · d 최근 가중 · g 성적 스위치 · 거부권 전체 평균 ≤ 0 이면 제외. 검증 구간 [60,80%) 에서 같은 달 무작위 대비 초과의 달 묶음 t 로 고른다.</p>
+          <p style={{ fontSize: 12, lineHeight: 1.6, color: DIM }}>규칙 = 한 종목에 매매법이 여럿 뜰 때 하나를 고르는 방법. <b style={{ color: INK }}>점수</b>: m 평균 · lcb 하한(평균−표준오차) · mpd·lcbpd 하루당 · <b style={{ color: INK }}>칸 단계</b>: fine 세부 칸(국면+RSI·20일선·5일·거래량) · regime 국면 칸만 · global 매매법 전체 · d 최근 가중 · g 성적 스위치 · 거부권 전체 평균 ≤ 0 이면 제외 · 수급과열 제외 = 지난 20일 외국인+기관 순매수가 거래량 대비 상위 10% 인 종목 제외(한국). 검증 구간 [60,80%) 에서 같은 달 무작위 대비 초과의 달 묶음 t 로 고른다.</p>
           {V.rule && V.rule.cells && (
             <div style={{ ...card, padding: 14, background: "#080C13" }}>
               <div style={{ fontSize: 12, color: MUTE, marginBottom: 8 }}>종목마다 다른 규칙 — 칸(중기 국면 × 종목 변동성)에서 [40,60%) 로 고른 규칙 · 나머지 칸은 기본 {ruleName(V.rule.def)}</div>

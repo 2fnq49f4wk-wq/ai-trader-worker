@@ -52,6 +52,13 @@ jobs:
           path: ~/.omniq
           key: omniq-model-${{ github.run_id }}
           restore-keys: omniq-model-
+      # [V33.704] 한국 수급(외국인·기관 순매수) 캐시 — 첫 회차만 10년치 · 이후 종목당 한 쪽(flow_kr.py)
+      - name: 수급 캐시 복원
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.pbflow
+          key: pbflow-${{ github.run_id }}
+          restore-keys: pbflow-
       - name: OMNI-Q 학습·채점·관문·업로드
         id: omq
         env:
@@ -64,6 +71,12 @@ jobs:
         run: |
           set -o pipefail
           python trainer/modal/omniq_gha.py 2>&1 | grep -v RuntimeWarning | tee omniq.log
+      - name: 수급 캐시 저장
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.pbflow
+          key: pbflow-${{ github.run_id }}
       - name: 금요일 모델 캐시 저장
         if: steps.omq.outputs.trained == 'true'
         uses: actions/cache/save@v4
