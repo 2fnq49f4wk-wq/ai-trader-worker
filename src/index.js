@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.708";
+const _BUILD_VER = "V33.709";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -20526,8 +20526,11 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
      '급락 대형주 첫 양봉' 같은 검증된 전략은 칼날·약세 거르개와 정의상 충돌한다. 매매법 AI 는 자체 공황 차단·국면 게이트·국면 거부·실전 손실 제동을 쓴다.
      포트폴리오 관문(재진입 쿨다운·인버스 페어·섹터 상한·동시 보유 상한·중복 보유·해외추종 ETF)은 그대로. */
   const isSR = !!(signal && signal.isStratRoute === true && signal.sr);
-  const _exemptCrash = isInverse || isPanicScalp || isSR;
-  const _exemptSig = isPanicScalp || isSR;
+  /* [V33.709] OMNI-Q 진입 경로(isOmniQ)도 같은 이유로 면제 — 10/30 15:17~15:30 실측: OMNI-Q 한국 후보 57종목 전부 MARKET_CRASH·BEAR_WEAK·FALLING_KNIFE 로 0건.
+     OMNI-Q 는 자체 관문 ③(모의 시뮬 · 국면별 맞춤 초과 · 확실히 지는 국면 없음)을 통과해야 발언하며, 그 시뮬에도 이 거르개는 없다. */
+  const isOQ = !!(signal && signal.isOmniQ === true);
+  const _exemptCrash = isInverse || isPanicScalp || isSR || isOQ;
+  const _exemptSig = isPanicScalp || isSR || isOQ;
 
   // 시장 붕괴 / 장중 급락 — 인버스·패닉단타는 면제
   if (!_exemptCrash && regime.worstDayPct <= cfg.marketCrashPct) return "MARKET_CRASH " + regime.worstDayPct.toFixed(2) + "%";

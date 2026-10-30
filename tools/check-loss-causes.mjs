@@ -15,8 +15,8 @@ chk(m && +m[1] >= 5, "수량 계산 손절폭 하한 ≥ 5%", "★수량 계산 
 chk(/Math\.floor\(riskDollar \/ Math\.max\(stopDist, price \* SIZE_STOP_FLOOR_PCT \/ 100\)\)/.test(S), "주식 수량 = 리스크 ÷ max(손절폭, 하한)", "★주식 수량 계산이 하한을 안 쓴다★");
 /* [V33.708] 매매법 AI·국면 전략(SROUTE)은 옛 신호 거르개 6종만 면제 — 포트폴리오 관문·폭락장 생존 게이트는 면제하지 않는다 */
 const B = (S.match(/function evaluateBuyBlocks[\s\S]*?\n}\n/) || [""])[0];
-chk(/const isSR = !!\(signal && signal\.isStratRoute === true && signal\.sr\);/.test(B), "SROUTE 판별(검증 경로 신호만)", "★SROUTE 면제 판별이 바뀌었다★");
-chk(!/isSR|_exemptSig/.test((B.split("// 인버스 페어 차단")[1] || "x")), "포트폴리오 관문(인버스 페어·섹터·동시 보유·중복)은 SROUTE 도 그대로", "★SROUTE 가 포트폴리오 관문까지 면제받는다★");
+chk(/const isSR = !!\(signal && signal\.isStratRoute === true && signal\.sr\);/.test(B) && /const isOQ = !!\(signal && signal\.isOmniQ === true\);/.test(B), "면제 = 검증 경로(SROUTE · OMNI-Q) 신호만", "★면제 판별이 바뀌었다★");
+chk(!/isSR|isOQ|_exemptSig/.test((B.split("// 인버스 페어 차단")[1] || "x")), "포트폴리오 관문(인버스 페어·섹터·동시 보유·중복)은 SROUTE 도 그대로", "★SROUTE 가 포트폴리오 관문까지 면제받는다★");
 chk(/if \(crashGate\.blockNew && !_symInverse && !_isPanicScalpSig\)/.test(S), "폭락장 생존 게이트(드로다운·연속손실)는 SROUTE 도 그대로", "★폭락장 생존 게이트가 풀렸다★");
 if (fails) { console.log("✗ 손해 원인 재발 방지 계약 실패 " + fails); process.exit(1); }
 console.log("✓ 손해 원인 재발 방지 계약 통과");
