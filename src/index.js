@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.709";
+const _BUILD_VER = "V33.710";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -13717,6 +13717,9 @@ function pbDailyKeys(reg, rsi, gap20, ret5, vr, evNear) {
   return [r + "|" + _pbBk(rsi, PB_KEYS.rsi) + "|" + _pbBk(gap20, PB_KEYS.gap20) + "|" + _pbBk(ret5, PB_KEYS.ret5) + "|" + _pbBk(vr, PB_KEYS.vr) + "|" + (evNear ? 1 : 0),
           r + "|" + _pbBk(rsi, PB_KEYS.rsi) + "|" + _pbBk(gap20, PB_KEYS.gap20) + "|*", r + "|*", "*"];
 }
+/* [V33.710] ★더 세심한 칸(k4)★ — 학습기 playbook_sim.flow_bucket · deep_key 와 같다. 규칙 level "deep" 일 때만 세부 칸 앞에 붙인다(표본 적은 칸은 학습기가 부모 값으로 수축 · 없으면 아래 칸으로). */
+function pbFlowB(v) { return typeof v === "number" && isFinite(v) ? (v > 0.9 ? "2" : v > 0.5 ? "1" : "0") : "x"; }
+function pbDeepKey(kfine, grp, flowV) { return kfine + "|g" + (grp == null || !(grp >= 0) ? "x" : String(Math.floor(grp))) + "|f" + pbFlowB(flowV); }
 function pbIntraKeys(reg, daypct, tod, up) {
   const r = String(reg || "NEUTRAL");
   return [r + "|" + _pbBk(daypct, PB_KEYS.daypct) + "|" + _pbBk(tod, PB_KEYS.tod) + "|" + (up ? 1 : 0), r + "|" + _pbBk(daypct, PB_KEYS.daypct) + "|*", r + "|*", "*"];
@@ -13974,7 +13977,7 @@ function pbRuleFor(st, grp) {
 function pbRuleLabel(rule, sleeve) {
   if (sleeve) return "국면 워크포워드(직전 3년 끝난 거래 · 평균−표준오차)";
   if (!rule) return "—";
-  const SC = { m: "평균", lcb: "하한(평균−표준오차)", mpd: "하루당 평균", lcbpd: "하루당 하한" }, LV = { fine: "세부 칸", regime: "국면 칸", global: "매매법 전체" };
+  const SC = { m: "평균", lcb: "하한(평균−표준오차)", mpd: "하루당 평균", lcbpd: "하루당 하한" }, LV = { deep: "세심한 칸(세부+변동성+수급)", fine: "세부 칸", regime: "국면 칸", global: "매매법 전체" };
   return [SC[rule.score] || rule.score, LV[rule.level] || rule.level].concat(rule.decay ? ["최근 " + rule.decay + "일 가중"] : []).concat(rule.gate ? ["성적 스위치 " + rule.gate + "일"] : []).concat(rule.gveto ? ["전체 거부권"] : []).concat(rule.fveto ? ["수급 과열 상위 " + Math.round((1 - _num(rule.fveto, 1)) * 100) + "% 제외"] : []).join("·");
 }
 /* [V33.704] ★수급 과열 제외★ — 규칙에 fveto 가 있으면, 학습기가 보낸 그 종목의 수급 과열 백분위(지난 20일 (외국인+기관)/거래량 · 한국)가
@@ -14150,7 +14153,8 @@ function pbRoutePick(st, ctx, nowMs) {
       const vr = _pbVr(D.v, i);   // [V33.610] 오늘 거래량(지난 시간 비율로 하루치 추정 · pbLiveDaily) — 시뮬 칸과 같은 날 기준
       const _rl = pbRuleFor(st, grp);
       const ch = pbFlowVetoed(st, ctx.symbol, _rl) ? null   // [V33.704] 수급 과열 제외(규칙에 fveto 가 있을 때만 · 학습기와 같다)
-        : pbChoose(st.daily.table, pbDailyKeys(ctx.reg, rsi, ma20 > 0 ? (px / ma20 - 1) * 100 : null, ret5, vr, ctx.evNear), fired.filter(function (pb) { return benched.indexOf(pb) < 0; }), _rl);
+        : pbChoose(st.daily.table, (function (ks) { return _rl && _rl.level === "deep" ? [pbDeepKey(ks[0], grp, st.daily.flow && st.daily.flow[ctx.symbol])].concat(ks) : ks; })(pbDailyKeys(ctx.reg, rsi, ma20 > 0 ? (px / ma20 - 1) * 100 : null, ret5, vr, ctx.evNear)),
+            fired.filter(function (pb) { return benched.indexOf(pb) < 0; }), _rl);   // [V33.710] deep 규칙이면 k4 를 앞에
       const pr0 = ch && st.daily.pb && st.daily.pb[ch.pb];
       const pr = pr0 && grp != null && pr0.grp && pr0.grp[grp] ? Object.assign({}, pr0, pr0.grp[grp]) : pr0;   // [V33.664] 그룹별 청산 미지수
       if (ch && pr) {

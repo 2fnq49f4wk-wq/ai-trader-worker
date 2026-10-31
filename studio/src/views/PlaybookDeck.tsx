@@ -314,7 +314,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
         {tab === "rules" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {/* [V33.694] 규칙이 뜻하는 것(사용자 10/28 질문) · 칸별 규칙이면 종목 칸마다 무엇을 쓰는지 */}
-          <p style={{ fontSize: 12, lineHeight: 1.6, color: DIM }}>규칙 = 한 종목에 매매법이 여럿 뜰 때 하나를 고르는 방법. <b style={{ color: INK }}>점수</b>: m 평균 · lcb 하한(평균−표준오차) · mpd·lcbpd 하루당 · <b style={{ color: INK }}>칸 단계</b>: fine 세부 칸(국면+RSI·20일선·5일·거래량) · regime 국면 칸만 · global 매매법 전체 · d 최근 가중 · g 성적 스위치 · 거부권 전체 평균 ≤ 0 이면 제외 · 수급과열 제외 = 지난 20일 외국인+기관 순매수가 거래량 대비 상위 10% 인 종목 제외(한국). 검증 구간 [60,80%) 에서 같은 달 무작위 대비 초과의 달 묶음 t 로 고른다.</p>
+          <p style={{ fontSize: 12, lineHeight: 1.6, color: DIM }}>규칙 = 한 종목에 매매법이 여럿 뜰 때 하나를 고르는 방법. <b style={{ color: INK }}>점수</b>: m 평균 · lcb 하한(평균−표준오차) · mpd·lcbpd 하루당 · <b style={{ color: INK }}>칸 단계</b>: deep 세심한 칸(세부 칸 + 종목 변동성 그룹 + 수급 과열 단계 · 표본 적으면 부모 칸으로) · fine 세부 칸(국면+RSI·20일선·5일·거래량) · regime 국면 칸만 · global 매매법 전체 · d 최근 가중 · g 성적 스위치 · 거부권 전체 평균 ≤ 0 이면 제외 · 수급과열 제외 = 지난 20일 외국인+기관 순매수가 거래량 대비 상위 10% 인 종목 제외(한국). 검증 구간 [60,80%) 에서 같은 달 무작위 대비 초과의 달 묶음 t 로 고른다.</p>
           {V.rule && V.rule.cells && (
             <div style={{ ...card, padding: 14, background: "#080C13" }}>
               <div style={{ fontSize: 12, color: MUTE, marginBottom: 8 }}>종목마다 다른 규칙 — 칸(중기 국면 × 종목 변동성)에서 [40,60%) 로 고른 규칙 · 나머지 칸은 기본 {ruleName(V.rule.def)}</div>

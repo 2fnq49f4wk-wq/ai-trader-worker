@@ -116,6 +116,18 @@ def daily_keys(reg, rsi, gap20, ret5, vr, ev):
     return [k3, k2, k1, np.full(len(r), "*")]
 
 
+def flow_bucket(fr):
+    """[V33.710] 수급 과열 백분위 → 0(하위 50%)·1(50~90%)·2(상위 10%) · 값 없으면 'x'(미국·결측). 워커 pbFlowB 와 같다."""
+    fr = np.asarray(fr, dtype=float)
+    return np.where(np.isnan(fr), "x", np.where(fr > 0.9, "2", np.where(fr > 0.5, "1", "0")))
+
+
+def deep_key(kfine, grp, fb):
+    """[V33.710] ★더 세심한 칸(k4)★ = 세부 칸(국면·RSI·이격·5일·거래량·사건) + 종목 변동성 그룹 + 수급 과열 단계. 워커 pbDeepKey 와 같다.
+    표본 적은 k4 칸은 _shrunk_table 이 부모(세부 칸) 값으로 끌어당긴다 — 칸이 비어도 부모가 대신하므로 '고를 것이 없음' 이 늘지 않는다."""
+    return np.char.add(np.char.add(np.char.add(np.char.add(np.asarray(kfine).astype(str), "|g"), np.asarray(grp).astype(str)), "|f"), np.asarray(fb).astype(str))
+
+
 def intra_keys(reg, daypct, tod, up):
     r = np.asarray(reg).astype(str)
     a, b, c = _bk(daypct, B_DAYPCT).astype(str), _bk(tod, B_TOD).astype(str), np.asarray(up).astype(int).astype(str)
@@ -1074,6 +1086,12 @@ def sim_daily(P, market, ev_dates, sig=None, cand=None, pbs=None):
     ks = daily_keys(reg[t], rsi[t, j], gap20[t, j], ret5[t, j], vr[t, j], near[t])
     for lv, k in enumerate(ks):
         df["k%d" % lv] = k
+    if len(t):   # [V33.710] 더 세심한 칸 — 변동성 그룹(하루 늦춘 값) · 수급 과열 단계(한국 · 하루 늦춘 값)
+        _G4 = P.get("_grp")
+        _g4 = np.asarray(_G4)[t, j].astype(int).astype(str) if _G4 is not None else np.full(len(t), "x")
+        _g4 = np.where(_g4 == "-1", "x", _g4)
+        _f4 = flow_bucket(FLOW_RANK[np.clip(t, 0, FLOW_RANK.shape[0] - 1), j]) if FLOW_RANK is not None else np.full(len(t), "x")
+        df["k4"] = deep_key(ks[0], _g4, _f4)
     # [V33.694] 종목 칸(규칙을 종목마다) = 중기 국면(M) | 종목 변동성 그룹(하루 늦춘 값 · 워커와 같다)
     M3 = np.asarray(regime3(P["close"])[1]).astype(str)
     G_ = P.get("_grp")
@@ -1287,7 +1305,7 @@ def _shrunk_table(df, decay=None, tcol="t", ref=None):
     g0 = df.groupby("pb").agg(n=nagg, s=("ex", "sum"), s2=("ex2", "sum"), w=("win", "sum"), h=("hd", "sum"))
     for pb, r in g0.iterrows():
         put(("*", pb), r["n"], r["s"], r["s2"], r["w"], r["h"], 0.5, 0.0, r["h"] / max(1.0, r["n"]))
-    for lv, plv in ((1, 0), (2, 1), (3, 2)):
+    for lv, plv in ((1, 0), (2, 1), (3, 2)) + (((4, 3),) if "k4" in df.columns else ()):   # [V33.710] k4 = 더 세심한 칸
         col, pcol = "k%d" % lv, "k%d" % plv
         g = df.groupby([col, pcol, "pb"]).agg(n=nagg, s=("ex", "sum"), s2=("ex2", "sum"), w=("win", "sum"), h=("hd", "sum")).reset_index()
         for r in g.itertuples(index=False):
@@ -1325,11 +1343,17 @@ RULES_FLOW = [{"score": "m", "level": "fine", "fveto": FLOW_VETO}, {"score": "lc
               {"score": "lcb", "level": "fine", "decay": 120, "gate": 40, "fveto": FLOW_VETO}, {"score": "m", "level": "fine", "gveto": True, "fveto": FLOW_VETO}]
 
 
+# [V33.710] ★더 세심한 칸 규칙 후보(일봉)★ — 사용자 10/29 "매매법 고르기에 더 많은 조건 · 단 아무것도 못 고르는 일은 없게".
+#   deep = k4(세부 칸 + 변동성 그룹 + 수급 과열 단계) → 표본 적으면 수축으로 부모 칸 값 → 비면 세부·국면·전체 순으로 내려간다(빈 칸 때문에 못 고르는 일 없음).
+#   쓸지 말지는 다른 규칙과 똑같이 검증 구간이 정한다(운 수준 K 에 포함).
+RULES_DEEP = [{"score": "m", "level": "deep"}, {"score": "lcb", "level": "deep"}]
+
+
 def score_of(v, score):
     """표 값 (n, w, m, lcb, hd) → 규칙 점수. 워커 pbChoose 와 같은 식."""
     m, lcb, hd = v[2], v[3], max(v[4] if len(v) > 4 else 1.0, 0.05)
     return m if score == "m" else lcb if score == "lcb" else m / hd if score == "mpd" else lcb / hd
-LEVEL_COLS = {"fine": ("k3", "k2", "k1", "k0"), "regime": ("k1", "k0"), "global": ("k0",)}
+LEVEL_COLS = {"deep": ("k4", "k3", "k2", "k1", "k0"), "fine": ("k3", "k2", "k1", "k0"), "regime": ("k1", "k0"), "global": ("k0",)}
 SPLIT = (0.60, 0.80)   # 표 [0,60%) → 규칙 고르기 [60,80%) → 표 [0,80%) → 판정 [80,100%)
 
 
@@ -1728,6 +1752,8 @@ def _validate(df, timecol, pbs=None):
     rules = RULES + (RULES_ADAPT + RULES_GV if timecol == "t" else [])   # 최근 가중·성적 스위치는 일봉(거래일 축)만
     if timecol == "t" and FLOW_RANK is not None:
         rules = rules + RULES_FLOW   # [V33.704] 한국 수급 과열 제외 후보
+    if timecol == "t" and "k4" in df.columns:
+        rules = rules + RULES_DEEP   # [V33.710] 더 세심한 칸
     if CELL_ON and timecol == "t" and "cell" in df.columns:
         try:
             rc_ = _fit_cells(df, ts, c1)
@@ -1835,15 +1861,21 @@ def export(tab, pbs, min_n=30, max_bytes=1200000):
     """워커로 보낼 표 — 열쇠마다 매매법별 [n, 성공확률, 평균]. 표본 적은 구체 칸은 버린다(부모가 대신한다).
     워커 상태 한 칸(D1) 크기 한도 때문에 max_bytes 를 넘으면 가장 구체적인 칸의 문턱(min_n)을 올린다."""
     import json
+    min_d = min_n   # [V33.710] k4(더 세심한 칸 · '|' 7개) 문턱 — 크기가 넘치면 k4 부터 덜어낸다(세부 칸은 지킨다)
     while True:
         out = {}
         for (k, pb), (n, w, m, lcb, hd) in tab.items():
+            if k.count("|") >= 7 and n < min_d:
+                continue
             if k.count("|") >= 3 and n < min_n:
                 continue
             out.setdefault(k, {})[pb] = [n, round(w, 3), round(m, 3), round(lcb, 3), round(hd, 2)]
         if len(json.dumps(out, separators=(",", ":"))) <= max_bytes or min_n > 100000:
             return out
-        min_n *= 2
+        if min_d <= 100000:
+            min_d *= 2
+        else:
+            min_n *= 2
 
 
 def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=print, bars5=None, ev_dates=(), oos=None, sector=None):
@@ -1971,7 +2003,7 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         if best_q is None and dflt is not None:
             log("   · [매매법시뮬] %s 검증 구간에서 양수인 후보 설정 없음 → 기본(5일 머리 상위 20%%)" % market)
             best_q = dflt
-        K_ = len(cand_cmp) * (len(RULES + RULES_ADAPT + RULES_GV) + (1 if CELL_ON else 0) + (len(RULES_FLOW) if FLOW_RANK is not None else 0))   # [V33.694] 칸별 규칙 후보 1개 더
+        K_ = len(cand_cmp) * (len(RULES + RULES_ADAPT + RULES_GV) + (1 if CELL_ON else 0) + (len(RULES_FLOW) if FLOW_RANK is not None else 0) + len(RULES_DEEP))   # [V33.694] 칸별 규칙 후보 1개 더
         luck = {"K": K_, "level": luck_level(K_), "best": best_q[0] if best_q else None, "fallback": False}
         if best_q is not None and dflt is not None and best_q is not dflt and (best_q[0] is None or best_q[0] < luck["level"]):   # [V33.675] 1등이 운 수준 이하 → 사전 등록 기본
             log("   · [매매법시뮬] %s 검증 1등 %s 이 운 수준 %.2f(설정·규칙 %d개 중 최대의 기대) 이하 → 사전 등록 기본(5일 머리 상위 20%%)" % (market, best_q[0], luck["level"], K_))
