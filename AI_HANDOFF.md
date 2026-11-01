@@ -6699,3 +6699,8 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
 - Cloudflare 요금(공식 문서 11/1 확인): 2026-12-01 부터 Workers Logs 가 Observability 요금(Paid: 월 50GB 수집·10GB-월 보관 포함 · 초과 $0.25/GB · $0.10/GB-월)으로.
   우리 wrangler.toml 에 [observability] 없음 → Workers Logs 꺼짐(로그는 D1 logs 표 · CRONPROF 는 wrangler tail 전용). 켜져 있어도 추정 월 0.1~0.2GB → 0원.
   Workers(월 1천만 요청·3천만 CPU ms 포함) · D1(월 읽기 250억·쓰기 5천만 포함) · R2 · KV 요금은 변경 없음 — 워커 사용량 상한(usage limits) 값 그대로 맞다.
+
+## V33.714 (11/1) — S&P 500 맵 1D 불일치 수리 · 사용자 "S&P500 맵 불일치 고쳐"
+- 원인(라이브 /api/state 11/1 주말): 미국 시세 mstate POST · dayPct = ★시간외 등락★(AAPL +0.14% · INTC −1.3%) · regPct = 정규장 등락(AAPL −1.23% · INTC −28.6%).
+  지수·탑무버는 정규장 기준인데 맵 1D 가 dayPct 를 써서 지수 −1.82% 인데 맵은 대부분 + 로 보였다.
+- 수리: 맵 1D = regPct(없으면 dayPct) · '장중' 단추 → '시간외'(PRE/POST 일 때만 dayPct) · 타일 설명 '1일(정규장) … · 시간외 …'.
