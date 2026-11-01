@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.710";
+const _BUILD_VER = "V33.711";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -22764,13 +22764,16 @@ async function usNaverSweep(env, opts) {
    하루 ~2,900회 · 회당 121만 행 = 하루 40~50억 행 읽기 = 청구액의 ~100%(9/7 주기 $69 · 10/7 주기 $14+). 표본 개수는 관측·문턱용이라
    몇 시간 묵어도 판단이 안 바뀐다 → 같은 질의(SQL+인자 키)를 6시간 동안 아이솔레이트 기억 + D1 상태 1행(mlagg:*)으로 재사용한다. */
 const ML_AGG_TTL_MS = 6 * 3600000;
+/* [V33.711] 위원회 퇴역(COMMITTEE_RETIRED) 뒤 ml_samples 는 더 쌓이지 않는다 — 집계(COUNT·GROUP BY · 회당 121만 행)를 6시간마다 다시 읽을 이유가 없다.
+   실측 11/1 D1 읽은 행 659만 중 364만(55%)이 이 세 질의. 퇴역 중엔 7일 기억. */
+function _mlAggTtl() { return (typeof COMMITTEE_RETIRED !== "undefined" && COMMITTEE_RETIRED) ? 7 * 86400000 : ML_AGG_TTL_MS; }
 const __mlAggMem = new Map();
 function _mlAggKey(sql, binds) { let h = 0; const t = sql + "|" + JSON.stringify(binds || []); for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0; return "mlagg:" + (h >>> 0).toString(36); }
 async function _mlAgg(DB, sql, binds, opts) {
   const key = (opts && opts.key) || _mlAggKey(sql, binds), now = Date.now(), all = !!(opts && opts.all);
   const m = __mlAggMem.get(key);
-  if (m && now - m.ts < ML_AGG_TTL_MS) return m.v;
-  try { const c = await getState(DB, key, null); if (c && now - _num(c.ts, 0) < ML_AGG_TTL_MS) { __mlAggMem.set(key, c); return c.v; } } catch (e) {}
+  if (m && now - m.ts < _mlAggTtl()) return m.v;
+  try { const c = await getState(DB, key, null); if (c && now - _num(c.ts, 0) < _mlAggTtl()) { __mlAggMem.set(key, c); return c.v; } } catch (e) {}
   const st = DB.prepare(sql).bind.apply(DB.prepare(sql), binds || []);
   const r = all ? await st.all() : await st.first();
   const v = all ? { results: (r && r.results) || [] } : r;

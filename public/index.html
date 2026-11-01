@@ -201,8 +201,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.710">
-<script src="/neural-observatory.js?v=33.710" defer></script>
+<meta name="lux-build" content="V33.711">
+<script src="/neural-observatory.js?v=33.711" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4036,6 +4036,17 @@ html[data-theme="light"] .pz-tabs button[aria-selected="true"]{background:#fff;c
 })();
 </script>
 <style>/* [V33.662] 체결 장 상태 */.sess-badge{display:inline-block;padding:0 6px;border-radius:4px;font-size:10.5px;border:1px solid var(--line,#2a3446);color:var(--dim,#8695aa)}.sess-pre,.sess-post{color:#ffd166;border-color:#5a4a1a}.sess-regular{color:#4fe3ff;border-color:#1d4a5a}</style>
+<style id="lux-calm">
+/* [V33.711] ★대기 CPU★ — 사용자 11/1 "작동화면·두뇌관측 로딩에서 CPU 너무 많이 잡아먹지 않는지". 실측(Playwright · 폰 4배 감속):
+   작동 화면을 가만히 띄워 두기만 해도 20초 중 메인 스레드 9.4초 · 6초 추적에서 합성기(Viz) 1.15초 + Compositor 0.45초 — 스크립트는 0.1초.
+   원인 = 무한 장식 애니메이션이 매 프레임 합성/칠하기를 강제: 다크 배경 body::before(화면보다 큰 blur 18px 층 · 46초 무한) ·
+   로고 반짝임 · 라이브/자동운용 점 깜빡임 · 두뇌관측 LED 등. 배경은 멈춘 그림으로, 점·LED 는 몇 번만 깜빡이고 멈춘다(상태 색은 그대로). */
+html:not([data-theme="light"]) body::before, body::after { animation: none !important; }
+.sb-brand-logo { animation-iteration-count: 2 !important; }
+.sb-train.fail .sb-train-dot, .live-indicator.live .live-dot, .dot.alive, .sb-auto-dot, .m-ab-sub.live .m-ab-dot,
+.macro-next-card .dday.soon, #page-macro .macro-table .dd.today,
+#page-nnviz .nnv-title .dot, #page-nnviz.active .nnv-title .dot, #page-nnviz.active .nlv-tagline::before, #page-nnviz .nnv-healthbar:not(.has-error) .nnv-health-title i { animation-iteration-count: 3 !important; }
+</style>
 </head>
 <body>
 
@@ -21502,12 +21513,12 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.710">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.710">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.710">
-<link rel="stylesheet" href="/model-evidence.css?v=33.710">
+<link rel="stylesheet" href="/brain-console.css?v=33.711">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.711">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.711">
+<link rel="stylesheet" href="/model-evidence.css?v=33.711">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.710">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.711">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -21534,7 +21545,7 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
   setTimeout(reveal, 9500);
 })();
 </script>
-<script src="/model-evidence.js?v=33.710"></script>
-<script src="/workspace-ui.js?v=33.710"></script>
+<script src="/model-evidence.js?v=33.711"></script>
+<script src="/workspace-ui.js?v=33.711"></script>
 </body>
 </html>

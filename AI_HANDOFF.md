@@ -6674,3 +6674,10 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
 - 규칙 후보 RULES_DEEP 2종(평균·하한 × deep) — 일봉만 · 검증 구간 [60,80%) 이 고를 때만 · 운 수준 K 에 포함.
 - 워커: pbFlowB · pbDeepKey(학습기와 같은 칸 이름) · deep 규칙일 때만 k4 를 키 앞에. 표 내보내기는 크기 넘치면 k4 부터 덜어냄(세부 칸 보호).
 - 화면: 규칙 비교 범례에 deep 설명. 게이트 check-deep-key(deploy.yml · 학습기·워커 같은 칸 이름 대조).
+
+## V33.711 (11/1) — 화면 대기 CPU · D1 실측 · 사용자 "CPU·D1 낭비 실측 · 작동화면·두뇌관측 로딩 CPU"
+- 워커 실측(/api/usage · /api/data-health 11/1 UTC): CPU 하루 285초(월 한도 0.5%) · D1 읽은 행 659만/일(10/31 402만 · 포함량 월 250억의 ~1%) · 쓴 행 ~3만.
+  D1 무거운 질의 = 퇴역 위원회 ml_samples COUNT/GROUP BY 3개(각 121만 행 · 합 364만 = 55%) → _mlAggTtl: 퇴역 중 7일 기억(종전 6시간).
+- 화면 실측(Playwright · CDP Performance): 작동 화면 대기 20초 — 데스크 task 3.6s · 폰(4배 감속) 9.4s(47%) · 스크립트 0.1s 뿐.
+  추적: 합성기 Viz 1.15s/6s + Compositor 0.45s — 원인 무한 장식 애니메이션(다크 배경 body::before 화면보다 큰 blur 층 46초 무한 · 로고 반짝임 · 라이브/자동운용 점 · 두뇌관측 LED).
+  조치: <style id="lux-calm"> — 배경 애니메이션 끔(정지 그림) · 점·LED 3회 · 로고 2회 후 멈춤(상태 색 그대로). 두뇌관측 GL 구체는 이미 30fps·화면 밖/탭 숨김 정지·느리면 자동 정지.
