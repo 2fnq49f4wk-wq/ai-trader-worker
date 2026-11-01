@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.711";
+const _BUILD_VER = "V33.712";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -56735,8 +56735,9 @@ export default {
       //   32MB를 읽고 쓰는 무거운 작업이라 거래 사이클 "앞"에서 한 번만 하고, 성공/실패 여부를
       //   상태에 남겨 다시 시도하지 않는다. 실패해도 D1 원본이 그대로라 서비스 영향 없음.
       try {
-        if (_bigR2()) {
+        if (_bigR2() && !COMMITTEE_RETIRED && !globalThis.__r2migDone) {   // [V33.712] 위원회 모델 이전 — 퇴역 · 끝났으면 다시 안 읽는다
           const _mg = await getState(env.DB, "r2_migrate:dnn_model", null);
+          if (_mg && _mg.done) globalThis.__r2migDone = true;
           if (!_mg || (!_mg.done && (Date.now() - (_mg.ts || 0)) > 3600000)) {
             await setState(env.DB, "r2_migrate:dnn_model", { done: false, ts: Date.now() });
             const _r = await migrateBigStateToR2(env.DB, "dnn_model");
@@ -56755,10 +56756,11 @@ export default {
       // 0.95) [V33.22] 딥이력(hist:, 약 71MB)을 R2로 조금씩 이관 — 틱당 최대 12종목·6초.
       //   읽기가 R2→D1 폴백이라 진행 중에도 전 종목이 정상 조회된다. 다 옮기면 로그 1회 남기고 멈춘다.
       try {
-        if (_bigR2()) {
+        if (_bigR2() && !globalThis.__histMigDone) {   // [V33.712] 끝난 1회성 이전은 아이솔레이트에 기억
           const _bo0 = await getState(env.DB, "r2_hist_backoff", null);
           const _boActive = !!(_bo0 && (Date.now() - (_bo0.ts || 0)) < 1200000);   // 과부하 후 20분 휴지
           const _hm = _boActive ? { done: true } : await getState(env.DB, "r2_migrate:hist", null);
+          if (!_boActive && _hm && _hm.done) globalThis.__histMigDone = true;
           if (!_hm || !_hm.done) {
             // [V33.23] 장중에는 거래 사이클을 먼저 보호한다 — 이관은 배치·시간을 절반 이하로 줄이고
             //   장외에만 속도를 낸다. 이관이 하루쯤 늦어지는 것보다 매매·화면 지연이 훨씬 나쁘다.
@@ -56791,6 +56793,7 @@ export default {
       }
 
       __prof.mark("barHarvest");
+      if (!COMMITTEE_RETIRED)   // [V33.712] 위원회 단타 표본 백필 퇴역 — 매분 진단 기록(D1 쓰기)·잠금 읽기도 하지 않는다
       // 0.955) [V33.70] ★과거 분봉 백필 수확 — 위치 재배치★
       //   V33.65/66 에서 야간 파이프라인 안쪽에 뒀는데 [ST-BACKFILL] 로그가 계속 0건이었다.
       //   그 블록은 하루1회 게이트·락·앞단계 예산소진의 영향을 받아 실제로는 거의 도달하지 않는다.
@@ -56882,7 +56885,8 @@ export default {
       //   정리하면 US +5.87%→+0.3%대, 원자재 +1.22%→−9%대로 내려간다 — 실제 수치다.
       try {
         const _REPAIR_VER = "V33.74-oversell";
-        const _rv = await getState(env.DB, "ledger_repair_ver", null);
+        const _rv = globalThis.__ledgerRepairVer || await getState(env.DB, "ledger_repair_ver", null);   // [V33.712] 끝난 수리 판은 아이솔레이트에 기억
+        if (_rv === _REPAIR_VER) globalThis.__ledgerRepairVer = _rv;
         let _mkoRp = false; try { _mkoRp = isMarketOpen("us") || isMarketOpen("kr"); } catch (e) {}
         if (_rv !== _REPAIR_VER && !_mkoRp) {   // 장중엔 안 돈다(원장 전량 재생 + 삭제라 무겁다)
           const _cfgR = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
@@ -57027,7 +57031,9 @@ export default {
       //   - 백필: quote가 아예 없는 종목은 장 시간과 무관하게 사이클당 60개씩 채움.
       //   - 재기록: 과거 v8 롤오버 버그로 오염된 미국 quote 전체(560개)를 수정된 fetch로
       //     사이클당 60개씩 한 바퀴 다시 써서(기존 일봉 지표 보존 머지) 즉시 정상화. 1회성.
-      try {
+      if (!globalThis.__bfScanTs || Date.now() - globalThis.__bfScanTs >= 600000) try {
+        /* [V33.712] 시세 키 전체 훑기(≈1,000행)가 매분 돌았다(하루 ≈140만 행 · D1 읽기의 ~20%) — 새 편입은 드물다 → 아이솔레이트당 10분에 한 번 */
+        globalThis.__bfScanTs = Date.now();
         const have = new Set();
         const rows = await env.DB.prepare("SELECT k FROM state WHERE k >= 'quote:' AND k < 'quote;'").all();
         for (const r of ((rows && rows.results) || [])) have.add(String(r.k).slice(6));
@@ -57305,7 +57311,7 @@ export default {
           //   성숙 판정은 함수 내부에서 horizon으로 하므로 자주 돌려도 안전·멱등하다.
           //   10분 락으로 틱 겹침만 막고 장중/장외 무관하게 상시 편입한다.
           __prof.mark("ai.cflabel");
-          try {
+          if (!COMMITTEE_RETIRED) try {   // [V33.712] 퇴역 — 잠금 읽기도 안 한다
             const _cfLock = _num(await getState(env.DB, "cf_label_lock", 0), 0);
             /* [V33.533] 10분 → 30분. 단계 측정(_cronProf, 10/08): 이 단계가 크론 활성시간의 17%(1회 ≈3분).
                라벨은 학습(하루 2회)에만 쓰인다 — 30분이면 학습 전에 충분히 다 편입된다(매매 판단 영향 0). */
@@ -57342,7 +57348,7 @@ export default {
           /* [V33.430] ★한국 종목 수급 이력 수집★ — 봉 수집기와 같은 모양(잠금 뒤 조금씩).
              장외 5분마다 12종목 · 장중 20분마다 3종목. I/O 뿐이다(피처는 Modal 이 만든다). */
           __prof.mark("ai.krFlow");
-          try {
+          if (!COMMITTEE_RETIRED) try {   // [V33.712] 한국 수급은 학습기가 네이버에서 직접(flow_kr.py) — 워커 수집·잠금 읽기 안 함
             const _ofLock = _num(await getState(env.DB, "omniflow_lock", 0), 0);
             const _ofOpen = (typeof isTradingWindow === "function") && isTradingWindow("kr");
             if (!COMMITTEE_RETIRED && Date.now() - _ofLock > (_ofOpen ? OMNIFLOW.gapInMs : OMNIFLOW.gapOffMs)) { /* [V33.634] 퇴역 위원회·옛 OMNI 전용 — 끔(사용자 "불필요한 수집으로 CPU 낭비") */ /* 수급은 옛 OMNI(omni.py get_flows)만 받았다 — OMNI-Q 는 안 받음 */
@@ -57382,7 +57388,7 @@ export default {
              꼬리 파일 덕에 한 종목이 수 ms 라, 수집기처럼 틱마다 조금씩 돌 수 있다.
              장외에 모인 종목들은 같은 결정시각(전 세션 마지막 격자봉)을 공유하므로 동료가 자연히 모인다. */
           __prof.mark("ai.omniShadow");
-          try {
+          if (!COMMITTEE_RETIRED) try {   // [V33.712] 옛 OMNI 섀도 퇴역 — 잠금 읽기 안 함
             const _osLock = _num(await getState(env.DB, "omniscore_lock", 0), 0);
             const _osOpen = (typeof isTradingWindow === "function") && (isTradingWindow("us") || isTradingWindow("kr"));
             if (!COMMITTEE_RETIRED && Date.now() - _osLock > (_osOpen ? OMNI_SHADOW.gapInMs : OMNI_SHADOW.gapOffMs)) { /* [V33.634] 퇴역 위원회·옛 OMNI 전용 — 끔(사용자 "불필요한 수집으로 CPU 낭비") */ /* 야간 omniscore 는 이미 퇴역 — 매분 길만 남아 있었다 */
@@ -57495,7 +57501,7 @@ export default {
           //   이어 돌린다. 회당 300행 상한이라 D1 전송량은 종전 야간 1회분과 비슷한 수준으로 유지되고,
           //   픽은 계속 갱신된다(사용자 지적: "최근 스캔이 9시로 뜬다").
           __prof.mark("ai.incScan");
-          try {
+          if (!ENTRY_ROUTES_ONLY) try {   // [V33.712] 위원회 픽 풀 증분 스캔 정지 — 잠금 읽기 안 함
             // [V33.56] 20분×300행 → 10분×150행. 시간당 읽는 행수는 900 으로 동일한데
             //   픽 갱신 빈도만 2배가 된다 — 부하를 늘리지 않고 신선도만 올리는 교환.
             const _isLock = _num(await getState(env.DB, "ai_incrscan_lock", 0), 0);

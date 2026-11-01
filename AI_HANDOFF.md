@@ -6681,3 +6681,12 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
 - 화면 실측(Playwright · CDP Performance): 작동 화면 대기 20초 — 데스크 task 3.6s · 폰(4배 감속) 9.4s(47%) · 스크립트 0.1s 뿐.
   추적: 합성기 Viz 1.15s/6s + Compositor 0.45s — 원인 무한 장식 애니메이션(다크 배경 body::before 화면보다 큰 blur 층 46초 무한 · 로고 반짝임 · 라이브/자동운용 점 · 두뇌관측 LED).
   조치: <style id="lux-calm"> — 배경 애니메이션 끔(정지 그림) · 점·LED 3회 · 로고 2회 후 멈춤(상태 색 그대로). 두뇌관측 GL 구체는 이미 30fps·화면 밖/탭 숨김 정지·느리면 자동 정지.
+
+## V33.712 (11/1) — 퇴역 시스템·불필요 자원 낭비 정리 · 사용자 "퇴역 위원회·시스템이 D1·CPU 외 다른 자원 낭비하는지 · 전부 수정"
+- 크론 단계 감사(usage stp · 코드): 퇴역 단계가 ★잠금 상태를 먼저 읽고★ 그 뒤에 COMMITTEE_RETIRED 를 봤다(매분 D1 읽기).
+  → if 를 try 앞으로: 반사실 라벨(cflabel) · 워커 한국 수급 수집(krFlow · 학습기가 직접 받음) · 옛 OMNI 섀도(omniShadow) · 위원회 증분 스캔(incScan · ENTRY_ROUTES_ONLY).
+  (throw 로 건너뛰면 catch 가 ERROR 로그를 매분 D1 에 쓴다 — 그래서 if.)
+- 위원회 단타 표본 백필(barHarvest): 퇴역인데도 매분 r2_bind_probe 를 D1 에 쓰고 잠금을 읽었다 → 단계 통째로 건너뜀.
+- 1회성 이관·수리 확인(r2mig 위원회 모델 · histMig · ghost 원장 수리판): 끝났어도 매분 상태 1~2건 읽음 → 아이솔레이트에 '끝남' 기억 · r2mig 는 퇴역이라 안 함.
+- 시세 백필(backfill): 시세 키 전체 훑기(≈1,000행) 매분 → 아이솔레이트당 10분 1회(하루 ≈140만 행 절감 추정).
+- 그대로(사용 중 확인): OMNI 봉 · 한국 뉴스 · 미국 실적 · 내부자(OMNI-Q 학습 피처) · 원자재·채권 슬리브 · 데이터 감시. 외부 LLM 은 EXTERNAL_LLM_DISABLED=true · 소셜 수집 꺼짐(V33.588) · KV 미사용.
