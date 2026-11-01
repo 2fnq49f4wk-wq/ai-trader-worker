@@ -6690,3 +6690,12 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
 - 1회성 이관·수리 확인(r2mig 위원회 모델 · histMig · ghost 원장 수리판): 끝났어도 매분 상태 1~2건 읽음 → 아이솔레이트에 '끝남' 기억 · r2mig 는 퇴역이라 안 함.
 - 시세 백필(backfill): 시세 키 전체 훑기(≈1,000행) 매분 → 아이솔레이트당 10분 1회(하루 ≈140만 행 절감 추정).
 - 그대로(사용 중 확인): OMNI 봉 · 한국 뉴스 · 미국 실적 · 내부자(OMNI-Q 학습 피처) · 원자재·채권 슬리브 · 데이터 감시. 외부 LLM 은 EXTERNAL_LLM_DISABLED=true · 소셜 수집 꺼짐(V33.588) · KV 미사용.
+
+## V33.713 (11/1) — 화면 대기 CPU 2차 · Cloudflare 요금 변경 확인
+- V33.711 뒤 재측정: 작동 화면 안정 상태(로드 25초 뒤) 데스크 메인 7% · 합성기 3.5%(종전 폰 합성기 19%). 남은 것 = 타이머가 부르는 레이아웃·스타일.
+  · 'LIVE · n초 전' 매초 클래스 제거·추가 + 글자 교체 → 5초 · 바뀔 때만(classList/textContent 비교).
+  · refreshAll(/api/state 215KB) 10초 → 20초(엔진 크론 1분 주기).
+  · 화면 굳음 감시 200ms → 1초 간격(문턱 400ms 그대로).
+- Cloudflare 요금(공식 문서 11/1 확인): 2026-12-01 부터 Workers Logs 가 Observability 요금(Paid: 월 50GB 수집·10GB-월 보관 포함 · 초과 $0.25/GB · $0.10/GB-월)으로.
+  우리 wrangler.toml 에 [observability] 없음 → Workers Logs 꺼짐(로그는 D1 logs 표 · CRONPROF 는 wrangler tail 전용). 켜져 있어도 추정 월 0.1~0.2GB → 0원.
+  Workers(월 1천만 요청·3천만 CPU ms 포함) · D1(월 읽기 250억·쓰기 5천만 포함) · R2 · KV 요금은 변경 없음 — 워커 사용량 상한(usage limits) 값 그대로 맞다.

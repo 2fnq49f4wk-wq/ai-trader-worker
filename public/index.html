@@ -149,11 +149,11 @@ window.LUXBOOT = (function () {
     window.addEventListener('pagehide', function () { send(true); });
     var shownAt = 0;
     setInterval(function () {
-      var n = performance.now(), g = n - last - 200; last = n;
+      var n = performance.now(), g = n - last - 1000; last = n;   // [V33.713] 200ms → 1s 간격(초당 5번 깨우던 감시) — 문턱(400ms 넘는 굳음)은 그대로
       if (document.hidden || Date.now() - hiddenAt < 1500 || Date.now() - shownAt < 1500) return;   // 백그라운드 절전은 멈춤이 아니다
       /* [V33.463] 20초 넘는 간격은 '멈춤' 이 아니라 앱이 잠든 것(iOS 는 돌아올 때 타이머가 숨김 해제보다 먼저 돈다 — 실기기 106초 기록) */
       if (g > 400) { var o = ctx(); o.ms = Math.round(g); o.at = Date.now(); o.k = g > 20000 ? 'susp' : 'stall'; q.push(o); if (q.length > 40) q.shift(); send(false); }
-    }, 200);
+    }, 1000);
     /* [V33.463] ★손가락은 움직였는데 화면이 안 굴렀나★ — 사용자(아이폰): "아직도 스크롤 멈춘다". 굳음(stall)이 없는데도 멈춘다면
        스크롤이 막힌 것이다. 위아래로 60px 넘게 밀었는데 그 화면의 스크롤 위치가 4px 도 안 바뀌었고 끝에 닿은 것도 아니면 'stuck' —
        손가락이 처음 닿은 요소(태그#id.클래스)를 같이 적는다. 수동 감시(passive)라 스크롤을 막지 않는다. */
@@ -201,8 +201,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.712">
-<script src="/neural-observatory.js?v=33.712" defer></script>
+<meta name="lux-build" content="V33.713">
+<script src="/neural-observatory.js?v=33.713" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -5788,7 +5788,7 @@ window.LUX_NV = {
 
 <script>
 (function () {
-  var REFRESH_MS = 10000;  // [V16] 가격은 cron이 갱신, 프론트는 state만 10s 폴링
+  var REFRESH_MS = 20000;  // [V33.713] 10s → 20s — 엔진 크론이 1분 주기라 10초 폴링은 대부분 같은 215KB 를 다시 받아 다시 그렸다(대기 CPU)
   var PRICE_REFRESH_MS = 60000;  // [V13] 가격 전 종목 fan-out 주기 (60s = 정규장 1분 갱신)
   var DAILY_REFRESH_MS = 20000;  // [V13] 일봉 라운드로빈 주기 (20s)
   var priceTimer = null;
@@ -6097,23 +6097,22 @@ window.LUX_NV = {
       return;
     }
     var sec = Math.floor((Date.now() - last) / 1000);
-    ind.classList.remove('live', 'stale', 'dead');
+    var __st = sec <= 30 ? 'live' : sec <= 120 ? 'stale' : 'dead';
+    if (!ind.classList.contains(__st)) { ind.classList.remove('live', 'stale', 'dead'); ind.classList.add(__st); }
+    var __setT = function (el, t) { if (el && el.textContent !== t) el.textContent = t; };
     if (sec <= 30) {
-      ind.classList.add('live');
-      txt.textContent = 'LIVE · ' + (sec <= 2 ? '방금 갱신' : sec + '초 전');
-      if (tbLive) { tbLive.textContent = '● LIVE · ' + (sec <= 2 ? '방금 갱신' : sec + '초 전'); tbLive.style.color = 'var(--pos)'; }
+      __setT(txt, 'LIVE · ' + (sec <= 2 ? '방금 갱신' : sec + '초 전'));
+      if (tbLive) { __setT(tbLive, '● LIVE · ' + (sec <= 2 ? '방금 갱신' : sec + '초 전')); tbLive.style.color = 'var(--pos)'; }
     } else if (sec <= 120) {
-      ind.classList.add('stale');
-      txt.textContent = '갱신 지연 · ' + sec + '초 전';
-      if (tbLive) { tbLive.textContent = '● 지연 · ' + sec + '초 전'; tbLive.style.color = 'var(--amber)'; }
+      __setT(txt, '갱신 지연 · ' + sec + '초 전');
+      if (tbLive) { __setT(tbLive, '● 지연 · ' + sec + '초 전'); tbLive.style.color = 'var(--amber)'; }
     } else {
-      ind.classList.add('dead');
-      txt.textContent = '연결 끊김 · ' + fmtAgo(last);
-      if (tbLive) { tbLive.textContent = '● 끊김 · ' + fmtAgo(last); tbLive.style.color = 'var(--neg)'; }
+      __setT(txt, '연결 끊김 · ' + fmtAgo(last));
+      if (tbLive) { __setT(tbLive, '● 끊김 · ' + fmtAgo(last)); tbLive.style.color = 'var(--neg)'; }
     }
   }
   // 1초마다 경과시간 표시 갱신 (데이터 재요청 아님 — 표시만)
-  setInterval(updateLiveIndicator, 1000);
+  setInterval(updateLiveIndicator, 5000);   // [V33.713] 1s → 5s · 바뀔 때만 DOM 을 건드린다(매초 클래스·글자 교체 = 매초 스타일·레이아웃 재계산)
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function(c){
@@ -21513,12 +21512,12 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.712">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.712">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.712">
-<link rel="stylesheet" href="/model-evidence.css?v=33.712">
+<link rel="stylesheet" href="/brain-console.css?v=33.713">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.713">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.713">
+<link rel="stylesheet" href="/model-evidence.css?v=33.713">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.712">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.713">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -21545,7 +21544,7 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
   setTimeout(reveal, 9500);
 })();
 </script>
-<script src="/model-evidence.js?v=33.712"></script>
-<script src="/workspace-ui.js?v=33.712"></script>
+<script src="/model-evidence.js?v=33.713"></script>
+<script src="/workspace-ui.js?v=33.713"></script>
 </body>
 </html>
