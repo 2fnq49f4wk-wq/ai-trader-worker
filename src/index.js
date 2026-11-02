@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.722";
+const _BUILD_VER = "V33.723";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8783,9 +8783,110 @@ async function luxProfileApi(DB, uid, request) {
       .bind(h, JSON.stringify(prof), now, now).run();
     return { ok: true, profile: prof };
   }
-  const r = await DB.prepare("SELECT profile FROM user_profiles WHERE uid_hash = ?").bind(h).first();
+  if (request.method === "DELETE") {   // [V33.723] 내 데이터 삭제(개인정보 삭제 요구) — 프로필·모의계좌·이 코드에 묶인 패스키까지
+    await DB.batch([DB.prepare("DELETE FROM user_profiles WHERE uid_hash = ?").bind(h), DB.prepare("DELETE FROM user_passkeys WHERE uid_hash = ?").bind(h)]).catch(function () {});
+    return { ok: true, deleted: true };
+  }
+  const r = await DB.prepare("SELECT profile, updated_ts FROM user_profiles WHERE uid_hash = ?").bind(h).first();
   let prof = null; try { prof = r && r.profile ? JSON.parse(r.profile) : null; } catch (e) {}
+  const now = Date.now();
+  // [V33.723] 보존 기한 — 마지막 사용 365일 지나면 삭제(개인정보 안내에 적은 대로). 사용 표시는 7일에 한 번만 쓴다(읽을 때마다 쓰지 않는다).
+  if (r && now - Number(r.updated_ts || 0) > 7 * 86400000) { try { await DB.prepare("UPDATE user_profiles SET updated_ts = ? WHERE uid_hash = ?").bind(now, h).run(); } catch (e) {} }
+  if (Math.random() < 0.02) { try { await DB.batch([DB.prepare("DELETE FROM user_profiles WHERE updated_ts < ?").bind(now - LUX_RETAIN_MS), DB.prepare("DELETE FROM user_passkeys WHERE last_ts < ?").bind(now - LUX_RETAIN_MS)]); } catch (e) {} }
   return { ok: true, profile: prof };
+}
+const LUX_RETAIN_MS = 365 * 86400000;
+
+/* [V33.723] ★패스키 로그인(WebAuthn)★ — 사용자 11/2 "앱 등록 말고 사이트에서 로그인". 외부 업체(구글·카카오) 등록 없이 브라우저 표준만 쓴다.
+   기기의 Face ID·지문·화면 잠금으로 서명 → 서버는 공개키(ES256)만 저장 · 비밀번호·이메일·이름 없음. 같은 애플/구글 계정 기기끼리는 패스키가 동기화된다.
+   패스키 = 이 사용자의 '연결 코드(uid)' 를 안전하게 되찾는 열쇠. 프로필 저장 방식(uid 해시 키)은 그대로다.
+   ※ 패스키는 도메인에 묶인다(지금 *.workers.dev) — .com 으로 옮기면 그 주소에서 다시 등록해야 한다. */
+function _b64u(buf) { let s = ""; const b = new Uint8Array(buf); for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
+function _unb64u(t) { t = String(t || "").replace(/-/g, "+").replace(/_/g, "/"); while (t.length % 4) t += "="; const s = atob(t), b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; }
+function _cbor(buf) {   // 최소 CBOR 해석기(패스키 attestationObject · COSE 키용: 정수·바이트·문자열·배열·맵)
+  const b = buf instanceof Uint8Array ? buf : new Uint8Array(buf); let i = 0;
+  function len(ai) { if (ai < 24) return ai; if (ai === 24) return b[i++]; if (ai === 25) { const v = (b[i] << 8) | b[i + 1]; i += 2; return v; } if (ai === 26) { const v = ((b[i] << 24) >>> 0) + (b[i + 1] << 16) + (b[i + 2] << 8) + b[i + 3]; i += 4; return v; } throw new Error("cbor len"); }
+  function item() { const h = b[i++], mt = h >> 5, ai = h & 31;
+    if (mt === 0) return len(ai); if (mt === 1) return -1 - len(ai);
+    if (mt === 2) { const n = len(ai), v = b.slice(i, i + n); i += n; return v; }
+    if (mt === 3) { const n = len(ai), v = new TextDecoder().decode(b.slice(i, i + n)); i += n; return v; }
+    if (mt === 4) { const n = len(ai), a = []; for (let k = 0; k < n; k++) a.push(item()); return a; }
+    if (mt === 5) { const n = len(ai), m = new Map(); for (let k = 0; k < n; k++) { const key = item(); m.set(key, item()); } return m; }
+    if (mt === 7) { if (ai === 20) return false; if (ai === 21) return true; if (ai === 22) return null; }
+    throw new Error("cbor type " + mt); }
+  return item();
+}
+async function _pkSecret(DB) {
+  if (globalThis.__pkSecret) return globalThis.__pkSecret;
+  let s = await getState(DB, "passkey_secret", null, true);   // 엄격 읽기 — 못 읽었으면 새 비밀로 덮지 않는다(기존 패스키 도전값이 깨진다)
+  if (!s || !s.k) { const a = new Uint8Array(32); crypto.getRandomValues(a); s = { k: _b64u(a) }; await setState(DB, "passkey_secret", s); }
+  globalThis.__pkSecret = await crypto.subtle.importKey("raw", _unb64u(s.k), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+  return globalThis.__pkSecret;
+}
+async function _pkChallenge(DB, kind) {   // 저장 없는 일회 도전값 — 시각·난수·종류에 서명(5분 유효). D1 쓰기 없음.
+  const n = new Uint8Array(16); crypto.getRandomValues(n);
+  const body = kind + "." + Date.now() + "." + _b64u(n);
+  const sig = await crypto.subtle.sign("HMAC", await _pkSecret(DB), new TextEncoder().encode(body));
+  return _b64u(new TextEncoder().encode(body + "." + _b64u(sig)));
+}
+async function _pkCheckChallenge(DB, ch, kind) {
+  const t = new TextDecoder().decode(_unb64u(ch)), p = t.split(".");
+  if (p.length !== 4 || p[0] !== kind || Date.now() - Number(p[1]) > 300000) return false;
+  return await crypto.subtle.verify("HMAC", await _pkSecret(DB), _unb64u(p[3]), new TextEncoder().encode(p.slice(0, 3).join(".")));
+}
+function _derToRaw(der) {   // ECDSA 서명 DER → r|s 64바이트(WebCrypto 형식)
+  let i = 2; if (der[1] & 0x80) i = 2 + (der[1] & 0x7f);
+  const rl = der[i + 1], r = der.slice(i + 2, i + 2 + rl); i = i + 2 + rl; const sl = der[i + 1], s2 = der.slice(i + 2, i + 2 + sl);
+  const fix = function (x) { while (x.length > 32 && x[0] === 0) x = x.slice(1); const o = new Uint8Array(32); o.set(x, 32 - x.length); return o; };
+  const out = new Uint8Array(64); out.set(fix(r), 0); out.set(fix(s2), 32); return out;
+}
+async function luxPasskeyApi(DB, sub, request, url) {
+  if (!globalThis.__luxPkTbl) {
+    await DB.prepare("CREATE TABLE IF NOT EXISTS user_passkeys (cred_id TEXT PRIMARY KEY, uid_hash TEXT NOT NULL, uid_enc TEXT NOT NULL, pub_jwk TEXT NOT NULL, created_ts INTEGER NOT NULL, last_ts INTEGER NOT NULL)").run();
+    globalThis.__luxPkTbl = true;
+  }
+  const rpId = url.hostname, origin = url.origin;
+  const bad = function (m) { const e = new Error(m); e.code = 400; throw e; };
+  if (sub === "options") return { ok: true, rpId: rpId, challenge: await _pkChallenge(DB, String(url.searchParams.get("kind") || "") === "reg" ? "reg" : "auth") };
+  const b = await request.json().catch(function () { return null; });
+  if (!b || !b.clientDataJSON) bad("bad body");
+  const cdRaw = _unb64u(b.clientDataJSON), cd = JSON.parse(new TextDecoder().decode(cdRaw));
+  if (cd.origin !== origin) bad("origin");
+  if (sub === "register") {
+    const uid = String(request.headers.get("x-lux-uid") || ""); if (!/^[0-9a-f]{32,64}$/.test(uid)) bad("uid");
+    if (cd.type !== "webauthn.create" || !(await _pkCheckChallenge(DB, cd.challenge, "reg"))) bad("challenge");
+    const att = _cbor(_unb64u(b.attestationObject)), ad = att.get("authData");
+    const rpHash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rpId)));
+    for (let k = 0; k < 32; k++) if (ad[k] !== rpHash[k]) bad("rpId");
+    if (!(ad[32] & 0x01) || !(ad[32] & 0x40)) bad("flags");
+    const cl = (ad[53] << 8) | ad[54], credId = ad.slice(55, 55 + cl), cose = _cbor(ad.slice(55 + cl));
+    if (cose.get(3) !== -7 || cose.get(-1) !== 1) bad("ES256 만 지원");
+    const jwk = { kty: "EC", crv: "P-256", x: _b64u(cose.get(-2)), y: _b64u(cose.get(-3)), ext: true };
+    const hb = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("lux-profile:" + uid));
+    const h = Array.from(new Uint8Array(hb)).map(function (x) { return x.toString(16).padStart(2, "0"); }).join("");
+    const n = await DB.prepare("SELECT COUNT(*) n FROM user_passkeys WHERE uid_hash = ?").bind(h).first();
+    if (n && n.n >= 10) bad("패스키는 10개까지");
+    const now = Date.now();
+    await DB.prepare("INSERT OR REPLACE INTO user_passkeys (cred_id, uid_hash, uid_enc, pub_jwk, created_ts, last_ts) VALUES (?, ?, ?, ?, ?, ?)").bind(_b64u(credId), h, uid, JSON.stringify(jwk), now, now).run();
+    return { ok: true, registered: true };
+  }
+  if (sub === "login") {
+    if (cd.type !== "webauthn.get" || !(await _pkCheckChallenge(DB, cd.challenge, "auth"))) bad("challenge");
+    const row = await DB.prepare("SELECT uid_enc, pub_jwk FROM user_passkeys WHERE cred_id = ?").bind(String(b.id || "")).first();
+    if (!row) bad("등록되지 않은 패스키");
+    const ad = _unb64u(b.authenticatorData);
+    const rpHash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rpId)));
+    for (let k = 0; k < 32; k++) if (ad[k] !== rpHash[k]) bad("rpId");
+    if (!(ad[32] & 0x01)) bad("flags");
+    const cdh = new Uint8Array(await crypto.subtle.digest("SHA-256", cdRaw));
+    const data = new Uint8Array(ad.length + 32); data.set(ad, 0); data.set(cdh, ad.length);
+    const key = await crypto.subtle.importKey("jwk", JSON.parse(row.pub_jwk), { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+    const ok = await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, _derToRaw(_unb64u(b.signature)), data);
+    if (!ok) bad("서명 불일치");
+    await DB.prepare("UPDATE user_passkeys SET last_ts = ? WHERE cred_id = ?").bind(Date.now(), String(b.id)).run();
+    return { ok: true, uid: row.uid_enc };
+  }
+  bad("unknown");
 }
 
 function quoteSessionFields(q) {
@@ -33562,6 +33663,11 @@ async function handleRequest(request, env, ctx, _inner) {
 
     /* [V33.721] ★개인화 프로필★(사용자 11/2 "개인 수요에 맞게 · 수익화는 나중 · 구현부터") — 로그인 없이 기기 토큰(브라우저가 만든 32~64자 16진수).
        서버는 토큰의 SHA-256 만 키로 쓰고 개인정보는 받지 않는다(성향·시장·기간·경험·관심종목만). 다른 기기는 같은 토큰(연결 코드)을 넣으면 같은 프로필. */
+    if (path === "/api/me/passkey/options" || path === "/api/me/passkey/register" || path === "/api/me/passkey/login") {   // [V33.723] 패스키 로그인
+      if (path !== "/api/me/passkey/options" && request.method !== "POST") return Response.json({ ok: false, error: "POST" }, { status: 405, headers: cors });
+      try { return Response.json(await luxPasskeyApi(env.DB, path.split("/").pop(), request, url), { headers: Object.assign({ "cache-control": "no-store" }, cors) }); }
+      catch (e) { return Response.json({ ok: false, error: String(e && e.message || e) }, { status: e && e.code === 400 ? 400 : 503, headers: cors }); }
+    }
     if (path === "/api/me") {
       const uid = String(request.headers.get("x-lux-uid") || "");
       if (!/^[0-9a-f]{32,64}$/.test(uid)) return Response.json({ ok: false, error: "bad uid" }, { status: 400, headers: cors });

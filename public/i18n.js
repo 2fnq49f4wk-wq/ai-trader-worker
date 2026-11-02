@@ -63,22 +63,47 @@
     while ((n = w.nextNode())) { if (n.nodeType === 3) doText(n); else if (!SKIP[n.tagName]) doAttrs(n); }
   }
 
-  var pend = new Set(), timer = 0;
-  function flush() { timer = 0; var a = Array.from(pend); pend.clear(); for (var i = 0; i < a.length; i++) if (a[i].isConnected) walk(a[i]); }
-  function queue(n) { pend.add(n); if (!timer) timer = setTimeout(flush, 60); }
+  /* [V33.723] ★렉 수리★(사용자 11/2 "영어·한국어 전환할 때 렉") — 종전엔 처음에 문서 전체(숨은 화면 수천 개 노드 포함)를 한 번에 번역하고,
+     숨은 화면의 시세 갱신까지 전부 감시했다. 이제 ① 보이는 곳(사이드바·앱바·탭바·열린 화면·열린 창)만 먼저 ② 숨은 화면은 '나중에' 표시만 해 두고
+     열릴 때 번역 ③ 한 번에 8ms 까지만 일하고 다음 프레임으로 넘긴다(화면이 멈추지 않게). */
+  function hiddenHost(n) {
+    var e = n.nodeType === 1 ? n : n.parentElement; if (!e) return null;
+    var pg = e.closest(".page"); if (pg && !pg.classList.contains("active")) return pg;
+    var md = e.closest(".modal"); if (md && !md.classList.contains("show")) return md;
+    return null;
+  }
+  var pend = [], head = 0, pendSet = new Set(), dirty = new Set(), timer = 0;
+  function queue(n) {
+    if (pendSet.has(n)) return;
+    var h = hiddenHost(n); if (h) { dirty.add(h); return; }
+    pendSet.add(n); pend.push(n);
+    if (!timer) timer = requestAnimationFrame(flush);
+  }
+  function flush() {   // 앞에서부터 가리키는 자리만 옮긴다(shift 는 수천 개에서 매번 배열 전체를 당겨 느렸다)
+    timer = 0; var t0 = performance.now(), k = 0;
+    while (head < pend.length) { var n = pend[head++]; pendSet.delete(n); if (n.isConnected) walk(n); if ((++k & 15) === 0 && performance.now() - t0 > 8) break; }
+    if (head >= pend.length) { pend = []; head = 0; } else timer = requestAnimationFrame(flush);
+  }
+  function walkLazy(root) {   // 큰 덩어리는 자식 단위로 쪼개 프레임마다 나눠 처리
+    if (root.nodeType === 1) { doAttrs(root); var c = root.children; for (var i = 0; i < c.length; i++) queue(c[i]); var t = root.childNodes; for (var j = 0; j < t.length; j++) if (t[j].nodeType === 3) doText(t[j]); }
+  }
 
   function start() {
     document.documentElement.setAttribute("lang", "en");
-    walk(document.body);
+    ["nav.sidebar", ".m-appbar", ".m-tabbar", ".page.active", ".modal.show", "header"].forEach(function (sel) { document.querySelectorAll(sel).forEach(walkLazy); });
+    document.querySelectorAll(".page:not(.active), .modal:not(.show)").forEach(function (e) { dirty.add(e); });
     if (document.title && HANGUL.test(document.title)) document.title = tr(document.title);
     new MutationObserver(function (ms) {
       for (var i = 0; i < ms.length; i++) {
         var m = ms[i];
-        if (m.type === "characterData") queue(m.target);
-        else if (m.type === "attributes") queue(m.target);
+        if (m.type === "attributes" && m.attributeName === "class") {   // 숨은 화면·창이 열리면 그때 번역
+          var el = m.target; if (dirty.has(el) && (el.classList.contains("active") || el.classList.contains("show"))) { dirty.delete(el); walkLazy(el); }
+          continue;
+        }
+        if (m.type === "characterData" || m.type === "attributes") queue(m.target);
         else for (var j = 0; j < m.addedNodes.length; j++) queue(m.addedNodes[j]);
       }
-    }).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ATTRS });
+    }).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ATTRS.concat(["class"]) });
   }
 
   function load() {
@@ -95,7 +120,10 @@
 
   window.luxLang = {
     get: function () { return lang; },
-    set: function (l) { try { localStorage.setItem(KEY, l === "en" ? "en" : "ko"); } catch (e) {} location.reload(); },
+    set: function (l) {   // [V33.723] 한국어→영어는 새로 고침 없이 그 자리에서(원문은 그대로라 바로 덮어 그린다) · 영어→한국어는 원문을 다시 그려야 해 새로 고침
+      l = l === "en" ? "en" : "ko"; try { localStorage.setItem(KEY, l); } catch (e) {}
+      if (l === "en" && lang !== "en") { lang = "en"; label(); load(); return; }
+      location.reload(); },
     t: function (s) { return lang === "en" ? tr(s) : s; }
   };
   function label() {

@@ -28,12 +28,18 @@ if (clean) {
 chk(/<script src="\/mine\.js\?v=[\d.]+" defer><\/script>/.test(H) && /class="nav-item" data-page="mine"/.test(H) && /id="page-mine"/.test(H) && /\{ id:'mine', ic:NV\.user, tx:'MY' \}/.test(H),
     "mine.js · 사이드바 MY 메뉴 · MY 페이지 · 모바일 탭", "★MY 메뉴·페이지·모바일 탭 중 빠진 것이 있다★");
 chk(!/id="luxMine"/.test(P) && !/btnMine/.test(H), "대시보드 맨 위 패널 없음(사용자 11/2 — 사이드바 메뉴로)", "★대시보드 위 패널이 남아 있다★");
-chk(/saveT = setTimeout\(function \(\) \{ api\("POST", prof\)/.test(P) && /if \(loaded\) return; loaded = true;/.test(P), "D1: 읽기는 MY 첫 열림 1회 · 쓰기는 2초 모아 1회", "★프로필 읽기·쓰기가 잦다★");
+chk(/saveT = setTimeout\(function \(\) \{ api\("POST", prof\)/.test(P) && /if \(loaded && !force\) return; loaded = true;/.test(P), "D1: 읽기는 MY 첫 열림 1회 · 쓰기는 2초 모아 1회", "★프로필 읽기·쓰기가 잦다★");
 chk(/window\.openDetailFromSym = openDetailFromSym;/.test(H), "패널에서 종목 상세 열기(전역 노출)", "★openDetailFromSym 이 전역에 없다★");
 chk(/!pg \|\| !pg\.classList\.contains\("active"\)\) return;/.test(P) && /170000/.test(P) && /!document\.hidden && pg\.classList\.contains\("active"\)/.test(P), "그리기·판정 조회는 MY 가 보일 때만 · 3분 간격", "★MY 가 숨어 있어도 갱신한다★");
 const regs = ["SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH"];
 chk(regs.every((r) => new RegExp(r + ": \\{ safe: \"[^\"]+\", mid: \"[^\"]+\", aggr: \"[^\"]+\" \\}").test(P)), "국면 5종 × 성향 3종 행동 안내", "★국면·성향 안내가 빠졌다★");
-chk(/모의투자 · 투자 권유 아님/.test(P) && /투자 권유가 아닙니다/.test(P), "모의투자·투자 권유 아님 표기", "★면책 표기가 빠졌다★");
-chk(/내 맞춤 설정\(2026-11-02 추가\)/.test(V), "개인정보 안내에 저장 항목", "★개인정보 안내가 없다★");
+chk(/모의투자 · 가상 자금 · 투자 권유가 아닙니다/.test(P) && /투자 판단과 결과의 책임은 본인에게/.test(P), "모의투자·투자 권유 아님 표기", "★면책 표기가 빠졌다★");
+chk(/MY\(내 투자\) · 모의계좌 · 패스키 \(2026-11-02\)/.test(V) && /보존 기간/.test(V), "개인정보 안내에 저장 항목", "★개인정보 안내가 없다★");
+// [V33.723] 패스키 로그인 · 내 데이터 삭제 · 보존 1년 · 관심종목/검색 결과에도 [사기]
+chk(/request\.method === "DELETE"/.test(S) && /DELETE FROM user_profiles WHERE uid_hash = \?/.test(S) && /id="mineDelete"|id === "mineDelete"/.test(P), "내 데이터 삭제(서버 프로필·모의계좌·패스키)", "★데이터 삭제 경로가 없다★");
+chk(/const LUX_RETAIN_MS = 365 \* 86400000;/.test(S) && /DELETE FROM user_profiles WHERE updated_ts < \?/.test(S) && /> 7 \* 86400000/.test(S), "보존 1년 자동 삭제 · 사용 표시는 7일에 1회만 쓰기", "★보존 기한 처리가 없다★");
+chk(/cd\.origin !== origin/.test(S) && /_pkCheckChallenge\(DB, cd\.challenge, "reg"\)/.test(S) && /_pkCheckChallenge\(DB, cd\.challenge, "auth"\)/.test(S) && /crypto\.subtle\.verify\(\{ name: "ECDSA", hash: "SHA-256" \}/.test(S) && /rpHash/.test(S),
+    "패스키: 출처·일회 도전값(5분 · 서명)·rpId·ECDSA 서명 검증", "★패스키 검증이 빠졌다★");
+chk((P.match(/buyBtn\(/g) || []).length >= 4, "모의 매수 버튼: 오늘 후보·관심종목·검색 결과·보유 종목", "★[사기] 버튼이 오늘 후보에만 있다★");
 console.log(fails === 0 ? "\n✓ 내 맞춤 검사 통과" : "\n✗ " + fails + "건 실패");
 process.exit(fails ? 1 : 0);

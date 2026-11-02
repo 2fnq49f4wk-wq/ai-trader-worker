@@ -97,7 +97,7 @@ console.log("⑤ 전수 대조(V33.526) — 화면이 부르는 /api/* GET 은 �
   const eps = [...new Set(fe.match(/\/api\/[a-zA-Z0-9\/_-]+/g) || [])];
   const mcSrc = (S.match(/const MICRO_CACHE_TTL = \{[\s\S]*?\};/) || [""])[0];
   /* 일부러 캐시하지 않는 것 — 이유를 같이 적는다 */
-  const ALLOW = { "/api/me": "내 맞춤 프로필 — 기기 토큰별 · no-store(공유 캐시 금지) · 한 행 조회(V33.721)", "/api/cfg": "설정 — 바꾼 즉시 보여야 한다", "/api/build": "판 확인 — no-store 한 줄(D1 없음)", "/api/client-perf": "기기 기록(POST 위주)",
+  const ALLOW = { "/api/me/passkey/options": "패스키 일회 도전값 — 캐시하면 재사용된다(V33.723)", "/api/me/passkey/register": "패스키 등록(POST)", "/api/me/passkey/login": "패스키 로그인(POST)", "/api/me": "내 맞춤 프로필 — 기기 토큰별 · no-store(공유 캐시 금지) · 한 행 조회(V33.721)", "/api/cfg": "설정 — 바꾼 즉시 보여야 한다", "/api/build": "판 확인 — no-store 한 줄(D1 없음)", "/api/client-perf": "기기 기록(POST 위주)",
     "/api/state": "자체 L1/L2/R2 + 크론 사본", "/api/omni-structure": "자체 R2 사본(6시간)" };
   const miss = [];
   for (const e of eps) {
