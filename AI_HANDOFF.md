@@ -6820,3 +6820,4 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
 - 사용자가 Cloudflare Registrar 에서 lux-inv.com 등록(2026-11-02 · 만료 2031-11-02 · 네임서버 Cloudflare).
 - wrangler.toml routes 에 lux-inv.com · www.lux-inv.com (custom_domain = true) → 배포 때 DNS(A 104.21.57.204 · 172.67.192.50)·인증서 자동 생성 확인.
   www.lux-inv.com/api/build 응답 확인. workers.dev 주소도 그대로 열림. 패스키는 주소별 — 새 주소에서 다시 만들어야 함.
+- V33.726b: routes 를 넣으면 workers.dev 가 기본으로 꺼져(오류 1042) 학습기·북마크가 끊겼다 → wrangler.toml workers_dev = true. 확인: workers.dev 200 · lux-inv.com · www.lux-inv.com /api/build 200(바깥 조회).
