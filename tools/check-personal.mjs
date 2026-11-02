@@ -42,7 +42,9 @@ chk(/cd\.origin !== origin/.test(S) && /_pkCheckChallenge\(DB, cd\.challenge, "r
     "패스키: 출처·일회 도전값(5분 · 서명)·rpId·ECDSA 서명 검증", "★패스키 검증이 빠졌다★");
 chk((P.match(/buyBtn\(/g) || []).length >= 4, "모의 매수 버튼: 오늘 후보·관심종목·검색 결과·보유 종목", "★[사기] 버튼이 오늘 후보에만 있다★");
 // [V33.724] 첫 화면(패스키로 시작 / 이미 있음 / 로그인 없이) · 로그인 기억 · AI 순위(매수 신호 → 검증 대기 → 점수) + 관찰·사기
-chk(/function gate\(\)/.test(P) && /id="gStart"/.test(P) && /id="gLogin"/.test(P) && /id="gGuest"/.test(P) && /localStorage\.getItem\("lux-gate"\)/.test(P), "첫 화면 로그인 선택(패스키 시작·로그인·로그인 없이)", "★첫 화면 선택이 없다★");
+chk(/function ask\(target\)/.test(P) && /id="gStart"/.test(P) && /id="gLogin"/.test(P) && /id="gGuest"/.test(P) && !/\n    gate\(\);/.test(P), "패스키는 대시보드·종목 상세 밖 메뉴로 갈 때 묻는다(첫 화면에서 안 묻는다)", "★패스키 묻기 흐름이 바뀌었다★");
+chk(/window\.luxGuard=function\(id\)\{if\(id==='dashboard'\|\|id==='detail'\)return true;/.test(H) && /if \(window\.luxGuard && !window\.luxGuard\(id\)\)/.test(H), "패스키 없으면 대시보드·종목 상세만(showPage 첫 관문)", "★메뉴 제한이 빠졌다★");
+chk(/location\.replace\('https:\/\/lux-inv\.com'/.test(H) && H.indexOf("workers\\.dev") < H.indexOf("lux-build"), "workers.dev 화면은 lux-inv.com 으로(맨 앞에서 · 기기 코드 #로 넘김)", "★workers.dev 이동이 빠졌다★");
 chk(/function remember\(kind\)/.test(P) && /navigator\.storage\.persist\(\)/.test(P), "로그인 기억(코드·선택 저장 + 저장소 유지 요청)", "★로그인 기억이 없다★");
 chk(/a\.tier - b\.tier \|\| b\.q - a\.q/.test(P) && /data-addwatch="' \+ esc\(r\.s\)/.test(P) && /buyBtn\(r\.s\)/.test(P), "AI 순위 · 줄마다 관찰·사기", "★AI 순위나 관찰·사기 버튼이 빠졌다★");
 // [V33.725] 닉네임 중복 금지 · 장부 검사(조작 방지) · 순위 1시간 1회 계산 · 쓰기 분당 30 · 종목 상세 매매 막대

@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.725";
+const _BUILD_VER = "V33.727";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".

@@ -46,6 +46,12 @@ const hourRows = [];
   for (const r of (aw && aw.workersInvocationsAdaptive) || []) { const k = r.dimensions.datetimeHour; H[k] = H[k] || { cpu: 0, n: 0 }; H[k].cpu += r.sum.cpuTimeUs / 1000; H[k].n += r.sum.requests; }
   for (const k of Object.keys(H).sort()) out("cpuHour", { h: k, cpuS: Math.round(H[k].cpu / 1000), n: H[k].n });
 }
+// [V33.727] 실행 결과별(정상·CPU 초과·오류) 건수 — 사용자 11/2 "CPU 계속 초과" 실측. 크론(scheduled)과 요청(fetch)을 나눠 본다.
+{
+  const h0 = new Date(Date.now() - 48 * 3600000).toISOString();
+  const st = await gql("status", A(`workersInvocationsAdaptive(limit: 2000, filter: {datetime_geq: "${h0}", scriptName: "ai-trader-app"}) { sum { requests errors cpuTimeUs } quantiles { cpuTimeP50 cpuTimeP99 } dimensions { status scriptName } }`));
+  for (const r of (st && st.workersInvocationsAdaptive) || []) out("status", { status: r.dimensions.status, n: r.sum.requests, err: r.sum.errors, cpuS: Math.round(r.sum.cpuTimeUs / 1e6), p50ms: r.quantiles && Math.round(r.quantiles.cpuTimeP50 / 1000), p99ms: r.quantiles && Math.round(r.quantiles.cpuTimeP99 / 1000) });
+}
 const q0 = new Date(Date.now() - (Number(process.env.TOPQ_DAYS) || 3) * 86400000).toISOString().slice(0, 10);
 a = await gql("d1q", A(`d1QueriesAdaptiveGroups(limit: 40, filter: {date_geq: "${q0}", date_leq: "${end}"}, orderBy: [sum_rowsRead_DESC]) { sum { rowsRead rowsWritten queryDurationMs } count dimensions { query } }`));
 for (const r of (a && a.d1QueriesAdaptiveGroups) || []) out("topq", { rowsRead: r.sum.rowsRead, rowsWritten: r.sum.rowsWritten, n: r.count, perCall: Math.round(r.sum.rowsRead / Math.max(1, r.count)), q: String(r.dimensions.query).slice(0, 220) });
