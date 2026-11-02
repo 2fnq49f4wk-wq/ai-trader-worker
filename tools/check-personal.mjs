@@ -41,5 +41,9 @@ chk(/const LUX_RETAIN_MS = 365 \* 86400000;/.test(S) && /DELETE FROM user_profil
 chk(/cd\.origin !== origin/.test(S) && /_pkCheckChallenge\(DB, cd\.challenge, "reg"\)/.test(S) && /_pkCheckChallenge\(DB, cd\.challenge, "auth"\)/.test(S) && /crypto\.subtle\.verify\(\{ name: "ECDSA", hash: "SHA-256" \}/.test(S) && /rpHash/.test(S),
     "패스키: 출처·일회 도전값(5분 · 서명)·rpId·ECDSA 서명 검증", "★패스키 검증이 빠졌다★");
 chk((P.match(/buyBtn\(/g) || []).length >= 4, "모의 매수 버튼: 오늘 후보·관심종목·검색 결과·보유 종목", "★[사기] 버튼이 오늘 후보에만 있다★");
+// [V33.724] 첫 화면(패스키로 시작 / 이미 있음 / 로그인 없이) · 로그인 기억 · AI 순위(매수 신호 → 검증 대기 → 점수) + 관찰·사기
+chk(/function gate\(\)/.test(P) && /id="gStart"/.test(P) && /id="gLogin"/.test(P) && /id="gGuest"/.test(P) && /localStorage\.getItem\("lux-gate"\)/.test(P), "첫 화면 로그인 선택(패스키 시작·로그인·로그인 없이)", "★첫 화면 선택이 없다★");
+chk(/function remember\(kind\)/.test(P) && /navigator\.storage\.persist\(\)/.test(P), "로그인 기억(코드·선택 저장 + 저장소 유지 요청)", "★로그인 기억이 없다★");
+chk(/a\.tier - b\.tier \|\| b\.q - a\.q/.test(P) && /data-addwatch="' \+ esc\(r\.s\)/.test(P) && /buyBtn\(r\.s\)/.test(P), "AI 순위 · 줄마다 관찰·사기", "★AI 순위나 관찰·사기 버튼이 빠졌다★");
 console.log(fails === 0 ? "\n✓ 내 맞춤 검사 통과" : "\n✗ " + fails + "건 실패");
 process.exit(fails ? 1 : 0);

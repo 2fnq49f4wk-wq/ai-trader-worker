@@ -51,7 +51,9 @@
   function q(sym) { var a = quotes(); for (var i = 0; i < a.length; i++) if (a[i].symbol === sym) return a[i]; return null; }
   function chg(x) { var v = x && (typeof x.regPct === "number" ? x.regPct : x.dayPct); return typeof v === "number" ? v : null; }
   function px(x) { return x && x.price > 0 ? x.price : null; }
-  function nm(sym) { var x = q(sym); return (x && x.name) || sym; }
+  function liveItem(sym) { var mk = isKr(sym) ? "kr" : "us", it = (PB && PB.live && PB.live[mk] && PB.live[mk].items) || []; for (var i = 0; i < it.length; i++) if (it[i].s === sym) return it[i]; return null; }
+  function priceOf(sym) { var p = px(q(sym)); if (p) return p; var it = liveItem(sym); return it && it.px > 0 ? it.px : null; }   // [V33.724] 워치리스트 밖 AI 후보도 살 수 있게(판정 시세)
+  function nm(sym) { var x = q(sym); if (x && x.name) return x.name; var it = liveItem(sym); return (it && it.nm) || sym; }
   function short(sym) { return isKr(sym) ? sym.split(".")[0] : sym; }
   function picksAll(mk) {
     var lv = PB && PB.live && PB.live[mk];
@@ -66,6 +68,21 @@
       if (hz === "long") return p.sl || p.hold >= 40;
       return !p.sl && p.hold > 3 && p.hold < 40;
     }).slice(0, 8);
+  }
+  /* [V33.724] ★AI 가 지금 사고 싶은 순위★(사용자 11/2) — ① 매수 신호(매매법 AI·국면 전략이 고르고 검증 통과) ② AI 가 골랐지만 검증 대기(그림자·관측)
+     ③ AI 점수(OMNI-Q) 상위 — 각 단계 안에서는 OMNI-Q 점수 순. 종전 '오늘 후보' 는 ①②만 · 보유 기간으로 걸러 약세장·장 마감에 비어 보였다. */
+  function ranked(mk) {
+    var it = (PB && PB.live && PB.live[mk] && PB.live[mk].items) || [];
+    return it.map(function (x) {
+      var w = /관측|미달|미통과|그림자|스캔만/.test(x.why || ""), tier = x.pb ? (w ? 1 : 0) : 2;
+      return { s: x.s, tier: tier, q: Number(x.q) || 0, sl: /^RG:/.test(x.pb || ""), pb: x.pb, stop: x.stop, hold: x.hold };
+    }).sort(function (a, b) { return a.tier - b.tier || b.q - a.q; }).slice(0, 12);
+  }
+  function rankSub(r) {
+    var top = Math.max(1, Math.round((1 - r.q) * 100));
+    var head = r.tier === 0 ? "매수 신호" : r.tier === 1 ? (r.sl ? "국면 전략 · 검증 대기" : "AI 선택 · 검증 대기") : "AI 점수 상위";
+    if (prof.exp === "new") head = r.tier === 0 ? "AI가 지금 사려는 종목" : r.tier === 1 ? "AI가 골랐지만 아직 검증 중" : "AI 점수가 높은 종목";
+    return head + " · OMNI-Q 상위 " + top + "%" + (r.stop ? " · 손절 −" + Number(r.stop).toFixed(0) + "%" : "");
   }
   function sigOf(sym) { var a = picksAll(isKr(sym) ? "kr" : "us"); for (var i = 0; i < a.length; i++) if (a[i].s === sym) return a[i]; return null; }
   function pbLoad(force) {
@@ -83,7 +100,7 @@
     return { eq: eq, cash: a.cash, mv: mv, upl: mv - cost, ret: (eq / a.start - 1) * 100, n: Object.keys(a.pos).length, days: Math.max(1, Math.round((Date.now() - (a.t0 || Date.now())) / 86400000)) };
   }
   function trade(side, sym, qty) {
-    var mk = isKr(sym) ? "kr" : "us", a = acct(mk), price = px(q(sym));
+    var mk = isKr(sym) ? "kr" : "us", a = acct(mk), price = priceOf(sym);
     qty = Math.floor(qty);
     if (!price) return "시세가 없어 체결할 수 없습니다";
     if (!(qty > 0)) return "수량을 1주 이상으로 정해 주세요";
@@ -125,6 +142,11 @@
       "#mineRoot .ops{display:grid;gap:6px;margin:6px 0 12px}#mineRoot .ops button{min-height:44px;border-radius:12px;border:1px solid #2C3A55;background:transparent;color:#C9D4E3;font-size:13.5px;cursor:pointer}#mineRoot .ops button.on{background:var(--m-acc);border-color:var(--m-acc);color:#06101E;font-weight:700}",
       "#mineRoot .kv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}#mineRoot .kv div{display:flex;flex-direction:column;gap:2px}#mineRoot .kv span{font-size:11.5px;color:var(--m-mute)}",
       "#mineRoot .note{font-size:11.5px;line-height:1.55;color:#8697AF}#mineRoot .empty{padding:16px 2px;color:var(--m-mute);font-size:13.5px;line-height:1.5}",
+      "#mineRoot .rk{flex:0 0 22px;text-align:center;font-size:15px;font-weight:700;color:var(--m-mute)}#mineRoot .rk.hot{color:var(--m-acc)}#mineRoot .wbtn{cursor:pointer;min-width:52px;justify-content:center;border:1px solid #2C3A55;background:transparent;color:#C9D4E3}#mineRoot .wbtn.on{color:var(--m-acc);border-color:#2A4A6A}",
+      "@media (max-width:520px){#mineRoot{padding:4px 0 96px;font-size:14px}#mineRoot .card{border-radius:16px;padding:14px}#mineRoot .h1{font-size:26px}#mineRoot .row{gap:8px;padding:11px 0}#mineRoot .buy,#mineRoot .sell,#mineRoot .tag2{min-height:38px;padding:0 11px;font-size:13px}#mineRoot .r .p{font-size:13.5px}#mineRoot .sb{font-size:11.5px}#mineRoot .tabs{margin-bottom:10px}#mineRoot .g2{gap:8px}}",
+      "#luxGate{position:fixed;inset:0;z-index:10050;background:#0B1220;color:#E8EEF7;display:flex;justify-content:center;font-family:inherit}#luxGate .in{width:min(440px,100%);display:flex;flex-direction:column;padding:0 24px calc(28px + env(safe-area-inset-bottom))}",
+      "#luxGate h1{margin:0;font-size:29px;line-height:1.3;font-weight:700;letter-spacing:-.5px}#luxGate .lg{width:64px;height:64px;border-radius:18px;background:#111A2C;border:1px solid #22304A;display:flex;align-items:center;justify-content:center}",
+      "#luxGate button{font-family:inherit;cursor:pointer}#luxGate .p1{min-height:56px;border-radius:16px;border:0;background:#5AB8FF;color:#06101E;font-size:16.5px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:10px}#luxGate .p2{min-height:52px;border-radius:16px;border:1px solid #2C3A55;background:transparent;color:#E8EEF7;font-size:15.5px}#luxGate .p3{min-height:48px;border:0;background:transparent;color:#9AA9BF;font-size:14.5px;text-decoration:underline}",
       "#mineSheet{position:fixed;inset:0;z-index:9999;background:rgba(4,8,16,.62);display:flex;align-items:flex-end;justify-content:center}",
       "#mineSheet .sh{width:min(520px,100%);background:#131D31;border-radius:22px 22px 0 0;padding:10px 20px calc(22px + env(safe-area-inset-bottom));color:#E8EEF7;display:flex;flex-direction:column;gap:14px;font-size:14px}",
       "#mineSheet .grab{width:40px;height:4px;border-radius:2px;background:#2C3A55;align-self:center}#mineSheet .pre{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}",
@@ -135,9 +157,10 @@
     document.head.appendChild(st);
   }
 
-  function rowQ(sym, sub, tags, right) {
-    var x = q(sym), c = chg(x), p = px(x);
-    return '<div class="row" data-open="' + esc(sym) + '"><div class="av">' + esc(short(sym).slice(0, 4)) + '</div><div class="l"><span class="nm">' + esc(nm(sym)) + (tags || "") + '</span><span class="sb">' + esc(sub) + "</span></div>" +
+  function rowQ(sym, sub, tags, right, rank, tier) {
+    var x = q(sym), c = chg(x), p = px(x), li = (!p || c == null) ? liveItem(sym) : null;
+    if (!p && li) p = li.px; if (c == null && li && typeof li.dp === "number") c = li.dp;
+    return '<div class="row" data-open="' + esc(sym) + '">' + (rank ? '<span class="rk' + (tier === 0 ? " hot" : "") + '">' + rank + "</span>" : '<div class="av">' + esc(short(sym).slice(0, 4)) + "</div>") + '<div class="l"><span class="nm">' + esc(nm(sym)) + (tags || "") + '</span><span class="sb">' + esc(sub) + "</span></div>" +
       '<div class="r"><span class="p">' + (p ? (isKr(sym) ? "₩" + Math.round(p).toLocaleString() : "$" + p.toFixed(2)) : "—") + '</span><span class="' + cls(c) + '" style="font-size:12.5px">' + pctS(c) + "</span></div>" + (right || "") + "</div>";
   }
   function pill(sig) { return !sig ? "" : sig.watch ? '<span class="pill w">관찰</span>' : sig.sl ? '<span class="pill s">국면 전략</span>' : '<span class="pill">AI 후보</span>'; }
@@ -151,13 +174,14 @@
       '<div class="btns">' + (v ? '<button type="button" class="b pri" data-tab="acct">내 계좌 보기</button>' : '<button type="button" class="b pri" data-open-acct="' + mk + '">' + MK[mk] + " 계좌 만들기</button>") + '<button type="button" class="b" data-tab="watch">종목 찾기</button></div></section>';
     h += '<div class="g2">' + prof.mkts.map(function (m) { var r = PB && PB.markets && PB.markets[m] && PB.markets[m].regime;
       return '<div class="wx"><span class="mu" style="font-size:12px">' + MK[m] + ' 시장</span><b style="color:' + (REGC[r] || "inherit") + '">' + (REG[r] || "불러오는 중") + '</b><span style="font-size:12.5px;line-height:1.45;color:#C9D4E3">' + esc(r && GUIDE[r] ? GUIDE[r][prof.risk] : "") + "</span></div>"; }).join("") + "</div>";
-    var all = [];
-    prof.mkts.forEach(function (m) { picks(m).forEach(function (p) { all.push(p); }); });
-    h += '<section class="card" aria-label="오늘 내 후보"><div class="ct"><span class="h2" style="color:#E8EEF7">오늘 내 후보</span><span>' + HOR[prof.horizon] + " · " + RISK[prof.risk] + "</span></div>" +
-      (all.length ? all.map(function (p) {
-        var sub = p.watch ? "관찰 중 · 검증 기준 미달" : (prof.exp === "new" ? (p.sl ? "지금 국면에 맞는 전략이 고른 종목" : "비슷한 과거에 성적 좋았던 방법") : (p.sl ? "국면 전략" : "AI 선택")) + (p.stop ? " · 손절 −" + Number(p.stop).toFixed(0) + "%" : "") + " · 최대 " + p.hold + "일";
-        return rowQ(p.s, sub, "", p.watch ? '<span class="tag2">관찰</span>' : buyBtn(p.s));
-      }).join("") : '<div class="empty">지금 내 조건(' + HOR[prof.horizon] + ')에 맞는 AI 후보가 없습니다' + (PB && prof.mkts.some(function (m) { var r = PB.markets && PB.markets[m] && PB.markets[m].regime; return r === "BEAR" || r === "CRASH"; }) ? " — 약세장이라 시스템이 신규 매수를 줄이는 중이에요" : "") + '.<br>관심종목에서 직접 골라 모의 매수할 수 있어요.</div>') + "</section>";
+    var rmk = prof.mkts.indexOf(acMk) >= 0 ? acMk : prof.mkts[0], rk = ranked(rmk), rg = PB && PB.markets && PB.markets[rmk] && PB.markets[rmk].regime;
+    h += '<section class="card" aria-label="AI 순위"><div class="ct"><span class="h2" style="color:#E8EEF7">AI가 지금 사고 싶은 순위</span>' +
+      (prof.mkts.length > 1 ? '<span class="seg">' + prof.mkts.map(function (m) { return '<button type="button" data-acmk="' + m + '" class="' + (m === rmk ? "on" : "") + '">' + MK[m] + "</button>"; }).join("") + "</span>" : '<span>' + MK[rmk] + "</span>") + "</div>" +
+      (rk.length ? rk.map(function (r, i) {
+        var on = prof.watch.indexOf(r.s) >= 0;
+        return rowQ(r.s, rankSub(r), "", '<button type="button" class="tag2 wbtn' + (on ? " on" : "") + '" data-addwatch="' + esc(r.s) + '" aria-label="관찰에 ' + (on ? "담김" : "추가") + '">' + (on ? "관찰중" : "관찰") + "</button>" + buyBtn(r.s), i + 1, r.tier);
+      }).join("") : '<div class="empty">AI 판정을 불러오는 중이거나 아직 오늘 판정이 없습니다.</div>') +
+      '<div class="note" style="margin-top:6px">' + MK[rmk] + " " + (REG[rg] || "") + " · 순위 = 매수 신호 → 검증 대기 → AI 점수 순 · 관찰 = 관심종목에 담기 · 모의투자</div></section>";
     return h;
   }
   function watch() {
@@ -197,7 +221,7 @@
     return '<section class="card">' + (prof.done ? '<div class="h2" style="margin-bottom:8px">투자 성향</div>' : '<div class="h2">처음이면 네 가지만 골라 주세요</div><div class="note" style="margin:4px 0 10px">답에 맞춰 홈의 시장 안내와 오늘 후보가 바뀝니다</div>') +
       ops("risk", RISK, 3) + '<span class="mu" style="font-size:13px">보유 기간</span>' + ops("horizon", HOR, 3) + '<span class="mu" style="font-size:13px">관심 시장</span>' + ops("mkts", MK, 2, true) + '<span class="mu" style="font-size:13px">투자 경험</span>' + ops("exp", EXP, 3) +
       (prof.done ? "" : '<button type="button" class="b pri" id="mineDone" style="width:100%">시작하기</button>') + "</section>" +
-      '<section class="card"><div class="h2">로그인 · 내 데이터</div><div class="note" style="margin:4px 0 0">내 설정·관심종목·모의계좌는 <b>이 기기 코드(또는 내 패스키)로만</b> 열립니다. 다른 사람에게는 보이지 않아요. 이름·이메일·전화번호는 받지 않습니다.</div>' +
+      '<section class="card"><div class="ct" style="margin:0"><span class="h2" style="color:#E8EEF7">로그인 · 내 데이터</span><span style="color:' + (isPk() ? "#5AB8FF" : "#9AA9BF") + '">' + (isPk() ? "패스키 로그인됨" : "로그인 없이 사용 중") + '</span></div><div class="note" style="margin:4px 0 0">내 설정·관심종목·모의계좌는 <b>이 기기 코드(또는 내 패스키)로만</b> 열립니다. 다른 사람에게는 보이지 않아요. 이름·이메일·전화번호는 받지 않습니다.</div>' +
       (pk ? '<div class="btns"><button type="button" class="b pri" id="minePkReg">패스키로 이 계정 지키기</button><button type="button" class="b" id="minePkLogin">패스키로 로그인</button></div><div class="note" style="margin-top:6px">패스키 = Face ID·지문·화면 잠금으로 하는 로그인(비밀번호 없음). 같은 애플·구글 계정의 기기끼리 자동으로 이어집니다.</div>'
           : '<div class="note" style="margin-top:6px">이 브라우저는 패스키를 지원하지 않아 연결 코드로만 이어 쓸 수 있어요.</div>') +
       '<div class="btns"><button type="button" class="b" id="mineCopy">연결 코드 복사</button><button type="button" class="b" id="mineLinkOpen">다른 기기 코드 넣기</button></div>' +
@@ -229,7 +253,7 @@
   function sheet(side, sym) {
     var mk = isKr(sym) ? "kr" : "us";
     if (side === "B" && !has(mk)) { acct(mk); persist(); }
-    var a = acct(mk), p = px(q(sym)); if (!p) { alert("지금 시세가 없어 주문할 수 없습니다"); return; }
+    var a = acct(mk), p = priceOf(sym); if (!p) { alert("지금 시세가 없어 주문할 수 없습니다"); return; }
     var hq = (a.pos[sym] || {}).q || 0, frac = side === "B" ? 0.25 : 1, qty = 0, col = side === "B" ? "#FF6B6B" : "#6FA0FF";
     var maxQ = function () { return side === "B" ? Math.floor(a.cash / p) : hq; };
     var setF = function (f) { frac = f; qty = side === "B" ? Math.floor(a.cash * f / p) : Math.floor(hq * f); };
@@ -257,26 +281,52 @@
   // ── 패스키(WebAuthn) ──
   var b64u = function (buf) { var s = "", b = new Uint8Array(buf); for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); };
   var unb64u = function (t) { t = t.replace(/-/g, "+").replace(/_/g, "/"); while (t.length % 4) t += "="; var s = atob(t), b = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; };
-  function pkReg() {
-    if (!prof.done) { alert("먼저 성향 네 가지를 고르고 [시작하기]를 눌러 주세요"); return; }
-    api("POST", prof).then(function () { return fetch("/api/me/passkey/options?kind=reg").then(function (r) { return r.json(); }); }).then(function (o) {
+  function pkReg(quiet) {
+    if (!prof.done) { alert("먼저 성향 네 가지를 고르고 [시작하기]를 눌러 주세요"); return Promise.resolve(false); }
+    return api("POST", prof).then(function () { return fetch("/api/me/passkey/options?kind=reg").then(function (r) { return r.json(); }); }).then(function (o) {
       return navigator.credentials.create({ publicKey: { rp: { id: o.rpId, name: "LUX" }, user: { id: crypto.getRandomValues(new Uint8Array(16)), name: "LUX 투자자", displayName: "LUX 투자자" },
         challenge: unb64u(o.challenge), pubKeyCredParams: [{ type: "public-key", alg: -7 }], authenticatorSelection: { residentKey: "required", userVerification: "preferred" }, attestation: "none", timeout: 120000 } });
     }).then(function (c) {
       return api("POST", { clientDataJSON: b64u(c.response.clientDataJSON), attestationObject: b64u(c.response.attestationObject) }, "/api/me/passkey/register");
-    }).then(function (j) { alert(j && j.ok ? "패스키를 만들었어요. 다른 기기에서는 [패스키로 로그인]만 누르면 됩니다." : "패스키를 만들지 못했습니다: " + ((j && j.error) || "")); })
-      .catch(function (e) { if (e && e.name !== "NotAllowedError") alert("패스키를 만들지 못했습니다: " + (e && e.message || e)); });
+    }).then(function (j) {
+      if (j && j.ok) { remember("pk"); if (!quiet) alert("패스키를 만들었어요. 다른 기기에서는 [패스키로 로그인]만 누르면 됩니다."); return true; }
+      alert("패스키를 만들지 못했습니다: " + ((j && j.error) || "")); return false;
+    }).catch(function (e) { if (e && e.name !== "NotAllowedError") alert("패스키를 만들지 못했습니다: " + (e && e.message || e)); return false; });
   }
+  /* [V33.724] 로그인 상태를 기억한다 — 코드·선택을 저장하고 브라우저에 '이 사이트 저장소를 지우지 말라' 고 요청(Safari 는 7일 미사용 시 지울 수 있다 → 그래도 패스키는 iCloud 키체인에 남아 다시 로그인하면 복원) */
+  function isPk() { try { return localStorage.getItem("lux-pk") === "1"; } catch (e) { return false; } }
+  function remember(kind) { try { localStorage.setItem("lux-gate", kind); if (kind === "pk") localStorage.setItem("lux-pk", "1"); } catch (e) {} try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {} }
   function pkLogin() {
-    fetch("/api/me/passkey/options?kind=auth").then(function (r) { return r.json(); }).then(function (o) {
+    return fetch("/api/me/passkey/options?kind=auth").then(function (r) { return r.json(); }).then(function (o) {
       return navigator.credentials.get({ publicKey: { challenge: unb64u(o.challenge), rpId: o.rpId, userVerification: "preferred", timeout: 120000 } });
     }).then(function (c) {
       return fetch("/api/me/passkey/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: c.id, clientDataJSON: b64u(c.response.clientDataJSON), authenticatorData: b64u(c.response.authenticatorData), signature: b64u(c.response.signature) }) }).then(function (r) { return r.json(); });
     }).then(function (j) {
-      if (!j || !j.ok || !j.uid) { alert("로그인하지 못했습니다: " + ((j && j.error) || "")); return; }
+      if (!j || !j.ok || !j.uid) { alert("로그인하지 못했습니다: " + ((j && j.error) || "")); return false; }
       try { localStorage.setItem(UIDK, j.uid); } catch (e) {}
-      load(true); tab = "home"; setTimeout(draw, 600);
-    }).catch(function (e) { if (e && e.name !== "NotAllowedError") alert("로그인하지 못했습니다: " + (e && e.message || e)); });
+      remember("pk"); load(true); tab = "home"; setTimeout(draw, 600); return true;
+    }).catch(function (e) { if (e && e.name !== "NotAllowedError") alert("로그인하지 못했습니다: " + (e && e.message || e)); return false; });
+  }
+  /* [V33.724] ★첫 화면 — 패스키로 시작 / 이미 패스키 있음 / 로그인 없이 둘러보기★(사용자 11/2) · 한 번 고르면 다시 묻지 않는다(저장소가 지워지면 다시 뜬다) */
+  function gate() {
+    var g = null; try { g = localStorage.getItem("lux-gate"); } catch (e) { return; }
+    if (g || $("luxGate")) return;
+    css();
+    var pk = !!(window.PublicKeyCredential && navigator.credentials);
+    var w = document.createElement("div"); w.id = "luxGate"; w.setAttribute("role", "dialog"); w.setAttribute("aria-label", "LUX 시작");
+    w.innerHTML = '<div class="in"><div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:18px"><div class="lg"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#5AB8FF" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 2v20M2 12h20M5 5l14 14M19 5L5 19"></path></svg></div>' +
+      "<h1>AI가 고른 종목을<br>가상 자금으로 먼저 사 보세요</h1><p style=\"margin:0;font-size:15px;line-height:1.6;color:#9AA9BF\">미국·한국 시장을 AI가 매일 분석합니다. 실제 돈은 쓰지 않는 모의투자예요.</p></div>" +
+      '<div style="display:flex;flex-direction:column;gap:10px">' + (pk ? '<button type="button" class="p1" id="gStart"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="15" r="4"></circle><path d="M10.8 12.2L20 3M16 7l3 3M14 9l2 2"></path></svg>패스키로 시작하기</button>' +
+      '<span style="font-size:12.5px;line-height:1.5;color:#9AA9BF;text-align:center">Face ID·지문으로 로그인 · 비밀번호 없음 · 다른 기기에서도 이어서</span><button type="button" class="p2" id="gLogin">이미 패스키가 있어요 · 로그인</button>' : "") +
+      '<button type="button" class="p3" id="gGuest">로그인 없이 둘러보기</button></div><p style="margin:14px 0 0;font-size:11.5px;line-height:1.55;color:#7D8FA8;text-align:center">이름·이메일을 받지 않습니다 · 모의투자이며 투자 권유가 아닙니다<br><a href="/privacy" style="color:#7CC4FF">개인정보 처리방침 · 이용 안내</a></p></div>';
+    document.body.appendChild(w);
+    var done = function (toMy) { w.remove(); if (toMy && typeof window.showPage === "function") window.showPage("mine"); };
+    $("gGuest").onclick = function () { remember("guest"); done(false); };
+    if (pk) {
+      $("gStart").onclick = function () { prof = Object.assign({}, DEF, prof, { done: true }); saveLocal(); tab = "me";
+        pkReg(true).then(function (ok) { if (ok) done(true); }); };
+      $("gLogin").onclick = function () { pkLogin().then(function (ok) { if (ok) done(true); }); };
+    }
   }
 
   function onClick(ev) {
@@ -295,7 +345,7 @@
       if (k === "mkts") { var j = prof.mkts.indexOf(d.v); if (j >= 0 && prof.mkts.length > 1) prof.mkts.splice(j, 1); else if (j < 0) prof.mkts.push(d.v); } else prof[k] = d.v;
       if (prof.done) persist(); draw(); return; }
     if (t.id === "mineDone") { prof.done = true; persist(); tab = "home"; pbLoad(true); draw(); return; }
-    if (t.id === "minePkReg") { pkReg(); return; }
+    if (t.id === "minePkReg") { pkReg(false); return; }
     if (t.id === "minePkLogin") { pkLogin(); return; }
     if (t.id === "mineCopy") { var c = uid(); (navigator.clipboard ? navigator.clipboard.writeText(c) : Promise.reject()).then(function () { alert("연결 코드를 복사했어요. 다른 사람에게 알려 주지 마세요."); }).catch(function () { prompt("연결 코드(다른 사람에게 알려 주지 마세요)", c); }); return; }
     if (t.id === "mineLinkOpen") { var bx = $("mineLinkBox"); if (bx) bx.style.display = "block"; return; }
@@ -305,13 +355,14 @@
       api("GET").then(function (j) { if (j && j.profile) { adopt(j.profile); tab = "home"; draw(); } else alert("그 코드의 데이터를 찾지 못했습니다"); }); return; }
     if (t.id === "mineDelete") {
       if (!confirm("서버에 저장된 내 성향·관심종목·모의계좌·패스키를 모두 지웁니다. 되돌릴 수 없어요. 지울까요?")) return;
-      api("DELETE").then(function () { try { localStorage.removeItem(PROFK); localStorage.setItem(UIDK, newUid()); } catch (e) {} prof = Object.assign({}, DEF); tab = "me"; draw(); alert("삭제했습니다."); }).catch(function () { alert("삭제하지 못했습니다. 잠시 뒤 다시 시도해 주세요."); });
+      api("DELETE").then(function () { try { localStorage.removeItem(PROFK); localStorage.removeItem("lux-pk"); localStorage.setItem(UIDK, newUid()); } catch (e) {} prof = Object.assign({}, DEF); tab = "me"; draw(); alert("삭제했습니다."); }).catch(function () { alert("삭제하지 못했습니다. 잠시 뒤 다시 시도해 주세요."); });
       return; }
     if (d.open && typeof window.openDetailFromSym === "function") window.openDetailFromSym(d.open);
   }
 
   function onShow() { load(false); pbLoad(false); draw(); }
   function boot() {
+    gate();
     var pg = $("page-mine"), root = $("mineRoot"); if (!pg || !root) return;
     root.addEventListener("click", onClick);
     new MutationObserver(function () { if (pg.classList.contains("active")) onShow(); }).observe(pg, { attributes: true, attributeFilter: ["class"] });
