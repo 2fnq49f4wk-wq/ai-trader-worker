@@ -21,7 +21,8 @@
   var tab = "home", acMk = "us", wFilter = "all", PB = null, pbTs = 0, loaded = false, saveT = 0;
   var MK = { us: "미국", kr: "한국" }, RISK = { safe: "안정형", mid: "중립형", aggr: "공격형" }, HOR = { scalp: "단타", swing: "스윙", long: "중장기" }, EXP = { "new": "처음", mid: "경험", pro: "전문가" };
   var REG = { SURGE: "급등장", BULL: "상승장", NEUTRAL: "횡보장", BEAR: "하락장", CRASH: "급락장" };
-  var REGC = { SURGE: "#FF5C5C", BULL: "#FF8C7A", NEUTRAL: "#E2C766", BEAR: "#7FA6FF", CRASH: "#5C86FF" };
+  var REGC0 = { SURGE: "#FF5C5C", BULL: "#FF8C7A", NEUTRAL: "#E2C766", BEAR: "#7FA6FF", CRASH: "#5C86FF" }, REGCL = { SURGE: "#B42318", BULL: "#B54708", NEUTRAL: "#7A5A00", BEAR: "#1D4ED8", CRASH: "#1E3A8A" };   // [V33.734] 라이트는 흰 바탕 대비 4.5:1 이상
+  var REGC = new Proxy({}, { get: function (o, k) { return (document.documentElement.getAttribute("data-theme") === "light" ? REGCL : REGC0)[k]; } });
   var GUIDE = {
     SURGE: { safe: "추격 매수는 피하고 이익 일부 실현", mid: "신규는 작게, 손절선 올려 이익 지키기", aggr: "추세 종목 짧게, 손절 엄수" },
     BULL: { safe: "국면 전략 종목 위주로 나눠 사기", mid: "AI 후보 중 분할 매수", aggr: "주도주 비중 확대, 추세 길게" },
@@ -30,6 +31,14 @@
     CRASH: { safe: "신규 매수 멈추고 현금 보존", mid: "관망 · 첫 양봉 뒤 소액만", aggr: "공황 반등 단타만, 손절 짧게" }
   };
   var START = { us: 10000, kr: 10000000 };
+  var TERMS_VER = "2026-11-02";   // [V33.734] 약관·개인정보처리방침 판 — 가입 때 서버에 동의 기록(판·시각)으로 남는다
+  /* [V33.732] 비밀번호 보기 버튼(사용자 11/2 "입력한 비밀번호 볼 수 있게") — 누르면 글자로 보이고 다시 누르면 가린다 */
+  var EYE = '<button type="button" class="eye" data-eye="1" aria-label="비밀번호 보기" aria-pressed="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>';
+  document.addEventListener("click", function (ev) {
+    var b = ev.target.closest && ev.target.closest("button[data-eye]"); if (!b) return; ev.preventDefault(); ev.stopPropagation();
+    var inp = b.parentNode.querySelector("input"); if (!inp) return; var show = inp.type === "password";
+    inp.type = show ? "text" : "password"; b.setAttribute("aria-pressed", String(show)); b.setAttribute("aria-label", show ? "비밀번호 가리기" : "비밀번호 보기"); b.classList.toggle("on", show);
+  }, true);
   var ACOL = ["#3DD6B5", "#7FA6FF", "#E2C766", "#FF8C7A", "#B9A6FF", "#5FC8E8", "#9BD67A", "#F0A0C8"];
   var isKr = function (s) { return /\.(KS|KQ)$/.test(s); };
   var fmt = function (mk, v, sign) { if (v == null || !isFinite(v)) return "—"; var a = Math.abs(v), s = sign ? (v >= 0 ? "+" : "−") : (v < 0 ? "−" : "");
@@ -101,7 +110,7 @@
   function val(mk) {
     if (!has(mk)) return null; var a = prof.pf[mk], eq = a.cash, cost = 0, mv = 0;
     Object.keys(a.pos).forEach(function (s) { var p = a.pos[s], x = px(q(s)) || p.avg; eq += p.q * x; mv += p.q * x; cost += p.q * p.avg; });
-    return { eq: eq, cash: a.cash, mv: mv, upl: mv - cost, ret: (eq / a.start - 1) * 100, n: Object.keys(a.pos).length, days: Math.max(1, Math.round((Date.now() - (a.t0 || Date.now())) / 86400000)) };
+    return { eq: eq, cash: a.cash, mv: mv, upl: mv - cost, ret: (eq / a.start - 1) * 100, n: Object.keys(a.pos).length, days: Math.max(1, Math.round((Date.now() - (a.t0 > 1e12 ? a.t0 : (a.hist.length ? a.hist[a.hist.length - 1][0] : Date.now()))) / 86400000)) };
   }
   function trade(side, sym, qty) {
     var mk = isKr(sym) ? "kr" : "us", a = acct(mk), price = priceOf(sym);
@@ -139,7 +148,7 @@
       "#mineRoot .av{flex:0 0 38px;height:38px;border-radius:19px;background:var(--m-chip);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;overflow:hidden}",
       "#mineRoot .l{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}#mineRoot .nm{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#mineRoot .sb{font-size:12px;color:var(--m-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
       "#mineRoot .r{display:flex;flex-direction:column;align-items:flex-end;gap:2px;white-space:nowrap}#mineRoot .r .p{font-size:14.5px;font-weight:600}",
-      "#mineRoot .buy,#mineRoot .sell,#mineRoot .tag2{min-height:40px;padding:0 14px;border-radius:10px;border:0;font-size:13.5px;font-weight:700;cursor:pointer;color:#fff;background:var(--m-up)}#mineRoot .sell{background:var(--m-dn)}#mineRoot .tag2{background:var(--m-chip);color:var(--m-mute);font-weight:500;cursor:default;display:inline-flex;align-items:center}",
+      "#mineRoot .buy,#mineRoot .sell,#mineRoot .tag2{min-height:40px;padding:0 14px;border-radius:10px;border:0;font-size:13.5px;font-weight:700;cursor:pointer;color:#fff;background:#D42F2F}#mineRoot .sell{background:#2160D8}#mineRoot .tag2{background:var(--m-chip);color:var(--m-mute);font-weight:500;cursor:default;display:inline-flex;align-items:center}",
       "#mineRoot .pill{font-size:11px;padding:2px 6px;border-radius:6px;margin-left:5px;background:#173A33;color:#5FE0C4;vertical-align:middle}#mineRoot .pill.s{background:#2A2440;color:#B9A6FF}#mineRoot .pill.w{background:#20252E;color:var(--m-mute)}",
       "#mineRoot .chips{display:flex;gap:6px;margin:10px 0 2px;flex-wrap:wrap}#mineRoot .chips button{min-height:36px;border-radius:18px;padding:0 14px;font-size:13px;border:1px solid #2A303B;background:transparent;color:#C7CDD6;cursor:pointer}#mineRoot .chips button.on{background:#EEF1F5;color:#0D1014;border-color:#EEF1F5;font-weight:700}",
       "#mineRoot .search{display:flex;align-items:center;gap:8px;background:var(--m-card);border:1px solid #2A303B;border-radius:14px;padding:0 14px;min-height:48px}#mineRoot .search input{flex:1;border:0;outline:0;background:transparent;color:inherit;font-size:15px;font-family:inherit;min-width:0}",
@@ -167,7 +176,33 @@
       "#luxGate h1{margin:0;font-size:29px;line-height:1.3;font-weight:700;letter-spacing:-.5px}#luxGate .lg{width:64px;height:64px;border-radius:18px;background:#161A21;border:1px solid #2A303B;display:flex;align-items:center;justify-content:center}",
       "#luxGate button{font-family:inherit;cursor:pointer}#luxGate .p1{min-height:56px;border-radius:16px;border:0;background:#3DD6B5;color:#04110D;font-size:16.5px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:10px}#luxGate .p2{min-height:52px;border-radius:16px;border:1px solid #2E3542;background:transparent;color:#EEF1F5;font-size:15.5px}#luxGate .p3{min-height:48px;border:0;background:transparent;color:#98A2B3;font-size:14.5px;text-decoration:underline}",
       "#mineDetailBar{margin:0 0 10px}#mineDetailBar .mdb{display:flex;align-items:center;gap:8px;background:#161A21;border:1px solid #232935;border-radius:14px;padding:10px 12px;color:#EEF1F5}#mineDetailBar .l{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}#mineDetailBar .nm{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#mineDetailBar .sb{font-size:12px;color:#98A2B3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
-      "#mineDetailBar .buy,#mineDetailBar .sell,#mineDetailBar .wbtn2{min-height:42px;padding:0 14px;border-radius:10px;border:0;font-size:14px;font-weight:700;cursor:pointer;color:#fff;background:#FF5C5C}#mineDetailBar .sell{background:#4D8DFF}#mineDetailBar .wbtn2{background:transparent;border:1px solid #2E3542;color:#C7CDD6;font-weight:500}",
+      "#mineDetailBar .buy,#mineDetailBar .sell,#mineDetailBar .wbtn2{min-height:42px;padding:0 14px;border-radius:10px;border:0;font-size:14px;font-weight:700;cursor:pointer;color:#fff;background:#D42F2F}#mineDetailBar .sell{background:#2160D8}#mineDetailBar .wbtn2{background:transparent;border:1px solid #2E3542;color:#C7CDD6;font-weight:500}",
+      // [V33.732] 라이트 테마(LUX Light 2) — 흰 카드 · 회색 바탕 · 글자 3단 · 상승 빨강/하락 파랑
+      "html[data-theme=light] #mineRoot{--m-bg:#EDF0F4;--m-card:#FFFFFF;--m-line:#EEF1F5;--m-chip:#F2F4F7;--m-mute:#5B6474;--m-acc:#0B7A66;--m-up:#C92A2A;--m-dn:#1B5FCC;color:#101828}",
+      "html[data-theme=light] #mineRoot .card,html[data-theme=light] #mineRoot .wx,html[data-theme=light] #mineRoot .tabs,html[data-theme=light] #mineRoot .search{border:1px solid #DCE1E8;box-shadow:0 1px 2px rgba(16,24,40,.05)}",
+      "html[data-theme=light] #mineRoot .tabs button.on,html[data-theme=light] #mineRoot .seg button.on{background:#101828;color:#fff}html[data-theme=light] #mineRoot .b{color:#101828}html[data-theme=light] #mineRoot .b.pri{color:#fff}html[data-theme=light] #mineRoot .b.line,html[data-theme=light] #mineRoot .ops button,html[data-theme=light] #mineRoot .chips button,html[data-theme=light] #mineRoot .wbtn{border-color:#D0D5DD;color:#344054}",
+      "html[data-theme=light] #mineRoot .wx span[style],html[data-theme=light] #mineRoot .note{color:#475467!important}html[data-theme=light] #mineRoot .chips button.on{background:#101828;color:#fff;border-color:#101828}html[data-theme=light] #mineRoot .pf{background:linear-gradient(135deg,#E6F7F2 0%,#FFFFFF 60%);border-color:#CDEBE2}html[data-theme=light] #mineRoot .st3{border-top-color:#E7EBF0}html[data-theme=light] #mineRoot .li .ch{color:#98A2B3}html[data-theme=light] #mineRoot .li .ic{color:#475467}html[data-theme=light] #mineRoot .pwf input{background:#F7F9FB;border-color:#D0D5DD}",
+      "html[data-theme=light] #mineSheet{background:rgba(16,24,40,.45)}html[data-theme=light] #mineSheet .sh{background:#FFFFFF;color:#101828}html[data-theme=light] #mineSheet .tabs2,html[data-theme=light] #mineSheet .stp2,html[data-theme=light] #mineSheet .sum,html[data-theme=light] #mineSheet .note2{background:#F2F4F7;color:#101828}html[data-theme=light] #mineSheet .stp2 button,html[data-theme=light] #mineSheet .x{background:#FFFFFF;color:#101828;box-shadow:0 1px 2px rgba(16,24,40,.08)}html[data-theme=light] #mineSheet .stp2 input{color:#101828}",
+      "html[data-theme=light] #mineSheet .typ button,html[data-theme=light] #mineSheet .pre button,html[data-theme=light] #mineSheet .qc button{border-color:#D0D5DD;color:#344054}html[data-theme=light] #mineSheet .typ button.on{border-color:#101828;color:#101828}html[data-theme=light] #mineSheet .tpg input{background:#F7F9FB;color:#101828}html[data-theme=light] #mineSheet .tpg .tp{border-color:#F6C9CA;color:#C2272A}html[data-theme=light] #mineSheet .tpg .sl{border-color:#C6D8F7;color:#1B64DA}html[data-theme=light] #mineSheet .tpsl{border-top-color:#EEF1F5}html[data-theme=light] #mineSheet .grab{background:#D0D5DD}html[data-theme=light] #mineSheet b[style],html[data-theme=light] #mineSheet .shh b{color:#101828!important}",
+      "html[data-theme=light] #luxGate{background:rgba(247,249,251,.98);color:#101828}html[data-theme=light] #luxGate .lg,html[data-theme=light] #luxGate .x,html[data-theme=light] #luxGate .sw{background:#FFFFFF;border:1px solid #DCE1E8}html[data-theme=light] #luxGate .sw button.on{background:#101828;color:#fff}html[data-theme=light] #luxGate .f input{background:#FFFFFF;border-color:#D0D5DD;color:#101828}html[data-theme=light] #luxGate .p1{background:#101828;color:#fff}html[data-theme=light] #luxGate .ag{color:#344054}html[data-theme=light] #luxGate .ag a{color:#1B64DA}html[data-theme=light] #luxGate .lead,html[data-theme=light] #luxGate .fine{color:#475467}",
+      "html[data-theme=light] #mineDetailBar .mdb{background:#FFFFFF;border-color:#DCE1E8;color:#101828;box-shadow:0 1px 2px rgba(16,24,40,.05)}html[data-theme=light] #mineDetailBar .sb{color:#667085}html[data-theme=light] #mineDetailBar .wbtn2{border-color:#D0D5DD;color:#344054}html[data-theme=light] .luxToast{background:#101828}",
+      // [V33.734] 동의 배너 · 가입 동의서 · 내 데이터 요약
+      "#luxConsent{position:fixed;left:12px;right:12px;bottom:calc(80px + env(safe-area-inset-bottom));z-index:10040;max-width:560px;margin:0 auto;background:#161A21;color:#EEF1F5;border:1px solid #2E3542;border-radius:16px;padding:14px 16px;box-shadow:0 14px 40px rgba(0,0,0,.4);font-size:13.5px;line-height:1.55}#luxConsent p{margin:0 0 10px}#luxConsent a{color:#7CC4FF}#luxConsent .cb{display:flex;gap:8px;justify-content:flex-end}#luxConsent button{min-height:44px;padding:0 16px;border-radius:12px;border:1px solid #3A4250;background:transparent;color:inherit;font:inherit;font-weight:600;cursor:pointer}#luxConsent button.pri{background:#EEF1F5;color:#0D1014;border-color:#EEF1F5}",
+      "html[data-theme=light] #luxConsent{background:#FFFFFF;color:#101828;border-color:#DCE1E8;box-shadow:0 14px 40px rgba(16,24,40,.18)}html[data-theme=light] #luxConsent a{color:#1B4FB5}html[data-theme=light] #luxConsent button{border-color:#D0D5DD}html[data-theme=light] #luxConsent button.pri{background:#101828;color:#fff;border-color:#101828}",
+      "#luxGate .agf{border:1px solid #2E3542;border-radius:14px;padding:10px 12px;margin:0;display:flex;flex-direction:column;gap:10px}#luxGate .agf legend{font-size:12.5px;color:#98A2B3;padding:0 6px}#luxGate .ag.all{padding-bottom:8px;border-bottom:1px solid #2E3542}#luxGate .agt{font-size:12px;line-height:1.6;color:#C7CDD6;background:rgba(127,137,155,.12);border-radius:10px;padding:8px 10px}html[data-theme=light] #luxGate .agf,html[data-theme=light] #luxGate .ag.all{border-color:#DCE1E8}html[data-theme=light] #luxGate .agt{color:#344054;background:#F2F4F7}",
+      "#mineRoot .kvl{display:flex;flex-direction:column}#mineRoot .kvl div{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid var(--m-line);font-size:13.5px}#mineRoot .kvl div:first-child{border-top:0}#mineRoot .kvl span{color:var(--m-mute);flex:0 0 auto}#mineRoot .kvl b{font-weight:600;text-align:right}",
+      // [V33.732] 비밀번호 보기 · 언어 선택
+      ".pwi{position:relative;display:flex}.pwi input{flex:1;min-width:0;padding-right:52px!important}.pwi .eye{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:44px;height:44px;border:0;border-radius:10px;background:transparent;color:#98A2B3;cursor:pointer;display:flex;align-items:center;justify-content:center}.pwi .eye.on{color:#3DD6B5}",
+      "#mineRoot .li.lang{cursor:default}#mineRoot .li.lang .seg{margin-left:auto}",
+      // [V33.730] MTS 주문창
+      ".luxToast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translate(-50%,12px);opacity:0;z-index:10060;max-width:min(92vw,460px);padding:12px 16px;border-radius:14px;background:#191F28;color:#fff;font-size:14px;line-height:1.45;box-shadow:0 10px 30px rgba(0,0,0,.35);transition:.25s}.luxToast.on{opacity:1;transform:translate(-50%,0)}",
+      "#mineSheet .shh{display:flex;justify-content:space-between;align-items:flex-start}#mineSheet .x{width:40px;height:40px;border-radius:20px;border:0;background:#20262F;color:#98A2B3;font-size:15px;cursor:pointer}",
+      "#mineSheet .tabs2{display:grid;grid-template-columns:1fr 1fr;gap:4px;background:#0D1014;border-radius:12px;padding:4px}#mineSheet .tabs2 button{min-height:42px;border:0;border-radius:9px;background:transparent;color:#98A2B3;font-size:15px;font-weight:700;cursor:pointer}#mineSheet .tabs2 button.on.b{background:#D42F2F;color:#fff}#mineSheet .tabs2 button.on.s{background:#2160D8;color:#fff}#mineSheet .tabs2 button:disabled{opacity:.45;cursor:default}",
+      "#mineSheet .typ{display:grid;grid-template-columns:1fr 1fr;gap:6px}#mineSheet .typ button{min-height:38px;border-radius:10px;border:1px solid #2E3542;background:transparent;color:#C7CDD6;font-size:13.5px;cursor:pointer}#mineSheet .typ button.on{border-color:#EEF1F5;color:#fff;font-weight:700}",
+      "#mineSheet .fld{display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:#98A2B3}#mineSheet .fld i{font-style:normal;float:right}#mineSheet .fld em{font-style:normal;font-size:12px}#mineSheet .stp2{display:flex;align-items:center;gap:6px;background:#0D1014;border-radius:12px;padding:4px}#mineSheet .stp2 button{width:44px;height:42px;border-radius:9px;border:0;background:#20262F;color:#EEF1F5;font-size:20px;cursor:pointer}#mineSheet .stp2 input{flex:1;min-width:0;height:42px;border:0;background:transparent;color:#EEF1F5;text-align:center;font-size:18px;font-weight:700;font-family:inherit;font-variant-numeric:tabular-nums;outline:0}",
+      "#mineSheet .tpsl{border-top:1px solid #232935;padding-top:12px;display:flex;flex-direction:column;gap:10px}#mineSheet .tph{display:flex;justify-content:space-between;align-items:center;font-size:14px;font-weight:600}#mineSheet .sw{width:48px;height:28px;border-radius:14px;border:0;background:#3A414D;position:relative;cursor:pointer;padding:0}#mineSheet .sw i{position:absolute;top:4px;left:4px;width:20px;height:20px;border-radius:10px;background:#fff;transition:.2s}#mineSheet .sw.on{background:#3DD6B5}#mineSheet .sw.on i{left:24px}",
+      "#mineSheet .tpg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}#mineSheet .tpg label{min-width:0;display:flex;flex-direction:column;gap:4px;border-radius:12px;padding:10px;font-size:12px}#mineSheet .tpg .tp{border:1px solid #5A2A30;color:#FF8A94}#mineSheet .tpg .sl{border:1px solid #23406E;color:#7FB0FF}#mineSheet .tpg input{width:100%;box-sizing:border-box;height:36px;border:0;border-radius:8px;background:#0D1014;color:#EEF1F5;font-size:16px;font-weight:700;padding:0 8px;font-family:inherit;min-width:0}#mineSheet .tpg em{font-style:normal;color:#98A2B3}#mineSheet .qc{display:flex;gap:4px}#mineSheet .qc button{flex:1;min-width:0;padding:0;min-height:30px;border-radius:7px;border:1px solid #2E3542;background:transparent;color:#C7CDD6;font-size:11.5px;cursor:pointer}",
+      "#mineSheet .sum{background:#0D1014;border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;font-size:13px}#mineSheet .sum div{display:flex;justify-content:space-between;gap:10px}#mineSheet .sum span:first-child{color:#98A2B3}#mineSheet .note2{font-size:13px;line-height:1.55;color:#C7CDD6;background:#0D1014;border-radius:12px;padding:10px 12px}#mineSheet .sh{max-height:92vh;overflow-y:auto}",
       "#mineSheet{position:fixed;inset:0;z-index:9999;background:rgba(4,8,16,.62);display:flex;align-items:flex-end;justify-content:center}",
       "#mineSheet .sh{width:min(520px,100%);background:#181C24;border-radius:22px 22px 0 0;padding:10px 20px calc(22px + env(safe-area-inset-bottom));color:#EEF1F5;display:flex;flex-direction:column;gap:14px;font-size:14px}",
       "#mineSheet .grab{width:40px;height:4px;border-radius:2px;background:#2E3542;align-self:center}#mineSheet .pre{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}",
@@ -197,7 +232,7 @@
     h += '<div class="g2">' + prof.mkts.map(function (m) { var r = PB && PB.markets && PB.markets[m] && PB.markets[m].regime;
       return '<div class="wx"><span class="mu" style="font-size:12px">' + MK[m] + ' 시장</span><b style="color:' + (REGC[r] || "inherit") + '">' + (REG[r] || "불러오는 중") + '</b><span style="font-size:12.5px;line-height:1.45;color:#C7CDD6">' + esc(r && GUIDE[r] ? GUIDE[r][prof.risk] : "") + "</span></div>"; }).join("") + "</div>";
     var rmk = prof.mkts.indexOf(acMk) >= 0 ? acMk : prof.mkts[0], rk = ranked(rmk), rg = PB && PB.markets && PB.markets[rmk] && PB.markets[rmk].regime;
-    h += '<section class="card" aria-label="AI 순위"><div class="ct"><span class="h2" style="color:#EEF1F5">AI가 지금 사고 싶은 순위</span>' +
+    h += '<section class="card" aria-label="AI 순위"><div class="ct"><span class="h2" style="color:inherit">AI가 지금 사고 싶은 순위</span>' +
       (prof.mkts.length > 1 ? '<span class="seg">' + prof.mkts.map(function (m) { return '<button type="button" data-acmk="' + m + '" class="' + (m === rmk ? "on" : "") + '">' + MK[m] + "</button>"; }).join("") + "</span>" : '<span>' + MK[rmk] + "</span>") + "</div>" +
       (rk.length ? rk.map(function (r, i) {
         var on = prof.watch.indexOf(r.s) >= 0;
@@ -229,9 +264,13 @@
       '<div class="kv kv4"><div><span>주문 가능</span>' + fmt(mk, v.cash) + '</div><div><span>주식</span>' + fmt(mk, v.mv) + '</div><div><span>평가손익</span><b class="' + cls(v.upl) + '" style="font-weight:600">' + fmt(mk, v.upl, true) + '</b></div><div><span>실현손익</span><b class="' + cls(v.eq - a.start - v.upl) + '" style="font-weight:600">' + fmt(mk, v.eq - a.start - v.upl, true) + "</b></div></div></section>";
     h += '<section class="card"><div class="h2" style="margin-bottom:4px">보유 ' + ks.length + "종목</div>" + (ks.length ? ks.map(function (s) {
       var p = a.pos[s], cur = px(q(s)) || p.avg, r = (cur / p.avg - 1) * 100;
-      return '<div class="row" data-open="' + esc(s) + '"><span class="dot" style="background:' + ACOL[ks.indexOf(s) % ACOL.length] + '" aria-hidden="true"></span><div class="l"><span class="nm">' + esc(nm(s)) + pill(sigOf(s)) + '</span><span class="sb">' + p.q.toLocaleString() + "주 · 평단 " + fmt(mk, p.avg) + " · 비중 " + (v.eq > 0 ? (p.q * cur / v.eq * 100).toFixed(0) : 0) + '%</span></div><div class="r"><span class="p">' + fmt(mk, p.q * cur) + '</span><span class="' + cls(r) + '" style="font-size:12.5px">' + pctS(r) + "</span></div>" +
-        buyBtn(s) + '<button type="button" class="sell" data-sell="' + esc(s) + '">팔기</button></div>';
+      return '<div class="row" data-open="' + esc(s) + '"><span class="dot" style="background:' + ACOL[ks.indexOf(s) % ACOL.length] + '" aria-hidden="true"></span><div class="l"><span class="nm">' + esc(nm(s)) + pill(sigOf(s)) + '</span><span class="sb">' + p.q.toLocaleString() + "주 · 평단 " + fmt(mk, p.avg) + " · 비중 " + (v.eq > 0 ? (p.q * cur / v.eq * 100).toFixed(0) : 0) + "%" + (p.tpPx || p.slPx ? '</span><span class="sb"><b class="up">익절 ' + pxS(mk, p.tpPx) + '</b> · <b class="dn">손절 ' + pxS(mk, p.slPx) + "</b>" : "") + '</span></div><div class="r"><span class="p">' + fmt(mk, p.q * cur) + '</span><span class="' + cls(r) + '" style="font-size:12.5px">' + pctS(r) + "</span></div>" +
+        '<button type="button" class="tag2 wbtn" data-risk="' + esc(s) + '" aria-label="익절 손절 설정">TP/SL</button>' + buyBtn(s) + '<button type="button" class="sell" data-sell="' + esc(s) + '">팔기</button></div>';
     }).join("") : '<div class="empty">홈의 AI 후보나 관심종목에서 [사기]를 눌러 보세요</div>') + "</section>";
+    var od = a.ord || [];
+    if (od.length) h += '<section class="card"><div class="h2" style="margin-bottom:4px">예약 주문 ' + od.length + '건</div>' + od.map(function (o) {
+      return '<div class="row" data-open="' + esc(o.s) + '"><div class="l"><span class="nm">' + esc(nm(o.s)) + ' <span class="pill ' + (o.side === "B" ? "" : "s") + '">예약 ' + (o.side === "B" ? "매수" : "매도") + '</span></span><span class="sb">' + pxS(mk, o.px) + (o.side === "B" ? " 이하" : " 이상") + " 도달 시 " + o.q.toLocaleString() + "주" + (o.tpPx ? " · 익절 " + pxS(mk, o.tpPx) + " · 손절 " + pxS(mk, o.slPx) : "") + '</span></div><div class="r"><span class="sb">현재 ' + pxS(mk, priceOf(o.s)) + '</span></div><button type="button" class="tag2 wbtn" data-cancel="' + esc(o.id) + '">취소</button></div>';
+    }).join("") + '<div class="note" style="margin-top:6px">예약 주문·익절·손절은 이 사이트가 열려 있을 때 15초마다 시세를 보고 체결합니다(닫혀 있으면 다시 열 때 확인).</div></section>';
     h += '<section class="card"><div class="h2" style="margin-bottom:4px">거래 내역</div>' + (a.hist.length ? a.hist.slice(0, 20).map(function (t) {
       return '<div class="row" data-open="' + esc(t[2]) + '"><div class="l"><span class="nm">' + esc(nm(t[2])) + '</span><span class="sb">' + new Date(t[0]).toLocaleString() + '</span></div><div class="r"><span class="' + (t[1] === "B" ? "up" : "dn") + '">' + (t[1] === "B" ? "매수" : "매도") + " " + t[3].toLocaleString() + '주</span><span class="sb">' + fmt(mk, t[4]) + "</span></div></div>";
     }).join("") : '<div class="empty">아직 거래가 없습니다</div>') + '<div class="note" style="margin-top:6px">체결가 = 그 순간 화면 시세(시간외 포함) · 수수료·세금 없음 · 모의투자</div></section>';
@@ -258,14 +297,25 @@
     var en = window.luxLang && window.luxLang.get && window.luxLang.get() === "en";
     h += '<div class="sec">계정</div><section class="card lst">' +
       (isAuth() ? li("mePw", "🔒", "비밀번호 바꾸기", "", pwOpen ? " on" : "") +
-        (pwOpen ? '<form id="mePwForm" class="pwf" novalidate><input id="mePw0" type="password" autocomplete="current-password" placeholder="지금 비밀번호" maxlength="64"><input id="mePw1" type="password" autocomplete="new-password" placeholder="새 비밀번호(8자 이상)" maxlength="64"><input id="mePw2" type="password" autocomplete="new-password" placeholder="새 비밀번호 확인" maxlength="64"><p id="mePwErr" class="err" role="alert"></p><button type="submit" class="b pri">비밀번호 바꾸기</button></form>' : "")
+        (pwOpen ? '<form id="mePwForm" class="pwf" novalidate><span class="pwi"><input id="mePw0" type="password" autocomplete="current-password" placeholder="지금 비밀번호" maxlength="64">' + EYE + '</span><span class="pwi"><input id="mePw1" type="password" autocomplete="new-password" placeholder="새 비밀번호(8자 이상)" maxlength="64">' + EYE + '</span><span class="pwi"><input id="mePw2" type="password" autocomplete="new-password" placeholder="새 비밀번호 확인" maxlength="64">' + EYE + '</span><p id="mePwErr" class="err" role="alert"></p><button type="submit" class="b pri">비밀번호 바꾸기</button></form>' : "")
         : li("meLogin", "👤", "로그인 · 회원가입", "")) +
-      li("meLang", "🌐", "언어", en ? "English" : "한국어") +
+      '<div class="li lang"><span class="ic" aria-hidden="true">🌐</span><span class="lb">언어</span><span class="seg" role="radiogroup" aria-label="언어"><button type="button" role="radio" aria-checked="' + !en + '" data-lang="ko" class="' + (en ? "" : "on") + '">한국어</button><button type="button" role="radio" aria-checked="' + en + '" data-lang="en" class="' + (en ? "on" : "") + '">English</button></span></div>' +
       (isAuth() ? li("meOut", "↩", "로그아웃", "") : "") + "</section>";
     h += '<div class="sec">모의계좌</div><section class="card lst">' + ["us", "kr"].map(function (m) {
       return '<button type="button" class="li" data-reset="' + m + '"><span class="ic" aria-hidden="true">' + (m === "us" ? "$" : "₩") + '</span><span class="lb">' + MK[m] + ' 계좌 처음부터</span><span class="rv">' + (has(m) ? fmt(m, val(m).eq) : "없음") + '</span><span class="ch" aria-hidden="true">›</span></button>'; }).join("") + "</section>";
-    h += '<div class="sec">데이터 · 약관</div><section class="card lst"><a class="li" href="/privacy"><span class="ic" aria-hidden="true">§</span><span class="lb">개인정보 처리방침 · 이용 안내</span><span class="rv"></span><span class="ch" aria-hidden="true">›</span></a>' +
-      li("mineDelete", "🗑", "내 데이터 · 계정 삭제", "", " warn") + "</section>";
+    /* [V33.734] 알림 · 약관 · 데이터(사용자 11/2 "체결 알림·이용 안내를 MY 내 정보로 · 동의서 · 데이터와 약관 제대로") */
+    var pb = document.getElementById("btnPush"), pushOn = !!(pb && /켜짐/.test(pb.textContent || "")), pushOk = ("serviceWorker" in navigator) && ("PushManager" in window) || !!(window.__luxNative && window.__luxNative.on && window.__luxNative.on());
+    h += '<div class="sec">알림</div><section class="card lst">' + (pushOk && window.__luxPush ? li("mePush", "🔔", "체결 알림", pushOn ? "켜짐" : "꺼짐") : '<div class="li" style="cursor:default"><span class="ic" aria-hidden="true">🔕</span><span class="lb">체결 알림</span><span class="rv">이 브라우저는 지원하지 않음</span></div>') + "</section>";
+    var cs = null; try { cs = JSON.parse(localStorage.getItem("lux-consent") || "null"); } catch (e) {}
+    h += '<div class="sec">약관 · 정책</div><section class="card lst">' +
+      ['<a class="li" href="/terms"><span class="ic" aria-hidden="true">§</span><span class="lb">이용약관</span><span class="rv">' + TERMS_VER + '</span><span class="ch" aria-hidden="true">›</span></a>',
+       '<a class="li" href="/privacy"><span class="ic" aria-hidden="true">🔐</span><span class="lb">개인정보처리방침</span><span class="rv">' + TERMS_VER + '</span><span class="ch" aria-hidden="true">›</span></a>',
+       '<a class="li" href="/cookies"><span class="ic" aria-hidden="true">🍪</span><span class="lb">쿠키 · 저장소 정책</span><span class="rv">' + (cs ? "글꼴 " + (cs.fonts ? "허용" : "거부") + " · 진단 " + (cs.perf ? "허용" : "거부") : "선택 전") + '</span><span class="ch" aria-hidden="true">›</span></a>',
+       '<a class="li" href="/terms#operator"><span class="ic" aria-hidden="true">ⓘ</span><span class="lb">운영자 정보</span><span class="rv"></span><span class="ch" aria-hidden="true">›</span></a>'].join("") + "</section>";
+    h += '<div class="sec">내 데이터</div><section class="card"><div class="kvl">' +
+      [["계정", isAuth() ? esc(nick) + " · 비밀번호 확인값만 저장" : "없음(로그인 안 함)"], ["약관 동의", isAuth() ? TERMS_VER + " 판" : "—"], ["투자 성향", prof.done ? "4항목" : "아직 없음"], ["관심종목", prof.watch.length + "개"],
+       ["모의계좌", ["us", "kr"].filter(has).map(function (m) { return MK[m] + " 거래 " + prof.pf[m].hist.length + "건"; }).join(" · ") || "없음"], ["보관 장소", "Cloudflare(미국) · 마지막 사용 후 1년 자동 삭제"]].map(function (r) { return "<div><span>" + r[0] + "</span><b>" + r[1] + "</b></div>"; }).join("") +
+      '</div></section><section class="card lst">' + li("mineDelete", "🗑", "내 데이터 · 계정 삭제", "", " warn") + "</section>";
     h += '<section class="note" style="padding:2px 6px">· 모의투자 서비스입니다. 가상 자금이며 실제 주문·자금 이동이 없습니다.<br>· 화면의 후보·안내는 투자 권유가 아니며, 수익을 약속하지 않습니다. 투자 판단과 결과의 책임은 본인에게 있습니다.<br>· 저장 항목: 닉네임 · 비밀번호 확인값(비밀번호 자체는 저장하지 않음) · 성향 · 관심종목 · 모의계좌. 마지막 사용 후 1년이 지나면 자동 삭제되며, [내 데이터 · 계정 삭제]로 언제든 지울 수 있습니다.</section>';
     return h;
   }
@@ -293,10 +343,10 @@
     detSym = sym; var pg = $("page-detail"); if (!pg || !sym) return; css();
     var bar = $("mineDetailBar");
     if (!bar) { bar = document.createElement("section"); bar.id = "mineDetailBar"; bar.setAttribute("aria-label", "모의 매매"); pg.insertBefore(bar, pg.firstChild);
-      bar.addEventListener("click", function (ev) { var b = ev.target.closest("button"); if (!b) return; if (!isAuth()) { ask("mine"); return; } if (b.dataset.dbuy) sheet("B", detSym); else if (b.dataset.dsell) sheet("S", detSym); else if (b.dataset.dwatch) { var i = prof.watch.indexOf(detSym); if (i >= 0) prof.watch.splice(i, 1); else if (prof.watch.length < 40) prof.watch.push(detSym); persist(); detail(detSym); } }); }
-    var hq = held(sym), on = prof.watch.indexOf(sym) >= 0, mk = isKr(sym) ? "kr" : "us";
-    bar.innerHTML = '<div class="mdb"><div class="l"><span class="nm">내 모의계좌 · ' + esc(nm(sym)) + '</span><span class="sb">' + (hq ? "보유 " + hq.toLocaleString() + "주" : "보유 없음") + (has(mk) ? " · 주문 가능 " + fmt(mk, prof.pf[mk].cash) : " · 첫 주문 때 가상 " + fmt(mk, START[mk]) + " 계좌가 열립니다") + "</span></div>" +
-      '<button type="button" class="wbtn2" data-dwatch="1">' + (on ? "관찰중" : "관찰") + '</button>' + (hq ? '<button type="button" class="sell" data-dsell="1">팔기</button>' : "") + '<button type="button" class="buy" data-dbuy="1">사기</button></div>';
+      bar.addEventListener("click", function (ev) { var b = ev.target.closest("button"); if (!b) return; if (!isAuth()) { ask("mine"); return; } if (b.dataset.dbuy) sheet("B", detSym); else if (b.dataset.dsell) sheet("S", detSym); else if (b.dataset.drisk) sheet("R", detSym); else if (b.dataset.dwatch) { var i = prof.watch.indexOf(detSym); if (i >= 0) prof.watch.splice(i, 1); else if (prof.watch.length < 40) prof.watch.push(detSym); persist(); detail(detSym); } }); }
+    var hq = held(sym), on = prof.watch.indexOf(sym) >= 0, mk = isKr(sym) ? "kr" : "us", hp = has(mk) ? prof.pf[mk].pos[sym] : null, no = has(mk) ? (prof.pf[mk].ord || []).filter(function (o) { return o.s === sym; }).length : 0;
+    bar.innerHTML = '<div class="mdb"><div class="l"><span class="nm">내 모의계좌 · ' + esc(nm(sym)) + '</span><span class="sb">' + (hq ? "보유 " + hq.toLocaleString() + "주" + (hp && hp.tpPx ? " · 익절 " + pxS(mk, hp.tpPx) + " · 손절 " + pxS(mk, hp.slPx) : "") : "보유 없음") + (no ? " · 예약 " + no + "건" : "") + (has(mk) ? " · 주문 가능 " + fmt(mk, prof.pf[mk].cash) : " · 첫 주문 때 가상 " + fmt(mk, START[mk]) + " 계좌가 열립니다") + "</span></div>" +
+      '<button type="button" class="wbtn2" data-dwatch="1">' + (on ? "관찰중" : "관찰") + '</button>' + (hq ? '<button type="button" class="wbtn2" data-drisk="1">TP/SL</button><button type="button" class="sell" data-dsell="1">팔기</button>' : "") + '<button type="button" class="buy" data-dbuy="1">사기</button></div>';
   }
   function draw() {
     if (detSym && $("page-detail") && $("page-detail").classList.contains("active")) detail(detSym);
@@ -320,32 +370,140 @@
       : '<div class="empty">찾는 종목이 없습니다(추적 중인 미국·한국 종목 안에서 찾습니다)</div>') + "</section>";
   }
 
+  /* [V33.730] ★MTS 같은 주문창★(사용자 11/2 "실제 MTS처럼 · 예약 매수 · 코인처럼 TP/SL · 그래프에 보이게")
+     · 매수/매도 탭 · 시장가 / 예약(지정가 — 그 가격에 닿으면 체결) · 가격·수량 ± (호가 단위) · 수량 10/25/50/최대
+     · 익절가(TP)·손절가(SL) — 매수와 함께 걸어 두면 체결된 보유에 붙는다. 보유 종목은 [익절·손절]로 따로 고친다.
+     · 체결은 이 화면이 시세를 보고 한다(앱이 열려 있을 때·다시 열 때) — 서버는 장부 검사로 체결가가 서버 시세 ±3% 안인지 확인한다. */
+  function tick(mk, p) { if (mk !== "kr") return p >= 1 ? 0.01 : 0.0001; return p < 2000 ? 1 : p < 5000 ? 5 : p < 20000 ? 10 : p < 50000 ? 50 : p < 200000 ? 100 : p < 500000 ? 500 : 1000; }
+  function rt(mk, v) { var t = tick(mk, v); return Math.max(t, Math.round(v / t) * t); }
+  function pxS(mk, v) { return v == null || !isFinite(v) ? "—" : mk === "kr" ? "₩" + Math.round(v).toLocaleString() : "$" + v.toFixed(v >= 1 ? 2 : 4); }
+  function oid() { return Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36); }
   function sheet(side, sym) {
     var mk = isKr(sym) ? "kr" : "us";
-    if (side === "B" && !has(mk)) { acct(mk); persist(); }
     var a = acct(mk), p = priceOf(sym); if (!p) { alert("지금 시세가 없어 주문할 수 없습니다"); return; }
-    var hq = (a.pos[sym] || {}).q || 0, frac = side === "B" ? 0.25 : 1, qty = 0, col = side === "B" ? "#FF5C5C" : "#4D8DFF";
-    var maxQ = function () { return side === "B" ? Math.floor(a.cash / p) : hq; };
-    var setF = function (f) { frac = f; qty = side === "B" ? Math.floor(a.cash * f / p) : Math.floor(hq * f); };
-    setF(frac);
-    var sig = sigOf(sym), w = document.createElement("div"); w.id = "mineSheet";
+    var pos = a.pos[sym], hq = pos ? pos.q : 0;
+    var S = { side: side === "R" ? "R" : side, type: "mkt", px: rt(mk, p), qty: 0, frac: 0.25, tpOn: false, tp: rt(mk, p * 1.1), sl: rt(mk, p * 0.95) };
+    if (S.side === "R") { S.tpOn = true; if (pos && pos.tpPx) S.tp = pos.tpPx; if (pos && pos.slPx) S.sl = pos.slPx; }
+    var unit = function () { return S.type === "lim" ? S.px : p; };
+    var maxQ = function () { return S.side === "B" ? Math.floor(a.cash / unit()) : hq; };
+    var setF = function (f) { S.frac = f; S.qty = Math.floor(maxQ() * f); };
+    setF(S.side === "S" ? 1 : 0.25);
+    var w = document.createElement("div"); w.id = "mineSheet";
+    var pct = function (v, base) { return (v >= base ? "+" : "−") + Math.abs((v / base - 1) * 100).toFixed(1) + "%"; };
     var paint = function () {
-      qty = Math.max(0, Math.min(qty, maxQ()));
-      w.innerHTML = '<section class="sh" role="dialog" aria-label="모의 ' + (side === "B" ? "매수" : "매도") + '" style="--c:' + col + '"><div class="grab" aria-hidden="true"></div>' +
-        '<div style="display:flex;justify-content:space-between;align-items:baseline"><div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:19px;font-weight:700">' + esc(nm(sym)) + " " + (side === "B" ? "사기" : "팔기") + '</span><span style="font-size:12.5px;color:#98A2B3">' + esc(short(sym)) + " · 현재가 " + fmt(mk, p) + '</span></div><span style="font-size:12.5px;color:#98A2B3">' + (side === "B" ? "주문 가능 " + fmt(mk, a.cash) : "보유 " + hq.toLocaleString() + "주") + "</span></div>" +
-        '<div class="pre">' + [0.1, 0.25, 0.5, 1].map(function (f) { return '<button type="button" data-f="' + f + '" class="' + (f === frac ? "on" : "") + '">' + (f === 1 ? (side === "B" ? "최대" : "전부") : f * 100 + "%") + "</button>"; }).join("") + "</div>" +
-        '<div class="stp"><button type="button" data-st="-1" aria-label="1주 빼기">−</button><div style="display:flex;flex-direction:column;align-items:center"><span style="font-size:22px;font-weight:700">' + qty.toLocaleString() + '주</span><span style="font-size:12.5px;color:#98A2B3">≈ ' + fmt(mk, qty * p) + '</span></div><button type="button" data-st="1" aria-label="1주 더하기">+</button></div>' +
-        '<div style="display:flex;flex-direction:column;gap:4px"><div class="kv2"><span>AI 근거</span><span style="color:#C7CDD6">' + (sig ? (sig.watch ? "관찰 중(검증 기준 미달)" : sig.sl ? "국면 전략 편입" : "매매법 AI 후보") + (sig.stop ? " · 손절 −" + Number(sig.stop).toFixed(0) + "%" : "") : "AI 후보 아님 · 내 판단") + '</span></div><div class="kv2"><span>체결 기준</span><span style="color:#C7CDD6">지금 화면 시세 · 수수료 없음</span></div></div>' +
-        '<button type="button" class="go" ' + (qty > 0 ? "" : "disabled") + ">" + (qty > 0 ? qty.toLocaleString() + "주 모의 " + (side === "B" ? "매수" : "매도") : (side === "B" ? "주문 가능 금액이 1주보다 적습니다" : "팔 수량이 없습니다")) + '</button><span style="font-size:11px;color:#7E8796;text-align:center">가상 자금 주문입니다 · 실제 증권 주문이 아닙니다</span></section>';
+      var buy = S.side === "B", risk = S.side === "R", col = buy ? "#D42F2F" : risk ? "#0B7A66" : "#2160D8";
+      S.qty = Math.max(0, Math.min(S.qty, maxQ()));
+      var u = unit(), amt = S.qty * u, base = risk ? (pos ? pos.avg : p) : u, q2 = risk ? hq : S.qty;
+      var head = '<div class="shh"><div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:18px;font-weight:700">' + esc(nm(sym)) + '</span><span style="font-size:13px;color:#98A2B3">' + esc(short(sym)) + " · 현재가 <b style=\"color:#EEF1F5\">" + pxS(mk, p) + "</b></span></div>" +
+        '<button type="button" class="x" data-close="1" aria-label="닫기">✕</button></div>';
+      var h = head;
+      if (!risk) {
+        h += '<div class="tabs2" role="tablist"><button type="button" role="tab" data-side="B" class="' + (buy ? "on b" : "") + '">매수</button><button type="button" role="tab" data-side="S" class="' + (!buy ? "on s" : "") + '"' + (hq ? "" : " disabled") + ">매도" + (hq ? "" : " (보유 없음)") + "</button></div>" +
+          '<div class="typ">' + [["mkt", "시장가"], ["lim", "예약 (지정가)"]].map(function (t) { return '<button type="button" data-type="' + t[0] + '" class="' + (S.type === t[0] ? "on" : "") + '">' + t[1] + "</button>"; }).join("") + "</div>";
+        if (S.type === "lim") h += '<div class="fld"><span>' + (buy ? "이 가격 이하로 내려오면 매수" : "이 가격 이상으로 오르면 매도") + '</span><div class="stp2"><button type="button" data-pxs="-1" aria-label="가격 내리기">−</button><input id="shPx" inputmode="decimal" aria-label="예약 가격" value="' + (mk === "kr" ? Math.round(S.px) : S.px.toFixed(2)) + '"><button type="button" data-pxs="1" aria-label="가격 올리기">+</button></div><em>현재가 대비 ' + pct(S.px, p) + "</em></div>";
+        h += '<div class="fld"><span>수량 <i>' + (buy ? "최대 " + maxQ().toLocaleString() + "주" : "보유 " + hq.toLocaleString() + "주") + '</i></span><div class="stp2"><button type="button" data-qs="-1" aria-label="1주 빼기">−</button><input id="shQ" inputmode="numeric" aria-label="수량" value="' + S.qty + '"><button type="button" data-qs="1" aria-label="1주 더하기">+</button></div></div>' +
+          '<div class="pre">' + [0.1, 0.25, 0.5, 1].map(function (f) { return '<button type="button" data-f="' + f + '" class="' + (f === S.frac ? "on" : "") + '">' + (f === 1 ? (buy ? "최대" : "전부") : f * 100 + "%") + "</button>"; }).join("") + "</div>";
+      } else {
+        h += '<div class="note2">보유 ' + hq.toLocaleString() + "주 · 평단 " + pxS(mk, pos ? pos.avg : p) + " — 현재가가 익절가 이상이면 전부 팔고, 손절가 이하이면 전부 팝니다.</div>";
+      }
+      if (buy || risk) {
+        h += '<div class="tpsl"><div class="tph"><span>익절 · 손절 (TP / SL)</span><button type="button" role="switch" aria-checked="' + S.tpOn + '" aria-label="익절 손절 켜기" class="sw' + (S.tpOn ? " on" : "") + '" data-tpsw="1"><i></i></button></div>' +
+          (S.tpOn ? '<div class="tpg"><label class="tp"><span>익절가</span><input id="shTp" inputmode="decimal" value="' + (mk === "kr" ? Math.round(S.tp) : S.tp.toFixed(2)) + '"><em>' + pct(S.tp, base) + " · " + fmt(mk, (S.tp - base) * q2, true) + '</em><span class="qc">' + [5, 10, 20].map(function (x) { return '<button type="button" data-tpp="' + x + '">+' + x + "%</button>"; }).join("") + "</span></label>" +
+            '<label class="sl"><span>손절가</span><input id="shSl" inputmode="decimal" value="' + (mk === "kr" ? Math.round(S.sl) : S.sl.toFixed(2)) + '"><em>' + pct(S.sl, base) + " · " + fmt(mk, (S.sl - base) * q2, true) + '</em><span class="qc">' + [3, 5, 10].map(function (x) { return '<button type="button" data-slp="' + x + '">−' + x + "%</button>"; }).join("") + "</span></label></div>" : "") + "</div>";
+      }
+      if (!risk) h += '<div class="sum"><div><span>' + (S.type === "lim" ? "예약 금액" : "주문 금액") + "</span><b>" + fmt(mk, amt) + '</b></div><div><span>주문 가능</span><span>' + fmt(mk, a.cash) + "</span></div>" + (S.type === "lim" ? '<div><span>체결 조건</span><span>' + pxS(mk, S.px) + (buy ? " 이하" : " 이상") + " 도달 시 · 취소 전까지 유지</span></div>" : "") + "</div>";
+      var ok = risk ? hq > 0 : S.qty > 0;
+      var cta = risk ? (S.tpOn ? "익절·손절 저장" : "익절·손절 끄기") : !S.qty ? (buy ? "주문 가능 금액이 1주보다 적습니다" : "팔 수량이 없습니다")
+        : S.type === "lim" ? pxS(mk, S.px) + " 도달 시 " + S.qty.toLocaleString() + "주 예약 " + (buy ? "매수" : "매도") : S.qty.toLocaleString() + "주 시장가 " + (buy ? "매수" : "매도");
+      h += '<button type="button" class="go" ' + (ok ? "" : "disabled") + ">" + cta + '</button><span style="font-size:11px;color:#7E8796;text-align:center">가상 자금 주문 · 실제 증권 주문이 아닙니다</span>';
+      w.innerHTML = '<section class="sh" role="dialog" aria-label="모의 주문" style="--c:' + col + '"><div class="grab" aria-hidden="true"></div>' + h + "</section>";
     };
+    var num = function (id) { var e = $(id); if (!e) return null; var v = Number(String(e.value).replace(/[^0-9.]/g, "")); return isFinite(v) && v > 0 ? v : null; };
+    w.addEventListener("change", function (ev) {
+      var id = ev.target.id;
+      if (id === "shPx") { var v = num("shPx"); if (v) S.px = rt(mk, v); }
+      else if (id === "shQ") { var q2 = num("shQ"); S.qty = q2 ? Math.floor(q2) : 0; S.frac = -1; }
+      else if (id === "shTp") { var t = num("shTp"); if (t) S.tp = rt(mk, t); }
+      else if (id === "shSl") { var s2 = num("shSl"); if (s2) S.sl = rt(mk, s2); }
+      paint();
+    });
     w.addEventListener("click", function (ev) {
       if (ev.target === w) { w.remove(); return; }
-      var b = ev.target.closest("button"); if (!b) return;
-      if (b.dataset.f) { setF(Number(b.dataset.f)); paint(); }
-      else if (b.dataset.st) { qty += Number(b.dataset.st); frac = -1; paint(); }
-      else if (b.classList.contains("go")) { var err = trade(side, sym, qty); if (err) { alert(err); return; } w.remove(); acMk = mk; tab = "acct"; draw(); if (detSym === sym) detail(sym); }
+      var b = ev.target.closest("button"); if (!b) return; var d = b.dataset;
+      if (d.close) { w.remove(); return; }
+      if (d.side) { S.side = d.side; setF(S.side === "S" ? 1 : 0.25); }
+      else if (d.type) { S.type = d.type; if (S.type === "lim") S.px = rt(mk, p * (S.side === "B" ? 0.97 : 1.05)); S.tp = rt(mk, unit() * 1.1); S.sl = rt(mk, unit() * 0.95); setF(S.frac > 0 ? S.frac : 0.25); }
+      else if (d.pxs) { S.px = rt(mk, S.px + Number(d.pxs) * tick(mk, S.px)); }
+      else if (d.qs) { S.qty += Number(d.qs); S.frac = -1; }
+      else if (d.f) { setF(Number(d.f)); }
+      else if (d.tpsw) { S.tpOn = !S.tpOn; }
+      else if (d.tpp) { S.tp = rt(mk, (S.side === "R" && pos ? pos.avg : unit()) * (1 + Number(d.tpp) / 100)); }
+      else if (d.slp) { S.sl = rt(mk, (S.side === "R" && pos ? pos.avg : unit()) * (1 - Number(d.slp) / 100)); }
+      else if (b.classList.contains("go")) {
+        var cur = priceOf(sym) || p, err = null, msg = "";
+        if (S.tpOn && !(S.tp > S.sl)) { alert("익절가는 손절가보다 높아야 합니다"); return; }
+        if (S.side === "R") {
+          if (!a.pos[sym]) { alert("보유하지 않은 종목입니다"); return; }
+          if (S.tpOn) { if (S.tp <= cur || S.sl >= cur) { alert("익절가는 현재가보다 높게, 손절가는 현재가보다 낮게 정해 주세요"); return; } a.pos[sym].tpPx = S.tp; a.pos[sym].slPx = S.sl; msg = "익절·손절을 걸었어요"; }
+          else { delete a.pos[sym].tpPx; delete a.pos[sym].slPx; msg = "익절·손절을 껐어요"; }
+          persist();
+        } else if (S.type === "lim" && (S.side === "B" ? S.px < cur : S.px > cur)) {
+          if (!a.ord) a.ord = []; if (a.ord.length >= 20) { alert("예약 주문은 시장당 20건까지입니다"); return; }
+          var o = { id: oid(), side: S.side, s: sym, px: S.px, q: S.qty, t: Date.now() };
+          if (S.side === "B" && S.tpOn) { o.tpPx = S.tp; o.slPx = S.sl; }
+          a.ord.unshift(o); persist(); msg = "예약 주문을 걸었어요 · " + pxS(mk, S.px) + (S.side === "B" ? " 이하" : " 이상") + "이면 체결";
+        } else {
+          if (S.side === "B" && S.tpOn && (S.tp <= cur || S.sl >= cur)) { alert("익절가는 현재가보다 높게, 손절가는 현재가보다 낮게 정해 주세요"); return; }
+          err = trade(S.side, sym, S.qty); if (err) { alert(err); return; }
+          if (S.side === "B" && S.tpOn && a.pos[sym]) { a.pos[sym].tpPx = S.tp; a.pos[sym].slPx = S.sl; persist(); }
+          msg = S.qty.toLocaleString() + "주 " + (S.side === "B" ? "매수" : "매도") + " 체결 · " + pxS(mk, cur);
+        }
+        w.remove(); toast(msg); acMk = mk; if ($("page-mine") && $("page-mine").classList.contains("active")) tab = "acct"; draw(); if (detSym === sym) detail(sym); redrawChart(sym);
+        return;
+      } else return;
+      paint();
     });
     paint(); document.body.appendChild(w);
+  }
+  // ── [V33.730] 예약 주문·익절·손절 실행기 — 화면이 열려 있는 동안 15초마다 시세를 보고 체결(서버 비용 0 · 체결 때만 저장 1회) ──
+  function toast(t) {
+    if (!t) return; var e = document.createElement("div"); e.className = "luxToast"; e.setAttribute("role", "status"); e.textContent = t;
+    document.body.appendChild(e); setTimeout(function () { e.classList.add("on"); }, 10); setTimeout(function () { e.remove(); }, 4200);
+  }
+  function redrawChart(sym) { try { if (typeof window.__luxDetailRedraw === "function" && detSym === sym) window.__luxDetailRedraw(); } catch (e) {} }
+  function runOrders() {
+    if (!prof.pf) return; var changed = [];
+    ["us", "kr"].forEach(function (mk) {
+      var a = prof.pf[mk]; if (!a) return;
+      (a.ord || []).slice().forEach(function (o) {
+        var p = priceOf(o.s); if (!p) return;
+        var hit = o.side === "B" ? p <= o.px : p >= o.px; if (!hit) return;
+        a.ord = a.ord.filter(function (x) { return x.id !== o.id; });
+        if (o.side === "S" && !(a.pos[o.s] && a.pos[o.s].q > 0)) { changed.push("예약 매도 취소(보유 없음) · " + nm(o.s)); return; }
+        var q = o.side === "B" ? Math.min(o.q, Math.floor(a.cash / p)) : o.q;
+        if (!(q > 0)) { changed.push("예약 매수 취소(주문 가능 금액 부족) · " + nm(o.s)); return; }
+        if (trade(o.side, o.s, q)) return;
+        if (o.side === "B" && o.tpPx && a.pos[o.s]) { a.pos[o.s].tpPx = o.tpPx; a.pos[o.s].slPx = o.slPx; }
+        changed.push("예약 " + (o.side === "B" ? "매수" : "매도") + " 체결 · " + nm(o.s) + " " + q.toLocaleString() + "주 @ " + pxS(mk, p));
+      });
+      Object.keys(a.pos).forEach(function (s) {
+        var h = a.pos[s], p = priceOf(s); if (!p || !(h.tpPx || h.slPx)) return;
+        var why = h.tpPx && p >= h.tpPx ? "익절" : h.slPx && p <= h.slPx ? "손절" : null; if (!why) return;
+        var q = h.q; if (trade("S", s, q)) return;
+        changed.push(why + " 체결 · " + nm(s) + " " + q.toLocaleString() + "주 @ " + pxS(mk, p));
+      });
+    });
+    if (changed.length) { persist(); changed.forEach(function (m, i) { setTimeout(function () { toast(m); }, i * 900); }); draw(); if (detSym) { detail(detSym); redrawChart(detSym); } }
+  }
+  /* 차트에 그릴 선 — 익절(빨강)·손절(파랑)·예약 주문(검정/흰)·평단(회색) */
+  function lines(sym) {
+    var mk = isKr(sym) ? "kr" : "us", a = prof.pf && prof.pf[mk], out = []; if (!a) return out;
+    var h = a.pos[sym];
+    if (h) { out.push({ p: h.avg, label: "평단 " + pxS(mk, h.avg), c: "#8C95A8", dash: "2 4" });
+      if (h.tpPx) out.push({ p: h.tpPx, label: "익절 " + pxS(mk, h.tpPx), c: "#F04452" }); if (h.slPx) out.push({ p: h.slPx, label: "손절 " + pxS(mk, h.slPx), c: "#3182F6" }); }
+    (a.ord || []).forEach(function (o) { if (o.s !== sym) return; out.push({ p: o.px, label: "예약 " + (o.side === "B" ? "매수" : "매도") + " " + pxS(mk, o.px) + " · " + o.q + "주", c: o.side === "B" ? "#B5179E" : "#7048E8" });
+      if (o.tpPx) out.push({ p: o.tpPx, label: "익절(예약) " + pxS(mk, o.tpPx), c: "#F04452", dash: "3 5" }); if (o.slPx) out.push({ p: o.slPx, label: "손절(예약) " + pxS(mk, o.slPx), c: "#3182F6", dash: "3 5" }); });
+    return out;
   }
 
   // ── [V33.729] 로그인 = 닉네임 + 비밀번호 ──
@@ -356,7 +514,7 @@
   function remember(nick, since) { try { localStorage.setItem("lux-auth", nick); if (since) localStorage.setItem("lux-auth-ts", String(since)); localStorage.removeItem("lux-pk"); localStorage.removeItem("lux-gate"); } catch (e) {} try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {} }
   function authPost(path, body) { return fetch(path, { method: "POST", headers: { "content-type": "application/json", "x-lux-uid": uid() }, body: JSON.stringify(body) }).then(function (r) { return r.json(); }); }
   function signup(nick, pw) {
-    return api("POST", Object.assign({}, prof)).catch(function () {}).then(function () { return authPost("/api/auth/signup", { nick: nick, pw: pw }); }).then(function (j) {
+    return api("POST", Object.assign({}, prof)).catch(function () {}).then(function () { return authPost("/api/auth/signup", { nick: nick, pw: pw, agree: TERMS_VER }); }).then(function (j) {
       if (!j || !j.ok) throw new Error((j && j.error) || "가입하지 못했어요");
       remember(j.nick, j.created); prof.nick = j.nick; saveLocal(); return j;
     });
@@ -388,9 +546,13 @@
         "<h1>" + (su ? "닉네임 하나로<br>모의투자를 시작하세요" : "다시 오셨네요") + '</h1><p class="lead">' + esc(PGN[target] || "이 메뉴") + "는 로그인 후 쓸 수 있어요. 대시보드와 종목 상세는 로그인 없이 볼 수 있습니다.</p>" +
         '<div class="sw" role="tablist"><button type="button" role="tab" data-m="login" class="' + (su ? "" : "on") + '" aria-selected="' + !su + '">로그인</button><button type="button" role="tab" data-m="signup" class="' + (su ? "on" : "") + '" aria-selected="' + su + '">회원가입</button></div>' +
         '<form id="gForm" novalidate><label class="f"><span>닉네임</span><input id="gNick" autocomplete="username" maxlength="12" placeholder="2~12자 한글·영문·숫자" value="' + esc(authNick() || prof.nick || "") + '"></label>' +
-        '<label class="f"><span>비밀번호</span><input id="gPw" type="password" autocomplete="' + (su ? "new-password" : "current-password") + '" maxlength="64" placeholder="' + (su ? "8자 이상" : "비밀번호") + '"></label>' +
-        (su ? '<label class="f"><span>비밀번호 확인</span><input id="gPw2" type="password" autocomplete="new-password" maxlength="64" placeholder="한 번 더"></label>' +
-              '<label class="ag"><input type="checkbox" id="gAgree"><span><a href="/privacy" target="_blank" rel="noopener">이용 안내·개인정보 처리방침</a>에 동의합니다 · 모의투자이며 투자 권유가 아님을 이해했습니다</span></label>' : "") +
+        '<label class="f"><span>비밀번호</span><span class="pwi"><input id="gPw" type="password" autocomplete="' + (su ? "new-password" : "current-password") + '" maxlength="64" placeholder="' + (su ? "8자 이상" : "비밀번호") + '">' + EYE + '</span></label>' +
+        (su ? '<label class="f"><span>비밀번호 확인</span><span class="pwi"><input id="gPw2" type="password" autocomplete="new-password" maxlength="64" placeholder="한 번 더">' + EYE + '</span></label>' +
+              '<fieldset class="agf"><legend>약관 동의</legend><label class="ag all"><input type="checkbox" id="gAll"><span><b>전체 동의</b></span></label>' +
+              '<label class="ag"><input type="checkbox" class="gReq" id="gAgree"><span>[필수] <a href="/terms" target="_blank" rel="noopener">이용약관</a> 동의 — 모의투자이며 투자 권유가 아님을 이해했습니다</span></label>' +
+              '<label class="ag"><input type="checkbox" class="gReq" id="gPriv"><span>[필수] <a href="/privacy" target="_blank" rel="noopener">개인정보 수집·이용</a> 동의</span></label>' +
+              '<div class="agt" role="note"><b>수집 항목</b> 닉네임 · 비밀번호 확인값(비밀번호 자체는 저장 안 함) · 성향·관심종목·모의계좌<br><b>목적</b> 로그인 · 모의투자 · 순위 표시<br><b>보유 기간</b> 마지막 사용 후 1년 또는 탈퇴 즉시 삭제 · 동의를 거부할 수 있으나 거부하면 가입할 수 없습니다</div>' +
+              '<label class="ag"><input type="checkbox" class="gReq" id="gAge"><span>[필수] 만 14세 이상입니다</span></label></fieldset>' : "") +
         '<p id="gErr" class="err" role="alert"></p><button type="submit" class="p1" id="gGo">' + (su ? "가입하고 시작하기" : "로그인") + "</button></form>" +
         '<button type="button" class="p3" id="gGuest">나중에 · 대시보드로 계속</button>' +
         '<p class="fine">이메일·이름·전화번호를 받지 않습니다 · 비밀번호는 서버에 저장되지 않고 확인용 값만 남습니다' + (su ? " · 로그인 없이 쓰던 관심종목·모의계좌는 이 계정으로 옮겨집니다" : "") + "<br>비밀번호를 잊으면 되찾을 수 없어요(이메일을 받지 않기 때문) — 꼭 기억해 두세요.</p></div>";
@@ -404,6 +566,10 @@
       if (b.dataset.m) { m = b.dataset.m; paint(); return; }
       if (b.id === "gClose" || b.id === "gGuest") done(false);
     });
+    w.addEventListener("change", function (ev) {   // [V33.734] 전체 동의 ↔ 개별 필수 항목
+      var t = ev.target; if (t.id === "gAll") w.querySelectorAll(".gReq").forEach(function (x) { x.checked = t.checked; });
+      else if (t.classList && t.classList.contains("gReq")) { var all = $("gAll"); if (all) all.checked = Array.prototype.every.call(w.querySelectorAll(".gReq"), function (x) { return x.checked; }); }
+    });
     w.addEventListener("submit", function (ev) {
       ev.preventDefault(); if (busy) return;
       var nick = ($("gNick").value || "").trim(), pw = $("gPw").value || "";
@@ -411,7 +577,7 @@
       if (m === "signup") {
         if (pw.length < 8) { err("비밀번호는 8자 이상으로 정해 주세요"); return; }
         if (pw !== ($("gPw2").value || "")) { err("비밀번호 확인이 다릅니다"); return; }
-        if (!$("gAgree").checked) { err("이용 안내·개인정보 처리방침에 동의해 주세요"); return; }
+        if (!$("gAgree").checked || !$("gPriv").checked || !$("gAge").checked) { err("필수 항목 세 가지에 모두 동의해 주세요"); return; }
       } else if (!pw) { err("비밀번호를 넣어 주세요"); return; }
       busy = true; err(""); var g = $("gGo"); g.disabled = true; g.textContent = m === "signup" ? "가입하는 중…" : "로그인하는 중…";
       (m === "signup" ? signup(nick, pw) : login(nick, pw)).then(function () { if (m === "signup" && !prof.done) tab = "me"; done(true); })
@@ -426,6 +592,8 @@
     if (d.tab) { tab = d.tab; draw(); return; }
     if (d.buy) { ev.stopPropagation(); sheet("B", d.buy); return; }
     if (d.sell) { ev.stopPropagation(); sheet("S", d.sell); return; }
+    if (d.risk) { ev.stopPropagation(); sheet("R", d.risk); return; }
+    if (d.cancel) { ev.stopPropagation(); ["us", "kr"].forEach(function (m) { var aa = prof.pf && prof.pf[m]; if (aa && aa.ord) aa.ord = aa.ord.filter(function (o) { return o.id !== d.cancel; }); }); persist(); draw(); toast("예약 주문을 취소했어요"); if (detSym) redrawChart(detSym); return; }
     if (d.openAcct) { acct(d.openAcct); persist(); acMk = d.openAcct; tab = "acct"; draw(); return; }
     if (d.acmk) { acMk = d.acmk; draw(); return; }
     if (d.wf) { wFilter = d.wf; draw(); return; }
@@ -442,7 +610,8 @@
     if (t.id === "mePw") { pwOpen = !pwOpen; draw(); if (pwOpen && $("mePw0")) $("mePw0").focus(); return; }
     if (t.id === "meLogin") { ask("mine", "login"); return; }
     if (t.id === "meOut") { logout(false); return; }
-    if (t.id === "meLang") { if (window.luxLang) window.luxLang.set(window.luxLang.get() === "en" ? "ko" : "en"); return; }
+    if (t.id === "mePush") { if (window.__luxPush) Promise.resolve(window.__luxPush()).then(function () { setTimeout(draw, 800); }); return; }
+    if (d.lang) { var curL = window.luxLang && window.luxLang.get ? window.luxLang.get() : "ko"; if (d.lang !== curL && window.luxLang) window.luxLang.set(d.lang); return; }   // [V33.732] 고른 언어로만 · 지금 언어를 누르면 아무 일 없음
     if (t.id === "mineDelete") {
       if (!confirm("서버에 저장된 내 계정(닉네임)·성향·관심종목·모의계좌를 모두 지웁니다. 되돌릴 수 없어요. 지울까요?")) return;
       api("DELETE").then(function () { alert("삭제했습니다."); logout(true); }).catch(function () { alert("삭제하지 못했습니다. 잠시 뒤 다시 시도해 주세요."); });
@@ -467,6 +636,22 @@
     if (pg.classList.contains("active")) onShow();
     setInterval(function () { if (!document.hidden && pg.classList.contains("active")) { pbLoad(false); var ae = document.activeElement; if (!$("mineSheet") && !(ae && (ae.id === "mineSearch" || /^mePw/.test(ae.id || "")))) draw(); } }, 60000);
   }
-  window.luxMine = { draw: draw, detail: detail, ask: ask };
+  /* [V33.734] ★첫 방문 동의 배너★ — 쿠키는 쓰지 않음 · 필수 저장소만 · 선택 2개(외부 글꼴 · 성능 진단). 고르기 전엔 선택 항목을 하지 않는다. */
+  function consentBanner() {
+    var c = null; try { c = JSON.parse(localStorage.getItem("lux-consent") || "null"); } catch (e) {}
+    if (c || $("luxConsent")) return; css();
+    var w = document.createElement("section"); w.id = "luxConsent"; w.setAttribute("role", "region"); w.setAttribute("aria-label", "쿠키 · 저장소 동의");
+    w.innerHTML = '<p><b>쿠키를 쓰지 않습니다.</b> 로그인·설정 유지에 꼭 필요한 값만 이 기기에 저장합니다. 선택: 외부 글꼴(Google 에 접속 정보 전달) · 익명 화면 성능 진단. <a href="/cookies">자세히</a></p>' +
+      '<div class="cb"><button type="button" data-cs="min">필수만</button><button type="button" data-cs="all" class="pri">모두 허용</button></div>';
+    w.addEventListener("click", function (ev) { var b = ev.target.closest("button[data-cs]"); if (!b) return; var all = b.dataset.cs === "all";
+      try { localStorage.setItem("lux-consent", JSON.stringify({ v: TERMS_VER, fonts: all, perf: all, ts: Date.now() })); } catch (e) {}
+      if (all) { try { var l = document.createElement("link"); l.rel = "stylesheet"; l.href = "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Pinyon+Script&family=UnifrakturCook:wght@700&display=swap"; document.head.appendChild(l); } catch (e) {} }
+      w.remove(); draw(); });
+    document.body.appendChild(w);
+  }
+  setTimeout(consentBanner, 1200);
+  setInterval(function () { if (!document.hidden) runOrders(); }, 15000);
+  setTimeout(runOrders, 4000);
+  window.luxMine = { draw: draw, detail: detail, ask: ask, lines: lines };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 })();

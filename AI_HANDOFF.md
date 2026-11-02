@@ -6844,3 +6844,26 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
     다음 단계 후보: R2 공개 버킷(data.lux-inv.com) 스냅샷을 CDN 캐시로 — 워커 호출 0(대시보드 공용 데이터).
   · 라이브 확인(V33.729 · lux-inv.com): 가입 → 틀린 비번 401(1/5) → 로그인 시 같은 uid 반환(0.7s) → /api/me/passkey/* 404 → 내 데이터 삭제 후 로그인 불가(계정도 지워짐). 시험 계정은 삭제함.
     /api/ai-mode 응답층 x-lux-c: r2 — 콜로 캐시(l2)는 키 주소가 swr-cache.internal(우리 존 밖)이라 안 잡히는 듯. 키를 lux-inv.com 아래로 바꾸면 l2 가 살아날 수 있음(다음 작업 후보).
+
+## V33.730 ~ V33.733 (11/2 · 사용자 "종목 상세 재무·IR·내부자 · MTS 주문(예약·TP/SL·차트 선) · 라이트 테마 · 사이드바 · 휴대폰 메뉴/대시보드")
+- 디자인 시안(캔버스): https://claude.ai/artifact/MJK86SCLgpsPn6F9qDWMGN (종목 상세 데스크톱 · MTS 주문 · 휴대폰 상세 · 대시보드, 라이트).
+- V33.730 MTS 주문: mine.js sheet() 재작성 — 매수/매도 · 시장가/예약(지정가) · 호가 단위 ± · 수량 % · 익절/손절(TP/SL) · 보유 종목 [TP/SL]로 따로 설정.
+  저장 필드: pf[mk].pos[S].tpPx/slPx · pf[mk].ord[]({id,side,s,px,q,t,tpPx,slPx} 시장당 20) — 엔진 설정 tp 와 이름 충돌(check-dead-config) 피해 tpPx/slPx.
+  실행: runOrders() 가 화면이 열려 있을 때 15초마다(숨은 탭 쉼) 시세로 체결 · 체결 때만 persist(2초 모아 1회) → D1 쓰기는 주문·체결 때만. 서버 순회 없음(D1·CPU 0).
+  차트: buildProChart(opts.lines) — 익절 빨강 · 손절 파랑 · 예약 보라 · 평단 회색 점선 + 이름표. window.luxMine.lines(sym) · window.__luxDetailRedraw.
+- V33.731 종목 상세 정보 탭(public/stock-info.js · #luxInfo): 개요 · 밸류에이션(PER/PBR/PSR/EV·EBITDA/FCF 수익률 = 지금 시총 ÷ 최근 회계연도) · KPI · 재무제표(손익/재무상태/현금흐름 4년) · 실적·전망 · IR 자료 · 내부자 거래.
+  새 API /api/ir (미국: SEC submissions → 10-K/10-Q/8-K/DEF14A + Form 4 · swrJson 6h — 사람 수와 무관하게 종목당 6시간 1회 · 한국: DART·네이버 링크만, 키 없음).
+- V33.732 라이트 테마 'LUX Light 2'(<style id="luxLight2"> 맨 끝): 바탕 #EDF0F4 · 흰 카드+테두리+옅은 그림자 · 기기 한글 산세리프(외부 글꼴 0) · 글자 3단. MY·주문창·로그인 창 라이트 대응.
+  비밀번호 보기 버튼(.pwi .eye) · MY 언어는 [한국어|English] 선택식(지금 언어를 눌러도 안 바뀜) · 설정 버튼을 AI 두뇌 MISSION CONTROL 옆(.nnv-setbtn)으로 · 사이드바 설정/TRADES 숨김
+  · POSITIONS → LUX-POSITION(AI 가 직접 매수한 종목) + [보유 종목|거래 기록] 탭(거래 기록 = 옛 TRADES 화면) · 휴대폰 탭 순서 대시보드·종목·MY(가운데)·AI 두뇌·메뉴.
+- V33.733 휴대폰: 대시보드 Finviz식 압축(600px 이하: 지수 3열 · 시장폭 한 줄 · TOP MOVERS 나란히 종목·등락만 · 표 행 축소 · 접힌 패널 빈칸 제거 · 파이프라인 띠 숨김)
+  · 메뉴(드로어) 새 디자인 — 머리(닉네임·로그인) · 화면 · 도구 · 상태 줄 목록(설정 앱식). id(mDrNav·mDrStatus·mDrClose) 규약 유지.
+- 비용 원칙(사용자 11/2 상시): 새 기능은 D1·CPU 뿐 아니라 Workers 요청·R2 등 모든 과금 한도 안에서 설계 — 개인 기능은 화면 계산 + 저장은 모아서 1행, 공용 데이터는 swrJson(콜로·R2) 캐시.
+- V33.734 법적·접근성(사용자 11/2): 새 문서 /terms(이용약관 — 무료·숨은 요금 없음·유료 전환 30일 전 고지+별도 동의 · 모의투자/투자 권유 아님 · 데이터 출처·글꼴 OFL·자체 제작 아이콘 · 운영자 정보)
+  · /privacy 전면 재작성(개인정보 보호법 30조 항목: 항목·목적·보유 · 14세 미만 가입 불가 · 제3자 없음 · 위탁·국외 이전(Cloudflare·Google Fonts·푸시) · 파기 · 권리 · 안전성 · 보호책임자 · 구제기관)
+  · /cookies(쿠키 미사용 · localStorage 목록 · 선택 2개(외부 글꼴·성능 진단) · 외부 SDK 점검: 광고·분석·결제 SDK 없음) · public/legal.css(대비 AA).
+  · 첫 방문 동의 배너(#luxConsent · lux-consent {v,fonts,perf,ts}) — Google Fonts 는 '모두 허용' 일 때만 주입(정적 link·noscript 제거, check-boot-paint 계약 갱신) · 성능 진단은 동의 기기의 ~5%만(R2 쓰기 비용).
+  · 가입 동의서: 전체 동의 + [필수] 이용약관 · [필수] 개인정보 수집·이용(항목·목적·보유 표) · [필수] 만 14세 이상 — 서버도 agree=LUX_TERMS_VER 없으면 거부 · user_accounts.agree 열(ALTER 1회)에 판·시각 기록.
+  · 체결 알림·이용 안내를 사이드바에서 MY › 내 정보로(알림 줄 · 약관·정책 4줄 · 내 데이터 요약) · 대시보드·종목 상세 맨 아래 법적 고지 줄(.lux-legal — 비회원도 봄).
+  · axe 점검(image-alt·button-name·label·color-contrast): 라이트 t3 #5B6474 · 손익색·매수/매도 버튼(#D42F2F/#2160D8)·국면색 라이트판 → 대시보드·상세·MY 위반 0~1건으로.
+  · ★남은 일★ 운영자 연락처·사업자 정보는 사용자에게 받아야 함(지금 '연락처 게시 준비 중' · 사업자 등록 전 표기).

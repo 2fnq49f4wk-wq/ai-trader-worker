@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>LUX-INV 쿠키 · 저장소 정책</title>
+<script>try{if(/\.workers\.dev$/.test(location.hostname))location.replace("https://lux-inv.com"+location.pathname);}catch(e){}</script>
+<meta name="description" content="LUX-INV 쿠키 · 브라우저 저장소 · 외부 요청 정책">
+<link rel="stylesheet" href="/legal.css?v=33.734">
+</head><body><main>
+<a class="back" href="/">← LUX-INV 로 돌아가기</a>
+<nav class="lg" aria-label="약관과 정책"><a href="/terms">이용약관</a><a href="/privacy">개인정보처리방침</a><a href="/cookies" aria-current="page">쿠키 · 저장소 정책</a></nav>
+<h1>쿠키 · 저장소 정책</h1>
+<p class="mu">시행일 2026-11-02 · 버전 2026-11-02</p>
+
+<div class="box"><b>쿠키를 쓰지 않습니다.</b> 광고·분석·추적 쿠키, 광고 SDK, 분석 SDK(구글 애널리틱스 등)를 넣지 않았습니다. 서비스가 동작하는 데 꼭 필요한 값만 이 기기의 브라우저 저장소(localStorage)에 둡니다 — 이 값은 서버로 자동 전송되지 않습니다.</div>
+
+<h2>1. 필수 저장소(거부하면 서비스가 동작하지 않음)</h2>
+<div class="tw"><table>
+<thead><tr><th>이름</th><th>용도</th><th>기간</th></tr></thead>
+<tbody>
+<tr><td>lux-uid</td><td>이 기기의 무작위 코드(내 MY 데이터를 여는 열쇠 · 서버에는 해시로만 저장)</td><td>로그아웃·삭제 전까지</td></tr>
+<tr><td>lux-auth · lux-auth-ts</td><td>로그인한 닉네임 · 가입 시각(로그인 상태 유지)</td><td>로그아웃 전까지</td></tr>
+<tr><td>lux-prof</td><td>MY 데이터의 기기 사본(빠른 화면 표시)</td><td>로그아웃·삭제 전까지</td></tr>
+<tr><td>lux-consent</td><td>이 동의 선택 기록</td><td>다시 고르기 전까지</td></tr>
+<tr><td>서비스 워커 캐시</td><td>화면 파일을 기기에 보관해 빨리 열기(앱 설치·오프라인)</td><td>새 판이 나오면 교체</td></tr>
+</tbody></table></div>
+
+<h2>2. 화면 설정 저장소(편의 · 기기에만)</h2>
+<p>luxTheme(밝게·어둡게) · lux-lang(언어) · luxPage(마지막 화면) · luxDensity · luxRailTab · luxRailSyms · luxPzOpen · luxIntroDay · priceAlerts(가격 알림 조건) · luxLiveCache · luxAiModeCache · bootBundle(화면 빠른 시작용 사본) · luxPush(알림 켬 여부). 모두 이 기기에만 있고 서버로 보내지 않습니다.</p>
+
+<h2>3. 선택 항목(동의 배너에서 고름)</h2>
+<div class="tw"><table>
+<thead><tr><th>항목</th><th>내용</th><th>거부 시</th></tr></thead>
+<tbody>
+<tr><td>외부 글꼴(Google Fonts)</td><td>제목·숫자용 글꼴 4종을 Google 서버에서 받습니다 — 이때 접속 IP·브라우저 정보가 Google 에 전달됩니다.</td><td>기기에 있는 시스템 글꼴로 보입니다(기능 차이 없음)</td></tr>
+<tr><td>화면 성능 진단</td><td>화면이 멈춘 시간·화면 이름·브라우저 종류를 익명으로 보냅니다(동의한 기기 중 5%만).</td><td>보내지 않습니다</td></tr>
+</tbody></table></div>
+<p><button type="button" id="reopen" style="min-height:44px;padding:0 16px;border-radius:10px;border:1px solid var(--ln);background:var(--card);color:var(--fg);font:inherit;cursor:pointer">동의 선택 다시 하기</button> <span id="cur" class="mu"></span></p>
+
+<h2>4. 외부 SDK · 외부 요청 점검 결과 (2026-11-02)</h2>
+<ul>
+<li>광고 SDK · 분석 SDK · 소셜 로그인 SDK · 결제 SDK: <b>없음</b></li>
+<li>화면이 직접 연결하는 외부 주소: fonts.googleapis.com · fonts.gstatic.com(위 선택 항목 · 거부 가능)뿐</li>
+<li>시세·공시 원천(Yahoo · Nasdaq · SEC · 네이버)은 서버가 받아 오며 이용자의 기기는 직접 접속하지 않습니다(IR 원문 링크를 누른 경우 제외).</li>
+</ul>
+<footer>© LUX-INV · <a href="/terms">이용약관</a> · <a href="/privacy">개인정보처리방침</a></footer>
+<script>
+(function(){var c=null;try{c=JSON.parse(localStorage.getItem('lux-consent')||'null');}catch(e){}
+var cur=document.getElementById('cur');cur.textContent=c?('지금 선택: 외부 글꼴 '+(c.fonts?'허용':'거부')+' · 성능 진단 '+(c.perf?'허용':'거부')+' · '+new Date(c.ts).toLocaleString()):'아직 고르지 않음';
+document.getElementById('reopen').onclick=function(){try{localStorage.removeItem('lux-consent');}catch(e){}location.href='/';};})();
+</script>
+</main></body></html>

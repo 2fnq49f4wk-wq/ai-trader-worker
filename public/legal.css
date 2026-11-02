@@ -1,0 +1,13 @@
+/* [V33.734] 약관·개인정보·쿠키 문서 공용 스타일 — 글자 대비 WCAG AA(본문 4.5:1 이상) · 시스템 한글 글꼴(외부 글꼴 요청 없음) */
+:root{--bg:#0B0E13;--card:#141922;--fg:#EDF1F7;--mu:#AAB4C3;--ln:#2A3240;--ac:#7CC4FF;--warn:#FFD27A}
+@media (prefers-color-scheme: light){:root{--bg:#F4F6F9;--card:#FFFFFF;--fg:#101828;--mu:#475467;--ln:#DCE1E8;--ac:#1B4FB5;--warn:#8A5A00}}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:15.5px/1.75 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",system-ui,sans-serif;-webkit-text-size-adjust:100%}
+main{max-width:780px;margin:0 auto;padding:24px 16px calc(48px + env(safe-area-inset-bottom))}
+nav.lg{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 18px}nav.lg a{padding:8px 12px;border-radius:999px;border:1px solid var(--ln);color:var(--fg);text-decoration:none;font-size:14px}nav.lg a[aria-current="page"]{background:var(--fg);color:var(--bg);border-color:var(--fg);font-weight:700}
+h1{font-size:24px;margin:6px 0 4px;letter-spacing:-.4px}h2{font-size:18px;margin:30px 0 8px;padding-top:18px;border-top:1px solid var(--ln)}h3{font-size:15.5px;margin:18px 0 6px}
+p,li,td{color:var(--fg)}.mu,small{color:var(--mu)}a{color:var(--ac)}
+.box{background:var(--card);border:1px solid var(--ln);border-radius:12px;padding:14px 16px;margin:14px 0}.box.warn{border-color:var(--warn)}.box.warn b:first-child{color:var(--warn)}
+table{width:100%;border-collapse:collapse;font-size:14px;margin:8px 0}th,td{border:1px solid var(--ln);padding:8px 10px;text-align:left;vertical-align:top}th{background:var(--card);font-weight:700}
+.tw{overflow-x:auto}
+footer{margin-top:36px;padding-top:16px;border-top:1px solid var(--ln);font-size:13px;color:var(--mu)}
+a.back{display:inline-flex;align-items:center;min-height:44px;color:var(--ac)}

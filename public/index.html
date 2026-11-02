@@ -146,7 +146,10 @@ window.LUXBOOT = (function () {
       } catch (e) {}
       return o;
     }
+    /* [V33.734] 성능 진단은 '동의한 기기 중 5%' 만 보낸다(쿠키·저장소 정책 · 보낼 때마다 R2 읽기·쓰기 1회 — 사람이 늘어도 비용이 커지지 않게) */
+    var _pOK = (function(){ try { var c = JSON.parse(localStorage.getItem('lux-consent') || 'null'); if (!c || !c.perf) return false; var k = sessionStorage.getItem('lux-perf-s'); if (k == null) { k = crypto.getRandomValues(new Uint8Array(1))[0] < 13 ? '1' : '0';   /* 약 5% */ sessionStorage.setItem('lux-perf-s', k); } return k === '1'; } catch (e) { return false; } })();
     function send(force) {
+      if (!_pOK) { q.length = 0; return; }
       if (!q.length || (!force && Date.now() - lastSend < 30000)) return;
       lastSend = Date.now();
       var meta = document.querySelector('meta[name="lux-build"]');
@@ -220,10 +223,11 @@ window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{
 window.__luxAct=Date.now();['pointerdown','keydown','touchstart','wheel'].forEach(function(e){addEventListener(e,function(){window.__luxAct=Date.now();},{passive:true,capture:true});});
 window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600000;};
 </script>
-<meta name="lux-build" content="V33.729">
-<script src="/i18n.js?v=33.729" defer></script>
-<script src="/mine.js?v=33.729" defer></script>
-<script src="/neural-observatory.js?v=33.729" defer></script>
+<meta name="lux-build" content="V33.734">
+<script src="/i18n.js?v=33.734" defer></script>
+<script src="/mine.js?v=33.734" defer></script>
+<script src="/stock-info.js?v=33.734" defer></script>
+<script src="/neural-observatory.js?v=33.734" defer></script>
 <title>LUX-INV</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -267,13 +271,14 @@ document.addEventListener('DOMContentLoaded',function(){
   }
 });
 </script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
 <!-- [V33.367] 렌더링을 막지 않게 받는다 — media="print" 로 받아 onload 에서 적용한다.
      URL 에 display=swap 이 이미 있어 폰트가 늦어도 글자는 대체 글꼴로 먼저 보인다.
      (JS 가 꺼진 환경을 위해 <noscript> 에 종전 방식을 남긴다) -->
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Pinyon+Script&family=UnifrakturCook:wght@700&display=swap" rel="stylesheet" media="print" onload="this.media='all';this.onload=null;">
-<noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Pinyon+Script&family=UnifrakturCook:wght@700&display=swap" rel="stylesheet"></noscript>
+<script>/* [V33.734] 외부 글꼴(Google Fonts)은 동의 배너에서 '허용' 을 고른 경우에만 받는다(접속 IP 가 Google 에 전달되므로 · 쿠키·저장소 정책).
+   고르기 전·거부면 기기 시스템 글꼴로 그린다(기능 차이 없음). 렌더링을 막지 않게 media=print → onload 로 적용(V33.367 그대로). */
+(function(){try{var c=JSON.parse(localStorage.getItem('lux-consent')||'null');if(!c||!c.fonts)return;var l=document.createElement('link');l.rel='stylesheet';l.media='print';l.onload=function(){this.media='all';};
+l.href='https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Pinyon+Script&family=UnifrakturCook:wght@700&display=swap';document.head.appendChild(l);}catch(e){}})();</script>
 <style>
 /* LUX-ENGINE · 완전 새 UI */
 :root{
@@ -4079,6 +4084,103 @@ nav.sidebar::-webkit-scrollbar{display:none;}
 #setWarnLogs .wl-row{display:flex;gap:8px;padding:5px 0;border-top:1px solid rgba(120,140,170,.14);font-size:11.5px;line-height:1.45}
 #setWarnLogs .wl-row:first-child{border-top:0}#setWarnLogs .wl-t{white-space:nowrap;color:var(--t2,#8ea0ba)}#setWarnLogs .wl-l{font-weight:700;white-space:nowrap}
 </style>
+<style id="luxMobile2">
+#btnPush[data-moved]{display:none !important}
+.lux-legal{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;padding:18px 12px calc(18px + env(safe-area-inset-bottom));margin-top:8px;font-size:12.5px;color:var(--t2)}.lux-legal a{color:var(--t1);text-decoration:underline;text-underline-offset:2px;min-height:32px;display:inline-flex;align-items:center}.lux-legal span{color:var(--t2)}/* [V33.734] 체결 알림은 MY › 내 정보로 */
+/* [V33.733] ★휴대폰 대시보드 — Finviz 모바일처럼 한 화면에 많이★(사용자 11/2) — 600px 이하만. 두 테마 공통.
+   지수 3열 소형 카드 · 시장폭 한 줄 · 상승/하락 TOP 을 나란히(종목·등락만) · 표 행 높이 축소 · 접힌 패널의 빈 공간 제거 · 파이프라인 띠 숨김 */
+@media (max-width:600px){
+  #pipelineBar,#tuneBanner{display:none !important}
+  .fv-deck{padding:6px 6px 0 !important;gap:6px !important}
+  .fv-index-row{display:grid !important;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px !important}
+  .fv-idx{padding:8px 9px 6px !important;border-radius:10px !important}
+  .fv-idx-top{flex-direction:column;align-items:flex-start;gap:1px}
+  .fv-idx-name{font-size:10.5px !important;letter-spacing:0 !important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .fv-idx-chg{margin-left:0 !important;font-size:11px !important}
+  .fv-idx-price{font-size:14.5px !important;margin-top:1px !important;letter-spacing:-.4px}
+  .fv-idx-chart{height:24px !important;margin-top:3px !important}
+  .fv-breadth-row{display:grid !important;grid-template-columns:1fr;gap:6px !important}
+  .fv-breadth{padding:6px 8px !important;border-radius:10px !important}
+  .fv-breadth-top{font-size:10px !important;margin-bottom:4px !important}
+  .fv-breadth-top .l,.fv-breadth-top .r{white-space:nowrap}
+  .fv-panel{border-radius:12px !important}
+  .fv-panel-head{padding:9px 10px !important;font-size:12px !important;letter-spacing:0 !important}
+  .fv-movers-grid{grid-template-columns:1fr 1fr !important;gap:0}
+  .fv-movers-grid .fv-table th:nth-child(2),.fv-movers-grid .fv-table td:nth-child(2),.fv-movers-grid .fv-table th:nth-child(4),.fv-movers-grid .fv-table td:nth-child(4){display:none}
+  .fv-movers-grid .fv-table{width:100%;table-layout:fixed}.fv-movers-grid .fv-table th:first-child,.fv-movers-grid .fv-table td:first-child{width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fv-movers-grid .fv-table td:nth-child(3),.fv-movers-grid .fv-table th:nth-child(3){text-overflow:clip !important;overflow:visible !important;padding-left:2px !important}
+  .fv-movers-grid .fv-table + .fv-table{border-left:1px solid var(--bd2)}
+  .page .fv-table th,.page .fv-table td{padding:5px 8px !important;font-size:12.5px !important;line-height:1.3}
+  .fv3-grid{padding:6px 0 !important;gap:6px !important}
+  .fv3-grid .fv-table th:nth-child(3),.fv3-grid .fv-table td:nth-child(3){max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fv-intel-wrap,.fv-intel-wrap .fv-panel{height:auto !important;min-height:0 !important;grid-template-rows:none !important}
+  .fv-intel-wrap{display:flex !important;flex-direction:column;gap:6px}
+}
+/* [V33.733] ★휴대폰 메뉴(드로어) 새 디자인★ — 설정 앱처럼: 묶음 카드 안에 줄 목록(아이콘 · 이름 · ›) · 한글 산세리프 · 상태는 맨 아래 작은 회색 카드 */
+.m-drawer{font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",system-ui,sans-serif !important}
+.m-drawer .m-dr2-hd{display:flex;align-items:center;gap:12px;padding:calc(14px + env(safe-area-inset-top)) 16px 12px}
+.m-drawer .m-dr2-av{width:44px;height:44px;border-radius:22px;background:linear-gradient(135deg,#3DD6B5,#2A8F7C);color:#04110D;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;flex:0 0 44px}
+.m-drawer .m-dr2-who{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.m-drawer .m-dr2-who b{font-size:17px}.m-drawer .m-dr2-who span{font-size:12.5px;opacity:.65}
+.m-drawer .m-dr2-cap{font-size:12px;font-weight:700;opacity:.55;margin:14px 20px 6px;letter-spacing:.2px}
+.m-drawer .m-dr-title{text-transform:none !important;letter-spacing:-.2px !important;font-size:17px !important;opacity:1 !important}
+.m-drawer .m-dr2-grp{display:block !important;height:auto !important;max-height:none !important;overflow:visible !important;padding:0 !important;margin:0 12px;border-radius:14px;overflow:hidden;background:var(--s1);border:1px solid var(--bd2)}
+.m-drawer .m-dr2-grp>button,.m-drawer .m-dr2-grp>a{display:flex !important;align-items:center;gap:12px;width:100%;min-height:52px;padding:0 14px !important;border:0 !important;border-top:1px solid var(--bd2) !important;border-radius:0 !important;background:transparent !important;color:var(--t1) !important;font:inherit !important;font-size:15px !important;text-align:left;text-decoration:none;letter-spacing:0 !important;cursor:pointer;box-shadow:none !important}
+.m-drawer .m-dr2-grp>:first-child{border-top:0 !important}
+.m-drawer .m-dr2-grp .i{flex:0 0 30px;height:30px;border-radius:9px;background:var(--s2);display:flex;align-items:center;justify-content:center;font-size:14px}.m-drawer .m-dr2-grp .i svg{width:17px;height:17px}
+.m-drawer .m-dr2-grp .t{flex:1;min-width:0}.m-drawer .m-dr2-grp .c{opacity:.4;font-size:20px}
+.m-drawer .m-dr2-grp .m-dr-item.active{color:#1B64DA !important;font-weight:700}.m-drawer .m-dr2-grp .m-dr-item.active .i{background:#EAF1FD;color:#1B64DA}
+.m-drawer .m-dr2-st{margin:14px 12px calc(20px + env(safe-area-inset-bottom));padding:12px 14px;border-radius:14px;background:var(--s2);font-size:12.5px !important;line-height:1.75 !important;font-family:inherit !important;color:var(--t2)}
+html[data-theme="light"] .m-drawer{background:#F2F4F7 !important}html[data-theme="light"] .m-drawer .m-dr2-grp{background:#FFFFFF;border-color:#E4E7EC}
+</style>
+<style id="luxLight2">
+/* [V33.732] ★LUX Light 2★ — 사용자 11/2 "라이트 테마 창 구별이 안 된다 · 폰트 · 더 깔끔하고 전문적으로 · MTS·AI 투자앱 느낌".
+   원칙(토스증권·MTS 류): ① 바탕은 한 톤 어두운 회색(#EDF0F4), 정보 상자는 흰 카드 + 얇은 테두리 + 아주 옅은 그림자 → 상자끼리 또렷이 갈린다
+   ② 글꼴은 기기 한글 산세리프(애플 SD 산돌고딕 · Pretendard 있으면 · 맑은 고딕) 하나로 — 고정폭(코드체) 티커·숫자를 없애고 숫자는 tabular
+   ③ 글자 3단(#101828 / #475467 / #667085) · 강조는 한 가지(#1B64DA) · 상승 빨강 #E5383B · 하락 파랑 #1B64DA(한국 관례).
+   외부 글꼴을 받지 않는다(요청 0 · 비용 0). 맨 마지막에 두어 앞의 라이트 규칙 10겹을 덮는다. */
+html[data-theme="light"]{
+  --lux-sans:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic","Segoe UI",system-ui,sans-serif;
+  --bg:#EDF0F4; --s1:#FFFFFF; --s2:#F5F7FA; --s3:#EAEEF3; --bd:#DCE1E8; --bd2:#E7EBF0;
+  --t1:#101828; --t2:#475467; --t3:#5B6474; --acc:#1B64DA;
+  --pos:#056B3D; --green:#056B3D; --neg:#B8233A; --red:#B8233A;   /* [V33.734] 대비 4.5:1 이상(axe 점검) */
+  --panel:#FFFFFF; --elev:#F5F7FA; --border:#DCE1E8; --text:#101828; --dim:#475467; --faint:#667085;
+  --glass:#FFFFFF; --glass-bd:#DCE1E8;
+  --lx-card-sh:0 1px 2px rgba(16,24,40,.05),0 6px 16px -10px rgba(16,24,40,.12);
+}
+html[data-theme="light"] body{background:#EDF0F4 !important;color:#101828;font-family:var(--lux-sans);-webkit-font-smoothing:antialiased;letter-spacing:-.1px}
+html[data-theme="light"] .page,html[data-theme="light"] .page *:not(svg):not(svg *),html[data-theme="light"] nav.sidebar .nav-item-label,html[data-theme="light"] .modal-box,html[data-theme="light"] .modal-box *:not(svg):not(svg *){font-family:var(--lux-sans) !important}
+html[data-theme="light"] .page td,html[data-theme="light"] .page th,html[data-theme="light"] [class*="price"],html[data-theme="light"] [class*="pct"],html[data-theme="light"] [class*="val"]{font-variant-numeric:tabular-nums}
+/* 카드 — 흰 바탕 · 테두리 · 옅은 그림자 · 14px */
+html[data-theme="light"] :is(.dash-block,.alt-panel,.pc2,.market-card,.k-panel,.card,.port-card,.pos-market-card,.wl-card,.wl-pane,.idx-card,.wi-card,.omq-card,.macro-next-card,.detail-vcard,.modal-box,.detail-fund,.detail-prof,.detail-anl,.detail-earn,.detail-crowd,.detail-tfsum,.detail-chart){
+  background:#FFFFFF !important;border:1px solid #DCE1E8 !important;box-shadow:var(--lx-card-sh) !important;border-radius:14px !important}
+html[data-theme="light"] #luxInfo{background:#FFFFFF;border:1px solid #DCE1E8;border-radius:14px;box-shadow:var(--lx-card-sh);padding:4px 18px 16px}
+html[data-theme="light"] #luxInfo .cd{background:#F7F9FB;border-color:#E7EBF0}
+/* 표 — 머리 회색 띠 · 줄 구분선 옅게 · 행 높이 여유 */
+html[data-theme="light"] .page table th{background:#F7F9FB;color:#667085 !important;font-weight:600;letter-spacing:0;text-transform:none}
+html[data-theme="light"] .page table td{border-color:#EEF1F5 !important}
+html[data-theme="light"] .page tbody tr:hover td{background:#F7F9FB}
+/* 사이드바 — 흰 판 · 오른쪽 경계 · 활성 항목은 옅은 파랑 */
+html[data-theme="light"] nav.sidebar{background:#FFFFFF !important;border-right:1px solid #DCE1E8 !important;box-shadow:none !important}
+html[data-theme="light"] nav.sidebar .nav-item{color:#475467 !important;border-left-color:transparent !important;border-radius:10px;font-weight:500}
+html[data-theme="light"] nav.sidebar .nav-item:hover{background:#F2F4F7 !important;color:#101828 !important}
+html[data-theme="light"] nav.sidebar .nav-item.active{background:#EAF1FD !important;color:#1B64DA !important;font-weight:700}
+html[data-theme="light"] nav.sidebar .nav-item.active .nav-item-icon,html[data-theme="light"] nav.sidebar .nav-item.active .nav-item-label{color:#1B64DA !important}
+html[data-theme="light"] nav.sidebar .nav-item-label{text-transform:none !important;letter-spacing:-.1px !important;font-size:14px !important}
+html[data-theme="light"] nav.sidebar .nav-item.active .nav-item-icon{background:transparent !important;box-shadow:none !important}
+html[data-theme="light"] nav.sidebar .sb-btn{background:#F5F7FA !important;border:1px solid #DCE1E8 !important;color:#344054 !important;border-radius:10px !important}
+/* 머리글·제목 */
+html[data-theme="light"] .page-title,html[data-theme="light"] .dash-block h2,html[data-theme="light"] .market-card h2{color:#101828 !important;letter-spacing:-.3px;font-weight:700}
+html[data-theme="light"] .page-header{border-bottom-color:#DCE1E8 !important}
+/* 버튼 · 칩 */
+html[data-theme="light"] .page .btn{background:#FFFFFF;border:1px solid #D0D5DD;color:#344054;border-radius:10px;box-shadow:0 1px 2px rgba(16,24,40,.05)}
+html[data-theme="light"] .page .btn:hover{background:#F9FAFB;transform:none}
+html[data-theme="light"] .lxp-sw,html[data-theme="light"] #luxInfo .seg{background:#EEF1F5}
+html[data-theme="light"] .lxp-sw button.on,html[data-theme="light"] #luxInfo .seg button.on{background:#FFFFFF;box-shadow:0 1px 2px rgba(16,24,40,.08)}
+/* 손익색 — 한국 관례(상승 빨강 · 하락 파랑) 화면에서 이미 쓰는 클래스만 톤을 맞춘다 */
+html[data-theme="light"] #luxInfo .up{color:#C92A2A}
+html[data-theme="light"] .fv-sec-sel{color:#101828 !important;background:#FFFFFF !important;border-color:#D0D5DD !important}
+html:not([data-theme="light"]) .fv-breadth-top .r{color:#FF5A5D}html[data-theme="light"] #luxInfo .dn{color:#1B64DA}
+</style>
 </head>
 <body>
 
@@ -4223,7 +4325,7 @@ window.LUX_NV = {
       </div>
       <div class="nav-item" data-page="positions">
         <span class="nav-item-icon"><svg class="nv-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg></span>
-        <span class="nav-item-label">POSITIONS</span>
+        <span class="nav-item-label">LUX-POSITION</span>
       </div>
       <!-- [V9.10/9.12] 액션바·AI픽 바에서 이동 — 대시보드·종목상세와 동일하게 일반 페이지로 표시 -->
       <!-- [V12.117] 지표+환율 통합 — 별도 페이지였던 두 개를 하나의 nav-item/페이지로 병합
@@ -4261,7 +4363,8 @@ window.LUX_NV = {
         <span class="nav-item-icon"><svg class="nv-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg></span>
         <span class="nav-item-label">MY</span>
       </div>
-      <div class="nav-item" data-page="trades">
+      <!-- [V33.732] 사용자 11/2 "TRADES 는 우리 AI 가 한 거래 → 포지션 창 안으로" — 메뉴에서 내리고 LUX-POSITION 의 [거래 기록] 탭으로 연다(요소는 숨겨 남긴다 · showPage('trades') 가 쓴다) -->
+      <div class="nav-item" data-page="trades" style="display:none;">
         <span class="nav-item-icon"><svg class="nv-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><polyline points="12,7 12,12 15,14"/></svg></span>
         <span class="nav-item-label">TRADES</span>
       </div>
@@ -4289,12 +4392,12 @@ window.LUX_NV = {
       <button type="button" class="sb-btn btn logs" id="btnLogs" style="display:none;">LOG</button>
       <div class="sb-grid">
         <button type="button" class="sb-btn btn macro" id="btnHeatmap">MAP</button>
-        <button type="button" class="sb-btn btn" id="btnSettings">⚙ 설정</button>
+        <button type="button" class="sb-btn btn" id="btnSettings" style="display:none;">⚙ 설정</button><!-- [V33.732] 설정은 AI 두뇌 'MISSION CONTROL' 옆으로(사용자 11/2) · 요소는 리스너 호환용 -->
         <button type="button" class="sb-btn btn" id="btnUpdate" title="서버의 최신 판과 비교해 다르면 캐시를 비우고 새로 받습니다">↻ 새 버전</button>
         <button type="button" class="sb-btn btn" id="btnInstall" title="홈 화면에 앱으로 설치(주소창 없이 앱처럼 열림)">📲 앱 설치</button>
-        <button type="button" class="sb-btn btn" id="btnPush" style="display:none;" title="매수·매도 체결을 앱이 닫혀 있어도 알림으로 받습니다(웹 푸시)">🔕 체결 알림 받기</button>
+        <button type="button" class="sb-btn btn" id="btnPush" data-moved="mine" style="display:none;" title="매수·매도 체결을 앱이 닫혀 있어도 알림으로 받습니다(웹 푸시)">🔕 체결 알림 받기</button>
         <button type="button" class="sb-btn btn" id="btnBio" style="display:none;" onclick="window.__luxBio && window.__luxBio()" title="앱을 열 때 지문·얼굴로 확인(앱에서만)">🔓 생체 잠금</button>
-        <a class="sb-btn btn" href="/privacy" style="text-align:center;text-decoration:none;" title="개인정보처리방침 · 이용 안내(모의투자)">📄 이용 안내</a>
+        <!-- [V33.734] 체결 알림 · 이용 안내는 MY › 내 정보로 옮겼다(사용자 11/2) -->
         <button type="button" class="sb-btn btn" id="btnLang" data-noi18n title="Language / 언어">🌐 English</button>
       </div>
       <button type="button" class="sb-theme-btn" id="btnTheme">🌙 DARK</button>
@@ -4652,12 +4755,14 @@ window.LUX_NV = {
            목표가를 볼 수 없었다. 서버의 개정 원장(analyst_rev)과 AI 반영(anlRevK)은
            그대로다 — 화면 위치만 바뀐다. -->
 
-    </div><!-- /dashboard -->
+    <footer class="lux-legal" aria-label="약관과 정책"><a href="/terms">이용약관</a><a href="/privacy">개인정보처리방침</a><a href="/cookies">쿠키 · 저장소 정책</a><a href="/terms#operator">운영자 정보</a><span>모의투자 · 투자 권유 아님 · 무료(숨은 요금 없음)</span></footer>
+</div><!-- /dashboard -->
 
     <!-- ══ PAGE: POSITIONS ══ -->
     <div class="page" id="page-positions">
       <div class="page-header">
-        <span class="page-title">포지션</span>
+        <span class="page-title">LUX-POSITION <small class="lxp-sub">AI 가 직접 매수한 종목</small></span>
+        <div class="lxp-sw" role="tablist" aria-label="LUX-POSITION 보기"><button type="button" role="tab" aria-selected="true" class="on" onclick="showPage('positions')">보유 종목</button><button type="button" role="tab" aria-selected="false" onclick="showPage('trades')">거래 기록</button></div>
         <!-- [V33.593] 위 '펼치기' 하나 → 미국·한국 카드마다 '보유 종목' 버튼(사용자 시안). 요소는 리스너 호환용으로 숨겨 둔다 -->
         <button type="button" class="btn watchlist-toggle-btn" id="positionsToggleBtn" style="display:none;">펼치기</button>
         <div class="pz-tabs" id="pzTabs" role="tablist" aria-label="보기">
@@ -4770,6 +4875,8 @@ window.LUX_NV = {
     <!-- ══ PAGE: TRADES ══ -->
     <div class="page" id="page-mine" aria-label="MY"><div id="mineRoot"></div></div>
     <div class="page" id="page-trades">
+      <div class="page-header lxp-head"><span class="page-title">LUX-POSITION <small class="lxp-sub">AI 가 한 매매 기록</small></span>
+        <div class="lxp-sw" role="tablist" aria-label="LUX-POSITION 보기"><button type="button" role="tab" aria-selected="false" onclick="showPage('positions')">보유 종목</button><button type="button" role="tab" aria-selected="true" class="on" onclick="showPage('trades')">거래 기록</button></div></div>
 
       <!-- [V91] 날짜별 수익 캘린더 — 미국주식·한국주식·채권·원자재 따로 표시 -->
       <div class="page-header">
@@ -4984,6 +5091,7 @@ window.LUX_NV = {
           </div>
           <!-- 차트 아래: 재무제표 · 재무평가(전체폭) + 수신 데이터 -->
           <div class="detail-below">
+            <section id="luxInfo" aria-label="종목 정보 — 밸류에이션 · KPI · 재무제표 · 실적 · IR · 내부자"></section>
             <div class="detail-fund" id="detailFund"><div class="empty">재무 로딩…</div></div>
             <div class="detail-datawrap">
               <div class="detail-sec">수신 데이터</div>
@@ -4992,7 +5100,8 @@ window.LUX_NV = {
           </div>
         </div>
       </div>
-    </div>
+    <footer class="lux-legal" aria-label="약관과 정책"><a href="/terms">이용약관</a><a href="/privacy">개인정보처리방침</a><a href="/cookies">쿠키 · 저장소 정책</a><a href="/terms#operator">운영자 정보</a><span>모의투자 · 투자 권유 아님 · 무료(숨은 요금 없음)</span></footer>
+</div>
 
 
 <!-- ══ [V12.117] 지표&환율 — 경제지표+환율 통합 페이지(종전 별도 두 페이지를 병합) ══ -->
@@ -5089,7 +5198,7 @@ window.LUX_NV = {
       <div class="nnv-heading">
         <!-- [Codex V33.314] Monochrome mission console; existing control IDs remain stable. -->
         <div class="nnv-eyebrow" id="nnvEyebrow">LUX / INTELLIGENCE SYSTEMS</div>
-        <div class="nnv-title"><span class="dot"></span><span id="nnvTitleTxt">MISSION CONTROL</span></div>
+        <div class="nnv-title"><span class="dot"></span><span id="nnvTitleTxt">MISSION CONTROL</span><button type="button" class="nnv-setbtn" onclick="var b=document.getElementById('btnSettings');if(b)b.click();" aria-label="설정 열기">⚙ 설정</button></div>
         <div class="nnv-headcopy" id="nnvHeadcopy">OMNI-Q 후보 → 지금 뜬 매매법 → 닮은 과거 성적으로 선택 → 위험 관문까지, 실제 엔진 상태를 한 화면에서 추적합니다.</div>
       </div>
       <div class="nnv-head-actions">
@@ -9278,6 +9387,9 @@ window.LUX_NV = {
     if (ind.boll) for (i = 0; i < n; i++) { _grow(bU[i]); _grow(bL[i]); }
     if (ind.ma) for (var k = 0; k < maArr.length; k++) for (i = 0; i < n; i++) _grow(maArr[k][i]);
     if (dmaV) for (i = 0; i < n; i++) _grow(dmaV[i]);
+    /* [V33.730] 모의 주문 선(익절·손절·예약·평단) — 화면 안에 꼭 보이게 범위를 넓힌다(캔들 폭의 3배까지만 · 너무 먼 값은 잘린다) */
+    var _ol = ((typeof opts !== 'undefined' && opts && opts.lines) || []).filter(function(l){ return l && typeof l.p === 'number' && isFinite(l.p) && l.p > 0; });
+    _ol.forEach(function(l){ var sp = Math.max(1e-9, cMax - cMin) * 3; if (l.p > pmax && l.p <= cMax + sp) pmax = l.p; if (l.p < pmin && l.p >= cMin - sp) pmin = l.p; });
     var pspan = Math.max(1e-9, pmax - pmin); pmin -= pspan * 0.04; pmax += pspan * 0.06; pspan = pmax - pmin;
     // 구간 첫 봉 종가 — 우측 축에 "여기서 몇 % 움직였나"를 함께 적기 위한 기준.
     var baseC = null;
@@ -9468,6 +9580,15 @@ window.LUX_NV = {
       svg += '<rect class="pc-hit" x="' + (X(i) - iw / 2).toFixed(1) + '" y="' + pTop
            + '" width="' + iw.toFixed(2) + '" height="' + priceH.toFixed(1) + '" data-ci="' + (start + i) + '"/>';
     }
+    // [V33.730] 모의 주문 선 — 점선 + 오른쪽 이름표(익절 빨강 · 손절 파랑 · 예약 보라 · 평단 회색)
+    _ol.forEach(function(l){
+      if (l.p < pmin || l.p > pmax) return;
+      var ly = PY(l.p), esc2 = String(l.label || '').replace(/[&<>"]/g, function(c){ return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
+      svg += '<line x1="' + padL + '" y1="' + ly.toFixed(1) + '" x2="' + (W - padR) + '" y2="' + ly.toFixed(1) + '" stroke="' + l.c + '" stroke-width="1.3" stroke-dasharray="' + (l.dash || '6 4') + '" pointer-events="none"/>';
+      var tw = Math.min(260, 9 + esc2.length * 6.2);
+      svg += '<rect x="' + (W - padR - tw - 2).toFixed(1) + '" y="' + (ly - 8).toFixed(1) + '" width="' + tw.toFixed(1) + '" height="16" rx="4" fill="' + l.c + '" pointer-events="none"/>'
+           + '<text x="' + (W - padR - tw / 2 - 2).toFixed(1) + '" y="' + (ly + 3.6).toFixed(1) + '" text-anchor="middle" font-size="10" font-weight="700" fill="#fff" pointer-events="none">' + esc2 + '</text>';
+    });
     svg += '</svg>';
     return svg;
   }
@@ -9898,6 +10019,7 @@ window.LUX_NV = {
 
   // ══ [V15] 재무제표 + LUX-AI 재무평가 — lazy fetch(상세 열 때만)·서버 7일 캐시·클라 세션 캐시 ══
   var __fundCache = {};   // sym → api 응답
+  try { window.__fundCache = __fundCache; } catch (e) {}   // [V33.731] 정보 탭이 같은 응답을 다시 받지 않게
   function _fmtMoney(v, kr) {
     if (v == null || !isFinite(v)) return '—';
     var a = Math.abs(v), sign = v < 0 ? '-' : '';
@@ -10281,6 +10403,7 @@ window.LUX_NV = {
     detailState.symbol = symbol;
     detailState.market = market;
     try { if (window.luxMine && window.luxMine.detail) window.luxMine.detail(symbol); } catch (e) {}   // [V33.725] 종목 상세에 모의 매매 막대(MY)
+    try { if (window.luxInfo && window.luxInfo.open) window.luxInfo.open(symbol); } catch (e) {}   // [V33.731] 밸류에이션·KPI·재무제표·실적·IR·내부자 탭
     detailState.__tfAutoSwapped = 0;   // [V12.10] 신규상장 일봉 부족 시 분봉 자동전환 플래그 초기화
     // [V12.28] 지수 모드 — ^IXIC 등은 재무/실적/뉴스/심리 등 종목 전용 패널이 없으므로 차트 전폭 뷰
     var isIdx = symbol.charAt(0) === '^';
@@ -10482,6 +10605,7 @@ window.LUX_NV = {
     v.count = Math.max(20, Math.min(maxN, Math.round(v.count)));
     v.off = Math.max(0, Math.min(Math.max(0, cs.length - v.count), Math.round(v.off)));
   }
+  if (typeof window !== 'undefined') window.__luxDetailRedraw = function(){ try { renderDetailChartFromCache(); } catch (e) {} };   // [V33.730] 주문을 바꾸면 선을 다시 그린다
   function renderDetailChartFromCache() {
     var box = $('detailChart');
     if (!box || !detailState.lastCandles) return;
@@ -10506,7 +10630,8 @@ window.LUX_NV = {
       ind: detailState.ind, interval: detailState.interval,
       dec: detailState.market === 'kr' ? 0 : 2,
       count: detailState.view.count, off: detailState.view.off,
-      selIdx: detailState.selIdx
+      selIdx: detailState.selIdx,
+      lines: (window.luxMine && window.luxMine.lines && detailState.symbol) ? window.luxMine.lines(detailState.symbol) : null   // [V33.730] 익절·손절·예약 선
     });
     bindCandleClick(box);
   }
@@ -13929,7 +14054,7 @@ window.LUX_NV = {
     document.querySelectorAll('.nav-item').forEach(function(n){n.classList.remove('active');});
     var pg=document.getElementById('page-'+id);
     if(pg) pg.classList.add('active');
-    var ni=document.querySelector('[data-page="'+id+'"]');
+    var ni=document.querySelector('[data-page="'+(id==='trades'?'positions':id)+'"]');   // [V33.732] 거래 기록은 LUX-POSITION 안의 탭
     if(ni) ni.classList.add('active');
     try{localStorage.setItem('luxPage',id);}catch(e){}
     // 페이지 전환 시 스크롤 상단으로 초기화
@@ -14156,6 +14281,9 @@ setTimeout(function(){
 #page-nnviz .nnviz-content{position:relative;margin:14px 20px 20px;box-sizing:border-box;background:linear-gradient(180deg,#0a0e18,#070a12);border:1px solid #1c2740;border-radius:16px;padding:22px 24px 26px;box-shadow:0 30px 90px rgba(0,0,0,.7),0 0 0 1px rgba(70,130,255,.06) inset;overflow-x:hidden;}
 #page-nnviz .nnv-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;}
 #page-nnviz .nnv-title{font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:700;letter-spacing:.5px;color:#eaf2ff;display:flex;align-items:center;gap:9px;}
+#page-nnviz .nnv-setbtn{margin-left:6px;min-height:34px;padding:0 12px;border-radius:9px;border:1px solid rgba(160,175,200,.35);background:transparent;color:inherit;font:600 12.5px/1 inherit;letter-spacing:0;cursor:pointer}#page-nnviz .nnv-setbtn:hover{background:rgba(160,175,200,.12)}
+.lxp-sub{font-size:12px;font-weight:500;opacity:.6;margin-left:8px;letter-spacing:0}.lxp-sw{display:inline-flex;gap:3px;padding:3px;border-radius:10px;background:rgba(127,137,155,.16)}.lxp-sw button{min-height:34px;padding:0 14px;border:0;border-radius:8px;background:transparent;color:inherit;opacity:.7;font:inherit;font-size:13px;cursor:pointer}.lxp-sw button.on{opacity:1;font-weight:700;background:rgba(127,137,155,.28)}
+#page-trades .lxp-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}
 #page-nnviz .nnv-title .dot{width:9px;height:9px;border-radius:50%;background:#38bdf8;box-shadow:0 0 10px #38bdf8;}
 /* [V9.12.1 성능] 무한 애니메이션은 이 페이지가 활성일 때만 — 안 볼 땐 GPU/배터리 소모 0 */
 #page-nnviz.active .nnv-title .dot{animation:nnPulse 1.6s ease-in-out infinite;}
@@ -18356,15 +18484,15 @@ html:root .page > *{ flex-shrink:0; }
   var NV = window.LUX_NV;   // [V33.591] 머리말의 공용 선 아이콘
   var NAVS = [
     { id:'dashboard', ic:NV.grid, tx:'대시보드' }, { id:'detail', ic:NV.trend, tx:'종목' },
-    { id:'mine', ic:NV.user, tx:'MY' },     { id:'positions', ic:NV.target, tx:'포지션' },   { id:'macro', ic:NV.news, tx:'뉴스·환율' },
+    { id:'mine', ic:NV.user, tx:'MY' },     { id:'positions', ic:NV.target, tx:'LUX-POSITION' },   { id:'macro', ic:NV.news, tx:'뉴스·환율' },
     { id:'report', ic:NV.doc, tx:'AI 리포트', brain:true },  { id:'nnviz', ic:NV.spark, tx:'AI 두뇌' },
     { id:'whatif', ic:NV.flask, tx:'WHAT-IF', brain:true },
-    { id:'trades', ic:NV.clock, tx:'TRADES' }
+    { id:'trades', ic:NV.clock, tx:'AI 거래 기록' }
     // [V33.683] AI VISION 항목 제거 — page-vision 이 없어(옛 화면 퇴역) 누르면 빈 화면이었다. AI 화면은 'AI 두뇌'(nnviz) 하나.
     // [V33.316] NEWS 항목은 뺐다 — showPage('news')가 지표&환율의 뉴스 탭으로 아예 넘어간다
     // (Codex V33.315). 드로어에 둘 다 두면 뉴스를 눌러도 지표&환율만 켜진 채 보였다.
   ];
-  var TABS = ['dashboard','mine','detail','nnviz'];   // [V33.721] MY(내 투자)를 탭에 · 포지션은 메뉴(드로어)
+  var TABS = ['dashboard','detail','mine','nnviz'];   // [V33.721] MY(내 투자)를 탭에 · [V33.732] MY 를 가운데로(사용자 11/2) — 대시보드 · 종목 · MY · AI 두뇌 · 메뉴
   // 우측 사이드바가 떠 있는 화면 — 두뇌 + 그 사이드바에서 여는 화면들
   var RAIL_PAGES = ['nnviz','report','whatif'];
   var RAIL_W = 190;   // 우측 사이드바 폭(px) — CSS .rail 과 같이 유지
@@ -18403,6 +18531,8 @@ html:root .page > *{ flex-shrink:0; }
   }
   function openDrawer(){
     if(!MOB.drawer) return;
+    try { var _n = localStorage.getItem('lux-auth') || '', _t = MOB.drawer.querySelector('.m-dr-title'), _w = MOB.drawer.querySelector('.m-dr2-who span'), _a = MOB.drawer.querySelector('.m-dr2-av');   // [V33.733] 로그인 상태를 열 때마다 맞춘다
+      if (_t) _t.textContent = _n || 'LUX-INV'; if (_w) _w.textContent = _n ? '로그인됨' : '로그인하지 않음 · 대시보드·종목만'; if (_a) _a.textContent = (_n || 'L').slice(0,1).toUpperCase(); } catch (e) {}
     syncMobile();
     MOB.drawer.classList.add('show'); MOB.scrim.classList.add('show');
   }
@@ -18447,32 +18577,29 @@ html:root .page > *{ flex-shrink:0; }
 
     var scrim = document.createElement('div'); scrim.className = 'm-drawer-scrim';
     var dr = document.createElement('aside'); dr.className = 'm-drawer';
+    /* [V33.733] 휴대폰 메뉴 새 디자인(사용자 11/2) — 머리(닉네임·로그인 상태) · 화면 · 도구 · 상태. 설정은 AI 두뇌 'MISSION CONTROL' 옆으로 옮겨 여기서 뺐고,
+       AI 거래 기록은 LUX-POSITION 안의 탭이라 화면 목록에서 뺐다. id(mDrNav · mDrStatus · mDrClose)와 data-page/data-proxy 규약은 그대로. */
+    var _nk = ''; try { _nk = localStorage.getItem('lux-auth') || ''; } catch (e) {}
+    var CH = '<span class="c" aria-hidden="true">›</span>';
     dr.innerHTML =
-      '<div class="m-dr-head"><span class="m-dr-title">메뉴</span>'
+      '<div class="m-dr-head m-dr2-hd"><span class="m-dr2-av" aria-hidden="true">'+esc((_nk || 'L').slice(0,1).toUpperCase())+'</span><span class="m-dr2-who"><b class="m-dr-title">'+(_nk ? esc(_nk) : 'LUX-INV')+'</b><span>'+(_nk ? '로그인됨' : '로그인하지 않음 · 대시보드·종목만')+'</span></span>'
         +'<button type="button" class="m-ab-btn" id="mDrClose" aria-label="닫기">✕</button></div>'
-      +'<div class="m-dr-sec"><div class="m-dr-sec-h">화면</div><div class="m-dr-nav" id="mDrNav">'
-        + NAVS.filter(function(n){ return !n.brain; }).map(function(n){
-            return '<button type="button" class="m-dr-item" data-page="'+n.id+'"><span>'+n.ic+'</span><span>'+esc(n.tx)+'</span></button>';
+      +'<div class="m-dr2-cap">화면</div><div class="m-dr-nav m-dr2-grp" id="mDrNav">'
+        + NAVS.filter(function(n){ return !n.brain && n.id !== 'trades'; }).map(function(n){
+            return '<button type="button" class="m-dr-item" data-page="'+n.id+'"><span class="i">'+n.ic+'</span><span class="t">'+esc(n.tx)+'</span>'+CH+'</button>';
           }).join('')
-      +'</div></div>'
-      // [V33.3] RUN NOW·US·KR 제거 — 서버 cron이 전부 자동 실행하므로 수동 트리거를 두지 않는다.
-      +'<div class="m-dr-sec"><div class="m-dr-sec-h">실행</div><div class="m-dr-act">'
-        +'<button type="button" data-proxy="btnHeatmap">MAP</button>'
-        +'<button type="button" data-proxy="btnSettings">⚙ 설정</button>'
-        +'<button type="button" data-proxy="btnUpdate">↻ 새 버전</button>'
-        +(window.__luxInstall && !(window.__luxIsApp && window.__luxIsApp()) ? '<button type="button" onclick="window.__luxInstall()">📲 앱 설치</button>' : '')
-        +(window.__luxPush ? '<button type="button" onclick="window.__luxPush()">🔔 체결 알림</button>' : '')
-        +(window.__luxBio && window.__luxNative && window.__luxNative.on() ? '<button type="button" onclick="window.__luxBio()">🔒 생체 잠금</button>' : '')
-        +'<button type="button" onclick="location.href=\'/privacy\'">📄 개인정보·이용 안내</button>'
-        +'<button type="button" data-proxy="btnTheme">🌓 테마</button>'
-      +'</div></div>'
-      +'<div class="m-dr-sec"><div class="m-dr-sec-h">자동 운용</div>'
-        +'<div style="font-size:10.5px;line-height:1.7;color:var(--t2);font-family:\'IBM Plex Mono\',monospace;">'
-        +'<span style="color:var(--pos);">●</span> 서버가 1분마다 자동으로 거래 사이클·시세·학습을 실행합니다.<br>'
-        +'<span style="color:var(--t3);">수동 실행 버튼은 필요하지 않습니다.</span></div></div>'
-      +'<div class="m-dr-sec"><div class="m-dr-sec-h">상태</div>'
-        +'<div id="mDrStatus" style="font-size:10.5px;line-height:1.9;color:var(--t2);font-family:\'IBM Plex Mono\',monospace;"></div>'
-      +'</div>';
+      +'</div>'
+      +'<div class="m-dr2-cap">도구</div><div class="m-dr-act m-dr2-grp">'
+        +'<button type="button" data-proxy="btnHeatmap"><span class="i">▦</span><span class="t">시장 지도</span>'+CH+'</button>'
+        +'<button type="button" data-proxy="btnTheme"><span class="i">◐</span><span class="t">화면 테마(밝게·어둡게)</span>'+CH+'</button>'
+        +'<button type="button" data-proxy="btnUpdate"><span class="i">↻</span><span class="t">새 버전 확인</span>'+CH+'</button>'
+        +(window.__luxInstall && !(window.__luxIsApp && window.__luxIsApp()) ? '<button type="button" onclick="window.__luxInstall()"><span class="i">⇩</span><span class="t">홈 화면에 앱 설치</span>'+CH+'</button>' : '')
+        +(window.__luxPush ? '<button type="button" onclick="window.__luxPush()"><span class="i">🔔</span><span class="t">체결 알림</span>'+CH+'</button>' : '')
+        +(window.__luxBio && window.__luxNative && window.__luxNative.on() ? '<button type="button" onclick="window.__luxBio()"><span class="i">🔒</span><span class="t">생체 잠금</span>'+CH+'</button>' : '')
+        +'<button type="button" onclick="location.href=\'/privacy\'"><span class="i">§</span><span class="t">개인정보 · 이용 안내</span>'+CH+'</button>'
+      +'</div>'
+      +'<div class="m-dr2-cap">상태 · 서버가 1분마다 자동 운용</div>'
+      +'<div id="mDrStatus" class="m-dr2-st"></div>';
     document.body.appendChild(scrim); document.body.appendChild(dr);
     MOB.drawer = dr; MOB.scrim = scrim;
 
@@ -21558,12 +21685,12 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.729">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.729">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.729">
-<link rel="stylesheet" href="/model-evidence.css?v=33.729">
+<link rel="stylesheet" href="/brain-console.css?v=33.734">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.734">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.734">
+<link rel="stylesheet" href="/model-evidence.css?v=33.734">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.729">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.734">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -21590,8 +21717,8 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
   setTimeout(reveal, 9500);
 })();
 </script>
-<script src="/model-evidence.js?v=33.729"></script>
-<script src="/workspace-ui.js?v=33.729"></script>
+<script src="/model-evidence.js?v=33.734"></script>
+<script src="/workspace-ui.js?v=33.734"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {

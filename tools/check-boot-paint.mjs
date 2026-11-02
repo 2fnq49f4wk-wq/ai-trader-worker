@@ -31,9 +31,10 @@ const ok = (c, m) => { n++; if (c) console.log("  ok   " + m); else { fail++; co
   ok(blockingCss.length === 0,
      `★배경색보다 앞에 렌더링 차단 스타일시트가 없다★ (지금 ${blockingCss.length}개)`);
   // 폰트는 비차단으로 받되, JS 없는 환경을 버리지 않는다
-  ok(/fonts\.googleapis\.com[^>]*media="print"[^>]*onload="this\.media='all'/.test(head),
-     "폰트 스타일시트를 비차단으로 받는다(media=print → onload)");
-  ok(/<noscript><link[^>]*fonts\.googleapis\.com/.test(head), "JS 가 꺼져 있어도 폰트는 받는다(noscript)");
+  /* [V33.734] 외부 글꼴은 쿠키·저장소 동의('허용')를 받은 뒤에만 받는다(접속 IP 가 Google 에 전달 — 사용자 11/2 법적 요구).
+     그래서 정적 <link>·<noscript> 는 없다. 대신: 동의 확인 → media=print → onload 로 비차단 적용, 거부·미선택이면 시스템 글꼴. */
+  ok(/lux-consent[\s\S]{0,200}c\.fonts[\s\S]{0,200}l\.media='print';l\.onload=function\(\)\{this\.media='all';\}/.test(head) && !/<link[^>]*href="https:\/\/fonts\.googleapis\.com/.test(head),
+     "외부 글꼴은 동의한 경우에만 · 비차단(media=print → onload)");
   ok(/<html lang="ko" class="lux-booting lux-cssw">/.test(H), "<html> 이 첫 바이트부터 부팅 상태(+ [V33.621] 디자인 시트 대기)를 들고 있다");
   ok(/html\.lux-cssw body>\*:not\(#lux-intro-overlay\)\{visibility:hidden;animation:luxCssReveal 0s linear 6s forwards\}/.test(H) && /SecurityError\) = 못 받은 것/.test(H),
      "[V33.621] 디자인 시트가 오기 전엔 본문을 감추고(옛 기본 디자인이 먼저 칠해지지 않게) · 실패 시트는 다시 받고 · 6초 뒤엔 CSS 만으로도 드러난다");

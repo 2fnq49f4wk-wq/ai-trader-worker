@@ -34,7 +34,7 @@ chk(/!pg \|\| !pg\.classList\.contains\("active"\)\) return;/.test(P) && /170000
 const regs = ["SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH"];
 chk(regs.every((r) => new RegExp(r + ": \\{ safe: \"[^\"]+\", mid: \"[^\"]+\", aggr: \"[^\"]+\" \\}").test(P)), "국면 5종 × 성향 3종 행동 안내", "★국면·성향 안내가 빠졌다★");
 chk(/모의투자 · 가상 자금 · 투자 권유가 아닙니다/.test(P) && /투자 판단과 결과의 책임은 본인에게/.test(P), "모의투자·투자 권유 아님 표기", "★면책 표기가 빠졌다★");
-chk(/MY\(내 투자\) · 모의계좌 · 계정 \(2026-11-02\)/.test(V) && /보존 기간/.test(V) && /비밀번호 자체는 저장하지 않습니다/.test(V), "개인정보 안내에 저장 항목", "★개인정보 안내가 없다★");
+chk(/개인정보처리방침/.test(V) && /보유 기간/.test(V) && /비밀번호 자체는 저장하지 않습니다/.test(V) && /만 14세 미만/.test(V) && /국외 이전/.test(V) && /개인정보침해신고센터/.test(V), "개인정보 안내에 저장 항목", "★개인정보 안내가 없다★");
 // [V33.723] 패스키 로그인 · 내 데이터 삭제 · 보존 1년 · 관심종목/검색 결과에도 [사기]
 chk(/request\.method === "DELETE"/.test(S) && /DELETE FROM user_profiles WHERE uid_hash = \?/.test(S) && /id="mineDelete"|id === "mineDelete"/.test(P), "내 데이터 삭제(서버 프로필·모의계좌·계정)", "★데이터 삭제 경로가 없다★");
 chk(/const LUX_RETAIN_MS = 365 \* 86400000;/.test(S) && /DELETE FROM user_profiles WHERE updated_ts < \?/.test(S) && /> 7 \* 86400000/.test(S), "보존 1년 자동 삭제 · 사용 표시는 7일에 1회만 쓰기", "★보존 기한 처리가 없다★");
@@ -62,5 +62,12 @@ chk(/CREATE TABLE IF NOT EXISTS user_nicks \(nick_key TEXT PRIMARY KEY/.test(S) 
 }
 chk(/swrJson\("leaderboard", 3600000/.test(S) && /function luxRateOk\(key\)/.test(S) && /r\.n <= 30/.test(S), "순위는 1시간 1번 계산 · 기기당 쓰기 분당 30", "★순위 계산·쓰기 제한이 빠졌다★");
 chk(/window\.luxMine\.detail\(symbol\)/.test(H) && /function detail\(sym\)/.test(P) && /data-dbuy/.test(P), "종목 상세에 모의 매매 막대", "★종목 상세에서 살 수 없다★");
+// [V33.730] MTS 주문: 예약(지정가)·익절·손절 — 서버는 모양만 검사 · 화면이 시세로 체결 · 차트에 선
+if (clean) {
+  const o2 = clean({ pf: { us: { start: 10000, cash: 10000, pos: { NVDA: { q: 1, avg: 100, tpPx: 120, slPx: 90 } }, hist: [], ord: Array.from({ length: 30 }, (_, i) => ({ id: "x" + i, side: "B", s: "AAPL", px: 150, q: 2, tpPx: 170, slPx: 140 })).concat([{ side: "Z", s: "AAPL", px: 1, q: 1 }]) } } }).pf.us;
+  chk(o2.pos.NVDA.tpPx === 120 && o2.pos.NVDA.slPx === 90 && o2.ord.length === 20 && o2.ord[0].tpPx === 170, "예약 주문 20건 상한 · 익절·손절 보관", "★예약 주문·익절·손절 저장 검사가 틀렸다★");
+}
+chk(/function runOrders\(\)/.test(P) && /p <= o\.px : p >= o\.px/.test(P) && /h\.tpPx && p >= h\.tpPx/.test(P) && /h\.slPx && p <= h\.slPx/.test(P) && /lines: \(window\.luxMine && window\.luxMine\.lines/.test(H) && /\[V33\.730\] 모의 주문 선/.test(H),
+    "예약 체결·익절·손절 실행기 + 차트 선", "★주문 실행기나 차트 선이 빠졌다★");
 console.log(fails === 0 ? "\n✓ 내 맞춤 검사 통과" : "\n✗ " + fails + "건 실패");
 process.exit(fails ? 1 : 0);

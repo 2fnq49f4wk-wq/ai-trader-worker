@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.729";
+const _BUILD_VER = "V33.734";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8758,11 +8758,17 @@ function luxProfileClean(b) {
         const x = a.pos[sy]; const S = String(sy).toUpperCase();
         if (n >= 30 || !/^[A-Z0-9.^=\-]{1,16}$/.test(S) || !x) continue;
         const q = num(x.q, 0.0001, 1e10), avg = num(x.avg, 0.000001, 1e9); if (q == null || avg == null) continue;
-        pos[S] = { q: q, avg: avg, t: num(x.t, 0, 1e14) || 0 }; n++;
+        pos[S] = { q: q, avg: avg, t: num(x.t, 0, 1e14) || 0 };
+        const tp = num(x.tpPx, 0.000001, 1e9), sl = num(x.slPx, 0.000001, 1e9);   // [V33.730] 익절가·손절가(모의 · 화면이 시세를 보고 실행 · 엔진 설정 tp 와 다른 이름)
+        if (tp != null && tp > avg * 0.2) pos[S].tpPx = tp; if (sl != null && sl < avg * 5) pos[S].slPx = sl; n++;
       }
       const hist = (Array.isArray(a.hist) ? a.hist : []).slice(0, 60).filter(function (h) { return Array.isArray(h) && h.length === 5 && (h[1] === "B" || h[1] === "S") && /^[A-Z0-9.^=\-]{1,16}$/.test(String(h[2])) && isFinite(h[0]) && isFinite(h[3]) && isFinite(h[4]); })
         .map(function (h) { return [Number(h[0]), h[1], String(h[2]), Number(h[3]), Number(h[4])]; });
-      (o.pf || (o.pf = {}))[mk] = { start: start, cash: cash, pos: pos, hist: hist, t0: num(a.t0, 0, 1e14) || 0 };
+      /* [V33.730] 예약 주문(지정가 · 가격에 닿으면 체결) — 시장당 20건 · 체결은 화면이 그 순간 시세로(장부 검사가 서버 시세 ±3% 로 확인) */
+      const ord = (Array.isArray(a.ord) ? a.ord : []).slice(0, 20).filter(function (r) { return r && (r.side === "B" || r.side === "S") && /^[A-Z0-9.^=\-]{1,16}$/.test(String(r.s || "")) && num(r.px, 0.000001, 1e9) != null && num(r.q, 1, 1e10) != null; })
+        .map(function (r) { const x = { id: String(r.id || "").slice(0, 16), side: r.side, s: String(r.s), px: Number(r.px), q: Math.floor(Number(r.q)), t: num(r.t, 0, 1e14) || 0 };
+          const tp = num(r.tpPx, 0.000001, 1e9), sl = num(r.slPx, 0.000001, 1e9); if (tp != null) x.tpPx = tp; if (sl != null) x.slPx = sl; return x; });
+      (o.pf || (o.pf = {}))[mk] = { start: start, cash: cash, pos: pos, hist: hist, t0: num(a.t0, 0, 1e14) || 0, ord: ord };
     }
   }
   return o;
@@ -8876,6 +8882,7 @@ async function luxLeaderboard(DB) {
    · 무차별 대입 방지: 같은 닉네임 5번 틀리면 10분 잠금 · 접속 주소(IP)당 분당 30회.
    · 비용: 가입·로그인 때만 한 행 읽기·쓰기 + CPU 수십 ms(PBKDF2). 평소 화면은 이 표를 건드리지 않는다. */
 const LUX_PW_ITER = 100000;
+const LUX_TERMS_VER = "2026-11-02";   // [V33.734] 이용약관·개인정보처리방침 판 — public/terms.html · privacy.html 과 같아야 한다
 function _b64u(buf) { let s = ""; const b = new Uint8Array(buf); for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
 function _unb64u(t) { t = String(t || "").replace(/-/g, "+").replace(/_/g, "/"); while (t.length % 4) t += "="; const s = atob(t), b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; }
 async function _luxUidHash(uid) {
@@ -8894,6 +8901,7 @@ async function _luxAcctTbl(DB) {
   if (globalThis.__luxAcctTbl) return;
   await DB.prepare("CREATE TABLE IF NOT EXISTS user_accounts (nick_key TEXT PRIMARY KEY, nick TEXT NOT NULL, uid_hash TEXT NOT NULL UNIQUE, salt TEXT NOT NULL, ver TEXT NOT NULL, uid_enc TEXT NOT NULL, iv TEXT NOT NULL, created_ts INTEGER NOT NULL, last_ts INTEGER NOT NULL, fails INTEGER NOT NULL DEFAULT 0, lock_ts INTEGER NOT NULL DEFAULT 0)").run();
   await DB.prepare("CREATE TABLE IF NOT EXISTS user_nicks (nick_key TEXT PRIMARY KEY, nick TEXT NOT NULL, uid_hash TEXT NOT NULL UNIQUE, created_ts INTEGER NOT NULL)").run();
+  try { await DB.prepare("ALTER TABLE user_accounts ADD COLUMN agree TEXT").run(); } catch (e) {}   // [V33.734] 약관 동의 기록(판 · 시각) — 이미 있으면 오류를 무시
   globalThis.__luxAcctTbl = true;
 }
 async function _luxSeal(pw, uid) {
@@ -8918,6 +8926,7 @@ async function luxAuthApi(DB, sub, request) {
     if (LUX_NICK_BAN.some(function (w) { return key.indexOf(w) >= 0; })) bad("쓸 수 없는 닉네임이에요");
     if (!pwOk(pw)) bad("비밀번호는 8~64자로 정해 주세요");
     if (pw.toLowerCase().indexOf(key) >= 0) bad("비밀번호에 닉네임을 넣지 말아 주세요");
+    if (String(b.agree || "") !== LUX_TERMS_VER) bad("이용약관 · 개인정보 수집·이용 · 만 14세 이상에 동의해 주세요");   // [V33.734] 필수 동의 없이는 가입하지 않는다
     const h = await _luxUidHash(uid);
     const mine = await DB.prepare("SELECT nick FROM user_accounts WHERE uid_hash = ?").bind(h).first();
     if (mine) bad("이 기기는 이미 '" + mine.nick + "' 계정이에요. 로그인해 주세요", 409);
@@ -8928,7 +8937,7 @@ async function luxAuthApi(DB, sub, request) {
     let prof = {}; try { prof = row && row.profile ? JSON.parse(row.profile) : {}; } catch (e) {}
     const cp = luxProfileClean(prof); cp.nick = nick;   // luxProfileClean 은 닉네임을 버린다 — 가입 때만 서버가 붙인다
     const st = [
-      DB.prepare("INSERT INTO user_accounts (nick_key, nick, uid_hash, salt, ver, uid_enc, iv, created_ts, last_ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(key, nick, h, sealed.salt, sealed.ver, sealed.uid_enc, sealed.iv, now, now),
+      DB.prepare("INSERT INTO user_accounts (nick_key, nick, uid_hash, salt, ver, uid_enc, iv, created_ts, last_ts, agree) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(key, nick, h, sealed.salt, sealed.ver, sealed.uid_enc, sealed.iv, now, now, JSON.stringify({ v: LUX_TERMS_VER, ts: now, items: ["terms", "privacy", "age14"] })),
       DB.prepare("DELETE FROM user_nicks WHERE uid_hash = ? AND nick_key <> ?").bind(h, key),
       DB.prepare("INSERT OR IGNORE INTO user_nicks (nick_key, nick, uid_hash, created_ts) VALUES (?, ?, ?, ?)").bind(key, nick, h, now),
       DB.prepare("INSERT INTO user_profiles (uid_hash, profile, created_ts, updated_ts) VALUES (?, ?, ?, ?) ON CONFLICT(uid_hash) DO UPDATE SET profile = excluded.profile, updated_ts = excluded.updated_ts").bind(h, JSON.stringify(cp), now, now)
@@ -33365,6 +33374,42 @@ async function handleRequest(request, env, ctx, _inner) {
         src: "일봉 캐시" + (ext && ext.src ? " · " + ext.src : ""), ts: (ext && ext.ts) || (d && d.ts) || null }, { headers: cors });
     }
 
+    /* [V33.731] ★IR 자료·내부자 공시★(사용자 11/2 "종목 상세에 IR 자료 · 내부자 거래") — 미국: SEC EDGAR 제출 목록(무료 · 키 없음)에서
+       10-K·10-Q·8-K·주총(DEF 14A) 등 최근 공시와 내부자 지분 변동(Form 4)을 뽑는다. 6시간 SWR(콜로·R2 캐시) — 사람 수와 무관하게 종목당 6시간 1번.
+       한국: DART 는 키가 필요해 원문 검색·네이버 공시 링크만 준다. */
+    if (path === "/api/ir") {
+      const sym = (url.searchParams.get("symbol") || "").trim().toUpperCase();
+      if (!sym || sym.length > 16 || !/^[A-Z0-9.^=\-]+$/.test(sym)) return Response.json({ ok: false, error: "bad symbol" }, { status: 400, headers: cors });
+      if (/\.(KS|KQ)$/.test(sym)) {
+        const code = sym.split(".")[0];
+        return Response.json({ ok: true, market: "kr", symbol: sym, links: [
+          { k: "dart", l: "DART 전자공시 — 사업보고서·분기보고서·주요사항", u: "https://dart.fss.or.kr/dsab007/main.do?option=corp&textCrpNm=" + encodeURIComponent((typeof NAME_MAP !== "undefined" && NAME_MAP[sym]) || code) },
+          { k: "notice", l: "네이버 증권 — 공시", u: "https://finance.naver.com/item/news_notice.naver?code=" + code },
+          { k: "fin", l: "네이버 증권 — 기업 실적 분석", u: "https://finance.naver.com/item/main.naver?code=" + code + "#section_cop" },
+          { k: "own", l: "DART — 임원·주요주주 소유 보고", u: "https://dart.fss.or.kr/dsab007/main.do?option=corp&textCrpNm=" + encodeURIComponent((typeof NAME_MAP !== "undefined" && NAME_MAP[sym]) || code) }
+        ] }, { headers: Object.assign({ "cache-control": "public, max-age=86400" }, cors) });
+      }
+      return await swrJson("ir:" + sym, 6 * 3600000, 48 * 3600000, async function () {
+        const UA = "LUX-INV/1.0 (contact: yryeolove@gmail.com)";
+        let map = globalThis.__secCik;
+        if (!map) { const c = await getState(env.DB, "sec_cik_map", null); map = c && c.map ? c.map : null; if (map) globalThis.__secCik = map; }
+        const cik = map && map[sym.replace(/-/g, ".")] || map && map[sym];
+        const links = [{ k: "edgar", l: "SEC EDGAR — 전체 공시", u: "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=" + encodeURIComponent(cik || sym) + "&owner=include&count=40" }];
+        if (!cik) return { ok: true, market: "us", symbol: sym, filings: [], insiders: [], links: links, note: "SEC 회사 번호(CIK)를 찾지 못했다" };
+        const r = await fetch("https://data.sec.gov/submissions/CIK" + cik + ".json", { headers: { "User-Agent": UA } });
+        if (!r.ok) throw new Error("sec " + r.status);
+        const d = await r.json(), rc = (d.filings && d.filings.recent) || {};
+        const F = rc.form || [], D = rc.filingDate || [], A = rc.accessionNumber || [], P = rc.primaryDocument || [], DS = rc.primaryDocDescription || [], RD = rc.reportDate || [];
+        const KEEP = { "10-K": "연간 보고서", "10-Q": "분기 보고서", "8-K": "주요 사항(실적 발표 등)", "DEF 14A": "주주총회 안건", "20-F": "연간 보고서(해외)", "6-K": "수시 보고(해외)", "S-1": "증권 신고서", "10-K/A": "연간 보고서 정정", "10-Q/A": "분기 보고서 정정" };
+        const cikN = String(Number(cik)), filings = [], insiders = [];
+        for (let i = 0; i < Math.min(F.length, 400) && (filings.length < 14 || insiders.length < 20); i++) {
+          const acc = String(A[i] || "").replace(/-/g, ""), u = "https://www.sec.gov/Archives/edgar/data/" + cikN + "/" + acc + "/" + (P[i] || "");
+          if (KEEP[F[i]] && filings.length < 14) filings.push({ form: F[i], ko: KEEP[F[i]], date: D[i], period: RD[i] || null, desc: String(DS[i] || "").slice(0, 80), u: u });
+          else if ((F[i] === "4" || F[i] === "4/A") && insiders.length < 20) insiders.push({ form: F[i], date: D[i], u: "https://www.sec.gov/Archives/edgar/data/" + cikN + "/" + acc + "/" });
+        }
+        return { ok: true, market: "us", symbol: sym, name: d.name || null, cik: cik, fy: d.fiscalYearEnd || null, filings: filings, insiders: insiders, links: links, ts: Date.now() };
+      });
+    }
     if (path === "/api/fundamentals") {
       const sym = (url.searchParams.get("symbol") || "").trim();
       if (!sym || sym.length > 16 || !/^[A-Za-z0-9.^=\-]+$/.test(sym)) {
