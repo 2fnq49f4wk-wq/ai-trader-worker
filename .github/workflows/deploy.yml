@@ -805,6 +805,9 @@ jobs:
       # [V33.720] 언어 설정(한국어/English) — 사전 빌드 일치 · 언어 버튼 · 한국어 기본 비용 0 · 긴 글 보호 · 단어 경계
       - name: 언어 설정 검사
         run: node tools/check-i18n.mjs
+      # [V33.721] 내 맞춤(개인화) — 토큰 해시 저장 · 좁은 프로필 검사 · 보일 때만 갱신 · 국면×성향 안내 · 개인정보 안내
+      - name: 내 맞춤 검사
+        run: node tools/check-personal.mjs
       # [V33.578] OMNI-Q 진입 경로 — 상위 10% 직접 매수(잠정 ×0.5) · 상위 25% 밖 매도 · 위원회 비개입 · NEGEXP 교착 해소
       - name: OMNI-Q 진입 경로 검사
         run: node tools/check-omniq-route.mjs

@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.720";
+const _BUILD_VER = "V33.721";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8718,6 +8718,63 @@ function applyKrOverMarket(o, d) {
 //   시간외 값으로 채운다(정규장 dayPct=0이라 0%로 보이던 문제). 정규/마감은 그대로.
 //   trading 경로는 DB quote를 직접 읽으므로 영향 없음(이 함수는 응답 payload 전용).
 // Codex V33.347: each complete quote write carries one price/session/time bundle.
+/* [V33.721] 개인화 프로필 — 저장 형식을 좁게 검사한다(아무 JSON 이나 받지 않는다 · 4KB 상한). */
+const LUX_PROFILE = { risk: ["safe", "mid", "aggr"], mkts: ["us", "kr"], horizon: ["scalp", "swing", "long"], exp: ["new", "mid", "pro"], watchMax: 40 };
+function luxProfileClean(b) {
+  const P = LUX_PROFILE, o = {};
+  const bad = function (m) { const e = new Error(m); e.code = 400; throw e; };
+  if (!b || typeof b !== "object") bad("bad body");
+  o.risk = P.risk.indexOf(b.risk) >= 0 ? b.risk : "mid";
+  o.mkts = Array.isArray(b.mkts) ? b.mkts.filter(function (m) { return P.mkts.indexOf(m) >= 0; }).slice(0, 2) : ["us", "kr"];
+  if (!o.mkts.length) o.mkts = ["us", "kr"];
+  o.horizon = P.horizon.indexOf(b.horizon) >= 0 ? b.horizon : "swing";
+  o.exp = P.exp.indexOf(b.exp) >= 0 ? b.exp : "mid";
+  const w = Array.isArray(b.watch) ? b.watch : [];
+  o.watch = [];
+  for (const x of w) { const sy = String(x || "").trim().toUpperCase(); if (/^[A-Z0-9.^=\-]{1,16}$/.test(sy) && o.watch.indexOf(sy) < 0) o.watch.push(sy); if (o.watch.length >= P.watchMax) break; }
+  o.done = b.done === true;
+  // [V33.721] 나만의 모의계좌(가상 자금 · 사용자 기기가 계산 · 서버는 모양만 검사해 보관) — 시장당 보유 30 · 내역 60
+  o.pf = null;
+  if (b.pf && typeof b.pf === "object") {
+    const num = function (v, lo, hi) { v = Number(v); return isFinite(v) && v >= lo && v <= hi ? v : null; };
+    for (const mk of P.mkts) {
+      const a = b.pf[mk]; if (!a || typeof a !== "object") continue;
+      const start = num(a.start, 1, 1e12), cash = num(a.cash, 0, 1e13); if (start == null || cash == null) continue;
+      const pos = {}; let n = 0;
+      for (const sy of Object.keys(a.pos || {})) {
+        const x = a.pos[sy]; const S = String(sy).toUpperCase();
+        if (n >= 30 || !/^[A-Z0-9.^=\-]{1,16}$/.test(S) || !x) continue;
+        const q = num(x.q, 0.0001, 1e10), avg = num(x.avg, 0.000001, 1e9); if (q == null || avg == null) continue;
+        pos[S] = { q: q, avg: avg, t: num(x.t, 0, 1e14) || 0 }; n++;
+      }
+      const hist = (Array.isArray(a.hist) ? a.hist : []).slice(0, 60).filter(function (h) { return Array.isArray(h) && h.length === 5 && (h[1] === "B" || h[1] === "S") && /^[A-Z0-9.^=\-]{1,16}$/.test(String(h[2])) && isFinite(h[0]) && isFinite(h[3]) && isFinite(h[4]); })
+        .map(function (h) { return [Number(h[0]), h[1], String(h[2]), Number(h[3]), Number(h[4])]; });
+      (o.pf || (o.pf = {}))[mk] = { start: start, cash: cash, pos: pos, hist: hist, t0: num(a.t0, 0, 1e14) || 0 };
+    }
+  }
+  return o;
+}
+async function luxProfileApi(DB, uid, request) {
+  if (!globalThis.__luxProfTbl) {
+    await DB.prepare("CREATE TABLE IF NOT EXISTS user_profiles (uid_hash TEXT PRIMARY KEY, profile TEXT NOT NULL, created_ts INTEGER NOT NULL, updated_ts INTEGER NOT NULL)").run();
+    globalThis.__luxProfTbl = true;
+  }
+  const hb = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("lux-profile:" + uid));
+  const h = Array.from(new Uint8Array(hb)).map(function (x) { return x.toString(16).padStart(2, "0"); }).join("");
+  if (request.method === "POST") {
+    const txt = await request.text();
+    if (txt.length > 16384) { const e = new Error("too large"); e.code = 400; throw e; }   // 모의계좌 포함 16KB
+    let b = null; try { b = JSON.parse(txt); } catch (e) {}
+    const prof = luxProfileClean(b), now = Date.now();
+    await DB.prepare("INSERT INTO user_profiles (uid_hash, profile, created_ts, updated_ts) VALUES (?, ?, ?, ?) ON CONFLICT(uid_hash) DO UPDATE SET profile = excluded.profile, updated_ts = excluded.updated_ts")
+      .bind(h, JSON.stringify(prof), now, now).run();
+    return { ok: true, profile: prof };
+  }
+  const r = await DB.prepare("SELECT profile FROM user_profiles WHERE uid_hash = ?").bind(h).first();
+  let prof = null; try { prof = r && r.profile ? JSON.parse(r.profile) : null; } catch (e) {}
+  return { ok: true, profile: prof };
+}
+
 function quoteSessionFields(q) {
   q = q || {};
   return { mstate: q.mstate || null,
@@ -33490,6 +33547,14 @@ async function handleRequest(request, env, ctx, _inner) {
       return Response.json(rpt, { headers: cors });
     }
 
+    /* [V33.721] ★개인화 프로필★(사용자 11/2 "개인 수요에 맞게 · 수익화는 나중 · 구현부터") — 로그인 없이 기기 토큰(브라우저가 만든 32~64자 16진수).
+       서버는 토큰의 SHA-256 만 키로 쓰고 개인정보는 받지 않는다(성향·시장·기간·경험·관심종목만). 다른 기기는 같은 토큰(연결 코드)을 넣으면 같은 프로필. */
+    if (path === "/api/me") {
+      const uid = String(request.headers.get("x-lux-uid") || "");
+      if (!/^[0-9a-f]{32,64}$/.test(uid)) return Response.json({ ok: false, error: "bad uid" }, { status: 400, headers: cors });
+      try { return Response.json(await luxProfileApi(env.DB, uid, request), { headers: Object.assign({ "cache-control": "no-store" }, cors) }); }
+      catch (e) { return Response.json({ ok: false, error: String(e && e.message || e) }, { status: e && e.code === 400 ? 400 : 503, headers: cors }); }
+    }
     if (path === "/api/crowd/vote" && request.method === "POST") {
       let body = null; try { body = await request.json(); } catch (e) {}
       const sym = body && String(body.symbol || "").trim();
