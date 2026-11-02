@@ -4,6 +4,7 @@ import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { ParamTab } from "./PlaybookFormula";
 
 const POS = "#4FE3FF", NEG = "#FF9A4A", INK = "#E9F2FF", MUTE = "#8695AA", DIM = "#6F7E94", FAINT = "#56657A", HL = "#FFD166";
+const LAYER_PB = "#5AB8FF", LAYER_SL = "#B49CFF";   // [V33.716] 매매법 AI 기본 선택(파랑) · 국면 전략(보라)
 const PANEL = "#0A0F17", PANEL2 = "#0C121C", LINE = "#1B2738", ROWLINE = "#121B28", TRACK = "#111A27";
 const MONO = 'ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace';
 
@@ -205,6 +206,11 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
             <h3 style={{ fontSize: 16, fontWeight: 600, color: "#F2F6FC" }}>국면별 성적 · 거래당 실현수익률</h3>
             <span style={{ fontSize: 12, color: DIM }}>초록 = 목표 +5% 이상 · 노랑 = 0~5% · 주황 = 손실 · 괄호 = 거래 수</span>
           </div>
+          {/* [V33.716] 사용자 10/31 "매매법 AI 랑 국면 전략이 다른 거냐" — 같은 매매법 AI 안의 두 층을 화면에서 구분(색 · 한 줄 설명) */}
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
+            <div style={{ ...card, padding: "8px 12px", borderLeft: "3px solid " + LAYER_PB, color: MUTE }}><b style={{ color: LAYER_PB }}>매매법 AI 기본 선택</b> — OMNI-Q 상위 후보 → 그날 뜬 매매법 중 하나를 칸 성적으로 고름 · 보유 2~4주</div>
+            <div style={{ ...card, padding: "8px 12px", borderLeft: "3px solid " + LAYER_SL, color: MUTE }}><b style={{ color: LAYER_SL }}>국면 전략</b> — 지금 국면에 맞는 전략 하나를 통째로 · OMNI-Q 거름 없이 전 종목에서 · 보유 40~60일</div>
+          </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
             {RG.map((r) => { const b = BR[r], sb = SL && SL.by && SL.by[r], v = SL && SL.wf && SL.wf.V && SL.wf.V[r], h = SL && SL.wf && SL.wf.H && SL.wf.H[r], on = r === now;
               const ok = !!(v && h && fin(v.mean) && fin(h.mean) && v.mean >= 5 && h.mean >= 5 && v.n >= 20 && h.n >= 20);
@@ -216,13 +222,13 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
                   <span style={{ fontSize: 11, color: FAINT }}>{b && fin(b.dayShare) ? "표본 외 기간 " + b.dayShare + "%" : ""}</span>
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, color: DIM, display: "flex", justifyContent: "space-between", gap: 6 }}>매매법 AI(OMNI-Q 후보 · 일봉){GO.indexOf(r) >= 0 && <b style={{ color: NEG, fontWeight: 600 }}>국면 게이트 · 매수 쉼</b>}</div>
+                  <div style={{ fontSize: 11, color: LAYER_PB, display: "flex", justifyContent: "space-between", gap: 6 }}>매매법 AI 기본 선택{GO.indexOf(r) >= 0 && <b style={{ color: NEG, fontWeight: 600 }}>국면 게이트 · 매수 쉼</b>}</div>
                   {b && !b.thin && fin(b.raw) ? <div style={{ fontFamily: MONO, fontSize: 17, color: c5(b.raw) }}>{sg(b.raw, 1)}% <span style={{ fontSize: 11, color: FAINT }}>({n0(b.n)})</span></div>
                     : <div style={{ fontSize: 13, color: FAINT, padding: "4px 0" }}>{b ? "표본 부족(" + n0(b.n) + "건 < 10)" : "표본 부족"}</div>}
                   {b && !b.thin && <div style={{ fontFamily: MONO, fontSize: 11, color: FAINT }}>초과수익 {sg(b.mean)}% · 기준선 {sg(b.base)}%{fin(b.hd) ? " · 보유 " + b.hd + "일" : ""}</div>}
                 </div>
                 {SL && <div style={{ borderTop: "1px solid " + ROWLINE, paddingTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
-                  <div style={{ fontSize: 11, color: DIM }}>국면 전략</div>
+                  <div style={{ fontSize: 11, color: LAYER_SL }}>국면 전략</div>
                   <div style={{ fontSize: 12, color: sb ? MUTE : FAINT, lineHeight: 1.4 }}>{sb ? sb.famKo + " · " + sb.profKo + (sb.cell ? " · 중기 " + (R3K.M[sb.cell] || sb.cell) : "") : "미운용(근거 부족)"}</div>
                   <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 12 }}><span style={{ color: DIM }}>검증</span>{wfv(v)}</div>
                   <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 12 }}><span style={{ color: DIM }}>표본 외</span>{wfv(h)}</div>
