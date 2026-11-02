@@ -1,0 +1,91 @@
+캡	Cap
+🌐 한국어	🌐 한국어
+엘더 레이	Elder Ray
+{n}일선	{n}-day MA
+판정 단계	Decision stage
+매도 규칙	Sell rule
+US 장기채	US long bonds
+🇺🇸 실업률	🇺🇸 Unemployment
+🇺🇸 근원 CPI	🇺🇸 Core CPI
+이격도 반등	MA-gap rebound
+MACD 교차	MACD cross
+{n}일 수익	{n}d return
+④ 매수 후보	④ Buy candidates
+상대강도 상위	Top relative strength
+닮은 과거 평균	Similar-past avg
+③ 매매법 선택	③ Playbook choice
+{n}시간 전 수집	Collected {n}h ago
+{n}년 {n}월	{n}-{n}
+{n}월 {n}일	{n}/{n}
+🛢 원자재 월합계	🛢 Commodities monthly total
+깊은 과매도 반등	Deep oversold rebound
+{n} 작동 화면	{n} Live screen
+{n} 모델 구조	{n} Model structure
+{n} 후보 · 로그	{n} Candidates · Logs
+고른 매매법 있음	Playbook chosen
+{n}/{n}(월)	{n}/{n} (Mon)
+{n}/{n}(화)	{n}/{n} (Tue)
+{n}/{n}(수)	{n}/{n} (Wed)
+{n}/{n}(목)	{n}/{n} (Thu)
+{n}/{n}(금)	{n}/{n} (Fri)
+② 매매법 신호 뜸	② Playbook signal fired
+{n}단계({n}%)	Stage {n} ({n}%)
+↘ 성장·반도체·리츠	↘ Growth · Semis · REITs
+↘ 고베타·정책민감주	↘ High beta · Policy-sensitive
+US 포트폴리오 예상	US portfolio forecast
+지금 매매법 신호 뜸	Playbook signal firing now
+🔴 장 종료 (EST)	🔴 Market closed (EST)
+🟢 장 개장 (EST)	🟢 Market open (EST)
+↗ 방산, 에너지·유가	↗ Defense, Energy · Oil
+닮은 과거 칸에서 선택	Chosen from similar past cells
+{n}일 전 · 오래됨	{n}d ago · stale
+마지막 사이클 방금 전	Last cycle just now
+마지막 사이클 {n}분 전	Last cycle {n}m ago
+최근 사이클 {n}분 전 · 마감까지 {n}분	Last cycle {n}m ago · {n}m to close
+↘ 은행 마진(상대약세)	↘ Bank margins (relative weakness)
+↘ 메가캡 빅테크·플랫폼	↘ Megacap Big Tech · Platforms
+↗ 규제 무풍 섹터	↗ Regulation-insulated sectors
+{n}% / {n}% 한도	{n}% / {n}% limit
+LIVE · 방금 갱신	LIVE · just updated
+이번 사이클 · 평가 {n}종목	This cycle · {n} symbols evaluated
+↘ 항공·여행, 소비·성장주	↘ Airlines · Travel, Consumer · Growth
+↗ 은행·보험, 가치주·달러	↗ Banks · Insurance, Value · Dollar
+검증 미통과 — 그림자 판정	Validation not passed — shadow decision
+윌리엄스 %R · CCI 반등	Williams %R · CCI rebound
+↘ 경기민감(산업·소비재·반도체)	↘ Cyclicals (Industrials · Consumer · Semis)
+↗ 저변동 방어주, 금(헤지)	↗ Low-vol defensives, Gold (hedge)
+🌊 US {n}년물 금리 {n}%p	🌊 US {n}Y yield {n}%p
+↗ 방어주(필수소비), 헬스케어·유틸	↗ Defensives (Staples), Health Care · Utilities
+↗ 은행·에너지·산업재, 보험·고배당	↗ Banks · Energy · Industrials, Insurance · High dividend
+장기 추세 전환 중	Long-term trend turning
+왜 이 매매법인가 — 뜬 매매법 비교	Why this playbook — comparing fired playbooks
+① 후보(OMNI-Q 상위 {n}%)	① Candidates (OMNI-Q top {n}%)
+⚡ 국면: 대형 호재/급등	⚡ Regime: major positive / spike
+• 지정학 급악화 신호(평소 수준 초과)	• Sharp geopolitical deterioration (above normal)
+↗ 성장·반도체·소프트웨어, 리츠·채권프록시	↗ Growth · Semis · Software, REITs · Bond proxies
+↘ 메가캡 기술(Mag{n}), 반도체·소프트웨어	↘ Megacap tech (Mag{n}), Semis · Software
+↘ 성장·반도체(고PER), 리츠·고배당·채권프록시	↘ Growth · Semis (high P/E), REITs · High dividend · Bond proxies
+엔진 자동 작동 중 · 마지막 실행: {n}분 전	Engine running · last run: {n}m ago
+{n}건 청산 · 최고 +${n} · 최저 -${n}	{n} exits · best +${n} · worst -${n}
+{n}건 청산 · 최고 +${n} · 최저 -${n}K	{n} exits · best +${n} · worst -${n}K
+{n}건 청산 · 최고 +${n}K · 최저 -${n}K	{n} exits · best +${n}K · worst -${n}K
+{n}건 청산 · 최고 +₩{n}만 · 최저 -₩{n}만	{n} exits · best +₩{n}×10k · worst -₩{n}×10k
+이번 사이클 · 평가 {n}종목	This cycle · {n} symbols evaluated
+코스피 지수 · 전일 종가 대비 · 규정 기준 그대로	KOSPI index · vs previous close · official basis
+코스닥 지수 · 전일 종가 대비 · 규정 기준 그대로	KOSDAQ index · vs previous close · official basis
+메가캡 · 성장주 · 반도체 · 경기소비재 · 중국노출 · 리츠	Megacap · Growth · Semis · Consumer Disc. · China exposure · REITs
+에 걸친 반영 가정 · 시장파급 계수 US {n} / KR {n}	pass-through assumed · market spillover coefficient US {n} / KR {n}
+필수소비 · 헬스케어 · 금·귀금속 · 유틸리티 · 채권 · 고배당	Staples · Health Care · Gold · Precious metals · Utilities · Bonds · High dividend
+매매법 AI · 실시간 판정 — 모델 설명·검증은 {n} 모델 구조	Playbook AI · live decisions — model details · validation in {n} Model structure
+• 지정학 헤드라인 {n}건(무력 {n}·긴장 {n}·핫스팟 {n}) · 평소대비 초과 {n}	• {n} geopolitical headlines (armed {n} · tension {n} · hotspots {n}) · above normal {n}
+▶ 신규 진입 대폭 축소·중단, 방어·헤지(인버스/VIX/금) 우선, 보유는 손절 타이트닝.	▶ Sharply cut or halt new entries, prioritize defense · hedges (inverse/VIX/gold), tighten stops on holdings.
+최근 학습의 판정 구간을 통과하지 못해 후보마다 무엇을 골랐을지 계산만 하고 사지 않습니다(독립 통과 {n}/{n}).	Didn't pass the latest training's test window — it only computes what it would pick for each candidate and doesn't buy (independent passes {n}/{n}).
+🔴 위기 게이지 위기({n}/{n}) — 신규 진입 대폭 축소·중단, 방어·헤지(인버스/VIX/금) 우선, 보유는 손절 타이트닝.	🔴 Crisis gauge: crisis ({n}/{n}) — sharply cut or halt new entries, prioritize defense · hedges (inverse/VIX/gold), tighten stops on holdings.
+🔴 위기 경보: 위기 ({n}/{n}) — 신규 진입 대폭 축소·중단, 방어·헤지(인버스/VIX/금) 우선, 보유는 손절 타이트닝.	🔴 Crisis alert: crisis ({n}/{n}) — sharply cut or halt new entries, prioritize defense · hedges (inverse/VIX/gold), tighten stops on holdings.
+국면 CRASH · 공황 — {n}순위 추세·모멘텀 쉼(보조는 계속) · 폭락 뒤 {n}거래일·{n}일 하락+고변동 — 폭락 직후 반등일엔 추세 매매법이 반대로 움직임(한국 {n}년 평균 {n}% · 평시 {n}%)	Regime CRASH · panic — rank-{n} trend/momentum paused (auxiliary continues) · {n} trading days after a crash · {n}d decline + high volatility — trend playbooks move the wrong way on post-crash rebound days (KR {n}y avg {n}% · normal {n}%)
+신규 진입 사이즈 축소, 고베타·성장주 비중 관리, 안전자산(금·국채) 관심.	Reduce new-entry size, manage high-beta/growth weight, watch safe havens (gold · Treasuries).
+🟠 위기 게이지 경계({n}/{n}) — 신규 진입 사이즈 축소, 고베타·성장주 비중 관리, 안전자산(금·국채) 관심.	🟠 Crisis gauge: elevated ({n}/{n}) — reduce new-entry size, manage high-beta/growth weight, watch safe havens (gold · Treasuries).
+평소보다 보수적으로 — 신규 진입 선별, 손절 준수.	More conservative than usual — selective new entries, honor stops.
+특이 위험신호 없음 — 정상 운용.	No unusual risk signals — normal operation.
+⚡ 국면: 대형 호재/급등	⚡ Regime: major positive / spike
+{n}단계({n}%)	Stage {n} ({n}%)

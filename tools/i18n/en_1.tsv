@@ -1,0 +1,326 @@
+월	Mon
+화	Tue
+수	Wed
+목	Thu
+금	Fri
+토	Sat
+일	Sun
+관심	Watch
+직접	Direct
+파급	Spillover
+대기	Waiting
+오늘	Today
+정규	Regular
+통과	Pass
+발언	Speaking
+출처	Source
+가동	Running
+전체	All
+기술	Tech
+금융	Financials
+보유	Holding
+지표	Indicators
+청산	Exit
+종목	Symbol
+한국	Korea
+현금	Cash
+프리	Pre
+장기	Long-term
+중기	Mid-term
+보합	Flat
+단기	Short-term
+정상	Normal
+매수	Buy
+미국	US
+검증	Validation
+입력	Input
+출력	Output
+통신	Comm. Services
+소재	Materials
+리츠	REITs
+환율	FX
+메뉴	Menu
+상시	Always on
+정식	Official
+표본	Sample
+예산	Budget
+조회	Lookup
+급락	Plunge
+폭등	Surge
+상승	Up
+전환	Switch
+하락	Down
+폭락	Crash
+진행	In progress
+관측	Observe
+저장	Save
+역할	Role
+설정	Settings
+누적	Cumulative
+증가	Increase
+닫힘	Closed
+활성	Active
+닫기	Close
+실행	Run
+상태	Status
+관찰	Watch
+모델	Model
+보조	Auxiliary
+일시	Time
+영향	Impact
+실제	Actual
+예상	Forecast
+이전	Previous
+서프	Surprise
+질문	Question
+기타	Other
+분석	Analysis
+대체	Fallback
+전략	Strategy
+채권	Bonds
+정렬	Sort
+국장	KR market
+미장	US market
+뉴스	News
+지도	Map
+개요	Overview
+성과	Performance
+이동	Move
+선택	Select
+추가	Add
+상세	Detail
+요청	Request
+거래	Trade
+에러	Error
+매일	Daily
+화면	Screen
+보기	View
+축소	Zoom out
+확대	Zoom in
+심볼	Symbol
+검색	Search
+시장	Market
+승률	Win rate
+중립	Neutral
+지금	Now
+구성	Composition
+분포	Distribution
+후보	Candidates
+손절	Stop-loss
+진입	Entry
+탈락	Dropped
+매도	Sell
+트리	Tree
+기억	Memory
+보류	On hold
+플랫	Flat
+주력	Primary
+꺼짐	Off
+없음	None
+산업재	Industrials
+펼치기	Expand
+에너지	Energy
+섀도우	Shadow
+투자금	Capital
+로딩…	Loading…
+소비재	Consumer
+포지션	Positions
+평가액	Market value
+정규장	Regular
+시간외	Extended
+위원회	Committee
+대용?	Proxy?
+시총순	By market cap
+▲상승	▲Up
+▼하강	▼Down
+∞자동	∞Auto
+최근치	Latest
+발표일	Release date
+미국장	US market
+한국장	KR market
+용도별	By use
+코스피	KOSPI
+코스닥	KOSDAQ
+원자재	Commodities
+거래량	Volume
+부스터	Booster
+상승률	Gainers
+하락률	Losers
+통화쌍	Pair
+현재가	Price
+실시간	Live
+🥇 금	🥇 Gold
+시스템	System
+영향도	Impact
+초기화	Reset
+목표가	Target price
+실업률	Unemployment
+금통위	BOK MPC
+통계청	Statistics Korea
+매매법	Playbook
+시장β	Market β
+진입가	Entry price
+정배열	Bullish alignment
+위원장	Chair
+시퀀스	Sequence
+억제됨	Suppressed
+기준일	Base date
+상승장	Bull market
+횡보장	Sideways market
+하락장	Bear market
+급락장	Crash market
+급등장	Surge market
+거르개	Filter
+신뢰 高	Confidence HIGH
+적극매수	Strong Buy
+신뢰 中	Confidence MID
+헬스케어	Health Care
+적극매도	Strong Sell
+신뢰 低	Confidence LOW
+→ 회수	→ Revoked
+◈ 채권	◈ Bonds
+하는 일	What it does
+유틸리티	Utilities
+AI 픽	AI Pick
+사이드카	Sidecar
+매수까지	to buy
+등락률순	By change %
+경제지표	Economic indicators
+美반도체	US semis
+美 미국	US
+韓 한국	KR
+꼬리비율	Tail ratio
+거래상태	Trading status
+대시보드	Dashboard
+투표 중	Voting
+기준금리	Policy rate
+(오늘)	(today)
+표본 외	Out-of-sample
+신규모델	New model
+진입문턱	Entry threshold
+▶ 실행	▶ Run
+🥇 금값	🥇 Gold price
+보유종목	Holdings
+평가손익	Unrealized P&L
+← 목록	← List
+🔔 알림	🔔 Alerts
+시가총액	Market cap
+전일대비	vs prev close
+이번 달	This month
+지난 달	Last month
+✕ 해제	✕ Clear
+🔶 구리	🔶 Copper
+바로가기	Go
+↑ 이상	↑ Above
+↓ 이하	↓ Below
+💰 거래	💰 Trades
+📈 주식	📈 Stocks
+📰 뉴스	📰 News
+🔍 스캔	🔍 Scan
+🧪 학습	🧪 Training
+세부레벨	Detail level
+✕ 삭제	✕ Delete
+매수신호	Buy signal
+🔧 진단	🔧 Diagnostics
+⚙ 설정	⚙ Settings
+🌓 테마	🌓 Theme
+달러/원	USD/KRW
+달러/엔	USD/JPY
+유로/원	EUR/KRW
+위안/원	CNY/KRW
+미국주식	US stocks
+한국주식	KR stocks
+시나리오	Scenario
+팩터β*	Factor β*
+초과수익	Excess return
+상대강도	Relative strength
+기술확률	Technical prob.
+⑤ 기권	⑤ Abstain
+홀드아웃	Holdout
+입니다.	.
+· 발언	· Speaking
+검증 중	Validating
+새로고침	Refresh
+실제 표	Actual table
+표 없음	No table
+애프터마켓	After-hours
+정식 합류	Officially joined
+₩{n}만	₩{n}×10k
+보유 없음	No holdings
+적합 진단	Fit diagnosis
+정상 범위	Normal range
+⛏ 원자재	⛏ Commodities
+AI 두뇌	AI Brain
+·{n}일	·{n}d
+쓰이는 곳	Used in
+임의소비재	Consumer Disc.
+필수소비재	Consumer Staples
+잠정 합류	Provisionally joined
+합류 보류	Join on hold
+뉴스·환율	News·FX
+펼치기 ▾	Expand ▾
+· 동시/	· concurrent/
+보유 종목	Holdings
+워치리스트	Watchlist
+섹터 온도	Sector heat
+스윙 표본	Swing samples
+추적 이후	Since tracking
+진입 문턱	Entry threshold
+이상 없음	No issues
+신뢰 통과	Confidence passed
+국면 전략	Regime strategy
+뉴스 감성	News sentiment
+표본 수확	Sample harvest
+AI 학습	AI Training
+종목 상세	Stock Detail
+금리 하락	Rates down
+↺ 초기화	↺ Reset
+📊 나스닥	📊 NASDAQ
+서프라이즈	Surprise
+지수 반응	Index reaction
+시장 뉴스	Market news
+성능 미달	Underperforming
+관리 도구	Admin tools
+전체 구조	Full structure
+↻ 재계산	↻ Recalculate
+📊 코스피	📊 KOSPI
+전체 닫기	Close all
+내부 AI	Internal AI
+로딩 중…	Loading…
+자동 운용	Auto trading
+시장 전환	Switch market
+섹터 뉴스	Sector news
+일정 미정	TBD
+파운드/원	GBP/KRW
+확률 보정	Probability calibration
+후보 없음	No candidates
+확인 중…	Checking…
+직접 입력	Manual input
+예상 손익	Expected P&L
+투매 반등	Capitulation rebound
+실전 기록	Live record
+판단 근거	Rationale
+기술 가산	Technical bonus
+처리 속도	Throughput
+스캔 소요	Scan time
+확률 이동	Probability shift
+오늘 피처	Today's features
+스토캐스틱	Stochastic
+기술 근거	Technical evidence
+후보 선별	Candidate screening
+시장 국면	Market regime
+손실 제동	Loss brake
+실전 투입	Live deployment
+뜬 매매법	Fired playbooks
+랭크 {n}	Rank {n}
+↻ 새로고침	↻ Refresh
++₩{n}만	+₩{n}×10k
+AI 리포트	AI Report
+퇴역(정상)	Retired (normal)
+-₩{n}만	-₩{n}×10k
+듀얼 모멘텀	Dual momentum
+📲 앱 설치	📲 Install app
+· 매도까지	· to sell
+서킷브레이커	Circuit breaker
+보유 {n}	Holding {n}
+다음 발표일	Next release

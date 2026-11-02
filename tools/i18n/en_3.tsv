@@ -1,0 +1,275 @@
+KODEX 코스닥{n}	KODEX KOSDAQ{n}
+MEMO (원형 기억)	MEMO (prototype memory)
+MIND 와 같은 피처	Same features as MIND
+MEMO · 원형 기억	MEMO · Prototype memory
+[{n}%) 검증 구간	[{n}%) validation window
+보합 {n}%(n{n})	Flat {n}%(n{n})
+폭락 {n}%(n{n})	Crash {n}%(n{n})
+KOSEF 국고채{n}년	KOSEF KTB {n}Y
+KODEX 국고채{n}년	KODEX KTB {n}Y
+MEMO(유사상황 기억)	MEMO (similar-situation memory)
+GBDT (부스팅 트리)	GBDT (boosted trees)
+홀드아웃·전진 모두 통과	Passed both holdout and walk-forward
+S&P{n} {n}x 숏	S&P{n} {n}x short
+미국 소맥 (Wheat)	US Wheat
+미국 옥수수 (Corn)	US Corn
+🇰🇷 KR 국고채 ETF	🇰🇷 KR Treasury ETFs
+⚠️ 전쟁 대비돼 있어?	⚠️ Ready for war risk?
+시세 통계 · 기업 개요	Quote stats · Company overview
+GitHub에서 실행 ↗	Run on GitHub ↗
+유니버스에서 진입후보까지	From universe to entry candidates
+오전 {n}:{n} 적용	Applied {n}:{n} AM
+종목 상세를 열면 여기에	Open a stock detail to see it here
+AUTO-TUNE 활성화	Enable AUTO-TUNE
+동시보유 무제한 (자동)	Unlimited concurrent (auto)
+분봉 모멘텀·거래량 폭발	Intraday momentum · Volume burst
+트레일 발동 % (고점)	Trail trigger % (peak)
+매매법 AI 실시간 판정	Playbook AI live decisions
+LIVE · {n}초 전	LIVE · {n}s ago
+최근 {n}거래일 수익률	Return over last {n} trading days
+피처 판(featVer)	Feature version (featVer)
+독립 증거 + 방향 판정	Independent evidence + direction
+② IC 소프트맥스 결합	② IC softmax blend
+GBDT · 부스팅 나무	GBDT · Boosted trees
+최근 {n}일 악화 검사	Last {n} days deterioration check
+OMNI-Q 상위 {n}%	OMNI-Q top {n}%
+매매 영향 없음 · 관측만	No trading impact · Observe only
+KODEX 국채선물{n}년	KODEX KTB futures {n}Y
+미국 종합국채 (GOVT)	US Treasury aggregate (GOVT)
+확률 체인 (측정된 계수)	Probability chain (measured coefficients)
+워치리스트 기준 · 실시간	Watchlist · Live
+천연가스 (Nat Gas)	Natural gas
+FOMC 매파(긴축 기조)	FOMC hawkish (tightening)
+캔들/차트 패턴 자동 감지	Auto-detect candle/chart patterns
+증권사 목표가 · 투자의견	Analyst targets · Ratings
+위원회 {n}/{n} 가동	Committee {n}/{n} running
+SEQ 트랜스포머 {n}D	SEQ Transformer {n}D
+은닉층(ReLU·드롭아웃)	Hidden layer (ReLU · dropout)
+SIZING (고정리스크)	SIZING (fixed risk)
+VBURST 시그널 활성화	Enable VBURST signal
+🧠 AI 운영상태 JSON	🧠 AI ops status JSON
+빠른 검색 (Ctrl+K)	Quick search (Ctrl+K)
+Core CPI (전년비)	Core CPI (YoY)
+Core PCE (전년비)	Core PCE (YoY)
+스캔 결과를 기다리는 중…	Waiting for scan results…
+스캔 기록을 불러오는 중…	Loading scan history…
+후보 종목을 불러오는 중…	Loading candidates…
+AI 스캔 · 매매법 판정	AI scan · Playbook decisions
+시장 데이터 → 피처 벡터	Market data → Feature vector
+모델을 눌러 내부 관측 ↓	Click a model to inspect ↓
+최종 보정 → 진입 게이트	Final calibration → Entry gate
+위원회 한 표(신뢰 가중)	One committee vote (trust-weighted)
+[{n}%) 표본 외 구간	[{n}%) out-of-sample window
+후보 선별 · OMNI-Q	Candidate screening · OMNI-Q
+위원회 학습 후 표시됩니다	Shown after committee training
+갱신 지연 · {n}초 전	Update delayed · {n}s ago
+하한 {n}% · w={n}	Lower bound {n}% · w={n}
+알루미늄 (Aluminum)	Aluminum
+판단 없음 — 규칙엔진 단독	No call — rule engine only
+손익비(수익률) · 위험대비	Payoff ratio · Risk-adjusted
+플래티넘 (Platinum)	Platinum
+미국 대두 (Soybean)	US Soybeans
+커피 C (Coffee C)	Coffee C
+영향도 · 발표치 vs 예상	Impact · Actual vs Expected
+USD · 미국 국채 ETF	USD · US Treasury ETFs
+합류에는 근거가 필요합니다.	Joining requires evidence.
+참여 {n} / {n} 모델	{n} / {n} models participating
+출력층(Sigmoid·승률)	Output layer (Sigmoid · win rate)
+미니 상세 카드로 쌓입니다.	Stacked as mini detail cards.
+SUBREQUESTS / 일	SUBREQUESTS / day
+SCALP 단타 전략 활성화	Enable SCALP strategy
+SNAP 스냅백 전략 활성화	Enable SNAP snapback strategy
+패닉·드로다운·연속손실 방어	Panic · Drawdown · Losing-streak defense
+이중헤드(강세/약세 사분면)	Dual-head (bull/bear quadrant)
+더블클릭(더블탭) → 종목상세	Double-click (double-tap) → Stock detail
+RSI {n} · {n}분 전	RSI {n} · {n}m ago
+RSI {n} · {n}일 전	RSI {n} · {n}d ago
+🟢 정규장 OPEN (실시간)	🟢 Regular session OPEN (live)
+빅테크·성장주 실적/센티 충격	Big Tech · Growth earnings/sentiment shock
+KRW · 한국 국고채 ETF	KRW · KR Treasury ETFs
+TOP RANK · 순위 점수	TOP RANK · Rank score
+AI 후보 종목 · 최근 흐름	AI candidates · Recent trend
+WHAT-IF 매크로 시나리오	WHAT-IF macro scenarios
+STEP {n} · 거시 변수	STEP {n} · Macro variable
+STEP {n} · 충격 크기	STEP {n} · Shock size
+STEP {n} · 반영 속도	STEP {n} · Pass-through speed
+정규장 시간에만 거래 (권장)	Trade regular hours only (recommended)
+AI 일일 지시 (내부 엔진)	AI daily directives (internal engine)
+당일 합산 손실 시 신규 중단	Stop new entries on daily loss
+트레일 청산폭 % (고점대비)	Trail exit % (from peak)
+패닉 게이트 (지수 급락 시)	Panic gate (on index plunge)
+지수 평균 낙폭 이하 시 발동	Triggers below index average drop
+서프라이즈 — 예상 대비 비율	Surprise — vs expected
+예: NVDA · {n}.KS	e.g. NVDA · {n}.KS
+옛 OMNI 분봉 머리(퇴역)	Old OMNI intraday head (retired)
+KODEX 코스닥{n}레버리지	KODEX KOSDAQ{n} Leverage
+① 전문가 — 각자 독립 학습	① Experts — each trained independently
+RULE · 규칙엔진 사전확률	RULE · Rule-engine prior
+국면별로 따로 맞춘 보정 로짓	Calibration logit fitted per regime
+기술 프리스크린 통과분만 추론	Infer only on technical pre-screen passes
+매매법 {n}종 중 신호 발생	Signals among {n} playbooks
+뉴스 수집·학습 후 표시됩니다	Shown after news collection · training
+검증 {n}% · 하한 {n}%	Validation {n}% · Lower {n}%
+누적 수익률 · 실현+평가 포함	Cumulative return · realized + unrealized
+→ 라벨 {n} → 저장 {n}	→ Labels {n} → Saved {n}
+대기 {n} · 오늘 {n}파일	Waiting {n} · {n} files today
+· ⚠ 마지막 학습 {n}일 전	· ⚠ Last trained {n}d ago
+고확률을 가장 많이 막는 게이트	Gate blocking the most high-probability picks
+투자 {n}% · 현금 {n}%	Invested {n}% · Cash {n}%
+오전 {n}:{n}:{n} 갱신	Updated {n}:{n}:{n} AM
+KOSPI{n} 선물 ±{n}%	KOSPI{n} futures ±{n}%
+🌊 점진 — 역사적 속도로 반영	🌊 Gradual — historical pace
+L{n} 기준 % (매수 중단)	L{n} threshold % (stop buying)
+백테스트 ({n}년 과거데이터)	Backtest ({n}y history)
+자산종류별 거래내역 (CSV):	Trades by asset type (CSV):
+반도체 {n}x 숏 · SOXS	Semis {n}x short · SOXS
+나스닥 {n}x 숏 · SQQQ	NASDAQ {n}x short · SQQQ
+반도체 {n}x 롱 · SOXL	Semis {n}x long · SOXL
+나스닥 {n}x 롱 · TQQQ	NASDAQ {n}x long · TQQQ
+Expected — 시장 예상치	Expected — consensus
+표본 부족({n}건 < {n})	Too few samples ({n} < {n})
+OMNI-Q 상위 {n}% 평가	OMNI-Q top {n}% evaluation
+일봉 {n}봉 · 구간 {n}%	Daily {n} bars · window {n}%
+반사실후보 {n}건 기록[kr]	{n} counterfactual candidates logged [kr]
+AI 픽 {n}일 전 · 오래됨	AI pick {n}d ago · stale
+상시 — 기술지표 기반 사전확률	Always on — technical-indicator prior
+결합 뒤 방향 보정(표결 아님)	Direction calibration after blend (not a vote)
+게이트 통과 (랭크 ≥ {n})	Gate passed (rank ≥ {n})
+강도{n}·확증{n}%·효능{n}	Strength {n} · Confirmation {n}% · Efficacy {n}
+KODEX {n}선물인버스{n}X	KODEX {n} Futures Inverse {n}X
+WTI 유가 (WTI Crude)	WTI Crude
+SEC Form {n} 최신 공시	SEC Form {n} latest filings
+📊 LUX-AI 월간 투자 리포트	📊 LUX-AI monthly investment report
+⚡ 급격 — {n}영업일 내 쇼크	⚡ Abrupt — shock within {n} business days
+US TICKERS (콤마 구분)	US TICKERS (comma-separated)
+외부 API(Claude) 미사용	No external API (Claude)
+TP{n} % (절반익절+본전락)	TP{n} % (half take-profit + breakeven)
+거래량 폭증 배수 ({n}MA×)	Volume surge multiple ({n}MA×)
+L{n} 기준 % (사이즈 축소)	L{n} threshold % (size down)
+사이클 전체 한도 (기본 {n})	Cycle-wide limit (default {n})
+양수=입금, 음수=출금. 입출금은	Positive=deposit, negative=withdraw. Transfers
+${n} 보유 → 예상 -${n}	${n} held → expected -${n}
+최근 동기화 {n}:{n}:{n}	Last sync {n}:{n}:{n}
+③ OMNI — 복합모델(섀도우)	③ OMNI — composite model (shadow)
+보조 — 사분면 판정(위원 아님)	Auxiliary — quadrant call (not a member)
+"{n}일 안에 이길 확률" 하나	One "probability of winning within {n} days"
+미국 장기국채 {n}년+ (TLT)	US long Treasury {n}Y+ (TLT)
+🇺🇸 US TREASURY · 금리	🇺🇸 US TREASURY · Yields
+LUX-AI 종합 의견 · 투자심리	LUX-AI overall view · Sentiment
+· 매일 KST {n}:{n} 리셋	· Resets daily {n}:{n} KST
+Portfolio Heat 한도 %	Portfolio Heat limit %
+분봉 장중 단타 — 진입·청산·한도	Intraday scalping — entry · exit · limits
+답변을 지우고 질문창만 다시 띄워요	Clear the answer and reopen the prompt
+지금 판단 중 · {n} / {n}	Deciding now · {n} / {n}
+전문가 증거에 따른 기본 결합 경로	Default blend path by expert evidence
+같은 질문의 확률 — 셋이 한 자리	Probability of the same question — three in one place
+· 학습 안 {n}% / 밖 {n}%	· In-sample {n}% / Out {n}%
+매매법 AI 국면 (장기·중기·단기)	Playbook AI regime (long · mid · short)
+SEQ(시퀀스 Transformer)	SEQ (sequence Transformer)
+위원장 — 신뢰게이트 없이 항상 참여	Chair — always participates, no trust gate
+이슈 {n}건 · 🟢 대형호재 {n}	{n} issues · 🟢 Major positive {n}
+미국 & 한국 핵심 매크로 · 기준일	US & KR key macro · Base date
+종목 평가 시간 한도 (기본 {n})	Per-symbol evaluation time limit (default {n})
+섹터 그룹 가중치 (autoTune)	Sector group weights (autoTune)
+신호 타입 가중치 (autoTune)	Signal type weights (autoTune)
+수동 실행 버튼은 필요하지 않습니다.	No manual run button is needed.
+S&P{n} {n}x 숏 · SPXU	S&P{n} {n}x short · SPXU
+심볼 입력 (AAPL, {n}.KS)	Enter symbol (AAPL, {n}.KS)
+검색 (심볼/메시지/RSI 등)...	Search (symbol/message/RSI etc.)...
+상위 {n}종목 · 진입후보 {n}개	Top {n} symbols · {n} entry candidates
+대기 {n}건 · 최근 {n}건 표시	{n} waiting · showing latest {n}
+위원회 한 표(전진검증을 넘을 때만)	One committee vote (only if walk-forward passes)
+시장 국면(강세·약세) × 종목 방향	Market regime (bull · bear) × Stock direction
+실측 사분면 로짓 적용 (n {n})	Measured quadrant logit applied (n {n})
+거래 {n}건 · 전부 평균 {n}%	{n} trades · all avg {n}%
+가중 {n} × 시총순위 점수 {n}	Weight {n} × Market-cap rank score {n}
+누적 {n}만 / {n}만 ({n}%)	Cumulative {n}×10k / {n}×10k ({n}%)
+미국 중기국채 {n}{n}년 (IEF)	US mid Treasury {n}{n}Y (IEF)
+미국 단기국채 {n}{n}년 (SHY)	US short Treasury {n}{n}Y (SHY)
+평균이익 {n}% / 평균손실 {n}%	Avg gain {n}% / Avg loss {n}%
+활성화됨 · 거래/조건 데이터 수집 중	Active · collecting trade/condition data
+방향 분리 · 오름과 내림을 따로 본다	Direction split · rises and falls seen separately
+누적 {n}억 / {n}억 ({n}%)	Cumulative {n}00M / {n}00M ({n}%)
+이 수익 넘으면 트레일 확대(추세 런)	Widen trail above this gain (trend run)
+CASH MANAGEMENT (입출금)	CASH MANAGEMENT (deposits/withdrawals)
+보조 방향 모델 · 위원회 투표와 구분	Auxiliary direction model · separate from committee vote
+MIND · 위원장(인수분해기계 FM)	MIND · Chair (factorization machine FM)
+SEQ · 시퀀스 Transformer	SEQ · Sequence Transformer
+과거에 가장 닮았던 장면들의 실제 결과	Actual outcomes of the most similar past scenes
+시장지수 대비 {n}일 초과수익(%p)	{n}-day excess return vs index (%p)
+입력에서 최종 판정까지 모델 처리 구조	Model pipeline from input to final decision
+정식 합류 — 가중 {n} 으로 투표 중	Officially joined — voting with weight {n}
+② 비용 뺀 초과 + 구간 {n}/{n}	② Net-of-cost excess + windows {n}/{n}
+게이트 감사 (막힌 강신호의 실제 결과)	Gate audit (actual results of blocked strong signals)
+MIND (위원장 · 인수분해기계 FM)	MIND (Chair · factorization machine FM)
+· 사지 않은 종목의 사후 라벨링 대기열	· Post-hoc labeling queue for unbought symbols
+종목 검색 — 워치리스트 밖 종목도 조회	Search — including symbols outside the watchlist
+KR TICKERS (예: {n}.KS)	KR TICKERS (e.g. {n}.KS)
+앱을 열 때 지문·얼굴로 확인(앱에서만)	Verify with fingerprint/face on open (app only)
+개인정보처리방침 · 이용 안내(모의투자)	Privacy policy · Terms (paper trading)
+최근 정규장 기준(휴장/데이터 지연 중)	As of last regular session (holiday/data delay)
+공황 국면 — 추세·모멘텀 쉼(PSAR)	Panic regime — trend/momentum paused (PSAR)
+아직 어느 지평도 발언 문턱을 못 넘었다	No horizon has passed the speaking threshold yet
+여기 숫자가 곧 올라가 있는 모델의 숫자	These numbers are the deployed model's numbers
+ATR({n}) / 가격 — 일간 변동성	ATR({n}) / price — daily volatility
+n {n} · 기준선 {n}% → 미통과	n {n} · baseline {n}% → not passed
+가중 {n} × 기술점수 {n} · 매수	Weight {n} × Tech score {n} · Buy
+당일 거래량 / 최근 {n}일 평균 거래량	Today's volume / {n}-day avg volume
+상위 {n}% 기준 {n} · 고정 {n}	Top {n}% cut {n} · fixed {n}
+학습 정상 {n}h · 시장 {n}/{n}	Training OK {n}h · Markets {n}/{n}
+MODEL READINESS / 검증 현황	MODEL READINESS / Validation status
+FETCH 피크 / 사이클 (한도 {n})	FETCH peak / cycle (limit {n})
+심볼 입력 (예: NVDA, {n}.KS)	Enter symbol (e.g. NVDA, {n}.KS)
+({n}일부터 평균 < {n} 이면 회수)	(revoked if avg < {n} from day {n})
+최근 스캔 {n}:{n} · {n}시간 전	Last scan {n}:{n} · {n}h ago
+모델의 예측과 실제 주문 여부는 별도 단계	Model prediction and actual orders are separate steps
+④ OMNI-Q — 순위모델(진입 좁히기)	④ OMNI-Q — ranking model (narrows entries)
+위원회 한 표(검증 통과분만큼 잠정 가중)	One committee vote (provisional weight by validation)
+사전확률 · AI_PRIMARY 후보 선정	Prior · AI_PRIMARY candidate selection
+· 검증 유효 {n}/{n}(고유도 {n})	· Valid {n}/{n} (uniqueness {n})
+단타 엔진 (AI) {n}/{n} 학습 완료	Scalp engine (AI) {n}/{n} trained
+상승추세 내 과매도 반등 ({n}~{n}일)	Oversold rebound in uptrend ({n}–{n}d)
+정식 {n} · 잠정 {n} · 대기 {n}	Official {n} · Provisional {n} · Waiting {n}
+시장 입력 → 전문가 → 결합 → 최종 판정	Market input → Experts → Blend → Final decision
+최근 L일의 피처를 날짜 순서대로 쌓은 행렬	Matrix of features over the last L days in date order
+가중 {n} × 기술점수 {n} · 적극매도	Weight {n} × Tech score {n} · Strong Sell
+가중 {n} × 기술점수 {n} · 적극매수	Weight {n} × Tech score {n} · Strong Buy
+차단 후 실현 · 승률 {n}% · n {n}	Realized after block · Win rate {n}% · n {n}
+거래내역·포지션을 CSV 파일로 내려받습니다.	Download trades and positions as CSV.
+최신 스캔과 위원회 응답을 기다리고 있습니다.	Waiting for the latest scan and committee response.
+이 값으로 후보 순위를 매긴다(확률이 아니다)	Candidates are ranked by this value (not a probability)
+기술 · 사건 · 충격 · 불일치 · 이중헤드	Technical · Event · Shock · Divergence · Dual-head
+모델별 검증 근거 · 표본 · 홀드아웃 펼치기	Expand validation evidence · samples · holdout by model
+승률 예측이 나온 상위 종목({n}시간 누적)	Top symbols with win-rate predictions ({n}h cumulative)
+분당 분봉 조회 종목 수 — 클수록 단타 기회↑	Intraday lookups per minute — larger → more scalp chances
+🔄 수치 자동갱신: {n}/{n} {n}:{n}	🔄 Auto-updated: {n}/{n} {n}:{n}
+검증 {n}% · 블록IC {n} (t {n})	Validation {n}% · Block IC {n} (t {n})
+빅테크·성장주 실적/센티 충격 · 전쟁·무력분쟁	Big Tech · Growth shock · War · Armed conflict
+MIND (인수분해기계 FM + 전문가 스태킹)	MIND (factorization machine FM + expert stacking)
+검증 {n}% · 하한 {n}% · 표본 {n}	Validation {n}% · Lower {n}% · Samples {n}
+같은 피처(학습기는 GitHub Actions)	Same features (trainer on GitHub Actions)
+· 손익비(수익률) {n} · Kelly {n}%	· Payoff ratio {n} · Kelly {n}%
+시간외(프리·애프터) 등락률 — 정규장 종가 대비	Extended-hours (pre/after) change — vs regular close
+엔진 자동 작동 중 · 마지막 실행: {n}초 전	Engine running · last run: {n}s ago
+여러 이슈를 확증·효능 가중으로 합산한 종합 방향	Overall direction from issues weighted by confirmation · efficacy
+홈 화면에 앱으로 설치(주소창 없이 앱처럼 열림)	Install to home screen (opens like an app)
+KODEX {n}선물인버스{n}X · {n}.KS	KODEX {n} Futures Inverse {n}X · {n}.KS
+신경망 구조·가중치 강도를 실시간으로 관측합니다.	Observe network structure and weight strength live.
+배지 = 설명력(R²)·표본수 기반 추정 신뢰도.	Badge = estimated confidence from R² and sample size.
+공황 국면 — 추세·모멘텀 쉼(ELDER_RAY)	Panic regime — trend/momentum paused (ELDER_RAY)
+보유 {n} · 최근 매수 {n} · 청산 {n}	Holding {n} · Recent buys {n} · Exits {n}
+검증 {n}% · 하한 {n}% / 문턱 {n}%	Validation {n}% · Lower {n}% / Threshold {n}%
+BOOST (XGB·LGB·CatBoost 합의)	BOOST (XGB · LGB · CatBoost consensus)
+시간순 블록 교차검증으로 온도·플랫·베타 중 선택	Chooses temperature · flat · beta by time-block CV
+규칙 신호(눌림·돌파·하이킨아시 등)의 과거 성적	Past performance of rule signals (pullback · breakout · Heikin-Ashi etc.)
+마지막 {n}%(학습·규칙 고르기에 안 쓴 구간)	Last {n}% (not used for training or rule selection)
+재무 미달 매수금지: AltmanZ {n}<{n}	Buy blocked on weak financials: AltmanZ {n}<{n}
+잠정 합류 — 증거가 덜 쌓여 가중을 줄여 투표 중	Provisionally joined — voting with reduced weight (less evidence)
+오늘 {n}% · {n}일 {n}% · ER {n}	Today {n}% · {n}d {n}% · ER {n}
+계수 미측정 → 개입 {n} (관측 {n}/{n})	Coefficient unmeasured → intervention {n} (observed {n}/{n})
+주요 통화 환율 · 화면 표시 중 {n}초마다 확인	Major FX rates · refreshed every {n}s while visible
+KR 독립 설정 — {n}분 지연 시세·거래세 기준	KR settings — {n}-min delayed quotes · transaction tax
+수익률(vs INITIAL)에 영향을 주지 않습니다	Does not affect return (vs INITIAL)
+OMNI-Q {n}일 상위 {n}% (점수 {n})	OMNI-Q {n}d top {n}% (score {n})
+상위 {n}% 직접 매수 · 하위 절반 신규진입 차단	Top {n}% bought directly · bottom half blocked from new entries
+KOSDAQ{n} 선물 ±{n}% + 지수 ±{n}%	KOSDAQ{n} futures ±{n}% + index ±{n}%

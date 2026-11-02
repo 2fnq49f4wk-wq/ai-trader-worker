@@ -1,0 +1,350 @@
+원장 정합성	Ledger integrity
+기술 {n}	Tech {n}
+거래 사이클	Trading cycle
+실시간 시세	Live quotes
+횡단면 패널	Cross-section panel
+판정 깔때기	Decision funnel
+매매법 AI	Playbook AI
+·최근장기준	·last session
+야간 AI픽	Overnight AI pick
+금 {n}%	Gold {n}%
+▲ 순수혜:	▲ Net beneficiaries:
+▼ 순역풍:	▼ Net headwinds:
+← 스크리너	← Screener
+기술적 패턴	Technical patterns
+재무 로딩…	Loading financials…
+수신 데이터	Received data
+전체 브리핑	Full briefing
+위원회 구성	Committee composition
+💱 달러/원	💱 USD/KRW
+💵 달러지수	💵 Dollar index
+₿ 비트코인	₿ Bitcoin
+진입 좁히기	Narrow entries
+열린 종목창	Open stock windows
+⚙️ 시스템	⚙️ System
+({n}회)	({n}x)
+({n}분)	({n}m)
+오늘 {n}	Today {n}
+초기 자본금	Initial capital
+RSI 하한	RSI lower
+RSI 상한	RSI upper
+입출금 적용	Apply deposit/withdrawal
+누적 입금:	Total deposits:
+누적 출금:	Total withdrawals:
+시스템 도구	System tools
+시장별 리셋	Reset by market
+↻ 새 버전	↻ New version
+접기/펼치기	Collapse/Expand
+나스닥 종합	NASDAQ Composite
+러셀 {n}	Russell {n}
+근원 CPI	Core CPI
+근원 PCE	Core PCE
+호주달러/원	AUD/KRW
+달러 인덱스	Dollar index
+채권(미국)	Bonds (US)
+채권(한국)	Bonds (KR)
+불러오는 중	Loading
+≈{n}개월	≈{n} months
+보유 평가액	Holdings value
+볼린저 하단	Bollinger lower
+거래량 배수	Volume multiple
+위원회 확률	Committee probability
+① 유니버스	① Universe
+④ 진입후보	④ Entry candidates
+위원회 가동	Committee running
+표본 {n}	Samples {n}
+이벤트 틸트	Event tilt
+다기간 추세	Multi-horizon trend
+국면 게이트	Regime gate
+상황 칸 표	Situation cell table
+고르는 규칙	Selection rule
+국면 거부권	Regime veto
+대형주 가산	Large-cap bonus
+체결 때 기록	Recorded at fill
+진입가 {n}	Entry {n}
+🇺🇸 미국주식	🇺🇸 US stocks
+🇰🇷 한국주식	🇰🇷 KR stocks
+고변동×{n}	High vol ×{n}
+미국 {n}년	US {n}Y
+이중헤드 강세	Dual-head bullish
+이중헤드 약세	Dual-head bearish
+↻ 지금 갱신	↻ Update now
+단타 레버리지	Scalp leverage
+폭등 레버리지	Surge leverage
+승률 · 표본	Win rate · Samples
+하방 · 꼬리	Downside · Tail
+거래수열 낙폭	Trade-sequence drawdown
+소셜 멀티소스	Social multi-source
+＋ 종목 열기	＋ Open symbol
+시장 컨텍스트	Market context
+상대가치 패널	Relative value panel
+반사실 라벨링	Counterfactual labeling
+불러오는 중…	Loading…
+자동 운용 중	Auto trading on
+🔓 생체 잠금	🔓 Biometric lock
+실시간(장중)	Live (intraday)
+유가 {n}%	Oil {n}%
+🔔 실행 알림	🔔 Execution alerts
+전쟁·무력분쟁	War · Armed conflict
+경기침체 우려	Recession fears
+🧠 모델 상태	🧠 Model status
+📐 매매 플랜	📐 Trade plan
+🧾 오늘 매매	🧾 Today's trades
+💼 내 포지션	💼 My positions
+📊 전체 스캔	📊 Full scan
+US 평가손익	US unrealized P&L
+원자재 ($)	Commodities ($)
+📈 종목 상세	📈 Stock detail
+뉴스 · 환율	News · FX
+에너지·원자재	Energy · Commodities
+주요 경제지표	Key economic indicators
+미국 (US)	United States (US)
+한국 (KR)	Korea (KR)
+시장 확인 중	Checking market
+단계별 최신도	Freshness by stage
+MEMO 기억	MEMO memory
+OMNI 복합	OMNI composite
+입력층(피처)	Input layer (features)
+🛢 국제 유가	🛢 Crude oil
+🔔 가격 알림	🔔 Price alerts
+🎯 판단·신호	🎯 Decisions · Signals
+▶ US 분석	▶ US analysis
+▶ KR 분석	▶ KR analysis
+오늘 {n}회	{n} today
+오늘 {n}분	{n} min today
+오늘 {n}콜	{n} calls today
+최종 TP %	Final TP %
+하드 손절 %	Hard stop %
+동시보유 상한	Max concurrent holdings
+📅 휴장 확인	📅 Check holidays
+♻ US 리셋	♻ Reset US
+♻ KR 리셋	♻ Reset KR
+🔔 체결 알림	🔔 Fill alerts
+사이드바 구역	Sidebar section
+국채 {n}년	Treasury {n}Y
+캐나다달러/원	CAD/KRW
+스위스프랑/원	CHF/KRW
+· 적합 진단	· Fit diagnosis
+명부 확인 중	Checking roster
+상위 {n}%	Top {n}%
+AI 자율운용	AI autonomous trading
+= 최종 랭크	= Final rank
+② 스캔 완료	② Scan done
+잠정 ×{n}	Provisional ×{n}
+OMNI 나무	OMNI trees
+검증 {n}%	Validation {n}%
+④ 확률 보정	④ Probability calibration
+봉 날짜 캐시	Bar date cache
+대기 중...	Waiting...
+거래량 ×{n}	Volume ×{n}
+뜬 매매법 없음	No playbook fired
+({n}일 전)	({n}d ago)
+다음 발표 임박	Next release soon
+금 (Gold)	Gold
+오늘 지수 흐름	Today's index flow
+가동 w={n}	Running w={n}
+단타모델 미신뢰	Scalp model not trusted
+전수 {n}종목	All {n} symbols
+결정블렌드 계수	Decision blend coefficient
+R{n} 저장소	R{n} storage
+R{n} 바인딩	R{n} binding
+Max 동시보유	Max concurrent
+국고채 {n}년	KTB {n}Y
+파라볼릭 SAR	Parabolic SAR
+AI 운용 상태	AI trading status
+실적 발표 일정	Earnings calendar
+미국 {n}개월	US {n}M
+(강도 {n})	(strength {n})
+한국장 매매정지	KR market halt
+🛡️ 폭락 헤지	🛡️ Crash hedge
+📋 오늘 브리핑	📋 Today's briefing
+🩺 시스템 점검	🩺 System check
+채권 포트폴리오	Bond portfolio
+📅 날짜별 수익	📅 P&L by date
+미국주식 ($)	US stocks ($)
+한국주식 (₩)	KR stocks (₩)
+차트 로딩 중…	Loading chart…
+AI 스캔 순회	AI scan rotation
+엔진 판정 로그	Engine decision log
+엔진 파이프라인	Engine pipeline
+MIND 스태킹	MIND stacking
+· 레짐 적응형	· Regime adaptive
+⚠️ 오류·경고	⚠️ Errors · Warnings
+D{n} 쓴 행	D{n} rows written
+내부 AI 엔진	Internal AI engine
+낮을수록 신호↑	Lower → more signals
+넓을수록 신호↑	Wider → more signals
+일손실 한도 %	Daily loss limit %
+VBURST 룰	VBURST rule
+높을수록 신호↑	Higher → more signals
+현재 cash:	Current cash:
+데이터 다운로드	Data download
+📥 전체 데이터	📥 All data
+📥 현재 포지션	📥 Current positions
+AI 상태 패널	AI status panel
+뉴스 섹터 필터	News sector filter
+두뇌 작업 화면	Brain workspace
+연준 선호 지표	Fed's preferred gauge
+비농업고용 동반	With nonfarm payrolls
+일봉 캐시 없음	No daily cache
+검증 자료 없음	No validation data
+진입 경로 켜짐	Entry route on
+신뢰 高/中/低	Confidence HIGH/MID/LOW
+일부 위원 대기	Some members waiting
+지금 뜬 매매법	Playbooks firing now
+③ 위원회 산출	③ Committee output
+사분면 프라이어	Quadrant prior
+투표 중인 위원	Voting members
+모델 처리 구조	Model pipeline
+IC 가중 결합	IC-weighted blend
+⑤ 로그오즈 층	⑤ Log-odds layer
+전체 추적 종목	All tracked symbols
+MA기울기{n}	MA slope {n}
+매매법 {n}종	{n} playbooks
+지수 로딩 중…	Loading indices…
+◉ AI 자율운용	◉ AI autonomous trading
+일일 페이스 한도	Daily pace limit
+· 원형 {n}개	· {n} prototypes
+잠정가동 ×{n}	Provisional ×{n}
+실적 · 거래상태	Earnings · Trading status
+온도(T {n})	Temperature (T {n})
+유니버스 확인 중	Checking universe
+↻ 새 버전 확인	↻ Check for update
+IC {n} 미달	IC below {n}
+▸ AI 자가진단	▸ AI self-diagnosis
+/{n} · 위기	/{n} · Crisis
+AI에게 물어보기	Ask the AI
+⭐ 지금 뭐 사?	⭐ What to buy now?
+📊 패턴 스크리너	📊 Pattern screener
+원자재 포트폴리오	Commodity portfolio
+재학습·재배포 ↗	Retrain · Redeploy ↗
+실시간 스캔 종목	Live scan symbols
+AI 반사실 후보	AI counterfactual candidates
+열린 종목창 없음	No open stock windows
+엔진 실시간 시세	Engine live quotes
+전략별 예산 비중	Budget share by strategy
+스캔 종목/사이클	Symbols per cycle
+개장 회피 (분)	Open avoidance (min)
+런너 트레일폭 %	Runner trail %
+패닉 게이트 ON	Panic gate ON
+▶ US 백테스트	▶ US backtest
+▶ KR 백테스트	▶ KR backtest
+📥 최근 거래내역	📥 Recent trades
+마켓 브리핑 보기	View market briefing
+다우존스 산업평균	Dow Jones Industrial Average
+한국은행 기준금리	BOK base rate
+같은 질문의 확률	Probability of the same question
+예상 등락(범위)	Expected move (range)
+· 보유 {n}일	· held {n}d
+리포트 생성 중…	Generating report…
+신호별 기본 승률	Base win rate by signal
+이격과매도{n}%	Oversold gap {n}%
+공황 반등 바구니	Panic rebound basket
+오늘 {n}:{n}	Today {n}:{n}
+체결 시각으로 계산	Computed from fill time
+합의 가중 ×{n}	Consensus weight ×{n}
+상위{n}% {n}	Top{n}% {n}
+단타 경로(MAE)	Scalp path (MAE)
+기술 프라이어 계수	Technical prior coefficient
+충격 프라이어 배율	Shock prior multiplier
+입금 +, 출금 −	Deposit +, Withdraw −
+더 보기 ({n})	More ({n})
+🔕 체결 알림 받기	🔕 Get fill alerts
+반도체 {n}x 숏	Semis {n}x short
+나스닥 {n}x 숏	NASDAQ {n}x short
+반도체 {n}x 롱	Semis {n}x long
+나스닥 {n}x 롱	NASDAQ {n}x long
+은 (Silver)	Silver
+지정학·위기 게이지	Geopolitics · Crisis gauge
+지정학뉴스 {n}건	{n} geopolitical news
+활성 이슈 · 레짐	Active issues · Regime
+지수 평균 {n}%	Index avg {n}%
+성장→가치 로테이션	Growth→Value rotation
+선거·정치 불확실성	Election · Political uncertainty
+정상 · 발동 없음	Normal · Not triggered
+🟢 지금 사도 돼?	🟢 OK to buy now?
+누적 실현손익 추이	Cumulative realized P&L
+홀드아웃 t {n}	Holdout t {n}
+단타 엔진 (AI)	Scalp engine (AI)
+외부 API 미사용	No external API
+CPU(분) / 일	CPU (min) / day
+SCALP 단타 룰	SCALP rules
+SNAP 스냅백 룰	SNAP snapback rules
+Panic 임계 %	Panic threshold %
+US 입출금 ($)	US deposit/withdraw ($)
+KR 입출금 (₩)	KR deposit/withdraw (₩)
+엔/원 ({n}엔)	JPY/KRW ({n} yen)
+엔진 연결 확인 중	Checking engine connection
+차트 불러오는 중…	Loading chart…
+진입 후보 감시 중	Watching entry candidates
+활성 이슈 {n}건	{n} active issues
+하위 절반을 막는다	Blocks the bottom half
+잠정 합류 ×{n}	Provisionally joined ×{n}
+뜬 매매법 성적 미달	Fired playbooks underperform
+→ KR 기술주 차단	→ KR tech blocked
+vs 기준선 {n}%	vs baseline {n}%
+이중헤드(강세/약세)	Dual-head (bull/bear)
+단타 합류 로짓 계수	Scalp join logit coefficient
+이중헤드 사분면 로짓	Dual-head quadrant logit
+상황별 전문가 신뢰도	Expert trust by situation
+소비자물가 (전년비)	CPI (YoY)
+OMNI-Q 순위모델	OMNI-Q ranking model
+구리 (Copper)	Copper
+규제·반독점(빅테크)	Regulation · Antitrust (Big Tech)
+🩺 포트폴리오 위험도	🩺 Portfolio risk
+📈 AI 성능 어때?	📈 How is the AI doing?
+발표 당일 지수 반응	Index reaction on release day
+보유 종목이 없습니다	No holdings
+📝 AI 분석 리포트	📝 AI analysis report
+📰 내일 오를 뉴스픽	📰 News picks for tomorrow
+🏦 미국 {n}년금리	🏦 US {n}Y yield
+로 바로 검색하세요.	to search directly.
+📥 데이터 fetch	📥 Fetch data
+US 초기자금 ($)	US initial capital ($)
+KR 초기자금 (₩)	KR initial capital (₩)
+티커 기본값으로 복원	Restore default tickers
+AI 일일 지시 사용	Use AI daily directives
+포트폴리오 차원 한도	Portfolio-level limits
+상대거래량 Min ×	Min relative volume ×
+재진입 쿨다운 (분)	Re-entry cooldown (min)
+드로다운 서킷브레이커	Drawdown circuit breaker
+L{n} 사이즈 배율	L{n} size multiplier
+Prior — 직전치	Prior — previous
+AI 현재 작동 요약	AI current summary
+스트림 일시정지/재개	Pause/Resume stream
+AI 두뇌로 돌아가기	Back to AI Brain
+생산자물가 (전년비)	PPI (YoY)
+실시간 판정 준비 중	Preparing live decisions
+모든 엔진 연결 정상	All engines connected
+이벤트틸트 {n}종목	Event tilt {n} symbols
+RULE (규칙엔진)	RULE (rule engine)
+불확실 — 판단 보류	Uncertain — no call
+리포트 불러오는 중…	Loading report…
+거래량 {n}차 파동	Volume wave {n}
+클릭하면 접거나 펼쳐요	Click to collapse or expand
+시중금리 · 매일 갱신	Market rates · updated daily
+📄 개인정보·이용 안내	📄 Privacy · Terms
+위원회 (신규 전문가)	Committee (new experts)
+성적 유의성 (SQN)	Performance significance (SQN)
+최종 확률보정 T{n}	Final calibration T{n}
+EV 문턱 · 종목보호	EV threshold · Symbol protection
+브렌트유 (Brent)	Brent crude
+강도{n}·확증{n}%	Strength {n} · Confirmation {n}%
+🌐 지금 시장 위험해?	🌐 Is the market risky now?
+· 최근 청산 {n}건	· {n} recent exits
+수량 · 평단 → 현재	Qty · Avg → Now
+기술적 요약 · 시기별	Technical summary · By horizon
+뉴스 · 환율 · 지표	News · FX · Indicators
+위원 · 각자 투표한다	Members · each votes
+🏦 단기({n}년)금리	🏦 Short-term ({n}Y) yield
+REQUESTS / 일	REQUESTS / day
+({n}시간 전 측정)	(measured {n}h ago)
+TREND (추세추종)	TREND (trend following)
+런너 발동 % (고점)	Runner trigger % (peak)
+Panic 사이즈 배율	Panic size multiplier
+Actual — 발표치	Actual — released
+종목명 또는 심볼 검색	Search name or symbol
+종목명 또는 코드 검색	Search name or code
+정식 · 잠정 · 대기	Official · Provisional · Waiting
+시나리오를 선택하세요…	Select a scenario…
+순회 중 {n}/{n}	Rotating {n}/{n}

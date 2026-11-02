@@ -1,0 +1,151 @@
+복합모델 · 분봉 한 모델이 장타·단타를 같이 배운다	Composite model · one intraday model learns both swing and scalp
+({n}시간 전 · 매일 {n}:{n} KST 갱신)	({n}h ago · updated daily {n}:{n} KST)
+(흐리게 표시)는 통계적 근거가 약해 참고만 하세요.	(Dimmed) items have weak statistical support — reference only.
+모델 합의 — 단일 지표가 아니라 피처 전체를 본 값	Model consensus — from all features, not a single indicator
+XGB · LGB · CAT (외부 부스터 {n}종)	XGB · LGB · CAT ({n} external boosters)
+— 체크 여부와 무관하게 내부 지시는 매일 생성됩니다.	— Internal directives are generated daily regardless of this box.
+홀드아웃 t {n}  {n} — 잡음과 구별되지 않는다	Holdout t {n}  {n} — indistinguishable from noise
+실시간 장부(회수 감시) {n}일 · 맞춤 초과 {n}%	Live ledger (revocation watch) {n}d · matched excess {n}%
+홀드아웃 t {n} < {n} — 잡음과 구별되지 않는다	Holdout t {n} < {n} — indistinguishable from noise
+· 하락 {n}%(n{n}) · 폭락 {n}%(n{n})	· Bear {n}%(n{n}) · Crash {n}%(n{n})
+지평 {n}분 · 피처 v{n}×{n} · 합류 {n}표	Horizon {n}m · Features v{n}×{n} · {n} votes joined
+주기 끝 예상 {n}만 ({n}%) · {n}시간 {n}	Expected at cycle end {n}×10k ({n}%) · {n}h {n}
+종목/페이지 검색…  (예: NVDA, 삼성, 대시보드)	Search symbols/pages…  (e.g. NVDA, Samsung, Dashboard)
+시장 {n}일 하락·고변동이면 {n}순위 추세 매매법 쉼	Rank-{n} trend playbooks pause when market {n}d falls with high volatility
+RSI({n}) — {n} 이상 과열, {n} 이하 과매도	RSI({n}) — above {n} overbought, below {n} oversold
+① 표본 밖 승률 {n}% · 하한 {n}% · t {n}	① Out-of-sample win rate {n}% · Lower {n}% · t {n}
+합류 보류 — 학습은 됐지만 문턱 미달이거나 아직 못 쟀다	Join on hold — trained but below threshold or not yet measured
+확인 {n}/{n} {n}:{n} · FRED PPIFIS	Checked {n}/{n} {n}:{n} · FRED PPIFIS
+확인 {n}/{n} {n}:{n} · FRED UNRATE	Checked {n}/{n} {n}:{n} · FRED UNRATE
+LIVE · {n}초 전 · 사이클 마지막 사이클 방금 전	LIVE · {n}s ago · last cycle just now
+섹터 뉴스, 환율, 경제지표로 시장의 맥락을 함께 읽습니다.	Read market context through sector news, FX and economic indicators.
+서버의 최신 판과 비교해 다르면 캐시를 비우고 새로 받습니다	Compares with the server's latest build; clears cache and reloads if different
+터미널 밀도 — 대시보드를 조밀한 터미널 그리드로 전환/해제	Terminal density — toggle a dense terminal grid for the dashboard
+확인 {n}/{n} {n}:{n} · 한국은행 기준금리 추이	Checked {n}/{n} {n}:{n} · BOK base rate history
+플랫(a {n} b {n}) · ECE {n}% → {n}%	Platt (a {n} b {n}) · ECE {n}% → {n}%
+OMNI · 복합모델(OMNI-Q 순위 머리 + 분봉 머리)	OMNI · Composite (OMNI-Q rank head + intraday head)
+갱신 지연 · {n}초 전 · 사이클 마지막 사이클 방금 전	Update delayed · {n}s ago · last cycle just now
+실측 {n} · t {n} · n {n} (종전 상수 {n})	Measured {n} · t {n} · n {n} (old constant {n})
+확인 {n}/{n} {n}:{n} · FRED CPIAUCNS	Checked {n}/{n} {n}:{n} · FRED CPIAUCNS
+확인 {n}/{n} {n}:{n} · FRED CPILFENS	Checked {n}/{n} {n}:{n} · FRED CPILFENS
+확인 {n}/{n} {n}:{n} · FRED PCEPILFE	Checked {n}/{n} {n}:{n} · FRED PCEPILFE
+로 잰 성적입니다 — 그 구간을 다시 넣어 재학습하지 않으므로	— performance measured on it; that window is never fed back into training, so
+여기부터는 전부 덧셈 — 보정된 기저확률에 독립 증거를 더한다	From here it's all additive — independent evidence added to the calibrated base probability
+순수 기술적 분석 기반 상승확률 — 위원회 확률과는 별개 신호	Pure technical rise probability — separate from the committee probability
+과거 데이터로 민감도 계산 중… (첫 계산은 몇 초 걸립니다)	Computing sensitivity from history… (first run takes a few seconds)
+뉴스 {n} · t {n} · n {n} (기본 {n}/{n})	News {n} · t {n} · n {n} (default {n}/{n})
+(최근 {n}일 · {n}건 · 승률 {n}% · PF {n})	(last {n}d · {n} trades · win rate {n}% · PF {n})
+※ 야후 파이낸스 기준. 실거래 전 공식 고시환율을 확인하세요.	※ Based on Yahoo Finance. Check official rates before real trades.
+매수·매도 체결을 앱이 닫혀 있어도 알림으로 받습니다(웹 푸시)	Get buy/sell fill alerts even when the app is closed (web push)
+모델별 역할 — 입력 → 출력 → 하는 일 → 매매에 쓰이는 곳	Role per model — Input → Output → What it does → Where it's used in trading
+서버가 {n}분마다 자동으로 거래 사이클·시세·학습을 실행합니다.	The server runs trading cycles, quotes and training automatically every {n} min.
+검증 {n}% · 하한 {n}% / 문턱 {n}% · 표본 {n}	Validation {n}% · Lower {n}% / Threshold {n}% · Samples {n}
+검증 {n}등 t {n} > 운 수준 {n}(설정·규칙 {n}개)	Validation #{n} t {n} > luck level {n} ({n} configs·rules)
+변동성 구간 {n}개 · 손절쿨다운 {n}분 · 저수익잠금 {n}분	{n} volatility bands · Stop cooldown {n}m · Low-gain lock {n}m
+SEQ (시퀀스 Transformer — 최근 {n}봉을 순서대로)	SEQ (sequence Transformer — last {n} bars in order)
+후보 종목의 일봉 피처 벡터(가격·추세·변동성·수급·상대강도·국면)	Daily feature vector of candidates (price · trend · volatility · flows · RS · regime)
+대형주 {n}일 {n}% 급락 · 넓은 손절({n}%) · {n}일	Large caps {n}d {n}% plunge · Wide stop ({n}%) · {n}d
+셧다운: {n}% | 경보: {n}% | 이번 달 cron 기준 누적	Shutdown: {n}% | Alert: {n}% | Month-to-date by cron
+시장별 가용현금을 세 전략에 나눠 배정 (합 {n}%로 자동 정규화)	Split available cash per market across three strategies (auto-normalized to {n}%)
+OMNI-Q(순위모델) — 美 발언({n}일) · 韓 발언({n}일)	OMNI-Q (ranking) — US speaking ({n}d) · KR speaking ({n}d)
+위원회 한 표 · AI 가동 판정(MIND + 트리 위원 하나 이상)	One committee vote · AI active (MIND + at least one tree member)
+미측정 → 배율 {n} (종전 상수 그대로) · 사건표본 {n}/{n}	Unmeasured → multiplier {n} (old constant) · Event samples {n}/{n}
+검증 {n}% · 블록IC {n} (t {n}) · 표본 {n}/{n}	Validation {n}% · Block IC {n} (t {n}) · Samples {n}/{n}
+● 정식 합류 · ◐ 잠정 합류(가중 축소·투표 중) · ○ 보류/미학습	● Official · ◐ Provisional (reduced weight · voting) · ○ On hold/untrained
+나무 {n}그루 · 입력 {n}지평 × {n}매매법 · 홀드아웃 {n}행	{n} trees · Input {n} horizons × {n} playbooks · Holdout {n} rows
+MA·BOLL·VOL·RSI·MACD·Stoch·ADX·다이버전스·주문흐름	MA·BOLL·VOL·RSI·MACD·Stoch·ADX·Divergence·Order flow
+정규장 등락률 — 전일 종가 대비(지수·TOP MOVERS 와 같은 기준)	Regular-session change — vs previous close (same basis as indices · TOP MOVERS)
+OMNI (복합모델 — OMNI-Q 순위 머리 가동 · 분봉 머리 섀도우)	OMNI (composite — OMNI-Q rank head live · intraday head shadow)
+IC 경로(accLB {n} · 블록IC t {n}) — 잠정 지분 ×{n}	IC path (accLB {n} · Block IC t {n}) — provisional share ×{n}
+과거 경향 기반이며 확정 아님. 실제 바스켓 수익으로 확증·학습해 반영해요.	Based on past tendencies, not certain. Confirmed and learned from actual basket returns.
+(좁히기만 · 매수를 늘리지 않는다). 실시간 기록이 나쁘면 자동 회수된다.	(narrows only · never adds buys). Auto-revoked if the live record is poor.
+Cloudflare 실측 청구 · 주기 {n}{n}{n} 부터 {n}/{n}일	Cloudflare measured billing · cycle from {n}{n}{n} day {n}/{n}
+스토캐스틱 슬로우({n}) — %K·%D, {n}↑ 과매수 / {n}↓ 과매도	Slow stochastic ({n}) — %K·%D, {n}↑ overbought / {n}↓ oversold
+확인 {n}/{n} {n}:{n} · FRED DFEDTARL/DFEDTARU	Checked {n}/{n} {n}:{n} · FRED DFEDTARL/DFEDTARU
+MACD({n}) 히스토그램 — 가격 대비 %로 정규화. 양수=상승 모멘텀 가속	MACD({n}) histogram — normalized as % of price. Positive = accelerating upward momentum
+서버 cron이 매 {n}분 자동 실행합니다 — 수동 실행 버튼이 필요 없습니다	Server cron runs every {n} min — no manual run button needed
+이동평균 정배열도 {n}~{n} (MA{n}>{n}>{n}>{n} 이면 {n})	MA alignment {n}–{n} ({n} if MA{n}>{n}>{n}>{n})
+— 수익률은 시간가중수익률(TWR)로 계산되어 입출금 시점마다 구간이 분리됩니다.	— Returns use time-weighted return (TWR), split at each deposit/withdrawal.
+— 그래서 한 표도 넣지 않는다. 문턱은 내리지 않는다. · 학습·추론 정합 오차	— so it casts no vote. Thresholds are not lowered. · Train/infer consistency error
+주기 끝 예상 {n}만 ({n}%) · {n}시간 {n}만 ({n}% / 일 한도)	Expected at cycle end {n}×10k ({n}%) · {n}h {n}×10k ({n}% / daily limit)
+확인 {n}/{n} {n}:{n} · 네이버 증권(레피니티브) 국채 {n}년 실시간	Checked {n}/{n} {n}:{n} · Naver Finance (Refinitiv) KTB {n}Y live
+S&P {n} 히트맵 · 상자 크기 = 시가총액, 색상 = 등락 · 섹터별 그룹 ·	S&P {n} heatmap · box size = market cap, color = change · grouped by sector ·
+주기 끝 예상 {n}억 ({n}%) · {n}시간 {n}만 ({n}% / 일 한도)	Expected at cycle end {n}00M ({n}%) · {n}h {n}×10k ({n}% / daily limit)
+현재 TREND 설정을 과거 {n}년에 적용해 성과를 검증합니다. (수십 초 소요)	Validates current TREND settings over the past {n} years. (takes tens of seconds)
+대형주 {n}일 신고가 · 따라붙는 손절(고점 {n}%) · {n}일 · 중기 보합	Large-cap {n}d new high · Trailing stop (peak {n}%) · {n}d · mid-term flat
+변동성 {n}그룹마다 조율 · 시스템을 안 낮춘 것만 실전(‘미지수 · 조율’ 탭)	Tuned per {n} volatility groups · only non-degrading ones go live ('Unknowns · Tuning' tab)
+※ 자본금은 SETTINGS 저장 후 RESET ALL DATA를 눌러야 적용됩니다.	※ Capital applies after saving SETTINGS and pressing RESET ALL DATA.
+이 시장국면·위기게이지·성과통계로 sizing·손절·매수신호 ON/OFF를 조정합니다.	This regime, crisis gauge and performance stats adjust sizing, stops and buy signals ON/OFF.
+Displaced MA({n} {n}봉) — 이동평균선을 {n}봉 앞으로 민 선(점선)	Displaced MA({n} {n} bars) — MA shifted {n} bars forward (dashed)
+👆 점 클릭/터치=뉴런 역할 + 연결 발광(밝은 파랑=직접, 옅은 파랑={n}단계 확산)	👆 Click/tap a dot = neuron role + glowing links (bright blue = direct, pale blue = {n}-step spread)
+— VWAP 상향돌파 + 거래량 폭증 + RSI 밴드 (SCALP 전략 예산·회계 공유)	— VWAP breakout + volume surge + RSI band (shares SCALP budget/accounting)
+모멘텀 추격 진입(공격) — VWAP 위 강양봉+거래량폭증이면 돌파 순간이 아니어도 진입	Momentum chase entry (aggressive) — enters on a strong bull bar above VWAP with a volume surge, even off the breakout
+곡선 굵기·밝기=연결강도 · 전 뉴런 표시(강도 상위일수록 밴드 중앙) · 깊을수록 푸른색	Curve width/brightness = link strength · all neurons shown (stronger ones centered) · deeper = bluer
+Modal 학습기를 재배포하고 즉시 {n}회 재학습(GitHub Actions 수동 실행)	Redeploy the Modal trainer and retrain {n}x now (manual GitHub Actions run)
+→ 신규 진입 관문·포지션 크기에 반영(폭락 국면은 매매법 AI 표의 국면 칸으로도 갈린다)	→ Applied to new-entry gates and position size (crash regime is also split by the Playbook AI regime cells)
+목표가에 도달하면 토스트와 브라우저 알림으로 알려줍니다. 종목 상세에서도 추가할 수 있어요.	Notifies with a toast and browser alert when the target is hit. You can also add from Stock Detail.
+워커 자체 계량(오늘 {n}{n}{n}): D{n} 읽은 행 {n}만 / 차단 상한 {n}억	Worker self-metering (today {n}{n}{n}): D{n} rows read {n}×10k / block cap {n}00M
+모델 교체·정식 합류는 독립 검증 후 결정됩니다. 과거 성과는 미래 수익을 보장하지 않습니다.	Model replacement and official joining are decided after independent validation. Past performance does not guarantee future returns.
+추가 요금(포함량 초과): 지금까지 ${n} · 주기 끝 예상 ${n} (기본 ${n} 별도)	Overage charges: so far ${n} · expected at cycle end ${n} (base ${n} separate)
+한 거래 최대손실 = 자산 × Risk%. 손절거리로 수량을 역산해 변동성에 맞춰 자동 조절.	Max loss per trade = equity × Risk%. Quantity is derived from stop distance, auto-scaled to volatility.
+확인 {n}/{n} {n}:{n} · 한국은행 「물가상황점검회의」 보도참고자료(통계청 CPI)	Checked {n}/{n} {n}:{n} · BOK inflation review release (Statistics Korea CPI)
+위원회 결합 → 백분위 진입 문턱 → AI_PRIMARY 진입 · 보유 재평가(AI_EXIT)	Committee blend → percentile entry threshold → AI_PRIMARY entry · holding re-evaluation (AI_EXIT)
+보유 총 미실현 리스크 합 한도 — 초과 시 trend/snap 신규 차단 (scalp은 면제)	Total unrealized risk limit on holdings — blocks new trend/snap when exceeded (scalp exempt)
+확인 {n}/{n} {n}:{n} · 미 재무부 일별 국채 수익률(Par Yield Curve)	Checked {n}/{n} {n}:{n} · US Treasury daily par yield curve
+※ 수치는 매일 {n}:{n}(KST) 자동 갱신됩니다. 참고용이므로 공식 사이트에서 확인하세요.	※ Figures update daily at {n}:{n} (KST). For reference only — check official sources.
+섹터 뉴스감성·감성변화·모멘텀·거래량 + 재무(저가중 하방가드)를 온라인 학습해 다음날 상승확률 예측	Online-learns sector news sentiment, its change, momentum, volume + financials (low-weight downside guard) to predict next-day rise probability
+— 분봉 기반 장중 단타 (VWAP 근접 진입, {n}% 손절, TP{n} 본전락, {n}분 타임스톱)	— Intraday scalping on minute bars (entry near VWAP, {n}% stop, TP{n} to breakeven, {n}-min time stop)
+오픈 리스크 합(손절까지 거리×수량) — 한도 초과 시 trend/snap 신규 차단 · scalp 면제	Open risk sum (distance to stop × qty) — blocks new trend/snap when over limit · scalp exempt
+통화혼합이라 금액 PF 는 무효 → 수익률 기준(Omega) · 위험대비수익 {n} · 최대연속손실 {n}	Mixed currencies make amount-based PF invalid → return-based (Omega) · Risk-adjusted {n} · Max losing streak {n}
+오브젝트 {n}개 · {n}MB · {n}일 전 집계 — /api/r{n}-status 를 열어야 갱신된다	{n} objects · {n}MB · tallied {n}d ago — refreshes when /api/r{n}-status is opened
+초기자본 대비 총자산 변화 — 실현손익+평가손익 모두 포함. 포지션 페이지의 '평가손익'은 현재 보유분만.	Total equity change vs initial capital — includes realized + unrealized. 'Unrealized P&L' on Positions covers current holdings only.
+※ 분봉 fetch 증가로 subrequest 소비가 늘어납니다 (최대 {n}/사이클). 유료 플랜 권장.	※ More intraday fetches increase subrequest use (up to {n}/cycle). Paid plan recommended.
+기술 프라이어 · 사건 틸트 · 충격 프라이어 · 전문가 불일치 · 이중헤드 사분면 → 최종보정(T{n})	Technical prior · Event tilt · Shock prior · Expert divergence · Dual-head quadrant → Final calibration (T{n})
+구조도 아래 관측창에서 노드(입력 칸·은닉 뉴런·출력·나무·시점)를 고르면 그 칸 하나의 역할도 적습니다.	Pick a node (input cell · hidden neuron · output · tree · time step) in the panel below the diagram to see its role.
+독립 진입 경로 [AI-Q] · OMNIQ_LOW 차단 · OMNIQ-DROP 청산 — 위원회 투표선은 없다	Independent entry route [AI-Q] · OMNIQ_LOW block · OMNIQ-DROP exit — no committee vote link
+역행/손절폭 p{n} {n} (중앙 {n}) · 계수 ×{n} · 여유 ≤{n} / 차단 ≥{n} · n{n}	Adverse/stop width p{n} {n} (median {n}) · coef ×{n} · slack ≤{n} / block ≥{n} · n{n}
+· 상위 {n}% 매수 ×{n} · 오늘 {n}/{n}건 · 관리 중 보유 {n} · 상위 {n}% 밖이면 매도	· Top {n}% buy ×{n} · Today {n}/{n} · Managed holdings {n} · Sell if outside top {n}%
+· 퇴역 {n}종(DNN·FLOW·XALPHA·STACK)은 측정에서 잡음과 구별되지 않아 {n}/{n} 뺐다.	· {n} retired (DNN·FLOW·XALPHA·STACK) were indistinguishable from noise and removed {n}/{n}.
+— 천장: 장타 폭등 ×{n} / 추세 ×{n} · 단타 폭등 ×{n} (ER {n}↑부터 열려 {n}에서 만개)	— Cap: swing surge ×{n} / trend ×{n} · scalp surge ×{n} (opens from ER {n}↑, full at {n})
+예: 지금 시장 위험해? / NVDA 매매 플랜 짜줘 / 삼성전자 몇 주 사야 해? / 마이크론 상승은 일시적인가?	e.g. Is the market risky now? / Make an NVDA trade plan / How many Samsung shares should I buy? / Is Micron's rise temporary?
+"RSI ≤ {n} 이고 거래량 ≥ {n}배면 +" 같은 문턱 규칙 수백 개를 쌓는다. 비선형 경계·결측에 강하다.	Stacks hundreds of threshold rules like "+ if RSI ≤ {n} and volume ≥ {n}x". Robust to nonlinear boundaries and missing data.
+최대 {n}%p · UPI {n} · 누적R {n}%p / {n}일 — 계좌 낙폭 아님(거래당 리스크 {n}~{n}%)	Max {n}%p · UPI {n} · Cumulative R {n}%p / {n}d — not account drawdown (risk per trade {n}–{n}%)
+관리 키 없이 GitHub Actions 페이지에서 직접 실행 — Run workflow → run_now 체크 → Run	Run directly from the GitHub Actions page without an admin key — Run workflow → check run_now → Run
+잠정 — 홀드아웃 t {n}(문턱 {n}, 동시검정 {n}종) · 전진 IC 양수이나 t {n}  {n} → 가중 ×{n}	Provisional — holdout t {n} (threshold {n}, {n} simultaneous tests) · walk-forward IC positive but t {n}  {n} → weight ×{n}
+같은 신호도 강세장과 약세장에서 뜻이 반대일 수 있다 — 국면마다 따로 학습한 두 머리가 위원회 확률을 국면에 맞게 민다.	The same signal can mean the opposite in bull and bear markets — two heads trained per regime nudge the committee probability to fit the regime.
+대기버퍼 {n}건 · ★{n}일 전 집계라 지금 상태가 아니다★ — 현재값은 /api/r{n}-status 를 열면 갱신된다	Pending buffer {n} · ★tallied {n}d ago, not current★ — open /api/r{n}-status to refresh
+잠정 — 홀드아웃 t {n}(문턱 {n}, 동시검정 {n}종) · 전진 IC 양수이나 t {n} < {n} → 가중 ×{n}	Provisional — holdout t {n} (threshold {n}, {n} simultaneous tests) · walk-forward IC positive but t {n} < {n} → weight ×{n}
+모든 지평 문턱 미달 · 나무 {n}그루 · 관측만 · 결합으로 가는 선이 없다 — 매매는 OMNI-Q(오른쪽 칸)가 맡는다	All horizons below threshold · {n} trees · observe only · no link to the blend — OMNI-Q (right) handles trading
+OMNI-Q 후보 → 지금 뜬 매매법 → 닮은 과거 성적으로 선택 → 위험 관문까지, 실제 엔진 상태를 한 화면에서 추적합니다.	Tracks the live engine on one screen: OMNI-Q candidates → firing playbooks → chosen by similar past results → risk gates.
+단타 전략은 TREND와 독립 운용됩니다. TREND 신호 없는 종목에 한해 분봉({n}분봉) 데이터로 진입 신호를 평가합니다.	The scalp strategy runs independently of TREND. Entry signals are evaluated on {n}-min bars only for symbols without a TREND signal.
+발언 중인 시장은 그날 상위 {n}% 를 직접 산다(잠정 반 크기) · 상위 {n}% 밖이면 판다 · 하위 절반 신규진입은 막는다	Markets where it is speaking buy the day's top {n}% directly (half size if provisional) · sell outside top {n}% · block new entries in the bottom half
+OMNI-Q: 그날 유니버스 안 순위({n}~{n} {n}일·{n}일) · 분봉 머리: 지평별({n}분~{n}일) 동료 대비 승률	OMNI-Q: rank within the day's universe ({n}–{n} {n}d·{n}d) · Intraday head: win rate vs peers by horizon ({n}m–{n}d)
+스토캐스틱 슬로우({n}) %K/%D — 평활한 값이라 하루 노이즈에 덜 흔들린다. {n}↓ 과매도, ▲는 %K가 %D를 상향돌파	Slow stochastic ({n}) %K/%D — smoothed, less daily noise. {n}↓ oversold, ▲ = %K crossed above %D
+스토캐스틱 슬로우({n}) %K/%D — 평활한 값이라 하루 노이즈에 덜 흔들린다. {n}↑ 과매수, ▲는 %K가 %D를 상향돌파	Slow stochastic ({n}) %K/%D — smoothed, less daily noise. {n}↑ overbought, ▲ = %K crossed above %D
+잠정 합류는 제한된 투표 참여, 검증 대기는 관측 부족, 성능 미달은 기준 미통과입니다. 표본 수만 늘어도 자동 합격하지 않습니다.	Provisional = limited voting, Awaiting validation = too few observations, Underperforming = failed criteria. More samples alone never auto-pass.
+OMNI-Q: 동물원 피처 {n}개(Alpha{n}/{n}·학계 팩터, 일봉) · 분봉 머리: {n}분봉·{n}분봉·일봉·피어 피처	OMNI-Q: {n} zoo features (Alpha{n}/{n} · academic factors, daily) · Intraday head: {n}-min · {n}-min · daily · peer features
+무제한 ON이면 종목 수 제한 없이 예산·히트·비중 상한이 총량을 통제합니다. OFF면 TREND 탭의 "Max 동시보유"가 적용됩니다.	With Unlimited ON, budget, heat and weight caps control totals with no symbol limit. With OFF, TREND's "Max concurrent" applies.
+OMNI-Q 표본 밖 avg일 머리 상위 {n}% · 하루·동시 상한이 차면 OMNI-Q 순위 높은 후보부터 산다(시뮬·실전 같은 순서)	OMNI-Q out-of-sample avg head top {n}% · when daily/concurrent caps fill, buys highest OMNI-Q rank first (same order in sim and live)
+정확도하한 {n}% / 문턱 {n}% t {n} · n{n} — IC 경로(accLB {n} · 블록IC t {n}) — 잠정 지분 ×{n}	Accuracy lower {n}% / threshold {n}% t {n} · n{n} — IC path (accLB {n} · Block IC t {n}) — provisional share ×{n}
+실선: 정식 합류 · 점선: 잠정 합류 · 상태와 수치는 서버 명부 기준. 아래 검증 근거에서 표본·하한·IC·홀드아웃을 확인할 수 있습니다.	Solid: official · Dashed: provisional · Status and figures from the server roster. See samples, lower bounds, IC and holdout in the validation evidence below.
+위원회가 판단을 시작하는 출발점(사전확률). 규칙 신호 자체는 AI 모드에서 직접 사지 않고 AI_PRIMARY 후보를 고르는 재료로만 쓰인다.	Starting point (prior) for committee decisions. In AI mode rule signals don't buy directly; they only feed AI_PRIMARY candidate selection.
+활성 지시 없음 — 내부 AI 엔진이 매일 KR {n}:{n} / US {n}:{n} 트리거에 생성해. 지금 바로 만들려면 아래 ▶ 분석을 눌러.	No active directive — the internal AI engine creates one daily at KR {n}:{n} / US {n}:{n}. Press ▶ Analysis below to create one now.
+학습 {n}. {n}. {n}. 오전 {n}:{n}:{n} · 홀드아웃 t {n} · 전진 표본 {n} / {n} · 전진 날짜 {n} / {n}일	Trained {n}. {n}. {n}. {n}:{n}:{n} AM · Holdout t {n} · Walk-forward samples {n} / {n} · Walk-forward dates {n} / {n}d
+셀프 어텐션이 "며칠 전의 어떤 날을 볼지" 고른다 — 눌림 뒤 반등, 거래량 선행 같은 ★순서가 있는★ 패턴용. 다른 위원은 오늘 하루치만 본다.	Self-attention picks "which past day to look at" — for ★ordered★ patterns like rebound after a pullback or volume leading price. Other members see only today.
+라이브러리별 나무 만드는 방식(깊이 우선·잎 우선·순서형 부스팅)이 달라 서로의 실수를 상쇄한다. 셋이 묶여 위원회의 "boost" 한 자리로 투표.	Each library grows trees differently (depth-first · leaf-first · ordered boosting), so their errors offset. The three vote together as one "boost" seat.
+비슷한 과거 사례(최근접 원형)를 찾아 그때 어떻게 됐는지를 그대로 가져온다 — 학습식이 아니라 기억식이라 드문 장면에서 다른 위원과 다른 말을 한다.	Finds similar past cases (nearest prototypes) and brings back what happened — memory-based rather than learned, so it disagrees with others in rare scenes.
+세 슬라이더의 상대 비율로 배정됩니다(예: {n}/{n}/{n}). 특정 전략 신호가 적으면 해당 예산이 남을 수 있습니다(미사용분은 다음 사이클로 이월).	Allocated by the relative ratio of the three sliders (e.g. {n}/{n}/{n}). Budget may go unused if a strategy has few signals (carried to the next cycle).
+OMNI-Q·매매법 AI(GitHub Actions 하루 {n}회) 마지막 학습 {n}시간 전 · 시장 {n}/{n}	OMNI-Q · Playbook AI (GitHub Actions {n}x/day) last trained {n}h ago · Markets {n}/{n}
+클릭하면 AI 두뇌 화면으로 이동합니다.	Click to open the AI Brain screen.
+— 항상 활성. 추세 정렬(MA{n}>MA{n}>MA{n}) 종목의 풀백 반등·신고가 돌파 진입, ATR 손절·분할익절·트레일링 관리. 한 거래 리스크 {n}%.	— Always on. Enters pullback rebounds and new-high breakouts in trend-aligned (MA{n}>MA{n}>MA{n}) stocks; ATR stop, scaled take-profit, trailing. Risk per trade {n}%.
+— 상승추세 종목의 단기 과매도(RSI({n})≤{n}) 반등을 {n}~{n}일 스윙으로 포착 (BEAR 레짐 차단, {n}×ATR 손절, MA{n} 회귀 익절)	— Catches short-term oversold (RSI({n})≤{n}) rebounds in uptrends as {n}–{n}d swings (blocked in BEAR, {n}×ATR stop, take profit on MA{n} reversion)
+진입신호 종류별 성과로 베팅 크기 차등 (거래 {n}건+ 부터 반영). [V{n}] 돌파/풀백 {n}종 → 트렌드 {n}종 + 스냅 + 단타 전 신호 학습으로 확장.	Bet size varies by entry-signal performance (from {n}+ trades). [V{n}] {n} breakout/pullback → {n} trend + snap + all scalp signals learned.
+SNAP은 일봉만 사용해 추가 fetch가 없습니다. TREND(순응)·SCALP(분봉)와 직교하는 세 번째 수익원으로, TREND 신호가 없는 종목에서만 평가됩니다.	SNAP uses daily bars only (no extra fetch). A third return source orthogonal to TREND and SCALP, evaluated only on symbols without a TREND signal.
+· 팩터β*=시장효과를 통제한 부분베타(유의성·√R² 축소) · 구성=직접(고유 민감도)+파급(시장 경유) · 고변동 배지=최근 변동성이 장기 대비 높아 충격 증폭 반영.	· Factor β* = partial beta controlling for market (shrunk by significance · √R²) · Composition = direct (own sensitivity) + spillover (via market) · High-vol badge = recent vol above long-term, amplifying shocks.
+"미국 금리가 {n}%p 오르면?" — 최근 {n}영업일 민감도(베타) 기반으로 포트폴리오·관심종목 예상 타격을 시뮬레이션합니다. 과거 데이터 근사이며 예측 보장이 아닙니다.	"What if US rates rise {n}%p?" — simulates the expected hit to portfolio and watchlist from sensitivities (beta) over the last {n} business days. Historical approximation, not a guaranteed forecast.
+피처 둘씩의 상호작용을 잠재 벡터 내적으로 학습해, 다른 위원이 못 보는 조합(예: 약세 국면 × 과매도)을 잡는다. 위원회 결합의 기준점이자 다른 위원이 없을 때의 대체 판단.	Learns pairwise feature interactions via latent vector dot products, catching combos others miss (e.g. bear regime × oversold). The committee blend's anchor and fallback when others are absent.
+Displaced MA({n} {n}봉) — 이동평균선을 {n}봉 앞으로 민 선. 값은 가격이 그 선보다 몇 % 위/아래인가. 선 기울기 {n}%/봉. 위면 추세 우위, ▲는 상향돌파	Displaced MA({n} {n} bars) — MA shifted {n} bars forward. Value = % price is above/below it. Slope {n}%/bar. Above = trend favored, ▲ = crossed above
+후보(OMNI-Q 상위 일부 — 폭은 학습기 검증이 {n}·{n}·{n}%·전 종목 중 고름) → 지금 뜬 매매법 중 닮은 과거에서 성적이 가장 좋은 것으로 사고, 그 매매법의 규칙으로 판다	Candidates (top slice of OMNI-Q — width chosen by trainer validation among {n}·{n}·{n}% · all) → buy with the firing playbook that did best in similar past cases, sell by that playbook's rules
+정확도가 아니라 IC 로 가중합니다 — 정확도로 하면 실력차가 {n}~{n}% 라는 좁은 구간에 뭉쳐 사실상 단순평균이 됩니다. 전문가 {n}명 이상이면 상하 {n}% 절사평균 가드가 함께 돕니다.	Weighted by IC, not accuracy — accuracy differences cluster in a narrow {n}–{n}% band, making it a near-simple average. With {n}+ experts a {n}% trimmed-mean guard also helps.
+SCALP 전략의 한 진입 시그널로 동작합니다. 진입: 종가 VWAP 상향돌파 + 분봉거래량 ≥ {n}MA×배수 + 분봉 RSI 밴드. 청산: 고정 손절 / 고점 도달 후 트레일링. 다른 SCALP 시그널과 청산이 분리되어 간섭하지 않습니다.	Works as one SCALP entry signal. Entry: close breaks above VWAP + minute volume ≥ {n}MA×multiple + minute RSI band. Exit: fixed stop / trailing after peak. Exits are separate from other SCALP signals.
+OMNI-Q 는 "누가 남보다 나을까" 를 순위로 매긴다. 실력 증명 관문 ①②를 통과해 잠정 발언 중 — 상위 {n}% 를 직접 사고(반 크기) 상위 {n}% 밖이면 판다 · 하위 절반은 신규진입을 막는다. 분봉 머리는 아직 섀도우(성적만 잰다).	OMNI-Q ranks "who will beat the rest". It passed skill gates ①② and is speaking provisionally — buys top {n}% directly (half size), sells outside top {n}%, blocks new entries in the bottom half. The intraday head is still shadow (scored only).

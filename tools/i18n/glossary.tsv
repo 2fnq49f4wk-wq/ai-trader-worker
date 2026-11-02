@@ -1,0 +1,226 @@
+종합점수	Composite score
+상세 열기	Open detail
+더블클릭(더블탭)	Double-click (double-tap)
+매매법 AI	Playbook AI
+국면 전략	Regime strategy
+시험 투입	Trial deployment
+실전 투입	Live deployment
+투입 기준 미달	Below deployment criteria
+뜬 매매법	fired playbooks
+성적 미달	underperforming
+표본 외	out-of-sample
+표본 부족	too few samples
+기준선	baseline
+초과수익	excess return
+실현수익률	realized return
+거래당	per trade
+보유	hold
+손절	stop
+익절	take-profit
+청산	exit
+진입	entry
+매수	buy
+매도	sell
+관측	observe
+관찰	watch
+검증	validation
+판정	decision
+후보	candidates
+국면	regime
+급등장	surge market
+상승장	bull market
+횡보장	sideways market
+하락장	bear market
+급락장	crash market
+폭등장	surge market
+폭락장	crash market
+폭등	surge
+폭락	crash
+급락	plunge
+급등	spike
+상승	up
+하락	down
+보합	flat
+장기	long-term
+중기	mid-term
+단기	short-term
+대형주	large caps
+주도주	leaders
+신고가	new high
+상대강도	relative strength
+첫 양봉	first up bar
+양봉	up bar
+음봉	down bar
+따라붙는 손절	trailing stop
+넓은 손절	wide stop
+고점	peak
+저점	trough
+거래량	volume
+거래대금	turnover
+변동성	volatility
+이동평균	moving average
+과매도	oversold
+과매수	overbought
+반등	rebound
+돌파	breakout
+눌림	pullback
+추세	trend
+모멘텀	momentum
+수급	flows
+외국인	foreign
+기관	institutional
+업종	sector
+섹터	sector
+종목	symbols
+시장	market
+지수	index
+선물	futures
+인버스	inverse
+레버리지	leverage
+레짐	regime
+위원회	committee
+위원장	chair
+위원	member
+전문가	expert
+잠정	provisional
+정식	official
+합류	joined
+대기	waiting
+보류	on hold
+차단	blocked
+통과	passed
+미통과	not passed
+미달	below
+문턱	threshold
+하한	lower bound
+상한	cap
+기본	default
+사전 등록	pre-registered
+운 수준	luck level
+설정	settings
+규칙	rule
+세부	fine
+그룹	group
+학습	training
+학습기	trainer
+모델	model
+나무	trees
+피처	features
+머리	head
+지평	horizon
+발언	speaking
+섀도우	shadow
+퇴역	retired
+회수	revoked
+실시간	live
+장부	ledger
+모의	simulated
+시뮬	sim
+실제	actual
+평균	avg
+승률	win rate
+표본	samples
+거래	trades
+수익	return
+손실	loss
+손익	P&L
+실현	realized
+평가	unrealized
+누적	cumulative
+오늘	today
+어제	yesterday
+지금	now
+최근	recent
+마지막	last
+다음	next
+이전	previous
+일봉	daily bars
+분봉	intraday bars
+정규장	regular session
+시간외	extended hours
+프리마켓	pre-market
+애프터마켓	after-hours
+장전	pre-market
+장마감	market close
+마감	close
+개장	open
+휴장	holiday
+체결	fill
+주문	order
+포지션	position
+현금	cash
+비중	weight
+크기	size
+배수	multiple
+가중	weighted
+점수	score
+순위	rank
+상위	top
+하위	bottom
+확률	probability
+신뢰	confidence
+근거	evidence
+이유	reason
+원인	cause
+경로	route
+관문	gate
+게이트	gate
+제동	brake
+공황	panic
+위기	crisis
+헤지	hedge
+단타	scalp
+스윙	swing
+추세추종	trend following
+역추세	mean reversion
+평균회귀	mean reversion
+매매	trading
+운용	trading
+자동	auto
+수동	manual
+켜짐	on
+꺼짐	off
+없음	none
+있음	yes
+정상	normal
+오류	error
+경고	warning
+실패	failed
+성공	success
+완료	done
+진행 중	in progress
+로딩 중	loading
+불러오는 중	loading
+갱신	updated
+지연	delayed
+시간	h
+개월	mo
+미국	US
+한국	KR
+오전	AM
+오후	PM
+구조	structure
+작동 화면	live screen
+사이클	cycle
+방금	just now
+마감까지	to close
+최고	best
+최저	worst
+그림자	shadow
+게이지	gauge
+경보	alert
+타이트닝	tightening
+대폭	sharply
+축소	cut
+중단	halt
+신규	new
+방어	defense
+헤지	hedge
+고변동	high volatility
+보조는 계속	auxiliary continues
+쉼	paused
+위기	crisis
+경계	elevated
+주의	caution
+평시	normal
+대형 호재	major positive
