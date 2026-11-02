@@ -6842,3 +6842,5 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
   · 사용자 증가 대비: 10분 무입력이면 luxIdle() → 대시보드 갱신·판정 피드 2분 1회 · AI 모드 패널 멈춤. lux-inv.com 은 사용자 지정 도메인이라
     swrJson 의 caches.default(콜로 공유 캐시)가 이제 실제로 동작(workers.dev 에선 안 됐음) — 공용 데이터는 콜로당 한 번만 빌드.
     다음 단계 후보: R2 공개 버킷(data.lux-inv.com) 스냅샷을 CDN 캐시로 — 워커 호출 0(대시보드 공용 데이터).
+  · 라이브 확인(V33.729 · lux-inv.com): 가입 → 틀린 비번 401(1/5) → 로그인 시 같은 uid 반환(0.7s) → /api/me/passkey/* 404 → 내 데이터 삭제 후 로그인 불가(계정도 지워짐). 시험 계정은 삭제함.
+    /api/ai-mode 응답층 x-lux-c: r2 — 콜로 캐시(l2)는 키 주소가 swr-cache.internal(우리 존 밖)이라 안 잡히는 듯. 키를 lux-inv.com 아래로 바꾸면 l2 가 살아날 수 있음(다음 작업 후보).
