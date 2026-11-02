@@ -201,10 +201,10 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.724">
-<script src="/i18n.js?v=33.724" defer></script>
-<script src="/mine.js?v=33.724" defer></script>
-<script src="/neural-observatory.js?v=33.724" defer></script>
+<meta name="lux-build" content="V33.725">
+<script src="/i18n.js?v=33.725" defer></script>
+<script src="/mine.js?v=33.725" defer></script>
+<script src="/neural-observatory.js?v=33.725" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -10261,6 +10261,7 @@ window.LUX_NV = {
     market = market || ((symbol.indexOf('.KS') >= 0 || symbol.indexOf('.KQ') >= 0) ? 'kr' : 'us');
     detailState.symbol = symbol;
     detailState.market = market;
+    try { if (window.luxMine && window.luxMine.detail) window.luxMine.detail(symbol); } catch (e) {}   // [V33.725] 종목 상세에 모의 매매 막대(MY)
     detailState.__tfAutoSwapped = 0;   // [V12.10] 신규상장 일봉 부족 시 분봉 자동전환 플래그 초기화
     // [V12.28] 지수 모드 — ^IXIC 등은 재무/실적/뉴스/심리 등 종목 전용 패널이 없으므로 차트 전폭 뷰
     var isIdx = symbol.charAt(0) === '^';
@@ -21534,12 +21535,12 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.724">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.724">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.724">
-<link rel="stylesheet" href="/model-evidence.css?v=33.724">
+<link rel="stylesheet" href="/brain-console.css?v=33.725">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.725">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.725">
+<link rel="stylesheet" href="/model-evidence.css?v=33.725">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.724">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.725">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -21566,8 +21567,8 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
   setTimeout(reveal, 9500);
 })();
 </script>
-<script src="/model-evidence.js?v=33.724"></script>
-<script src="/workspace-ui.js?v=33.724"></script>
+<script src="/model-evidence.js?v=33.725"></script>
+<script src="/workspace-ui.js?v=33.725"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {

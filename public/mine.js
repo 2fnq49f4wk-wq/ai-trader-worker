@@ -15,7 +15,7 @@
     if (!u || !/^[0-9a-f]{32,64}$/.test(u)) { u = newUid(); try { localStorage.setItem(UIDK, u); } catch (e) {} }
     return u;
   }
-  var DEF = { risk: "mid", mkts: ["us", "kr"], horizon: "swing", exp: "mid", watch: [], done: false, pf: null };
+  var DEF = { risk: "mid", mkts: ["us", "kr"], horizon: "swing", exp: "mid", watch: [], done: false, pf: null, nick: null };
   var prof = null; try { prof = JSON.parse(localStorage.getItem(PROFK) || "null"); } catch (e) {}
   prof = Object.assign({}, DEF, prof || {});
   var tab = "home", acMk = "us", wFilter = "all", PB = null, pbTs = 0, loaded = false, saveT = 0;
@@ -40,7 +40,10 @@
     return fetch(path || "/api/me", { method: method, headers: Object.assign({ "x-lux-uid": uid() }, body ? { "content-type": "application/json" } : {}, extra || {}), body: body ? JSON.stringify(body) : undefined }).then(function (r) { return r.json(); });
   }
   function saveLocal() { try { localStorage.setItem(PROFK, JSON.stringify(prof)); } catch (e) {} }
-  function persist() { saveLocal(); clearTimeout(saveT); saveT = setTimeout(function () { api("POST", prof).catch(function () {}); }, 2000); }
+  function persist() { saveLocal(); clearTimeout(saveT); saveT = setTimeout(function () { api("POST", prof).then(function (j) {
+    if (j && j.pfRejected && j.profile) { adopt(j.profile); draw(); alert("모의계좌 기록이 서버 시세와 맞지 않아 마지막으로 확인된 상태로 되돌렸습니다(" + j.pfRejected + ")."); }
+    else if (j && j.profile && j.profile.nick !== undefined) { prof.nick = j.profile.nick; saveLocal(); }
+  }).catch(function () {}); }, 2000); }
   function adopt(p) { prof = Object.assign({}, DEF, p || {}); saveLocal(); }
   function load(force) {
     if (loaded && !force) return; loaded = true;
@@ -124,7 +127,7 @@
     st.textContent = [
       "#mineRoot{--m-bg:#0B1220;--m-card:#111A2C;--m-line:#1C2840;--m-chip:#1E2C46;--m-mute:#9AA9BF;--m-acc:#5AB8FF;--m-up:#FF6B6B;--m-dn:#6FA0FF;width:100%;max-width:760px;margin:0 auto;padding:6px 4px 96px;box-sizing:border-box;font-size:14.5px;color:var(--fg,#E8EEF7)}",
       "#mineRoot *{box-sizing:border-box}#mineRoot .up{color:var(--m-up)}#mineRoot .dn{color:var(--m-dn)}#mineRoot .mu{color:var(--m-mute)}",
-      "#mineRoot .tabs{position:sticky;top:0;z-index:5;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:5px;margin:0 0 14px;border-radius:16px;background:var(--m-card);border:1px solid var(--m-line)}",
+      "#mineRoot .tabs{position:sticky;top:0;z-index:5;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;padding:5px;margin:0 0 14px;border-radius:16px;background:var(--m-card);border:1px solid var(--m-line)}",
       "#mineRoot .tabs button{min-height:44px;border:0;border-radius:12px;background:transparent;color:var(--m-mute);font-size:14.5px;font-weight:600;cursor:pointer}#mineRoot .tabs button.on{background:var(--m-chip);color:#fff}",
       "#mineRoot .card{background:var(--m-card);border-radius:20px;padding:16px 18px;margin:0 0 12px}#mineRoot .ct{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px;color:var(--m-mute);margin-bottom:6px}",
       "#mineRoot .h1{font-size:30px;font-weight:700;letter-spacing:-.5px}#mineRoot .h2{font-size:16px;font-weight:700}",
@@ -147,6 +150,8 @@
       "#luxGate{position:fixed;inset:0;z-index:10050;background:#0B1220;color:#E8EEF7;display:flex;justify-content:center;font-family:inherit}#luxGate .in{width:min(440px,100%);display:flex;flex-direction:column;padding:0 24px calc(28px + env(safe-area-inset-bottom))}",
       "#luxGate h1{margin:0;font-size:29px;line-height:1.3;font-weight:700;letter-spacing:-.5px}#luxGate .lg{width:64px;height:64px;border-radius:18px;background:#111A2C;border:1px solid #22304A;display:flex;align-items:center;justify-content:center}",
       "#luxGate button{font-family:inherit;cursor:pointer}#luxGate .p1{min-height:56px;border-radius:16px;border:0;background:#5AB8FF;color:#06101E;font-size:16.5px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:10px}#luxGate .p2{min-height:52px;border-radius:16px;border:1px solid #2C3A55;background:transparent;color:#E8EEF7;font-size:15.5px}#luxGate .p3{min-height:48px;border:0;background:transparent;color:#9AA9BF;font-size:14.5px;text-decoration:underline}",
+      "#mineDetailBar{margin:0 0 10px}#mineDetailBar .mdb{display:flex;align-items:center;gap:8px;background:#111A2C;border:1px solid #1C2840;border-radius:14px;padding:10px 12px;color:#E8EEF7}#mineDetailBar .l{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}#mineDetailBar .nm{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#mineDetailBar .sb{font-size:12px;color:#9AA9BF;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+      "#mineDetailBar .buy,#mineDetailBar .sell,#mineDetailBar .wbtn2{min-height:42px;padding:0 14px;border-radius:10px;border:0;font-size:14px;font-weight:700;cursor:pointer;color:#fff;background:#FF6B6B}#mineDetailBar .sell{background:#6FA0FF}#mineDetailBar .wbtn2{background:transparent;border:1px solid #2C3A55;color:#C9D4E3;font-weight:500}",
       "#mineSheet{position:fixed;inset:0;z-index:9999;background:rgba(4,8,16,.62);display:flex;align-items:flex-end;justify-content:center}",
       "#mineSheet .sh{width:min(520px,100%);background:#131D31;border-radius:22px 22px 0 0;padding:10px 20px calc(22px + env(safe-area-inset-bottom));color:#E8EEF7;display:flex;flex-direction:column;gap:14px;font-size:14px}",
       "#mineSheet .grab{width:40px;height:4px;border-radius:2px;background:#2C3A55;align-self:center}#mineSheet .pre{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}",
@@ -221,6 +226,7 @@
     return '<section class="card">' + (prof.done ? '<div class="h2" style="margin-bottom:8px">투자 성향</div>' : '<div class="h2">처음이면 네 가지만 골라 주세요</div><div class="note" style="margin:4px 0 10px">답에 맞춰 홈의 시장 안내와 오늘 후보가 바뀝니다</div>') +
       ops("risk", RISK, 3) + '<span class="mu" style="font-size:13px">보유 기간</span>' + ops("horizon", HOR, 3) + '<span class="mu" style="font-size:13px">관심 시장</span>' + ops("mkts", MK, 2, true) + '<span class="mu" style="font-size:13px">투자 경험</span>' + ops("exp", EXP, 3) +
       (prof.done ? "" : '<button type="button" class="b pri" id="mineDone" style="width:100%">시작하기</button>') + "</section>" +
+      (prof.done ? '<section class="card"><div class="ct" style="margin:0"><span class="h2" style="color:#E8EEF7">닉네임</span><span>' + (prof.nick ? esc(prof.nick) : "아직 없음") + '</span></div><div class="note" style="margin:4px 0 8px">수익률 순위에 이 이름으로 나옵니다 · 다른 사람과 겹칠 수 없어요</div><label class="search"><input id="mineNick" maxlength="12" aria-label="닉네임" placeholder="2~12자 한글·영문·숫자" value="' + esc(prof.nick || "") + '"></label><div class="btns"><button type="button" class="b pri" id="mineNickSave">' + (prof.nick ? "닉네임 바꾸기" : "닉네임 정하기") + "</button></div></section>" : "") +
       '<section class="card"><div class="ct" style="margin:0"><span class="h2" style="color:#E8EEF7">로그인 · 내 데이터</span><span style="color:' + (isPk() ? "#5AB8FF" : "#9AA9BF") + '">' + (isPk() ? "패스키 로그인됨" : "로그인 없이 사용 중") + '</span></div><div class="note" style="margin:4px 0 0">내 설정·관심종목·모의계좌는 <b>이 기기 코드(또는 내 패스키)로만</b> 열립니다. 다른 사람에게는 보이지 않아요. 이름·이메일·전화번호는 받지 않습니다.</div>' +
       (pk ? '<div class="btns"><button type="button" class="b pri" id="minePkReg">패스키로 이 계정 지키기</button><button type="button" class="b" id="minePkLogin">패스키로 로그인</button></div><div class="note" style="margin-top:6px">패스키 = Face ID·지문·화면 잠금으로 하는 로그인(비밀번호 없음). 같은 애플·구글 계정의 기기끼리 자동으로 이어집니다.</div>'
           : '<div class="note" style="margin-top:6px">이 브라우저는 패스키를 지원하지 않아 연결 코드로만 이어 쓸 수 있어요.</div>') +
@@ -229,15 +235,51 @@
       '<div class="btns"><button type="button" class="b line" data-reset="' + acMk + '">' + MK[acMk] + ' 모의계좌 초기화</button><button type="button" class="b warn" id="mineDelete">내 데이터 삭제</button></div></section>' +
       '<section class="note" style="padding:0 6px">· 모의투자 서비스입니다. 가상 자금이며 실제 주문·자금 이동이 없습니다.<br>· 화면의 후보·안내는 투자 권유가 아니며, 수익을 약속하지 않습니다. 투자 판단과 결과의 책임은 본인에게 있습니다.<br>· 저장 항목: 성향·관심종목·모의계좌(이 기기 코드의 해시로 구분). 마지막 사용 후 1년이 지나면 자동 삭제되며, 위 [내 데이터 삭제]로 언제든 지울 수 있습니다.<br>· <a href="/privacy">개인정보 처리방침 · 이용 안내 전문</a></section>';
   }
+  /* [V33.725] ★수익률 순위★ — 서버가 1시간에 한 번 계산한 표(/api/leaderboard)를 받는다. 이 기기는 5분에 한 번만 다시 받는다. */
+  var LB = null, lbTs = 0, rkMk = "us";
+  function lbLoad(force) { if (!force && Date.now() - lbTs < 300000) return; lbTs = Date.now(); fetch("/api/leaderboard").then(function (r) { return r.json(); }).then(function (j) { LB = j; draw(); }).catch(function () {}); }
+  function rankTab() {
+    lbLoad(false);
+    var rows = (LB && LB[rkMk]) || [], me = prof.nick;
+    var h = '<div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 12px"><span class="h2">모의투자 수익률 순위</span><span class="seg">' + ["us", "kr"].map(function (m) { return '<button type="button" data-rkmk="' + m + '" class="' + (m === rkMk ? "on" : "") + '">' + MK[m] + "</button>"; }).join("") + "</span></div>";
+    if (!me) h += '<section class="card"><div class="h2">닉네임을 정하면 순위에 올라가요</div><div class="note" style="margin-top:4px">거래가 1건 이상 있는 모의계좌만 순위에 들어갑니다.</div><div class="btns"><button type="button" class="b pri" data-tab="me">닉네임 정하기</button></div></section>';
+    h += '<section class="card">' + (rows.length ? rows.map(function (r, i) {
+      var mine = me && r.nick === me;
+      return '<div class="row" style="cursor:default' + (mine ? ";background:rgba(90,184,255,.08);border-radius:10px" : "") + '"><span class="rk' + (i < 3 ? " hot" : "") + '">' + (i + 1) + '</span><div class="l"><span class="nm">' + esc(r.nick) + (mine ? ' <span class="pill">나</span>' : "") + '</span><span class="sb">' + r.days + "일째 · 보유 " + r.n + '종목</span></div><div class="r"><span class="p ' + cls(r.ret) + '">' + pctS(r.ret) + "</span></div></div>";
+    }).join("") : '<div class="empty">' + (LB ? "아직 순위에 오른 계좌가 없습니다. 첫 번째가 되어 보세요." : "순위를 불러오는 중…") + "</div>") +
+      '<div class="note" style="margin-top:6px">서버가 실제 시세로 1시간마다 다시 계산합니다' + (LB && LB.ts ? " · " + new Date(LB.ts).toLocaleTimeString() + " 기준" : "") + " · 가상 자금 · 투자 권유 아님</div></section>";
+    return h;
+  }
+  function nickSave() {
+    var v = (($("mineNick") || {}).value || "").trim();
+    if (!/^[가-힣A-Za-z0-9_]{2,12}$/.test(v)) { alert("닉네임은 2~12자 한글·영문·숫자·_ 만 쓸 수 있어요"); return; }
+    if (!prof.done) { alert("먼저 성향을 고르고 [시작하기]를 눌러 주세요"); return; }
+    api("POST", prof).then(function () { return api("POST", { nick: v }, "/api/me/nick"); }).then(function (j) {
+      if (j && j.ok) { prof.nick = j.nick; saveLocal(); draw(); alert("닉네임을 '" + j.nick + "'(으)로 정했어요."); }
+      else alert((j && j.error) || "닉네임을 저장하지 못했습니다");
+    }).catch(function () { alert("닉네임을 저장하지 못했습니다"); });
+  }
+  /* [V33.725] ★종목 상세의 모의 매매 막대★ — 관심종목에서 종목을 누르면 상세로 가는데 거기서 살 수 없었다(사용자 11/2) */
+  var detSym = null;
+  function detail(sym) {
+    detSym = sym; var pg = $("page-detail"); if (!pg || !sym) return; css();
+    var bar = $("mineDetailBar");
+    if (!bar) { bar = document.createElement("section"); bar.id = "mineDetailBar"; bar.setAttribute("aria-label", "모의 매매"); pg.insertBefore(bar, pg.firstChild);
+      bar.addEventListener("click", function (ev) { var b = ev.target.closest("button"); if (!b) return; if (b.dataset.dbuy) sheet("B", detSym); else if (b.dataset.dsell) sheet("S", detSym); else if (b.dataset.dwatch) { var i = prof.watch.indexOf(detSym); if (i >= 0) prof.watch.splice(i, 1); else if (prof.watch.length < 40) prof.watch.push(detSym); persist(); detail(detSym); } }); }
+    var hq = held(sym), on = prof.watch.indexOf(sym) >= 0, mk = isKr(sym) ? "kr" : "us";
+    bar.innerHTML = '<div class="mdb"><div class="l"><span class="nm">내 모의계좌 · ' + esc(nm(sym)) + '</span><span class="sb">' + (hq ? "보유 " + hq.toLocaleString() + "주" : "보유 없음") + (has(mk) ? " · 주문 가능 " + fmt(mk, prof.pf[mk].cash) : " · 첫 주문 때 가상 " + fmt(mk, START[mk]) + " 계좌가 열립니다") + "</span></div>" +
+      '<button type="button" class="wbtn2" data-dwatch="1">' + (on ? "관찰중" : "관찰") + '</button>' + (hq ? '<button type="button" class="sell" data-dsell="1">팔기</button>' : "") + '<button type="button" class="buy" data-dbuy="1">사기</button></div>';
+  }
   function draw() {
+    if (detSym && $("page-detail") && $("page-detail").classList.contains("active")) detail(detSym);
     var root = $("mineRoot"), pg = $("page-mine");
     if (!root || !pg || !pg.classList.contains("active")) return;
     css();
     if (!prof.done) tab = "me";
-    var T = { home: "홈", watch: "관심", acct: "계좌", me: "내 정보" };
+    var T = { home: "홈", watch: "관심", acct: "계좌", rank: "순위", me: "내 정보" };
     var keep = ($("mineSearch") || {}).value || "";
     root.innerHTML = '<nav class="tabs" aria-label="MY 메뉴">' + Object.keys(T).map(function (k) { return '<button type="button" data-tab="' + k + '" class="' + (k === tab ? "on" : "") + '">' + T[k] + "</button>"; }).join("") + "</nav>" +
-      (tab === "home" ? home() : tab === "watch" ? watch() : tab === "acct" ? acctTab() : me()) +
+      (tab === "home" ? home() : tab === "watch" ? watch() : tab === "acct" ? acctTab() : tab === "rank" ? rankTab() : me()) +
       '<p class="note" style="text-align:center;margin-top:10px">모의투자 · 가상 자금 · 투자 권유가 아닙니다' + (pbTs ? " · AI 판정 " + new Date(pbTs).toLocaleTimeString() : "") + "</p>";
     var s = $("mineSearch"); if (s) { s.value = keep; s.oninput = function () { found(s.value); }; if (keep) found(keep); }
   }
@@ -273,7 +315,7 @@
       var b = ev.target.closest("button"); if (!b) return;
       if (b.dataset.f) { setF(Number(b.dataset.f)); paint(); }
       else if (b.dataset.st) { qty += Number(b.dataset.st); frac = -1; paint(); }
-      else if (b.classList.contains("go")) { var err = trade(side, sym, qty); if (err) { alert(err); return; } w.remove(); acMk = mk; tab = "acct"; draw(); }
+      else if (b.classList.contains("go")) { var err = trade(side, sym, qty); if (err) { alert(err); return; } w.remove(); acMk = mk; tab = "acct"; draw(); if (detSym === sym) detail(sym); }
     });
     paint(); document.body.appendChild(w);
   }
@@ -338,6 +380,8 @@
     if (d.openAcct) { acct(d.openAcct); persist(); acMk = d.openAcct; tab = "acct"; draw(); return; }
     if (d.acmk) { acMk = d.acmk; draw(); return; }
     if (d.wf) { wFilter = d.wf; draw(); return; }
+    if (d.rkmk) { rkMk = d.rkmk; draw(); return; }
+    if (t.id === "mineNickSave") { nickSave(); return; }
     if (d.addwatch) { ev.stopPropagation(); var i = prof.watch.indexOf(d.addwatch); if (i >= 0) prof.watch.splice(i, 1); else if (prof.watch.length < 40) prof.watch.push(d.addwatch); persist(); draw(); return; }
     if (d.unwatch) { ev.stopPropagation(); prof.watch = prof.watch.filter(function (x) { return x !== d.unwatch; }); persist(); draw(); return; }
     if (d.reset) { if (confirm(MK[d.reset] + " 모의계좌를 처음 상태로 되돌릴까요?")) { if (prof.pf) delete prof.pf[d.reset]; persist(); draw(); } return; }
@@ -367,8 +411,8 @@
     root.addEventListener("click", onClick);
     new MutationObserver(function () { if (pg.classList.contains("active")) onShow(); }).observe(pg, { attributes: true, attributeFilter: ["class"] });
     if (pg.classList.contains("active")) onShow();
-    setInterval(function () { if (!document.hidden && pg.classList.contains("active")) { pbLoad(false); var ae = document.activeElement; if (!$("mineSheet") && !(ae && (ae.id === "mineSearch" || ae.id === "mineCode"))) draw(); } }, 60000);
+    setInterval(function () { if (!document.hidden && pg.classList.contains("active")) { pbLoad(false); var ae = document.activeElement; if (!$("mineSheet") && !(ae && (ae.id === "mineSearch" || ae.id === "mineCode" || ae.id === "mineNick"))) draw(); } }, 60000);
   }
-  window.luxMine = { draw: draw };
+  window.luxMine = { draw: draw, detail: detail };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 })();

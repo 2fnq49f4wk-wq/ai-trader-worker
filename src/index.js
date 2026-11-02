@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.724";
+const _BUILD_VER = "V33.725";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8775,16 +8775,23 @@ async function luxProfileApi(DB, uid, request) {
   const hb = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("lux-profile:" + uid));
   const h = Array.from(new Uint8Array(hb)).map(function (x) { return x.toString(16).padStart(2, "0"); }).join("");
   if (request.method === "POST") {
+    if (!luxRateOk(h)) { const e = new Error("too many"); e.code = 400; throw e; }   // [V33.725] 기기당 분당 30회 — 쓰기 폭주 방지(요금)
     const txt = await request.text();
     if (txt.length > 16384) { const e = new Error("too large"); e.code = 400; throw e; }   // 모의계좌 포함 16KB
     let b = null; try { b = JSON.parse(txt); } catch (e) {}
     const prof = luxProfileClean(b), now = Date.now();
+    const oldRow = await DB.prepare("SELECT profile FROM user_profiles WHERE uid_hash = ?").bind(h).first();
+    let old = null; try { old = oldRow && oldRow.profile ? JSON.parse(oldRow.profile) : null; } catch (e) {}
+    prof.nick = (old && old.nick) || null;   // 닉네임은 /api/me/nick 만 바꾼다
+    const chk = await luxLedgerCheck(DB, old && old.pf, prof.pf);
+    if (!chk.ok) prof.pf = (old && old.pf) || null;   // [V33.725] 장부가 안 맞으면(조작·시세 벗어남) 모의계좌 변경을 받지 않는다 — 순위 공정성
     await DB.prepare("INSERT INTO user_profiles (uid_hash, profile, created_ts, updated_ts) VALUES (?, ?, ?, ?) ON CONFLICT(uid_hash) DO UPDATE SET profile = excluded.profile, updated_ts = excluded.updated_ts")
       .bind(h, JSON.stringify(prof), now, now).run();
-    return { ok: true, profile: prof };
+    return chk.ok ? { ok: true, profile: prof } : { ok: true, profile: prof, pfRejected: chk.why };
   }
   if (request.method === "DELETE") {   // [V33.723] 내 데이터 삭제(개인정보 삭제 요구) — 프로필·모의계좌·이 코드에 묶인 패스키까지
     await DB.batch([DB.prepare("DELETE FROM user_profiles WHERE uid_hash = ?").bind(h), DB.prepare("DELETE FROM user_passkeys WHERE uid_hash = ?").bind(h)]).catch(function () {});
+    try { await DB.prepare("DELETE FROM user_nicks WHERE uid_hash = ?").bind(h).run(); } catch (e) {}
     return { ok: true, deleted: true };
   }
   const r = await DB.prepare("SELECT profile, updated_ts FROM user_profiles WHERE uid_hash = ?").bind(h).first();
@@ -8796,6 +8803,94 @@ async function luxProfileApi(DB, uid, request) {
   return { ok: true, profile: prof };
 }
 const LUX_RETAIN_MS = 365 * 86400000;
+const _luxRate = new Map();
+function luxRateOk(key) { const now = Date.now(), r = _luxRate.get(key) || { t: now, n: 0 }; if (now - r.t > 60000) { r.t = now; r.n = 0; } r.n++; _luxRate.set(key, r); if (_luxRate.size > 5000) _luxRate.clear(); return r.n <= 30; }
+function _luxSrvPx(qv) { if (!qv) return null; const st = qv.mstate; if (st === "PRE" && qv.pre > 0) return qv.pre; if ((st === "POST" || st === "POSTPOST") && qv.post > 0) return qv.post; return qv.price > 0 ? qv.price : null; }
+async function _luxQuotes(DB, syms) {
+  const out = {}; syms = Array.from(new Set(syms)).slice(0, 2000);
+  for (let i = 0; i < syms.length; i += 100) {
+    const ck = syms.slice(i, i + 100), st = DB.prepare("SELECT k, v FROM state WHERE k IN (" + ck.map(function () { return "?"; }).join(",") + ")");
+    const rw = await st.bind.apply(st, ck.map(function (x) { return "quote:" + x; })).all();
+    for (const r of ((rw && rw.results) || [])) { try { out[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {} }
+  }
+  return out;
+}
+/* [V33.725] ★모의계좌 장부 검사★ — 순위를 공개하니 숫자를 손으로 고쳐 올리는 것을 막는다. 저장된 장부(old)에서 새 거래(hist 의 새 항목)만 다시 계산해
+   현금·수량이 맞는지, 새 거래 체결가가 서버 시세(정규/시간외 중 하나)의 ±3% 안인지 본다. 새 계좌·초기화는 시작금·빈 보유에서 다시 계산. */
+async function luxLedgerCheck(DB, oldPf, newPf) {
+  if (!newPf) return { ok: true };
+  const need = [], plan = [];
+  for (const mk of ["us", "kr"]) {
+    const a = newPf[mk]; if (!a) continue;
+    const o = oldPf && oldPf[mk] && oldPf[mk].t0 === a.t0 ? oldPf[mk] : null;
+    const base = o ? { cash: o.cash, pos: o.pos || {}, last: (o.hist && o.hist[0] && o.hist[0][0]) || 0 } : { cash: a.start, pos: {}, last: 0 };
+    if (!o && a.start !== (mk === "kr" ? 10000000 : 10000)) return { ok: false, why: "시작금" };
+    const fresh = (a.hist || []).filter(function (t) { return t[0] > base.last; }).sort(function (x, y) { return x[0] - y[0]; });
+    if (fresh.length > 60) return { ok: false, why: "거래 수" };
+    fresh.forEach(function (t) { need.push(t[2]); });
+    plan.push({ mk: mk, a: a, base: base, fresh: fresh });
+  }
+  const Q = need.length ? await _luxQuotes(DB, need) : {};
+  for (const p of plan) {
+    let cash = p.base.cash; const pos = {}; Object.keys(p.base.pos).forEach(function (k) { pos[k] = p.base.pos[k].q; });
+    for (const t of p.fresh) {
+      const qv = Q[t[2]], sp = _luxSrvPx(qv), rp = qv && qv.price > 0 ? qv.price : null;
+      if (!sp && !rp) return { ok: false, why: "시세 없음 " + t[2] };
+      const near = function (ref) { return ref && Math.abs(t[4] / ref - 1) <= 0.03; };
+      if (!near(sp) && !near(rp)) return { ok: false, why: "체결가 " + t[2] };
+      if (t[1] === "B") { cash -= t[3] * t[4]; pos[t[2]] = (pos[t[2]] || 0) + t[3]; }
+      else { if ((pos[t[2]] || 0) < t[3] - 1e-9) return { ok: false, why: "보유 부족 " + t[2] }; cash += t[3] * t[4]; pos[t[2]] -= t[3]; if (pos[t[2]] <= 1e-9) delete pos[t[2]]; }
+    }
+    if (cash < -1e-6 || Math.abs(cash - p.a.cash) > Math.max(1, Math.abs(p.a.start) * 1e-6)) return { ok: false, why: "현금" };
+    const ks = Object.keys(p.a.pos);
+    if (ks.length !== Object.keys(pos).length) return { ok: false, why: "보유 수" };
+    for (const k of ks) if (Math.abs((pos[k] || 0) - p.a.pos[k].q) > 1e-6) return { ok: false, why: "수량 " + k };
+  }
+  return { ok: true };
+}
+/* [V33.725] ★닉네임★ — 중복 금지(대소문자 무시) · 2~12자 한글·영문·숫자·_ · 한 사람 하나(바꾸면 옛 이름은 풀린다) */
+const LUX_NICK_BAN = ["admin", "관리자", "운영자", "lux", "luxengine", "claude", "anthropic", "official", "공식"];
+async function luxNickApi(DB, uid, request) {
+  await DB.prepare("CREATE TABLE IF NOT EXISTS user_nicks (nick_key TEXT PRIMARY KEY, nick TEXT NOT NULL, uid_hash TEXT NOT NULL UNIQUE, created_ts INTEGER NOT NULL)").run();
+  const bad = function (m, c) { const e = new Error(m); e.code = c || 400; throw e; };
+  if (!luxRateOk("nick:" + uid)) bad("잠시 뒤 다시");
+  const hb = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("lux-profile:" + uid));
+  const h = Array.from(new Uint8Array(hb)).map(function (x) { return x.toString(16).padStart(2, "0"); }).join("");
+  const b = await request.json().catch(function () { return null; });
+  const nick = String((b && b.nick) || "").trim();
+  if (!/^[가-힣A-Za-z0-9_]{2,12}$/.test(nick)) bad("닉네임은 2~12자 한글·영문·숫자·_ 만");
+  const key = nick.toLowerCase();
+  if (LUX_NICK_BAN.some(function (w) { return key.indexOf(w) >= 0; })) bad("쓸 수 없는 닉네임");
+  const row = await DB.prepare("SELECT profile FROM user_profiles WHERE uid_hash = ?").bind(h).first();
+  if (!row) bad("먼저 MY 설정을 저장해 주세요");
+  const taken = await DB.prepare("SELECT uid_hash FROM user_nicks WHERE nick_key = ?").bind(key).first();
+  if (taken && taken.uid_hash !== h) bad("이미 쓰는 닉네임", 409);
+  let prof = {}; try { prof = JSON.parse(row.profile); } catch (e) {}
+  prof.nick = nick;
+  await DB.batch([
+    DB.prepare("DELETE FROM user_nicks WHERE uid_hash = ? AND nick_key <> ?").bind(h, key),
+    DB.prepare("INSERT OR IGNORE INTO user_nicks (nick_key, nick, uid_hash, created_ts) VALUES (?, ?, ?, ?)").bind(key, nick, h, Date.now()),
+    DB.prepare("UPDATE user_profiles SET profile = ? WHERE uid_hash = ?").bind(JSON.stringify(prof), h)
+  ]);
+  return { ok: true, nick: nick };
+}
+/* [V33.725] ★수익률 순위★ — 1시간에 한 번만 계산(swrJson) · 서버 시세로 평가(사용자가 보낸 평가액을 믿지 않는다) · 닉네임 있는 계좌만 · 시장별 상위 50 */
+async function luxLeaderboard(DB) {
+  let rows = [];
+  try { rows = ((await DB.prepare("SELECT n.nick, p.profile FROM user_nicks n JOIN user_profiles p ON p.uid_hash = n.uid_hash LIMIT 20000").all()).results) || []; } catch (e) { return { ok: true, ts: Date.now(), us: [], kr: [], n: 0 }; }
+  const accs = [], syms = [];
+  for (const r of rows) { let pr = null; try { pr = JSON.parse(r.profile); } catch (e) {} if (!pr || !pr.pf) continue;
+    for (const mk of ["us", "kr"]) { const a = pr.pf[mk]; if (!a || !(a.hist && a.hist.length)) continue; accs.push({ nick: r.nick, mk: mk, a: a }); Object.keys(a.pos || {}).forEach(function (k) { syms.push(k); }); } }
+  const Q = await _luxQuotes(DB, syms);
+  const out = { us: [], kr: [] };
+  for (const x of accs) {
+    let eq = x.a.cash;
+    for (const k of Object.keys(x.a.pos || {})) { const p = x.a.pos[k], sp = _luxSrvPx(Q[k]) || p.avg; eq += p.q * sp; }
+    out[x.mk].push({ nick: x.nick, ret: +((eq / x.a.start - 1) * 100).toFixed(2), days: Math.max(1, Math.round((Date.now() - (x.a.t0 || Date.now())) / 86400000)), n: Object.keys(x.a.pos || {}).length });
+  }
+  ["us", "kr"].forEach(function (mk) { out[mk].sort(function (a, b) { return b.ret - a.ret; }); out[mk] = out[mk].slice(0, 50); });
+  return { ok: true, ts: Date.now(), us: out.us, kr: out.kr, n: accs.length };
+}
 
 /* [V33.723] ★패스키 로그인(WebAuthn)★ — 사용자 11/2 "앱 등록 말고 사이트에서 로그인". 외부 업체(구글·카카오) 등록 없이 브라우저 표준만 쓴다.
    기기의 Face ID·지문·화면 잠금으로 서명 → 서버는 공개키(ES256)만 저장 · 비밀번호·이메일·이름 없음. 같은 애플/구글 계정 기기끼리는 패스키가 동기화된다.
@@ -33663,6 +33758,15 @@ async function handleRequest(request, env, ctx, _inner) {
 
     /* [V33.721] ★개인화 프로필★(사용자 11/2 "개인 수요에 맞게 · 수익화는 나중 · 구현부터") — 로그인 없이 기기 토큰(브라우저가 만든 32~64자 16진수).
        서버는 토큰의 SHA-256 만 키로 쓰고 개인정보는 받지 않는다(성향·시장·기간·경험·관심종목만). 다른 기기는 같은 토큰(연결 코드)을 넣으면 같은 프로필. */
+    if (path === "/api/me/nick" && request.method === "POST") {   // [V33.725] 닉네임(중복 금지)
+      const uid = String(request.headers.get("x-lux-uid") || "");
+      if (!/^[0-9a-f]{32,64}$/.test(uid)) return Response.json({ ok: false, error: "bad uid" }, { status: 400, headers: cors });
+      try { return Response.json(await luxNickApi(env.DB, uid, request), { headers: Object.assign({ "cache-control": "no-store" }, cors) }); }
+      catch (e) { return Response.json({ ok: false, error: String(e && e.message || e) }, { status: e && (e.code === 400 || e.code === 409) ? e.code : 503, headers: cors }); }
+    }
+    if (path === "/api/leaderboard") {   // [V33.725] 수익률 순위 — 1시간 SWR · 누가 몇 번 봐도 계산은 1시간 1번
+      return await swrJson("leaderboard", 3600000, 6 * 3600000, async function () { return await luxLeaderboard(env.DB); });
+    }
     if (path === "/api/me/passkey/options" || path === "/api/me/passkey/register" || path === "/api/me/passkey/login") {   // [V33.723] 패스키 로그인
       if (path !== "/api/me/passkey/options" && request.method !== "POST") return Response.json({ ok: false, error: "POST" }, { status: 405, headers: cors });
       try { return Response.json(await luxPasskeyApi(env.DB, path.split("/").pop(), request, url), { headers: Object.assign({ "cache-control": "no-store" }, cors) }); }

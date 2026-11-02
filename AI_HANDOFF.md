@@ -6808,3 +6808,10 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
 - 패스키는 도메인에 묶임 — .com 으로 옮기면 그 주소에서 다시 등록해야 한다(연결 코드는 그대로 쓸 수 있음).
 - 도메인(.com · Verisign RDAP 404=미등록, 11/2 조회): luxsig.com(6) · luxvst.com(6, LUX+inVeSTment) · luxinvst.com(8) · luxinvestai.com(11) · luxengineai.com.
   lux+1~2글자·luxinvest·luxai 등은 전부 등록됨. 구매는 사용자가 Cloudflare 대시보드 › Registrar(원가) → 그다음 Workers 사용자 지정 도메인 연결.
+
+## V33.724~725 (11/2 15:xxZ) — 첫 화면 로그인 · AI 순위 · 닉네임 · 수익률 순위 · 장부 검사 · 종목 상세 매매
+- V33.724: 첫 방문 화면(패스키로 시작 · 이미 있음 · 로그인 없이) · lux-gate/lux-pk 기억 + storage.persist · MY 홈 'AI가 지금 사고 싶은 순위'(매수 신호→검증 대기→OMNI-Q 점수 · 관찰·사기).
+- V33.725: 닉네임(/api/me/nick · user_nicks 표 · 대소문자 무시 중복 금지 · 금칙어) · 수익률 순위(/api/leaderboard · swrJson 1시간 · 서버 시세로 평가 · 시장별 50) ·
+  장부 검사(luxLedgerCheck · 새 거래만 다시 계산 · 체결가 서버 시세 ±3% · 현금·수량 일치 · 안 맞으면 모의계좌 변경 거부) · 쓰기 기기당 분당 30 ·
+  종목 상세 상단 '내 모의계좌' 막대(관찰·팔기·사기 · index.html openStockDetail → luxMine.detail).
+- 요금 설계: 순위는 누가 봐도 1시간 1번 계산 · 프로필 읽기 MY 첫 열림 1회 · 쓰기 2초 모음 + 분당 30 상한 · 정적 자산(html/js)은 Workers 요청 요금에 안 잡힘.

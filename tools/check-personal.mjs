@@ -45,5 +45,18 @@ chk((P.match(/buyBtn\(/g) || []).length >= 4, "모의 매수 버튼: 오늘 후�
 chk(/function gate\(\)/.test(P) && /id="gStart"/.test(P) && /id="gLogin"/.test(P) && /id="gGuest"/.test(P) && /localStorage\.getItem\("lux-gate"\)/.test(P), "첫 화면 로그인 선택(패스키 시작·로그인·로그인 없이)", "★첫 화면 선택이 없다★");
 chk(/function remember\(kind\)/.test(P) && /navigator\.storage\.persist\(\)/.test(P), "로그인 기억(코드·선택 저장 + 저장소 유지 요청)", "★로그인 기억이 없다★");
 chk(/a\.tier - b\.tier \|\| b\.q - a\.q/.test(P) && /data-addwatch="' \+ esc\(r\.s\)/.test(P) && /buyBtn\(r\.s\)/.test(P), "AI 순위 · 줄마다 관찰·사기", "★AI 순위나 관찰·사기 버튼이 빠졌다★");
+// [V33.725] 닉네임 중복 금지 · 장부 검사(조작 방지) · 순위 1시간 1회 계산 · 쓰기 분당 30 · 종목 상세 매매 막대
+chk(/CREATE TABLE IF NOT EXISTS user_nicks \(nick_key TEXT PRIMARY KEY/.test(S) && /이미 쓰는 닉네임", 409/.test(S) && /prof\.nick = \(old && old\.nick\) \|\| null;/.test(S), "닉네임: 중복 금지(대소문자 무시) · 화면이 직접 못 바꾼다", "★닉네임 중복 방지가 빠졌다★");
+{
+  const a = S.indexOf("const _luxRate"), b = S.indexOf("/* [V33.725] ★닉네임★");
+  let f = null; try { f = new Function(S.slice(a, b) + "; return luxLedgerCheck;")(); } catch (e) { console.log(e.message); }
+  const DB = { prepare: () => ({ bind: (...k) => ({ all: async () => ({ results: k.map((x) => ({ k: x, v: JSON.stringify({ price: 100, mstate: "REGULAR" }) })) }) }) }) };
+  const ok = f && await f(DB, null, { us: { start: 10000, cash: 9000, pos: { AAPL: { q: 10, avg: 100 } }, hist: [[5, "B", "AAPL", 10, 100]], t0: 1 } });
+  const fake = f && await f(DB, null, { us: { start: 10000, cash: 9900, pos: { AAPL: { q: 10, avg: 1 } }, hist: [[5, "B", "AAPL", 10, 10]], t0: 1 } });
+  const pump = f && await f(DB, null, { us: { start: 10000, cash: 50000, pos: {}, hist: [], t0: 1 } });
+  chk(ok && ok.ok && fake && !fake.ok && pump && !pump.ok, "장부 검사: 정상 통과 · 가짜 체결가·현금 부풀리기 거부", "★장부 검사가 조작을 못 막는다★");
+}
+chk(/swrJson\("leaderboard", 3600000/.test(S) && /function luxRateOk\(key\)/.test(S) && /r\.n <= 30/.test(S), "순위는 1시간 1번 계산 · 기기당 쓰기 분당 30", "★순위 계산·쓰기 제한이 빠졌다★");
+chk(/window\.luxMine\.detail\(symbol\)/.test(H) && /function detail\(sym\)/.test(P) && /data-dbuy/.test(P), "종목 상세에 모의 매매 막대", "★종목 상세에서 살 수 없다★");
 console.log(fails === 0 ? "\n✓ 내 맞춤 검사 통과" : "\n✗ " + fails + "건 실패");
 process.exit(fails ? 1 : 0);
