@@ -6815,3 +6815,8 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
   장부 검사(luxLedgerCheck · 새 거래만 다시 계산 · 체결가 서버 시세 ±3% · 현금·수량 일치 · 안 맞으면 모의계좌 변경 거부) · 쓰기 기기당 분당 30 ·
   종목 상세 상단 '내 모의계좌' 막대(관찰·팔기·사기 · index.html openStockDetail → luxMine.detail).
 - 요금 설계: 순위는 누가 봐도 1시간 1번 계산 · 프로필 읽기 MY 첫 열림 1회 · 쓰기 2초 모음 + 분당 30 상한 · 정적 자산(html/js)은 Workers 요청 요금에 안 잡힘.
+
+## V33.726 (11/2 16:0xZ) — 사용자 지정 도메인 lux-inv.com
+- 사용자가 Cloudflare Registrar 에서 lux-inv.com 등록(2026-11-02 · 만료 2031-11-02 · 네임서버 Cloudflare).
+- wrangler.toml routes 에 lux-inv.com · www.lux-inv.com (custom_domain = true) → 배포 때 DNS(A 104.21.57.204 · 172.67.192.50)·인증서 자동 생성 확인.
+  www.lux-inv.com/api/build 응답 확인. workers.dev 주소도 그대로 열림. 패스키는 주소별 — 새 주소에서 다시 만들어야 함.
