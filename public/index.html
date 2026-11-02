@@ -201,8 +201,8 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.718">
-<script src="/neural-observatory.js?v=33.718" defer></script>
+<meta name="lux-build" content="V33.719">
+<script src="/neural-observatory.js?v=33.719" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4325,8 +4325,8 @@ window.LUX_NV = {
                 <button class="llm-btn fv-mkt" data-market="us" style="font-size:9px;padding:2px 8px;font-weight:700;">US</button>
                 <button class="llm-btn fv-mkt" data-market="kr" style="font-size:9px;padding:2px 8px;font-weight:700;">KR</button>
                 <span style="width:1px;height:14px;background:var(--bd,#333);margin:0 2px;"></span>
-                <button class="llm-btn fv-hm" data-metric="1d" style="font-size:9px;padding:2px 7px;">1D</button>
-                <button class="llm-btn fv-hm" data-metric="reg" style="font-size:9px;padding:2px 7px;" title="시간외(프리·애프터) 등락률 — 정규장 종가 대비">시간외</button>
+                <button class="llm-btn fv-hm" data-metric="1d" style="font-size:9px;padding:2px 7px;" title="정규장 등락률 — 전일 종가 대비(지수·TOP MOVERS 와 같은 기준)">정규장</button>
+                <button class="llm-btn fv-hm" data-metric="ext" style="font-size:9px;padding:2px 7px;" title="시간외(프리·애프터) 등락률 — 정규장 종가 대비">시간외</button>
                 <button class="llm-btn fv-hm" data-metric="1w" style="font-size:9px;padding:2px 7px;">1W</button>
                 <button class="llm-btn fv-hm" data-metric="1m" style="font-size:9px;padding:2px 7px;">1M</button>
                 <button class="llm-btn fv-hm" data-metric="3m" style="font-size:9px;padding:2px 7px;">3M</button>
@@ -5361,8 +5361,8 @@ window.LUX_NV = {
         <button class="llm-btn fv-mkt" data-market="us" style="font-size:10px;font-weight:700;">US</button>
         <button class="llm-btn fv-mkt" data-market="kr" style="font-size:10px;font-weight:700;">KR</button>
         <span style="width:1px;height:16px;background:var(--bd,#333);margin:0 3px;"></span>
-        <button class="llm-btn fv-hm" data-metric="1d" style="font-size:10px;">1D</button>
-        <button class="llm-btn fv-hm" data-metric="reg" style="font-size:10px;" title="시간외(프리·애프터) 등락률 — 정규장 종가 대비">시간외</button>
+        <button class="llm-btn fv-hm" data-metric="1d" style="font-size:10px;" title="정규장 등락률 — 전일 종가 대비(지수·TOP MOVERS 와 같은 기준)">정규장</button>
+        <button class="llm-btn fv-hm" data-metric="ext" style="font-size:10px;" title="시간외(프리·애프터) 등락률 — 정규장 종가 대비">시간외</button>
         <button class="llm-btn fv-hm" data-metric="1w" style="font-size:10px;">1W</button>
         <button class="llm-btn fv-hm" data-metric="1m" style="font-size:10px;">1M</button>
         <button class="llm-btn fv-hm" data-metric="3m" style="font-size:10px;">3M</button>
@@ -6903,14 +6903,19 @@ window.LUX_NV = {
   }
 
   // ════ [V66] TradingView급 기능 — 기간/RSI 토글 · 섹터 줌 · 타일 클릭=차트분석 · 리치 툴팁 · 보유 하이라이트 ════
-  var fvHeatMetric = '1d';     // '1d' | '1w' | '1m' | '3m' | 'rsi'
+  var fvHeatMetric = '1d';     // [V33.719] '1d'(=정규장) | 'ext'(시간외) | '1w' | '1m' | '3m' | '1y' | 'vol' | 'rsi'
   var fvHeatZoomSec = null;    // 섹터 줌 상태 (섹터명 또는 null)
   var FV_METRICS = {
     /* [V33.714] 사용자 11/1 "S&P500 맵 불일치" — 주말·장후(mstate POST/PRE)엔 백엔드가 dayPct 를 ★시간외 등락★(정규장 종가 대비)으로 덮어
        맵 1D 가 AAPL +0.14% · INTC −1.3% 로 보였다(지수·탑무버는 정규장 −1.2% · −28.6%). 1D = 정규장 등락(regPct · 지수·탑무버와 같은 기준) · 시간외는 따로. */
-    '1d':  { label: '1일 수익률(정규장)',  clamp: 3,  get: function(q){ return (typeof q.regPct === 'number') ? q.regPct : ((typeof q.dayPct === 'number') ? q.dayPct : null); } },
-    // [V12.2] 장중(정규장) 등락 — 시간외(PRE/POST)엔 백엔드가 dayPct를 시간외 값으로 덮어쓰므로 보존값 regPct 사용
-    'reg': { label: '시간외 등락(정규장 종가 대비)', clamp: 3, get: function(q){ return (q.mstate === 'PRE' || q.mstate === 'POST') && typeof q.dayPct === 'number' ? q.dayPct : null; } },
+    /* [V33.719] 사용자 11/2 "정규장 버튼이 날라갔다 · 1D 이름을 정규장으로" — V33.714 가 '정규장(reg)' 버튼을 '시간외' 로 바꿔 정규장 이름이 사라졌다.
+       버튼: 정규장(키 '1d' · regPct · 지수·TOP MOVERS 와 같은 기준) · 시간외(키 'ext' · 프리 prePct · 애프터 postPct = 정규장 종가 대비). */
+    '1d':  { label: '정규장 등락(전일 종가 대비)', clamp: 3, get: function(q){ return (typeof q.regPct === 'number') ? q.regPct : ((typeof q.dayPct === 'number') ? q.dayPct : null); } },
+    'reg': { label: '정규장 등락(전일 종가 대비)', clamp: 3, get: function(q){ return (typeof q.regPct === 'number') ? q.regPct : ((typeof q.dayPct === 'number') ? q.dayPct : null); } },   // 옛 키(저장된 선택 호환)
+    'ext': { label: '시간외 등락(정규장 종가 대비)', clamp: 3, get: function(q){
+               if (q.mstate === 'PRE' && typeof q.prePct === 'number' && q.pre > 0) return q.prePct;
+               if ((q.mstate === 'POST' || q.mstate === 'POSTPOST') && typeof q.postPct === 'number' && q.post > 0) return q.postPct;
+               return null; } },
     '1w':  { label: '1주 수익률',  clamp: 6,  get: function(q){ return (typeof q.return5  === 'number') ? q.return5  : null; } },
     '1m':  { label: '1개월 수익률', clamp: 12, get: function(q){ return (typeof q.return20 === 'number') ? q.return20 : null; } },
     '3m':  { label: '3개월 수익률', clamp: 25, get: function(q){ return (typeof q.return60 === 'number') ? q.return60 : null; } },
@@ -7568,7 +7573,7 @@ window.LUX_NV = {
     b.addEventListener('click', function(){
       fvHeatMetric = b.getAttribute('data-metric') || '1d';
       fvUpdateMetricBtns();
-      if (fvHeatMetric !== '1d') fvLoadHeatExtra(false);
+      if (['1d', 'reg', 'ext'].indexOf(fvHeatMetric) < 0) fvLoadHeatExtra(false);
       renderFvHeatmap();
     });
   });
@@ -7593,7 +7598,7 @@ window.LUX_NV = {
     });
     fvUpdateMarketBtns();
     fvSyncSectorSelects();
-    if (fvHeatMetric !== '1d') fvLoadHeatExtra(false);
+    if (['1d', 'reg', 'ext'].indexOf(fvHeatMetric) < 0) fvLoadHeatExtra(false);
     renderFvHeatmap();
   }
   document.querySelectorAll('.fv-mkt').forEach(function(b){
@@ -21514,12 +21519,12 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.718">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.718">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.718">
-<link rel="stylesheet" href="/model-evidence.css?v=33.718">
+<link rel="stylesheet" href="/brain-console.css?v=33.719">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.719">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.719">
+<link rel="stylesheet" href="/model-evidence.css?v=33.719">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.718">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.719">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -21546,7 +21551,7 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
   setTimeout(reveal, 9500);
 })();
 </script>
-<script src="/model-evidence.js?v=33.718"></script>
-<script src="/workspace-ui.js?v=33.718"></script>
+<script src="/model-evidence.js?v=33.719"></script>
+<script src="/workspace-ui.js?v=33.719"></script>
 </body>
 </html>

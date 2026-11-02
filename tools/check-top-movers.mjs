@@ -185,5 +185,13 @@ console.log("\n⑦ ts 없는 시세");
     "★ts 없는 시세를 통째로 버린다★");
 }
 
+// [V33.719] S&P 500 MAP — 정규장 · 시간외 버튼이 두 판(대시보드·맵 화면)에 모두 있어야 한다(V33.714 에서 정규장 이름이 사라졌다 · 사용자 11/2)
+{
+  const nb = (m, lab) => (H.match(new RegExp('data-metric="' + m + '"[^>]*>' + lab + '</button>', "g")) || []).length;
+  chk(nb("1d", "정규장") === 2 && nb("ext", "시간외") === 2, "S&P 맵 기준 버튼 정규장·시간외가 두 판 모두에 있다", "★S&P 맵 정규장·시간외 버튼이 빠졌다★");
+  chk(/'1d':  \{ label: '정규장 등락[^']*', clamp: 3, get: function\(q\)\{ return \(typeof q\.regPct === 'number'\)/.test(H) && /'ext': \{ label: '시간외 등락/.test(H),
+      "맵 기준 정의: 정규장=regPct · 시간외=프리·애프터", "★맵 기준 정의가 바뀌었다★");
+}
+
 console.log(fails === 0 ? "\n✓ TOP MOVERS 시장 균형 검사 통과" : "\n✗ " + fails + "건 실패");
 process.exit(fails ? 1 : 0);
