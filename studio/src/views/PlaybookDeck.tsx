@@ -239,7 +239,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
           {SL && <div style={{ ...card, padding: "12px 16px", display: "flex", flexWrap: "wrap", gap: 18, alignItems: "center", fontSize: 13 }}>
             <span style={{ color: DIM }}>현재 국면 전략</span>
             <b style={{ color: INK, fontWeight: 500 }}>{SL.cur ? SL.cur.famKo + " · " + SL.cur.profKo : "미운용"}</b>
-            <span style={{ color: SL.live ? POS : SLtr ? HL : MUTE }}>{SL.live ? "실전 투입 중" : SLtr ? "시험 투입 중(비중 50%) — 검증 ≥ +5% · 표본 외 수익" : "관찰 — 현재 국면이 검증·표본 외 모두 수익은 아님"}</span>
+            <span style={{ color: SL.live ? POS : SLtr ? HL : MUTE }}>{SL.live ? "실전 투입 중" : SLtr ? "시험 투입 중(비중 50%) — 검증 ≥ +5% · 표본 외 수익" : "관찰 — 투입 기준(검증 ≥ +5% · 표본 외 수익 · 20건 이상) 미달"}</span>
             <span style={{ color: MUTE, fontFamily: MONO, fontSize: 12 }}>편입 후보 {(SL.syms || []).join(" · ") || "—"}</span>
           </div>}
           {RGt && <div style={{ ...card, padding: "10px 14px", display: "flex", flexWrap: "wrap", gap: 14, alignItems: "center", fontSize: 12 }}>
