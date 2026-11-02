@@ -6769,3 +6769,12 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
 - 예약(trig_011xAjoA4b6dJwfmGLYZ7AET)이 옛 OMNI(분봉 머리) 전진평가·실적·뉴스 칸을 modal-deploy 로 재라고 했다.
 - 옛 OMNI 는 퇴역(V33.6xx · 화면 '퇴역' 표기 · 섀도우 크론도 COMMITTEE_RETIRED 로 멈춤) — 지금 실전은 OMNI-Q(GHA 무료 · 회차마다 관문 ①②③ 재측정).
 - 사용자 10/31 "퇴역 시스템 자원 낭비 전부 수정" 에 따라 실행하지 않고 예약을 비활성화(삭제 아님 · 되살리려면 enabled=true).
+
+## 11/2 05:xxZ — secrev 실험판 결과(미채택) · V33.719 맵 정규장 버튼 · V33.720 언어 설정
+- secrev(회차 41382382029 · 업로드 안 함): 약세장 업종 안 20일 상위 20% 제외(대상 칸 59,803). 한국 검증 1등 t 1.65(정상 1.80) · 기본(5일 상위 20%) 검증 2.35%(정상 3.48%) ·
+  판정(보고만) 실제 거래당 3.11%(정상 3.69%). 사전 등록 기준(검증 구간이 나을 때만) 미달 → ★미채택★. 실험판 코드는 남김(재실험용 · 실전 영향 없음).
+- V33.719: S&P 500 맵 '1D' 버튼 이름 → '정규장'(regPct · 지수·TOP MOVERS 와 같은 기준) · '시간외' 는 프리·애프터(prePct/postPct). check-top-movers 에 버튼·정의 계약.
+- V33.720: 언어 설정 — 사이드바 '🌐 English' 버튼(localStorage lux-lang) · public/i18n.js(텍스트 노드·title·placeholder·aria-label 치환 · MutationObserver)
+  · 사전 public/i18n-en.json = node tools/i18n/build.mjs(tools/i18n/en_*.tsv 틀 1,213 · glossary.tsv 용어 223). 한국어 기본은 사전도 안 받음.
+  · 라이브 수집(Playwright)으로 보이는 문구 틀 2,600 → 고정 문구 번역 · 남는 것: 한국 종목명(고유명사 · 의도), 160자 넘는 자동 생성 글(월간 리포트 — 섞임 방지로 원문).
+  · 새 화면 문구를 넣으면 tools/i18n/en_*.tsv 에 한 줄 추가 → build → check-i18n 게이트.
