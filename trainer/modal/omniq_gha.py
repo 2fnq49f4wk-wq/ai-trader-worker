@@ -61,7 +61,11 @@ except Exception as e:  # noqa: BLE001
 AB = bool(os.environ.get("PB_VARIANT"))
 if AB:
     print("   · A/B 실험판(%s) — OMNI-Q·페어·매매법AI 업로드 안 함" % os.environ.get("PB_VARIANT"))
-omni_q.run(daily, mkt, omni.day_key_of_daily, BASE=BASE, HDR=HDR, upload=not AB, log=print, cache=cache, mode=MODE)
+# [V33.715] 일봉이 22년으로 늘었다(사용자 11/1 "20년 데이터로 학습") — 매매법 시뮬·국면 전략은 22년 전부, OMNI-Q 는 종전처럼 최근 OMNIQ_MAX_BARS(≈12년)만
+#   (OMNI-Q 는 받은 봉 전부로 학습한다 — 22년이면 학습 시간이 두 배라 GHA 120분을 넘을 수 있다 · 모델 성질도 종전과 같게).
+OMNIQ_MAX_BARS = int(os.environ.get("OMNIQ_MAX_BARS", "3100"))
+daily_omq = {s_: ({k_: (v_[-OMNIQ_MAX_BARS:] if isinstance(v_, list) else v_) for k_, v_ in bd.items()} if isinstance(bd, dict) else bd) for s_, bd in daily.items()}
+omni_q.run(daily_omq, mkt, omni.day_key_of_daily, BASE=BASE, HDR=HDR, upload=not AB, log=print, cache=cache, mode=MODE)
 # [V33.594] 페어(PR_OU) — 같은 일봉으로 전 종목 공적분 페어 + 표본 밖 걷기 검증(워커 CPU 0). 실패해도 OMNI-Q 는 살린다.
 try:
     if AB:

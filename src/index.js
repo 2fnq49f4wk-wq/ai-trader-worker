@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.714";
+const _BUILD_VER = "V33.715";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -11198,7 +11198,8 @@ const OMNIBARS = {
      시간초과, 봉 간격 검사("구멍")에 2만 건. 야후 chart 는 range=max 에서 간격을 굵게(월·분기) 줄 수
      있다 — 요청은 1d 인데 오는 건 1d 가 아니다. 기간을 period1/period2 로 못 박으면 요청한 간격이 온다.
      그리고 ★받은 것을 믿지 않는다★: 간격 중앙값이 해상도와 안 맞으면 저장하지 않는다(_obSpacingOk). */
-  usDailyYears: 12,
+  usDailyYears: 22,   // [V33.715] 12 → 22년 — 사용자 11/1 "20년 데이터로 학습" · 2008·2011·2015·2020 하락·폭락장 표본(야후 AAPL 2004-11~ 확인)
+  krDailyYears: 22,   // [V33.715] 한국도 22년(네이버 일봉 005930 2004-01~ 확인 · 액면분할 반영값)
   /* 저장 판 — 올리면 그 해상도의 옛 파일을 ★합치지 않고★ 새로 받아 덮는다(굵은 봉이 섞여 남지 않게).
      1d 를 2 로 올린 이유가 위의 range=max 다. */
   ver: { "5m": 1, "1d": 2 },
@@ -11398,7 +11399,7 @@ async function _obFetch(sym, res) {
     const now = new Date();
     const ymd = function (d) { return d.getUTCFullYear() + String(d.getUTCMonth() + 1).padStart(2, "0") + String(d.getUTCDate()).padStart(2, "0"); };
     const from = new Date(now);
-    if (res === "1d") from.setUTCFullYear(from.getUTCFullYear() - 12); else from.setUTCDate(from.getUTCDate() - 60);
+    if (res === "1d") from.setUTCFullYear(from.getUTCFullYear() - OMNIBARS.krDailyYears); else from.setUTCDate(from.getUTCDate() - 60);
     /* 분봉은 네이버가 ★기간을 얼마나 주는지 확인하지 못했다★(이 세션은 외부 호출이 막혀 있다).
        그래서 기간을 넓게 요청하고, 오는 만큼 합친다 — 짧게 와도 매일 쌓이면 깊어진다. */
     const ep = res === "1d" ? "day" : "minute";
