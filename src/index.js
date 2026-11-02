@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.721";
+const _BUILD_VER = "V33.722";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -7591,6 +7591,19 @@ async function log(DB, level, symbol, message) {
       for (const [k, v] of _logSeen) if ((now - v.first) >= LOG_DEDUP_MS) _logSeen.delete(k);
     }
   } catch (e) { console.error("log fail:", e.message); }
+}
+
+/* [V33.722] ★반복 안내 로그는 종류별로 30분에 1번만 D1 에 쓴다★ — 사용자 11/2 "로그 D1 낭비면 줄여라".
+   실측(11/2 · 27분 로그 1,200행): 'BUY 실적 관문 차단'(종목마다 · 421행) · '[V64 CTX] 사이즈 배수'(≈350행) 가 쓰기의 ~85%.
+   화면은 이 줄들을 읽지 않는다(판단은 메모리에서 이미 끝났다). 묶음(_logSeen)도 반복마다 UPDATE 쓰기 1회라 줄지 않았다 → 여기서 막는다. */
+const _logThrottle = new Map();
+async function logEvery(DB, level, key, symbol, message, ms) {
+  const now = Date.now(), t = _logThrottle.get(key);
+  if (t && now - t.ts < (ms || 1800000)) { t.n++; return; }
+  const extra = t && t.n ? " (지난 " + Math.round((now - t.ts) / 60000) + "분 같은 종류 " + t.n + "건 더 · 기록 생략)" : "";
+  _logThrottle.set(key, { ts: now, n: 0 });
+  if (_logThrottle.size > 300) { for (const [k, v] of _logThrottle) if (now - v.ts > 3600000) _logThrottle.delete(k); }
+  await log(DB, level, symbol, message + extra);
 }
 
 // === 지표 함수들 ===
@@ -20914,7 +20927,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
 
   // [V33.459] 실적 관문 — 이 시장에서 이 진입 주체·전략이 원장상 지고 있으면 막거나(7일) 반 크기로 시험한다
   const _pg = (typeof perfGateCheck === "function") ? await perfGateCheck(DB, market, signal, strategy) : { ok: true, mult: 1 };
-  if (!_pg.ok) { await log(DB, "INFO", symbol, "BUY 실적 관문 차단 [" + _pg.key + "] " + (_pg.why || "")); return cash; }
+  if (!_pg.ok) { await logEvery(DB, "INFO", "pg:" + _pg.key, symbol, "BUY 실적 관문 차단 [" + _pg.key + "] " + (_pg.why || "")); return cash; }
   /* [V33.506] ★레버리지·인버스 ETF 에 AI·단타 진입 금지★ — 원장(한국): 레버리지/인버스 9건 PF 0.47 · −210만 원(한국 손실의 39%) —
      252670(인버스2X) AI 진입 하나가 −19.6% · −287만. 위원회는 개별주 피처로 학습했고, 손절(5%)·수량 산정은 1배 변동을 가정한다
      (2배 상품의 밤사이 갭이 손절을 뛰어넘는다). 스냅은 이미 제외 · 규칙 추세는 ADX 로 축소 중 · 꼬리위험 헤지(hedge)는 그대로. */
@@ -23733,7 +23746,7 @@ async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash)
   if (qty <= 0) return cash;
   // [V33.459] 실적 관문 — 원장 태그 [RULE][CM-SWING] 과 같은 열쇠(cm:RULE:CM-SWING)
   const _pgC = (typeof perfGateCheck === "function") ? await perfGateCheck(DB, "cm", null, "cm-swing") : { ok: true, mult: 1 };
-  if (!_pgC.ok) { await log(DB, "INFO", symbol, "[CM] BUY 실적 관문 차단 [" + _pgC.key + "] " + (_pgC.why || "")); return cash; }
+  if (!_pgC.ok) { await logEvery(DB, "INFO", "pgc:" + _pgC.key, symbol, "[CM] BUY 실적 관문 차단 [" + _pgC.key + "] " + (_pgC.why || "")); return cash; }
   if (_pgC.mult < 1) { qty = Math.floor(qty * _pgC.mult); if (qty <= 0) return cash; }
 
   const feeRate = cfg.feeUS || 0.0001;
@@ -24220,7 +24233,7 @@ async function executeBuyAlt(DB, sleeve, symbol, qty, price, signal, dailyAtr, c
   qty = Math.floor(qty); if (qty <= 0) return cash;
   // [V33.459] 실적 관문 — 원장 태그 [RULE][<라벨>-SWING] 과 같은 열쇠
   const _pgA = (typeof perfGateCheck === "function") ? await perfGateCheck(DB, mk, null, sleeve.label + "-swing") : { ok: true, mult: 1 };
-  if (!_pgA.ok) { await log(DB, "INFO", symbol, "[" + sleeve.label + "] BUY 실적 관문 차단 [" + _pgA.key + "] " + (_pgA.why || "")); return cash; }
+  if (!_pgA.ok) { await logEvery(DB, "INFO", "pga:" + _pgA.key, symbol, "[" + sleeve.label + "] BUY 실적 관문 차단 [" + _pgA.key + "] " + (_pgA.why || "")); return cash; }
   if (_pgA.mult < 1) { qty = Math.floor(qty * _pgA.mult); if (qty <= 0) return cash; }
   const feeRate = sleeve.isKRW ? (cfg.feeKR || 0) : (cfg.feeUS || 0.0001);
   const unitCost = price * (1 + feeRate + _slipRate(mk, Date.now()));   // [V33.92]
@@ -27284,7 +27297,7 @@ async function runTradingCycle(env) {
             const _ctxStr = ctxWhy.length ? (" [" + ctxWhy.join(" ") + "]") : "";
             if (ctxScore <= -4) {
               incBlock("CTX_NEG");
-              await log(DB, "INFO", symbol, "[V64 CTX] 진입 차단 score=" + ctxScore + _ctxStr);
+              await logEvery(DB, "INFO", "ctx:block", symbol, "[V64 CTX] 진입 차단 score=" + ctxScore + _ctxStr);
               continue;
             }
             const _ctxMult = ctxScore >= 3 ? 1.25 : ctxScore >= 1 ? 1.1 : ctxScore <= -1 ? 0.7 : 1.0;
@@ -27292,7 +27305,7 @@ async function runTradingCycle(env) {
             for (const _sr of stratResults) {
               if (_sr.strategy === "scalp" && ctxScore < 0 && !_regimeScalp(_sr.signal)) {   // [V33.582] 패닉 인버스는 역풍이 아니라 순풍이다
                 incBlock("CTX_SCALP_NEG");
-                await log(DB, "INFO", symbol, "[V64 CTX] scalp 차단 score=" + ctxScore + _ctxStr);
+                await logEvery(DB, "INFO", "ctx:scalp", symbol, "[V64 CTX] scalp 차단 score=" + ctxScore + _ctxStr);
                 continue;
               }
               if (_sr.signal) {
@@ -27304,7 +27317,7 @@ async function runTradingCycle(env) {
             stratResults = _kept;
             if (stratResults.length === 0) continue;
             if (_ctxMult !== 1.0) {
-              await log(DB, "INFO", symbol, "[V64 CTX] score=" + ctxScore + " → 사이즈 ×" + _ctxMult + _ctxStr);
+              await logEvery(DB, "INFO", "ctx:size", symbol, "[V64 CTX] score=" + ctxScore + " → 사이즈 ×" + _ctxMult + _ctxStr);
             }
           }
           signalCount += stratResults.length;   // [통계] 발생 매수신호 누적
@@ -34132,6 +34145,15 @@ async function handleRequest(request, env, ctx, _inner) {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const result = await dedupePhantomTrades(env.DB, cfg);
       return Response.json(result, { headers: cors });
+    }
+    if (path === "/api/logs" && url.searchParams.get("warn") === "1") {
+      /* [V33.722] 설정창 '경고·오류 로그' — 누를 때만 · 최근 3,000행 범위(기본키 범위라 그 이상 안 읽는다)에서 INFO 를 뺀 150행 · 60초 캐시 */
+      const __wc = globalThis.__logsWarnCache;
+      if (__wc && (Date.now() - __wc.ts) < 60000) return new Response(__wc.str, { headers: Object.assign({ "content-type": "application/json" }, cors) });
+      const res = await env.DB.prepare("SELECT id, ts, level, symbol, message FROM logs WHERE id > (SELECT MAX(id) FROM logs) - 3000 AND level <> 'INFO' ORDER BY id DESC LIMIT 150").all();
+      const __str = JSON.stringify(res.results || []);
+      globalThis.__logsWarnCache = { ts: Date.now(), str: __str };
+      return new Response(__str, { headers: Object.assign({ "content-type": "application/json" }, cors) });
     }
     if (path === "/api/logs") {
       const limit = parseInt(url.searchParams.get("limit") || "200", 10);

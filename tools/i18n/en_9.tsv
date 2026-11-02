@@ -1,0 +1,9 @@
+⚙ 설정	⚙ Settings
+↻ 새 버전	↻ Update
+📄 이용 안내	📄 Terms
+⚠️ 경고·오류 로그	⚠️ Warnings · Errors
+불러오기	Load
+전체 로그 대신 경고·오류만 보여 줍니다(자동 갱신 없음)	Shows warnings and errors only, not the full log (no auto-refresh)
+최근 경고·오류가 없습니다	No recent warnings or errors
+최근 {n}건 · {n}:{n}:{n} 기준(최근 로그 {n}행 범위)	{n} recent · as of {n}:{n}:{n} (last {n} log rows)
+불러오지 못했습니다	Failed to load

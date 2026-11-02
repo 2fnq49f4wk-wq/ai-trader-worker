@@ -201,10 +201,10 @@ if (document.fonts && document.fonts.ready) {
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.721">
-<script src="/i18n.js?v=33.721" defer></script>
-<script src="/mine.js?v=33.721" defer></script>
-<script src="/neural-observatory.js?v=33.721" defer></script>
+<meta name="lux-build" content="V33.722">
+<script src="/i18n.js?v=33.722" defer></script>
+<script src="/mine.js?v=33.722" defer></script>
+<script src="/neural-observatory.js?v=33.722" defer></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4049,6 +4049,17 @@ html:not([data-theme="light"]) body::before, body::after { animation: none !impo
 .macro-next-card .dday.soon, #page-macro .macro-table .dd.today,
 #page-nnviz .nnv-title .dot, #page-nnviz.active .nnv-title .dot, #page-nnviz.active .nlv-tagline::before, #page-nnviz .nnv-healthbar:not(.has-error) .nnv-health-title i { animation-iteration-count: 3 !important; }
 </style>
+<style id="sb-compact">
+/* [V33.722] 사이드바 비율 — 아래 버튼 2열 격자 · 메뉴 줄 높이 조금 줄임 · 넘치면 사이드바 안에서 스크롤 */
+nav.sidebar .sb-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:0 0 6px;}
+nav.sidebar .sb-grid .sb-btn{min-width:0;padding:7px 4px !important;font-size:10.5px !important;letter-spacing:.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+nav.sidebar .sb-theme-btn{padding:7px 6px;}
+nav.sidebar .nav-item{padding-top:10px;padding-bottom:10px;}
+nav.sidebar{overflow-y:auto;scrollbar-width:none;}
+nav.sidebar::-webkit-scrollbar{display:none;}
+#setWarnLogs .wl-row{display:flex;gap:8px;padding:5px 0;border-top:1px solid rgba(120,140,170,.14);font-size:11.5px;line-height:1.45}
+#setWarnLogs .wl-row:first-child{border-top:0}#setWarnLogs .wl-t{white-space:nowrap;color:var(--t2,#8ea0ba)}#setWarnLogs .wl-l{font-weight:700;white-space:nowrap}
+</style>
 </head>
 <body>
 
@@ -4254,33 +4265,18 @@ window.LUX_NV = {
         <button type="button" class="sb-btn btn refresh" id="btnRefreshUS">US</button>
         <button type="button" class="sb-btn btn refresh" id="btnRefreshKR">KR</button>
       </div>
-      <div class="sb-btn-row">
-        <button type="button" class="sb-btn btn logs" id="btnLogs" style="flex:1;">LOG</button>
-        <button type="button" class="sb-btn btn macro" id="btnHeatmap" style="flex:1;">MAP</button>
-      </div>
-      <div class="sb-btn-row">
-        <button type="button" class="sb-btn btn" id="btnSettings" style="flex:1;">⚙ SETTINGS</button>
-      </div>
-      <!-- [V33.157] 홈 화면에 추가해 앱으로 열면 주소창의 새로고침(↻)이 없다.
-           웹에서도 눌러서 손해 볼 것이 없으므로 조건 없이 둔다 — 앱에서만 보이는
-           버튼은 "웹에서 되던 게 앱에서 안 된다" 의 반대 문제를 만든다. -->
-      <div class="sb-btn-row">
-        <button type="button" class="sb-btn btn" id="btnUpdate" style="flex:1;" title="서버의 최신 판과 비교해 다르면 캐시를 비우고 새로 받습니다">↻ 새 버전 확인</button>
-      </div>
-      <div class="sb-btn-row">
-        <button type="button" class="sb-btn btn" id="btnInstall" style="flex:1;" title="홈 화면에 앱으로 설치(주소창 없이 앱처럼 열림)">📲 앱 설치</button>
-      </div>
-      <div class="sb-btn-row">
-        <button type="button" class="sb-btn btn" id="btnPush" style="flex:1;display:none;" title="매수·매도 체결을 앱이 닫혀 있어도 알림으로 받습니다(웹 푸시)">🔕 체결 알림 받기</button>
-      </div>
-      <div class="sb-btn-row">
-        <button type="button" class="sb-btn btn" id="btnBio" style="flex:1;display:none;" onclick="window.__luxBio && window.__luxBio()" title="앱을 열 때 지문·얼굴로 확인(앱에서만)">🔓 생체 잠금</button>
-      </div>
-      <div class="sb-btn-row">
-        <a class="sb-btn btn" href="/privacy" style="flex:1;text-align:center;text-decoration:none;" title="개인정보처리방침 · 이용 안내(모의투자)">📄 개인정보·이용 안내</a>
-      </div>
-      <div class="sb-btn-row">
-        <button type="button" class="sb-btn btn" id="btnLang" data-noi18n style="flex:1;" title="Language / 언어">🌐 English</button>
+      <!-- [V33.722] 사용자 11/2 "사이드바 비율 조절 · 로그는 설정창 안으로" — 한 줄씩 9개가 쌓여 900px 화면에서 아래가 잘렸다 → 2열 격자.
+           LOG 버튼은 설정창의 '경고·오류 로그' 로 옮겼다(요소는 숨겨 남긴다 — 기존 스크립트가 이 id 에 이벤트를 단다). -->
+      <button type="button" class="sb-btn btn logs" id="btnLogs" style="display:none;">LOG</button>
+      <div class="sb-grid">
+        <button type="button" class="sb-btn btn macro" id="btnHeatmap">MAP</button>
+        <button type="button" class="sb-btn btn" id="btnSettings">⚙ 설정</button>
+        <button type="button" class="sb-btn btn" id="btnUpdate" title="서버의 최신 판과 비교해 다르면 캐시를 비우고 새로 받습니다">↻ 새 버전</button>
+        <button type="button" class="sb-btn btn" id="btnInstall" title="홈 화면에 앱으로 설치(주소창 없이 앱처럼 열림)">📲 앱 설치</button>
+        <button type="button" class="sb-btn btn" id="btnPush" style="display:none;" title="매수·매도 체결을 앱이 닫혀 있어도 알림으로 받습니다(웹 푸시)">🔕 체결 알림 받기</button>
+        <button type="button" class="sb-btn btn" id="btnBio" style="display:none;" onclick="window.__luxBio && window.__luxBio()" title="앱을 열 때 지문·얼굴로 확인(앱에서만)">🔓 생체 잠금</button>
+        <a class="sb-btn btn" href="/privacy" style="text-align:center;text-decoration:none;" title="개인정보처리방침 · 이용 안내(모의투자)">📄 이용 안내</a>
+        <button type="button" class="sb-btn btn" id="btnLang" data-noi18n title="Language / 언어">🌐 English</button>
       </div>
       <button type="button" class="sb-theme-btn" id="btnTheme">🌙 DARK</button>
     </div>
@@ -5452,6 +5448,14 @@ window.LUX_NV = {
       <span class="verse">Im stillen Liebestraum verglüht die blaue Nacht — für die Wintertulpen zur glühenden Morgenröte.</span>
     </div>
     <h2>SETTINGS</h2>
+
+    <!-- [V33.722] 경고·오류 로그 — 사용자 11/2 "로그는 설정창 안으로 · D1 낭비면 경고만". 누를 때만 읽는다(최근 3,000행 범위의 경고·오류 150건 · 60초 캐시). -->
+    <div class="section-title" style="margin-top:4px;">⚠️ 경고·오류 로그</div>
+    <div style="display:flex;gap:8px;align-items:center;margin:4px 0 6px;">
+      <button type="button" class="btn" id="btnWarnLogs" onclick="window.__luxWarnLogs && window.__luxWarnLogs()">불러오기</button>
+      <span class="sub" id="setWarnLogsSub" style="font-size:11px;">전체 로그 대신 경고·오류만 보여 줍니다(자동 갱신 없음)</span>
+    </div>
+    <div id="setWarnLogs" style="max-height:260px;overflow:auto;margin-bottom:10px;"></div>
 
     <!-- [V10.5] AI DAILY DIRECTIVE — 설정창 통합 -->
     <div class="section-title" style="margin-top:4px;">AI DAILY DIRECTIVE</div>
@@ -18431,7 +18435,6 @@ html:root .page > *{ flex-shrink:0; }
       +'</div></div>'
       // [V33.3] RUN NOW·US·KR 제거 — 서버 cron이 전부 자동 실행하므로 수동 트리거를 두지 않는다.
       +'<div class="m-dr-sec"><div class="m-dr-sec-h">실행</div><div class="m-dr-act">'
-        +'<button type="button" data-proxy="btnLogs">LOG</button>'
         +'<button type="button" data-proxy="btnHeatmap">MAP</button>'
         +'<button type="button" data-proxy="btnSettings">⚙ 설정</button>'
         +'<button type="button" data-proxy="btnUpdate">↻ 새 버전</button>'
@@ -20400,7 +20403,7 @@ html:root .page > *{ flex-shrink:0; }
     var feed = $id('nlvFeed');
     if(feed && !FEED.booted) feed.innerHTML = '<div class="nlv-empty">엔진 로그를 불러오는 중…</div>';
     pollFeed();
-    FEED.timer = setInterval(pollFeed, 8000);   // 엔진 cron이 1분 주기라 8초면 충분히 실시간
+    FEED.timer = setInterval(pollFeed, 20000);   // [V33.722] 8초 → 20초 — 엔진 cron 이 1분 주기라 20초면 충분(로그 읽기 D1 2.5배 줄임)
   }
   function stopFeed(){ if(FEED.timer){ clearInterval(FEED.timer); FEED.timer = null; } }
 
@@ -21531,12 +21534,12 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.721">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.721">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.721">
-<link rel="stylesheet" href="/model-evidence.css?v=33.721">
+<link rel="stylesheet" href="/brain-console.css?v=33.722">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.722">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.722">
+<link rel="stylesheet" href="/model-evidence.css?v=33.722">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.721">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.722">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -21563,7 +21566,23 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
   setTimeout(reveal, 9500);
 })();
 </script>
-<script src="/model-evidence.js?v=33.721"></script>
-<script src="/workspace-ui.js?v=33.721"></script>
+<script src="/model-evidence.js?v=33.722"></script>
+<script src="/workspace-ui.js?v=33.722"></script>
+<script>
+/* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
+window.__luxWarnLogs = function () {
+  var box = document.getElementById('setWarnLogs'), sub = document.getElementById('setWarnLogsSub');
+  if (!box) return; box.textContent = '불러오는 중…';
+  fetch('/api/logs?warn=1').then(function (r) { return r.json(); }).then(function (rows) {
+    rows = Array.isArray(rows) ? rows : [];
+    var esc = function (t) { return String(t == null ? '' : t).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); };
+    box.innerHTML = rows.length ? rows.map(function (l) {
+      var c = l.level === 'ERROR' ? '#F0524B' : '#E5B84B';
+      return '<div class="wl-row"><span class="wl-t">' + new Date(l.ts).toLocaleString() + '</span><span class="wl-l" style="color:' + c + '">' + esc(l.level) + '</span><span>' + (l.symbol ? '<b>' + esc(l.symbol) + '</b> ' : '') + esc(l.message) + '</span></div>';
+    }).join('') : '<div class="sub">최근 경고·오류가 없습니다</div>';
+    if (sub) sub.textContent = '최근 ' + rows.length + '건 · ' + new Date().toLocaleTimeString() + ' 기준(최근 로그 3,000행 범위)';
+  })['catch'](function () { box.textContent = '불러오지 못했습니다'; });
+};
+</script>
 </body>
 </html>
