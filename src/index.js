@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.717";
+const _BUILD_VER = "V33.718";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -11490,7 +11490,8 @@ async function omniBarsCollect(DB, opts) {
       //   마지막 봉의 ★종가·거래량까지★ 같아야 건너뛴다 — 장중에 받은 미완성 봉이 장 마감 뒤 확정값으로 바뀌는 경우는 다시 쓴다.
       const _fi = fresh.t.length - 1, _fLast = _num(fresh.t[_fi], 0);
       if (curVer && meta && _num(meta.last, 0) > 0 && _fLast > 0 && _fLast <= _num(meta.last, 0)
-          && meta.lc != null && fresh.c[_fi] === meta.lc && fresh.v[_fi] === meta.lv) {
+          && meta.lc != null && fresh.c[_fi] === meta.lc && fresh.v[_fi] === meta.lv
+          && !(_num(meta.first, 0) > 0 && _num(fresh.t[0], 0) > 0 && _num(fresh.t[0], 0) < _num(meta.first, 0) - 86400 * 30)) {   // [V33.718] 앞쪽 이력이 더 깊게 오면(12→22년) 건너뛰지 않는다 — 11/1(일) 22년 전환 때 미국이 새 봉 없음으로 버려졌다
         ent[res] = Object.assign({}, meta, { upd: nowMs }); noNew++; continue;
       }
       /* [V33.427] 색인이 아니라 ★파일★ 에 묻는다 — 색인이 그 종목을 잊었어도 쌓은 봉은 남긴다. */
