@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 WIN, STEP, NMIN, TH = 750, 63, 20, 3.0
-CELL_REGS = ("SURGE", "BEAR")   # [V33.696] 이 국면은 중기 방향(M: 상승·보합·하락)으로 나눠 따로 고른다 — 하락장 속 반등 폭등 ≠ 상승장 속 폭등
+CELL_REGS = ("SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH")   # [V33.736] 국면 세분화(사용자 11/2) — 5개 국면 전부를 중기 방향(상승·보합·하락)으로 나눠 15칸에서 따로 고른다(칸 표본 < 20 이면 국면 전체로)
 SCORE = "lcb"   # [V33.696] 고르기 점수 = 평균 − 표준오차(표본 적은 우연을 덜 탄다)
 CRASH_EXIT = False   # 국면 깨짐 청산 — 실험실 A/B(검증 구간만 비교)에서 우열 없음 → 단순한 쪽(끔). 켜면 워커도 cfg.crashExit 로 따른다
 CAP_DAY = 6
@@ -24,7 +24,9 @@ REG5 = ("SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH")
 REG_KO = {"SURGE": "폭등", "BULL": "상승", "NEUTRAL": "보합", "BEAR": "하락", "CRASH": "폭락"}
 PROFS = {"h10": dict(stop=8, atr=3, hold=10, tpR=None, be=0), "h20": dict(stop=10, atr=3, hold=20, tpR=None, be=0),
          "h40": dict(stop=12, atr=4, hold=40, tpR=None, be=0), "h60": dict(stop=12, atr=4, hold=60, tpR=None, be=0),
-         "r60": dict(stop=12, atr=4, hold=60, trail=20, trailAct=10, tpR=None, be=0), "h60w": dict(stop=20, atr=6, hold=60, tpR=None, be=0)}
+         "r60": dict(stop=12, atr=4, hold=60, trail=20, trailAct=10, tpR=None, be=0), "h60w": dict(stop=20, atr=6, hold=60, tpR=None, be=0),
+         # [V33.736] ★단타★(사용자 11/2 "국면 전략에 단타도") — 2·3·5일 보유 · 좁은 손절. 같은 고르기·같은 관문(거래당 +5%)을 통과해야만 쓰인다
+         "d2": dict(stop=4, atr=2, hold=2, tpR=None, be=0), "d3": dict(stop=5, atr=2, hold=3, tpR=None, be=0), "d5": dict(stop=6, atr=2.5, hold=5, tpR=None, be=0)}
 ETFS = {"kr": {"lev": "122630.KS", "idx": "069500.KS", "inv": "114800.KS", "inv2": "252670.KS"},
         "us": {"lev": "TQQQ", "idx": "SPY", "inv": "SH", "inv2": "SQQQ"}}
 FAM_KO = {"rs60t5": "60일 상대강도 상위 5% · 20일선 위", "rs120t5": "120일 상대강도 상위 5% · 50일선 위", "rs20t5": "20일 상대강도 상위 5%",
@@ -32,12 +34,14 @@ FAM_KO = {"rs60t5": "60일 상대강도 상위 5% · 20일선 위", "rs120t5": "
           "lead_fall10": "120일 주도주(상위 20%) 10일 −10% 급락", "lead_fall10_up": "주도주 10일 −10% 급락 뒤 첫 양봉",
           "mega_rs": "대형주(거래대금 상위 10%) 중 60일 강세", "mega_fall": "대형주 10일 −8% 급락", "mega_fall_up": "대형주 급락 뒤 첫 양봉",
           "newhi250": "52주 신고가 근처 · 60일 강세", "newhi60_mega": "대형주 60일 신고가", "rsi_lo_lead": "1년 주도주 RSI 과매도(200일선 위)",
-          "lowvol_lead": "저변동 주도주(120일 강세 · 50일선 위)", "above200_lo20": "200일선 위 20일 저점 근처 강세주", "crash_quality": "200일선 위 종목의 5일 −7% 뒤 첫 양봉"}
+          "lowvol_lead": "저변동 주도주(120일 강세 · 50일선 위)", "above200_lo20": "200일선 위 20일 저점 근처 강세주", "crash_quality": "200일선 위 종목의 5일 −7% 뒤 첫 양봉",
+          "gap_rev": "[단타] 3% 넘게 갭 하락 뒤 시가보다 높게 마감(50일선 위)", "os3_up": "[단타] 3일 연속 하락 · 5일 −6% 뒤 첫 양봉(200일선 위)",
+          "vol_brk20": "[단타] 거래량 2배 · 20일 고점 돌파", "st_rev": "[단타] 5일 낙폭 하위 5% 강세주(60일 상위 30%) 반등 양봉"}
 for _k, _v in {"lev": "레버리지 지수 ETF", "idx": "지수 ETF", "inv": "인버스 ETF", "inv2": "인버스 2배 ETF"}.items():
     FAM_KO["etf_" + _k] = _v
     FAM_KO["etf_" + _k + "_up1"] = _v + " · 양봉 날"
     FAM_KO["etf_" + _k + "_dn5"] = _v + " · 5일 −4% 뒤"
-PROF_KO = {"h10": "10일 보유", "h20": "20일 보유", "h40": "40일 보유", "h60": "60일 보유", "r60": "따라붙는 손절(고점 −20%) · 60일", "h60w": "넓은 손절(20%) · 60일"}
+PROF_KO = {"d2": "단타 2일(손절 4%)", "d3": "단타 3일(손절 5%)", "d5": "단타 5일(손절 6%)", "h10": "10일 보유", "h20": "20일 보유", "h40": "40일 보유", "h60": "60일 보유", "r60": "따라붙는 손절(고점 −20%) · 60일", "h60w": "넓은 손절(20%) · 60일"}
 
 
 def families(P, mk, L3, M3, S3, st):
@@ -57,13 +61,23 @@ def families(P, mk, L3, M3, S3, st):
     lo20 = Cd.rolling(20, min_periods=15).min().values
     vol20 = pd.DataFrame(np.log(C)).diff().rolling(20).std().rank(axis=1, pct=True).values
     up1 = np.vstack([np.full((1, N), False), C[1:] > C[:-1]])
+    O = P["open"].values
+    dn1 = np.vstack([np.full((1, N), False), C[1:] < C[:-1]])
+    dn3 = dn1 & np.vstack([np.full((1, N), False), dn1[:-1]]) & np.vstack([np.full((2, N), False), dn1[:-2]])
+    vma20 = Vd.rolling(20, min_periods=15).mean().shift(1).values
+    hi20p = Cd.rolling(20, min_periods=15).max().shift(1).values
+    gap = np.vstack([np.full((1, N), np.nan), O[1:] / C[:-1] - 1])
+    r5r = (Cd / Cd.shift(5) - 1).rank(axis=1, pct=True).values
     with np.errstate(invalid="ignore"):
         F = {"rs60t5": (r60r >= .95) & (C > ma20), "rs120t5": (r120r >= .95) & (C > ma50), "rs20t5": r20r >= .95, "rs250t5": (r250r >= .95) & (C > ma50),
              "rs60t10dip": (r60r >= .90) & (C < ma20) & (C > ma50), "lead_fall10": (r120r >= .8) & (r10 <= -.10), "lead_fall10_up": (r120r >= .8) & (r10 <= -.10) & up1,
              "mega_rs": (dvr >= .9) & (r60r >= .7) & (C > ma20), "mega_fall": (dvr >= .9) & (r10 <= -.08), "mega_fall_up": (dvr >= .9) & (r10 <= -.08) & up1,
              "newhi250": (C >= hi250 * .995) & (r60r >= .7), "newhi60_mega": (C >= hi60 * .995) & (dvr >= .8),
              "rsi_lo_lead": (r250r >= .8) & (rsi < 30) & (C > ma200), "lowvol_lead": (vol20 <= .3) & (r120r >= .8) & (C > ma50),
-             "above200_lo20": (C > ma200) & (C <= lo20 * 1.01) & (r120r >= .6), "crash_quality": (C > ma200) & (r5 <= -.07) & up1}
+             "above200_lo20": (C > ma200) & (C <= lo20 * 1.01) & (r120r >= .6), "crash_quality": (C > ma200) & (r5 <= -.07) & up1,
+             # [V33.736] 단타 거름
+             "gap_rev": (gap <= -.03) & (C > O) & (C > ma50), "os3_up": np.vstack([np.full((1, N), False), dn3[:-1]]) & up1 & (r5 <= -.06) & (C > ma200),
+             "vol_brk20": (V > 2 * vma20) & (C > hi20p) & (C > ma50), "st_rev": (r5r <= .05) & (r60r >= .7) & up1}
     cols = list(P["close"].columns)
     for k_, s_ in ETFS.get(mk, {}).items():
         m = np.zeros((T, N), bool)
