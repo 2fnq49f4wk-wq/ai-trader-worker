@@ -6797,3 +6797,14 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
 - 게이트 check-personal(223종). 영어 사전 en_7·en_8.
 - R2: 지금 정상(bound true · 9,509 객체). 화면의 'R2 미바인딩' 은 10/15 옛 ERROR 로그 167건(현재 아님).
 - 다음: ① 22:40Z 미국 22년 학습 확인 → 실전 자격 없는 국면 개선 실험(검증 구간으로만 · 문턱 그대로) ② MY 확장 후보: 'AI vs 나' 같은 기간 성적 비교 · 공유 카드 · 맞춤 알림(내 관심종목 신호 → 웹 푸시).
+
+## V33.722~723 (11/2 07:xxZ) — 사이드바·로그 · MY 재디자인 · 패스키 로그인 · 데이터 보존 · 도메인 조사
+- V33.722: 사이드바 아래 버튼 2열 격자(900px 화면 안) · LOG → 설정창 '경고·오류 로그'(누를 때만 · /api/logs?warn=1 · 3,000행 범위 · 60초 캐시) ·
+  반복 안내 로그(실적 관문 차단 · V64 CTX) 종류별 30분 1회(logEvery · 쓰기 ~85%↓) · AI 두뇌 판정 피드 8→20초 · check-log-read.
+- V33.723: MY 재디자인(아티팩트 'LUX MY 화면 리디자인' 시안) · [사기] 를 관심종목·검색·보유에도(후보가 비면 매수 불가였다) · 주문창 ±1주 ·
+  패스키 로그인(/api/me/passkey/options|register|login · WebAuthn ES256 · 저장 없는 HMAC 일회 도전값 5분 · rpId·출처·서명 검증 · user_passkeys 테이블) ·
+  내 데이터 삭제(DELETE /api/me) · 보존 1년(updated_ts 7일 1회 갱신 · 2% 확률 정리) · 영어 전환은 새로 고침 없이 · 번역은 보이는 화면부터 8ms 조각.
+  라이브 확인: 가상 인증기로 기기1 등록 → 기기2 로그인 → 같은 프로필 복원 → 삭제 정상. 기기별 분리 확인(A 저장 · B 읽기 null).
+- 패스키는 도메인에 묶임 — .com 으로 옮기면 그 주소에서 다시 등록해야 한다(연결 코드는 그대로 쓸 수 있음).
+- 도메인(.com · Verisign RDAP 404=미등록, 11/2 조회): luxsig.com(6) · luxvst.com(6, LUX+inVeSTment) · luxinvst.com(8) · luxinvestai.com(11) · luxengineai.com.
+  lux+1~2글자·luxinvest·luxai 등은 전부 등록됨. 구매는 사용자가 Cloudflare 대시보드 › Registrar(원가) → 그다음 Workers 사용자 지정 도메인 연결.
