@@ -19,10 +19,10 @@ on:
         default: train
         options: [auto, train, score]
       pb_variant:
-        description: '매매법 A/B 실험판(업로드 안 함) — 빈칸=정상 · no_new=문헌 전략 끈 판 · y5_off=OMNI-Q 5일 혼합 라벨 끈 판'
+        description: '매매법 A/B 실험판(업로드 안 함) — 빈칸=정상 · no_new=문헌 전략 끈 판 · y5_off=OMNI-Q 5일 혼합 라벨 끈 판 · secrev=한국 약세장 업종 안 앞서 달린 후보 빼기'
         type: choice
         default: ''
-        options: ['', no_new, y5_off]
+        options: ['', no_new, y5_off, secrev]
 concurrency: { group: omniq-gha, cancel-in-progress: false }
 jobs:
   train:

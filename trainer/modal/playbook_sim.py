@@ -1974,6 +1974,16 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         #   [V33.622] 머리(5일·20일·평균) × 폭 + 거름 없음 = 10 설정. 검증 구간 [60,80%) 에서 고른 규칙의 ★t★ 가 가장 큰(평균 > 0 · 거래 ≥ VAL_MIN_N) 설정 —
         #   평균 최대로 고르면 무작위 시세에서 판정 구간 거래 0 인 설정을 골랐다(다중 비교의 함정). 판정 구간은 고르기에 안 쓴다.
         best_q, cand_cmp, dflt = None, [], None
+        SEC_VETO = None
+        if market == "kr" and os.environ.get("PB_VARIANT") == "secrev":   # [V33.719] A/B 실험판 — 약세장 업종 안 앞서 달린 후보 빼기(업로드 안 함)
+            try:
+                import sector_kr as SK
+                _reg5, _ = _regime(P["close"])
+                SEC_VETO = SK.veto_mask(P, SK.update(list(P["close"].columns), log=log), _reg5)
+                log("   · [매매법시뮬] kr 실험판 secrev — 약세장 업종 안 20일 상위 20%% 후보 제외 · 대상 칸 %d" % int(SEC_VETO.sum()))
+            except Exception as e:  # noqa: BLE001
+                log("   ⚠️ [매매법시뮬] secrev 준비 실패 %s — 실험 없이 진행" % e)
+                SEC_VETO = None
         t_c = time.time()
         for hd_, q_ in [(h_, q2) for h_ in CAND_HEADS for q2 in CAND_QS if q2 > 0] + [("5", 0.0)]:
             if time.time() - t_c > CAND_BUDGET_S:
@@ -1982,6 +1992,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             cm_ = cand_mask(P, (oos or {}).get(market), q_, hd_)
             if cm_ is None:
                 continue
+            if SEC_VETO is not None and SEC_VETO.shape == cm_.shape:
+                cm_ = cm_ & ~SEC_VETO
             global CAND_RANK
             CAND_RANK = cand_rank(P, (oos or {}).get(market), hd_) if RANK_MODE == "omq" else None
             d_, reg_now, _ = sim_daily(P, market, ev_dates, sig=sig, cand=cm_, pbs=dpb)
