@@ -223,11 +223,11 @@ window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{
 window.__luxAct=Date.now();['pointerdown','keydown','touchstart','wheel'].forEach(function(e){addEventListener(e,function(){window.__luxAct=Date.now();},{passive:true,capture:true});});
 window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600000;};
 </script>
-<meta name="lux-build" content="V33.734">
-<script src="/i18n.js?v=33.734" defer></script>
-<script src="/mine.js?v=33.734" defer></script>
-<script src="/stock-info.js?v=33.734" defer></script>
-<script src="/neural-observatory.js?v=33.734" defer></script>
+<meta name="lux-build" content="V33.735">
+<script src="/i18n.js?v=33.735" defer></script>
+<script src="/mine.js?v=33.735" defer></script>
+<script src="/stock-info.js?v=33.735" defer></script>
+<script src="/neural-observatory.js?v=33.735" defer></script>
 <title>LUX-INV</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4083,6 +4083,125 @@ nav.sidebar{overflow-y:auto;scrollbar-width:none;}
 nav.sidebar::-webkit-scrollbar{display:none;}
 #setWarnLogs .wl-row{display:flex;gap:8px;padding:5px 0;border-top:1px solid rgba(120,140,170,.14);font-size:11.5px;line-height:1.45}
 #setWarnLogs .wl-row:first-child{border-top:0}#setWarnLogs .wl-t{white-space:nowrap;color:var(--t2,#8ea0ba)}#setWarnLogs .wl-l{font-weight:700;white-space:nowrap}
+</style>
+<script>
+/* [V33.735] 휴대폰 대시보드 PC 축소 보기 — showPage 가 화면을 바꿀 때마다 부른다 */
+window.luxDz=function(id){try{var de=document.documentElement,m=document.querySelector('meta[name="viewport"]');if(!m)return;
+ var small=Math.min(screen.width||9999,screen.height||9999)<=600&&(screen.width||9999)<=600,on=small&&id==='dashboard';
+ var off=false;try{off=localStorage.getItem('lux-dz')==='0';}catch(e){}if(off)on=false;
+ if(on){de.style.setProperty('--dzi',(1320/(screen.width||390)).toFixed(4));if(!de.classList.contains('lux-dz')){de.classList.add('lux-dz');m.setAttribute('content','width=1320, viewport-fit=cover');}}
+ else if(de.classList.contains('lux-dz')){de.classList.remove('lux-dz');m.setAttribute('content','width=device-width, initial-scale=1.0, viewport-fit=cover');}
+}catch(e){}};
+</script>
+<style id="luxDz">
+html.lux-dz .shell{flex-direction:column;height:100dvh;overflow:hidden;max-width:100vw;}
+html.lux-dz .sidebar{width:100%;flex:0 0 auto;max-height:none;
+    border-right:none;border-bottom:1px solid var(--bd);
+    overflow:visible;}
+html.lux-dz .content{flex:1 1 0%;min-height:0;}
+html.lux-dz .content-topbar{grid-template-columns:1fr 1fr;}
+html.lux-dz .sidebar{display:none!important;}
+html.lux-dz .shell{flex-direction:column;height:100dvh;overflow:hidden;padding-top:50px;padding-bottom:58px;}
+html.lux-dz .content{flex:1 1 0%;min-height:0;}
+html.lux-dz .m-appbar{display:flex;align-items:center;gap:8px;position:fixed;top:0;left:0;right:0;height:50px;z-index:120;
+    padding:0 12px;background:var(--s1);border-bottom:1px solid var(--bd);}
+html.lux-dz .m-ab-logo{width:19px;height:19px;flex:0 0 auto;}
+html.lux-dz .m-ab-logo svg{width:100%;height:100%;display:block;}
+html.lux-dz .m-ab-title{font-size:12px;font-weight:700;letter-spacing:1.4px;color:var(--t1);white-space:nowrap;}
+html.lux-dz .m-ab-sub{font-size:8.5px;color:var(--t3);letter-spacing:.6px;margin-top:1px;white-space:nowrap;}
+html.lux-dz .m-ab-mid{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;justify-content:center;}
+html.lux-dz .m-ab-pnl{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;
+    font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--t2);}
+html.lux-dz .m-ab-btn{width:34px;height:34px;flex:0 0 auto;border:1px solid var(--bd);border-radius:9px;
+    background:transparent;color:var(--t2);font-size:14px;line-height:1;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;}
+html.lux-dz .m-ab-btn:active{background:var(--s2);}
+html.lux-dz .m-tabbar{display:flex;position:fixed;left:0;right:0;bottom:0;height:58px;z-index:120;
+    background:var(--s1);border-top:1px solid var(--bd);
+    padding-bottom:env(safe-area-inset-bottom,0);}
+html.lux-dz .m-tab{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+    background:transparent;border:none;cursor:pointer;color:var(--t3);padding:0;}
+html.lux-dz .m-tab .ic{font-size:16px;line-height:1;}
+html.lux-dz .m-tab .tx{font-size:9px;letter-spacing:.2px;white-space:nowrap;}
+html.lux-dz .m-tab.active{color:var(--acc);}
+html.lux-dz .m-tab.active .ic{filter:drop-shadow(0 0 7px currentColor);}
+html.lux-dz .m-drawer-scrim{display:block;position:fixed;inset:0;z-index:130;background:rgba(0,0,0,.55);
+    opacity:0;pointer-events:none;transition:opacity .18s ease;}
+html.lux-dz .m-drawer-scrim.show{opacity:1;pointer-events:auto;}
+html.lux-dz .m-drawer{display:flex;flex-direction:column;position:fixed;z-index:131;top:0;bottom:0;right:0;width:min(84vw,320px);
+    background:var(--s1);border-left:1px solid var(--bd);
+    transform:translateX(100%);transition:transform .2s cubic-bezier(.2,.8,.2,1);
+    overflow-y:auto;}
+html.lux-dz .m-drawer.show{transform:none;}
+html.lux-dz .m-dr-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 12px;border-bottom:1px solid var(--bd);}
+html.lux-dz .m-dr-title{font-size:11px;letter-spacing:1.8px;color:var(--t3);text-transform:uppercase;font-family:'IBM Plex Mono',monospace;}
+html.lux-dz .m-dr-sec{padding:10px 12px;border-bottom:1px solid var(--bd2);}
+html.lux-dz .m-dr-sec-h{font-size:8.5px;letter-spacing:1.8px;color:var(--t3);text-transform:uppercase;
+    font-family:'IBM Plex Mono',monospace;margin:0 4px 7px;}
+html.lux-dz .m-dr-nav{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+html.lux-dz .m-dr-item{display:flex;align-items:center;gap:8px;padding:11px 10px;border:1px solid var(--bd);border-radius:10px;
+    background:transparent;color:var(--t2);font-size:11px;cursor:pointer;text-align:left;}
+html.lux-dz .m-dr-item.active{border-color:var(--acc);color:var(--acc);background:var(--s2);}
+html.lux-dz .m-dr-act{display:flex;flex-wrap:wrap;gap:6px;}
+html.lux-dz .m-dr-act button{flex:1 1 30%;min-width:0;padding:11px 6px;border:1px solid var(--bd);border-radius:10px;
+    background:transparent;color:var(--t2);font-size:10.5px;cursor:pointer;
+    font-family:'IBM Plex Mono',monospace;letter-spacing:.4px;}
+html.lux-dz .m-dr-act button.primary{background:var(--acc);color:var(--bg);border-color:transparent;font-weight:700;flex-basis:100%;}
+html.lux-dz .m-brainbar{display:grid!important;}
+html.lux-dz .m-aimode{display:block!important;}
+html.lux-dz .shell{padding-top:var(--dz-top); padding-bottom:var(--dz-bot);}
+html.lux-dz .m-appbar{height:var(--dz-top); padding-top:env(safe-area-inset-top,0px);
+    padding-left:calc(12px + var(--m-sal)); padding-right:calc(12px + var(--m-sar));}
+html.lux-dz .m-tabbar{height:var(--dz-bot); padding-bottom:env(safe-area-inset-bottom,0px);
+    padding-left:var(--m-sal); padding-right:var(--m-sar);}
+html.lux-dz .m-drawer{padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);}
+html.lux-dz .m-appbar{background:color-mix(in srgb, var(--s1) 86%, transparent);
+    -webkit-backdrop-filter:saturate(180%) blur(18px); backdrop-filter:saturate(180%) blur(18px);
+    gap:10px;}
+html.lux-dz .m-ab-title{font-size:11.5px; letter-spacing:1.2px;}
+html.lux-dz .m-ab-sub{font-size:8.5px; overflow:hidden; text-overflow:ellipsis;}
+html.lux-dz .m-ab-pnl{max-width:34vw; overflow:hidden; text-overflow:ellipsis;}
+html.lux-dz .m-ab-btn{width:38px; height:38px; border-radius:11px; font-size:15px;}
+html.lux-dz .m-tabbar{background:color-mix(in srgb, var(--s1) 86%, transparent);
+    -webkit-backdrop-filter:saturate(180%) blur(18px); backdrop-filter:saturate(180%) blur(18px);}
+html.lux-dz .m-tab{gap:2px; padding-top:5px;}
+html.lux-dz .m-tab .ic{display:flex; align-items:center; justify-content:center;
+    width:46px; height:26px; border-radius:9px; font-size:16px;
+    transition:background .16s var(--ap-ease,ease), color .16s;}
+html.lux-dz .m-tab .tx{font-size:9.5px; font-weight:600; letter-spacing:0;}
+html.lux-dz .m-tab.active .ic{background:color-mix(in srgb, var(--acc) 16%, transparent);}
+html.lux-dz .m-tab:active .ic{transform:scale(.94);}
+html.lux-dz .m-ab-sub{display:flex; align-items:center; gap:5px; font-size:8.5px;}
+html.lux-dz .m-ab-sub>b{font-weight:600;}
+html.lux-dz .m-ab-sub>span{color:var(--t3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+html.lux-dz .m-ab-dot{width:5px; height:5px; border-radius:50%; background:var(--t3); flex:0 0 auto;}
+html.lux-dz .m-ab-sub.live>b{color:var(--pos);}
+html.lux-dz .m-ab-train{margin-left:5px; padding:1px 5px; border-radius:5px; font-size:8px; font-weight:700;
+               white-space:nowrap; flex-shrink:0;}
+html.lux-dz .m-ab-train.fail{color:var(--neg); background:rgba(255,82,82,.14); border:1px solid rgba(255,82,82,.4);}
+html.lux-dz .m-ab-train.warn{color:#ffb300; background:rgba(255,179,0,.13); border:1px solid rgba(255,179,0,.34);}
+html.lux-dz .m-ab-sub.live .m-ab-dot{background:var(--pos); box-shadow:0 0 6px rgba(0,230,118,.7); animation:livePulse 2s ease-in-out infinite;}
+html.lux-dz .m-ab-sub.stale>b{color:var(--amber,#fbbf24);}
+html.lux-dz .m-ab-sub.stale .m-ab-dot{background:var(--amber,#fbbf24);}
+html.lux-dz .m-ab-sub.dead>b{color:var(--neg);}
+html.lux-dz .m-ab-sub.dead .m-ab-dot{background:var(--neg);}
+html.lux-dz .m-ab-sub.live .m-ab-dot{animation:none;}
+html.lux-dz .m-dr-item{min-height:46px; font-size:11.5px;}
+html.lux-dz .m-dr-act button{min-height:46px;}
+html.lux-dz .m-brainbar{grid-template-columns:repeat(6,1fr); gap:6px; margin:0 0 10px;}
+html.lux-dz .m-brainbar>button:nth-child(1),html.lux-dz .m-brainbar>button:nth-child(2){grid-column:span 3; min-height:42px; font-size:12px;}
+html.lux-dz .m-brainbar>button:nth-child(3),html.lux-dz .m-brainbar>button:nth-child(4){grid-column:span 2; min-height:38px; font-size:10.5px;}
+html.lux-dz .m-brainbar>button[data-tools]{grid-column:span 2; min-height:38px; font-size:10.5px;}
+    padding:9px 2px; background:transparent; border:none; cursor:pointer;
+    font-family:'IBM Plex Mono',monospace; font-size:9px; letter-spacing:1.4px;
+    text-transform:uppercase; color:var(--t3); text-align:left;}
+/* [V33.735] ★휴대폰 대시보드 = Finviz 모바일처럼 PC 배치를 통째로 축소★(사용자 11/2 스크린샷) — 휴대폰에서 대시보드를 열 때만
+   뷰포트를 PC 폭(1320px)으로 잡는다 → 미디어 쿼리가 PC 로 판정해 지수·시장폭·TOP MOVERS·맵·실적·선물·환율·지표·뉴스가 PC 처럼 한 화면에.
+   상단 바·하단 탭·메뉴는 위 규칙을 복사해 zoom(--dzi = 1320 ÷ 기기 폭)으로 원래 크기 그대로. 다른 화면으로 가면 원래 휴대폰 화면. */
+html.lux-dz{--dz-top:calc(50px + env(safe-area-inset-top,0px));--dz-bot:calc(56px + env(safe-area-inset-bottom,0px))}
+html.lux-dz .m-appbar,html.lux-dz .m-tabbar,html.lux-dz .m-drawer,html.lux-dz .m-drawer-scrim{zoom:var(--dzi,1)}
+html.lux-dz .shell{padding-top:calc(var(--dz-top) * var(--dzi,1)) !important;padding-bottom:calc(var(--dz-bot) * var(--dzi,1)) !important}
+html.lux-dz #luxConsent{zoom:var(--dzi,1)}
 </style>
 <style id="luxMobile2">
 #btnPush[data-moved]{display:none !important}
@@ -14057,6 +14176,7 @@ window.LUX_NV = {
     var ni=document.querySelector('[data-page="'+(id==='trades'?'positions':id)+'"]');   // [V33.732] 거래 기록은 LUX-POSITION 안의 탭
     if(ni) ni.classList.add('active');
     try{localStorage.setItem('luxPage',id);}catch(e){}
+    try{ if(window.luxDz) window.luxDz(id); }catch(e){}   // [V33.735] 휴대폰 대시보드는 PC 배치 축소 보기
     // 페이지 전환 시 스크롤 상단으로 초기화
     // [V33.450] 다음 그리기 직전에 — 여기서 바로 쓰면 방금 드러난 페이지(요소 1만 개)의 배치를 억지로 한 번 더 계산했다
     //   (운영 프로파일: showPage 195ms · 뒤이은 렌더가 배치를 또 흔들어 두 번 계산).
@@ -21685,12 +21805,12 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.734">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.734">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.734">
-<link rel="stylesheet" href="/model-evidence.css?v=33.734">
+<link rel="stylesheet" href="/brain-console.css?v=33.735">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.735">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.735">
+<link rel="stylesheet" href="/model-evidence.css?v=33.735">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.734">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.735">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -21717,8 +21837,8 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
   setTimeout(reveal, 9500);
 })();
 </script>
-<script src="/model-evidence.js?v=33.734"></script>
-<script src="/workspace-ui.js?v=33.734"></script>
+<script src="/model-evidence.js?v=33.735"></script>
+<script src="/workspace-ui.js?v=33.735"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {
