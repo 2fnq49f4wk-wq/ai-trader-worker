@@ -3,7 +3,7 @@
 <head>
 <script>
 /* [V33.727] ★workers.dev → lux-inv.com 자동 이동★(사용자 11/2) — 화면만 옮긴다(/api/* 는 학습기가 workers.dev 로 계속 쓴다).
-   기기 코드(lux-uid)·선택(lux-gate)은 주소 뒤 #(서버로 안 감)로 넘겨 새 주소에서 같은 계좌가 열리게 하고 바로 지운다. 패스키는 주소마다 따로라 넘기지 않는다. */
+   기기 코드(lux-uid)·선택(lux-gate)은 주소 뒤 #(서버로 안 감)로 넘겨 새 주소에서 같은 계좌가 열리게 하고 바로 지운다. 로그인 상태는 넘기지 않는다(새 주소에서 닉네임·비밀번호로 한 번 로그인). */
 (function(){try{var h=location.hostname;
  if(/\.workers\.dev$/.test(h)){var u='',g='';try{u=localStorage.getItem('lux-uid')||'';g=localStorage.getItem('lux-gate')||'';}catch(e){}
   location.replace('https://lux-inv.com'+location.pathname+location.search+(u?'#luxuid='+u+(g?'&luxgate='+g:''):location.hash));return;}
@@ -213,14 +213,17 @@ if (document.fonts && document.fonts.ready) {
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
 <script>
-/* [V33.727] ★패스키 없이 쓰면 대시보드·종목 상세만★ — 다른 메뉴로 갈 때 패스키 등록을 묻는다(showPage 첫 줄이 이 함수를 부른다) */
-window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{if(localStorage.getItem('lux-pk')==='1')return true;}catch(e){return true;}
+/* [V33.727·729] ★로그인 없이 쓰면 대시보드·종목 상세만★ — 다른 메뉴로 갈 때 로그인 창(닉네임 + 비밀번호)을 띄운다(showPage 첫 줄이 이 함수를 부른다) */
+window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{if(localStorage.getItem('lux-auth'))return true;}catch(e){return true;}
  if(window.luxMine&&window.luxMine.ask)window.luxMine.ask(id);return false;};
+/* [V33.729] ★손 놓은 화면은 천천히★ — 사람이 많아져도 요청 수(=워커 호출·요금)가 '열려만 있는 탭' 수에 비례하지 않게. 10분 동안 입력이 없으면 luxIdle()=참 → 주기 갱신이 2분에 한 번으로 준다. 손대면 즉시 원래대로. */
+window.__luxAct=Date.now();['pointerdown','keydown','touchstart','wheel'].forEach(function(e){addEventListener(e,function(){window.__luxAct=Date.now();},{passive:true,capture:true});});
+window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600000;};
 </script>
-<meta name="lux-build" content="V33.727">
-<script src="/i18n.js?v=33.727" defer></script>
-<script src="/mine.js?v=33.727" defer></script>
-<script src="/neural-observatory.js?v=33.727" defer></script>
+<meta name="lux-build" content="V33.729">
+<script src="/i18n.js?v=33.729" defer></script>
+<script src="/mine.js?v=33.729" defer></script>
+<script src="/neural-observatory.js?v=33.729" defer></script>
 <title>LUX-INV</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -13849,6 +13852,7 @@ window.LUX_NV = {
      60초에 한 번으로(폰 실측: 두뇌 화면에서 주 스레드 긴 작업의 대부분). 대시보드로 돌아오면 showPage 가 곧바로 갱신한다. */
   timer = setInterval(function(){
     if (document.hidden) return;
+    if (window.luxIdle && window.luxIdle() && (Date.now() - (window.__lastRefreshAll || 0)) < 120000) return;   // [V33.729] 손 놓은 화면은 2분에 한 번
     var nn = document.getElementById('page-nnviz');
     if (nn && nn.classList.contains('active') && (Date.now() - (window.__lastRefreshAll || 0)) < 60000) return;
     window.__lastRefreshAll = Date.now(); refreshAll();
@@ -13920,7 +13924,7 @@ window.LUX_NV = {
     try { if (document.getElementById('page-nnviz') && document.getElementById('page-nnviz').classList.contains('active') && id !== 'nnviz' && typeof closeNnViz === 'function') closeNnViz(); } catch(e){}
     // [V33.683] 없는 화면(옛 북마크·저장된 luxPage 'vision' 등)이면 빈 화면 대신 대시보드로
     if(!document.getElementById('page-'+id)) id = 'dashboard';
-    if (window.luxGuard && !window.luxGuard(id)) { if (document.querySelector('.page.active')) return; id = 'dashboard'; }   // [V33.727] 패스키 없으면 대시보드·종목 상세만
+    if (window.luxGuard && !window.luxGuard(id)) { if (document.querySelector('.page.active')) return; id = 'dashboard'; }   // [V33.727·729] 로그인 없으면 대시보드·종목 상세만
     document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
     document.querySelectorAll('.nav-item').forEach(function(n){n.classList.remove('active');});
     var pg=document.getElementById('page-'+id);
@@ -14056,7 +14060,7 @@ window.LUX_NV = {
   // [V33.56] ★화면 지연의 실제 병목★ 서버는 국면을 매 사이클(1분) 재계산하는데
   //   프론트가 5분에 한 번만 물어봐 사이드바가 최대 5분 늦게 갱신됐다.
   //   /api/ai-mode 는 SWR(fresh 20s) 캐시라 자주 불러도 대부분 캐시 히트 — 서버 부하 거의 없음.
-  try { bootAiModePanel(true); setInterval(function(){ bootAiModePanel(true); }, 45 * 1000); } catch(e) {}
+  try { bootAiModePanel(true); setInterval(function(){ if (!(window.luxIdle && window.luxIdle())) bootAiModePanel(true); }, 45 * 1000); } catch(e) {}
 
   try { loadEcon(false); setInterval(function(){ loadEcon(false); }, 30 * 60 * 1000); } catch(e) {}
   // [V33.151] 목표가 개정 — 컨센서스가 6시간 주기라 화면도 30분이면 충분하다.
@@ -20390,6 +20394,8 @@ html:root .page > *{ flex-shrink:0; }
 
   function pollFeed(){
     if(LIVE.paused || document.hidden) return;   // [V33.683] 숨긴 탭은 쉰다
+    if(window.luxIdle && window.luxIdle() && Date.now() - (FEED.lastAt || 0) < 120000) return;   // [V33.729] 손 놓은 화면은 2분에 한 번
+    FEED.lastAt = Date.now();
     return fetch('/api/logs?limit=' + (FEED.booted ? 40 : 25))
       .then(function(r){ return r.json(); })
       .then(function(rows){
@@ -21552,12 +21558,12 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.727">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.727">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.727">
-<link rel="stylesheet" href="/model-evidence.css?v=33.727">
+<link rel="stylesheet" href="/brain-console.css?v=33.729">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.729">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.729">
+<link rel="stylesheet" href="/model-evidence.css?v=33.729">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.727">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.729">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -21584,8 +21590,8 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
   setTimeout(reveal, 9500);
 })();
 </script>
-<script src="/model-evidence.js?v=33.727"></script>
-<script src="/workspace-ui.js?v=33.727"></script>
+<script src="/model-evidence.js?v=33.729"></script>
+<script src="/workspace-ui.js?v=33.729"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {

@@ -34,23 +34,25 @@ chk(/!pg \|\| !pg\.classList\.contains\("active"\)\) return;/.test(P) && /170000
 const regs = ["SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH"];
 chk(regs.every((r) => new RegExp(r + ": \\{ safe: \"[^\"]+\", mid: \"[^\"]+\", aggr: \"[^\"]+\" \\}").test(P)), "국면 5종 × 성향 3종 행동 안내", "★국면·성향 안내가 빠졌다★");
 chk(/모의투자 · 가상 자금 · 투자 권유가 아닙니다/.test(P) && /투자 판단과 결과의 책임은 본인에게/.test(P), "모의투자·투자 권유 아님 표기", "★면책 표기가 빠졌다★");
-chk(/MY\(내 투자\) · 모의계좌 · 패스키 \(2026-11-02\)/.test(V) && /보존 기간/.test(V), "개인정보 안내에 저장 항목", "★개인정보 안내가 없다★");
+chk(/MY\(내 투자\) · 모의계좌 · 계정 \(2026-11-02\)/.test(V) && /보존 기간/.test(V) && /비밀번호 자체는 저장하지 않습니다/.test(V), "개인정보 안내에 저장 항목", "★개인정보 안내가 없다★");
 // [V33.723] 패스키 로그인 · 내 데이터 삭제 · 보존 1년 · 관심종목/검색 결과에도 [사기]
-chk(/request\.method === "DELETE"/.test(S) && /DELETE FROM user_profiles WHERE uid_hash = \?/.test(S) && /id="mineDelete"|id === "mineDelete"/.test(P), "내 데이터 삭제(서버 프로필·모의계좌·패스키)", "★데이터 삭제 경로가 없다★");
+chk(/request\.method === "DELETE"/.test(S) && /DELETE FROM user_profiles WHERE uid_hash = \?/.test(S) && /id="mineDelete"|id === "mineDelete"/.test(P), "내 데이터 삭제(서버 프로필·모의계좌·계정)", "★데이터 삭제 경로가 없다★");
 chk(/const LUX_RETAIN_MS = 365 \* 86400000;/.test(S) && /DELETE FROM user_profiles WHERE updated_ts < \?/.test(S) && /> 7 \* 86400000/.test(S), "보존 1년 자동 삭제 · 사용 표시는 7일에 1회만 쓰기", "★보존 기한 처리가 없다★");
-chk(/cd\.origin !== origin/.test(S) && /_pkCheckChallenge\(DB, cd\.challenge, "reg"\)/.test(S) && /_pkCheckChallenge\(DB, cd\.challenge, "auth"\)/.test(S) && /crypto\.subtle\.verify\(\{ name: "ECDSA", hash: "SHA-256" \}/.test(S) && /rpHash/.test(S),
-    "패스키: 출처·일회 도전값(5분 · 서명)·rpId·ECDSA 서명 검증", "★패스키 검증이 빠졌다★");
+// [V33.729] 닉네임 + 비밀번호(패스키 대체) — 비밀번호 원문 저장 금지 · PBKDF2 10만 회 · uid 는 비밀번호로만 풀리게 AES-GCM · 5회 실패 10분 잠금
+chk(!/passkey/i.test(S.slice(S.indexOf("async function luxAuthApi") - 3000, S.indexOf("async function luxAuthApi") + 6000)) && !/\/api\/me\/passkey/.test(S) && /const LUX_PW_ITER = 100000;/.test(S) && /name: "PBKDF2", hash: "SHA-256", salt: salt, iterations: LUX_PW_ITER/.test(S) && /name: "AES-GCM", iv: iv/.test(S) && !/bind\([^)]*\bpw\b/.test(S),
+    "비밀번호: 원문 저장 없음 · PBKDF2 10만 회 · 기기 코드는 비밀번호로만 풀림 · 패스키 경로 없음", "★비밀번호 저장 방식이 약하거나 패스키가 남았다★");
+chk(/f >= 5 \? now \+ 600000/.test(S) && /luxRateOk\("auth:" \+ ip\)/.test(S) && /_luxSame\(d\.ver, a\.ver\)/.test(S), "무차별 대입 방지: 5회 실패 10분 잠금 · IP 분당 30 · 고정 시간 비교", "★로그인 대입 방지가 빠졌다★");
 chk((P.match(/buyBtn\(/g) || []).length >= 4, "모의 매수 버튼: 오늘 후보·관심종목·검색 결과·보유 종목", "★[사기] 버튼이 오늘 후보에만 있다★");
 // [V33.724] 첫 화면(패스키로 시작 / 이미 있음 / 로그인 없이) · 로그인 기억 · AI 순위(매수 신호 → 검증 대기 → 점수) + 관찰·사기
-chk(/function ask\(target\)/.test(P) && /id="gStart"/.test(P) && /id="gLogin"/.test(P) && /id="gGuest"/.test(P) && !/\n    gate\(\);/.test(P), "패스키는 대시보드·종목 상세 밖 메뉴로 갈 때 묻는다(첫 화면에서 안 묻는다)", "★패스키 묻기 흐름이 바뀌었다★");
-chk(/window\.luxGuard=function\(id\)\{if\(id==='dashboard'\|\|id==='detail'\)return true;/.test(H) && /if \(window\.luxGuard && !window\.luxGuard\(id\)\)/.test(H), "패스키 없으면 대시보드·종목 상세만(showPage 첫 관문)", "★메뉴 제한이 빠졌다★");
+chk(/function ask\(target, mode\)/.test(P) && /id="gNick"/.test(P) && /id="gPw"/.test(P) && /id="gAgree"/.test(P) && /id="gGuest"/.test(P) && !/\n    gate\(\);/.test(P) && !/credentials\.(create|get)/.test(P), "로그인 창(닉네임·비밀번호·동의)은 대시보드·종목 상세 밖 메뉴로 갈 때 뜬다", "★로그인 창 흐름이 바뀌었다★");
+chk(/window\.luxGuard=function\(id\)\{if\(id==='dashboard'\|\|id==='detail'\)return true;try\{if\(localStorage\.getItem\('lux-auth'\)\)return true;/.test(H) && /if \(window\.luxGuard && !window\.luxGuard\(id\)\)/.test(H), "로그인 없으면 대시보드·종목 상세만(showPage 첫 관문)", "★메뉴 제한이 빠졌다★");
 chk(/location\.replace\('https:\/\/lux-inv\.com'/.test(H) && H.indexOf("workers\\.dev") < H.indexOf("lux-build"), "workers.dev 화면은 lux-inv.com 으로(맨 앞에서 · 기기 코드 #로 넘김)", "★workers.dev 이동이 빠졌다★");
-chk(/function remember\(kind\)/.test(P) && /navigator\.storage\.persist\(\)/.test(P), "로그인 기억(코드·선택 저장 + 저장소 유지 요청)", "★로그인 기억이 없다★");
+chk(/function remember\(nick, since\)/.test(P) && /navigator\.storage\.persist\(\)/.test(P), "로그인 기억(코드·선택 저장 + 저장소 유지 요청)", "★로그인 기억이 없다★");
 chk(/a\.tier - b\.tier \|\| b\.q - a\.q/.test(P) && /data-addwatch="' \+ esc\(r\.s\)/.test(P) && /buyBtn\(r\.s\)/.test(P), "AI 순위 · 줄마다 관찰·사기", "★AI 순위나 관찰·사기 버튼이 빠졌다★");
 // [V33.725] 닉네임 중복 금지 · 장부 검사(조작 방지) · 순위 1시간 1회 계산 · 쓰기 분당 30 · 종목 상세 매매 막대
-chk(/CREATE TABLE IF NOT EXISTS user_nicks \(nick_key TEXT PRIMARY KEY/.test(S) && /이미 쓰는 닉네임", 409/.test(S) && /prof\.nick = \(old && old\.nick\) \|\| null;/.test(S), "닉네임: 중복 금지(대소문자 무시) · 화면이 직접 못 바꾼다", "★닉네임 중복 방지가 빠졌다★");
+chk(/CREATE TABLE IF NOT EXISTS user_nicks \(nick_key TEXT PRIMARY KEY/.test(S) && /이미 쓰는 닉네임이에요", 409/.test(S) && /prof\.nick = \(old && old\.nick\) \|\| null;/.test(S), "닉네임: 중복 금지(대소문자 무시) · 가입 때 정함 · 화면이 직접 못 바꾼다", "★닉네임 중복 방지가 빠졌다★");
 {
-  const a = S.indexOf("const _luxRate"), b = S.indexOf("/* [V33.725] ★닉네임★");
+  const a = S.indexOf("const _luxRate"), b = S.indexOf("/* [V33.725·729] ★닉네임★");
   let f = null; try { f = new Function(S.slice(a, b) + "; return luxLedgerCheck;")(); } catch (e) { console.log(e.message); }
   const DB = { prepare: () => ({ bind: (...k) => ({ all: async () => ({ results: k.map((x) => ({ k: x, v: JSON.stringify({ price: 100, mstate: "REGULAR" }) })) }) }) }) };
   const ok = f && await f(DB, null, { us: { start: 10000, cash: 9000, pos: { AAPL: { q: 10, avg: 100 } }, hist: [[5, "B", "AAPL", 10, 100]], t0: 1 } });

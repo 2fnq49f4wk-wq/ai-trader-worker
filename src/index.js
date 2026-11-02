@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.727";
+const _BUILD_VER = "V33.729";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8790,7 +8790,7 @@ async function luxProfileApi(DB, uid, request) {
     return chk.ok ? { ok: true, profile: prof } : { ok: true, profile: prof, pfRejected: chk.why };
   }
   if (request.method === "DELETE") {   // [V33.723] 내 데이터 삭제(개인정보 삭제 요구) — 프로필·모의계좌·이 코드에 묶인 패스키까지
-    await DB.batch([DB.prepare("DELETE FROM user_profiles WHERE uid_hash = ?").bind(h), DB.prepare("DELETE FROM user_passkeys WHERE uid_hash = ?").bind(h)]).catch(function () {});
+    await DB.batch([DB.prepare("DELETE FROM user_profiles WHERE uid_hash = ?").bind(h), DB.prepare("DELETE FROM user_accounts WHERE uid_hash = ?").bind(h)]).catch(function () {});
     try { await DB.prepare("DELETE FROM user_nicks WHERE uid_hash = ?").bind(h).run(); } catch (e) {}
     return { ok: true, deleted: true };
   }
@@ -8799,7 +8799,7 @@ async function luxProfileApi(DB, uid, request) {
   const now = Date.now();
   // [V33.723] 보존 기한 — 마지막 사용 365일 지나면 삭제(개인정보 안내에 적은 대로). 사용 표시는 7일에 한 번만 쓴다(읽을 때마다 쓰지 않는다).
   if (r && now - Number(r.updated_ts || 0) > 7 * 86400000) { try { await DB.prepare("UPDATE user_profiles SET updated_ts = ? WHERE uid_hash = ?").bind(now, h).run(); } catch (e) {} }
-  if (Math.random() < 0.02) { try { await DB.batch([DB.prepare("DELETE FROM user_profiles WHERE updated_ts < ?").bind(now - LUX_RETAIN_MS), DB.prepare("DELETE FROM user_passkeys WHERE last_ts < ?").bind(now - LUX_RETAIN_MS)]); } catch (e) {} }
+  if (Math.random() < 0.02) { try { await DB.batch([DB.prepare("DELETE FROM user_profiles WHERE updated_ts < ?").bind(now - LUX_RETAIN_MS), DB.prepare("DELETE FROM user_accounts WHERE last_ts < ? AND uid_hash NOT IN (SELECT uid_hash FROM user_profiles)").bind(now - LUX_RETAIN_MS)]); } catch (e) {} }
   return { ok: true, profile: prof };
 }
 const LUX_RETAIN_MS = 365 * 86400000;
@@ -8848,32 +8848,8 @@ async function luxLedgerCheck(DB, oldPf, newPf) {
   }
   return { ok: true };
 }
-/* [V33.725] ★닉네임★ — 중복 금지(대소문자 무시) · 2~12자 한글·영문·숫자·_ · 한 사람 하나(바꾸면 옛 이름은 풀린다) */
+/* [V33.725·729] ★닉네임★ — 중복 금지(대소문자 무시) · 2~12자 한글·영문·숫자·_ · 회원가입 때 정한다(로그인 아이디 = 순위 이름) */
 const LUX_NICK_BAN = ["admin", "관리자", "운영자", "lux", "luxengine", "claude", "anthropic", "official", "공식"];
-async function luxNickApi(DB, uid, request) {
-  await DB.prepare("CREATE TABLE IF NOT EXISTS user_nicks (nick_key TEXT PRIMARY KEY, nick TEXT NOT NULL, uid_hash TEXT NOT NULL UNIQUE, created_ts INTEGER NOT NULL)").run();
-  const bad = function (m, c) { const e = new Error(m); e.code = c || 400; throw e; };
-  if (!luxRateOk("nick:" + uid)) bad("잠시 뒤 다시");
-  const hb = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("lux-profile:" + uid));
-  const h = Array.from(new Uint8Array(hb)).map(function (x) { return x.toString(16).padStart(2, "0"); }).join("");
-  const b = await request.json().catch(function () { return null; });
-  const nick = String((b && b.nick) || "").trim();
-  if (!/^[가-힣A-Za-z0-9_]{2,12}$/.test(nick)) bad("닉네임은 2~12자 한글·영문·숫자·_ 만");
-  const key = nick.toLowerCase();
-  if (LUX_NICK_BAN.some(function (w) { return key.indexOf(w) >= 0; })) bad("쓸 수 없는 닉네임");
-  const row = await DB.prepare("SELECT profile FROM user_profiles WHERE uid_hash = ?").bind(h).first();
-  if (!row) bad("먼저 MY 설정을 저장해 주세요");
-  const taken = await DB.prepare("SELECT uid_hash FROM user_nicks WHERE nick_key = ?").bind(key).first();
-  if (taken && taken.uid_hash !== h) bad("이미 쓰는 닉네임", 409);
-  let prof = {}; try { prof = JSON.parse(row.profile); } catch (e) {}
-  prof.nick = nick;
-  await DB.batch([
-    DB.prepare("DELETE FROM user_nicks WHERE uid_hash = ? AND nick_key <> ?").bind(h, key),
-    DB.prepare("INSERT OR IGNORE INTO user_nicks (nick_key, nick, uid_hash, created_ts) VALUES (?, ?, ?, ?)").bind(key, nick, h, Date.now()),
-    DB.prepare("UPDATE user_profiles SET profile = ? WHERE uid_hash = ?").bind(JSON.stringify(prof), h)
-  ]);
-  return { ok: true, nick: nick };
-}
 /* [V33.725] ★수익률 순위★ — 1시간에 한 번만 계산(swrJson) · 서버 시세로 평가(사용자가 보낸 평가액을 믿지 않는다) · 닉네임 있는 계좌만 · 시장별 상위 50 */
 async function luxLeaderboard(DB) {
   let rows = [];
@@ -8892,94 +8868,96 @@ async function luxLeaderboard(DB) {
   return { ok: true, ts: Date.now(), us: out.us, kr: out.kr, n: accs.length };
 }
 
-/* [V33.723] ★패스키 로그인(WebAuthn)★ — 사용자 11/2 "앱 등록 말고 사이트에서 로그인". 외부 업체(구글·카카오) 등록 없이 브라우저 표준만 쓴다.
-   기기의 Face ID·지문·화면 잠금으로 서명 → 서버는 공개키(ES256)만 저장 · 비밀번호·이메일·이름 없음. 같은 애플/구글 계정 기기끼리는 패스키가 동기화된다.
-   패스키 = 이 사용자의 '연결 코드(uid)' 를 안전하게 되찾는 열쇠. 프로필 저장 방식(uid 해시 키)은 그대로다.
-   ※ 패스키는 도메인에 묶인다(지금 *.workers.dev) — .com 으로 옮기면 그 주소에서 다시 등록해야 한다. */
+/* [V33.729] ★닉네임 + 비밀번호 로그인★ — 사용자 11/2 "패스키 말고 닉네임으로 로그인 · 비밀번호". 패스키(V33.723~727)는 뺐다.
+   · 계정 = 닉네임(중복 금지 · 순위 이름과 같다) + 비밀번호(8~64자). 이메일·이름·전화번호는 받지 않는다.
+   · 비밀번호는 저장하지 않는다 — PBKDF2-SHA256(10만 회 · 계정마다 다른 소금)으로 512비트를 뽑아
+     앞 256비트의 해시만 '확인값' 으로 저장하고, 뒤 256비트로 이 사람의 기기 코드(uid)를 AES-GCM 으로 잠가 둔다.
+     → D1 이 통째로 새도 비밀번호 없이는 누구의 모의계좌도 열 수 없다(서버 비밀 키도 필요 없다).
+   · 무차별 대입 방지: 같은 닉네임 5번 틀리면 10분 잠금 · 접속 주소(IP)당 분당 30회.
+   · 비용: 가입·로그인 때만 한 행 읽기·쓰기 + CPU 수십 ms(PBKDF2). 평소 화면은 이 표를 건드리지 않는다. */
+const LUX_PW_ITER = 100000;
 function _b64u(buf) { let s = ""; const b = new Uint8Array(buf); for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
 function _unb64u(t) { t = String(t || "").replace(/-/g, "+").replace(/_/g, "/"); while (t.length % 4) t += "="; const s = atob(t), b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; }
-function _cbor(buf) {   // 최소 CBOR 해석기(패스키 attestationObject · COSE 키용: 정수·바이트·문자열·배열·맵)
-  const b = buf instanceof Uint8Array ? buf : new Uint8Array(buf); let i = 0;
-  function len(ai) { if (ai < 24) return ai; if (ai === 24) return b[i++]; if (ai === 25) { const v = (b[i] << 8) | b[i + 1]; i += 2; return v; } if (ai === 26) { const v = ((b[i] << 24) >>> 0) + (b[i + 1] << 16) + (b[i + 2] << 8) + b[i + 3]; i += 4; return v; } throw new Error("cbor len"); }
-  function item() { const h = b[i++], mt = h >> 5, ai = h & 31;
-    if (mt === 0) return len(ai); if (mt === 1) return -1 - len(ai);
-    if (mt === 2) { const n = len(ai), v = b.slice(i, i + n); i += n; return v; }
-    if (mt === 3) { const n = len(ai), v = new TextDecoder().decode(b.slice(i, i + n)); i += n; return v; }
-    if (mt === 4) { const n = len(ai), a = []; for (let k = 0; k < n; k++) a.push(item()); return a; }
-    if (mt === 5) { const n = len(ai), m = new Map(); for (let k = 0; k < n; k++) { const key = item(); m.set(key, item()); } return m; }
-    if (mt === 7) { if (ai === 20) return false; if (ai === 21) return true; if (ai === 22) return null; }
-    throw new Error("cbor type " + mt); }
-  return item();
+async function _luxUidHash(uid) {
+  const hb = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("lux-profile:" + uid));
+  return Array.from(new Uint8Array(hb)).map(function (x) { return x.toString(16).padStart(2, "0"); }).join("");
 }
-async function _pkSecret(DB) {
-  if (globalThis.__pkSecret) return globalThis.__pkSecret;
-  let s = await getState(DB, "passkey_secret", null, true);   // 엄격 읽기 — 못 읽었으면 새 비밀로 덮지 않는다(기존 패스키 도전값이 깨진다)
-  if (!s || !s.k) { const a = new Uint8Array(32); crypto.getRandomValues(a); s = { k: _b64u(a) }; await setState(DB, "passkey_secret", s); }
-  globalThis.__pkSecret = await crypto.subtle.importKey("raw", _unb64u(s.k), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
-  return globalThis.__pkSecret;
+async function _luxPwDerive(pw, salt) {   // → { ver: 확인값(b64u), key: AES 키 }
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pw), "PBKDF2", false, ["deriveBits"]);
+  const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: salt, iterations: LUX_PW_ITER }, base, 512));
+  const ver = _b64u(await crypto.subtle.digest("SHA-256", bits.slice(0, 32)));
+  const key = await crypto.subtle.importKey("raw", bits.slice(32, 64), "AES-GCM", false, ["encrypt", "decrypt"]);
+  return { ver: ver, key: key };
 }
-async function _pkChallenge(DB, kind) {   // 저장 없는 일회 도전값 — 시각·난수·종류에 서명(5분 유효). D1 쓰기 없음.
-  const n = new Uint8Array(16); crypto.getRandomValues(n);
-  const body = kind + "." + Date.now() + "." + _b64u(n);
-  const sig = await crypto.subtle.sign("HMAC", await _pkSecret(DB), new TextEncoder().encode(body));
-  return _b64u(new TextEncoder().encode(body + "." + _b64u(sig)));
+function _luxSame(a, b) { a = String(a); b = String(b); if (a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; }
+async function _luxAcctTbl(DB) {
+  if (globalThis.__luxAcctTbl) return;
+  await DB.prepare("CREATE TABLE IF NOT EXISTS user_accounts (nick_key TEXT PRIMARY KEY, nick TEXT NOT NULL, uid_hash TEXT NOT NULL UNIQUE, salt TEXT NOT NULL, ver TEXT NOT NULL, uid_enc TEXT NOT NULL, iv TEXT NOT NULL, created_ts INTEGER NOT NULL, last_ts INTEGER NOT NULL, fails INTEGER NOT NULL DEFAULT 0, lock_ts INTEGER NOT NULL DEFAULT 0)").run();
+  await DB.prepare("CREATE TABLE IF NOT EXISTS user_nicks (nick_key TEXT PRIMARY KEY, nick TEXT NOT NULL, uid_hash TEXT NOT NULL UNIQUE, created_ts INTEGER NOT NULL)").run();
+  globalThis.__luxAcctTbl = true;
 }
-async function _pkCheckChallenge(DB, ch, kind) {
-  const t = new TextDecoder().decode(_unb64u(ch)), p = t.split(".");
-  if (p.length !== 4 || p[0] !== kind || Date.now() - Number(p[1]) > 300000) return false;
-  return await crypto.subtle.verify("HMAC", await _pkSecret(DB), _unb64u(p[3]), new TextEncoder().encode(p.slice(0, 3).join(".")));
+async function _luxSeal(pw, uid) {
+  const salt = new Uint8Array(16); crypto.getRandomValues(salt);
+  const iv = new Uint8Array(12); crypto.getRandomValues(iv);
+  const d = await _luxPwDerive(pw, salt);
+  const enc = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, d.key, new TextEncoder().encode(uid));
+  return { salt: _b64u(salt), ver: d.ver, uid_enc: _b64u(enc), iv: _b64u(iv) };
 }
-function _derToRaw(der) {   // ECDSA 서명 DER → r|s 64바이트(WebCrypto 형식)
-  let i = 2; if (der[1] & 0x80) i = 2 + (der[1] & 0x7f);
-  const rl = der[i + 1], r = der.slice(i + 2, i + 2 + rl); i = i + 2 + rl; const sl = der[i + 1], s2 = der.slice(i + 2, i + 2 + sl);
-  const fix = function (x) { while (x.length > 32 && x[0] === 0) x = x.slice(1); const o = new Uint8Array(32); o.set(x, 32 - x.length); return o; };
-  const out = new Uint8Array(64); out.set(fix(r), 0); out.set(fix(s2), 32); return out;
-}
-async function luxPasskeyApi(DB, sub, request, url) {
-  if (!globalThis.__luxPkTbl) {
-    await DB.prepare("CREATE TABLE IF NOT EXISTS user_passkeys (cred_id TEXT PRIMARY KEY, uid_hash TEXT NOT NULL, uid_enc TEXT NOT NULL, pub_jwk TEXT NOT NULL, created_ts INTEGER NOT NULL, last_ts INTEGER NOT NULL)").run();
-    globalThis.__luxPkTbl = true;
+async function luxAuthApi(DB, sub, request) {
+  await _luxAcctTbl(DB);
+  const bad = function (m, c) { const e = new Error(m); e.code = c || 400; throw e; };
+  const ip = String(request.headers.get("cf-connecting-ip") || "-");
+  if (!luxRateOk("auth:" + ip)) bad("요청이 너무 많아요. 1분 뒤 다시 시도해 주세요", 429);
+  const b = await request.json().catch(function () { return null; }) || {};
+  const nick = String(b.nick || "").trim(), key = nick.toLowerCase(), pw = String(b.pw || "");
+  const pwOk = function (x) { return x.length >= 8 && x.length <= 64; };
+  const now = Date.now();
+  if (sub === "signup") {   // 이 기기의 코드(uid)에 계정을 붙인다 — 로그인 없이 쓰던 관심종목·모의계좌가 그대로 계정으로 옮겨진다
+    const uid = String(request.headers.get("x-lux-uid") || ""); if (!/^[0-9a-f]{32,64}$/.test(uid)) bad("기기 코드가 없습니다");
+    if (!/^[가-힣A-Za-z0-9_]{2,12}$/.test(nick)) bad("닉네임은 2~12자 한글·영문·숫자·_ 만 쓸 수 있어요");
+    if (LUX_NICK_BAN.some(function (w) { return key.indexOf(w) >= 0; })) bad("쓸 수 없는 닉네임이에요");
+    if (!pwOk(pw)) bad("비밀번호는 8~64자로 정해 주세요");
+    if (pw.toLowerCase().indexOf(key) >= 0) bad("비밀번호에 닉네임을 넣지 말아 주세요");
+    const h = await _luxUidHash(uid);
+    const mine = await DB.prepare("SELECT nick FROM user_accounts WHERE uid_hash = ?").bind(h).first();
+    if (mine) bad("이 기기는 이미 '" + mine.nick + "' 계정이에요. 로그인해 주세요", 409);
+    const taken = await DB.prepare("SELECT uid_hash FROM user_nicks WHERE nick_key = ?").bind(key).first();
+    if (taken && taken.uid_hash !== h) bad("이미 쓰는 닉네임이에요", 409);
+    const sealed = await _luxSeal(pw, uid);
+    const row = await DB.prepare("SELECT profile FROM user_profiles WHERE uid_hash = ?").bind(h).first();
+    let prof = {}; try { prof = row && row.profile ? JSON.parse(row.profile) : {}; } catch (e) {}
+    const cp = luxProfileClean(prof); cp.nick = nick;   // luxProfileClean 은 닉네임을 버린다 — 가입 때만 서버가 붙인다
+    const st = [
+      DB.prepare("INSERT INTO user_accounts (nick_key, nick, uid_hash, salt, ver, uid_enc, iv, created_ts, last_ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(key, nick, h, sealed.salt, sealed.ver, sealed.uid_enc, sealed.iv, now, now),
+      DB.prepare("DELETE FROM user_nicks WHERE uid_hash = ? AND nick_key <> ?").bind(h, key),
+      DB.prepare("INSERT OR IGNORE INTO user_nicks (nick_key, nick, uid_hash, created_ts) VALUES (?, ?, ?, ?)").bind(key, nick, h, now),
+      DB.prepare("INSERT INTO user_profiles (uid_hash, profile, created_ts, updated_ts) VALUES (?, ?, ?, ?) ON CONFLICT(uid_hash) DO UPDATE SET profile = excluded.profile, updated_ts = excluded.updated_ts").bind(h, JSON.stringify(cp), now, now)
+    ];
+    try { await DB.batch(st); } catch (e) { if (/UNIQUE|constraint/i.test(String(e && e.message))) bad("이미 쓰는 닉네임이에요", 409); throw e; }
+    return { ok: true, nick: nick, created: now };
   }
-  const rpId = url.hostname, origin = url.origin;
-  const bad = function (m) { const e = new Error(m); e.code = 400; throw e; };
-  if (sub === "options") return { ok: true, rpId: rpId, challenge: await _pkChallenge(DB, String(url.searchParams.get("kind") || "") === "reg" ? "reg" : "auth") };
-  const b = await request.json().catch(function () { return null; });
-  if (!b || !b.clientDataJSON) bad("bad body");
-  const cdRaw = _unb64u(b.clientDataJSON), cd = JSON.parse(new TextDecoder().decode(cdRaw));
-  if (cd.origin !== origin) bad("origin");
-  if (sub === "register") {
-    const uid = String(request.headers.get("x-lux-uid") || ""); if (!/^[0-9a-f]{32,64}$/.test(uid)) bad("uid");
-    if (cd.type !== "webauthn.create" || !(await _pkCheckChallenge(DB, cd.challenge, "reg"))) bad("challenge");
-    const att = _cbor(_unb64u(b.attestationObject)), ad = att.get("authData");
-    const rpHash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rpId)));
-    for (let k = 0; k < 32; k++) if (ad[k] !== rpHash[k]) bad("rpId");
-    if (!(ad[32] & 0x01) || !(ad[32] & 0x40)) bad("flags");
-    const cl = (ad[53] << 8) | ad[54], credId = ad.slice(55, 55 + cl), cose = _cbor(ad.slice(55 + cl));
-    if (cose.get(3) !== -7 || cose.get(-1) !== 1) bad("ES256 만 지원");
-    const jwk = { kty: "EC", crv: "P-256", x: _b64u(cose.get(-2)), y: _b64u(cose.get(-3)), ext: true };
-    const hb = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("lux-profile:" + uid));
-    const h = Array.from(new Uint8Array(hb)).map(function (x) { return x.toString(16).padStart(2, "0"); }).join("");
-    const n = await DB.prepare("SELECT COUNT(*) n FROM user_passkeys WHERE uid_hash = ?").bind(h).first();
-    if (n && n.n >= 10) bad("패스키는 10개까지");
-    const now = Date.now();
-    await DB.prepare("INSERT OR REPLACE INTO user_passkeys (cred_id, uid_hash, uid_enc, pub_jwk, created_ts, last_ts) VALUES (?, ?, ?, ?, ?, ?)").bind(_b64u(credId), h, uid, JSON.stringify(jwk), now, now).run();
-    return { ok: true, registered: true };
-  }
-  if (sub === "login") {
-    if (cd.type !== "webauthn.get" || !(await _pkCheckChallenge(DB, cd.challenge, "auth"))) bad("challenge");
-    const row = await DB.prepare("SELECT uid_enc, pub_jwk FROM user_passkeys WHERE cred_id = ?").bind(String(b.id || "")).first();
-    if (!row) bad("등록되지 않은 패스키");
-    const ad = _unb64u(b.authenticatorData);
-    const rpHash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rpId)));
-    for (let k = 0; k < 32; k++) if (ad[k] !== rpHash[k]) bad("rpId");
-    if (!(ad[32] & 0x01)) bad("flags");
-    const cdh = new Uint8Array(await crypto.subtle.digest("SHA-256", cdRaw));
-    const data = new Uint8Array(ad.length + 32); data.set(ad, 0); data.set(cdh, ad.length);
-    const key = await crypto.subtle.importKey("jwk", JSON.parse(row.pub_jwk), { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
-    const ok = await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, _derToRaw(_unb64u(b.signature)), data);
-    if (!ok) bad("서명 불일치");
-    await DB.prepare("UPDATE user_passkeys SET last_ts = ? WHERE cred_id = ?").bind(Date.now(), String(b.id)).run();
-    return { ok: true, uid: row.uid_enc };
+  if (sub === "login" || sub === "password") {
+    if (!nick || !pw) bad("닉네임과 비밀번호를 넣어 주세요");
+    const a = await DB.prepare("SELECT nick, uid_hash, salt, ver, uid_enc, iv, created_ts, fails, lock_ts FROM user_accounts WHERE nick_key = ?").bind(key).first();
+    if (!a) bad("닉네임 또는 비밀번호가 맞지 않아요", 401);
+    if (Number(a.lock_ts) > now) bad("비밀번호를 여러 번 틀려 " + Math.ceil((Number(a.lock_ts) - now) / 60000) + "분 동안 잠겼어요", 429);
+    const d = await _luxPwDerive(pw, _unb64u(a.salt));
+    if (!_luxSame(d.ver, a.ver)) {
+      const f = Number(a.fails || 0) + 1;
+      await DB.prepare("UPDATE user_accounts SET fails = ?, lock_ts = ? WHERE nick_key = ?").bind(f >= 5 ? 0 : f, f >= 5 ? now + 600000 : 0, key).run();
+      bad(f >= 5 ? "비밀번호를 5번 틀려 10분 동안 잠겼어요" : "닉네임 또는 비밀번호가 맞지 않아요 (" + f + "/5)", 401);
+    }
+    const uid = new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: _unb64u(a.iv) }, d.key, _unb64u(a.uid_enc)));
+    if (sub === "login") {
+      await DB.prepare("UPDATE user_accounts SET fails = 0, lock_ts = 0, last_ts = ? WHERE nick_key = ?").bind(now, key).run();
+      return { ok: true, uid: uid, nick: a.nick, created: Number(a.created_ts) };
+    }
+    const npw = String(b.newPw || "");   // 비밀번호 바꾸기 — 지금 비밀번호 확인 뒤 같은 uid 를 새 비밀번호로 다시 잠근다
+    if (!pwOk(npw)) bad("새 비밀번호는 8~64자로 정해 주세요");
+    if (npw.toLowerCase().indexOf(key) >= 0) bad("비밀번호에 닉네임을 넣지 말아 주세요");
+    const sealed = await _luxSeal(npw, uid);
+    await DB.prepare("UPDATE user_accounts SET salt = ?, ver = ?, uid_enc = ?, iv = ?, fails = 0, lock_ts = 0, last_ts = ? WHERE nick_key = ?").bind(sealed.salt, sealed.ver, sealed.uid_enc, sealed.iv, now, key).run();
+    return { ok: true, changed: true };
   }
   bad("unknown");
 }
@@ -33758,19 +33736,13 @@ async function handleRequest(request, env, ctx, _inner) {
 
     /* [V33.721] ★개인화 프로필★(사용자 11/2 "개인 수요에 맞게 · 수익화는 나중 · 구현부터") — 로그인 없이 기기 토큰(브라우저가 만든 32~64자 16진수).
        서버는 토큰의 SHA-256 만 키로 쓰고 개인정보는 받지 않는다(성향·시장·기간·경험·관심종목만). 다른 기기는 같은 토큰(연결 코드)을 넣으면 같은 프로필. */
-    if (path === "/api/me/nick" && request.method === "POST") {   // [V33.725] 닉네임(중복 금지)
-      const uid = String(request.headers.get("x-lux-uid") || "");
-      if (!/^[0-9a-f]{32,64}$/.test(uid)) return Response.json({ ok: false, error: "bad uid" }, { status: 400, headers: cors });
-      try { return Response.json(await luxNickApi(env.DB, uid, request), { headers: Object.assign({ "cache-control": "no-store" }, cors) }); }
-      catch (e) { return Response.json({ ok: false, error: String(e && e.message || e) }, { status: e && (e.code === 400 || e.code === 409) ? e.code : 503, headers: cors }); }
-    }
     if (path === "/api/leaderboard") {   // [V33.725] 수익률 순위 — 1시간 SWR · 누가 몇 번 봐도 계산은 1시간 1번
       return await swrJson("leaderboard", 3600000, 6 * 3600000, async function () { return await luxLeaderboard(env.DB); });
     }
-    if (path === "/api/me/passkey/options" || path === "/api/me/passkey/register" || path === "/api/me/passkey/login") {   // [V33.723] 패스키 로그인
-      if (path !== "/api/me/passkey/options" && request.method !== "POST") return Response.json({ ok: false, error: "POST" }, { status: 405, headers: cors });
-      try { return Response.json(await luxPasskeyApi(env.DB, path.split("/").pop(), request, url), { headers: Object.assign({ "cache-control": "no-store" }, cors) }); }
-      catch (e) { return Response.json({ ok: false, error: String(e && e.message || e) }, { status: e && e.code === 400 ? 400 : 503, headers: cors }); }
+    if (path === "/api/auth/signup" || path === "/api/auth/login" || path === "/api/auth/password") {   // [V33.729] 닉네임 + 비밀번호
+      if (request.method !== "POST") return Response.json({ ok: false, error: "POST" }, { status: 405, headers: cors });
+      try { return Response.json(await luxAuthApi(env.DB, path.split("/").pop(), request), { headers: Object.assign({ "cache-control": "no-store" }, cors) }); }
+      catch (e) { const c = e && e.code; return Response.json({ ok: false, error: String(e && e.message || e) }, { status: c === 400 || c === 401 || c === 409 || c === 429 ? c : 503, headers: cors }); }
     }
     if (path === "/api/me") {
       const uid = String(request.headers.get("x-lux-uid") || "");
@@ -56646,7 +56618,8 @@ async function _mlCountsCached(DB) {
     if (rr) { v.cur24 = _num(rr.d1, 0); v.cur7d = _num(rr.d7, 0); }
   } catch (e) {}
   try {
-    const rc = await DB.prepare("SELECT labeled, COUNT(*) n FROM ml_candidates WHERE featver=? GROUP BY labeled").bind(LUXML.featVer).all();
+    /* [V33.728] 청구 감시 실측(11/2 · 48h): 이 GROUP BY 가 143회 × 회당 18.8만 행 = 2,690만 행 — 현재 D1 읽기 1위. 관측용 개수라 _mlAgg 기억으로 돌린다. */
+    const rc = await _mlAgg(DB, "SELECT labeled, COUNT(*) n FROM ml_candidates WHERE featver=? GROUP BY labeled", [LUXML.featVer], { key: "mlagg:cand:" + LUXML.featVer, all: true });
     for (const r of ((rc && rc.results) || [])) {
       v.cand += (r.n || 0);
       if (r.labeled === 0) v.candUnlabeled += (r.n || 0);

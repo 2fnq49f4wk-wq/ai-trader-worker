@@ -1,9 +1,9 @@
 /* [V33.723] ★MY(내 투자) 재디자인★ — 사용자 11/2 시안(아티팩트 'LUX MY 화면 리디자인') 반영 · 기능은 V33.721 그대로 + 고친 것:
    · 모의 매수: '오늘 후보' 에만 있던 [사기] 를 관심종목·검색 결과 모든 종목에(후보가 비면 살 길이 없었다) · 주문창 ±1주
-   · 패스키 로그인(사이트 자체 · 외부 앱 등록 없음 · Face ID/지문) — 연결 코드를 안전하게 되찾는 열쇠
-   · 내 데이터 삭제(서버 프로필·모의계좌·패스키) · 보존 1년(서버가 지움)
+   · [V33.729] 로그인 = 닉네임 + 비밀번호(패스키 뺌) — 서버는 비밀번호를 저장하지 않고 PBKDF2 확인값만 · 기기 코드는 비밀번호로 잠가 둔다
+   · 내 데이터 삭제(서버 프로필·모의계좌·계정) · 보존 1년(서버가 지움)
    ★비용★: /api/me 읽기는 MY 첫 열림 1회 · 쓰기는 조작 2초 모아 1회 · 그리기·/api/playbook(엣지 캐시)은 MY 가 보일 때만 3분 · 시세는 대시보드가 받은 것 재사용.
-   개인 데이터는 이 기기 코드(또는 패스키)로만 열린다 — 다른 사람에게 보이지 않는다. 모의투자 · 투자 권유 아님. */
+   개인 데이터는 이 기기 코드(또는 내 닉네임·비밀번호)로만 열린다 — 다른 사람에게 보이지 않는다. 모의투자 · 투자 권유 아님. */
 (function () {
   "use strict";
   var UIDK = "lux-uid", PROFK = "lux-prof";
@@ -30,6 +30,7 @@
     CRASH: { safe: "신규 매수 멈추고 현금 보존", mid: "관망 · 첫 양봉 뒤 소액만", aggr: "공황 반등 단타만, 손절 짧게" }
   };
   var START = { us: 10000, kr: 10000000 };
+  var ACOL = ["#3DD6B5", "#7FA6FF", "#E2C766", "#FF8C7A", "#B9A6FF", "#5FC8E8", "#9BD67A", "#F0A0C8"];
   var isKr = function (s) { return /\.(KS|KQ)$/.test(s); };
   var fmt = function (mk, v, sign) { if (v == null || !isFinite(v)) return "—"; var a = Math.abs(v), s = sign ? (v >= 0 ? "+" : "−") : (v < 0 ? "−" : "");
     return mk === "kr" ? s + "₩" + Math.round(a).toLocaleString() : s + "$" + a.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
@@ -147,6 +148,21 @@
       "#mineRoot .note{font-size:11.5px;line-height:1.55;color:#8A93A3}#mineRoot .empty{padding:16px 2px;color:var(--m-mute);font-size:13.5px;line-height:1.5}",
       "#mineRoot .rk{flex:0 0 22px;text-align:center;font-size:15px;font-weight:700;color:var(--m-mute)}#mineRoot .rk.hot{color:var(--m-acc)}#mineRoot .wbtn{cursor:pointer;min-width:52px;justify-content:center;border:1px solid #2E3542;background:transparent;color:#C7CDD6}#mineRoot .wbtn.on{color:var(--m-acc);border-color:#22574B}",
       "@media (max-width:520px){#mineRoot{padding:4px 0 96px;font-size:14px}#mineRoot .card{border-radius:16px;padding:14px}#mineRoot .h1{font-size:26px}#mineRoot .row{gap:8px;padding:11px 0}#mineRoot .buy,#mineRoot .sell,#mineRoot .tag2{min-height:38px;padding:0 11px;font-size:13px}#mineRoot .r .p{font-size:13.5px}#mineRoot .sb{font-size:11.5px}#mineRoot .tabs{margin-bottom:10px}#mineRoot .g2{gap:8px}}",
+      // [V33.729] 내 정보(프로필 머리·설정 목록) · 계좌 비중 막대 · 내 순위 카드
+      "#mineRoot .hi{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:2px 4px 12px;font-size:15px}#mineRoot .hi b{color:var(--m-acc)}#mineRoot .hi .mu{font-size:12.5px}",
+      "#mineRoot .pf{background:linear-gradient(135deg,#17322C 0%,#161A21 55%);border:1px solid #1F3A34}#mineRoot .pfh{display:flex;align-items:center;gap:14px}#mineRoot .av2{flex:0 0 56px;height:56px;border-radius:28px;background:linear-gradient(135deg,#3DD6B5,#2A8F7C);color:#04110D;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800}",
+      "#mineRoot .pn{font-size:21px;font-weight:700;letter-spacing:-.3px}#mineRoot .ok{color:var(--m-acc)}#mineRoot .st3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,.07)}#mineRoot .st3 div{display:flex;flex-direction:column;gap:3px}#mineRoot .st3 span{font-size:11.5px;color:var(--m-mute)}#mineRoot .st3 b{font-size:17px}",
+      "#mineRoot .sec{font-size:12.5px;font-weight:700;color:var(--m-mute);letter-spacing:.3px;margin:18px 6px 8px}#mineRoot .tg{display:flex;flex-wrap:wrap;gap:6px}#mineRoot .tg span{padding:7px 12px;border-radius:18px;background:var(--m-chip);font-size:13.5px}",
+      "#mineRoot .lst{padding:4px 0}#mineRoot .li{display:flex;align-items:center;gap:12px;width:100%;min-height:54px;padding:0 16px;border:0;border-top:1px solid var(--m-line);background:transparent;color:inherit;font:inherit;font-size:15px;text-align:left;text-decoration:none;cursor:pointer}#mineRoot .lst>.li:first-child{border-top:0}",
+      "#mineRoot .li .ic{flex:0 0 30px;height:30px;border-radius:9px;background:var(--m-chip);display:flex;align-items:center;justify-content:center;font-size:14px;color:#C7CDD6}#mineRoot .li .lb{flex:1;min-width:0}#mineRoot .li .rv{color:var(--m-mute);font-size:13.5px;white-space:nowrap}#mineRoot .li .ch{color:#4A5261;font-size:20px}#mineRoot .li.warn{color:#FF8A8A}#mineRoot .li.on .ch{transform:rotate(90deg)}",
+      "#mineRoot .pwf{display:flex;flex-direction:column;gap:8px;padding:4px 16px 14px}#mineRoot .pwf input{min-height:46px;border-radius:12px;border:1px solid #2E3542;background:var(--m-bg);color:inherit;padding:0 14px;font-size:15px;font-family:inherit}#mineRoot .err{margin:0;min-height:1em;color:#FF8A8A;font-size:13px}",
+      "#mineRoot .myrk{display:flex;justify-content:space-between;align-items:center;border:1px solid #1F3A34}#mineRoot .myrk .l{gap:3px}#mineRoot .alloc{display:flex;height:8px;border-radius:4px;overflow:hidden;margin-top:14px;gap:2px}#mineRoot .alloc i{display:block;height:100%;min-width:2px}#mineRoot .kv4{grid-template-columns:repeat(4,minmax(0,1fr))}#mineRoot .dot{flex:0 0 8px;height:8px;border-radius:4px}",
+      "@media (max-width:520px){#mineRoot .kv4{grid-template-columns:repeat(2,minmax(0,1fr))}#mineRoot .pn{font-size:19px}#mineRoot .st3 b{font-size:15.5px}}",
+      // [V33.729] 로그인 창(닉네임 + 비밀번호)
+      "#luxGate .hd{display:flex;justify-content:space-between;align-items:center;padding-top:calc(18px + env(safe-area-inset-top))}#luxGate .x{width:44px;height:44px;border-radius:22px;border:0;background:#161A21;color:#98A2B3;font-size:16px}#luxGate .lead{margin:10px 0 0;font-size:14.5px;line-height:1.6;color:var(--g-mute)}",
+      "#luxGate .sw{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;border-radius:14px;background:#161A21;margin:22px 0 14px}#luxGate .sw button{min-height:42px;border:0;border-radius:10px;background:transparent;color:#98A2B3;font-size:14.5px;font-weight:600}#luxGate .sw button.on{background:#262C36;color:#fff}",
+      "#luxGate form{display:flex;flex-direction:column;gap:12px}#luxGate .f{display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:#98A2B3}#luxGate .f input{min-height:52px;border-radius:14px;border:1px solid #2E3542;background:#161A21;color:#EEF1F5;padding:0 16px;font-size:16px;font-family:inherit;outline:0}#luxGate .f input:focus{border-color:#3DD6B5}",
+      "#luxGate .ag{display:flex;gap:10px;align-items:flex-start;font-size:12.5px;line-height:1.5;color:#C7CDD6}#luxGate .ag input{width:20px;height:20px;margin:1px 0 0;accent-color:#3DD6B5;flex:0 0 20px}#luxGate .ag a{color:#5FE0C4}#luxGate .err{margin:0;min-height:18px;color:#FF8A8A;font-size:13.5px}#luxGate .p1:disabled{opacity:.6}#luxGate .fine{margin:14px 0 0;font-size:11.5px;line-height:1.6;color:#7E8796;text-align:center}#luxGate .in{overflow-y:auto}#luxGate h1{margin-top:22px}",
       "#luxGate{--g-mute:#98A2B3;position:fixed;inset:0;z-index:10050;background:rgba(13,16,20,.97);color:#EEF1F5;display:flex;justify-content:center;font-family:inherit}#luxGate .in{width:min(440px,100%);display:flex;flex-direction:column;padding:0 24px calc(28px + env(safe-area-inset-bottom))}",
       "#luxGate h1{margin:0;font-size:29px;line-height:1.3;font-weight:700;letter-spacing:-.5px}#luxGate .lg{width:64px;height:64px;border-radius:18px;background:#161A21;border:1px solid #2A303B;display:flex;align-items:center;justify-content:center}",
       "#luxGate button{font-family:inherit;cursor:pointer}#luxGate .p1{min-height:56px;border-radius:16px;border:0;background:#3DD6B5;color:#04110D;font-size:16.5px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:10px}#luxGate .p2{min-height:52px;border-radius:16px;border:1px solid #2E3542;background:transparent;color:#EEF1F5;font-size:15.5px}#luxGate .p3{min-height:48px;border:0;background:transparent;color:#98A2B3;font-size:14.5px;text-decoration:underline}",
@@ -172,7 +188,8 @@
   function buyBtn(sym) { return '<button type="button" class="buy" data-buy="' + esc(sym) + '">사기</button>'; }
 
   function home() {
-    var mk = has(acMk) ? acMk : (has("us") ? "us" : has("kr") ? "kr" : acMk), v = val(mk), h = "";
+    var mk = has(acMk) ? acMk : (has("us") ? "us" : has("kr") ? "kr" : acMk), v = val(mk), h = "", hr = new Date().getHours();
+    h += '<div class="hi"><span>' + (hr < 12 ? "좋은 아침이에요" : hr < 18 ? "좋은 오후예요" : "좋은 저녁이에요") + (prof.nick ? ", <b>" + esc(prof.nick) + "</b>님" : "") + '</span><span class="mu">' + RISK[prof.risk] + " · " + HOR[prof.horizon] + "</span></div>";
     h += '<section class="card" aria-label="모의계좌"><div class="ct"><span>모의계좌 총자산</span><span class="seg">' + ["us", "kr"].map(function (m) { return '<button type="button" data-acmk="' + m + '" class="' + (m === mk ? "on" : "") + '">' + MK[m] + "</button>"; }).join("") + "</span></div>" +
       (v ? '<div class="h1">' + fmt(mk, v.eq) + '</div><div class="' + cls(v.ret) + '">' + fmt(mk, v.eq - prof.pf[mk].start, true) + " (" + pctS(v.ret) + ") · 시작 후 " + v.days + "일</div>"
          : '<div class="h2" style="margin:6px 0 2px">가상 ' + fmt(mk, START[mk]) + '으로 AI 후보를 따라 사 보세요</div><div class="note">실제 돈은 쓰지 않습니다 · 내 성적이 이 기기에만 쌓입니다</div>') +
@@ -208,10 +225,11 @@
     if (!has(mk)) return h + '<section class="card"><div class="h2">' + MK[mk] + ' 모의계좌가 아직 없습니다</div><div class="note" style="margin-top:4px">가상 ' + fmt(mk, START[mk]) + '으로 시작 · 실제 돈은 쓰지 않습니다</div><div class="btns"><button type="button" class="b pri" data-open-acct="' + mk + '">계좌 만들기</button></div></section>';
     var a = prof.pf[mk], v = val(mk), ks = Object.keys(a.pos);
     h += '<section class="card"><div class="ct"><span>총자산 · ' + v.days + '일째</span></div><div class="h1">' + fmt(mk, v.eq) + '</div><div class="' + cls(v.ret) + '">' + fmt(mk, v.eq - a.start, true) + " (" + pctS(v.ret) + ")</div>" +
-      '<div class="kv"><div><span>주문 가능</span>' + fmt(mk, v.cash) + '</div><div><span>주식</span>' + fmt(mk, v.mv) + '</div><div><span>평가손익</span><b class="' + cls(v.upl) + '" style="font-weight:600">' + fmt(mk, v.upl, true) + "</b></div></div></section>";
+      '<div class="alloc" aria-label="자산 비중">' + (v.eq > 0 ? ks.map(function (s, i) { var p = a.pos[s], w = p.q * (px(q(s)) || p.avg) / v.eq * 100; return '<i style="width:' + w.toFixed(2) + '%;background:' + ACOL[i % ACOL.length] + '" title="' + esc(nm(s)) + " " + w.toFixed(1) + '%"></i>'; }).join("") : "") + '<i style="flex:1;background:#2A303B" title="현금"></i></div>' +
+      '<div class="kv kv4"><div><span>주문 가능</span>' + fmt(mk, v.cash) + '</div><div><span>주식</span>' + fmt(mk, v.mv) + '</div><div><span>평가손익</span><b class="' + cls(v.upl) + '" style="font-weight:600">' + fmt(mk, v.upl, true) + '</b></div><div><span>실현손익</span><b class="' + cls(v.eq - a.start - v.upl) + '" style="font-weight:600">' + fmt(mk, v.eq - a.start - v.upl, true) + "</b></div></div></section>";
     h += '<section class="card"><div class="h2" style="margin-bottom:4px">보유 ' + ks.length + "종목</div>" + (ks.length ? ks.map(function (s) {
       var p = a.pos[s], cur = px(q(s)) || p.avg, r = (cur / p.avg - 1) * 100;
-      return '<div class="row" data-open="' + esc(s) + '"><div class="l"><span class="nm">' + esc(nm(s)) + pill(sigOf(s)) + '</span><span class="sb">' + p.q.toLocaleString() + "주 · 평단 " + fmt(mk, p.avg) + '</span></div><div class="r"><span class="p">' + fmt(mk, p.q * cur) + '</span><span class="' + cls(r) + '" style="font-size:12.5px">' + pctS(r) + "</span></div>" +
+      return '<div class="row" data-open="' + esc(s) + '"><span class="dot" style="background:' + ACOL[ks.indexOf(s) % ACOL.length] + '" aria-hidden="true"></span><div class="l"><span class="nm">' + esc(nm(s)) + pill(sigOf(s)) + '</span><span class="sb">' + p.q.toLocaleString() + "주 · 평단 " + fmt(mk, p.avg) + " · 비중 " + (v.eq > 0 ? (p.q * cur / v.eq * 100).toFixed(0) : 0) + '%</span></div><div class="r"><span class="p">' + fmt(mk, p.q * cur) + '</span><span class="' + cls(r) + '" style="font-size:12.5px">' + pctS(r) + "</span></div>" +
         buyBtn(s) + '<button type="button" class="sell" data-sell="' + esc(s) + '">팔기</button></div>';
     }).join("") : '<div class="empty">홈의 AI 후보나 관심종목에서 [사기]를 눌러 보세요</div>') + "</section>";
     h += '<section class="card"><div class="h2" style="margin-bottom:4px">거래 내역</div>' + (a.hist.length ? a.hist.slice(0, 20).map(function (t) {
@@ -219,21 +237,37 @@
     }).join("") : '<div class="empty">아직 거래가 없습니다</div>') + '<div class="note" style="margin-top:6px">체결가 = 그 순간 화면 시세(시간외 포함) · 수수료·세금 없음 · 모의투자</div></section>';
     return h;
   }
+  /* [V33.729] ★내 정보 새 디자인★(사용자 11/2) — 프로필 머리(닉네임·가입일·두 계좌 수익률·관심 수) → 투자 성향(요약 칩 · [바꾸기]로 펼침)
+     → 계정(비밀번호 바꾸기·언어·로그아웃) → 모의계좌(시장별 초기화) → 데이터·약관(처리방침·내 데이터 삭제). 설정 앱처럼 줄 단위 목록. */
+  var meEdit = false, pwOpen = false;
   function me() {
     var ops = function (k, map, cols, multi) { return '<div class="ops" data-k="' + k + '" style="grid-template-columns:repeat(' + cols + ',minmax(0,1fr))">' + Object.keys(map).map(function (v) {
       var on = multi ? prof[k].indexOf(v) >= 0 : prof[k] === v; return '<button type="button" data-v="' + v + '" class="' + (on ? "on" : "") + '">' + map[v] + "</button>"; }).join("") + "</div>"; };
-    var pk = !!(window.PublicKeyCredential && navigator.credentials);
-    return '<section class="card">' + (prof.done ? '<div class="h2" style="margin-bottom:8px">투자 성향</div>' : '<div class="h2">처음이면 네 가지만 골라 주세요</div><div class="note" style="margin:4px 0 10px">답에 맞춰 홈의 시장 안내와 오늘 후보가 바뀝니다</div>') +
-      ops("risk", RISK, 3) + '<span class="mu" style="font-size:13px">보유 기간</span>' + ops("horizon", HOR, 3) + '<span class="mu" style="font-size:13px">관심 시장</span>' + ops("mkts", MK, 2, true) + '<span class="mu" style="font-size:13px">투자 경험</span>' + ops("exp", EXP, 3) +
-      (prof.done ? "" : '<button type="button" class="b pri" id="mineDone" style="width:100%">시작하기</button>') + "</section>" +
-      (prof.done ? '<section class="card"><div class="ct" style="margin:0"><span class="h2" style="color:#EEF1F5">닉네임</span><span>' + (prof.nick ? esc(prof.nick) : "아직 없음") + '</span></div><div class="note" style="margin:4px 0 8px">수익률 순위에 이 이름으로 나옵니다 · 다른 사람과 겹칠 수 없어요</div><label class="search"><input id="mineNick" maxlength="12" aria-label="닉네임" placeholder="2~12자 한글·영문·숫자" value="' + esc(prof.nick || "") + '"></label><div class="btns"><button type="button" class="b pri" id="mineNickSave">' + (prof.nick ? "닉네임 바꾸기" : "닉네임 정하기") + "</button></div></section>" : "") +
-      '<section class="card"><div class="ct" style="margin:0"><span class="h2" style="color:#EEF1F5">로그인 · 내 데이터</span><span style="color:' + (isPk() ? "#3DD6B5" : "#98A2B3") + '">' + (isPk() ? "패스키 로그인됨" : "로그인 없이 사용 중") + '</span></div><div class="note" style="margin:4px 0 0">내 설정·관심종목·모의계좌는 <b>이 기기 코드(또는 내 패스키)로만</b> 열립니다. 다른 사람에게는 보이지 않아요. 이름·이메일·전화번호는 받지 않습니다.</div>' +
-      (pk ? '<div class="btns"><button type="button" class="b pri" id="minePkReg">패스키로 이 계정 지키기</button><button type="button" class="b" id="minePkLogin">패스키로 로그인</button></div><div class="note" style="margin-top:6px">패스키 = Face ID·지문·화면 잠금으로 하는 로그인(비밀번호 없음). 같은 애플·구글 계정의 기기끼리 자동으로 이어집니다.</div>'
-          : '<div class="note" style="margin-top:6px">이 브라우저는 패스키를 지원하지 않아 연결 코드로만 이어 쓸 수 있어요.</div>') +
-      '<div class="btns"><button type="button" class="b" id="mineCopy">연결 코드 복사</button><button type="button" class="b" id="mineLinkOpen">다른 기기 코드 넣기</button></div>' +
-      '<div id="mineLinkBox" style="display:none;margin-top:8px"><label class="search"><input id="mineCode" aria-label="연결 코드" placeholder="다른 기기의 연결 코드 붙여넣기"></label><div class="btns"><button type="button" class="b pri" id="mineLink">연결</button></div></div>' +
-      '<div class="btns"><button type="button" class="b line" data-reset="' + acMk + '">' + MK[acMk] + ' 모의계좌 초기화</button><button type="button" class="b warn" id="mineDelete">내 데이터 삭제</button></div></section>' +
-      '<section class="note" style="padding:0 6px">· 모의투자 서비스입니다. 가상 자금이며 실제 주문·자금 이동이 없습니다.<br>· 화면의 후보·안내는 투자 권유가 아니며, 수익을 약속하지 않습니다. 투자 판단과 결과의 책임은 본인에게 있습니다.<br>· 저장 항목: 성향·관심종목·모의계좌(이 기기 코드의 해시로 구분). 마지막 사용 후 1년이 지나면 자동 삭제되며, 위 [내 데이터 삭제]로 언제든 지울 수 있습니다.<br>· <a href="/privacy">개인정보 처리방침 · 이용 안내 전문</a></section>';
+    var nick = prof.nick || authNick(), since = authSince(), vu = val("us"), vk = val("kr");
+    var stat = function (lb, v) { return '<div><span>' + lb + '</span><b class="' + (v ? cls(v.ret) : "mu") + '">' + (v ? pctS(v.ret) : "—") + "</b></div>"; };
+    var li = function (id, ic, lb, right, extra) { return '<button type="button" class="li' + (extra || "") + '" id="' + id + '"><span class="ic" aria-hidden="true">' + ic + '</span><span class="lb">' + lb + '</span><span class="rv">' + (right || "") + '</span><span class="ch" aria-hidden="true">›</span></button>'; };
+    var h = '<section class="card pf"><div class="pfh"><div class="av2" aria-hidden="true">' + esc((nick || "?").slice(0, 1).toUpperCase()) + '</div><div class="l"><span class="pn">' + esc(nick || "게스트") + '</span><span class="sb">' +
+      (isAuth() ? '<span class="ok">● 로그인됨</span>' + (since ? " · " + new Date(since).toLocaleDateString() + " 가입" : "") : "로그인하지 않음") + "</span></div></div>" +
+      '<div class="st3">' + stat("미국 계좌", vu) + stat("한국 계좌", vk) + '<div><span>관심종목</span><b>' + prof.watch.length + "</b></div></div></section>";
+    var open = meEdit || !prof.done;
+    h += '<div class="sec">투자 성향</div><section class="card">' + (prof.done && !open
+      ? '<div class="tg">' + [RISK[prof.risk], HOR[prof.horizon], prof.mkts.map(function (m) { return MK[m]; }).join("·"), (prof.exp === "new" ? "투자 처음" : prof.exp === "pro" ? "전문가" : "경험 있음")].map(function (t) { return "<span>" + esc(t) + "</span>"; }).join("") + '</div><div class="note" style="margin-top:8px">이 성향에 맞춰 홈의 시장 안내와 AI 순위 설명이 바뀝니다.</div><div class="btns"><button type="button" class="b line" id="meEdit">성향 바꾸기</button></div>'
+      : (prof.done ? "" : '<div class="h2">처음이면 네 가지만 골라 주세요</div><div class="note" style="margin:4px 0 10px">답에 맞춰 홈의 시장 안내와 AI 순위 설명이 바뀝니다</div>') +
+        '<span class="mu" style="font-size:13px">위험 성향</span>' + ops("risk", RISK, 3) + '<span class="mu" style="font-size:13px">보유 기간</span>' + ops("horizon", HOR, 3) + '<span class="mu" style="font-size:13px">관심 시장</span>' + ops("mkts", MK, 2, true) + '<span class="mu" style="font-size:13px">투자 경험</span>' + ops("exp", EXP, 3) +
+        (prof.done ? '<button type="button" class="b pri" id="meEditDone" style="width:100%">완료</button>' : '<button type="button" class="b pri" id="mineDone" style="width:100%">시작하기</button>')) + "</section>";
+    var en = window.luxLang && window.luxLang.get && window.luxLang.get() === "en";
+    h += '<div class="sec">계정</div><section class="card lst">' +
+      (isAuth() ? li("mePw", "🔒", "비밀번호 바꾸기", "", pwOpen ? " on" : "") +
+        (pwOpen ? '<form id="mePwForm" class="pwf" novalidate><input id="mePw0" type="password" autocomplete="current-password" placeholder="지금 비밀번호" maxlength="64"><input id="mePw1" type="password" autocomplete="new-password" placeholder="새 비밀번호(8자 이상)" maxlength="64"><input id="mePw2" type="password" autocomplete="new-password" placeholder="새 비밀번호 확인" maxlength="64"><p id="mePwErr" class="err" role="alert"></p><button type="submit" class="b pri">비밀번호 바꾸기</button></form>' : "")
+        : li("meLogin", "👤", "로그인 · 회원가입", "")) +
+      li("meLang", "🌐", "언어", en ? "English" : "한국어") +
+      (isAuth() ? li("meOut", "↩", "로그아웃", "") : "") + "</section>";
+    h += '<div class="sec">모의계좌</div><section class="card lst">' + ["us", "kr"].map(function (m) {
+      return '<button type="button" class="li" data-reset="' + m + '"><span class="ic" aria-hidden="true">' + (m === "us" ? "$" : "₩") + '</span><span class="lb">' + MK[m] + ' 계좌 처음부터</span><span class="rv">' + (has(m) ? fmt(m, val(m).eq) : "없음") + '</span><span class="ch" aria-hidden="true">›</span></button>'; }).join("") + "</section>";
+    h += '<div class="sec">데이터 · 약관</div><section class="card lst"><a class="li" href="/privacy"><span class="ic" aria-hidden="true">§</span><span class="lb">개인정보 처리방침 · 이용 안내</span><span class="rv"></span><span class="ch" aria-hidden="true">›</span></a>' +
+      li("mineDelete", "🗑", "내 데이터 · 계정 삭제", "", " warn") + "</section>";
+    h += '<section class="note" style="padding:2px 6px">· 모의투자 서비스입니다. 가상 자금이며 실제 주문·자금 이동이 없습니다.<br>· 화면의 후보·안내는 투자 권유가 아니며, 수익을 약속하지 않습니다. 투자 판단과 결과의 책임은 본인에게 있습니다.<br>· 저장 항목: 닉네임 · 비밀번호 확인값(비밀번호 자체는 저장하지 않음) · 성향 · 관심종목 · 모의계좌. 마지막 사용 후 1년이 지나면 자동 삭제되며, [내 데이터 · 계정 삭제]로 언제든 지울 수 있습니다.</section>';
+    return h;
   }
   /* [V33.725] ★수익률 순위★ — 서버가 1시간에 한 번 계산한 표(/api/leaderboard)를 받는다. 이 기기는 5분에 한 번만 다시 받는다. */
   var LB = null, lbTs = 0, rkMk = "us";
@@ -242,7 +276,10 @@
     lbLoad(false);
     var rows = (LB && LB[rkMk]) || [], me = prof.nick;
     var h = '<div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 12px"><span class="h2">모의투자 수익률 순위</span><span class="seg">' + ["us", "kr"].map(function (m) { return '<button type="button" data-rkmk="' + m + '" class="' + (m === rkMk ? "on" : "") + '">' + MK[m] + "</button>"; }).join("") + "</span></div>";
-    if (!me) h += '<section class="card"><div class="h2">닉네임을 정하면 순위에 올라가요</div><div class="note" style="margin-top:4px">거래가 1건 이상 있는 모의계좌만 순위에 들어갑니다.</div><div class="btns"><button type="button" class="b pri" data-tab="me">닉네임 정하기</button></div></section>';
+    var myI = -1; for (var ii = 0; ii < rows.length; ii++) if (me && rows[ii].nick === me) { myI = ii; break; }
+    var mv = val(rkMk);
+    h += '<section class="card myrk"><div class="l"><span class="sb">내 순위 · ' + MK[rkMk] + '</span><span class="h1" style="font-size:26px">' + (myI >= 0 ? (myI + 1) + "위" : "순위 밖") + '</span><span class="sb">' +
+      (myI >= 0 ? "상위 " + rows.length + "명 중" : !mv ? MK[rkMk] + " 모의계좌가 아직 없어요" : prof.pf[rkMk].hist.length ? "다음 정각 계산에 반영되거나 상위 50 밖이에요" : "거래 1건 이상이면 순위에 들어가요") + '</span></div><div class="r"><span class="sb">내 수익률</span><span class="h2 ' + (mv ? cls(mv.ret) : myI >= 0 ? cls(rows[myI].ret) : "mu") + '">' + (mv ? pctS(mv.ret) : myI >= 0 ? pctS(rows[myI].ret) : "—") + "</span></div></section>";
     h += '<section class="card">' + (rows.length ? rows.map(function (r, i) {
       var mine = me && r.nick === me;
       return '<div class="row" style="cursor:default' + (mine ? ";background:rgba(61,214,181,.08);border-radius:10px" : "") + '"><span class="rk' + (i < 3 ? " hot" : "") + '">' + (i + 1) + '</span><div class="l"><span class="nm">' + esc(r.nick) + (mine ? ' <span class="pill">나</span>' : "") + '</span><span class="sb">' + r.days + "일째 · 보유 " + r.n + '종목</span></div><div class="r"><span class="p ' + cls(r.ret) + '">' + pctS(r.ret) + "</span></div></div>";
@@ -250,22 +287,13 @@
       '<div class="note" style="margin-top:6px">서버가 실제 시세로 1시간마다 다시 계산합니다' + (LB && LB.ts ? " · " + new Date(LB.ts).toLocaleTimeString() + " 기준" : "") + " · 가상 자금 · 투자 권유 아님</div></section>";
     return h;
   }
-  function nickSave() {
-    var v = (($("mineNick") || {}).value || "").trim();
-    if (!/^[가-힣A-Za-z0-9_]{2,12}$/.test(v)) { alert("닉네임은 2~12자 한글·영문·숫자·_ 만 쓸 수 있어요"); return; }
-    if (!prof.done) { alert("먼저 성향을 고르고 [시작하기]를 눌러 주세요"); return; }
-    api("POST", prof).then(function () { return api("POST", { nick: v }, "/api/me/nick"); }).then(function (j) {
-      if (j && j.ok) { prof.nick = j.nick; saveLocal(); draw(); alert("닉네임을 '" + j.nick + "'(으)로 정했어요."); }
-      else alert((j && j.error) || "닉네임을 저장하지 못했습니다");
-    }).catch(function () { alert("닉네임을 저장하지 못했습니다"); });
-  }
   /* [V33.725] ★종목 상세의 모의 매매 막대★ — 관심종목에서 종목을 누르면 상세로 가는데 거기서 살 수 없었다(사용자 11/2) */
   var detSym = null;
   function detail(sym) {
     detSym = sym; var pg = $("page-detail"); if (!pg || !sym) return; css();
     var bar = $("mineDetailBar");
     if (!bar) { bar = document.createElement("section"); bar.id = "mineDetailBar"; bar.setAttribute("aria-label", "모의 매매"); pg.insertBefore(bar, pg.firstChild);
-      bar.addEventListener("click", function (ev) { var b = ev.target.closest("button"); if (!b) return; if (!isPk()) { ask("mine"); return; } if (b.dataset.dbuy) sheet("B", detSym); else if (b.dataset.dsell) sheet("S", detSym); else if (b.dataset.dwatch) { var i = prof.watch.indexOf(detSym); if (i >= 0) prof.watch.splice(i, 1); else if (prof.watch.length < 40) prof.watch.push(detSym); persist(); detail(detSym); } }); }
+      bar.addEventListener("click", function (ev) { var b = ev.target.closest("button"); if (!b) return; if (!isAuth()) { ask("mine"); return; } if (b.dataset.dbuy) sheet("B", detSym); else if (b.dataset.dsell) sheet("S", detSym); else if (b.dataset.dwatch) { var i = prof.watch.indexOf(detSym); if (i >= 0) prof.watch.splice(i, 1); else if (prof.watch.length < 40) prof.watch.push(detSym); persist(); detail(detSym); } }); }
     var hq = held(sym), on = prof.watch.indexOf(sym) >= 0, mk = isKr(sym) ? "kr" : "us";
     bar.innerHTML = '<div class="mdb"><div class="l"><span class="nm">내 모의계좌 · ' + esc(nm(sym)) + '</span><span class="sb">' + (hq ? "보유 " + hq.toLocaleString() + "주" : "보유 없음") + (has(mk) ? " · 주문 가능 " + fmt(mk, prof.pf[mk].cash) : " · 첫 주문 때 가상 " + fmt(mk, START[mk]) + " 계좌가 열립니다") + "</span></div>" +
       '<button type="button" class="wbtn2" data-dwatch="1">' + (on ? "관찰중" : "관찰") + '</button>' + (hq ? '<button type="button" class="sell" data-dsell="1">팔기</button>' : "") + '<button type="button" class="buy" data-dbuy="1">사기</button></div>';
@@ -320,57 +348,76 @@
     paint(); document.body.appendChild(w);
   }
 
-  // ── 패스키(WebAuthn) ──
-  var b64u = function (buf) { var s = "", b = new Uint8Array(buf); for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); };
-  var unb64u = function (t) { t = t.replace(/-/g, "+").replace(/_/g, "/"); while (t.length % 4) t += "="; var s = atob(t), b = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; };
-  function pkReg(quiet) {
-    if (!prof.done) { alert("먼저 성향 네 가지를 고르고 [시작하기]를 눌러 주세요"); return Promise.resolve(false); }
-    return api("POST", prof).then(function () { return fetch("/api/me/passkey/options?kind=reg").then(function (r) { return r.json(); }); }).then(function (o) {
-      return navigator.credentials.create({ publicKey: { rp: { id: o.rpId, name: "LUX" }, user: { id: crypto.getRandomValues(new Uint8Array(16)), name: "LUX 투자자", displayName: "LUX 투자자" },
-        challenge: unb64u(o.challenge), pubKeyCredParams: [{ type: "public-key", alg: -7 }], authenticatorSelection: { residentKey: "required", userVerification: "preferred" }, attestation: "none", timeout: 120000 } });
-    }).then(function (c) {
-      return api("POST", { clientDataJSON: b64u(c.response.clientDataJSON), attestationObject: b64u(c.response.attestationObject) }, "/api/me/passkey/register");
-    }).then(function (j) {
-      if (j && j.ok) { remember("pk"); if (!quiet) alert("패스키를 만들었어요. 다른 기기에서는 [패스키로 로그인]만 누르면 됩니다."); return true; }
-      alert("패스키를 만들지 못했습니다: " + ((j && j.error) || "")); return false;
-    }).catch(function (e) { if (e && e.name !== "NotAllowedError") alert("패스키를 만들지 못했습니다: " + (e && e.message || e)); return false; });
+  // ── [V33.729] 로그인 = 닉네임 + 비밀번호 ──
+  // 로그인 상태는 이 브라우저에 닉네임(lux-auth)으로 기억한다. 서버 계정은 이 기기 코드(uid)를 비밀번호로 잠가 두고, 로그인하면 그 코드를 돌려준다.
+  function isAuth() { try { return !!localStorage.getItem("lux-auth"); } catch (e) { return false; } }
+  function authNick() { try { return localStorage.getItem("lux-auth") || ""; } catch (e) { return ""; } }
+  function authSince() { try { return Number(localStorage.getItem("lux-auth-ts")) || 0; } catch (e) { return 0; } }
+  function remember(nick, since) { try { localStorage.setItem("lux-auth", nick); if (since) localStorage.setItem("lux-auth-ts", String(since)); localStorage.removeItem("lux-pk"); localStorage.removeItem("lux-gate"); } catch (e) {} try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {} }
+  function authPost(path, body) { return fetch(path, { method: "POST", headers: { "content-type": "application/json", "x-lux-uid": uid() }, body: JSON.stringify(body) }).then(function (r) { return r.json(); }); }
+  function signup(nick, pw) {
+    return api("POST", Object.assign({}, prof)).catch(function () {}).then(function () { return authPost("/api/auth/signup", { nick: nick, pw: pw }); }).then(function (j) {
+      if (!j || !j.ok) throw new Error((j && j.error) || "가입하지 못했어요");
+      remember(j.nick, j.created); prof.nick = j.nick; saveLocal(); return j;
+    });
   }
-  /* [V33.724] 로그인 상태를 기억한다 — 코드·선택을 저장하고 브라우저에 '이 사이트 저장소를 지우지 말라' 고 요청(Safari 는 7일 미사용 시 지울 수 있다 → 그래도 패스키는 iCloud 키체인에 남아 다시 로그인하면 복원) */
-  function isPk() { try { return localStorage.getItem("lux-pk") === "1"; } catch (e) { return false; } }
-  function remember(kind) { try { if (kind === "guest" && localStorage.getItem("lux-gate") === "pk") return; localStorage.setItem("lux-gate", kind); if (kind === "pk") localStorage.setItem("lux-pk", "1"); } catch (e) {} try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {} }
-  function pkLogin() {
-    return fetch("/api/me/passkey/options?kind=auth").then(function (r) { return r.json(); }).then(function (o) {
-      return navigator.credentials.get({ publicKey: { challenge: unb64u(o.challenge), rpId: o.rpId, userVerification: "preferred", timeout: 120000 } });
-    }).then(function (c) {
-      return fetch("/api/me/passkey/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: c.id, clientDataJSON: b64u(c.response.clientDataJSON), authenticatorData: b64u(c.response.authenticatorData), signature: b64u(c.response.signature) }) }).then(function (r) { return r.json(); });
-    }).then(function (j) {
-      if (!j || !j.ok || !j.uid) { alert("로그인하지 못했습니다: " + ((j && j.error) || "")); return false; }
-      try { localStorage.setItem(UIDK, j.uid); } catch (e) {}
-      remember("pk"); load(true); tab = "home"; setTimeout(draw, 600); return true;
-    }).catch(function (e) { if (e && e.name !== "NotAllowedError") alert("로그인하지 못했습니다: " + (e && e.message || e)); return false; });
+  function login(nick, pw) {
+    return authPost("/api/auth/login", { nick: nick, pw: pw }).then(function (j) {
+      if (!j || !j.ok || !j.uid) throw new Error((j && j.error) || "로그인하지 못했어요");
+      try { localStorage.setItem(UIDK, j.uid); localStorage.removeItem(PROFK); } catch (e) {}
+      prof = Object.assign({}, DEF, { nick: j.nick, done: true }); remember(j.nick, j.created); loaded = false; load(true); tab = "home"; return j;
+    });
   }
-  /* [V33.724] ★첫 화면 — 패스키로 시작 / 이미 패스키 있음 / 로그인 없이 둘러보기★(사용자 11/2) · 한 번 고르면 다시 묻지 않는다(저장소가 지워지면 다시 뜬다) */
-  /* [V33.727] ★패스키 묻기★ — 첫 화면에서 묻지 않고, 패스키 없이 대시보드·종목 상세 밖 메뉴로 가려 할 때 묻는다(사용자 11/2). 성공하면 그 메뉴로 간다. */
+  function logout(silent) {
+    if (!silent && !confirm("로그아웃할까요? 다시 쓰려면 닉네임과 비밀번호로 로그인하면 됩니다.")) return;
+    try { localStorage.removeItem("lux-auth"); localStorage.removeItem("lux-auth-ts"); localStorage.removeItem(PROFK); localStorage.setItem(UIDK, newUid()); } catch (e) {}
+    prof = Object.assign({}, DEF); loaded = false; tab = "home";
+    if (typeof window.showPage === "function") window.showPage("dashboard");
+  }
+  /* [V33.729] ★로그인 창★ — 대시보드·종목 상세 밖 메뉴로 갈 때 뜬다(V33.727 흐름 그대로). 탭 둘: 로그인 / 회원가입. 오류는 창 안에 글로(팝업 없음). */
   var PGN = { mine: "MY(내 투자)", positions: "포지션", macro: "뉴스·환율", nnviz: "AI 두뇌", trades: "거래 기록", report: "AI 리포트", whatif: "WHAT-IF" };
-  function ask(target) {
+  function ask(target, mode) {
     if ($("luxGate")) return;
     css();
-    var pk = !!(window.PublicKeyCredential && navigator.credentials);
-    var w = document.createElement("div"); w.id = "luxGate"; w.setAttribute("role", "dialog"); w.setAttribute("aria-label", "LUX 시작");
-    w.innerHTML = '<div class="in"><div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:18px"><div class="lg"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#3DD6B5" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 2v20M2 12h20M5 5l14 14M19 5L5 19"></path></svg></div>' +
-      "<h1>" + esc(PGN[target] || "이 메뉴") + "는<br>패스키 로그인 후 쓸 수 있어요</h1><p style=\"margin:0;font-size:15px;line-height:1.6;color:var(--g-mute)\">대시보드와 종목 상세는 로그인 없이 볼 수 있어요. 모의투자·AI 두뇌·순위 등은 패스키(Face ID·지문)로 시작해 주세요. 비밀번호도 이메일도 필요 없습니다.</p></div>" +
-      '<div style="display:flex;flex-direction:column;gap:10px">' + (pk ? '<button type="button" class="p1" id="gStart"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="15" r="4"></circle><path d="M10.8 12.2L20 3M16 7l3 3M14 9l2 2"></path></svg>패스키로 시작하기</button>' +
-      '<span style="font-size:12.5px;line-height:1.5;color:#98A2B3;text-align:center">Face ID·지문으로 로그인 · 비밀번호 없음 · 다른 기기에서도 이어서</span><button type="button" class="p2" id="gLogin">이미 패스키가 있어요 · 로그인</button>' : "") +
-      '<button type="button" class="p3" id="gGuest">나중에 · 대시보드로 계속</button></div><p style="margin:14px 0 0;font-size:11.5px;line-height:1.55;color:#7E8796;text-align:center">이름·이메일을 받지 않습니다 · 모의투자이며 투자 권유가 아닙니다<br><a href="/privacy" style="color:#5FE0C4">개인정보 처리방침 · 이용 안내</a></p></div>';
-    document.body.appendChild(w);
+    var m = mode || (authNick() || prof.nick ? "login" : "signup"), busy = false;
+    var w = document.createElement("div"); w.id = "luxGate"; w.setAttribute("role", "dialog"); w.setAttribute("aria-modal", "true"); w.setAttribute("aria-label", "LUX-INV 로그인");
+    var paint = function () {
+      var su = m === "signup";
+      w.innerHTML = '<div class="in"><div class="hd"><div class="lg"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3DD6B5" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 2v20M2 12h20M5 5l14 14M19 5L5 19"></path></svg></div>' +
+        '<button type="button" class="x" id="gClose" aria-label="닫기">✕</button></div>' +
+        "<h1>" + (su ? "닉네임 하나로<br>모의투자를 시작하세요" : "다시 오셨네요") + '</h1><p class="lead">' + esc(PGN[target] || "이 메뉴") + "는 로그인 후 쓸 수 있어요. 대시보드와 종목 상세는 로그인 없이 볼 수 있습니다.</p>" +
+        '<div class="sw" role="tablist"><button type="button" role="tab" data-m="login" class="' + (su ? "" : "on") + '" aria-selected="' + !su + '">로그인</button><button type="button" role="tab" data-m="signup" class="' + (su ? "on" : "") + '" aria-selected="' + su + '">회원가입</button></div>' +
+        '<form id="gForm" novalidate><label class="f"><span>닉네임</span><input id="gNick" autocomplete="username" maxlength="12" placeholder="2~12자 한글·영문·숫자" value="' + esc(authNick() || prof.nick || "") + '"></label>' +
+        '<label class="f"><span>비밀번호</span><input id="gPw" type="password" autocomplete="' + (su ? "new-password" : "current-password") + '" maxlength="64" placeholder="' + (su ? "8자 이상" : "비밀번호") + '"></label>' +
+        (su ? '<label class="f"><span>비밀번호 확인</span><input id="gPw2" type="password" autocomplete="new-password" maxlength="64" placeholder="한 번 더"></label>' +
+              '<label class="ag"><input type="checkbox" id="gAgree"><span><a href="/privacy" target="_blank" rel="noopener">이용 안내·개인정보 처리방침</a>에 동의합니다 · 모의투자이며 투자 권유가 아님을 이해했습니다</span></label>' : "") +
+        '<p id="gErr" class="err" role="alert"></p><button type="submit" class="p1" id="gGo">' + (su ? "가입하고 시작하기" : "로그인") + "</button></form>" +
+        '<button type="button" class="p3" id="gGuest">나중에 · 대시보드로 계속</button>' +
+        '<p class="fine">이메일·이름·전화번호를 받지 않습니다 · 비밀번호는 서버에 저장되지 않고 확인용 값만 남습니다' + (su ? " · 로그인 없이 쓰던 관심종목·모의계좌는 이 계정으로 옮겨집니다" : "") + "<br>비밀번호를 잊으면 되찾을 수 없어요(이메일을 받지 않기 때문) — 꼭 기억해 두세요.</p></div>";
+      var nk = $("gNick"); if (nk) setTimeout(function () { try { (nk.value ? $("gPw") : nk).focus(); } catch (e) {} }, 30);
+    };
+    var err = function (t) { var e = $("gErr"); if (e) e.textContent = t || ""; };
     var done = function (go) { w.remove(); if (go && typeof window.showPage === "function") window.showPage(target || "mine"); };
-    $("gGuest").onclick = function () { remember("guest"); done(false); };
-    w.addEventListener("click", function (ev) { if (ev.target === w) done(false); });
-    if (pk) {
-      $("gStart").onclick = function () { prof = Object.assign({}, DEF, prof, { done: true }); saveLocal(); tab = "me";
-        pkReg(true).then(function (ok) { if (ok) done(true); }); };
-      $("gLogin").onclick = function () { pkLogin().then(function (ok) { if (ok) done(true); }); };
-    }
+    w.addEventListener("click", function (ev) {
+      if (ev.target === w) { done(false); return; }
+      var b = ev.target.closest("button"); if (!b) return;
+      if (b.dataset.m) { m = b.dataset.m; paint(); return; }
+      if (b.id === "gClose" || b.id === "gGuest") done(false);
+    });
+    w.addEventListener("submit", function (ev) {
+      ev.preventDefault(); if (busy) return;
+      var nick = ($("gNick").value || "").trim(), pw = $("gPw").value || "";
+      if (!/^[가-힣A-Za-z0-9_]{2,12}$/.test(nick)) { err("닉네임은 2~12자 한글·영문·숫자·_ 만 쓸 수 있어요"); return; }
+      if (m === "signup") {
+        if (pw.length < 8) { err("비밀번호는 8자 이상으로 정해 주세요"); return; }
+        if (pw !== ($("gPw2").value || "")) { err("비밀번호 확인이 다릅니다"); return; }
+        if (!$("gAgree").checked) { err("이용 안내·개인정보 처리방침에 동의해 주세요"); return; }
+      } else if (!pw) { err("비밀번호를 넣어 주세요"); return; }
+      busy = true; err(""); var g = $("gGo"); g.disabled = true; g.textContent = m === "signup" ? "가입하는 중…" : "로그인하는 중…";
+      (m === "signup" ? signup(nick, pw) : login(nick, pw)).then(function () { if (m === "signup" && !prof.done) tab = "me"; done(true); })
+        .catch(function (e) { busy = false; g.disabled = false; g.textContent = m === "signup" ? "가입하고 시작하기" : "로그인"; err(String(e && e.message || e)); });
+    });
+    paint(); document.body.appendChild(w);
   }
 
   function onClick(ev) {
@@ -383,7 +430,6 @@
     if (d.acmk) { acMk = d.acmk; draw(); return; }
     if (d.wf) { wFilter = d.wf; draw(); return; }
     if (d.rkmk) { rkMk = d.rkmk; draw(); return; }
-    if (t.id === "mineNickSave") { nickSave(); return; }
     if (d.addwatch) { ev.stopPropagation(); var i = prof.watch.indexOf(d.addwatch); if (i >= 0) prof.watch.splice(i, 1); else if (prof.watch.length < 40) prof.watch.push(d.addwatch); persist(); draw(); return; }
     if (d.unwatch) { ev.stopPropagation(); prof.watch = prof.watch.filter(function (x) { return x !== d.unwatch; }); persist(); draw(); return; }
     if (d.reset) { if (confirm(MK[d.reset] + " 모의계좌를 처음 상태로 되돌릴까요?")) { if (prof.pf) delete prof.pf[d.reset]; persist(); draw(); } return; }
@@ -391,17 +437,15 @@
       if (k === "mkts") { var j = prof.mkts.indexOf(d.v); if (j >= 0 && prof.mkts.length > 1) prof.mkts.splice(j, 1); else if (j < 0) prof.mkts.push(d.v); } else prof[k] = d.v;
       if (prof.done) persist(); draw(); return; }
     if (t.id === "mineDone") { prof.done = true; persist(); tab = "home"; pbLoad(true); draw(); return; }
-    if (t.id === "minePkReg") { pkReg(false); return; }
-    if (t.id === "minePkLogin") { pkLogin(); return; }
-    if (t.id === "mineCopy") { var c = uid(); (navigator.clipboard ? navigator.clipboard.writeText(c) : Promise.reject()).then(function () { alert("연결 코드를 복사했어요. 다른 사람에게 알려 주지 마세요."); }).catch(function () { prompt("연결 코드(다른 사람에게 알려 주지 마세요)", c); }); return; }
-    if (t.id === "mineLinkOpen") { var bx = $("mineLinkBox"); if (bx) bx.style.display = "block"; return; }
-    if (t.id === "mineLink") { var code = (($("mineCode") || {}).value || "").trim().toLowerCase();
-      if (!/^[0-9a-f]{32,64}$/.test(code)) { alert("연결 코드 형식이 아닙니다"); return; }
-      try { localStorage.setItem(UIDK, code); } catch (e) {}
-      api("GET").then(function (j) { if (j && j.profile) { adopt(j.profile); tab = "home"; draw(); } else alert("그 코드의 데이터를 찾지 못했습니다"); }); return; }
+    if (t.id === "meEdit") { meEdit = true; draw(); return; }
+    if (t.id === "meEditDone") { meEdit = false; draw(); return; }
+    if (t.id === "mePw") { pwOpen = !pwOpen; draw(); if (pwOpen && $("mePw0")) $("mePw0").focus(); return; }
+    if (t.id === "meLogin") { ask("mine", "login"); return; }
+    if (t.id === "meOut") { logout(false); return; }
+    if (t.id === "meLang") { if (window.luxLang) window.luxLang.set(window.luxLang.get() === "en" ? "ko" : "en"); return; }
     if (t.id === "mineDelete") {
-      if (!confirm("서버에 저장된 내 성향·관심종목·모의계좌·패스키를 모두 지웁니다. 되돌릴 수 없어요. 지울까요?")) return;
-      api("DELETE").then(function () { try { localStorage.removeItem(PROFK); localStorage.removeItem("lux-pk"); localStorage.setItem(UIDK, newUid()); } catch (e) {} prof = Object.assign({}, DEF); tab = "me"; draw(); alert("삭제했습니다."); }).catch(function () { alert("삭제하지 못했습니다. 잠시 뒤 다시 시도해 주세요."); });
+      if (!confirm("서버에 저장된 내 계정(닉네임)·성향·관심종목·모의계좌를 모두 지웁니다. 되돌릴 수 없어요. 지울까요?")) return;
+      api("DELETE").then(function () { alert("삭제했습니다."); logout(true); }).catch(function () { alert("삭제하지 못했습니다. 잠시 뒤 다시 시도해 주세요."); });
       return; }
     if (d.open && typeof window.openDetailFromSym === "function") window.openDetailFromSym(d.open);
   }
@@ -410,9 +454,18 @@
   function boot() {
     var pg = $("page-mine"), root = $("mineRoot"); if (!pg || !root) return;
     root.addEventListener("click", onClick);
+    root.addEventListener("submit", function (ev) {   // [V33.729] 비밀번호 바꾸기
+      if (ev.target.id !== "mePwForm") return; ev.preventDefault();
+      var e0 = $("mePwErr"), say = function (t) { if (e0) e0.textContent = t; }, p0 = $("mePw0").value, p1 = $("mePw1").value;
+      if (p1.length < 8) { say("새 비밀번호는 8자 이상으로 정해 주세요"); return; }
+      if (p1 !== $("mePw2").value) { say("새 비밀번호 확인이 다릅니다"); return; }
+      authPost("/api/auth/password", { nick: prof.nick || authNick(), pw: p0, newPw: p1 }).then(function (j) {
+        if (j && j.ok) { pwOpen = false; draw(); alert("비밀번호를 바꿨어요."); } else say((j && j.error) || "바꾸지 못했어요");
+      }).catch(function () { say("바꾸지 못했어요. 잠시 뒤 다시 시도해 주세요"); });
+    });
     new MutationObserver(function () { if (pg.classList.contains("active")) onShow(); }).observe(pg, { attributes: true, attributeFilter: ["class"] });
     if (pg.classList.contains("active")) onShow();
-    setInterval(function () { if (!document.hidden && pg.classList.contains("active")) { pbLoad(false); var ae = document.activeElement; if (!$("mineSheet") && !(ae && (ae.id === "mineSearch" || ae.id === "mineCode" || ae.id === "mineNick"))) draw(); } }, 60000);
+    setInterval(function () { if (!document.hidden && pg.classList.contains("active")) { pbLoad(false); var ae = document.activeElement; if (!$("mineSheet") && !(ae && (ae.id === "mineSearch" || /^mePw/.test(ae.id || "")))) draw(); } }, 60000);
   }
   window.luxMine = { draw: draw, detail: detail, ask: ask };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();

@@ -6821,3 +6821,24 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
 - wrangler.toml routes 에 lux-inv.com · www.lux-inv.com (custom_domain = true) → 배포 때 DNS(A 104.21.57.204 · 172.67.192.50)·인증서 자동 생성 확인.
   www.lux-inv.com/api/build 응답 확인. workers.dev 주소도 그대로 열림. 패스키는 주소별 — 새 주소에서 다시 만들어야 함.
 - V33.726b: routes 를 넣으면 workers.dev 가 기본으로 꺼져(오류 1042) 학습기·북마크가 끊겼다 → wrangler.toml workers_dev = true. 확인: workers.dev 200 · lux-inv.com · www.lux-inv.com /api/build 200(바깥 조회).
+
+## V33.727 ~ V33.728 (11/2 16:3xZ)
+- V33.727: workers.dev 화면 → lux-inv.com 자동 이동(index.html head 첫 스크립트 · 기기 코드 lux-uid 를 #luxuid 로 이어받음 · /api/* 는 그대로 — 학습기·러너가 workers.dev 를 씀). privacy.html 도 이동.
+  패스키 없으면 대시보드·종목 상세만(window.luxGuard · showPage 첫 줄) · 다른 메뉴로 가면 luxMine.ask(id) 로 패스키 등록을 묻는다(첫 방문 자동 질문은 없앰).
+  MY 새 색감(바탕 #0D1014 · 카드 #161A21 · 강조 민트 #3DD6B5 · 상승 #FF5C5C · 하락 #4D8DFF) · 접속 애니메이션·제목·브랜드 LUX-ENGINE → LUX-INV.
+  ※ 패스키는 도메인에 묶인다(rpId=hostname) — workers.dev 에서 만든 패스키는 lux-inv.com 에서 다시 등록해야 한다.
+- "CPU 계속 초과" 실측(billing-probe 11/2 16:27Z · 48h): 실행 6,742건 · 오류 0 · CPU 초과(exceededCpu) 0건 · p50 45ms · p99 1.9s · 월 CPU 한도의 ~1.9%.
+  이번 주기 초과 요금 $15.04 중 $15.01 이 D1 읽은 행(주로 10월 초 하루 40~50억 행 — V33.637/711 에서 이미 막음) · 최근 24h 읽기 4,300만 행(무료 범위).
+- V33.728: 현재 D1 읽기 1위였던 `SELECT labeled, COUNT(*) FROM ml_candidates ... GROUP BY labeled`(48h 143회 × 18.8만 행 = 2,690만 행)를 _mlAgg 기억(키 mlagg:cand:featver)으로 돌림.
+- V33.729 (11/2 사용자 "패스키 이상함 → 닉네임 + 비밀번호 로그인 · 많은 사람이 와도 D1·CPU 안 새게 · 내 정보 새 디자인 · MY 개선"):
+  · 패스키 전부 제거(/api/me/passkey/* · user_passkeys 쓰기 · mine.js WebAuthn). 새 /api/auth/signup|login|password (luxAuthApi · 표 user_accounts).
+    비밀번호 원문 저장 없음: PBKDF2-SHA256 10만 회(계정별 소금) → 앞 256비트 해시 = 확인값 · 뒤 256비트 = AES-GCM 키로 기기 코드(uid) 암호화.
+    로그인하면 그 uid 를 돌려받아 기존 /api/me(uid 해시 키) 그대로 씀. 5회 틀리면 10분 잠금 · IP 분당 30 · 고정 시간 비교.
+    가입 = 지금 기기 uid 에 계정을 붙임(로그인 없이 쓰던 데이터가 계정으로) · 닉네임 = 아이디 = 순위 이름(/api/me/nick 제거).
+    비밀번호 분실 시 복구 불가(이메일 안 받음) — 화면·처리방침에 명시. node:sqlite 로 가입·중복·잠금·변경·복호화 검증함.
+  · 메뉴 제한: luxGuard 가 localStorage 'lux-auth'(로그인한 닉네임) 기준. 로그인 창 = luxMine.ask(target, mode) 로그인/회원가입 탭 · 동의 체크.
+  · 내 정보: 프로필 머리(닉네임·가입일·두 계좌 수익률·관심 수) · 성향 요약 칩(바꾸기로 펼침) · 계정(비밀번호 바꾸기·언어·로그아웃) · 모의계좌 초기화 · 처리방침·삭제.
+    계좌: 자산 비중 막대 · 종목별 비중 · 실현손익 · 순위: 내 순위 카드 · 홈: 인사 줄.
+  · 사용자 증가 대비: 10분 무입력이면 luxIdle() → 대시보드 갱신·판정 피드 2분 1회 · AI 모드 패널 멈춤. lux-inv.com 은 사용자 지정 도메인이라
+    swrJson 의 caches.default(콜로 공유 캐시)가 이제 실제로 동작(workers.dev 에선 안 됐음) — 공용 데이터는 콜로당 한 번만 빌드.
+    다음 단계 후보: R2 공개 버킷(data.lux-inv.com) 스냅샷을 CDN 캐시로 — 워커 호출 0(대시보드 공용 데이터).
