@@ -156,9 +156,21 @@
     return head + " · OMNI-Q 상위 " + top + "%" + (r.stop ? " · 손절 −" + Number(r.stop).toFixed(0) + "%" : "");
   }
   function sigOf(sym) { var a = picksAll(isKr(sym) ? "kr" : "us"); for (var i = 0; i < a.length; i++) if (a[i].s === sym) return a[i]; return null; }
+  /* [V33.748] ★MY 홈·AI 추천이 늦게 뜨던 것★(사용자 11/4) — /api/playbook(197KB · 0.2~1.3초)을 MY 를 열 때에야 받아 그동안 순위가 비었다.
+     ① 받은 판정의 필요한 칸만 기기에 보관(lux-pb · 6시간) → MY 를 열면 바로 그린다 ② 뒤에서 새로 받아 바꾼다 ③ 로그인한 사람은 접속 4초 뒤 미리 받아 둔다. */
+  var PBK = "lux-pb", pbBusy = false;
+  function pbSlim(j) {
+    var o = { ts: Date.now(), markets: {}, live: {} };
+    ["us", "kr"].forEach(function (m) {
+      var mm = j && j.markets && j.markets[m]; if (mm) o.markets[m] = { regime: mm.regime };
+      var lv = j && j.live && j.live[m]; if (lv && lv.items) o.live[m] = { items: lv.items.slice(0, 60).map(function (x) { return { s: x.s, pb: x.pb, why: x.why, q: x.q, stop: x.stop, hold: x.hold, kind: x.kind, px: x.px, nm: x.nm, dp: x.dp }; }) };
+    });
+    return o;
+  }
+  try { var _pb0 = JSON.parse(localStorage.getItem(PBK) || "null"); if (_pb0 && Date.now() - _pb0.ts < 6 * 3600000) PB = _pb0; } catch (e) {}
   function pbLoad(force) {
-    if (!force && Date.now() - pbTs < 170000) return; pbTs = Date.now();
-    fetch("/api/playbook").then(function (r) { return r.json(); }).then(function (j) { PB = j; draw(); }).catch(function () {});
+    if (pbBusy || (!force && Date.now() - pbTs < 170000)) return; pbTs = Date.now(); pbBusy = true;
+    fetch("/api/playbook").then(function (r) { return r.json(); }).then(function (j) { pbBusy = false; if (!j || !j.live) return; PB = j; try { localStorage.setItem(PBK, JSON.stringify(pbSlim(j))); } catch (e) {} draw(); }).catch(function () { pbBusy = false; pbTs = 0; });
   }
 
   // ── 모의계좌 ──
@@ -224,6 +236,18 @@
       "@media (max-width:520px){#mineRoot{padding:4px 0 96px;font-size:14px}#mineRoot .card{border-radius:16px;padding:14px}#mineRoot .h1{font-size:26px}#mineRoot .row{gap:8px;padding:11px 0}#mineRoot .buy,#mineRoot .sell,#mineRoot .tag2{min-height:38px;padding:0 11px;font-size:13px}#mineRoot .r .p{font-size:13.5px}#mineRoot .sb{font-size:11.5px}#mineRoot .tabs{margin-bottom:10px}#mineRoot .g2{gap:8px}}",
       // [V33.741] 저장 상태 · 오늘 손익 · 보유 카드 · 거래 내역 매수/매도 표 · 폰 옆 여백(카드가 화면 끝에 붙었다)
       "#mineRoot .syncbar{display:flex;justify-content:flex-end;margin:-6px 4px 8px}#mineRoot .sync{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--m-mute)}#mineRoot .sync i{width:7px;height:7px;border-radius:4px;background:var(--m-acc)}#mineRoot .sync.sv i{background:#E2C766;animation:mineBlink 1s infinite alternate}#mineRoot .sync.bad{color:#FF8A8A}#mineRoot .sync.bad i{background:#FF5C5C}@keyframes mineBlink{to{opacity:.3}}",
+      // [V33.748] 종목 간단히 보기(MTS 식 아래 시트)
+      "#minePv{--m-up:#FF5C5C;--m-dn:#4D8DFF;position:fixed;inset:0;z-index:9998;background:rgba(4,8,16,0);display:flex;align-items:flex-end;justify-content:center;transition:background .25s}#minePv.on{background:rgba(4,8,16,.55)}",
+      "#minePv .pvb{width:min(560px,100%);max-height:90vh;overflow-y:auto;background:#181C24;color:#EEF1F5;border-radius:22px 22px 0 0;padding:10px 20px calc(18px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:12px;font-size:14px;transform:translateY(100%);transition:transform .32s cubic-bezier(.2,.8,.2,1)}#minePv.on .pvb{transform:none}",
+      "#minePv .grab{width:40px;height:4px;border-radius:2px;background:#2E3542;align-self:center}#minePv .pvh{display:flex;align-items:flex-start;gap:10px}#minePv .pvh .l{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}#minePv .nm{font-size:18px;font-weight:700}#minePv .sb{font-size:12.5px;color:#98A2B3}#minePv .x{width:40px;height:40px;border-radius:20px;border:0;background:#20262F;color:#98A2B3;font-size:15px;cursor:pointer}",
+      "#minePv .pvp{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}#minePv .h1{font-size:30px;font-weight:700;letter-spacing:-.5px}#minePv .up,#minePv i.up{color:var(--m-up);font-style:normal}#minePv .dn,#minePv i.dn{color:var(--m-dn);font-style:normal}",
+      "#minePv .pvc{position:relative;height:210px;border-radius:14px;background:#0D1014;overflow:hidden}#minePv .pvc svg{display:block;width:100%;height:100%}#minePv .pvax{position:absolute;right:8px;top:6px;bottom:6px;display:flex;flex-direction:column;justify-content:space-between;font-size:11px;color:#7E8796;pointer-events:none}#minePv .pvload{display:flex;align-items:center;justify-content:center;height:100%;color:#7E8796;font-size:13px}",
+      "#minePv .seg{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;background:#0D1014;border-radius:10px;padding:3px}#minePv .seg button{min-height:36px;border:0;border-radius:8px;background:transparent;color:#98A2B3;font-size:13px;cursor:pointer}#minePv .seg button.on{background:#262C36;color:#fff;font-weight:700}",
+      "#minePv .pvs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}#minePv .pvs div{display:flex;flex-direction:column;gap:3px;background:#0D1014;border-radius:12px;padding:10px}#minePv .pvs span{font-size:11.5px;color:#98A2B3}#minePv .pvs b{font-size:14.5px;font-weight:600}",
+      "#minePv .pvai{font-size:13px;line-height:1.5;color:#C7CDD6;background:rgba(61,214,181,.08);border:1px solid rgba(61,214,181,.25);border-radius:12px;padding:10px 12px}#minePv .pvai b{color:#3DD6B5;margin-right:4px}#minePv .pvhd{font-size:13px;color:#C7CDD6;background:#0D1014;border-radius:12px;padding:10px 12px}",
+      "#minePv .pva{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));gap:8px}#minePv .pva button{min-height:48px;border-radius:12px;border:0;font-size:15px;font-weight:700;cursor:pointer;color:#fff;background:#D42F2F}#minePv .pva .sell{background:#2160D8}#minePv .pva .wbtn2{background:transparent;border:1px solid #2E3542;color:#C7CDD6;font-weight:600}#minePv .pva .wbtn2.on{color:#3DD6B5;border-color:#22574B}",
+      "#minePv .pvgo{min-height:50px;border-radius:14px;border:0;background:#EEF1F5;color:#0D1014;font-size:15.5px;font-weight:700;cursor:pointer}#minePv .pvgo span{margin-left:4px}",
+      "html[data-theme=light] #minePv{--m-up:#C92A2A;--m-dn:#1B5FCC}html[data-theme=light] #minePv.on{background:rgba(16,24,40,.45)}html[data-theme=light] #minePv .pvb{background:#fff;color:#101828}html[data-theme=light] #minePv .pvc,html[data-theme=light] #minePv .pvs div,html[data-theme=light] #minePv .pvhd,html[data-theme=light] #minePv .seg{background:#F2F4F7}html[data-theme=light] #minePv .seg button.on{background:#101828}html[data-theme=light] #minePv .x{background:#F2F4F7;color:#101828}html[data-theme=light] #minePv .pvai,html[data-theme=light] #minePv .pvhd{color:#344054}html[data-theme=light] #minePv .pvai{background:#E6F7F2;border-color:#CDEBE2}html[data-theme=light] #minePv .pvai b{color:#0B7A66}html[data-theme=light] #minePv .pva .wbtn2{border-color:#D0D5DD;color:#344054}html[data-theme=light] #minePv .pvgo{background:#101828;color:#fff}html[data-theme=light] #minePv .sb,html[data-theme=light] #minePv .pvs span{color:#667085}",
       "#mineRoot .pill.hold{background:rgba(226,199,102,.16);color:#E2C766}html[data-theme=light] #mineRoot .pill.hold{background:#FEF3C7;color:#7A5A00}",
       "#mineRoot .today{margin-top:4px;font-size:13px;color:var(--m-mute)}#mineRoot .today b{font-weight:600}",
       "#mineRoot .hold{padding:13px 0 12px;border-top:1px solid var(--m-line);cursor:pointer}#mineRoot .ct+.hold,#mineRoot .ct+.row{border-top:0}#mineRoot .ht{display:flex;align-items:center;gap:10px}#mineRoot .hm{display:flex;flex-wrap:wrap;gap:4px 14px;margin:8px 0 0 18px;font-size:12.5px;color:var(--m-mute)}#mineRoot .hm b{font-weight:600;color:var(--fg,#EEF1F5)}#mineRoot .hm b.up{color:var(--m-up)}#mineRoot .hm b.dn{color:var(--m-dn)}",
@@ -553,6 +577,70 @@
     paint(); document.body.appendChild(w);
   }
   // ── [V33.730] 예약 주문·익절·손절 실행기 — 화면이 열려 있는 동안 15초마다 시세를 보고 체결(서버 비용 0 · 체결 때만 저장 1회) ──
+  /* [V33.748] ★종목 간단히 보기★(사용자 11/4 "증권사 MTS 처럼 — 누르면 바로 상세로 가지 말고 가격·일봉을 간단히, [자세히 보기] 로 상세") —
+     관심·보유·AI 추천·거래 내역 줄을 누르면 아래에서 올라온다. 차트는 대시보드가 이미 받은 23일 종가로 ★바로★ 그리고, 일봉(3개월)은 한 번만 받아 기기 메모리에 둔다
+     (서버 /api/chart 는 5분 엣지 캐시 — 사람 수만큼 서버 일이 늘지 않는다). */
+  var pvCache = {}, pvSym = null, pvRange = "3mo";
+  function pvClose() { var w = $("minePv"); if (w) w.remove(); pvSym = null; }
+  function pvChart(sym) {
+    var c = pvCache[sym + "|" + pvRange], W = 600, H = 210, P = 6;
+    if (c && c.length > 1) {
+      var lo = Infinity, hi = -Infinity; c.forEach(function (k) { if (k.l < lo) lo = k.l; if (k.h > hi) hi = k.h; });
+      var sx = (W - P * 2) / c.length, y = function (v) { return P + (hi - v) / ((hi - lo) || 1) * (H - P * 2); }, g = "";
+      c.forEach(function (k, i) { var x = P + i * sx + sx / 2, up = k.c >= k.o, col = up ? "var(--m-up)" : "var(--m-dn)", bw = Math.max(1.5, sx * 0.62);
+        g += '<line x1="' + x.toFixed(1) + '" x2="' + x.toFixed(1) + '" y1="' + y(k.h).toFixed(1) + '" y2="' + y(k.l).toFixed(1) + '" stroke="' + col + '" stroke-width="1"/>' +
+             '<rect x="' + (x - bw / 2).toFixed(1) + '" y="' + Math.min(y(k.o), y(k.c)).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(1, Math.abs(y(k.o) - y(k.c))).toFixed(1) + '" fill="' + col + '"/>'; });
+      var ma = ""; for (var i = 19; i < c.length; i++) { var sm = 0; for (var j = i - 19; j <= i; j++) sm += c[j].c; ma += (ma ? "L" : "M") + (P + i * sx + sx / 2).toFixed(1) + " " + y(sm / 20).toFixed(1); }
+      return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-label="일봉 차트">' + g + (ma ? '<path d="' + ma + '" fill="none" stroke="#E2C766" stroke-width="1.6" opacity=".9"/>' : "") + '</svg><div class="pvax"><span>' + pxS(isKr(sym) ? "kr" : "us", hi) + '</span><span>' + pxS(isKr(sym) ? "kr" : "us", lo) + "</span></div>";
+    }
+    var x = q(sym), sp = x && Array.isArray(x.spark) ? x.spark.filter(function (v) { return v > 0; }) : [];
+    if (sp.length > 1) {   // 받기 전: 대시보드가 가진 23일 종가 선
+      var lo2 = Math.min.apply(null, sp), hi2 = Math.max.apply(null, sp), d = "";
+      sp.forEach(function (v, i) { d += (i ? "L" : "M") + (P + i * (W - P * 2) / (sp.length - 1)).toFixed(1) + " " + (P + (hi2 - v) / ((hi2 - lo2) || 1) * (H - P * 2)).toFixed(1); });
+      return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none"><path d="' + d + '" fill="none" stroke="' + (sp[sp.length - 1] >= sp[0] ? "var(--m-up)" : "var(--m-dn)") + '" stroke-width="2.4"/></svg>';
+    }
+    return '<div class="pvload">차트 불러오는 중…</div>';
+  }
+  function pvPaint() {
+    var w = $("minePv"), sym = pvSym; if (!w || !sym) return;
+    var mk = isKr(sym) ? "kr" : "us", x = q(sym), p = priceOf(sym), c = dayPct(sym), sig = sigOf(sym), r = ranked(mk).filter(function (z) { return z.s === sym; })[0];
+    var hp = has(mk) ? prof.pf[mk].pos[sym] : null, on = prof.watch.indexOf(sym) >= 0;
+    var st = function (lb, v) { return '<div><span>' + lb + "</span><b>" + v + "</b></div>"; };
+    var prev = x && x.prevClose > 0 ? x.prevClose : null;
+    w.querySelector(".pvb").innerHTML =
+      '<div class="grab"></div><div class="pvh"><div class="l"><span class="nm">' + esc(nm(sym)) + pill(sig) + '</span><span class="sb">' + esc(short(sym)) + " · " + MK[mk] + (x && x.mstate && x.mstate !== "REGULAR" ? " · " + (x.mstate === "PRE" ? "프리마켓" : x.mstate === "CLOSED" ? "장 마감" : "시간외") : "") + '</span></div><button type="button" class="x" data-pvx="1" aria-label="닫기">✕</button></div>' +
+      '<div class="pvp"><span class="h1">' + pxS(mk, p) + '</span><span class="' + cls(c) + '">' + (prev && p ? fmt(mk, p - prev, true) + " " : "") + "(" + pctS(c) + ")</span></div>" +
+      '<div class="pvc">' + pvChart(sym) + '</div><div class="seg pvr" role="tablist">' + [["1mo", "1개월"], ["3mo", "3개월"], ["6mo", "6개월"], ["1y", "1년"]].map(function (o) { return '<button type="button" data-pvr="' + o[0] + '" class="' + (pvRange === o[0] ? "on" : "") + '">' + o[1] + "</button>"; }).join("") + "</div>" +
+      '<div class="pvs">' + st("전일 종가", pxS(mk, prev)) + st("RSI", x && x.rsi ? Math.round(x.rsi) : "—") + st("20일", x && typeof x.return20 === "number" ? '<i class="' + cls(x.return20) + '">' + pctS(x.return20) + "</i>" : "—") + st("1년", x && typeof x.ret1y === "number" ? '<i class="' + cls(x.ret1y) + '">' + pctS(x.ret1y) + "</i>" : "—") + "</div>" +
+      (r ? '<div class="pvai"><b>AI</b> ' + esc(rankSub(r)) + "</div>" : "") +
+      (hp ? '<div class="pvhd">보유 ' + hp.q.toLocaleString() + "주 · 평단 " + pxS(mk, hp.avg) + ' · <b class="' + cls(p - hp.avg) + '">' + fmt(mk, (p - hp.avg) * hp.q, true) + " (" + pctS((p / hp.avg - 1) * 100) + ")</b></div>" : "") +
+      '<div class="pva"><button type="button" class="wbtn2' + (on ? " on" : "") + '" data-pvw="1">' + (on ? "관찰중" : "관찰") + '</button><button type="button" class="buy" data-pvbuy="1">매수</button>' + (hp ? '<button type="button" class="sell" data-pvsell="1">매도</button>' : "") + "</div>" +
+      '<button type="button" class="pvgo" data-pvgo="1">자세히 보기 <span aria-hidden="true">›</span></button>';
+  }
+  function pvFetch(sym) {
+    var key = sym + "|" + pvRange; if (key in pvCache) return;   // 받는 중(null)이면 또 받지 않음
+    pvCache[key] = null;
+    fetch("/api/chart?symbol=" + encodeURIComponent(sym) + "&range=" + pvRange + "&interval=1d").then(function (r) { return r.json(); }).then(function (j) {
+      var cs = (j && j.candles || []).filter(function (k) { return k && k.c > 0 && k.h > 0 && k.l > 0 && k.o > 0; });
+      if (cs.length) { pvCache[key] = cs; if (pvSym === sym) pvPaint(); } else delete pvCache[key];
+    }).catch(function () { delete pvCache[key]; });
+  }
+  function preview(sym) {
+    css(); pvClose(); pvSym = sym;
+    var w = document.createElement("div"); w.id = "minePv"; w.setAttribute("role", "dialog"); w.setAttribute("aria-modal", "true"); w.setAttribute("aria-label", nm(sym) + " 간단히 보기");
+    w.innerHTML = '<div class="pvb"></div>'; document.body.appendChild(w); pvPaint(); pvFetch(sym);
+    requestAnimationFrame(function () { w.classList.add("on"); });
+    w.addEventListener("click", function (ev) {
+      if (ev.target === w) { pvClose(); return; }
+      var b = ev.target.closest("button"); if (!b) return; var d = b.dataset, s0 = pvSym;
+      if (d.pvx) pvClose();
+      else if (d.pvr) { pvRange = d.pvr; pvPaint(); pvFetch(s0); }
+      else if (d.pvw) { var i = prof.watch.indexOf(s0); if (i >= 0) prof.watch.splice(i, 1); else if (prof.watch.length < 40) prof.watch.push(s0); persist(); pvPaint(); draw(); }
+      else if (d.pvbuy) { pvClose(); sheet("B", s0); }
+      else if (d.pvsell) { pvClose(); sheet("S", s0); }
+      else if (d.pvgo) { pvClose(); if (typeof window.openDetailFromSym === "function") window.openDetailFromSym(s0); }
+    });
+  }
   function toast(t) {
     if (!t) return; var e = document.createElement("div"); e.className = "luxToast"; e.setAttribute("role", "status"); e.textContent = t;
     document.body.appendChild(e); setTimeout(function () { e.classList.add("on"); }, 10); setTimeout(function () { e.remove(); }, 4200);
@@ -709,7 +797,7 @@
       if (!confirm("서버에 저장된 내 계정(닉네임)·성향·관심종목·모의계좌를 모두 지웁니다. 되돌릴 수 없어요. 지울까요?")) return;
       api("DELETE").then(function () { alert("삭제했습니다."); logout(true); }).catch(function () { alert("삭제하지 못했습니다. 잠시 뒤 다시 시도해 주세요."); });
       return; }
-    if (d.open && typeof window.openDetailFromSym === "function") window.openDetailFromSym(d.open);
+    if (d.open) { preview(d.open); return; }   // [V33.748] 바로 상세로 가지 않고 간단히 보기 → [자세히 보기]
   }
 
   function onShow() { load(false); pbLoad(false); draw(); }
@@ -727,7 +815,8 @@
     });
     new MutationObserver(function () { if (pg.classList.contains("active")) onShow(); }).observe(pg, { attributes: true, attributeFilter: ["class"] });
     if (pg.classList.contains("active")) onShow();
-    if (isAuth() || isDirty()) setTimeout(function () { load(false); }, 2500);   // [V33.741] 로그인한 사람은 MY 를 안 열어도 한 번 맞춰 둔다 — 종목 상세에서 산 것이 다른 기기의 새 기록을 옛 사본으로 덮지 않게(세션당 GET 1회)
+    if (isAuth() || isDirty()) setTimeout(function () { load(false); }, 2500);
+    if (isAuth()) setTimeout(function () { if (!document.hidden) pbLoad(false); }, 4000);   // [V33.748] MY 를 열기 전에 AI 판정을 미리 받아 둔다(로그인한 사람만 · 접속당 1회 · 엣지 캐시 30초)   // [V33.741] 로그인한 사람은 MY 를 안 열어도 한 번 맞춰 둔다 — 종목 상세에서 산 것이 다른 기기의 새 기록을 옛 사본으로 덮지 않게(세션당 GET 1회)
     setInterval(function () { if (!document.hidden && pg.classList.contains("active")) { pbLoad(false); var ae = document.activeElement; if (!$("mineSheet") && !(ae && (ae.id === "mineSearch" || /^mePw/.test(ae.id || "")))) draw(); } }, 60000);
   }
   /* [V33.734] ★첫 방문 동의 배너★ — 쿠키는 쓰지 않음 · 필수 저장소만 · 선택 2개(외부 글꼴 · 성능 진단). 고르기 전엔 선택 항목을 하지 않는다. */
