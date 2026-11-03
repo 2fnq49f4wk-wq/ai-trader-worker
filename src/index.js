@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.752";
+const _BUILD_VER = "V33.753";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8817,7 +8817,7 @@ async function luxProfileApi(DB, uid, request) {
     if (txt.length > 32768) { const e = new Error("too large"); e.code = 400; throw e; }   // [V33.741] 16KB→32KB — 두 시장 보유 30·내역 60·예약 20 을 다 채우면 16KB 를 넘어 저장이 조용히 거부됐다(행 1개 · 요금 차이 없음)
     let b = null; try { b = JSON.parse(txt); } catch (e) {}
     const prof = luxProfileClean(b), now = Date.now();
-    const oldRow = await DB.prepare("SELECT profile FROM user_profiles WHERE uid_hash = ?").bind(h).first();
+    const oldRow = await DB.prepare("SELECT profile, updated_ts FROM user_profiles WHERE uid_hash = ?").bind(h).first();
     let old = null; try { old = oldRow && oldRow.profile ? JSON.parse(oldRow.profile) : null; } catch (e) {}
     prof.nick = (old && old.nick) || null;   // 닉네임은 /api/me/nick 만 바꾼다
     /* [V33.746] ★다른 기기의 낡은 사본이 모의계좌를 지웠다★(사용자 11/4 "같은 계정인데 다른 기기에서 데이터가 안 보인다") —
@@ -8832,8 +8832,11 @@ async function luxProfileApi(DB, uid, request) {
     }
     const chk = await luxLedgerCheck(DB, old && old.pf, prof.pf);
     if (!chk.ok) prof.pf = (old && old.pf) || null;   // [V33.725] 장부가 안 맞으면(조작·시세 벗어남) 모의계좌 변경을 받지 않는다 — 순위 공정성
-    await DB.prepare("INSERT INTO user_profiles (uid_hash, profile, created_ts, updated_ts) VALUES (?, ?, ?, ?) ON CONFLICT(uid_hash) DO UPDATE SET profile = excluded.profile, updated_ts = excluded.updated_ts")
-      .bind(h, JSON.stringify(prof), now, now).run();
+    /* [V33.753] 같은 내용을 다시 보낸 저장(keepalive 마저 보내기 · 재시도 겹침)은 쓰지 않는다 — 하루 안이면 쓴 행 0 */
+    const _pj = JSON.stringify(prof);
+    if (!(oldRow && oldRow.profile === _pj && now - Number(oldRow.updated_ts || 0) < 86400000))
+      await DB.prepare("INSERT INTO user_profiles (uid_hash, profile, created_ts, updated_ts) VALUES (?, ?, ?, ?) ON CONFLICT(uid_hash) DO UPDATE SET profile = excluded.profile, updated_ts = excluded.updated_ts")
+        .bind(h, _pj, now, now).run();
     const _res = chk.ok ? { ok: true, profile: prof } : { ok: true, profile: prof, pfRejected: chk.why };
     if (_kept.length) _res.pfKept = _kept;
     return _res;
@@ -15046,6 +15049,18 @@ function __d1Stmt(realDB, sql, binds) {
     run: function () { return call("run"); },
     raw: function () { return call("raw"); }
   };
+}
+/* [V33.753] 요청 하나의 D1 사용량을 세는 얇은 겹(감싼 D1 위에 — 계량기·거래 원장 기억은 그대로 지난다) */
+function _d1Count(DB, acc) {
+  const add = function (r) { const m = r && r.meta; acc.q++; if (m) { acc.r += Number(m.rows_read) || 0; acc.w += Number(m.rows_written) || 0; } return r; };
+  const stmt = function (sql, binds) {
+    const p = DB.prepare(sql), inner = binds ? p.bind.apply(p, binds) : p;
+    return { __inner: inner, bind: function () { return stmt(sql, Array.prototype.slice.call(arguments)); },
+      first: function (col) { return inner.all().then(function (r) { add(r); const row = r && r.results && r.results.length ? r.results[0] : null; return (col === undefined || row === null) ? row : (row[col] === undefined ? null : row[col]); }); },
+      all: function () { return inner.all().then(add); }, run: function () { return inner.run().then(add); } };
+  };
+  return { prepare: function (sql) { return stmt(sql, null); },
+    batch: function (sts) { return DB.batch(sts.map(function (x) { return x && x.__inner ? x.__inner : x; })).then(function (rs) { (rs || []).forEach(add); return rs; }); } };
 }
 function wrapD1(realDB) {
   if (!realDB || realDB.__d1wrapped) return realDB;
@@ -33857,7 +33872,9 @@ async function handleRequest(request, env, ctx, _inner) {
     if (path === "/api/me") {
       const uid = String(request.headers.get("x-lux-uid") || "");
       if (!/^[0-9a-f]{32,64}$/.test(uid)) return Response.json({ ok: false, error: "bad uid" }, { status: 400, headers: cors });
-      try { return Response.json(await luxProfileApi(env.DB, uid, request), { headers: Object.assign({ "cache-control": "no-store" }, cors) }); }
+      /* [V33.753] ★요청당 D1 실측★(사용자 11/4 "MY 저장·로딩 D1 낭비 실측") — 이 요청이 읽고 쓴 행(meta.rows_read/rows_written)을 그대로 세어 x-lux-d1 에 싣는다(추정 아님 · 추가 쿼리 0) */
+      const _m = { r: 0, w: 0, q: 0 };
+      try { const _o = await luxProfileApi(_d1Count(env.DB, _m), uid, request); return Response.json(_o, { headers: Object.assign({ "cache-control": "no-store", "x-lux-d1": "r=" + _m.r + ";w=" + _m.w + ";q=" + _m.q }, cors) }); }
       catch (e) { return Response.json({ ok: false, error: String(e && e.message || e) }, { status: e && e.code === 400 ? 400 : 503, headers: cors }); }
     }
     if (path === "/api/crowd/vote" && request.method === "POST") {
