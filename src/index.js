@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.740";
+const _BUILD_VER = "V33.741";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8776,6 +8776,9 @@ function luxProfileClean(b) {
 async function luxProfileApi(DB, uid, request) {
   if (!globalThis.__luxProfTbl) {
     await DB.prepare("CREATE TABLE IF NOT EXISTS user_profiles (uid_hash TEXT PRIMARY KEY, profile TEXT NOT NULL, created_ts INTEGER NOT NULL, updated_ts INTEGER NOT NULL)").run();
+    /* [V33.741] 보존 기한 삭제(DELETE … WHERE updated_ts < ?)가 색인 없이 표 전체를 읽었다(D1 행 읽기 요금) — 색인으로 지울 행만 읽게 */
+    try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_user_profiles_upd ON user_profiles(updated_ts)").run(); } catch (e) {}
+    try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_user_accounts_last ON user_accounts(last_ts)").run(); } catch (e) {}   // 표가 아직 없으면 건너뜀(가입 때 생김)
     globalThis.__luxProfTbl = true;
   }
   const hb = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("lux-profile:" + uid));
@@ -8783,7 +8786,7 @@ async function luxProfileApi(DB, uid, request) {
   if (request.method === "POST") {
     if (!luxRateOk(h)) { const e = new Error("too many"); e.code = 400; throw e; }   // [V33.725] 기기당 분당 30회 — 쓰기 폭주 방지(요금)
     const txt = await request.text();
-    if (txt.length > 16384) { const e = new Error("too large"); e.code = 400; throw e; }   // 모의계좌 포함 16KB
+    if (txt.length > 32768) { const e = new Error("too large"); e.code = 400; throw e; }   // [V33.741] 16KB→32KB — 두 시장 보유 30·내역 60·예약 20 을 다 채우면 16KB 를 넘어 저장이 조용히 거부됐다(행 1개 · 요금 차이 없음)
     let b = null; try { b = JSON.parse(txt); } catch (e) {}
     const prof = luxProfileClean(b), now = Date.now();
     const oldRow = await DB.prepare("SELECT profile FROM user_profiles WHERE uid_hash = ?").bind(h).first();
@@ -8805,7 +8808,7 @@ async function luxProfileApi(DB, uid, request) {
   const now = Date.now();
   // [V33.723] 보존 기한 — 마지막 사용 365일 지나면 삭제(개인정보 안내에 적은 대로). 사용 표시는 7일에 한 번만 쓴다(읽을 때마다 쓰지 않는다).
   if (r && now - Number(r.updated_ts || 0) > 7 * 86400000) { try { await DB.prepare("UPDATE user_profiles SET updated_ts = ? WHERE uid_hash = ?").bind(now, h).run(); } catch (e) {} }
-  if (Math.random() < 0.02) { try { await DB.batch([DB.prepare("DELETE FROM user_profiles WHERE updated_ts < ?").bind(now - LUX_RETAIN_MS), DB.prepare("DELETE FROM user_accounts WHERE last_ts < ? AND uid_hash NOT IN (SELECT uid_hash FROM user_profiles)").bind(now - LUX_RETAIN_MS)]); } catch (e) {} }
+  if (Math.random() < 0.005) { try { await DB.batch([DB.prepare("DELETE FROM user_profiles WHERE updated_ts < ?").bind(now - LUX_RETAIN_MS), DB.prepare("DELETE FROM user_accounts WHERE last_ts < ? AND uid_hash NOT IN (SELECT uid_hash FROM user_profiles)").bind(now - LUX_RETAIN_MS)]); } catch (e) {} }
   return { ok: true, profile: prof };
 }
 const LUX_RETAIN_MS = 365 * 86400000;

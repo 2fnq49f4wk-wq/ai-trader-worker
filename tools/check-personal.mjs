@@ -11,7 +11,7 @@ const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8")
 const V = readFileSync(new URL("../public/privacy.html", import.meta.url), "utf8");
 chk(/if \(path === "\/api\/me"\) \{/.test(S) && /\^\[0-9a-f\]\{32,64\}\$/.test(S), "/api/me 라우트 · 토큰 형식 검사", "★/api/me 가 없거나 토큰 검사가 빠졌다★");
 chk(/crypto\.subtle\.digest\("SHA-256", new TextEncoder\(\)\.encode\("lux-profile:" \+ uid\)\)/.test(S) && !/bind\(uid,/.test(S), "토큰은 해시로만 저장", "★원문 토큰을 저장한다★");
-chk(/txt\.length > 16384/.test(S), "본문 16KB 상한(모의계좌 포함)", "★본문 크기 상한이 없다★");
+chk(/txt\.length > 32768/.test(S), "본문 32KB 상한(모의계좌 포함 · V33.741)", "★본문 크기 상한이 없다★");
 // luxProfileClean 을 실제로 돌린다
 const a = S.indexOf("const LUX_PROFILE"), b = S.indexOf("async function luxProfileApi");
 let clean = null;
@@ -28,7 +28,7 @@ if (clean) {
 chk(/<script src="\/mine\.js\?v=[\d.]+" defer><\/script>/.test(H) && /class="nav-item" data-page="mine"/.test(H) && /id="page-mine"/.test(H) && /\{ id:'mine', ic:NV\.user, tx:'MY' \}/.test(H),
     "mine.js · 사이드바 MY 메뉴 · MY 페이지 · 모바일 탭", "★MY 메뉴·페이지·모바일 탭 중 빠진 것이 있다★");
 chk(!/id="luxMine"/.test(P) && !/btnMine/.test(H), "대시보드 맨 위 패널 없음(사용자 11/2 — 사이드바 메뉴로)", "★대시보드 위 패널이 남아 있다★");
-chk(/saveT = setTimeout\(function \(\) \{ api\("POST", prof\)/.test(P) && /if \(loaded && !force\) return; loaded = true;/.test(P), "D1: 읽기는 MY 첫 열림 1회 · 쓰기는 2초 모아 1회", "★프로필 읽기·쓰기가 잦다★");
+chk(/saveT = setTimeout\(push, 2000\)/.test(P) && /if \(loaded && !force\) return; loaded = true;/.test(P) && /Math\.min\(120000, 5000 \* Math\.pow\(3/.test(P) && /keepalive: true/.test(P) && /if \(!isDirty\(\)\) return;/.test(P), "D1: 읽기는 세션 1회 · 쓰기는 2초 모아 1회 · 재시도는 5초부터 3배씩(최대 2분) · 닫을 때는 남은 변경이 있을 때만", "★프로필 읽기·쓰기가 잦다★");
 chk(/window\.openDetailFromSym = openDetailFromSym;/.test(H), "패널에서 종목 상세 열기(전역 노출)", "★openDetailFromSym 이 전역에 없다★");
 chk(/!pg \|\| !pg\.classList\.contains\("active"\)\) return;/.test(P) && /170000/.test(P) && /!document\.hidden && pg\.classList\.contains\("active"\)/.test(P), "그리기·판정 조회는 MY 가 보일 때만 · 3분 간격", "★MY 가 숨어 있어도 갱신한다★");
 const regs = ["SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH"];
