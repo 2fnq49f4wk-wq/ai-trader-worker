@@ -14,6 +14,12 @@
 </script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<script>/* [V33.740] ★첫 그림부터 축소 보기★(사용자 11/2 "로딩할 때 처음에 옛날 화면이 보인다") — 휴대폰은 늘 대시보드로 시작하므로, 첫 그림 전에 PC 폭 뷰포트로 바꿔 둔다
+   (종전엔 스크립트가 다 돈 뒤 showPage 에서 바꿔 휴대폰 배치가 한 번 보였다). 폭은 지난번 잰 높이(localStorage lux-dz-vh)로 같은 식. */
+(function(){try{var sw=screen.width||390;if(!(Math.min(sw,screen.height||9999)<=600&&sw<=600))return;if(localStorage.getItem('lux-dz')==='0')return;
+ var vh=+localStorage.getItem('lux-dz-vh')||window.innerHeight||Math.round((screen.height||844)*0.8);try{sessionStorage.setItem('lux-dz-vh',String(vh));}catch(e){}
+ var W=Math.max(920,Math.min(1180,Math.round(1450*sw/Math.max(300,vh-106))));var de=document.documentElement,m=document.querySelector('meta[name="viewport"]');
+ de.classList.add('lux-dz');de.setAttribute('data-dzw',String(W));de.style.setProperty('--dzi',(W/sw).toFixed(4));if(m)m.setAttribute('content','width='+W+', viewport-fit=cover');}catch(e){}})();</script>
 <!-- ══ [V33.367] ★접속 직후 흰 화면을 없앤다★ ═══════════════════════════════════
      증상: 인트로(별 로고)가 뜨기 ★전에★ 흰 화면이 먼저 보인다.
      원인: 브라우저는 <head> 의 ★렌더링 차단 자원★ 을 다 받기 전에는 아무것도 못 칠한다.
@@ -223,11 +229,11 @@ window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{
 window.__luxAct=Date.now();['pointerdown','keydown','touchstart','wheel'].forEach(function(e){addEventListener(e,function(){window.__luxAct=Date.now();},{passive:true,capture:true});});
 window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600000;};
 </script>
-<meta name="lux-build" content="V33.739">
-<script src="/i18n.js?v=33.739" defer></script>
-<script src="/mine.js?v=33.739" defer></script>
-<script src="/stock-info.js?v=33.739" defer></script>
-<script src="/neural-observatory.js?v=33.739" defer></script>
+<meta name="lux-build" content="V33.740">
+<script src="/i18n.js?v=33.740" defer></script>
+<script src="/mine.js?v=33.740" defer></script>
+<script src="/stock-info.js?v=33.740" defer></script>
+<script src="/neural-observatory.js?v=33.740" defer></script>
 <title>LUX-INV</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4090,11 +4096,11 @@ window.luxDz=function(id){try{var de=document.documentElement,m=document.querySe
  var sw=screen.width||390,small=Math.min(sw,screen.height||9999)<=600&&sw<=600,on=small&&id==='dashboard'&&!window.__luxDzOverlay();
  var off=false;try{off=localStorage.getItem('lux-dz')==='0';}catch(e){}if(off)on=false;
  if(on){
-  /* [V33.737] 폭은 화면 높이로 정한다(사용자 11/2 "첫 화면은 이코노믹 캘린더까지만 · 나머지는 스크롤") — 지수~경제 캘린더 높이(약 1700 레이아웃 px · 실측 보간)가
-     상·하단 바를 뺀 보이는 높이에 꼭 맞도록 W = 1700 × 기기 폭 ÷ 보이는 높이(920~1180 · 920 미만이면 PC 배치가 깨진다). 높이는 휴대폰 화면일 때 잰 값을 기억해 쓴다. */
-  var vh=0;if(!de.classList.contains('lux-dz')){vh=window.innerHeight||0;try{if(vh)sessionStorage.setItem('lux-dz-vh',String(vh));}catch(e){}}
+  /* [V33.737] 폭은 화면 높이로 정한다(사용자 11/2 "첫 화면은 이코노믹 캘린더까지만 · 나머지는 스크롤") — 지수~경제 캘린더 높이(약 1450 레이아웃 px · 실측 보간)가
+     상·하단 바를 뺀 보이는 높이에 꼭 맞도록 W = 1450 × 기기 폭 ÷ 보이는 높이(920~1180 · 920 미만이면 PC 배치가 깨진다). 높이는 휴대폰 화면일 때 잰 값을 기억해 쓴다. */
+  var vh=0;if(!de.classList.contains('lux-dz')){vh=window.innerHeight||0;try{if(vh){sessionStorage.setItem('lux-dz-vh',String(vh));localStorage.setItem('lux-dz-vh',String(vh));}}catch(e){}}
   if(!vh){try{vh=+sessionStorage.getItem('lux-dz-vh')||0;}catch(e){}}if(!vh)vh=Math.round((screen.height||844)*0.8);
-  var W=Math.max(920,Math.min(1180,Math.round(1700*sw/Math.max(300,vh-106))));
+  var W=Math.max(920,Math.min(1180,Math.round(1450*sw/Math.max(300,vh-106))));
   de.style.setProperty('--dzi',(W/sw).toFixed(4));if(!de.classList.contains('lux-dz')||de.getAttribute('data-dzw')!==String(W)){de.classList.add('lux-dz');de.setAttribute('data-dzw',String(W));m.setAttribute('content','width='+W+', viewport-fit=cover');}}
  else if(de.classList.contains('lux-dz')){de.classList.remove('lux-dz');de.removeAttribute('data-dzw');m.setAttribute('content','width=device-width, initial-scale=1.0, viewport-fit=cover');}
 }catch(e){}};
@@ -4215,8 +4221,9 @@ html.lux-dz .shell{padding-top:calc(var(--dz-top) * var(--dzi,1)) !important;pad
 html.lux-dz #luxConsent,html.lux-dz .luxToast,html.lux-dz #luxBuildBanner{zoom:var(--dzi,1)}
 html.lux-dz .cmdk-fab{display:none !important}   /* [V33.738] 축소 보기 위의 알림·버튼은 원래 크기 */
 /* [V33.736] 비율 세밀 조정 — 폭 1320 → 1180(글자 약 12% 크게) · 아래 세 칸(실적·선물·환율)은 1180 에서도 3열 유지 · 파이프라인 띠는 숨겨 위로 당김 */
-html.lux-dz .fv3-grid{grid-template-columns:repeat(3,minmax(0,1fr)) !important}
-html.lux-dz .fv3-grid > .fv-panel:last-child:nth-child(odd){grid-column:auto !important}
+html.lux-dz .fv3-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important}   /* [V33.740] 이 줄은 두 칸(지표 반응·내부자 거래) — 3열로 두면 오른쪽 한 칸이 비었다 */
+html.lux-dz .fv-mid > .fv-panel:nth-child(2){display:flex !important;flex-direction:column}
+html.lux-dz .fv-mid > .fv-panel:nth-child(2) #fvHeatmap{flex:1 1 auto;height:auto !important;min-height:330px}   /* [V33.740] 시총맵이 옆 TOP MOVERS 높이까지 채움 — 아래 빈칸 없앰(ResizeObserver 가 다시 그림) */
 html.lux-dz #pipelineBar,html.lux-dz #tuneBanner{display:none !important}
 /* [V33.739] 축소 보기 시인성(사용자 11/2 "빈 공간 많다 · 글씨·창 크기 조절해 꽉 채워") — 칸 높이는 그대로, 글씨·행 간격을 키워 칸 안을 채운다 */
 html.lux-dz .fv-table th{font-size:12.5px !important;padding:6px 8px !important}
@@ -4231,10 +4238,14 @@ html.lux-dz .fv-idx-chart{height:46px !important}
 html.lux-dz .fv-breadth{padding:8px 12px !important}html.lux-dz .fv-breadth-top{font-size:13px !important}html.lux-dz .fv-breadth-bar{height:9px !important}
 html.lux-dz .fv-hl{font-size:14px !important;padding:7px 12px !important;line-height:1.4}
 html.lux-dz .fv-intel-wrap .fv-panel{font-size:13.5px}
-html.lux-dz .fv-movers-grid .fv-table th:nth-child(1),html.lux-dz .fv-movers-grid .fv-table td:nth-child(1){width:40% !important}
-html.lux-dz .fv-movers-grid .fv-table th:nth-child(2),html.lux-dz .fv-movers-grid .fv-table td:nth-child(2){width:29% !important}
+html.lux-dz .fv-movers-grid .fv-table th:nth-child(1),html.lux-dz .fv-movers-grid .fv-table td:nth-child(1){width:36% !important}
+html.lux-dz .fv-movers-grid .fv-table td{font-size:13.5px !important;padding-left:6px !important;padding-right:6px !important}
+html.lux-dz .fv-movers-grid .fv-table th:nth-child(2),html.lux-dz .fv-movers-grid .fv-table td:nth-child(2){width:33% !important;text-overflow:clip !important;overflow:visible !important}
 html.lux-dz .fv-movers-grid .fv-table th:nth-child(3),html.lux-dz .fv-movers-grid .fv-table td:nth-child(3){width:31% !important;white-space:nowrap;text-overflow:clip !important;overflow:visible !important}
 html.lux-dz .fv3-grid > .fv-panel{display:flex !important;flex-direction:column}
+/* [V33.740] 빈칸 없애기 — 한 줄에서 가장 긴 칸(선물·경제 캘린더)이 줄 높이를 정하지 않게(contain:size) 하고, 옆 칸 높이에 맞춰 안에서 스크롤 */
+html.lux-dz .fv-cal-row > .fv-panel:nth-child(2),html.lux-dz .fv-bottom > .fv-panel:nth-child(2){contain:size;display:flex !important;flex-direction:column;min-height:0}
+html.lux-dz .fv-cal-row > .fv-panel:nth-child(2) > :not(.fv-panel-head),html.lux-dz .fv-bottom > .fv-panel:nth-child(2) > :not(.fv-panel-head){flex:1 1 auto;min-height:0;overflow:auto;max-height:none !important}
 html.lux-dz .fv3-grid .fv3-scroll{flex:1 1 auto !important;max-height:none !important;height:auto !important}
 /* [V33.737] 920~1180 폭에서도 PC 배치 유지(1000·1100·1300px 아래 규칙 무력화) */
 html.lux-dz .fv-mid{grid-template-columns:1fr 1.1fr !important}
@@ -4245,6 +4256,8 @@ html.lux-dz .fv-idx{flex:1 1 0 !important}html.lux-dz .fv-index-row{flex-wrap:no
 </style>
 <style id="luxMobile2">
 #btnPush[data-moved]{display:none !important}
+/* [V33.740] STRATEGY PERFORMANCE(옛 TREND·SCALP·SNAP 청산 집계)는 지금 엔진(매매법·국면 전략)과 맞지 않아 뺀다(사용자 11/2) — 옆 MARKET INTEL 이 한 줄을 다 쓴다 */
+.dash-block:has(#stratPerfBox){display:none !important}.dash-grid:has(#stratPerfBox){grid-template-columns:1fr !important}
 .lux-legal{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;padding:18px 12px calc(18px + env(safe-area-inset-bottom));margin-top:8px;font-size:12.5px;color:var(--t2)}.lux-legal a{color:var(--t1);text-decoration:underline;text-underline-offset:2px;min-height:32px;display:inline-flex;align-items:center}.lux-legal span{color:var(--t2)}/* [V33.734] 체결 알림은 MY › 내 정보로 */
 /* [V33.733] ★휴대폰 대시보드 — Finviz 모바일처럼 한 화면에 많이★(사용자 11/2) — 600px 이하만. 두 테마 공통.
    지수 3열 소형 카드 · 시장폭 한 줄 · 상승/하락 TOP 을 나란히(종목·등락만) · 표 행 높이 축소 · 접힌 패널의 빈 공간 제거 · 파이프라인 띠 숨김 */
@@ -21851,12 +21864,12 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.739">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.739">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.739">
-<link rel="stylesheet" href="/model-evidence.css?v=33.739">
+<link rel="stylesheet" href="/brain-console.css?v=33.740">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.740">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.740">
+<link rel="stylesheet" href="/model-evidence.css?v=33.740">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.739">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.740">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -21883,8 +21896,8 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
   setTimeout(reveal, 9500);
 })();
 </script>
-<script src="/model-evidence.js?v=33.739"></script>
-<script src="/workspace-ui.js?v=33.739"></script>
+<script src="/model-evidence.js?v=33.740"></script>
+<script src="/workspace-ui.js?v=33.740"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {

@@ -688,6 +688,7 @@ def _event_feats(P, mk, log):
 #     발표 서프라이즈(CPI·근원 CPI·PPI·실업률·고용 — 실제 변화 − 직전 6개월 추세, 표준화 · 발표 뒤 10일 반감) — FRED 무료(합의 예측치 없음 → 추세가 기대).
 #   발표일은 보수적으로 늦게 잡는다(미래 정보 누출 없음). 미국 = 그날 종가 · 한국 = 전날 미국 마감까지만. 끄려면 OMNIQ_MACRO=0.
 SECTOR_NOW = {}   # 시장별 {종목: 섹터 ETF}
+SECTOR_IDX = {}   # [V33.740] 시장별 날짜×종목 섹터 번호와 섹터 20일 강도 순위 — 국면 전략(regime_sleeve)의 '강한 업종 주도주' 거름이 쓴다(과거 250일만 · 미래 정보 없음)
 MACRO = {}   # omniq_gha 가 넣는다: {"etf": {sym: {daykey: close}}, "fred": {id: [(YYYY-MM-DD, v), ...]}}
 SECTOR_ETFS = ("XLK", "XLV", "XLF", "XLP", "XLE", "XLU", "XLI", "XLY", "XLB", "XLRE", "XLC", "SMH")
 DEFENSIVE = ("XLV", "XLP", "XLU")
@@ -857,7 +858,8 @@ def _macro_feats(P, mk, log):
         sv = pd.Series(v, index=C.index)
         out.append(("mx_s_%s_rate" % sid.lower(), mul(b_tlt, sv)))
         out.append(("mx_s_%s_mkt" % sid.lower(), mul(b_mkt, sv)))
-    SECTOR_NOW[mk] = {str(s_): secs[k] for s_, k in zip(C.columns, sec_idx[-1]) if k >= 0}   # 화면·매매법 AI 용 지금 섹터
+    SECTOR_NOW[mk] = {str(s_): secs[k] for s_, k in zip(C.columns, sec_idx[-1]) if k >= 0}
+    SECTOR_IDX[mk] = {"index": C.index, "cols": [str(c) for c in C.columns], "idx": sec_idx, "srank": srank}   # 화면·매매법 AI 용 지금 섹터
     nsec = int((sec_idx[-1] >= 0).sum())
     log("      거시·섹터 피처 %d개 · 섹터 배정 %d/%d종목 · 서프라이즈 %s" % (len(out), nsec, N, ",".join(sur) or "없음"))
     return out

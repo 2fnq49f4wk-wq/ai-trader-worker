@@ -25,7 +25,7 @@
   var REGC = new Proxy({}, { get: function (o, k) { return (document.documentElement.getAttribute("data-theme") === "light" ? REGCL : REGC0)[k]; } });
   var GUIDE = {
     SURGE: { safe: "추격 매수는 피하고 이익 일부 실현", mid: "신규는 작게, 손절선 올려 이익 지키기", aggr: "추세 종목 짧게, 손절 엄수" },
-    BULL: { safe: "국면 전략 종목 위주로 나눠 사기", mid: "AI 후보 중 분할 매수", aggr: "주도주 비중 확대, 추세 길게" },
+    BULL: { safe: "국면 전략 종목 위주로 분할 매수", mid: "AI 후보 중 분할 매수", aggr: "주도주 비중 확대, 추세 길게" },
     NEUTRAL: { safe: "현금 비중 유지, 관망", mid: "신호 뜬 종목만 골라 짧게", aggr: "박스권 반등 매매, 목표 짧게" },
     BEAR: { safe: "신규 매수 줄이고 현금·방어주", mid: "소액·분할만, 손절 엄수", aggr: "인버스·단기 반등만 짧게" },
     CRASH: { safe: "신규 매수 멈추고 현금 보존", mid: "관망 · 첫 양봉 뒤 소액만", aggr: "공황 반등 단타만, 손절 짧게" }
@@ -50,14 +50,22 @@
     return fetch(path || "/api/me", { method: method, headers: Object.assign({ "x-lux-uid": uid() }, body ? { "content-type": "application/json" } : {}, extra || {}), body: body ? JSON.stringify(body) : undefined }).then(function (r) { return r.json(); });
   }
   function saveLocal() { try { localStorage.setItem(PROFK, JSON.stringify(prof)); } catch (e) {} }
-  function persist() { saveLocal(); clearTimeout(saveT); saveT = setTimeout(function () { api("POST", prof).then(function (j) {
+  var editSeq = 0;   // [V33.740] 이 기기에서 바꾼 횟수 — 불러오기 응답이 늦게 와도 그 사이 바꾼 것을 덮지 않게
+  function persist() { editSeq++; saveLocal(); clearTimeout(saveT); saveT = setTimeout(function () { api("POST", prof).then(function (j) {
     if (j && j.pfRejected && j.profile) { adopt(j.profile); draw(); alert("모의계좌 기록이 서버 시세와 맞지 않아 마지막으로 확인된 상태로 되돌렸습니다(" + j.pfRejected + ")."); }
     else if (j && j.profile && j.profile.nick !== undefined) { prof.nick = j.profile.nick; saveLocal(); }
   }).catch(function () {}); }, 2000); }
   function adopt(p) { prof = Object.assign({}, DEF, p || {}); saveLocal(); }
   function load(force) {
     if (loaded && !force) return; loaded = true;
-    api("GET").then(function (j) { if (j && j.profile) { adopt(j.profile); draw(); } else if (prof.done) persist(); }).catch(function () {});
+    /* [V33.740] ★로그인 뒤 저장이 안 되던 버그★(사용자 11/2) — 불러오기(GET)가 늦게 돌아오면 그 사이 고른 성향·관심종목을 옛 서버 값으로 덮었다.
+       요청 뒤에 이 기기에서 바꾼 게 있으면 서버 값을 쓰지 않고 이 기기 값을 저장한다(닉네임은 서버 값). */
+    var seq = editSeq;
+    api("GET").then(function (j) {
+      if (j && j.profile && editSeq === seq) { adopt(j.profile); draw(); }
+      else if (j && j.profile) { if (j.profile.nick) prof.nick = j.profile.nick; persist(); }
+      else if (prof.done) persist();
+    }).catch(function () {});
   }
 
   function quotes() { return window.__lastQuotesArr || []; }
@@ -220,7 +228,7 @@
       '<div class="r"><span class="p">' + (p ? (isKr(sym) ? "₩" + Math.round(p).toLocaleString() : "$" + p.toFixed(2)) : "—") + '</span><span class="' + cls(c) + '" style="font-size:12.5px">' + pctS(c) + "</span></div>" + (right || "") + "</div>";
   }
   function pill(sig) { return !sig ? "" : sig.watch ? '<span class="pill w">관찰</span>' : sig.sl ? '<span class="pill s">국면 전략</span>' : '<span class="pill">AI 후보</span>'; }
-  function buyBtn(sym) { return '<button type="button" class="buy" data-buy="' + esc(sym) + '">사기</button>'; }
+  function buyBtn(sym) { return '<button type="button" class="buy" data-buy="' + esc(sym) + '">매수</button>'; }
 
   function home() {
     var mk = has(acMk) ? acMk : (has("us") ? "us" : has("kr") ? "kr" : acMk), v = val(mk), h = "", hr = new Date().getHours();
@@ -232,7 +240,7 @@
     h += '<div class="g2">' + prof.mkts.map(function (m) { var r = PB && PB.markets && PB.markets[m] && PB.markets[m].regime;
       return '<div class="wx"><span class="mu" style="font-size:12px">' + MK[m] + ' 시장</span><b style="color:' + (REGC[r] || "inherit") + '">' + (REG[r] || "불러오는 중") + '</b><span style="font-size:12.5px;line-height:1.45;color:#C7CDD6">' + esc(r && GUIDE[r] ? GUIDE[r][prof.risk] : "") + "</span></div>"; }).join("") + "</div>";
     var rmk = prof.mkts.indexOf(acMk) >= 0 ? acMk : prof.mkts[0], rk = ranked(rmk), rg = PB && PB.markets && PB.markets[rmk] && PB.markets[rmk].regime;
-    h += '<section class="card" aria-label="AI 순위"><div class="ct"><span class="h2" style="color:inherit">AI가 지금 사고 싶은 순위</span>' +
+    h += '<section class="card" aria-label="AI 순위"><div class="ct"><span class="h2" style="color:inherit">AI 매수 추천 순위</span>' +
       (prof.mkts.length > 1 ? '<span class="seg">' + prof.mkts.map(function (m) { return '<button type="button" data-acmk="' + m + '" class="' + (m === rmk ? "on" : "") + '">' + MK[m] + "</button>"; }).join("") + "</span>" : '<span>' + MK[rmk] + "</span>") + "</div>" +
       (rk.length ? rk.map(function (r, i) {
         var on = prof.watch.indexOf(r.s) >= 0;
@@ -265,8 +273,8 @@
     h += '<section class="card"><div class="h2" style="margin-bottom:4px">보유 ' + ks.length + "종목</div>" + (ks.length ? ks.map(function (s) {
       var p = a.pos[s], cur = px(q(s)) || p.avg, r = (cur / p.avg - 1) * 100;
       return '<div class="row" data-open="' + esc(s) + '"><span class="dot" style="background:' + ACOL[ks.indexOf(s) % ACOL.length] + '" aria-hidden="true"></span><div class="l"><span class="nm">' + esc(nm(s)) + pill(sigOf(s)) + '</span><span class="sb">' + p.q.toLocaleString() + "주 · 평단 " + fmt(mk, p.avg) + " · 비중 " + (v.eq > 0 ? (p.q * cur / v.eq * 100).toFixed(0) : 0) + "%" + (p.tpPx || p.slPx ? '</span><span class="sb"><b class="up">익절 ' + pxS(mk, p.tpPx) + '</b> · <b class="dn">손절 ' + pxS(mk, p.slPx) + "</b>" : "") + '</span></div><div class="r"><span class="p">' + fmt(mk, p.q * cur) + '</span><span class="' + cls(r) + '" style="font-size:12.5px">' + pctS(r) + "</span></div>" +
-        '<button type="button" class="tag2 wbtn" data-risk="' + esc(s) + '" aria-label="익절 손절 설정">TP/SL</button>' + buyBtn(s) + '<button type="button" class="sell" data-sell="' + esc(s) + '">팔기</button></div>';
-    }).join("") : '<div class="empty">홈의 AI 후보나 관심종목에서 [사기]를 눌러 보세요</div>') + "</section>";
+        '<button type="button" class="tag2 wbtn" data-risk="' + esc(s) + '" aria-label="익절 손절 설정">TP/SL</button>' + buyBtn(s) + '<button type="button" class="sell" data-sell="' + esc(s) + '">매도</button></div>';
+    }).join("") : '<div class="empty">홈의 AI 후보나 관심종목에서 [매수]를 눌러 보세요</div>') + "</section>";
     var od = a.ord || [];
     if (od.length) h += '<section class="card"><div class="h2" style="margin-bottom:4px">예약 주문 ' + od.length + '건</div>' + od.map(function (o) {
       return '<div class="row" data-open="' + esc(o.s) + '"><div class="l"><span class="nm">' + esc(nm(o.s)) + ' <span class="pill ' + (o.side === "B" ? "" : "s") + '">예약 ' + (o.side === "B" ? "매수" : "매도") + '</span></span><span class="sb">' + pxS(mk, o.px) + (o.side === "B" ? " 이하" : " 이상") + " 도달 시 " + o.q.toLocaleString() + "주" + (o.tpPx ? " · 익절 " + pxS(mk, o.tpPx) + " · 손절 " + pxS(mk, o.slPx) : "") + '</span></div><div class="r"><span class="sb">현재 ' + pxS(mk, priceOf(o.s)) + '</span></div><button type="button" class="tag2 wbtn" data-cancel="' + esc(o.id) + '">취소</button></div>';
@@ -346,7 +354,7 @@
       bar.addEventListener("click", function (ev) { var b = ev.target.closest("button"); if (!b) return; if (!isAuth()) { ask("mine"); return; } if (b.dataset.dbuy) sheet("B", detSym); else if (b.dataset.dsell) sheet("S", detSym); else if (b.dataset.drisk) sheet("R", detSym); else if (b.dataset.dwatch) { var i = prof.watch.indexOf(detSym); if (i >= 0) prof.watch.splice(i, 1); else if (prof.watch.length < 40) prof.watch.push(detSym); persist(); detail(detSym); } }); }
     var hq = held(sym), on = prof.watch.indexOf(sym) >= 0, mk = isKr(sym) ? "kr" : "us", hp = has(mk) ? prof.pf[mk].pos[sym] : null, no = has(mk) ? (prof.pf[mk].ord || []).filter(function (o) { return o.s === sym; }).length : 0;
     bar.innerHTML = '<div class="mdb"><div class="l"><span class="nm">내 모의계좌 · ' + esc(nm(sym)) + '</span><span class="sb">' + (hq ? "보유 " + hq.toLocaleString() + "주" + (hp && hp.tpPx ? " · 익절 " + pxS(mk, hp.tpPx) + " · 손절 " + pxS(mk, hp.slPx) : "") : "보유 없음") + (no ? " · 예약 " + no + "건" : "") + (has(mk) ? " · 주문 가능 " + fmt(mk, prof.pf[mk].cash) : " · 첫 주문 때 가상 " + fmt(mk, START[mk]) + " 계좌가 열립니다") + "</span></div>" +
-      '<button type="button" class="wbtn2" data-dwatch="1">' + (on ? "관찰중" : "관찰") + '</button>' + (hq ? '<button type="button" class="wbtn2" data-drisk="1">TP/SL</button><button type="button" class="sell" data-dsell="1">팔기</button>' : "") + '<button type="button" class="buy" data-dbuy="1">사기</button></div>';
+      '<button type="button" class="wbtn2" data-dwatch="1">' + (on ? "관찰중" : "관찰") + '</button>' + (hq ? '<button type="button" class="wbtn2" data-drisk="1">TP/SL</button><button type="button" class="sell" data-dsell="1">매도</button>' : "") + '<button type="button" class="buy" data-dbuy="1">매수</button></div>';
   }
   function draw() {
     if (detSym && $("page-detail") && $("page-detail").classList.contains("active")) detail(detSym);

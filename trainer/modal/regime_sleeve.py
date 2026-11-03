@@ -37,7 +37,8 @@ FAM_KO = {"rs60t5": "60일 상대강도 상위 5% · 20일선 위", "rs120t5": "
           "newhi250": "52주 신고가 근처 · 60일 강세", "newhi60_mega": "대형주 60일 신고가", "rsi_lo_lead": "1년 주도주 RSI 과매도(200일선 위)",
           "lowvol_lead": "저변동 주도주(120일 강세 · 50일선 위)", "above200_lo20": "200일선 위 20일 저점 근처 강세주", "crash_quality": "200일선 위 종목의 5일 −7% 뒤 첫 양봉",
           "gap_rev": "[단타] 3% 넘게 갭 하락 뒤 시가보다 높게 마감(50일선 위)", "os3_up": "[단타] 3일 연속 하락 · 5일 −6% 뒤 첫 양봉(200일선 위)",
-          "vol_brk20": "[단타] 거래량 2배 · 20일 고점 돌파", "st_rev": "[단타] 5일 낙폭 하위 5% 강세주(60일 상위 30%) 반등 양봉"}
+          "vol_brk20": "[단타] 거래량 2배 · 20일 고점 돌파", "st_rev": "[단타] 5일 낙폭 하위 5% 강세주(60일 상위 30%) 반등 양봉",
+          "sec_lead": "[업종] 20일 강한 업종(상위 25%) 안 60일 주도주 · 50일선 위", "sec_lead_dip": "[업종] 강한 업종 안 강세주의 20일선 눌림(50일선 위)"}
 for _k, _v in {"lev": "레버리지 지수 ETF", "idx": "지수 ETF", "inv": "인버스 ETF", "inv2": "인버스 2배 ETF"}.items():
     FAM_KO["etf_" + _k] = _v
     FAM_KO["etf_" + _k + "_up1"] = _v + " · 양봉 날"
@@ -79,6 +80,24 @@ def families(P, mk, L3, M3, S3, st):
              # [V33.736] 단타 거름
              "gap_rev": (gap <= -.03) & (C > O) & (C > ma50), "os3_up": np.vstack([np.full((1, N), False), dn3[:-1]]) & up1 & (r5 <= -.06) & (C > ma200),
              "vol_brk20": (V > 2 * vma20) & (C > hi20p) & (C > ma50), "st_rev": (r5r <= .05) & (r60r >= .7) & up1}
+    # [V33.740] ★업종(분야)별 조절★(사용자 11/2 "기술주·금융주 같은 분야별 조절을 국면 전략에도") — OMNI-Q 가 만든 날짜별 섹터 배정(과거 250일 상관)과
+    #   섹터 20일 강도 순위로 '지금 강한 업종 안의 주도주' 거름 2종을 후보에 더한다. 같은 고르기·같은 관문(검증 구간)으로만 쓰인다.
+    try:
+        import sys as _sys
+        OQ = _sys.modules.get("omni_q")
+        SI = OQ.SECTOR_IDX.get(mk) if OQ is not None and hasattr(OQ, "SECTOR_IDX") else None
+        if SI is not None:
+            ti_ = pd.Index(SI["index"]).get_indexer(P["close"].index)
+            cj_ = pd.Index(SI["cols"]).get_indexer([str(c) for c in P["close"].columns])
+            idx_ = SI["idx"][np.clip(ti_, 0, None)][:, np.clip(cj_, 0, None)].astype(int)
+            sr_ = SI["srank"][np.clip(ti_, 0, None)]
+            secr = np.take_along_axis(sr_, np.clip(idx_, 0, None), axis=1).astype(float)
+            secr[(idx_ < 0) | (ti_[:, None] < 0) | (cj_[None, :] < 0)] = np.nan
+            with np.errstate(invalid="ignore"):
+                F["sec_lead"] = (secr >= .75) & (r60r >= .8) & (C > ma50)
+                F["sec_lead_dip"] = (secr >= .75) & (r60r >= .7) & (C < ma20) & (C > ma50)
+    except Exception:  # noqa: BLE001
+        pass
     cols = list(P["close"].columns)
     for k_, s_ in ETFS.get(mk, {}).items():
         m = np.zeros((T, N), bool)
