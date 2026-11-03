@@ -31,11 +31,25 @@
       "#luxInfo .cd{border:1px solid rgba(127,137,155,.22);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;min-width:0}#luxInfo .cd .k{font-size:12.5px;opacity:.7}#luxInfo .cd .v{font-size:22px;font-weight:700;letter-spacing:-.3px}#luxInfo .cd .s{font-size:12px;opacity:.65;line-height:1.45}",
       "#luxInfo .bar{position:relative;height:6px;border-radius:3px;background:rgba(127,137,155,.2)}#luxInfo .bar i{position:absolute;top:-3px;width:2px;height:12px;background:currentColor}#luxInfo .bar b{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:rgba(61,214,181,.55)}",
       "#luxInfo .up{color:#E5484D}#luxInfo .dn{color:#3B82F6}#luxInfo h4{margin:18px 0 8px;font-size:15px}#luxInfo .nt{font-size:12px;opacity:.62;line-height:1.55;margin:10px 0 0}",
-      "#luxInfo .tw{overflow-x:auto;border:1px solid rgba(127,137,155,.22);border-radius:14px}#luxInfo table{width:100%;border-collapse:collapse;font-size:13.5px;min-width:520px}#luxInfo th,#luxInfo td{padding:10px 12px;text-align:right;border-bottom:1px solid rgba(127,137,155,.14);white-space:nowrap}#luxInfo th{font-weight:500;opacity:.7;font-size:12.5px}#luxInfo td:first-child,#luxInfo th:first-child{text-align:left;position:sticky;left:0;background:inherit}#luxInfo tr.em td{font-weight:700}#luxInfo tr:last-child td{border-bottom:0}",
+      "#luxInfo .tw{overflow-x:auto;border:1px solid rgba(127,137,155,.22);border-radius:14px}#luxInfo table{width:100%;border-collapse:collapse;font-size:13.5px;min-width:520px}#luxInfo th,#luxInfo td{padding:10px 12px;text-align:right;border-bottom:1px solid rgba(127,137,155,.14);white-space:nowrap}#luxInfo th{font-weight:500;color:#8A93A3;font-size:12.5px}html[data-theme=light] #luxInfo th{color:#667085}#luxInfo td:first-child,#luxInfo th:first-child{text-align:left;position:sticky;left:0;background:inherit}#luxInfo tr.em td{font-weight:700}#luxInfo tr:last-child td{border-bottom:0}",
       "#luxInfo .seg{display:inline-flex;gap:3px;padding:3px;border-radius:10px;background:rgba(127,137,155,.14);margin-bottom:10px}#luxInfo .seg button{border:0;border-radius:8px;padding:7px 12px;background:transparent;color:inherit;opacity:.7;font:inherit;font-size:13px;cursor:pointer}#luxInfo .seg button.on{opacity:1;font-weight:700;background:rgba(127,137,155,.22)}",
       "#luxInfo .li{display:flex;align-items:center;gap:12px;padding:11px 2px;border-bottom:1px solid rgba(127,137,155,.14);color:inherit;text-decoration:none}#luxInfo .li:last-child{border-bottom:0}#luxInfo .li .tg{flex:0 0 auto;min-width:46px;text-align:center;padding:5px 6px;border-radius:8px;background:rgba(127,137,155,.16);font-size:11.5px;font-weight:700}#luxInfo .li .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}#luxInfo .li .d{font-size:12.5px;opacity:.65;white-space:nowrap}",
       "#luxInfo .bars{display:flex;align-items:flex-end;gap:10px;height:120px;padding:6px 4px 0}#luxInfo .bars div{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end;font-size:11.5px}#luxInfo .bars span.b{width:70%;max-width:46px;border-radius:6px 6px 0 0;background:rgba(127,137,155,.45)}#luxInfo .bars div:last-child span.b{background:currentColor;opacity:.85}",
-      "#luxInfo .emp{padding:18px 4px;opacity:.65;font-size:13.5px}"
+      "#luxInfo .emp{padding:18px 4px;opacity:.65;font-size:13.5px}",
+      /* [V33.750] ★폰에서 개요·밸류·KPI 보기 편하게★(사용자 11/4 · 디자인 캔버스 'LUX 종목 정보 탭 모바일 리디자인') —
+         ① 탭 = 알약 칩 · 앱바 아래 고정(스크롤해도 보임 — 종전엔 위 버튼줄에 가려 밑줄만 보였다) ② 카드 8장(장당 260px) → 한 상자 안 줄 목록(이름·설명 왼쪽 · 값 오른쪽)
+         ③ 기업 정보 값이 안 보이던 것(표 최소 폭 520px 이 폰 369px 를 넘어 값 열이 화면 밖) → 2열 목록 ④ 재무 표 첫 열 고정 배경 · 연도만 */
+      "#luxInfo .kv td:first-child{position:static;background:transparent !important;opacity:.75}#luxInfo .kv table{min-width:0}#luxInfo .kv td{white-space:normal;word-break:keep-all}#luxInfo .kv td:last-child{font-weight:600;text-align:right}",
+      "#luxInfo td:first-child,#luxInfo th:first-child{background:var(--s1,#141922)}html[data-theme=light] #luxInfo td:first-child,html[data-theme=light] #luxInfo th:first-child{background:#fff}",
+      "@media (max-width:760px){",
+      "#luxInfo .lxt{position:sticky;top:var(--m-top,56px);z-index:6;gap:6px;padding:8px 0;margin:0 0 12px;border-bottom:0;background:var(--bg,#0D1014)}html[data-theme=light] #luxInfo .lxt{background:#F7F9FB}",
+      "#luxInfo .lxt button{min-height:38px;padding:0 15px;border:1px solid rgba(127,137,155,.35);border-radius:999px;opacity:1;color:inherit;font-size:13.5px}#luxInfo .lxt button.on{background:#EEF1F5;color:#0D1014;border-color:#EEF1F5}html[data-theme=light] #luxInfo .lxt button.on{background:#101828;color:#fff;border-color:#101828}",
+      "#luxInfo .g4,#luxInfo .g3{grid-template-columns:1fr;gap:0;border:1px solid rgba(127,137,155,.22);border-radius:16px;overflow:hidden;background:var(--s1,#141922)}html[data-theme=light] #luxInfo .g4,html[data-theme=light] #luxInfo .g3{background:#fff}",
+      "#luxInfo .g4 .cd,#luxInfo .g3 .cd{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:'k v' 's v' 'b b';align-items:center;gap:2px 14px;border:0;border-bottom:1px solid rgba(127,137,155,.14);border-radius:0;padding:12px 16px;min-height:52px}#luxInfo .g4 .cd:last-child,#luxInfo .g3 .cd:last-child{border-bottom:0}",
+      "#luxInfo .cd .k{grid-area:k;font-size:14px;opacity:1;font-weight:600}#luxInfo .cd .v{grid-area:v;font-size:17px;text-align:right}#luxInfo .cd .s{grid-area:s;font-size:11.5px}#luxInfo .cd .bar{grid-area:b;margin-top:8px}",
+      "#luxInfo h4{margin:16px 2px 8px;font-size:14px}#luxInfo table{font-size:13px}#luxInfo th,#luxInfo td{padding:10px}",
+      "#luxInfo .tw{position:relative;-webkit-overflow-scrolling:touch}#luxInfo .bars{height:104px}",
+      "}"
     ].join("");
     document.head.appendChild(st);
   }
@@ -65,7 +79,7 @@
       card("고점 대비", pct(st.fromHi52), "저점 대비 " + pct(st.fromLo52)) +
       card("베타", st.beta != null ? st.beta.toFixed(2) : "—", (isKr(sym) ? "코스피200" : "S&P 500") + " 대비 · 1년") +
       card("1년 최대 낙폭", pct(st.mdd1y), "연초 이후 " + pct(st.ytd)) + "</div>";
-    if (fx.length) h += "<h4>기업 정보</h4>" + '<div class="tw"><table><tbody>' + fx.map(function (r) { return "<tr><td>" + esc(r.l) + "</td><td>" + esc(r.v) + "</td></tr>"; }).join("") + "</tbody></table></div>";
+    if (fx.length) h += "<h4>기업 정보</h4>" + '<div class="tw kv"><table><tbody>'  + fx.map(function (r) { return "<tr><td>" + esc(r.l) + "</td><td>" + esc(r.v) + "</td></tr>"; }).join("") + "</tbody></table></div>";
     if (p.about) h += '<p class="nt" style="font-size:13.5px;opacity:.85">' + esc(String(p.about).slice(0, 900)) + "</p>";
     return h + '<p class="nt">출처: ' + esc(p.src || "") + "</p>";
   }
@@ -123,7 +137,7 @@
     var h = '<div class="seg" role="tablist">' + [["is", "손익계산서"], ["bs", "재무상태표"], ["cf", "현금흐름표"]].map(function (t) { return '<button type="button" role="tab" data-fs="' + t[0] + '" class="' + (fsTab === t[0] ? "on" : "") + '">' + t[1] + "</button>"; }).join("") + "</div>";
     var rev = o.map(function (y) { return Y(f, y, fsTab === "cf" ? "FreeCashFlow" : fsTab === "bs" ? "TotalAssets" : "TotalRevenue"); }), mx = Math.max.apply(null, rev.map(function (v) { return Math.abs(v || 0); })) || 1;
     h += '<div class="bars" aria-hidden="true">' + o.map(function (y, i) { var v = rev[i] || 0; return '<div><span>' + money(v, kr) + '</span><span class="b" style="height:' + Math.max(3, Math.abs(v) / mx * 80).toFixed(0) + '%"></span><span style="opacity:.6">' + esc(y.slice(0, 4)) + "</span></div>"; }).join("") + "</div>";
-    h += '<div class="tw" style="margin-top:10px"><table><thead><tr><th>항목</th>' + o.map(function (y) { return "<th>" + esc(y.slice(0, 7)) + "</th>"; }).join("") + "<th>전년 대비</th></tr></thead><tbody>" + rows.map(function (r) {
+    h += '<div class="tw" style="margin-top:10px"><table><thead><tr><th>항목</th>' + o.map(function (y) { return "<th>" + esc(y.slice(0, 4)) + "</th>"; }).join("") + "<th>전년 대비</th></tr></thead><tbody>" + rows.map(function (r) {
       var vals = o.map(function (y) { if (r[1] === "_eps") { var n = Y(f, y, "NetIncome"), s = Y(f, y, "BasicAverageShares"); return n != null && s ? n / s : null; } return Y(f, y, r[1]); });
       var a = vals[vals.length - 1], b = vals[vals.length - 2], yoy = a != null && b ? (a - b) / Math.abs(b) * 100 : null;
       return '<tr class="' + (r[2] ? "em" : "") + '"><td>' + r[0] + "</td>" + vals.map(function (v) { return "<td>" + (r[1] === "_eps" ? (v == null ? "—" : (kr ? Math.round(v).toLocaleString() + "원" : "$" + v.toFixed(2))) : money(v, kr)) + "</td>"; }).join("") + '<td class="' + cls(yoy) + '">' + pct(yoy) + "</td></tr>";
@@ -168,6 +182,7 @@
     var el = $("luxInfo"); if (!el || !sym) return; css();
     var body = tab === "ov" ? vOv() : tab === "val" ? vVal() : tab === "kpi" ? vKpi() : tab === "fs" ? vFs() : tab === "er" ? vEr() : tab === "ir" ? vIr() : vIns();
     el.innerHTML = '<nav class="lxt" role="tablist" aria-label="종목 정보">' + TABS.map(function (t) { return '<button type="button" role="tab" aria-selected="' + (t[0] === tab) + '" data-lxt="' + t[0] + '" class="' + (t[0] === tab ? "on" : "") + '">' + t[1] + "</button>"; }).join("") + "</nav>" + body;
+    if (tab === "fs") el.querySelectorAll(".tw").forEach(function (t) { if (t.scrollWidth > t.clientWidth) t.scrollLeft = t.scrollWidth; });   // [V33.750] 재무 표는 최신 연도부터 보이게(왼쪽으로 밀면 이전 해)
   }
   function open(s) {
     if (!s) return; sym = s; var el = $("luxInfo"); if (!el) return;
