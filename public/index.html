@@ -229,11 +229,11 @@ window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{
 window.__luxAct=Date.now();['pointerdown','keydown','touchstart','wheel'].forEach(function(e){addEventListener(e,function(){window.__luxAct=Date.now();},{passive:true,capture:true});});
 window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600000;};
 </script>
-<meta name="lux-build" content="V33.746">
-<script src="/i18n.js?v=33.746" defer></script>
-<script src="/mine.js?v=33.746" defer></script>
-<script src="/stock-info.js?v=33.746" defer></script>
-<script src="/neural-observatory.js?v=33.746" defer></script>
+<meta name="lux-build" content="V33.747">
+<script src="/i18n.js?v=33.747" defer></script>
+<script src="/mine.js?v=33.747" defer></script>
+<script src="/stock-info.js?v=33.747" defer></script>
+<script src="/neural-observatory.js?v=33.747" defer></script>
 <title>LUX-INV</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -9139,12 +9139,12 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.746">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.746">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.746">
-<link rel="stylesheet" href="/model-evidence.css?v=33.746">
+<link rel="stylesheet" href="/brain-console.css?v=33.747">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.747">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.747">
+<link rel="stylesheet" href="/model-evidence.css?v=33.747">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.746">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.747">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -10658,6 +10658,10 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
       return q.market === fvHeatMarket && !q.isEtf && typeof q.price === 'number' && q.price > 0;
     });
     if (!stocks.length) { host.innerHTML = '<div class="empty" style="padding:20px;">시세 수신 대기 중...</div>'; host.__fvSvg = null; return; }
+    /* [V33.747] ★정규장 시간엔 '시간외' = '정규장' 맵과 똑같이★(사용자 11/4 "정규장 시간에는 시간외 보이는 거랑 정규장 맵 동기화") —
+       종목마다 mstate 로 고르면 시세가 늦은 몇 종목이 시간외 값·빈칸으로 남아 두 맵이 달랐다. 시장 절반 넘게 정규장이면 시간외 단추도 정규장 값을 그대로 쓴다. */
+    var _regMkt = false;
+    if (fvHeatMetric === 'ext') { var _nr = 0; stocks.forEach(function(q){ if (q.mstate === 'REGULAR') _nr++; }); _regMkt = _nr * 2 > stocks.length; if (_regMkt) met = FV_METRICS['1d']; }
     // /api/heatmap 보충 데이터 머지
     stocks.forEach(function(q){
       var ex = fvHeatExtra[q.symbol];
@@ -10850,7 +10854,7 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
     var subEl = (host.id === 'fvHeatmap') ? $('fvHeatSub') : $('tvHeatmapSub');
     var _extN = (fvHeatMetric === 'ext') ? stocks.filter(function(q){ return met.get(q) != null; }).length : -1;
     /* [V33.743] 시간외 단추를 눌렀는데 지금 시간외 체결이 없으면(미국 정규장 중 등) 맵 전체가 회색이라 '꺼진' 것처럼 보였다(사용자 11/3) — 이유를 적는다 */
-    if (subEl) subEl.textContent = (_extN === 0 ? '시간외 체결 없음(아직 시간외 전) · ' : '') + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 갱신';
+    if (subEl) subEl.textContent = (_regMkt ? '정규장 진행 중 — 시간외 = 정규장 값 · ' : _extN === 0 ? '시간외 체결 없음(아직 시간외 전) · ' : '') + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 갱신';
   }
   function fvFmtPct(v) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'; }
   // [V33.549] 지도 타일 툴팁 — 마우스를 올린 타일 하나만 만든다(종전: 렌더마다 전 타일의 HTML 을 만들어 data-tip 에 썼다)
@@ -21938,8 +21942,8 @@ setTimeout(function(){
   window.addEventListener('load', function(){ setTimeout(function(){ try{ boot(); }catch(e){} }, 0); });
 })();
 </script>
-<script src="/model-evidence.js?v=33.746"></script>
-<script src="/workspace-ui.js?v=33.746"></script>
+<script src="/model-evidence.js?v=33.747"></script>
+<script src="/workspace-ui.js?v=33.747"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {
