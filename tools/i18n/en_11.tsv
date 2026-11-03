@@ -55,3 +55,27 @@ TP/SL 설정	Set TP/SL
 엔진 자동 작동 중 · 마지막 실행: {n}분 전	Engine running · last run: {n}m ago
 엔진 자동 작동 중 · 마지막 실행: {n}초 전	Engine running · last run: {n}s ago
 엔진 지연 · 마지막 실행: {n}분 전	Engine delayed · last run: {n}m ago
+유로/달러	EUR/USD
+파운드/달러	GBP/USD
+달러/위안	USD/CNY
+달러/스위스프랑	USD/CHF
+달러/캐나다달러	USD/CAD
+호주달러/달러	AUD/USD
+뉴질랜드달러/달러	NZD/USD
+달러/홍콩달러	USD/HKD
+달러/대만달러	USD/TWD
+달러/싱가포르달러	USD/SGD
+달러/인도루피	USD/INR
+달러/태국바트	USD/THB
+달러/인도네시아루피아	USD/IDR
+달러/베트남동	USD/VND
+달러/멕시코페소	USD/MXN
+달러/브라질헤알	USD/BRL
+달러/튀르키예리라	USD/TRY
+달러/남아공랜드	USD/ZAR
+달러/스웨덴크로나	USD/SEK
+달러/노르웨이크로네	USD/NOK
+주요 통화 (G10)	Majors (G10)
+아시아	Asia
+신흥국	Emerging
+💱 FOREX · 달러 기준	💱 FOREX · vs USD

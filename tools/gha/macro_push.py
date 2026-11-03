@@ -90,5 +90,17 @@ for k, id_ in FRED.items():
 print(json.dumps(out, ensure_ascii=False))
 if not out:
     sys.exit(1)
-r = get(BASE + "/api/macro-push", json.dumps({"us": out}).encode(), headers={"Content-Type": "application/json", "x-train-key": KEY})
-print("워커:", r.decode()[:400])
+# [V33.745] 워커 배포(같은 시각 main push) 중엔 응답이 늦어 한 번에 실패했다(11/2 15:58Z · 11/3 14:20Z 읽기 시간 초과) — 4번까지 다시 보낸다.
+#   워커는 관측월이 새로울 때만 받으므로 같은 값을 두 번 보내도 안전하다(멱등).
+import time  # noqa: E402
+body = json.dumps({"us": out}).encode()
+for att in range(4):
+    try:
+        r = get(BASE + "/api/macro-push", body, timeout=90, headers={"Content-Type": "application/json", "x-train-key": KEY})
+        print("워커:", r.decode()[:400])
+        break
+    except Exception as e:  # noqa: BLE001
+        print("워커 전송 실패", att + 1, "회:", e)
+        if att == 3:
+            raise
+        time.sleep(20 * (att + 1))

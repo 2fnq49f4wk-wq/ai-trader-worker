@@ -2466,20 +2466,33 @@ const TREASURY_YIELDS = [
 const TREASURY_YIELD_SYMBOLS = TREASURY_YIELDS.map(function(y){ return y.symbol; });
 
 // === [FX] 환율 조회 대상 ===
-//   야후 파이낸스 환율 심볼. 매일 06:30 KST 1회 갱신 (조회 전용 — 매매 없음).
-//   "XXXKRW=X" = 1 XXX당 원화. "KRW=X" = 1달러당 원화. "JPY=X" = 1달러당 엔.
-//   엔/원은 야후 직접 페어가 부정확할 수 있어 USD/KRW ÷ USD/JPY 로 파생 계산도 함께 제공.
+//   [V33.745] ★달러 기준★(사용자 11/3 "환율 더 많이 · 원으로 맞추지 말고 달러 기준") — 원화 교차(엔/원·유로/원…)를 빼고 달러와 짝지은 22쌍.
+//   표기는 시장 관례: 유로·파운드·호주·뉴질랜드는 1단위당 달러(EUR/USD), 나머지는 1달러당 그 통화(USD/JPY). 야후 "XXX=X" = 1달러당 XXX.
+//   조회는 일괄(spark 20종목 1요청) — 쌍이 늘어도 요청 수는 1~2(3분마다).
 const FX_PAIRS = [
-  { key: "USDKRW", symbol: "KRW=X",     label: "달러/원",        sub: "USD/KRW",   unit: "₩" },
-  { key: "JPYKRW", symbol: "JPYKRW=X",  label: "엔/원 (100엔)",  sub: "JPY/KRW",   unit: "₩", per100: true },
-  { key: "USDJPY", symbol: "JPY=X",     label: "달러/엔",        sub: "USD/JPY",   unit: "¥" },
-  { key: "GBPKRW", symbol: "GBPKRW=X",  label: "파운드/원",      sub: "GBP/KRW",   unit: "₩" },
-  { key: "EURKRW", symbol: "EURKRW=X",  label: "유로/원",        sub: "EUR/KRW",   unit: "₩" },
-  { key: "CNYKRW", symbol: "CNYKRW=X",  label: "위안/원",        sub: "CNY/KRW",   unit: "₩" },
-  { key: "AUDKRW", symbol: "AUDKRW=X",  label: "호주달러/원",    sub: "AUD/KRW",   unit: "₩" },
-  { key: "CADKRW", symbol: "CADKRW=X",  label: "캐나다달러/원",  sub: "CAD/KRW",   unit: "₩" },
-  { key: "CHFKRW", symbol: "CHFKRW=X",  label: "스위스프랑/원",  sub: "CHF/KRW",   unit: "₩" },
-  { key: "DXY",    symbol: "DX-Y.NYB",  label: "달러 인덱스",    sub: "DXY",       unit: "" }
+  { key: "DXY",    symbol: "DX-Y.NYB", label: "달러 인덱스",        sub: "DXY",     unit: "",     grp: "idx" },
+  { key: "USDKRW", symbol: "KRW=X",    label: "달러/원",            sub: "USD/KRW", unit: "₩",    grp: "asia" },
+  { key: "USDJPY", symbol: "JPY=X",    label: "달러/엔",            sub: "USD/JPY", unit: "¥",    grp: "asia" },
+  { key: "EURUSD", symbol: "EURUSD=X", label: "유로/달러",          sub: "EUR/USD", unit: "$",    grp: "major" },
+  { key: "GBPUSD", symbol: "GBPUSD=X", label: "파운드/달러",        sub: "GBP/USD", unit: "$",    grp: "major" },
+  { key: "USDCNY", symbol: "CNY=X",    label: "달러/위안",          sub: "USD/CNY", unit: "CN¥",  grp: "asia" },
+  { key: "USDCHF", symbol: "CHF=X",    label: "달러/스위스프랑",    sub: "USD/CHF", unit: "Fr ",  grp: "major" },
+  { key: "USDCAD", symbol: "CAD=X",    label: "달러/캐나다달러",    sub: "USD/CAD", unit: "C$",   grp: "major" },
+  { key: "AUDUSD", symbol: "AUDUSD=X", label: "호주달러/달러",      sub: "AUD/USD", unit: "$",    grp: "major" },
+  { key: "NZDUSD", symbol: "NZDUSD=X", label: "뉴질랜드달러/달러",  sub: "NZD/USD", unit: "$",    grp: "major" },
+  { key: "USDHKD", symbol: "HKD=X",    label: "달러/홍콩달러",      sub: "USD/HKD", unit: "HK$",  grp: "asia" },
+  { key: "USDTWD", symbol: "TWD=X",    label: "달러/대만달러",      sub: "USD/TWD", unit: "NT$",  grp: "asia" },
+  { key: "USDSGD", symbol: "SGD=X",    label: "달러/싱가포르달러",  sub: "USD/SGD", unit: "S$",   grp: "asia" },
+  { key: "USDINR", symbol: "INR=X",    label: "달러/인도루피",      sub: "USD/INR", unit: "₹",    grp: "asia" },
+  { key: "USDTHB", symbol: "THB=X",    label: "달러/태국바트",      sub: "USD/THB", unit: "฿",    grp: "asia" },
+  { key: "USDIDR", symbol: "IDR=X",    label: "달러/인도네시아루피아", sub: "USD/IDR", unit: "Rp ", grp: "asia" },
+  { key: "USDVND", symbol: "VND=X",    label: "달러/베트남동",      sub: "USD/VND", unit: "₫",    grp: "asia" },
+  { key: "USDMXN", symbol: "MXN=X",    label: "달러/멕시코페소",    sub: "USD/MXN", unit: "Mex$", grp: "em" },
+  { key: "USDBRL", symbol: "BRL=X",    label: "달러/브라질헤알",    sub: "USD/BRL", unit: "R$",   grp: "em" },
+  { key: "USDTRY", symbol: "TRY=X",    label: "달러/튀르키예리라",  sub: "USD/TRY", unit: "₺",    grp: "em" },
+  { key: "USDZAR", symbol: "ZAR=X",    label: "달러/남아공랜드",    sub: "USD/ZAR", unit: "R ",   grp: "em" },
+  { key: "USDSEK", symbol: "SEK=X",    label: "달러/스웨덴크로나",  sub: "USD/SEK", unit: "kr ",  grp: "major" },
+  { key: "USDNOK", symbol: "NOK=X",    label: "달러/노르웨이크로네", sub: "USD/NOK", unit: "kr ", grp: "major" }
 ];
 
 // === 전략 식별자 ===
@@ -3052,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.744";
+const _BUILD_VER = "V33.745";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -22921,12 +22934,24 @@ const EXT_SWEEP_MS = 50000;
 function extSweepMarkets(now) {
   return ["kr", "us"].filter(function (m) { const s0 = marketSessionNow(m, now); return s0 === "PRE" || s0 === "POST"; });
 }
+/* [V33.745] ★한국 장후 마지막 체결 받기(하루 1회)★ — 사용자 11/3 "국장 시간외가 아직도 맵에 안 보인다". 실측: 20:08 KST 수집 1회(옛 코드) 뒤로
+   다음 날 08:00 까지 한국 시세를 한 번도 안 받아 post 가 빈 채로 밤을 넘겼다. 20:05 이후(~다음 날 07:50) 그 거래일 몫을 아직 안 받았으면 한 번 더 받는다.
+   비용: 하루 1회 한국 샤드 한 바퀴(네이버 일괄 몇 요청). 받는 값은 보여 주기만(extTs 0 · applyKrOverMarket CLOSED 분기). */
+function krPostFillKey(now) {
+  if (marketSessionNow("kr", now) !== "CLOSED") return null;
+  const k = getKST(now); if (!(k.totalMin >= 1205 || k.totalMin < 470)) return null;
+  const d = new Date(now.getTime() + 9 * 3600000 - (k.totalMin < 470 ? 86400000 : 0)); const wd = d.getUTCDay();
+  if (wd === 0 || wd === 6) return null;   // 주말 밤은 금요일 몫을 이미 받았다
+  return d.toISOString().slice(0, 10);
+}
 async function extQuoteSweep(env) {
-  const DB = env.DB, mk = extSweepMarkets(new Date());
-  if (!mk.length) return 0;
+  const DB = env.DB, _now = new Date(), mk = extSweepMarkets(_now);
+  let _fk = krPostFillKey(_now); if (_fk && globalThis.__krPostFillDone === _fk) _fk = null;   // 이 isolate 가 이미 확인함 — 밤새 매분 상태 읽기(D1) 안 함
+  if (!mk.length && !_fk) return 0;
   let last = null;
   try { last = (await getState(DB, "ext_sweep", null, true)) || {}; } catch (e) { return 0; }   // 못 읽으면 이번 분은 건너뛴다(사이클이 받는다)
   const due = mk.filter(function (m) { return Date.now() - _num(last[m], 0) >= EXT_SWEEP_MS; });
+  if (_fk) { globalThis.__krPostFillDone = _fk; if (last.krPostFill !== _fk && due.indexOf("kr") < 0) { due.push("kr"); last.krPostFill = _fk; } }
   if (!due.length) return 0;
   for (const m of due) last[m] = Date.now();
   try { await setState(DB, "ext_sweep", last); } catch (e) {}
@@ -23859,14 +23884,26 @@ async function refreshCycleLock(DB, ttl, myPid) {
 // ============================================================
 async function runFxUpdate(env) {
   const DB = env.DB;
-  resetFetchBudget(100);  // [PAID] FX ~10쌍 + 여유
+  resetFetchBudget(100);  // [PAID] FX 22쌍(일괄 1~2요청 · 빠진 것만 종목별) + 여유
   const out = {};
   let ok = 0, fail = 0;
 
+  /* [V33.745] 일괄 조회 먼저(spark · 20종목 1요청) — 빠진 쌍만 아래 종목별 조회(5개씩)로 */
+  const _sp = {};
+  try {
+    const syms = FX_PAIRS.map(function (p) { return p.symbol; });
+    for (let i = 0; i < syms.length; i += SPARK_CHUNK) Object.assign(_sp, await fetchSparkQuotes(syms.slice(i, i + SPARK_CHUNK)));
+  } catch (e) {}
+  for (const p of FX_PAIRS) {
+    const q = _sp[p.symbol]; if (!q || !(q.price > 0)) continue;
+    const prev = q.prevClose > 0 ? q.prevClose : q.price;
+    out[p.key] = { key: p.key, label: p.label, sub: p.sub, unit: p.unit, grp: p.grp, per100: false, price: q.price, prevClose: prev, dayPct: prev ? ((q.price - prev) / prev) * 100 : 0 }; ok++;
+  }
+  const _miss = FX_PAIRS.filter(function (p) { return !out[p.key]; });
   // 배치 조회
   const BATCH = 5;
-  for (let i = 0; i < FX_PAIRS.length; i += BATCH) {
-    const slice = FX_PAIRS.slice(i, i + BATCH);
+  for (let i = 0; i < _miss.length; i += BATCH) {
+    const slice = _miss.slice(i, i + BATCH);
     const results = await Promise.all(slice.map(async function(pair){
       try {
         const q = await fetchIntraday(pair.symbol);
@@ -23893,31 +23930,14 @@ async function runFxUpdate(env) {
       const prev = (r.q.prevClose && r.q.prevClose > 0) ? r.q.prevClose : price;
       const dayPct = prev ? ((price - prev) / prev) * 100 : 0;
       out[p.key] = {
-        key: p.key, label: p.label, sub: p.sub, unit: p.unit,
+        key: p.key, label: p.label, sub: p.sub, unit: p.unit, grp: p.grp,
         per100: p.per100 || false,
         price: price, prevClose: prev, dayPct: dayPct
       };
     }
   }
 
-  // 엔/원 파생 보정: 직접 페어가 실패했거나 비정상(원/엔이 5 미만 등)일 때
-  //   USD/KRW ÷ USD/JPY × 100 = 100엔당 원화.
-  try {
-    const usdkrw = out["USDKRW"];
-    const usdjpy = out["USDJPY"];
-    const jpykrw = out["JPYKRW"];
-    if (usdkrw && usdkrw.price > 0 && usdjpy && usdjpy.price > 0) {
-      const derived100 = (usdkrw.price / usdjpy.price) * 100;  // 100엔당 원
-      const bad = !jpykrw || jpykrw.price == null || jpykrw.price <= 0 || jpykrw.price < 5;
-      if (bad) {
-        out["JPYKRW"] = {
-          key: "JPYKRW", label: "엔/원 (100엔)", sub: "JPY/KRW", unit: "₩", per100: true,
-          price: derived100, prevClose: derived100, dayPct: 0, derived: true
-        };
-      }
-    }
-  } catch (e) {}
-
+  /* [V33.745] 엔/원 파생 보정 삭제 — 원화 교차 쌍을 더는 받지 않는다(달러 기준) */
   const payload = { rates: out, updatedAt: Date.now() };
   await setState(DB, "fx", payload);
   // [V9.1] 10분 주기화로 성공 로그는 노이즈 — 실패가 있을 때만 기록
