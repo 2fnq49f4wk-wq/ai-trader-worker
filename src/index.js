@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.753";
+const _BUILD_VER = "V33.754";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8802,6 +8802,16 @@ function luxProfileClean(b) {
   return o;
 }
 async function luxProfileApi(DB, uid, request) {
+  /* [V33.753] ★표 만들기를 요청마다 하지 않는다★ — 실측(x-lux-d1): 새 아이솔레이트마다 CREATE TABLE/INDEX IF NOT EXISTS 3번(행 0 · D1 왕복 3번)이
+     거의 모든 /api/me 에 붙었다(q=4 중 3). 표는 이미 있다 — 처음 읽기가 'no such table' 일 때만 만들고 다시 한다. */
+  try { return await _luxProfileApi(DB, uid, request); }
+  catch (e) {
+    if (!/no such table/i.test(String(e && e.message || e))) throw e;
+    globalThis.__luxProfTbl = false; await _luxProfTblMake(DB);
+    return await _luxProfileApi(DB, uid, request);
+  }
+}
+async function _luxProfTblMake(DB) {
   if (!globalThis.__luxProfTbl) {
     await DB.prepare("CREATE TABLE IF NOT EXISTS user_profiles (uid_hash TEXT PRIMARY KEY, profile TEXT NOT NULL, created_ts INTEGER NOT NULL, updated_ts INTEGER NOT NULL)").run();
     /* [V33.741] 보존 기한 삭제(DELETE … WHERE updated_ts < ?)가 색인 없이 표 전체를 읽었다(D1 행 읽기 요금) — 색인으로 지울 행만 읽게 */
@@ -8809,6 +8819,8 @@ async function luxProfileApi(DB, uid, request) {
     try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_user_accounts_last ON user_accounts(last_ts)").run(); } catch (e) {}   // 표가 아직 없으면 건너뜀(가입 때 생김)
     globalThis.__luxProfTbl = true;
   }
+}
+async function _luxProfileApi(DB, uid, request) {
   const hb = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("lux-profile:" + uid));
   const h = Array.from(new Uint8Array(hb)).map(function (x) { return x.toString(16).padStart(2, "0"); }).join("");
   if (request.method === "POST") {
