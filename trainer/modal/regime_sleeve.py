@@ -16,7 +16,8 @@ import numpy as np
 import pandas as pd
 
 WIN, STEP, NMIN, TH = 750, 63, 20, 3.0
-CELL_REGS = ("SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH")   # [V33.736] 국면 세분화(사용자 11/2) — 5개 국면 전부를 중기 방향(상승·보합·하락)으로 나눠 15칸에서 따로 고른다(칸 표본 < 20 이면 국면 전체로)
+CELL_SETS = {"s2": ("SURGE", "BEAR"), "s5": ("SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH")}   # [V33.739] 칸 나누기 두 방식을 매 회차 둘 다 돌려 검증 구간으로 고른다(아래 run)
+CELL_REGS = CELL_SETS["s5"]   # [V33.736] 국면 세분화(사용자 11/2) — 5개 국면 전부를 중기 방향(상승·보합·하락)으로 나눠 15칸에서 따로 고른다(칸 표본 < 20 이면 국면 전체로)
 SCORE = "lcb"   # [V33.696] 고르기 점수 = 평균 − 표준오차(표본 적은 우연을 덜 탄다)
 CRASH_EXIT = False   # 국면 깨짐 청산 — 실험실 A/B(검증 구간만 비교)에서 우열 없음 → 단순한 쪽(끔). 켜면 워커도 cfg.crashExit 로 따른다
 CAP_DAY = 6
@@ -192,7 +193,20 @@ def run(P, mk, PB, log=print):
             if r is not None and len(r[0]) >= 10:
                 TR[(fn, pn)] = (r[0], r[1], r[2], reg5[r[0]], M3s[r[0]])
     c1, c2 = int(T * .6), int(T * .8)
-    wfV, wfH = walk(TR, c1, c2), walk(TR, c2, T)
+    # [V33.739] ★칸 나누기 방식은 검증 구간으로 고른다★ — s2(폭등·하락만 중기 방향으로) vs s5(5국면 전부 · 15칸).
+    #   V33.736 에서 15칸을 켰더니 판정 구간 평균이 미 7.99→7.02 · 한 4.68→3.69 로 나빠졌다(표본이 칸마다 줄어 우연에 맞춘 듯).
+    #   원칙대로 판정 구간은 고르기에 안 쓴다 — 검증 구간 거래 가중 평균이 큰 쪽(같으면 단순한 s2)을 쓴다.
+    global CELL_REGS
+    alt = {}
+    for nm_, cs_ in CELL_SETS.items():
+        CELL_REGS = cs_
+        v_, h_ = walk(TR, c1, c2), walk(TR, c2, T)
+        nn = sum(x["n"] for x in v_.values())
+        alt[nm_] = (v_, h_, (sum((x["mean"] or 0) * x["n"] for x in v_.values()) / nn) if nn else -99, nn)
+    pick_cs = max(alt, key=lambda k: (round(alt[k][2], 3), k == "s2"))
+    CELL_REGS = CELL_SETS[pick_cs]
+    wfV, wfH = alt[pick_cs][0], alt[pick_cs][1]
+    log("   · [국면전략] %s 칸 방식 — %s · 검증 구간 거래당 s2 %+.2f%%(n%d) vs s5 %+.2f%%(n%d) → %s" % (mk, "검증으로 선택", alt["s2"][2], alt["s2"][3], alt["s5"][2], alt["s5"][3], pick_cs))
     q = T - 1
     by = {}
     m_now = str(M3s[-1])
@@ -212,7 +226,7 @@ def run(P, mk, PB, log=print):
     ok = bool(cur) and all((w.get(rg_now) or {}).get("n", 0) >= NMIN and ((w.get(rg_now) or {}).get("mean") or -99) >= 5.0 for w in (wfV, wfH))
     pr = PROFS[cur["prof"]] if cur else None
     out = {"reg": rg_now, "regKo": REG_KO.get(rg_now, rg_now), "cur": cur, "syms": syms, "live": ok, "by": by, "wf": {"V": wfV, "H": wfH},
-           "prof": ({k: v for k, v in pr.items() if v is not None} if pr else None), "cfg": {"win": WIN, "step": STEP, "nmin": NMIN, "th": TH, "capDay": CAP_DAY, "target": 5.0, "crashExit": CRASH_EXIT, "score": SCORE, "cellRegs": list(CELL_REGS)}, "mNow": m_now,
+           "prof": ({k: v for k, v in pr.items() if v is not None} if pr else None), "cfg": {"win": WIN, "step": STEP, "nmin": NMIN, "th": TH, "capDay": CAP_DAY, "target": 5.0, "crashExit": CRASH_EXIT, "score": SCORE, "cellRegs": list(CELL_REGS), "cellSet": pick_cs, "cellCmp": {k: {"v": round(v[2], 3), "n": v[3]} for k, v in alt.items()}}, "mNow": m_now,
            "cut": [str(P["close"].index[c1]), str(P["close"].index[c2])]}
     log("   · [국면전략] %s 지금 %s → %s · 오늘 %d종 · 실전 %s · 워크포워드 판정 %s" % (
         mk, REG_KO.get(rg_now), (cur["famKo"] + " · " + cur["profKo"] + " (직전 3년 %+.2f%% n%d)" % (cur["mean"], cur["n"])) if cur else "쉼(근거 부족)", len(syms),

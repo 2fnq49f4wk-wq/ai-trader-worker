@@ -223,11 +223,11 @@ window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{
 window.__luxAct=Date.now();['pointerdown','keydown','touchstart','wheel'].forEach(function(e){addEventListener(e,function(){window.__luxAct=Date.now();},{passive:true,capture:true});});
 window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600000;};
 </script>
-<meta name="lux-build" content="V33.738">
-<script src="/i18n.js?v=33.738" defer></script>
-<script src="/mine.js?v=33.738" defer></script>
-<script src="/stock-info.js?v=33.738" defer></script>
-<script src="/neural-observatory.js?v=33.738" defer></script>
+<meta name="lux-build" content="V33.739">
+<script src="/i18n.js?v=33.739" defer></script>
+<script src="/mine.js?v=33.739" defer></script>
+<script src="/stock-info.js?v=33.739" defer></script>
+<script src="/neural-observatory.js?v=33.739" defer></script>
 <title>LUX-INV</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4090,11 +4090,11 @@ window.luxDz=function(id){try{var de=document.documentElement,m=document.querySe
  var sw=screen.width||390,small=Math.min(sw,screen.height||9999)<=600&&sw<=600,on=small&&id==='dashboard'&&!window.__luxDzOverlay();
  var off=false;try{off=localStorage.getItem('lux-dz')==='0';}catch(e){}if(off)on=false;
  if(on){
-  /* [V33.737] 폭은 화면 높이로 정한다(사용자 11/2 "첫 화면은 이코노믹 캘린더까지만 · 나머지는 스크롤") — 지수~경제 캘린더 높이(약 1480 레이아웃 px · 실측 보간)가
-     상·하단 바를 뺀 보이는 높이에 꼭 맞도록 W = 1480 × 기기 폭 ÷ 보이는 높이(920~1180 · 920 미만이면 PC 배치가 깨진다). 높이는 휴대폰 화면일 때 잰 값을 기억해 쓴다. */
+  /* [V33.737] 폭은 화면 높이로 정한다(사용자 11/2 "첫 화면은 이코노믹 캘린더까지만 · 나머지는 스크롤") — 지수~경제 캘린더 높이(약 1700 레이아웃 px · 실측 보간)가
+     상·하단 바를 뺀 보이는 높이에 꼭 맞도록 W = 1700 × 기기 폭 ÷ 보이는 높이(920~1180 · 920 미만이면 PC 배치가 깨진다). 높이는 휴대폰 화면일 때 잰 값을 기억해 쓴다. */
   var vh=0;if(!de.classList.contains('lux-dz')){vh=window.innerHeight||0;try{if(vh)sessionStorage.setItem('lux-dz-vh',String(vh));}catch(e){}}
   if(!vh){try{vh=+sessionStorage.getItem('lux-dz-vh')||0;}catch(e){}}if(!vh)vh=Math.round((screen.height||844)*0.8);
-  var W=Math.max(920,Math.min(1180,Math.round(1480*sw/Math.max(300,vh-106))));
+  var W=Math.max(920,Math.min(1180,Math.round(1700*sw/Math.max(300,vh-106))));
   de.style.setProperty('--dzi',(W/sw).toFixed(4));if(!de.classList.contains('lux-dz')||de.getAttribute('data-dzw')!==String(W)){de.classList.add('lux-dz');de.setAttribute('data-dzw',String(W));m.setAttribute('content','width='+W+', viewport-fit=cover');}}
  else if(de.classList.contains('lux-dz')){de.classList.remove('lux-dz');de.removeAttribute('data-dzw');m.setAttribute('content','width=device-width, initial-scale=1.0, viewport-fit=cover');}
 }catch(e){}};
@@ -4218,7 +4218,24 @@ html.lux-dz .cmdk-fab{display:none !important}   /* [V33.738] 축소 보기 위�
 html.lux-dz .fv3-grid{grid-template-columns:repeat(3,minmax(0,1fr)) !important}
 html.lux-dz .fv3-grid > .fv-panel:last-child:nth-child(odd){grid-column:auto !important}
 html.lux-dz #pipelineBar,html.lux-dz #tuneBanner{display:none !important}
-html.lux-dz .fv-table th,html.lux-dz .fv-table td{font-size:12px}
+/* [V33.739] 축소 보기 시인성(사용자 11/2 "빈 공간 많다 · 글씨·창 크기 조절해 꽉 채워") — 칸 높이는 그대로, 글씨·행 간격을 키워 칸 안을 채운다 */
+html.lux-dz .fv-table th{font-size:12.5px !important;padding:6px 8px !important}
+html.lux-dz .fv-table td{font-size:14.5px !important;padding:6px 8px !important;line-height:1.35}
+html.lux-dz .fv-panel-head{font-size:14px !important;padding:10px 12px !important;letter-spacing:.2px !important}
+html.lux-dz .fv-panel-sub{font-size:12px !important}
+html.lux-dz .fv-idx{padding:10px 12px 8px !important}
+html.lux-dz .fv-idx-name{font-size:14px !important;letter-spacing:.2px !important}
+html.lux-dz .fv-idx-chg{font-size:14px !important}
+html.lux-dz .fv-idx-price{font-size:23px !important}
+html.lux-dz .fv-idx-chart{height:46px !important}
+html.lux-dz .fv-breadth{padding:8px 12px !important}html.lux-dz .fv-breadth-top{font-size:13px !important}html.lux-dz .fv-breadth-bar{height:9px !important}
+html.lux-dz .fv-hl{font-size:14px !important;padding:7px 12px !important;line-height:1.4}
+html.lux-dz .fv-intel-wrap .fv-panel{font-size:13.5px}
+html.lux-dz .fv-movers-grid .fv-table th:nth-child(1),html.lux-dz .fv-movers-grid .fv-table td:nth-child(1){width:40% !important}
+html.lux-dz .fv-movers-grid .fv-table th:nth-child(2),html.lux-dz .fv-movers-grid .fv-table td:nth-child(2){width:29% !important}
+html.lux-dz .fv-movers-grid .fv-table th:nth-child(3),html.lux-dz .fv-movers-grid .fv-table td:nth-child(3){width:31% !important;white-space:nowrap;text-overflow:clip !important;overflow:visible !important}
+html.lux-dz .fv3-grid > .fv-panel{display:flex !important;flex-direction:column}
+html.lux-dz .fv3-grid .fv3-scroll{flex:1 1 auto !important;max-height:none !important;height:auto !important}
 /* [V33.737] 920~1180 폭에서도 PC 배치 유지(1000·1100·1300px 아래 규칙 무력화) */
 html.lux-dz .fv-mid{grid-template-columns:1fr 1.1fr !important}
 html.lux-dz .fv-bottom{grid-template-columns:1fr 1.35fr !important}
@@ -21834,12 +21851,12 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.738">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.738">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.738">
-<link rel="stylesheet" href="/model-evidence.css?v=33.738">
+<link rel="stylesheet" href="/brain-console.css?v=33.739">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.739">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.739">
+<link rel="stylesheet" href="/model-evidence.css?v=33.739">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.738">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.739">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -21866,8 +21883,8 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
   setTimeout(reveal, 9500);
 })();
 </script>
-<script src="/model-evidence.js?v=33.738"></script>
-<script src="/workspace-ui.js?v=33.738"></script>
+<script src="/model-evidence.js?v=33.739"></script>
+<script src="/workspace-ui.js?v=33.739"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {
