@@ -229,11 +229,11 @@ window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{
 window.__luxAct=Date.now();['pointerdown','keydown','touchstart','wheel'].forEach(function(e){addEventListener(e,function(){window.__luxAct=Date.now();},{passive:true,capture:true});});
 window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600000;};
 </script>
-<meta name="lux-build" content="V33.748">
-<script src="/i18n.js?v=33.748" defer></script>
-<script src="/mine.js?v=33.748" defer></script>
-<script src="/stock-info.js?v=33.748" defer></script>
-<script src="/neural-observatory.js?v=33.748" defer></script>
+<meta name="lux-build" content="V33.749">
+<script src="/i18n.js?v=33.749" defer></script>
+<script src="/mine.js?v=33.749" defer></script>
+<script src="/stock-info.js?v=33.749" defer></script>
+<script src="/neural-observatory.js?v=33.749" defer></script>
 <title>LUX-INV</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -5260,6 +5260,11 @@ window.LUX_NV = {
           <div class="detail-main">
             <div class="detail-left">
               <div class="detail-chart" id="detailChart"><div class="detail-empty">차트 로딩 중…</div></div>
+              <!-- [V33.749] 수신 데이터(시세 통계)를 차트 바로 아래로(사용자 11/4 "위치가 애매") — 종전엔 재무 칸 아래 왼쪽에 홀로 떨어져 오른쪽이 비었다 -->
+              <div class="detail-datawrap">
+                <div class="detail-sec">시세 데이터</div>
+                <div class="detail-data" id="detailData"></div>
+              </div>
               <div class="detail-news" id="detailNews"></div>
             </div>
             <aside class="detail-side">
@@ -5286,10 +5291,6 @@ window.LUX_NV = {
           <div class="detail-below">
             <section id="luxInfo" aria-label="종목 정보 — 밸류에이션 · KPI · 재무제표 · 실적 · IR · 내부자"></section>
             <div class="detail-fund" id="detailFund"><div class="empty">재무 로딩…</div></div>
-            <div class="detail-datawrap">
-              <div class="detail-sec">수신 데이터</div>
-              <div class="detail-data" id="detailData"></div>
-            </div>
           </div>
         </div>
       </div>
@@ -9139,12 +9140,57 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.748">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.748">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.748">
-<link rel="stylesheet" href="/model-evidence.css?v=33.748">
+<style id="luxDetail2">
+/* [V33.749] ★종목 상세 다듬기★(사용자 11/4 "비율 조정 · 2% 부족한 느낌") — 차트 왼쪽 칸: 차트 → 시세 데이터 → 뉴스 · 오른쪽: AI 의견 사이드바.
+   제목은 입력칸처럼 보이던 금속 상자를 빼고 강조 막대 라벨로 · 시간·지표 버튼을 같은 알약 모양으로 · 폰은 위 머리를 줄이고 도구줄을 한 줄 가로 스크롤로. */
+#page-detail .detail-sec{background:none !important;border:0 !important;box-shadow:none !important;border-left:3px solid var(--acc,#3DD6B5) !important;border-radius:0 !important;padding:1px 0 1px 9px !important;margin:14px 0 8px !important;font-size:11.5px !important;font-weight:700 !important;letter-spacing:.5px !important;text-transform:none !important;color:var(--t2,#C7CDD6) !important}
+#page-detail .detail-side .detail-sec:first-child{margin-top:2px !important}
+#page-detail .detail-left .detail-datawrap{margin-top:12px;flex:0 0 auto}
+#page-detail .detail-left .detail-datawrap .detail-sec{margin-top:0 !important}
+#page-detail .detail-head{border-radius:16px !important;padding:18px 22px !important}
+#page-detail .detail-price{font-size:38px !important;letter-spacing:-1px !important;line-height:1.1 !important}
+#page-detail .detail-change{display:inline-block;margin-top:6px;padding:4px 10px;border-radius:999px;font-weight:700 !important}
+#page-detail .detail-change.pos{background:rgba(46,204,113,.12)}#page-detail .detail-change.neg{background:rgba(255,92,92,.12)}
+#page-detail .detail-sym{font-size:26px !important;letter-spacing:.5px}
+#page-detail .detail-chart{border-radius:14px !important}
+#page-detail .detail-tf-btn,#page-detail .detail-ind-btn,#page-detail .detail-zoom-btn{border-radius:999px !important;min-height:32px;padding:0 13px !important;font-size:12px !important;font-weight:600 !important;letter-spacing:.2px;background:transparent !important;border:1px solid var(--bd,#2E3542) !important;box-shadow:none !important;color:var(--t2,#C7CDD6) !important}
+#page-detail .detail-tf-btn::after,#page-detail .detail-ind-btn::after{display:none !important}
+#page-detail .detail-tf-btn.active{background:var(--t1,#EEF1F5) !important;color:var(--bg,#0D1014) !important;border-color:var(--t1,#EEF1F5) !important;font-weight:800 !important}
+#page-detail .detail-ind-btn.active{background:rgba(61,214,181,.12) !important;color:var(--acc,#3DD6B5) !important;border-color:rgba(61,214,181,.55) !important}
+html[data-theme="light"] #page-detail .detail-tf-btn.active{background:#101828 !important;color:#fff !important;border-color:#101828 !important}
+html[data-theme="light"] #page-detail .detail-ind-btn.active{background:#E6F7F2 !important;color:#0B7A66 !important;border-color:#9ED9C8 !important}
+html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;border-left-color:#0B7A66 !important}
+#page-detail .detail-toolbar{gap:8px 14px;align-items:center}
+@media (min-width:901px){
+  #page-detail .detail-main .detail-chart{min-height:460px}
+  #page-detail .detail-below{grid-template-columns:1.55fr 1fr;align-items:start}
+}
+@media (max-width:900px){
+  /* 종목을 열었으면 페이지 제목·검색칸을 숨긴다(검색은 위 앱바 돋보기) — 종전엔 종목이 470px 아래에서 시작했다 */
+  #page-detail:has(#detailContent:not([style*="none"])) .page-title,
+  #page-detail:has(#detailContent:not([style*="none"])) #detailSearch,
+  #page-detail:has(#detailContent:not([style*="none"])) #detailSearchBtn{display:none !important}
+  #page-detail:has(#detailContent:not([style*="none"])) .page-header{padding-top:4px !important;padding-bottom:4px !important;min-height:0 !important;margin-bottom:6px !important}
+  #page-detail:has(#detailContent:not([style*="none"])) .page-body{padding-top:0 !important}
+  #page-detail .detail-ohlc{gap:4px 14px !important}
+  #page-detail .page-actions{flex-wrap:nowrap !important;gap:6px !important;overflow-x:auto;scrollbar-width:none}
+  #page-detail .page-actions .btn,#page-detail .detail-alertbtn{min-height:36px;padding:0 12px !important;font-size:12.5px !important;white-space:nowrap}
+  #page-detail .detail-toolbar{flex-wrap:nowrap !important;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:2px}
+  #page-detail .detail-toolbar::-webkit-scrollbar,#page-detail .page-actions::-webkit-scrollbar{display:none}
+  #page-detail .detail-tf,#page-detail .detail-ind,#page-detail .detail-zoom{flex:0 0 auto;flex-wrap:nowrap !important;display:flex;gap:6px}
+  #page-detail .detail-tf-btn,#page-detail .detail-ind-btn,#page-detail .detail-zoom-btn{min-height:34px;flex:0 0 auto}
+  #page-detail .detail-head{padding:14px 16px !important}
+  #page-detail .detail-price{font-size:32px !important}
+  #page-detail .detail-sym{font-size:22px !important}
+  #page-detail .detail-main .detail-chart{height:46vh !important;min-height:300px !important}
+}
+</style>
+<link rel="stylesheet" href="/brain-console.css?v=33.749">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.749">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.749">
+<link rel="stylesheet" href="/model-evidence.css?v=33.749">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.748">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.749">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -21942,8 +21988,8 @@ setTimeout(function(){
   window.addEventListener('load', function(){ setTimeout(function(){ try{ boot(); }catch(e){} }, 0); });
 })();
 </script>
-<script src="/model-evidence.js?v=33.748"></script>
-<script src="/workspace-ui.js?v=33.748"></script>
+<script src="/model-evidence.js?v=33.749"></script>
+<script src="/workspace-ui.js?v=33.749"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {
