@@ -90,7 +90,7 @@
 
   function start() {
     document.documentElement.setAttribute("lang", "en");
-    ["nav.sidebar", ".m-appbar", ".m-tabbar", ".page.active", ".modal.show", "header"].forEach(function (sel) { document.querySelectorAll(sel).forEach(walkLazy); });
+    ["nav.sidebar", ".m-appbar", ".m-tabbar", ".m-drawer", ".page.active", ".modal.show", "header"].forEach(function (sel) { document.querySelectorAll(sel).forEach(walkLazy); });
     document.querySelectorAll(".page:not(.active), .modal:not(.show)").forEach(function (e) { dirty.add(e); });
     if (document.title && HANGUL.test(document.title)) document.title = tr(document.title);
     new MutationObserver(function (ms) {

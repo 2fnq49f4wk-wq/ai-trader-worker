@@ -127,7 +127,7 @@ console.log('⑦ 상단 표시가 "보낸 시각"이 아니라 "들어온 결과
   else bad('상단 표시가 없다');
   if (/safeRun\('extTrain'/.test(H)) ok('상태 폴링이 칩을 갱신한다');
   else bad('칩이 갱신되지 않는다 — 첫 문구에 머문다');
-  if (/id="mAbTrain"/.test(H) && /학습 · ' \+ esc\(\(trn && trn\.textContent\)/.test(H))
+  if (/id="mAbTrain"/.test(H) && /_T\('학습'\) \+ ' · ' \+ esc\(_T\(\(trn && trn\.textContent\)/.test(H))
     ok('폰에서도 보인다 — 문제일 때 앱바 배지, 전체 문구는 드로어에 상시');
   else bad('폰에서 확인할 방법이 없다(사이드바는 폰에서 숨겨진다)');
   // 색만으로 말하지 않는지

@@ -35,3 +35,23 @@ AI 매수 추천 순위	AI buy ranking
 TP/SL 수정	Edit TP/SL
 TP/SL 설정	Set TP/SL
 이 조건의 거래가 없습니다	No trades match this filter
+도구	Tools
+시장 지도	Market map
+화면 테마(밝게·어둡게)	Theme (light · dark)
+새 버전 확인	Check for update
+홈 화면에 앱 설치	Install app on home screen
+체결 알림	Fill alerts
+개인정보 · 이용 안내	Privacy · terms
+상태 · 서버가 1분마다 자동 운용	Status · server runs every minute
+로그인됨	Signed in
+로그인하지 않음 · 대시보드·종목만	Not signed in · dashboard and stocks only
+생체 잠금	Biometric lock
+언어	Language
+엔진	Engine
+연결	Connection
+학습	Training
+장 종료	Closed
+🔴 장 종료	🔴 Closed
+엔진 자동 작동 중 · 마지막 실행: {n}분 전	Engine running · last run: {n}m ago
+엔진 자동 작동 중 · 마지막 실행: {n}초 전	Engine running · last run: {n}s ago
+엔진 지연 · 마지막 실행: {n}분 전	Engine delayed · last run: {n}m ago
