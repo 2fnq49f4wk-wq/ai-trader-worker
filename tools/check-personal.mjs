@@ -28,7 +28,7 @@ if (clean) {
 chk(/<script src="\/mine\.js\?v=[\d.]+" defer><\/script>/.test(H) && /class="nav-item" data-page="mine"/.test(H) && /id="page-mine"/.test(H) && /\{ id:'mine', ic:NV\.user, tx:'MY' \}/.test(H),
     "mine.js · 사이드바 MY 메뉴 · MY 페이지 · 모바일 탭", "★MY 메뉴·페이지·모바일 탭 중 빠진 것이 있다★");
 chk(!/id="luxMine"/.test(P) && !/btnMine/.test(H), "대시보드 맨 위 패널 없음(사용자 11/2 — 사이드바 메뉴로)", "★대시보드 위 패널이 남아 있다★");
-chk(/saveT = setTimeout\(push, 2000\)/.test(P) && /if \(loaded && !force\) return; loaded = true;/.test(P) && /Math\.min\(120000, 5000 \* Math\.pow\(3/.test(P) && /keepalive: true/.test(P) && /if \(!isDirty\(\)\) return;/.test(P), "D1: 읽기는 세션 1회 · 쓰기는 2초 모아 1회 · 재시도는 5초부터 3배씩(최대 2분) · 닫을 때는 남은 변경이 있을 때만", "★프로필 읽기·쓰기가 잦다★");
+chk(/saveT = setTimeout\(push, 2000\)/.test(P) && /if \(loaded && !force\) return; loaded = true;/.test(P) && /Math\.min\(120000, 5000 \* Math\.pow\(3/.test(P) && /keepalive: true/.test(P) && /if \(!isDirty\(\) \|\| \(!synced && isAuth\(\)\)\) return;/.test(P) && /if \(loadingNow\) return; loadingNow = true;/.test(P), "D1: 읽기는 세션 1회 · 쓰기는 2초 모아 1회 · 재시도는 5초부터 3배씩(최대 2분) · 닫을 때는 남은 변경이 있을 때만", "★프로필 읽기·쓰기가 잦다★");
 chk(/window\.openDetailFromSym = openDetailFromSym;/.test(H), "패널에서 종목 상세 열기(전역 노출)", "★openDetailFromSym 이 전역에 없다★");
 chk(/!pg \|\| !pg\.classList\.contains\("active"\)\) return;/.test(P) && /170000/.test(P) && /!document\.hidden && pg\.classList\.contains\("active"\)/.test(P), "그리기·판정 조회는 MY 가 보일 때만 · 3분 간격", "★MY 가 숨어 있어도 갱신한다★");
 const regs = ["SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH"];
@@ -60,7 +60,7 @@ chk(/CREATE TABLE IF NOT EXISTS user_nicks \(nick_key TEXT PRIMARY KEY/.test(S) 
   const pump = f && await f(DB, null, { us: { start: 10000, cash: 50000, pos: {}, hist: [], t0: 1 } });
   chk(ok && ok.ok && fake && !fake.ok && pump && !pump.ok, "장부 검사: 정상 통과 · 가짜 체결가·현금 부풀리기 거부", "★장부 검사가 조작을 못 막는다★");
 }
-chk(/swrJson\("leaderboard", 3600000/.test(S) && /function luxRateOk\(key\)/.test(S) && /r\.n <= 30/.test(S), "순위는 1시간 1번 계산 · 기기당 쓰기 분당 30", "★순위 계산·쓰기 제한이 빠졌다★");
+chk(/swrJson\("leaderboard2", 3600000/.test(S) && /FROM user_accounts a JOIN user_profiles p/.test(S) && /function luxRateOk\(key\)/.test(S) && /r\.n <= 30/.test(S), "순위는 1시간 1번 계산 · 기기당 쓰기 분당 30", "★순위 계산·쓰기 제한이 빠졌다★");
 chk(/window\.luxMine\.detail\(symbol\)/.test(H) && /function detail\(sym\)/.test(P) && /data-dbuy/.test(P), "종목 상세에 모의 매매 막대", "★종목 상세에서 살 수 없다★");
 // [V33.730] MTS 주문: 예약(지정가)·익절·손절 — 서버는 모양만 검사 · 화면이 시세로 체결 · 차트에 선
 if (clean) {

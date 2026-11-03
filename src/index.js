@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.745";
+const _BUILD_VER = "V33.746";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8820,11 +8820,23 @@ async function luxProfileApi(DB, uid, request) {
     const oldRow = await DB.prepare("SELECT profile FROM user_profiles WHERE uid_hash = ?").bind(h).first();
     let old = null; try { old = oldRow && oldRow.profile ? JSON.parse(oldRow.profile) : null; } catch (e) {}
     prof.nick = (old && old.nick) || null;   // 닉네임은 /api/me/nick 만 바꾼다
+    /* [V33.746] ★다른 기기의 낡은 사본이 모의계좌를 지웠다★(사용자 11/4 "같은 계정인데 다른 기기에서 데이터가 안 보인다") —
+       서버에서 받기 전에 저장한 기기(로그인 직후 관심 누름 · 남은 미전송 등)는 pf 가 비었거나 옛것인데, 저장이 그대로 덮어썼다(빈 pf 는 장부 검사도 통과).
+       이제 ① 빠진 시장은 서버 것을 지킨다(초기화는 resetMk 로만) ② 마지막 활동(거래·예약·개설 시각)이 서버보다 옛것이면 서버 것을 지킨다. 지킨 시장은 pfKept 로 알려 화면이 맞춘다. */
+    const _act = function (a) { if (!a) return 0; let t = Number(a.t0) || 0; (a.hist || []).forEach(function (h) { if (h[0] > t) t = h[0]; }); (a.ord || []).forEach(function (o) { if (o.t > t) t = o.t; }); Object.keys(a.pos || {}).forEach(function (k) { const x = a.pos[k]; if (x && x.t > t) t = x.t; }); return t; };
+    const _reset = Array.isArray(b && b.resetMk) ? b.resetMk : [], _kept = [];
+    if (old && old.pf) for (const mk of ["us", "kr"]) {
+      const om = old.pf[mk]; if (!om || _reset.indexOf(mk) >= 0) continue;
+      const nm = prof.pf && prof.pf[mk];
+      if (!nm || _act(nm) < _act(om) || (nm.t0 !== om.t0 && _act(nm) <= _act(om))) { (prof.pf || (prof.pf = {}))[mk] = om; _kept.push(mk); }
+    }
     const chk = await luxLedgerCheck(DB, old && old.pf, prof.pf);
     if (!chk.ok) prof.pf = (old && old.pf) || null;   // [V33.725] 장부가 안 맞으면(조작·시세 벗어남) 모의계좌 변경을 받지 않는다 — 순위 공정성
     await DB.prepare("INSERT INTO user_profiles (uid_hash, profile, created_ts, updated_ts) VALUES (?, ?, ?, ?) ON CONFLICT(uid_hash) DO UPDATE SET profile = excluded.profile, updated_ts = excluded.updated_ts")
       .bind(h, JSON.stringify(prof), now, now).run();
-    return chk.ok ? { ok: true, profile: prof } : { ok: true, profile: prof, pfRejected: chk.why };
+    const _res = chk.ok ? { ok: true, profile: prof } : { ok: true, profile: prof, pfRejected: chk.why };
+    if (_kept.length) _res.pfKept = _kept;
+    return _res;
   }
   if (request.method === "DELETE") {   // [V33.723] 내 데이터 삭제(개인정보 삭제 요구) — 프로필·모의계좌·이 코드에 묶인 패스키까지
     await DB.batch([DB.prepare("DELETE FROM user_profiles WHERE uid_hash = ?").bind(h), DB.prepare("DELETE FROM user_accounts WHERE uid_hash = ?").bind(h)]).catch(function () {});
@@ -8890,7 +8902,11 @@ const LUX_NICK_BAN = ["admin", "관리자", "운영자", "lux", "luxengine", "cl
 /* [V33.725] ★수익률 순위★ — 1시간에 한 번만 계산(swrJson) · 서버 시세로 평가(사용자가 보낸 평가액을 믿지 않는다) · 닉네임 있는 계좌만 · 시장별 상위 50 */
 async function luxLeaderboard(DB) {
   let rows = [];
-  try { rows = ((await DB.prepare("SELECT n.nick, p.profile FROM user_nicks n JOIN user_profiles p ON p.uid_hash = n.uid_hash LIMIT 20000").all()).results) || []; } catch (e) { return { ok: true, ts: Date.now(), us: [], kr: [], n: 0 }; }
+  try { /* [V33.746] ★순위가 늘 비어 있었다★(사용자 11/4) — V33.729 부터 계정은 user_accounts 에만 생기는데 여기는 옛 닉네임 표(user_nicks)만 붙여 0명이었다.
+       계정 표를 기본으로, 옛 표 닉네임(패스키 시절)도 합친다. */
+    try { await _luxAcctTbl(DB); } catch (e) {}
+    rows = ((await DB.prepare("SELECT a.nick AS nick, p.profile AS profile FROM user_accounts a JOIN user_profiles p ON p.uid_hash = a.uid_hash LIMIT 20000").all()).results) || [];
+    try { const _old = ((await DB.prepare("SELECT n.nick AS nick, p.profile AS profile FROM user_nicks n JOIN user_profiles p ON p.uid_hash = n.uid_hash WHERE n.uid_hash NOT IN (SELECT uid_hash FROM user_accounts) LIMIT 5000").all()).results) || []; rows = rows.concat(_old); } catch (e) {} } catch (e) { return { ok: true, ts: Date.now(), us: [], kr: [], n: 0 }; }
   const accs = [], syms = [];
   for (const r of rows) { let pr = null; try { pr = JSON.parse(r.profile); } catch (e) {} if (!pr || !pr.pf) continue;
     for (const mk of ["us", "kr"]) { const a = pr.pf[mk]; if (!a || !(a.hist && a.hist.length)) continue; accs.push({ nick: r.nick, mk: mk, a: a }); Object.keys(a.pos || {}).forEach(function (k) { syms.push(k); }); } }
@@ -10536,6 +10552,17 @@ async function updateAnalystConsensus(DB, cfg, force) {
 //   거래 입력이다. SEC 제목 형식이 바뀌었을 때 한쪽만 고치면, 고친 쪽이 채운 값을
 //   못 고친 쪽이 곧바로 덮어써 원인이 안 보이는 채로 피처가 0 이 된다.
 //   (신규 위원이 MEMO 한 곳만 고쳐져 굶던 것과 같은 부류의 함정이다.)
+/* [V33.746] 내부자 거래 목록을 회차마다 쌓는다(사용자 11/4 "내부자 거래창 빈 공간") — SEC 최신 피드는 한 번에 몇 건(실측 6건)뿐이라 칸이 비었다.
+   이전 목록과 합쳐(같은 공시 번호는 하나) 최근 3일 · 최신순 40건까지. */
+function _insiderMerge(prev, fresh) {
+  const seen = {}, out = [], cut = Date.now() - 3 * 86400000;
+  (fresh || []).concat((prev && prev.filings) || []).forEach(function (f) {
+    if (!f) return; const k = f.link || ((f.cik || "") + "|" + (f.insider || "") + "|" + (f.date || "")); if (seen[k]) return; seen[k] = 1;
+    const t = Date.parse(f.date || ""); if (Number.isFinite(t) && t < cut) return; out.push(f);
+  });
+  out.sort(function (a, b) { return (Date.parse(b.date || "") || 0) - (Date.parse(a.date || "") || 0); });
+  return out.slice(0, 40);
+}
 function _secForm4Parse(xml, rev) {
   const dec = function (s) { return String(s || "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim(); };
   const byAcc = {}, order = [];
@@ -10577,7 +10604,7 @@ async function updateInsiderFeedNow(DB) {
     const cikMap = await getState(DB, "sec_cik_map", null);
     const rev = {};
     if (cikMap && cikMap.map) for (const t in cikMap.map) { if (!rev[cikMap.map[t]]) rev[cikMap.map[t]] = t; }
-    const filings = _secForm4Parse(xml, rev);   // [V33.328] 파싱은 공용 한 곳
+    const filings = _insiderMerge(cached, _secForm4Parse(xml, rev));   // [V33.328] 파싱은 공용 한 곳 · [V33.746] 이전 목록과 합침
     const payload = { filings: filings, ts: Date.now() };
     try { await setState(DB, "insider_feed", payload); } catch (e2) {}
     try { await log(DB, "INFO", null, "[INSIDER] Form4 피드 갱신 " + filings.length + "건"); } catch (e2) {}
@@ -33820,7 +33847,7 @@ async function handleRequest(request, env, ctx, _inner) {
     /* [V33.721] ★개인화 프로필★(사용자 11/2 "개인 수요에 맞게 · 수익화는 나중 · 구현부터") — 로그인 없이 기기 토큰(브라우저가 만든 32~64자 16진수).
        서버는 토큰의 SHA-256 만 키로 쓰고 개인정보는 받지 않는다(성향·시장·기간·경험·관심종목만). 다른 기기는 같은 토큰(연결 코드)을 넣으면 같은 프로필. */
     if (path === "/api/leaderboard") {   // [V33.725] 수익률 순위 — 1시간 SWR · 누가 몇 번 봐도 계산은 1시간 1번
-      return await swrJson("leaderboard", 3600000, 6 * 3600000, async function () { return await luxLeaderboard(env.DB); });
+      return await swrJson("leaderboard2", 3600000, 6 * 3600000, async function () { return await luxLeaderboard(env.DB); });   // [V33.746] 키 바꿈 — 비어 있던(0명) 옛 캐시를 안 쓰게
     }
     if (path === "/api/auth/signup" || path === "/api/auth/login" || path === "/api/auth/password") {   // [V33.729] 닉네임 + 비밀번호
       if (request.method !== "POST") return Response.json({ ok: false, error: "POST" }, { status: 405, headers: cors });
@@ -35211,7 +35238,7 @@ async function handleRequest(request, env, ctx, _inner) {
         const cikMap = await getState(env.DB, "sec_cik_map", null);
         const rev = {};
         if (cikMap && cikMap.map) for (const t in cikMap.map) { if (!rev[cikMap.map[t]]) rev[cikMap.map[t]] = t; }
-        const filings = _secForm4Parse(xml, rev);   // [V33.328] 야간 갱신과 ★같은★ 파서
+        const filings = _insiderMerge(cached, _secForm4Parse(xml, rev));   // [V33.328] 야간 갱신과 ★같은★ 파서 · [V33.746] 이전 목록과 합침
         const payload = { filings: filings, ts: Date.now() };
         try { await setState(env.DB, ck, payload); } catch (e2) {}
         return payload;

@@ -229,11 +229,11 @@ window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{
 window.__luxAct=Date.now();['pointerdown','keydown','touchstart','wheel'].forEach(function(e){addEventListener(e,function(){window.__luxAct=Date.now();},{passive:true,capture:true});});
 window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600000;};
 </script>
-<meta name="lux-build" content="V33.745">
-<script src="/i18n.js?v=33.745" defer></script>
-<script src="/mine.js?v=33.745" defer></script>
-<script src="/stock-info.js?v=33.745" defer></script>
-<script src="/neural-observatory.js?v=33.745" defer></script>
+<meta name="lux-build" content="V33.746">
+<script src="/i18n.js?v=33.746" defer></script>
+<script src="/mine.js?v=33.746" defer></script>
+<script src="/stock-info.js?v=33.746" defer></script>
+<script src="/neural-observatory.js?v=33.746" defer></script>
 <title>LUX-INV</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4255,6 +4255,11 @@ html.lux-dz .fv-cal-row > .fv-panel:nth-child(n+2) > .fv-table{flex:1 1 auto;hei
 html.lux-dz .fv-bottom > .fv-panel:nth-child(2){contain:size;display:flex !important;flex-direction:column;min-height:0}
 html.lux-dz .fv-bottom > .fv-panel:nth-child(2) > :not(.fv-panel-head){flex:1 1 auto;min-height:0;overflow:auto;max-height:none !important}
 html.lux-dz .fv3-grid .fv3-scroll{flex:1 1 auto !important;max-height:none !important;height:auto !important}
+/* [V33.746] 내부자 거래 칸 채움(사용자 11/4) — 줄 높이를 내부자 목록 10행 정도로 · 지표 반응 표는 행을 늘려 같은 높이를 채운다 */
+html.lux-dz .fv3-grid > .fv-panel{min-height:360px}
+html.lux-dz .fv3-grid > .fv-panel:nth-child(2){contain:size}
+html.lux-dz .fv3-grid > .fv-panel .fv3-scroll{min-height:0;overflow:auto}
+html.lux-dz .fv3-grid > .fv-panel .fv3-scroll > table{height:100%}
 /* [V33.737] 920~1180 폭에서도 PC 배치 유지(1000·1100·1300px 아래 규칙 무력화) */
 html.lux-dz .fv-mid{grid-template-columns:1fr 1.1fr !important}
 html.lux-dz .fv-bottom{grid-template-columns:1fr 1.35fr !important}
@@ -9134,12 +9139,12 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.745">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.745">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.745">
-<link rel="stylesheet" href="/model-evidence.css?v=33.745">
+<link rel="stylesheet" href="/brain-console.css?v=33.746">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.746">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.746">
+<link rel="stylesheet" href="/model-evidence.css?v=33.746">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.745">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.746">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -10296,6 +10301,8 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
     '1d':  { label: '정규장 등락(전일 종가 대비)', clamp: 3, get: function(q){ return (typeof q.regPct === 'number') ? q.regPct : ((typeof q.dayPct === 'number') ? q.dayPct : null); } },
     'reg': { label: '정규장 등락(전일 종가 대비)', clamp: 3, get: function(q){ return (typeof q.regPct === 'number') ? q.regPct : ((typeof q.dayPct === 'number') ? q.dayPct : null); } },   // 옛 키(저장된 선택 호환)
     'ext': { label: '시간외 등락(정규장 종가 대비)', clamp: 3, get: function(q){
+               /* [V33.746] 정규장 시간엔 시간외 = 정규장 가격·등락(사용자 11/4 "정규장 시간에서 시간외는 정규장 가격이랑 등락률") — 종전엔 비어 맵 전체가 회색이었다 */
+               if (q.mstate === 'REGULAR') return (typeof q.regPct === 'number') ? q.regPct : ((typeof q.dayPct === 'number') ? q.dayPct : null);
                if (q.mstate === 'PRE' && typeof q.prePct === 'number' && q.pre > 0) return q.prePct;
                if ((q.mstate === 'POST' || q.mstate === 'POSTPOST' || q.mstate === 'CLOSED') && q.post > 0) { if (q.regPrice > 0) return (q.post / q.regPrice - 1) * 100; if (typeof q.postPct === 'number') return q.postPct; }   // [V33.743] 장 마감 뒤에도 마지막 장후 체결(한국 20:00 뒤 포함)
                return null; } },
@@ -10843,7 +10850,7 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
     var subEl = (host.id === 'fvHeatmap') ? $('fvHeatSub') : $('tvHeatmapSub');
     var _extN = (fvHeatMetric === 'ext') ? stocks.filter(function(q){ return met.get(q) != null; }).length : -1;
     /* [V33.743] 시간외 단추를 눌렀는데 지금 시간외 체결이 없으면(미국 정규장 중 등) 맵 전체가 회색이라 '꺼진' 것처럼 보였다(사용자 11/3) — 이유를 적는다 */
-    if (subEl) subEl.textContent = (_extN === 0 ? '시간외 체결 없음(지금 정규장이거나 아직 시간외 전) · ' : '') + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 갱신';
+    if (subEl) subEl.textContent = (_extN === 0 ? '시간외 체결 없음(아직 시간외 전) · ' : '') + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 갱신';
   }
   function fvFmtPct(v) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'; }
   // [V33.549] 지도 타일 툴팁 — 마우스를 올린 타일 하나만 만든다(종전: 렌더마다 전 타일의 HTML 을 만들어 data-tip 에 썼다)
@@ -21931,8 +21938,8 @@ setTimeout(function(){
   window.addEventListener('load', function(){ setTimeout(function(){ try{ boot(); }catch(e){} }, 0); });
 })();
 </script>
-<script src="/model-evidence.js?v=33.745"></script>
-<script src="/workspace-ui.js?v=33.745"></script>
+<script src="/model-evidence.js?v=33.746"></script>
+<script src="/workspace-ui.js?v=33.746"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {

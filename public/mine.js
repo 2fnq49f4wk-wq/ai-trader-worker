@@ -56,6 +56,7 @@
      · 실패하면 5초 → 15초 → 45초 … (최대 2분) 다시 보냄 · 연결이 돌아오면(online) 바로 보냄 · 창을 닫거나 숨길 때 keepalive 로 마저 보냄
      · 화면에 저장 상태(저장 중 · 저장됨 · 실패) 표시 · 요청 수는 그대로(바꿀 때만 · 2초 모아 1회) */
   var DIRTYK = "lux-prof-dirty", sync = { st: "", ts: 0, fail: 0 }, retryT = 0;
+  var resetQ = [];   // [V33.746] 초기화한 시장 — 서버는 빠진 시장을 지키므로 초기화는 이렇게 분명히 알린다
   function dirty(on) { try { if (on) localStorage.setItem(DIRTYK, String(Date.now())); else localStorage.removeItem(DIRTYK); } catch (e) {} }
   function isDirty() { try { return !!localStorage.getItem(DIRTYK); } catch (e) { return false; } }
   function syncHtml() {
@@ -63,12 +64,17 @@
     return '<span id="mineSync" class="sync ' + t[0] + '" role="status" aria-live="polite"><i aria-hidden="true"></i>' + t[1] + "</span>";
   }
   function setSync(st) { sync.st = st; if (st === "ok") sync.ts = Date.now(); var el = $("mineSync"); if (el) el.outerHTML = syncHtml(); }
+  var synced = false, loadingNow = false;   // [V33.746] 이번 접속에서 서버 사본을 한 번 받았나 — 받기 전엔 저장을 미룬다(빈 사본이 다른 기기 기록을 덮지 않게)
   function push() {
     clearTimeout(saveT); clearTimeout(retryT); saveT = 0; retryT = 0;
-    var seq = editSeq, who = uid(); setSync("saving");
-    return api("POST", prof).then(function (j) {
+    if (!synced && isAuth()) { load(true); retryT = setTimeout(push, 5000); return; }
+    var seq = editSeq, who = uid(), rs = resetQ.slice(); setSync("saving");
+    return api("POST", rs.length ? Object.assign({}, prof, { resetMk: rs }) : prof).then(function (j) {
       if (who !== uid()) return;   // 그 사이 로그인·로그아웃 — 이 응답은 다른 계정 것
       if (!j || j.ok === false) throw new Error((j && j.error) || "save");
+      resetQ = resetQ.filter(function (m) { return rs.indexOf(m) < 0; });
+      /* [V33.746] 서버가 더 새 모의계좌를 지켰다(다른 기기에서 거래함) — 그 시장은 서버 것으로 맞춘다 */
+      if (j.pfKept && j.profile && j.profile.pf) { if (!prof.pf) prof.pf = {}; j.pfKept.forEach(function (m) { prof.pf[m] = j.profile.pf[m]; }); saveLocal(); draw(); }
       if (j.pfRejected && j.profile) { adopt(j.profile); draw(); alert("모의계좌 기록이 서버 시세와 맞지 않아 마지막으로 확인된 상태로 되돌렸습니다(" + j.pfRejected + ")."); }
       else if (j.profile && j.profile.nick !== undefined) { prof.nick = j.profile.nick; saveLocal(); }
       if (editSeq === seq) dirty(false);   // 보내는 사이 또 바뀌었으면 표시를 남겨 다음 저장이 보낸다
@@ -82,8 +88,8 @@
   }
   function persist() { editSeq++; saveLocal(); dirty(true); clearTimeout(saveT); saveT = setTimeout(push, 2000); setSync("pending"); }
   function flush() {   // 창을 닫거나 다른 앱으로 갈 때 — 남은 변경을 keepalive 로(응답을 못 받으면 표시가 남아 다음에 다시 보냄)
-    if (!isDirty()) return; clearTimeout(saveT); saveT = 0;
-    try { fetch("/api/me", { method: "POST", keepalive: true, headers: { "x-lux-uid": uid(), "content-type": "application/json" }, body: JSON.stringify(prof) }).then(function (r) { return r.json(); }).then(function (j) { if (j && j.ok && !j.pfRejected) { dirty(false); sync.fail = 0; setSync("ok"); } }).catch(function () {}); } catch (e) {}
+    if (!isDirty() || (!synced && isAuth())) return; clearTimeout(saveT); saveT = 0;
+    try { fetch("/api/me", { method: "POST", keepalive: true, headers: { "x-lux-uid": uid(), "content-type": "application/json" }, body: JSON.stringify(resetQ.length ? Object.assign({}, prof, { resetMk: resetQ.slice() }) : prof) }).then(function (r) { return r.json(); }).then(function (j) { if (j && j.ok && !j.pfRejected) { dirty(false); sync.fail = 0; setSync("ok"); } }).catch(function () {}); } catch (e) {}
   }
   addEventListener("pagehide", flush);
   document.addEventListener("visibilitychange", function () { if (document.visibilityState === "hidden") flush(); });
@@ -93,18 +99,28 @@
     if (loaded && !force) return; loaded = true;
     /* [V33.740] ★로그인 뒤 저장이 안 되던 버그★ — 불러오기(GET)가 늦게 오면 그 사이 바꾼 것을 옛 서버 값으로 덮었다.
        [V33.741] 서버에 아직 못 간 변경(lux-prof-dirty)이 있어도 서버 값을 쓰지 않고 이 기기 값을 보낸다. 불러오기에 실패하면 다음에 다시. */
+    if (loadingNow) return; loadingNow = true;   // [V33.746] 같은 불러오기를 겹쳐 보내지 않는다
     var seq = editSeq, who = uid();
     api("GET").then(function (j) {
+      loadingNow = false;
       if (who !== uid()) return;
       if (!j || j.ok === false) { loaded = false; return; }
+      synced = true;
       if (j.profile && editSeq === seq && !isDirty()) { adopt(j.profile); sync.st = "ok"; sync.ts = Date.now(); draw(); }
-      else if (j.profile) { if (j.profile.nick) prof.nick = j.profile.nick; saveLocal(); push(); }
+      else if (j.profile) {
+        /* 이 기기에 못 보낸 변경이 있다 — 서버 것과 합친다: 관심종목은 합집합, 모의계좌는 서버가 시장별로 더 새 것을 지킨다(pfKept) */
+        if (j.profile.nick) prof.nick = j.profile.nick;
+        (j.profile.watch || []).forEach(function (x) { if (prof.watch.indexOf(x) < 0 && prof.watch.length < 40) prof.watch.push(x); });
+        if (!prof.pf && j.profile.pf) prof.pf = j.profile.pf;
+        saveLocal(); draw(); push();
+      }
       else if (prof.done || isDirty()) push();
-    }).catch(function () { loaded = false; });
+    }).catch(function () { loadingNow = false; loaded = false; });
   }
   function quotes() { return window.__lastQuotesArr || []; }
   function q(sym) { var a = quotes(); for (var i = 0; i < a.length; i++) if (a[i].symbol === sym) return a[i]; return null; }
-  function chg(x) { var v = x && (typeof x.regPct === "number" ? x.regPct : x.dayPct); return typeof v === "number" ? v : null; }
+  /* [V33.746] 등락률은 ★보여 주는 가격과 같은 기준★(전일 종가 대비) — 종전엔 가격은 시간외 체결가인데 등락은 정규장 값이라 서로 안 맞았다 */
+  function chg(x) { if (!x) return null; if (x.price > 0 && x.prevClose > 0) return (x.price / x.prevClose - 1) * 100; var v = typeof x.dayPct === "number" ? x.dayPct : x.regPct; return typeof v === "number" ? v : null; }
   function px(x) { return x && x.price > 0 ? x.price : null; }
   function liveItem(sym) { var mk = isKr(sym) ? "kr" : "us", it = (PB && PB.live && PB.live[mk] && PB.live[mk].items) || []; for (var i = 0; i < it.length; i++) if (it[i].s === sym) return it[i]; return null; }
   function priceOf(sym) { var p = px(q(sym)); if (p) return p; var it = liveItem(sym); return it && it.px > 0 ? it.px : null; }   // [V33.724] 워치리스트 밖 AI 후보도 살 수 있게(판정 시세)
@@ -149,11 +165,15 @@
   function acct(mk) { if (!prof.pf) prof.pf = {}; if (!prof.pf[mk]) prof.pf[mk] = { start: START[mk], cash: START[mk], pos: {}, hist: [], t0: Date.now() }; return prof.pf[mk]; }
   function has(mk) { return !!(prof.pf && prof.pf[mk]); }
   function held(sym) { var mk = isKr(sym) ? "kr" : "us"; return has(mk) && prof.pf[mk].pos[sym] ? prof.pf[mk].pos[sym].q : 0; }
+  function todayKey(mk, ts) { try { return new Date(ts || Date.now()).toLocaleDateString("en-CA", { timeZone: mk === "kr" ? "Asia/Seoul" : "America/New_York" }); } catch (e) { return new Date(ts || Date.now()).toDateString(); } }
   function dayPct(sym) { var c = chg(q(sym)); if (c == null) { var it = liveItem(sym); if (it && typeof it.dp === "number") c = it.dp; } return c; }
   function val(mk) {
     /* [V33.741] 평가는 priceOf(관심종목 밖 AI 후보 시세까지) · 오늘 변동(보유 × 오늘 등락) · 시작일이 비정상이면 1일(테스트·옛 기록에서 '20760일' 로 보였다) */
     if (!has(mk)) return null; var a = prof.pf[mk], eq = a.cash, cost = 0, mv = 0, day = 0;
-    Object.keys(a.pos).forEach(function (s) { var p = a.pos[s], x = priceOf(s) || p.avg, c = dayPct(s); eq += p.q * x; mv += p.q * x; cost += p.q * p.avg; if (c != null && c > -100) day += p.q * x * (c / (100 + c)); });
+    /* [V33.746] ★오늘 손익★ — 오늘 산 종목은 전일 종가가 아니라 산 값(평단)이 기준이다(종전: 오늘 산 1종목이 '오늘 +$144' 인데 총손익은 −$5 로 보였다) */
+    var today = todayKey(mk);
+    Object.keys(a.pos).forEach(function (s) { var p = a.pos[s], x = priceOf(s) || p.avg, c = dayPct(s); eq += p.q * x; mv += p.q * x; cost += p.q * p.avg;
+      if (p.t > 1e12 && todayKey(mk, p.t) === today) day += p.q * (x - p.avg); else if (c != null && c > -100) day += p.q * x * (c / (100 + c)); });
     var t0 = a.t0 > 1e12 ? a.t0 : (a.hist.length && a.hist[a.hist.length - 1][0] > 1e12 ? a.hist[a.hist.length - 1][0] : Date.now());
     return { eq: eq, cash: a.cash, mv: mv, upl: mv - cost, ret: (eq / a.start - 1) * 100, n: Object.keys(a.pos).length, day: day, dayPct: eq - day > 0 ? day / (eq - day) * 100 : 0, days: Math.max(1, Math.round((Date.now() - t0) / 86400000)) };
   }
@@ -204,6 +224,7 @@
       "@media (max-width:520px){#mineRoot{padding:4px 0 96px;font-size:14px}#mineRoot .card{border-radius:16px;padding:14px}#mineRoot .h1{font-size:26px}#mineRoot .row{gap:8px;padding:11px 0}#mineRoot .buy,#mineRoot .sell,#mineRoot .tag2{min-height:38px;padding:0 11px;font-size:13px}#mineRoot .r .p{font-size:13.5px}#mineRoot .sb{font-size:11.5px}#mineRoot .tabs{margin-bottom:10px}#mineRoot .g2{gap:8px}}",
       // [V33.741] 저장 상태 · 오늘 손익 · 보유 카드 · 거래 내역 매수/매도 표 · 폰 옆 여백(카드가 화면 끝에 붙었다)
       "#mineRoot .syncbar{display:flex;justify-content:flex-end;margin:-6px 4px 8px}#mineRoot .sync{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--m-mute)}#mineRoot .sync i{width:7px;height:7px;border-radius:4px;background:var(--m-acc)}#mineRoot .sync.sv i{background:#E2C766;animation:mineBlink 1s infinite alternate}#mineRoot .sync.bad{color:#FF8A8A}#mineRoot .sync.bad i{background:#FF5C5C}@keyframes mineBlink{to{opacity:.3}}",
+      "#mineRoot .pill.hold{background:rgba(226,199,102,.16);color:#E2C766}html[data-theme=light] #mineRoot .pill.hold{background:#FEF3C7;color:#7A5A00}",
       "#mineRoot .today{margin-top:4px;font-size:13px;color:var(--m-mute)}#mineRoot .today b{font-weight:600}",
       "#mineRoot .hold{padding:13px 0 12px;border-top:1px solid var(--m-line);cursor:pointer}#mineRoot .ct+.hold,#mineRoot .ct+.row{border-top:0}#mineRoot .ht{display:flex;align-items:center;gap:10px}#mineRoot .hm{display:flex;flex-wrap:wrap;gap:4px 14px;margin:8px 0 0 18px;font-size:12.5px;color:var(--m-mute)}#mineRoot .hm b{font-weight:600;color:var(--fg,#EEF1F5)}#mineRoot .hm b.up{color:var(--m-up)}#mineRoot .hm b.dn{color:var(--m-dn)}",
       "#mineRoot .ha{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:6px;margin:10px 0 0 18px}#mineRoot .ha button{min-height:40px;justify-content:center}#mineRoot .bs{flex:0 0 auto;font-size:11.5px;font-weight:700;padding:3px 7px;border-radius:6px}#mineRoot .bs.b{color:var(--m-up);background:rgba(255,92,92,.12)}#mineRoot .bs.s{color:var(--m-dn);background:rgba(77,141,255,.12)}#mineRoot .more{width:100%;margin-top:8px;min-height:42px}#mineRoot .cashbar{background:#2A303B}",
@@ -293,18 +314,21 @@
       '<div class="note" style="margin-top:6px">' + MK[rmk] + " " + (REG[rg] || "") + " · 순위 = 매수 신호 → 검증 대기 → AI 점수 순 · 관찰 = 관심종목에 담기 · 모의투자</div></section>";
     return h;
   }
+  /* [V33.746] ★보유 종목은 관심에 늘 보인다★(사용자 11/4) — 관심에 안 담았어도 들고 있으면 맨 위에 · 다 팔면 사라진다(직접 담은 종목은 그대로 남음) */
+  function heldSyms() { var o = []; ["us", "kr"].forEach(function (m) { if (has(m)) Object.keys(prof.pf[m].pos || {}).forEach(function (k) { if (prof.pf[m].pos[k].q > 0) o.push(k); }); }); return o; }
   function watch() {
-    var list = prof.watch.slice();
+    var hs = heldSyms(), all = hs.concat(prof.watch.filter(function (s) { return hs.indexOf(s) < 0; })), list = all.slice();
     if (wFilter === "sig") list = list.filter(function (s) { return !!sigOf(s); });
     if (wFilter === "held") list = list.filter(function (s) { return held(s) > 0; });
-    var nSig = prof.watch.filter(function (s) { return !!sigOf(s); }).length, nHeld = prof.watch.filter(function (s) { return held(s) > 0; }).length;
+    var nSig = all.filter(function (s) { return !!sigOf(s); }).length, nHeld = hs.length;
     var h = '<label class="search"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#98A2B3" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>' +
       '<input id="mineSearch" type="search" autocomplete="off" aria-label="종목 검색" placeholder="이름이나 코드 (엔비디아, NVDA, 삼성전자)"></label><div id="mineFound"></div>' +
-      '<div class="chips">' + [["all", "전체 " + prof.watch.length], ["sig", "AI 신호 " + nSig], ["held", "보유 " + nHeld]].map(function (c) { return '<button type="button" data-wf="' + c[0] + '" class="' + (wFilter === c[0] ? "on" : "") + '">' + c[1] + "</button>"; }).join("") + "</div>";
+      '<div class="chips">' + [["all", "전체 " + all.length], ["sig", "AI 신호 " + nSig], ["held", "보유 " + nHeld]].map(function (c) { return '<button type="button" data-wf="' + c[0] + '" class="' + (wFilter === c[0] ? "on" : "") + '">' + c[1] + "</button>"; }).join("") + "</div>";
     h += '<section class="card" style="margin-top:10px">' + (list.length ? list.map(function (s) {
       var sig = sigOf(s), hq = held(s);
-      return rowQ(s, short(s) + (hq ? " · 보유 " + hq.toLocaleString() + "주" : ""), pill(sig), buyBtn(s) + '<button type="button" class="tag2" style="cursor:pointer;min-width:40px;justify-content:center" data-unwatch="' + esc(s) + '" aria-label="관심 해제">✕</button>');
-    }).join("") : '<div class="empty">' + (prof.watch.length ? "이 조건에 맞는 종목이 없습니다" : "위 검색창에서 종목을 찾아 추가하거나 바로 사 보세요") + "</div>") + "</section>";
+      var inW = prof.watch.indexOf(s) >= 0;
+      return rowQ(s, short(s) + (hq ? " · 보유 " + hq.toLocaleString() + "주" : ""), (hq ? '<span class="pill hold">보유</span>' : "") + pill(sig), buyBtn(s) + (hq ? '<button type="button" class="sell" data-sell="' + esc(s) + '">매도</button>' : "") + (inW ? '<button type="button" class="tag2" style="cursor:pointer;min-width:40px;justify-content:center" data-unwatch="' + esc(s) + '" aria-label="관심 해제">✕</button>' : '<span class="tag2" style="min-width:40px;justify-content:center;visibility:hidden" aria-hidden="true">✕</span>'));
+    }).join("") : '<div class="empty">' + (all.length ? "이 조건에 맞는 종목이 없습니다" : "위 검색창에서 종목을 찾아 추가하거나 바로 사 보세요") + "</div>") + "</section>";
     return h;
   }
   function acctTab() {
@@ -585,7 +609,7 @@
   function login(nick, pw) {
     return authPost("/api/auth/login", { nick: nick, pw: pw }).then(function (j) {
       if (!j || !j.ok || !j.uid) throw new Error((j && j.error) || "로그인하지 못했어요");
-      clearTimeout(saveT); clearTimeout(retryT); saveT = retryT = 0; try { localStorage.setItem(UIDK, j.uid); localStorage.removeItem(PROFK); } catch (e) {} dirty(false); sync = { st: "", ts: 0, fail: 0 };   // [V33.741] 로그인 전 예약된 저장이 새 계정 데이터를 덮지 않게
+      clearTimeout(saveT); clearTimeout(retryT); saveT = retryT = 0; try { localStorage.setItem(UIDK, j.uid); localStorage.removeItem(PROFK); } catch (e) {} dirty(false); sync = { st: "", ts: 0, fail: 0 }; synced = false; resetQ = [];   // [V33.741] 로그인 전 예약된 저장이 새 계정 데이터를 덮지 않게
       prof = Object.assign({}, DEF, { nick: j.nick, done: true }); remember(j.nick, j.created); loaded = false; load(true); tab = "home"; return j;
     });
   }
@@ -593,7 +617,7 @@
     if (!silent && !confirm("로그아웃할까요? 다시 쓰려면 닉네임과 비밀번호로 로그인하면 됩니다.")) return;
     if (!silent && isDirty()) push();   // [V33.741] 나가기 전 남은 변경을 이 계정에 보냄(새 코드로 바꾸기 전에 보낸다)
     clearTimeout(saveT); clearTimeout(retryT); saveT = retryT = 0;
-    try { localStorage.removeItem("lux-auth"); localStorage.removeItem("lux-auth-ts"); localStorage.removeItem(PROFK); localStorage.setItem(UIDK, newUid()); } catch (e) {} dirty(false); sync = { st: "", ts: 0, fail: 0 };
+    try { localStorage.removeItem("lux-auth"); localStorage.removeItem("lux-auth-ts"); localStorage.removeItem(PROFK); localStorage.setItem(UIDK, newUid()); } catch (e) {} dirty(false); sync = { st: "", ts: 0, fail: 0 }; synced = false; resetQ = [];
     prof = Object.assign({}, DEF); loaded = false; tab = "home";
     if (typeof window.showPage === "function") window.showPage("dashboard");
   }
@@ -669,7 +693,7 @@
     if (d.rkmk) { rkMk = d.rkmk; draw(); return; }
     if (d.addwatch) { ev.stopPropagation(); var i = prof.watch.indexOf(d.addwatch); if (i >= 0) prof.watch.splice(i, 1); else if (prof.watch.length < 40) prof.watch.push(d.addwatch); persist(); draw(); return; }
     if (d.unwatch) { ev.stopPropagation(); prof.watch = prof.watch.filter(function (x) { return x !== d.unwatch; }); persist(); draw(); return; }
-    if (d.reset) { if (confirm(MK[d.reset] + " 모의계좌를 처음 상태로 되돌릴까요?")) { if (prof.pf) delete prof.pf[d.reset]; persist(); draw(); } return; }
+    if (d.reset) { if (confirm(MK[d.reset] + " 모의계좌를 처음 상태로 되돌릴까요?")) { if (prof.pf) delete prof.pf[d.reset]; if (resetQ.indexOf(d.reset) < 0) resetQ.push(d.reset); persist(); draw(); } return; }
     if (d.v) { var g = t.closest("[data-k]"); if (!g) return; var k = g.getAttribute("data-k");
       if (k === "mkts") { var j = prof.mkts.indexOf(d.v); if (j >= 0 && prof.mkts.length > 1) prof.mkts.splice(j, 1); else if (j < 0) prof.mkts.push(d.v); } else prof[k] = d.v;
       if (prof.done) persist(); draw(); return; }
