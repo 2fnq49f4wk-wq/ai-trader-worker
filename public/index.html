@@ -229,11 +229,11 @@ window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{
 window.__luxAct=Date.now();['pointerdown','keydown','touchstart','wheel'].forEach(function(e){addEventListener(e,function(){window.__luxAct=Date.now();},{passive:true,capture:true});});
 window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600000;};
 </script>
-<meta name="lux-build" content="V33.742">
-<script src="/i18n.js?v=33.742" defer></script>
-<script src="/mine.js?v=33.742" defer></script>
-<script src="/stock-info.js?v=33.742" defer></script>
-<script src="/neural-observatory.js?v=33.742" defer></script>
+<meta name="lux-build" content="V33.743">
+<script src="/i18n.js?v=33.743" defer></script>
+<script src="/mine.js?v=33.743" defer></script>
+<script src="/stock-info.js?v=33.743" defer></script>
+<script src="/neural-observatory.js?v=33.743" defer></script>
 <title>LUX-INV</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -7243,7 +7243,7 @@ window.LUX_NV = {
     'reg': { label: '정규장 등락(전일 종가 대비)', clamp: 3, get: function(q){ return (typeof q.regPct === 'number') ? q.regPct : ((typeof q.dayPct === 'number') ? q.dayPct : null); } },   // 옛 키(저장된 선택 호환)
     'ext': { label: '시간외 등락(정규장 종가 대비)', clamp: 3, get: function(q){
                if (q.mstate === 'PRE' && typeof q.prePct === 'number' && q.pre > 0) return q.prePct;
-               if ((q.mstate === 'POST' || q.mstate === 'POSTPOST') && typeof q.postPct === 'number' && q.post > 0) return q.postPct;
+               if ((q.mstate === 'POST' || q.mstate === 'POSTPOST' || q.mstate === 'CLOSED') && q.post > 0) { if (q.regPrice > 0) return (q.post / q.regPrice - 1) * 100; if (typeof q.postPct === 'number') return q.postPct; }   // [V33.743] 장 마감 뒤에도 마지막 장후 체결(한국 20:00 뒤 포함)
                return null; } },
     '1w':  { label: '1주 수익률',  clamp: 6,  get: function(q){ return (typeof q.return5  === 'number') ? q.return5  : null; } },
     '1m':  { label: '1개월 수익률', clamp: 12, get: function(q){ return (typeof q.return20 === 'number') ? q.return20 : null; } },
@@ -7787,7 +7787,9 @@ window.LUX_NV = {
     var fresh = 0;
     stocks.forEach(function(q){ if (q.ts && Date.now() - q.ts < 300000) fresh++; });
     var subEl = (host.id === 'fvHeatmap') ? $('fvHeatSub') : $('tvHeatmapSub');
-    if (subEl) subEl.textContent = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 갱신';
+    var _extN = (fvHeatMetric === 'ext') ? stocks.filter(function(q){ return met.get(q) != null; }).length : -1;
+    /* [V33.743] 시간외 단추를 눌렀는데 지금 시간외 체결이 없으면(미국 정규장 중 등) 맵 전체가 회색이라 '꺼진' 것처럼 보였다(사용자 11/3) — 이유를 적는다 */
+    if (subEl) subEl.textContent = (_extN === 0 ? '시간외 체결 없음(지금 정규장이거나 아직 시간외 전) · ' : '') + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 갱신';
   }
   function fvFmtPct(v) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'; }
   // [V33.549] 지도 타일 툴팁 — 마우스를 올린 타일 하나만 만든다(종전: 렌더마다 전 타일의 HTML 을 만들어 data-tip 에 썼다)
@@ -21872,12 +21874,12 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.742">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.742">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.742">
-<link rel="stylesheet" href="/model-evidence.css?v=33.742">
+<link rel="stylesheet" href="/brain-console.css?v=33.743">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.743">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.743">
+<link rel="stylesheet" href="/model-evidence.css?v=33.743">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.742">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.743">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -21904,8 +21906,8 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
   setTimeout(reveal, 9500);
 })();
 </script>
-<script src="/model-evidence.js?v=33.742"></script>
-<script src="/workspace-ui.js?v=33.742"></script>
+<script src="/model-evidence.js?v=33.743"></script>
+<script src="/workspace-ui.js?v=33.743"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {

@@ -3052,7 +3052,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.742";
+const _BUILD_VER = "V33.743";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8676,10 +8676,25 @@ function applyKrOverMarket(o, d) {
   /* [V33.350 · A-10 해결] 여기서 값을 안 넣고 나가는 것 자체는 맞다 — 없는 체결을 지어내지 않는다.
      문제는 기록부가 한국에 대해 아무것도 지우지 않아, 안 넣은 자리에 ★지난 세션 값★ 이
      COALESCE 로 남던 것이었다. 이제 extKeepMaskKR 이 세션 밖 값을 지운다(16908 부근). */
-  if (!inPre && !inPost) { o.mstate = "CLOSED"; return o; }
-  // 두 시간외 정보 중 현재 창에 맞는 세션의 최신 체결을 선택한다.
   const krx = d.overMarketPriceInfo || null;
   const nxt = d.nxtOverMarketPriceInfo || null;
+  if (!inPre && !inPost) {
+    o.mstate = "CLOSED";
+    /* [V33.743] ★장후 시간외가 20:00 뒤에 사라졌다★(사용자 11/3 23:31 KST "국장 시간외 데이터가 안 들어온다") — 실측: 삼성 KRX 종가 219,500(−4.15% · 야후 일치)
+       · 넥스트레이드 애프터 마지막 222,000(20:00 체결)인데 화면엔 시간외 값이 없었다. 창(15:30~20:00) 밖이면 바로 돌아가 post 를 안 채웠기 때문.
+       미국처럼 장 마감 뒤에도 ★마지막 장후 체결을 보여만★ 준다(extTs 0 — 거래 가격으로 안 씀 · Codex V33.346 원칙). 64시간 안 · 15:30~20:00 체결만(주말 넘김 · 낡은 값 차단). */
+    const _aft = [krx, nxt].filter(function (x) { return x && (x.tradingSessionType === "AFTER_MARKET" || x.tradingSessionType === "POST_MARKET") && num(x.overPrice) > 0; })
+      .sort(function (a, b) { return (Date.parse(b.localTradedAt) || 0) - (Date.parse(a.localTradedAt) || 0); })[0];
+    const _at = _aft && typeof _aft.localTradedAt === "string" ? Date.parse(_aft.localTradedAt) : NaN;
+    const _atMin = Number.isFinite(_at) ? (Math.floor(_at / 60000) + 540) % 1440 : -1;   // KST 시:분
+    if (_sessKR !== "REGULAR" && _aft && Number.isFinite(_at) && Date.now() - _at < 64 * 3600000 && _atMin >= 930 && _atMin <= 1200) {
+      const _op = num(_aft.overPrice), _rr = num(_aft.fluctuationsRatio), _cd = _aft.compareToPreviousPrice && _aft.compareToPreviousPrice.code;
+      o.post = _op; o.postPct = isFinite(_rr) ? ((_cd === "4" || _cd === "5") ? -Math.abs(_rr) : Math.abs(_rr)) : (o.prevClose > 0 ? ((_op - o.prevClose) / o.prevClose) * 100 : 0);
+      o.extTs = 0; o.postClosed = 1;
+    }
+    return o;
+  }
+  // 두 시간외 정보 중 현재 창에 맞는 세션의 최신 체결을 선택한다.
   const wantSess = inPre ? "BEFORE_MARKET" : inPost ? "AFTER_MARKET" : null;
   function pick() {
     const cands = [krx, nxt].filter(Boolean);
