@@ -6881,3 +6881,4 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
 - V33.737 (11/2 사용자 아이폰 화면): 폰 대시보드 폭을 화면 높이로 정함 — W = 1480 × 기기 폭 ÷ (보이는 높이 − 106) · 920~1180 (실측 보간: 지수~경제 캘린더 ≈ 첫 화면) ·
   보이는 높이는 휴대폰 화면일 때 잰 innerHeight(sessionStorage lux-dz-vh). 920~1179 에서도 PC 배치 유지(fv-mid·fv-bottom·fv-cal-row·지수 한 줄 override).
   지정학·위기 게이지 · 활성 이슈 · 한국장 매매정지는 휴대폰에서도 항상 펼침(_luxPhoneFold 즉시 return · 머리 눌러 접기는 그대로).
+- V33.738: 폰 대시보드 축소 보기 중 로그인 창·주문창·모달(시장 지도 등)·검색이 열리면 잠시 device-width 로 돌림(window.__luxDzOverlay + MutationObserver) · 닫히면 복귀 · 토스트·새 버전 띠는 zoom · 검색 FAB 숨김. 15칸 세분화는 판정 구간 평균이 미 7.99→7.02 · 한 4.68→3.69 로 나빠짐(사용자에게 되돌릴지 물음).

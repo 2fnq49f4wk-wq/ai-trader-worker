@@ -223,11 +223,11 @@ window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{
 window.__luxAct=Date.now();['pointerdown','keydown','touchstart','wheel'].forEach(function(e){addEventListener(e,function(){window.__luxAct=Date.now();},{passive:true,capture:true});});
 window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600000;};
 </script>
-<meta name="lux-build" content="V33.737">
-<script src="/i18n.js?v=33.737" defer></script>
-<script src="/mine.js?v=33.737" defer></script>
-<script src="/stock-info.js?v=33.737" defer></script>
-<script src="/neural-observatory.js?v=33.737" defer></script>
+<meta name="lux-build" content="V33.738">
+<script src="/i18n.js?v=33.738" defer></script>
+<script src="/mine.js?v=33.738" defer></script>
+<script src="/stock-info.js?v=33.738" defer></script>
+<script src="/neural-observatory.js?v=33.738" defer></script>
 <title>LUX-INV</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4087,7 +4087,7 @@ nav.sidebar::-webkit-scrollbar{display:none;}
 <script>
 /* [V33.735] 휴대폰 대시보드 PC 축소 보기 — showPage 가 화면을 바꿀 때마다 부른다 */
 window.luxDz=function(id){try{var de=document.documentElement,m=document.querySelector('meta[name="viewport"]');if(!m)return;
- var sw=screen.width||390,small=Math.min(sw,screen.height||9999)<=600&&sw<=600,on=small&&id==='dashboard';
+ var sw=screen.width||390,small=Math.min(sw,screen.height||9999)<=600&&sw<=600,on=small&&id==='dashboard'&&!window.__luxDzOverlay();
  var off=false;try{off=localStorage.getItem('lux-dz')==='0';}catch(e){}if(off)on=false;
  if(on){
   /* [V33.737] 폭은 화면 높이로 정한다(사용자 11/2 "첫 화면은 이코노믹 캘린더까지만 · 나머지는 스크롤") — 지수~경제 캘린더 높이(약 1480 레이아웃 px · 실측 보간)가
@@ -4098,6 +4098,14 @@ window.luxDz=function(id){try{var de=document.documentElement,m=document.querySe
   de.style.setProperty('--dzi',(W/sw).toFixed(4));if(!de.classList.contains('lux-dz')||de.getAttribute('data-dzw')!==String(W)){de.classList.add('lux-dz');de.setAttribute('data-dzw',String(W));m.setAttribute('content','width='+W+', viewport-fit=cover');}}
  else if(de.classList.contains('lux-dz')){de.classList.remove('lux-dz');de.removeAttribute('data-dzw');m.setAttribute('content','width=device-width, initial-scale=1.0, viewport-fit=cover');}
 }catch(e){}};
+/* [V33.738] ★축소 보기 중 뜨는 창은 원래 크기로★(사용자 11/2 "폰에서 로그인 화면이 너무 작게") — 로그인 창 · 주문창 · 검색 · 시장 지도 등 모달이
+   열리는 동안은 휴대폰 화면(device-width)으로 잠시 돌리고, 닫히면 대시보드 축소 보기로 되돌린다. */
+window.__luxDzOverlay=function(){try{return !!document.querySelector('#luxGate,#mineSheet,.modal.show,.cmdk-overlay.show');}catch(e){return false;}};
+(function(){var t=0;function chk(){t=0;try{var pg=document.querySelector('.page.active');if(window.luxDz)window.luxDz(pg?pg.id.replace('page-',''):'');}catch(e){}}
+ function go(){if(!t)t=setTimeout(chk,30);}
+ function start(){try{new MutationObserver(function(ms){for(var i=0;i<ms.length;i++){var m=ms[i];if(m.type==='childList'){for(var j=0;j<m.addedNodes.length;j++){var n=m.addedNodes[j];if(n.id==='luxGate'||n.id==='mineSheet'){go();return;}}for(var k=0;k<m.removedNodes.length;k++){var r=m.removedNodes[k];if(r.id==='luxGate'||r.id==='mineSheet'){go();return;}}}else if(m.target&&m.target.classList&&(m.target.classList.contains('modal')||m.target.classList.contains('cmdk-overlay'))){go();return;}}})
+  .observe(document.body,{childList:true,attributes:true,attributeFilter:['class'],subtree:true});}catch(e){}}
+ if(document.body)start();else document.addEventListener('DOMContentLoaded',start);})();
 </script>
 <style id="luxDz">
 html.lux-dz .shell{flex-direction:column;height:100dvh;overflow:hidden;max-width:100vw;}
@@ -4204,7 +4212,8 @@ html.lux-dz .m-brainbar>button[data-tools]{grid-column:span 2; min-height:38px; 
 html.lux-dz{--dz-top:calc(50px + env(safe-area-inset-top,0px));--dz-bot:calc(56px + env(safe-area-inset-bottom,0px))}
 html.lux-dz .m-appbar,html.lux-dz .m-tabbar,html.lux-dz .m-drawer,html.lux-dz .m-drawer-scrim{zoom:var(--dzi,1)}
 html.lux-dz .shell{padding-top:calc(var(--dz-top) * var(--dzi,1)) !important;padding-bottom:calc(var(--dz-bot) * var(--dzi,1)) !important}
-html.lux-dz #luxConsent{zoom:var(--dzi,1)}
+html.lux-dz #luxConsent,html.lux-dz .luxToast,html.lux-dz #luxBuildBanner{zoom:var(--dzi,1)}
+html.lux-dz .cmdk-fab{display:none !important}   /* [V33.738] 축소 보기 위의 알림·버튼은 원래 크기 */
 /* [V33.736] 비율 세밀 조정 — 폭 1320 → 1180(글자 약 12% 크게) · 아래 세 칸(실적·선물·환율)은 1180 에서도 3열 유지 · 파이프라인 띠는 숨겨 위로 당김 */
 html.lux-dz .fv3-grid{grid-template-columns:repeat(3,minmax(0,1fr)) !important}
 html.lux-dz .fv3-grid > .fv-panel:last-child:nth-child(odd){grid-column:auto !important}
@@ -21825,12 +21834,12 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.737">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.737">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.737">
-<link rel="stylesheet" href="/model-evidence.css?v=33.737">
+<link rel="stylesheet" href="/brain-console.css?v=33.738">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.738">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.738">
+<link rel="stylesheet" href="/model-evidence.css?v=33.738">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.737">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.738">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -21857,8 +21866,8 @@ html:not([data-theme="light"]) .rail .rail-glance{margin:0 10px;border:1px solid
   setTimeout(reveal, 9500);
 })();
 </script>
-<script src="/model-evidence.js?v=33.737"></script>
-<script src="/workspace-ui.js?v=33.737"></script>
+<script src="/model-evidence.js?v=33.738"></script>
+<script src="/workspace-ui.js?v=33.738"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {
