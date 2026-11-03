@@ -18,7 +18,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-restore() { git checkout -- wrangler.toml 2>/dev/null || true; }
+restore() { git checkout -- wrangler.toml public/index.html 2>/dev/null || true; rm -rf public/_b public/full.html; }   # [V33.752] [build] 분할 산출물도 되돌린다
 trap restore EXIT
 
 # [V33.372] 게이트 실행은 ★한 벌★ 로 접었다 — 여기와 Cloudflare Workers Builds 가

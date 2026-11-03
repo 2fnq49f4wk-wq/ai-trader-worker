@@ -44,10 +44,13 @@ const iSplit = DY.indexOf("node tools/build-split.mjs public/index.html public")
 chk(iSplit > 0 && iSplit > iLastGate && iSplit < iDeploy, "분할은 모든 게이트 뒤 · 배포 직전", "분할 위치 " + [iLastGate, iSplit, iDeploy].join(","));
 
 const iSmoke = DY.indexOf("분할 빌드 연기 시험(실패하면 원본 재배포)");
-chk(iSmoke > iDeploy && /git checkout -- public\/index\.html && rm -rf public\/_b && wrangler deploy/.test(DY.slice(iSmoke)) && /cmp -s \/tmp\/smoke\.bin "public\$f"/.test(DY.slice(iSmoke)),
+chk(iSmoke > iDeploy && /git checkout -- public\/index\.html && rm -rf public\/_b && LUX_NO_SPLIT=1 wrangler deploy/.test(DY.slice(iSmoke)) && /cmp -s \/tmp\/smoke\.bin "public\$f"/.test(DY.slice(iSmoke)),
   "배포 뒤 연기 시험 — /_b/ 파일이 200·내용 일치가 아니면 원본으로 즉시 재배포", "연기 시험/되돌림 없음");
 chk(/for t in 1 2 3 4 5 6 7 8; do/.test(DY.slice(iSmoke)) && /\/full\.html/.test(DY.slice(iSmoke)), "엣지 전파 지연은 파일마다 ~70초 다시 묻는다 · 피난처 /full.html 도 확인", "재시도/피난처 확인 없음");
 
+const TM = readFileSync("wrangler.toml", "utf8"), BS = readFileSync("tools/build-split.mjs", "utf8");
+chk(/^\[build\]\s*\ncommand = "node tools\/build-split\.mjs public\/index\.html public"/m.test(TM) && /process\.env\.LUX_NO_SPLIT/.test(BS),
+  "[V33.752] wrangler.toml [build] 가 분할 — Workers Builds(push 직후 배포)도 분할된 판을 낸다 · 되돌림은 LUX_NO_SPLIT=1", "[build] 분할 없음 — Workers Builds 가 통짜 443KB 를 배포한다");
 console.log("③ 인트로 하루 한 번");
 const head = H.slice(0, H.indexOf("</head>"));
 chk(/html\.lux-nointro #lux-intro-overlay\{display:none!important\}/.test(head) && /localStorage\.getItem\('luxIntroDay'\) === day/.test(head) && /intro=1/.test(head),

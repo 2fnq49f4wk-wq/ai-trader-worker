@@ -1350,7 +1350,7 @@ jobs:
           [ -n "$FIRST" ] && curl -sSI "$U$FIRST" | grep -i '^cache-control' || echo "(cache-control 헤더 없음 — 캐시는 서비스워커가 맡는다)"
           if [ "$ok" != "1" ]; then
             echo "::error::분할 파일이 운영에서 열리지 않는다 — 원본(인라인) index.html 로 즉시 재배포한다"
-            git checkout -- public/index.html && rm -rf public/_b && wrangler deploy && echo "원본 재배포 완료"
+            git checkout -- public/index.html && rm -rf public/_b && LUX_NO_SPLIT=1 wrangler deploy && echo "원본 재배포 완료"
             exit 1
           fi
           echo "✅ 분할 파일 $N 개 전부 200 · 내용 일치"

@@ -2,3 +2,5 @@
 node_modules/
 studio/node_modules
 studio/dist/
+public/_b/
+public/full.html

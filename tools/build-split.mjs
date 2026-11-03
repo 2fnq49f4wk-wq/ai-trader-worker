@@ -57,6 +57,8 @@ if (isMain) {
   const checkOnly = process.argv.includes("--check");
   const src = args[0] || "public/index.html", outDir = args[1] || dirname(src);
   const html = readFileSync(src, "utf8");
+  // [V33.752] 연기 시험이 실패해 원본으로 되돌릴 때는 wrangler.toml [build] 가 다시 분할하지 않게 한다
+  if (process.env.LUX_NO_SPLIT) { console.log("LUX_NO_SPLIT — 분할하지 않는다(원본 재배포)"); process.exit(0); }
   if (/<!-- \[build-split\]/.test(html)) { console.log("이미 분할된 파일이다 — 건너뜀"); process.exit(0); }
   const r = splitHtml(html);
   if (joinBack(r.html, r.parts) !== html) { console.error("✗ 되돌려 붙인 결과가 원본과 다르다 — 쓰지 않는다"); process.exit(1); }

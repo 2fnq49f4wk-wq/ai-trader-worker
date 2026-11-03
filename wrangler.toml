@@ -53,6 +53,13 @@ crons = ["*/1 * * * *"]
 [limits]
 cpu_ms = 300000
 
+# [V33.752] ★분할 빌드는 wrangler deploy 자체에 묶는다★ — Cloudflare Workers Builds(저장소 연결)가
+#   push 30초 뒤 ★분할 안 된 443KB index.html★ 을 먼저 배포하고, CI 의 분할 배포는 게이트 25분 뒤에야
+#   덮었다(실측: 4fedf29 Workers Builds 23:10:57 배포 · CI Deploy 진행 중 · 운영 _b 참조 0). 한 판의 대부분 시간을
+#   느린 판이 서비스했다. 어느 경로로 배포하든 분할되게 여기서 돈다(이미 분할됐으면 건너뜀 · LUX_NO_SPLIT=1 이면 원본).
+[build]
+command = "node tools/build-split.mjs public/index.html public"
+
 [assets]
 directory = "./public"
 binding = "ASSETS"
