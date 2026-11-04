@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.759";
+const _BUILD_VER = "V33.760";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -22787,7 +22787,7 @@ async function stateR2Refresh(env, maxAgeMs) {
 /* [V33.759] ★CDN 공개 사본★(사용자 11/4 "CDN 구조로") — 모두에게 같은 화면 데이터(시세·지수·포지션·엔진 상태)를 R2 공개 버킷(lux-public ·
    data.lux-inv.com)에 1분마다 쓴다. 화면은 그 주소(CDN 캐시 30초)를 먼저 읽어 ★워커 요청·CPU·D1 이 방문자 수와 무관★ 해진다.
    비용: 크론 1분에 R2 쓰기 1번 + 시세 범위 읽기 1번(사람 수와 무관). 개인 데이터(MY)는 여기 없다 — /api/me 그대로. */
-const STATE_PUB_KEY = "pub/state.json";
+const STATE_PUB_KEY = "pub/state.js";   // [V33.760] .json 은 Cloudflare 가 기본 캐시하지 않는다(실측 cf-cache-status: DYNAMIC) — 기본 캐시 확장자 .js(내용은 JSON 그대로)
 async function statePubWrite(env) {
   const PUB = env && env.PUB; if (!PUB) return null;
   let body = null, at = 0;
