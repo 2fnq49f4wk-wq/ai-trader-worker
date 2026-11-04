@@ -1,0 +1,29 @@
+name: Cloudflare 설정 점검 (읽기 전용)
+# [V33.759] CDN(data.lux-inv.com) 점검 — 워커 경로·사용자 도메인·R2 공개 도메인·공개 사본 존재를 API 로 읽기만 한다(아무것도 바꾸지 않는다).
+on:
+  workflow_dispatch:
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 읽기 전용 점검
+        env:
+          T: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          A: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set +e
+          H="Authorization: Bearer $T"; B=https://api.cloudflare.com/client/v4
+          j() { python3 -c 'import sys,json; d=json.load(sys.stdin); print(json.dumps({k:d.get(k) for k in ("success","errors")}, ensure_ascii=False)); r=d.get("result"); print(json.dumps(r, ensure_ascii=False)[:3000])'; }
+          echo "== 토큰 검증"; curl -sS -H "$H" $B/user/tokens/verify | j
+          echo "== 영역(zone)"; curl -sS -H "$H" "$B/zones?name=lux-inv.com" | j
+          Z=$(curl -sS -H "$H" "$B/zones?name=lux-inv.com" | python3 -c 'import sys,json; r=json.load(sys.stdin).get("result") or []; print(r[0]["id"] if r else "")')
+          echo "zone=$Z"
+          echo "== 워커 경로(routes)"; [ -n "$Z" ] && curl -sS -H "$H" "$B/zones/$Z/workers/routes" | j
+          echo "== 워커 사용자 도메인"; curl -sS -H "$H" "$B/accounts/$A/workers/domains" | j
+          echo "== DNS data.lux-inv.com"; [ -n "$Z" ] && curl -sS -H "$H" "$B/zones/$Z/dns_records?name=data.lux-inv.com" | j
+          echo "== DNS 와일드카드"; [ -n "$Z" ] && curl -sS -H "$H" "$B/zones/$Z/dns_records?name=*.lux-inv.com" | j
+          echo "== R2 lux-public 사용자 도메인"; curl -sS -H "$H" "$B/accounts/$A/r2/buckets/lux-public/domains/custom" | j
+          echo "== R2 lux-public 객체 목록(pub/)"; curl -sS -H "$H" "$B/accounts/$A/r2/buckets/lux-public/objects?prefix=pub/" | j
+          echo "== 캐시 규칙"; [ -n "$Z" ] && curl -sS -H "$H" "$B/zones/$Z/rulesets/phases/http_request_cache_settings/entrypoint" | j
+          echo "== 외부에서"; curl -sS -D - -o /dev/null https://data.lux-inv.com/pub/state.json | head -20
