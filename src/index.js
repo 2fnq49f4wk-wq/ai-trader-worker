@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.761";
+const _BUILD_VER = "V33.762";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8849,6 +8849,7 @@ async function _luxProfileApi(DB, uid, request) {
     if (!(oldRow && oldRow.profile === _pj && now - Number(oldRow.updated_ts || 0) < 86400000))
       await DB.prepare("INSERT INTO user_profiles (uid_hash, profile, created_ts, updated_ts) VALUES (?, ?, ?, ?) ON CONFLICT(uid_hash) DO UPDATE SET profile = excluded.profile, updated_ts = excluded.updated_ts")
         .bind(h, _pj, now, now).run();
+    if (JSON.stringify((old && old.pf) || null) !== JSON.stringify(prof.pf || null) || !old) { try { await _luxLbPut(DB, h, prof.pf); } catch (e) {} }   // [V33.762] 순위표 요약(모의계좌가 바뀐 저장만)
     const _res = chk.ok ? { ok: true, profile: prof } : { ok: true, profile: prof, pfRejected: chk.why };
     if (_kept.length) _res.pfKept = _kept;
     return _res;
@@ -8856,6 +8857,7 @@ async function _luxProfileApi(DB, uid, request) {
   if (request.method === "DELETE") {   // [V33.723] 내 데이터 삭제(개인정보 삭제 요구) — 프로필·모의계좌·이 코드에 묶인 패스키까지
     await DB.batch([DB.prepare("DELETE FROM user_profiles WHERE uid_hash = ?").bind(h), DB.prepare("DELETE FROM user_accounts WHERE uid_hash = ?").bind(h)]).catch(function () {});
     try { await DB.prepare("DELETE FROM user_nicks WHERE uid_hash = ?").bind(h).run(); } catch (e) {}
+    try { await DB.prepare("DELETE FROM user_lb WHERE uid_hash = ?").bind(h).run(); } catch (e) {}   // [V33.762]
     return { ok: true, deleted: true };
   }
   const r = await DB.prepare("SELECT profile, updated_ts FROM user_profiles WHERE uid_hash = ?").bind(h).first();
@@ -8867,6 +8869,26 @@ async function _luxProfileApi(DB, uid, request) {
   return { ok: true, profile: prof };
 }
 const LUX_RETAIN_MS = 365 * 86400000;
+/* [V33.762] ★순위표 요약 행★ — 종전 순위 계산은 한 시간마다 모든 프로필(최대 32KB)을 통째로 읽어 파싱했다: 1만 명이면 최대 ~320MB → 워커 메모리 128MB 초과로
+   순위 갱신이 멈춘다. 저장할 때 모의계좌 요약(시작금·현금·보유 수량/평단·개설 시각)만 user_lb 한 행에 함께 쓰고, 순위는 그 요약만 읽는다(한 명 ~수백 B).
+   비용: 모의계좌가 바뀐 저장에만 1행 더 씀(같은 내용 재저장은 V33.753 대로 0). */
+function _luxLbSum(pf) {
+  const o = {};
+  for (const mk of ["us", "kr"]) { const a = pf && pf[mk]; if (!a || !(a.start > 0)) continue;
+    const pos = {}; Object.keys(a.pos || {}).forEach(function (k) { const x = a.pos[k]; if (x && x.q > 0) pos[k] = [x.q, x.avg]; });
+    o[mk] = { s: a.start, c: a.cash, t0: a.t0 || 0, p: pos }; }
+  return o;
+}
+async function _luxLbTbl(DB) {
+  if (globalThis.__luxLbTbl) return;
+  await DB.prepare("CREATE TABLE IF NOT EXISTS user_lb (uid_hash TEXT PRIMARY KEY, sum TEXT NOT NULL, ts INTEGER NOT NULL)").run();
+  globalThis.__luxLbTbl = true;
+}
+async function _luxLbPut(DB, h, pf) {
+  const v = JSON.stringify(_luxLbSum(pf));
+  const run = function () { return DB.prepare("INSERT INTO user_lb (uid_hash, sum, ts) VALUES (?, ?, ?) ON CONFLICT(uid_hash) DO UPDATE SET sum = excluded.sum, ts = excluded.ts WHERE user_lb.sum IS NOT excluded.sum").bind(h, v, Date.now()).run(); };
+  try { await run(); } catch (e) { if (!/no such table/i.test(String(e && e.message || e))) throw e; globalThis.__luxLbTbl = false; await _luxLbTbl(DB); await run(); }
+}
 const _luxRate = new Map();
 function luxRateOk(key) { const now = Date.now(), r = _luxRate.get(key) || { t: now, n: 0 }; if (now - r.t > 60000) { r.t = now; r.n = 0; } r.n++; _luxRate.set(key, r); if (_luxRate.size > 5000) _luxRate.clear(); return r.n <= 30; }
 function _luxSrvPx(qv) { if (!qv) return null; const st = qv.mstate; if (st === "PRE" && qv.pre > 0) return qv.pre; if ((st === "POST" || st === "POSTPOST") && qv.post > 0) return qv.post; return qv.price > 0 ? qv.price : null; }
@@ -8916,23 +8938,28 @@ async function luxLedgerCheck(DB, oldPf, newPf) {
 const LUX_NICK_BAN = ["admin", "관리자", "운영자", "lux", "luxengine", "claude", "anthropic", "official", "공식"];
 /* [V33.725] ★수익률 순위★ — 1시간에 한 번만 계산(swrJson) · 서버 시세로 평가(사용자가 보낸 평가액을 믿지 않는다) · 닉네임 있는 계좌만 · 시장별 상위 50 */
 async function luxLeaderboard(DB) {
+  /* [V33.762] ★요약 행만 읽는다★(user_lb · 한 명 수백 B) — 종전: 모든 프로필 통째(1만 명이면 ~320MB · 메모리 초과).
+     요약이 아직 없는 계정(이 판 전에 저장한 사람)은 한 번에 300명씩 프로필에서 요약을 만들어 채운다(몇 회차면 끝 · 그 뒤로는 0).
+     [V33.757] 마이너스·0% 도 순위 · 같은 수익률 같은 순위 · 상위 100 · 시장별 인원. */
   let rows = [];
-  try { /* [V33.746] ★순위가 늘 비어 있었다★(사용자 11/4) — V33.729 부터 계정은 user_accounts 에만 생기는데 여기는 옛 닉네임 표(user_nicks)만 붙여 0명이었다.
-       계정 표를 기본으로, 옛 표 닉네임(패스키 시절)도 합친다. */
-    try { await _luxAcctTbl(DB); } catch (e) {}
-    rows = ((await DB.prepare("SELECT a.nick AS nick, p.profile AS profile FROM user_accounts a JOIN user_profiles p ON p.uid_hash = a.uid_hash LIMIT 20000").all()).results) || [];
-    try { const _old = ((await DB.prepare("SELECT n.nick AS nick, p.profile AS profile FROM user_nicks n JOIN user_profiles p ON p.uid_hash = n.uid_hash WHERE n.uid_hash NOT IN (SELECT uid_hash FROM user_accounts) LIMIT 5000").all()).results) || []; rows = rows.concat(_old); } catch (e) {} } catch (e) { return { ok: true, ts: Date.now(), us: [], kr: [], n: 0 }; }
-  const accs = [], syms = [];
-  for (const r of rows) { let pr = null; try { pr = JSON.parse(r.profile); } catch (e) {} if (!pr || !pr.pf) continue;
-    for (const mk of ["us", "kr"]) { const a = pr.pf[mk]; if (!a || !(a.start > 0)) continue; accs.push({ nick: r.nick, mk: mk, a: a }); Object.keys(a.pos || {}).forEach(function (k) { syms.push(k); }); } }
-  const Q = await _luxQuotes(DB, syms);
+  try {
+    try { await _luxAcctTbl(DB); await _luxLbTbl(DB); } catch (e) {}
+    try {
+      const miss = ((await DB.prepare("SELECT a.uid_hash AS h, p.profile AS profile FROM user_accounts a JOIN user_profiles p ON p.uid_hash = a.uid_hash LEFT JOIN user_lb l ON l.uid_hash = a.uid_hash WHERE l.uid_hash IS NULL LIMIT 300").all()).results) || [];
+      for (const m of miss) { let pr = null; try { pr = JSON.parse(m.profile); } catch (e) {} try { await _luxLbPut(DB, m.h, pr && pr.pf); } catch (e) {} }
+    } catch (e) {}
+    rows = ((await DB.prepare("SELECT a.nick AS nick, l.sum AS sum FROM user_accounts a JOIN user_lb l ON l.uid_hash = a.uid_hash LIMIT 50000").all()).results) || [];
+  } catch (e) { return { ok: true, ts: Date.now(), us: [], kr: [], n: 0 }; }
+  const accs = [], syms = {};
+  for (const r of rows) { let sm = null; try { sm = JSON.parse(r.sum); } catch (e) {} if (!sm) continue;
+    for (const mk of ["us", "kr"]) { const a = sm[mk]; if (!a || !(a.s > 0)) continue; accs.push({ nick: r.nick, mk: mk, a: a }); Object.keys(a.p || {}).forEach(function (k) { syms[k] = 1; }); } }
+  const Q = await _luxQuotes(DB, Object.keys(syms));
   const out = { us: [], kr: [] };
   for (const x of accs) {
-    let eq = x.a.cash;
-    for (const k of Object.keys(x.a.pos || {})) { const p = x.a.pos[k], sp = _luxSrvPx(Q[k]) || p.avg; eq += p.q * sp; }
-    out[x.mk].push({ nick: x.nick, ret: +((eq / x.a.start - 1) * 100).toFixed(2), days: Math.max(1, Math.round((Date.now() - (x.a.t0 || Date.now())) / 86400000)), n: Object.keys(x.a.pos || {}).length });
+    let eq = _num(x.a.c, 0);
+    for (const k of Object.keys(x.a.p || {})) { const p = x.a.p[k], sp = _luxSrvPx(Q[k]) || p[1]; eq += p[0] * sp; }
+    out[x.mk].push({ nick: x.nick, ret: +((eq / x.a.s - 1) * 100).toFixed(2), days: Math.max(1, Math.round((Date.now() - (x.a.t0 || Date.now())) / 86400000)), n: Object.keys(x.a.p || {}).length });
   }
-  /* [V33.757] ★마이너스·0% 도 그냥 순위로★(사용자 11/4) — 거래 0건(0%)·손실 계좌도 넣는다 · 같은 수익률은 같은 순위(1·2·2·4) · 상위 100 · 시장별 전체 인원(cnt) */
   const cnt = { us: out.us.length, kr: out.kr.length };
   ["us", "kr"].forEach(function (mk) { out[mk].sort(function (a, b) { return b.ret - a.ret; }); out[mk] = out[mk].slice(0, 100);
     out[mk].forEach(function (x, i) { x.rk = i > 0 && x.ret === out[mk][i - 1].ret ? out[mk][i - 1].rk : i + 1; }); });
@@ -22807,6 +22834,37 @@ async function statePubWrite(env) {
   return { kb: Math.round(out.length / 1024) };
 }
 
+/* [V33.762] ★공용 피드도 CDN 으로★(사용자 11/4 "유저가 늘 때 문제 · 비용부터") — 상태(V33.759) 다음으로 요청이 많은 공용 GET(누구에게나 같은 응답)을
+   크론이 정해진 주기마다 자기 핸들러로 한 번 만들어 R2 공개 버킷 pub/f/<키>.js 에 쓴다(본문 = {"_pubAt":시각,"d":원래 JSON}).
+   화면 관문이 이 목록의 주소는 CDN 을 먼저 읽는다 — 방문자가 늘어도 워커 요청·CPU·D1 이 늘지 않는다. 개인 데이터(/api/me 등)는 목록에 없다.
+   주기(초)는 화면 최소 간격과 같거나 짧게. 크론 1분에 최대 몇 개만(바쁜 크론을 늘리지 않게 · 기한 지난 것부터). */
+const PUB_FEEDS = { "/api/trades?limit=50": 60, "/api/kr-halt": 60, "/api/heatmap": 60, "/api/ai-mode": 120, "/api/ai-picks": 120, "/api/news-picks": 300,
+  "/api/commodities": 120, "/api/news": 120, "/api/pipeline": 120, "/api/diag": 120, "/api/fx": 120, "/api/bonds": 120, "/api/alerts": 120,
+  "/api/crisis": 180, "/api/events": 240, "/api/trades?limit=3000": 300, "/api/shard_meta": 600, "/api/econ": 600, "/api/earnings": 900,
+  "/api/insider": 600, "/api/econ-impact": 900, "/api/ta-screener": 600, "/api/leaderboard": 600 };
+function pubFeedKey(u) { return "pub/f/" + String(u).replace(/^\/api\//, "").replace(/[^A-Za-z0-9]+/g, "_") + ".js"; }
+async function feedPubWrite(env, ctx, budgetMs) {
+  const PUB = env && env.PUB; if (!PUB) return null;
+  const t0 = Date.now();
+  let ts = {}; try { ts = (await getState(env.DB, "pub_feed_ts", {}, true)) || {}; } catch (e) { return null; }   // 엄격 읽기 — 못 읽으면 이번 회차는 쉰다(되쓰기로 기록을 지우지 않게)
+  const due = Object.keys(PUB_FEEDS).filter(function (u) { return t0 - _num(ts[u], 0) >= PUB_FEEDS[u] * 1000 - 15000; })
+    .sort(function (a, b) { return _num(ts[a], 0) - _num(ts[b], 0); });
+  let n = 0;
+  for (const u of due) {
+    if (Date.now() - t0 > (budgetMs || 8000)) break;
+    try {
+      const r = await handleRequest(new Request("https://lux-inv.com" + u, { headers: { "x-lux-pub": "1" } }), env, ctx, true);
+      if (!r || !r.ok) continue;
+      const b = await r.text();
+      if (!b || (b.charAt(0) !== "{" && b.charAt(0) !== "[")) continue;
+      await PUB.put(pubFeedKey(u), '{"_pubAt":' + Date.now() + ',"d":' + b + "}", { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "public, max-age=" + Math.min(60, PUB_FEEDS[u]) + ", s-maxage=" + Math.min(60, PUB_FEEDS[u]) } });
+      ts[u] = Date.now(); n++;
+    } catch (e) {}
+  }
+  if (n) { try { await setState(env.DB, "pub_feed_ts", ts); } catch (e) {} }
+  return { n: n, due: due.length, ms: Date.now() - t0 };
+}
+
 async function refreshPriceShard(env, market, shard) {
   const DB = env.DB;
   const t0 = Date.now();
@@ -33950,7 +34008,7 @@ async function handleRequest(request, env, ctx, _inner) {
     /* [V33.721] ★개인화 프로필★(사용자 11/2 "개인 수요에 맞게 · 수익화는 나중 · 구현부터") — 로그인 없이 기기 토큰(브라우저가 만든 32~64자 16진수).
        서버는 토큰의 SHA-256 만 키로 쓰고 개인정보는 받지 않는다(성향·시장·기간·경험·관심종목만). 다른 기기는 같은 토큰(연결 코드)을 넣으면 같은 프로필. */
     if (path === "/api/leaderboard") {   // [V33.725] 수익률 순위 — 1시간 SWR · 누가 몇 번 봐도 계산은 1시간 1번
-      return await swrJson("leaderboard3", 3600000, 6 * 3600000, async function () { return await luxLeaderboard(env.DB); });   // [V33.746] 키 바꿈 — 비어 있던(0명) 옛 캐시를 안 쓰게
+      return await swrJson("leaderboard4", 3600000, 6 * 3600000, async function () { return await luxLeaderboard(env.DB); });   // [V33.746] 키 바꿈 — 비어 있던(0명) 옛 캐시를 안 쓰게
     }
     if (path === "/api/auth/signup" || path === "/api/auth/login" || path === "/api/auth/password") {   // [V33.729] 닉네임 + 비밀번호
       if (request.method !== "POST") return Response.json({ ok: false, error: "POST" }, { status: 405, headers: cors });
@@ -57516,7 +57574,7 @@ export default {
           if (Date.now() - _w > 1800000) { await setState(env.DB, "state_r2_warn", Date.now());
             await log(env.DB, "WARN", null, "[STATE-R2] 상태 사본 사전 빌드 실패: " + ((e && e.message) || e)); } } catch (e2) {}
       }
-      try { if (env.PUB) { const _lr2 = _num(await getState(env.DB, "state_last_req", 0), 0); if (Date.now() - _lr2 < 15 * 60000) await statePubWrite(env); } } catch (e) {}   // [V33.759] CDN 공개 사본(1분마다 · 화면이 열려 있을 때만)
+      try { if (env.PUB) { const _lr2 = _num(await getState(env.DB, "state_last_req", 0), 0); if (Date.now() - _lr2 < 15 * 60000) { await statePubWrite(env); try { await feedPubWrite(env, ctx, 8000); } catch (e2) {} } } } catch (e) {}   // [V33.759] CDN 공개 사본(1분마다 · 화면이 열려 있을 때만)
 
       __prof.mark("backfill");
       // 1.5) [V12.8] 신규 편입 종목 즉시 백필 + [V12.9] 오염 quote 전량 재기록 마이그레이션.
