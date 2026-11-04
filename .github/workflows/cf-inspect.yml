@@ -1,7 +1,12 @@
-name: Cloudflare 설정 점검 (읽기 전용)
-# [V33.759] CDN(data.lux-inv.com) 점검 — 워커 경로·사용자 도메인·R2 공개 도메인·공개 사본 존재를 API 로 읽기만 한다(아무것도 바꾸지 않는다).
+name: Cloudflare 설정 점검
+# [V33.759] CDN(data.lux-inv.com) 점검 — 워커 경로·사용자 도메인·R2 공개 도메인·공개 사본 존재를 읽는다. exclude_data 를 켰을 때만 예외 경로 1개를 추가한다(그 밖엔 바꾸지 않는다).
 on:
   workflow_dispatch:
+    inputs:
+      exclude_data:
+        description: 'data.lux-inv.com/* 를 워커 없는 경로로 추가(와일드카드 *.lux-inv.com/* 예외 · R2 공개 도메인이 직접 답하게)'
+        type: boolean
+        default: false
 jobs:
   inspect:
     runs-on: ubuntu-latest
@@ -26,4 +31,10 @@ jobs:
           echo "== R2 lux-public 사용자 도메인"; curl -sS -H "$H" "$B/accounts/$A/r2/buckets/lux-public/domains/custom" | j
           echo "== R2 lux-public 객체 목록(pub/)"; curl -sS -H "$H" "$B/accounts/$A/r2/buckets/lux-public/objects?prefix=pub/" | j
           echo "== 캐시 규칙"; [ -n "$Z" ] && curl -sS -H "$H" "$B/zones/$Z/rulesets/phases/http_request_cache_settings/entrypoint" | j
+          if [ "${{ inputs.exclude_data }}" = "true" ]; then
+            echo "== 예외 경로 추가(data.lux-inv.com/* → 워커 없음)"
+            EX=$(curl -sS -H "$H" "$B/zones/$Z/workers/routes" | python3 -c 'import sys,json; print(any(r.get("pattern")=="data.lux-inv.com/*" for r in (json.load(sys.stdin).get("result") or [])))')
+            if [ "$EX" = "True" ]; then echo "이미 있음"; else curl -sS -X POST -H "$H" -H "content-type: application/json" "$B/zones/$Z/workers/routes" --data '{"pattern":"data.lux-inv.com/*"}' | j; fi
+            sleep 20
+          fi
           echo "== 외부에서"; curl -sS -D - -o /dev/null https://data.lux-inv.com/pub/state.json | head -20
