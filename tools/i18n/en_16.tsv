@@ -519,3 +519,5 @@ OMNI-Q 거름 없음(전 종목 · 검증이 고름) · 하루·동시 상한이
 종목/페이지 검색…  (예: NVDA, 삼성, 대시보드)	Search stocks/pages…  (e.g. NVDA, Samsung, Dashboard)
 LIVE · {n}초 전 · 첫 사이클 대기 중	LIVE · {n}s ago · waiting for first cycle
 첫 사이클 대기 중	Waiting for first cycle
+{n}:{n} 이후 — 오늘은 발동하지 않아요	After {n}:{n} — will not trigger today
+· {n}:{n} 이후 — 오늘은 발동하지 않아요	· After {n}:{n} — will not trigger today
