@@ -711,7 +711,7 @@
     if (typeof window.showPage === "function") window.showPage("dashboard");
   }
   /* [V33.729] ★로그인 창★ — 대시보드·종목 상세 밖 메뉴로 갈 때 뜬다(V33.727 흐름 그대로). 탭 둘: 로그인 / 회원가입. 오류는 창 안에 글로(팝업 없음). */
-  var PGN = { mine: "MY(내 투자)", positions: "포지션", macro: "뉴스·환율", nnviz: "AI 두뇌", trades: "거래 기록", report: "AI 리포트", whatif: "WHAT-IF" };
+  var PGN = { mine: "MY(내 투자)", positions: "포지션", macro: "뉴스·환율", nnviz: "AI 작동원리 보기", trades: "거래 기록", report: "AI 리포트", whatif: "WHAT-IF" };
   function ask(target, mode) {
     if ($("luxGate")) return;
     css();
