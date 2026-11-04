@@ -12,8 +12,9 @@
   var HANGUL = /[가-힣]/;
   var NUM = /[+\-−]?\d[\d,]*(?:\.\d+)?/g;
   var T = null, G = null, GRE = null, cache = new Map();
+  /* [V33.769] '숫자+주' 는 이 사이트에서 대부분 주식 수량(매수 5주 · 10주 @ ₩…) — 뒤에 전·후·간·동안이 올 때만 기간(1wk ago · 2 weeks) */
   var UNITS = [[/(\d)\s?개월/g, "$1mo"], [/(\d)\s?시간/g, "$1h"], [/(\d)\s?거래일/g, "$1 trading days"], [/(\d)\s?영업일/g, "$1 business days"],
-               [/(\d)\s?일(?![가-힣])/g, "$1d"], [/(\d)\s?분(?![가-힣])/g, "$1m"], [/(\d)\s?초(?![가-힣])/g, "$1s"], [/(\d)\s?주(?=\s?(?:전|후|간|동안)?(?![가-힣]))/g, "$1wk"], [/(\d)\s?년(?![가-힣])/g, "$1y"],
+               [/(\d)\s?일(?![가-힣])/g, "$1d"], [/(\d)\s?분(?![가-힣])/g, "$1m"], [/(\d)\s?초(?![가-힣])/g, "$1s"], [/(\d)\s?주\s?(?=전|후)/g, "$1wk "], [/(\d)\s?주\s?(?:간|동안)(?![가-힣])/g, "$1 weeks"], [/(\d)\s?주(?![가-힣])/g, "$1 sh"], [/(\d)\s?년(?![가-힣])/g, "$1y"],
                [/(\d)\s?건/g, "$1"], [/(\d)\s?개(?![가-힣])/g, "$1"], [/(\d)\s?종목/g, "$1 symbols"], [/(\d)\s?종(?![가-힣])/g, "$1 kinds"], [/(\d)\s?회(?![가-힣])/g, "$1x"],
                [/(\d)\s?배(?![가-힣])/g, "$1x"], [/(\d)\s?표(?![가-힣])/g, "$1 votes"], [/(\d)\s?[인명곳](?![가-힣])/g, "$1"],
                [/(\d)\s?위(?![가-힣])/g, "#$1"], [/(\d)\s?차(?![가-힣])/g, "$1th"],
@@ -68,6 +69,9 @@
     if (!v || !HANGUL.test(v) || lastSet.get(n) === v) return;
     var p = n.parentElement;
     if (!p || SKIP[p.tagName] || p.closest("[data-noi18n]")) return;
+    /* [V33.769] 같은 한글이 자리마다 뜻이 다를 때(차트 '일·주·월' = 일봉·주봉·월봉 ↔ 달력 요일 · '1주' = 1주일 ↔ 주식 1주) 그 요소의 data-en 을 그대로 쓴다 */
+    var de = p.getAttribute && p.getAttribute("data-en");
+    if (de != null && p.childNodes.length === 1) { if (v !== de) { lastSet.set(n, de); n.nodeValue = de; } return; }
     var o = tr(v);
     if (o !== v) { lastSet.set(n, o); n.nodeValue = o; }
   }

@@ -521,3 +521,10 @@ LIVE · {n}초 전 · 첫 사이클 대기 중	LIVE · {n}s ago · waiting for f
 첫 사이클 대기 중	Waiting for first cycle
 {n}:{n} 이후 — 오늘은 발동하지 않아요	After {n}:{n} — will not trigger today
 · {n}:{n} 이후 — 오늘은 발동하지 않아요	· After {n}:{n} — will not trigger today
+일요일	Sunday
+월요일	Monday
+화요일	Tuesday
+수요일	Wednesday
+목요일	Thursday
+금요일	Friday
+토요일	Saturday

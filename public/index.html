@@ -320,11 +320,11 @@ window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{
 window.__luxAct=Date.now();['pointerdown','keydown','touchstart','wheel'].forEach(function(e){addEventListener(e,function(){window.__luxAct=Date.now();},{passive:true,capture:true});});
 window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600000;};
 </script>
-<meta name="lux-build" content="V33.768">
-<script src="/i18n.js?v=33.768" defer></script>
-<script src="/mine.js?v=33.768" defer></script>
-<script src="/stock-info.js?v=33.768" defer></script>
-<script src="/neural-observatory.js?v=33.768" defer></script>
+<meta name="lux-build" content="V33.769">
+<script src="/i18n.js?v=33.769" defer></script>
+<script src="/mine.js?v=33.769" defer></script>
+<script src="/stock-info.js?v=33.769" defer></script>
+<script src="/neural-observatory.js?v=33.769" defer></script>
 <title>LUX-INV</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -5334,9 +5334,9 @@ window.LUX_NV = {
               <button type="button" class="detail-tf-btn" data-tf="15m">15분</button>
               <button type="button" class="detail-tf-btn" data-tf="30m">30분</button>
               <button type="button" class="detail-tf-btn" data-tf="60m">1시간</button>
-              <button type="button" class="detail-tf-btn active" data-tf="1d">일</button>
-              <button type="button" class="detail-tf-btn" data-tf="1wk">주</button>
-              <button type="button" class="detail-tf-btn" data-tf="1mo">월</button>
+              <button type="button" class="detail-tf-btn active" data-tf="1d" data-en="Day">일</button>
+              <button type="button" class="detail-tf-btn" data-tf="1wk" data-en="Week">주</button>
+              <button type="button" class="detail-tf-btn" data-tf="1mo" data-en="Month">월</button>
             </div>
             <div class="detail-ind" id="detailInd">
               <button type="button" class="detail-ind-btn active" data-ind="ma">MA</button>
@@ -9282,12 +9282,12 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
   #page-detail .detail-main .detail-chart{height:46vh !important;min-height:300px !important}
 }
 </style>
-<link rel="stylesheet" href="/brain-console.css?v=33.768">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.768">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.768">
-<link rel="stylesheet" href="/model-evidence.css?v=33.768">
+<link rel="stylesheet" href="/brain-console.css?v=33.769">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.769">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.769">
+<link rel="stylesheet" href="/model-evidence.css?v=33.769">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.768">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.769">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -13835,12 +13835,12 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
   function renderDetailTfSum(sum) {
     var el = $('detailTfSum'); if (!el) return;
     if (!sum) { el.innerHTML = '<div class="empty">데이터 없음</div>'; return; }
-    var rows = [['now','지금'],['week','1주'],['month','1달'],['year','1년']];
+    var rows = [['now','지금','Now'],['week','1주','1W'],['month','1달','1M'],['year','1년','1Y']];   // [V33.769] 3번째 = 영어(data-en · '1주' 가 '1 share' 로 옮겨지던 것)
     var cls = function(lb){ return lb.indexOf('매수')>=0 ? 'pos' : (lb.indexOf('매도')>=0 ? 'neg' : 'flat'); };
     el.innerHTML = rows.map(function(r){
       var tf = sum[r[0]]; if (!tf) return '';
       var pct = Math.round((tf.score + 1) / 2 * 100);   // -1..1 → 0..100 매수강도
-      return '<div class="tfsum-row"><span class="tfsum-k">' + r[1] + '</span>' +
+      return '<div class="tfsum-row"><span class="tfsum-k" data-en="' + r[2] + '">' + r[1] + '</span>' +
         '<div class="tfsum-bar"><div class="tfsum-fill ' + cls(tf.label) + '" style="width:' + pct + '%"></div></div>' +
         '<span class="tfsum-v ' + cls(tf.label) + '">' + tf.label + '</span></div>';
     }).join('');
@@ -21648,11 +21648,11 @@ setTimeout(function(){
         + '</div>';
     }
     if(ex && ex.tf){
-      var order = [['now','지금'],['week','1주'],['month','1달'],['year','1년']], tfs = [];
+      var order = [['now','지금','Now'],['week','1주','1W'],['month','1달','1M'],['year','1년','1Y']], tfs = [];   // [V33.769] 영어는 data-en
       order.forEach(function(o){
         var t = ex.tf[o[0]]; if(!t) return;
         var dir = t.score >= 0.15 ? 1 : (t.score <= -0.15 ? -1 : 0);
-        tfs.push('<span class="w-tf"><b>' + o[1] + '</b> <i class="' + (taDirCls(dir).trim()||'nu') + '">'
+        tfs.push('<span class="w-tf"><b data-en="' + o[2] + '">' + o[1] + '</b> <i class="' + (taDirCls(dir).trim()||'nu') + '">'
           + esc(t.label) + '</i></span>');
       });
       if(tfs.length) html += '<div class="nlv-why-tags"><span class="w-lab">다기간 추세</span>' + tfs.join('') + '</div>';
@@ -22090,8 +22090,8 @@ setTimeout(function(){
   window.addEventListener('load', function(){ setTimeout(function(){ try{ boot(); }catch(e){} }, 0); });
 })();
 </script>
-<script src="/model-evidence.js?v=33.768"></script>
-<script src="/workspace-ui.js?v=33.768"></script>
+<script src="/model-evidence.js?v=33.769"></script>
+<script src="/workspace-ui.js?v=33.769"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {
