@@ -60,7 +60,7 @@ chk(/CREATE TABLE IF NOT EXISTS user_nicks \(nick_key TEXT PRIMARY KEY/.test(S) 
   const pump = f && await f(DB, null, { us: { start: 10000, cash: 50000, pos: {}, hist: [], t0: 1 } });
   chk(ok && ok.ok && fake && !fake.ok && pump && !pump.ok, "장부 검사: 정상 통과 · 가짜 체결가·현금 부풀리기 거부", "★장부 검사가 조작을 못 막는다★");
 }
-chk(/swrJson\("leaderboard2", 3600000/.test(S) && /FROM user_accounts a JOIN user_profiles p/.test(S) && /function luxRateOk\(key\)/.test(S) && /r\.n <= 30/.test(S), "순위는 1시간 1번 계산 · 기기당 쓰기 분당 30", "★순위 계산·쓰기 제한이 빠졌다★");
+chk(/swrJson\("leaderboard3", 3600000/.test(S) && /FROM user_accounts a JOIN user_profiles p/.test(S) && /function luxRateOk\(key\)/.test(S) && /r\.n <= 30/.test(S), "순위는 1시간 1번 계산 · 기기당 쓰기 분당 30", "★순위 계산·쓰기 제한이 빠졌다★");
 chk(/window\.luxMine\.detail\(symbol\)/.test(H) && /function detail\(sym\)/.test(P) && /data-dbuy/.test(P), "종목 상세에 모의 매매 막대", "★종목 상세에서 살 수 없다★");
 // [V33.730] MTS 주문: 예약(지정가)·익절·손절 — 서버는 모양만 검사 · 화면이 시세로 체결 · 차트에 선
 if (clean) {

@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.756";
+const _BUILD_VER = "V33.757";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8924,7 +8924,7 @@ async function luxLeaderboard(DB) {
     try { const _old = ((await DB.prepare("SELECT n.nick AS nick, p.profile AS profile FROM user_nicks n JOIN user_profiles p ON p.uid_hash = n.uid_hash WHERE n.uid_hash NOT IN (SELECT uid_hash FROM user_accounts) LIMIT 5000").all()).results) || []; rows = rows.concat(_old); } catch (e) {} } catch (e) { return { ok: true, ts: Date.now(), us: [], kr: [], n: 0 }; }
   const accs = [], syms = [];
   for (const r of rows) { let pr = null; try { pr = JSON.parse(r.profile); } catch (e) {} if (!pr || !pr.pf) continue;
-    for (const mk of ["us", "kr"]) { const a = pr.pf[mk]; if (!a || !(a.hist && a.hist.length)) continue; accs.push({ nick: r.nick, mk: mk, a: a }); Object.keys(a.pos || {}).forEach(function (k) { syms.push(k); }); } }
+    for (const mk of ["us", "kr"]) { const a = pr.pf[mk]; if (!a || !(a.start > 0)) continue; accs.push({ nick: r.nick, mk: mk, a: a }); Object.keys(a.pos || {}).forEach(function (k) { syms.push(k); }); } }
   const Q = await _luxQuotes(DB, syms);
   const out = { us: [], kr: [] };
   for (const x of accs) {
@@ -8932,8 +8932,11 @@ async function luxLeaderboard(DB) {
     for (const k of Object.keys(x.a.pos || {})) { const p = x.a.pos[k], sp = _luxSrvPx(Q[k]) || p.avg; eq += p.q * sp; }
     out[x.mk].push({ nick: x.nick, ret: +((eq / x.a.start - 1) * 100).toFixed(2), days: Math.max(1, Math.round((Date.now() - (x.a.t0 || Date.now())) / 86400000)), n: Object.keys(x.a.pos || {}).length });
   }
-  ["us", "kr"].forEach(function (mk) { out[mk].sort(function (a, b) { return b.ret - a.ret; }); out[mk] = out[mk].slice(0, 50); });
-  return { ok: true, ts: Date.now(), us: out.us, kr: out.kr, n: accs.length };
+  /* [V33.757] ★마이너스·0% 도 그냥 순위로★(사용자 11/4) — 거래 0건(0%)·손실 계좌도 넣는다 · 같은 수익률은 같은 순위(1·2·2·4) · 상위 100 · 시장별 전체 인원(cnt) */
+  const cnt = { us: out.us.length, kr: out.kr.length };
+  ["us", "kr"].forEach(function (mk) { out[mk].sort(function (a, b) { return b.ret - a.ret; }); out[mk] = out[mk].slice(0, 100);
+    out[mk].forEach(function (x, i) { x.rk = i > 0 && x.ret === out[mk][i - 1].ret ? out[mk][i - 1].rk : i + 1; }); });
+  return { ok: true, ts: Date.now(), us: out.us, kr: out.kr, n: accs.length, cnt: cnt };
 }
 
 /* [V33.729] ★닉네임 + 비밀번호 로그인★ — 사용자 11/2 "패스키 말고 닉네임으로 로그인 · 비밀번호". 패스키(V33.723~727)는 뺐다.
@@ -33924,7 +33927,7 @@ async function handleRequest(request, env, ctx, _inner) {
     /* [V33.721] ★개인화 프로필★(사용자 11/2 "개인 수요에 맞게 · 수익화는 나중 · 구현부터") — 로그인 없이 기기 토큰(브라우저가 만든 32~64자 16진수).
        서버는 토큰의 SHA-256 만 키로 쓰고 개인정보는 받지 않는다(성향·시장·기간·경험·관심종목만). 다른 기기는 같은 토큰(연결 코드)을 넣으면 같은 프로필. */
     if (path === "/api/leaderboard") {   // [V33.725] 수익률 순위 — 1시간 SWR · 누가 몇 번 봐도 계산은 1시간 1번
-      return await swrJson("leaderboard2", 3600000, 6 * 3600000, async function () { return await luxLeaderboard(env.DB); });   // [V33.746] 키 바꿈 — 비어 있던(0명) 옛 캐시를 안 쓰게
+      return await swrJson("leaderboard3", 3600000, 6 * 3600000, async function () { return await luxLeaderboard(env.DB); });   // [V33.746] 키 바꿈 — 비어 있던(0명) 옛 캐시를 안 쓰게
     }
     if (path === "/api/auth/signup" || path === "/api/auth/login" || path === "/api/auth/password") {   // [V33.729] 닉네임 + 비밀번호
       if (request.method !== "POST") return Response.json({ ok: false, error: "POST" }, { status: 405, headers: cors });

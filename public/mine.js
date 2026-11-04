@@ -106,15 +106,15 @@
       if (who !== uid()) return;
       if (!j || j.ok === false) { loaded = false; return; }
       synced = true;
-      if (j.profile && editSeq === seq && !isDirty()) { adopt(j.profile); sync.st = "ok"; sync.ts = Date.now(); draw(); }
+      if (j.profile && editSeq === seq && !isDirty()) { adopt(j.profile); sync.st = "ok"; sync.ts = Date.now(); draw(); ensureAccts(); }
       else if (j.profile) {
         /* 이 기기에 못 보낸 변경이 있다 — 서버 것과 합친다: 관심종목은 합집합, 모의계좌는 서버가 시장별로 더 새 것을 지킨다(pfKept) */
         if (j.profile.nick) prof.nick = j.profile.nick;
         (j.profile.watch || []).forEach(function (x) { if (prof.watch.indexOf(x) < 0 && prof.watch.length < 40) prof.watch.push(x); });
         if (!prof.pf && j.profile.pf) prof.pf = j.profile.pf;
-        saveLocal(); draw(); push();
+        saveLocal(); draw(); push(); ensureAccts();
       }
-      else if (prof.done || isDirty()) push();
+      else { if (prof.done || isDirty()) push(); ensureAccts(); }
     }).catch(function () { loadingNow = false; loaded = false; });
   }
   function quotes() { return window.__lastQuotesArr || []; }
@@ -175,6 +175,8 @@
 
   // ── 모의계좌 ──
   function acct(mk) { if (!prof.pf) prof.pf = {}; if (!prof.pf[mk]) prof.pf[mk] = { start: START[mk], cash: START[mk], pos: {}, hist: [], t0: Date.now() }; return prof.pf[mk]; }
+  /* [V33.757] ★계정이 생기면 미국·한국 모의계좌 둘 다 바로 연다★(사용자 11/4) — 서버 사본을 받은 뒤(synced)에만: 다른 기기에서 이미 연 계좌를 새 빈 계좌로 덮지 않게 */
+  function ensureAccts() { if (!isAuth() || !synced) return; var made = 0; ["us", "kr"].forEach(function (m) { if (!prof.pf || !prof.pf[m]) { acct(m); made++; } }); if (made) { persist(); draw(); } }
   function has(mk) { return !!(prof.pf && prof.pf[mk]); }
   function held(sym) { var mk = isKr(sym) ? "kr" : "us"; return has(mk) && prof.pf[mk].pos[sym] ? prof.pf[mk].pos[sym].q : 0; }
   function todayKey(mk, ts) { try { return new Date(ts || Date.now()).toLocaleDateString("en-CA", { timeZone: mk === "kr" ? "Asia/Seoul" : "America/New_York" }); } catch (e) { return new Date(ts || Date.now()).toDateString(); } }
@@ -437,11 +439,11 @@
     var h = '<div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 12px"><span class="h2">모의투자 수익률 순위</span><span class="seg">' + ["us", "kr"].map(function (m) { return '<button type="button" data-rkmk="' + m + '" class="' + (m === rkMk ? "on" : "") + '">' + MK[m] + "</button>"; }).join("") + "</span></div>";
     var myI = -1; for (var ii = 0; ii < rows.length; ii++) if (me && rows[ii].nick === me) { myI = ii; break; }
     var mv = val(rkMk);
-    h += '<section class="card myrk"><div class="l"><span class="sb">내 순위 · ' + MK[rkMk] + '</span><span class="h1" style="font-size:26px">' + (myI >= 0 ? (myI + 1) + "위" : "순위 밖") + '</span><span class="sb">' +
-      (myI >= 0 ? "상위 " + rows.length + "명 중" : !mv ? MK[rkMk] + " 모의계좌가 아직 없어요" : prof.pf[rkMk].hist.length ? "다음 정각 계산에 반영되거나 상위 50 밖이에요" : "거래 1건 이상이면 순위에 들어가요") + '</span></div><div class="r"><span class="sb">내 수익률</span><span class="h2 ' + (mv ? cls(mv.ret) : myI >= 0 ? cls(rows[myI].ret) : "mu") + '">' + (mv ? pctS(mv.ret) : myI >= 0 ? pctS(rows[myI].ret) : "—") + "</span></div></section>";
+    h += '<section class="card myrk"><div class="l"><span class="sb">내 순위 · ' + MK[rkMk] + '</span><span class="h1" style="font-size:26px">' + (myI >= 0 ? (rows[myI].rk || myI + 1) + "위" : "순위 밖") + '</span><span class="sb">' +
+      (myI >= 0 ? (LB && LB.cnt && LB.cnt[rkMk] ? LB.cnt[rkMk] : rows.length) + "명 중" : !mv ? MK[rkMk] + " 모의계좌가 아직 없어요" : "다음 정각 계산에 반영되거나 상위 100 밖이에요") + '</span></div><div class="r"><span class="sb">내 수익률</span><span class="h2 ' + (mv ? cls(mv.ret) : myI >= 0 ? cls(rows[myI].ret) : "mu") + '">' + (mv ? pctS(mv.ret) : myI >= 0 ? pctS(rows[myI].ret) : "—") + "</span></div></section>";
     h += '<section class="card">' + (rows.length ? rows.map(function (r, i) {
       var mine = me && r.nick === me;
-      return '<div class="row" style="cursor:default' + (mine ? ";background:rgba(61,214,181,.08);border-radius:10px" : "") + '"><span class="rk' + (i < 3 ? " hot" : "") + '">' + (i + 1) + '</span><div class="l"><span class="nm">' + esc(r.nick) + (mine ? ' <span class="pill">나</span>' : "") + '</span><span class="sb">' + r.days + "일째 · 보유 " + r.n + '종목</span></div><div class="r"><span class="p ' + cls(r.ret) + '">' + pctS(r.ret) + "</span></div></div>";
+      return '<div class="row" style="cursor:default' + (mine ? ";background:rgba(61,214,181,.08);border-radius:10px" : "") + '"><span class="rk' + ((r.rk || i + 1) <= 3 ? " hot" : "") + '">' + (r.rk || i + 1) + '</span><div class="l"><span class="nm">' + esc(r.nick) + (mine ? ' <span class="pill">나</span>' : "") + '</span><span class="sb">' + r.days + "일째 · 보유 " + r.n + '종목</span></div><div class="r"><span class="p ' + cls(r.ret) + '">' + pctS(r.ret) + "</span></div></div>";
     }).join("") : '<div class="empty">' + (LB ? "아직 순위에 오른 계좌가 없습니다. 첫 번째가 되어 보세요." : "순위를 불러오는 중…") + "</div>") +
       '<div class="note" style="margin-top:6px">서버가 실제 시세로 1시간마다 다시 계산합니다' + (LB && LB.ts ? " · " + new Date(LB.ts).toLocaleTimeString() + " 기준" : "") + " · 가상 자금 · 투자 권유 아님</div></section>";
     return h;
@@ -690,6 +692,7 @@
   function remember(nick, since) { try { localStorage.setItem("lux-auth", nick); if (since) localStorage.setItem("lux-auth-ts", String(since)); localStorage.removeItem("lux-pk"); localStorage.removeItem("lux-gate"); } catch (e) {} try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {} }
   function authPost(path, body) { return fetch(path, { method: "POST", headers: { "content-type": "application/json", "x-lux-uid": uid() }, body: JSON.stringify(body) }).then(function (r) { return r.json(); }); }
   function signup(nick, pw) {
+    acct("us"); acct("kr"); saveLocal();   // [V33.757] 가입과 함께 두 시장 모의계좌(시작금 $10,000 · ₩10,000,000)
     return api("POST", Object.assign({}, prof)).catch(function () {}).then(function () { return authPost("/api/auth/signup", { nick: nick, pw: pw, agree: TERMS_VER }); }).then(function (j) {
       if (!j || !j.ok) throw new Error((j && j.error) || "가입하지 못했어요");
       remember(j.nick, j.created); prof.nick = j.nick; saveLocal(); return j;
