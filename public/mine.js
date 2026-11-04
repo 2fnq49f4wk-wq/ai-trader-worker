@@ -431,8 +431,11 @@
     return h;
   }
   /* [V33.725] ★수익률 순위★ — 서버가 1시간에 한 번 계산한 표(/api/leaderboard)를 받는다. 이 기기는 5분에 한 번만 다시 받는다. */
-  var LB = null, lbTs = 0, rkMk = "us";
-  function lbLoad(force) { if (!force && Date.now() - lbTs < 300000) return; lbTs = Date.now(); fetch("/api/leaderboard").then(function (r) { return r.json(); }).then(function (j) { LB = j; draw(); }).catch(function () {}); }
+  /* [V33.758] ★순위표는 기기 사본을 먼저 그린다★(사용자 11/4 "순위표 로딩 느리다") — 탭을 열 때마다 '불러오는 중…' 을 보던 것을
+     마지막으로 받은 표(lux-lb · 서버도 1시간마다 계산)로 바로 그리고 뒤에서 새로 받는다. 접속 뒤 미리 받기는 아래 boot 에서 1회. */
+  var LBK = "lux-lb", LB = null, lbTs = 0, rkMk = "us";
+  try { LB = JSON.parse(localStorage.getItem(LBK) || "null"); } catch (e) { LB = null; }
+  function lbLoad(force) { if (!force && Date.now() - lbTs < 300000) return; lbTs = Date.now(); fetch("/api/leaderboard").then(function (r) { return r.json(); }).then(function (j) { if (!j || !j.ok) return; var same = LB && LB.ts === j.ts; LB = j; try { localStorage.setItem(LBK, JSON.stringify(j)); } catch (e) {} var pm = $("page-mine"); if (!same && pm && pm.classList.contains("active")) draw(); }).catch(function () {}); }
   function rankTab() {
     lbLoad(false);
     var rows = (LB && LB[rkMk]) || [], me = prof.nick;
@@ -820,7 +823,7 @@
     new MutationObserver(function () { if (pg.classList.contains("active")) onShow(); }).observe(pg, { attributes: true, attributeFilter: ["class"] });
     if (pg.classList.contains("active")) onShow();
     if (isAuth() || isDirty()) setTimeout(function () { load(false); }, 2500);
-    if (isAuth()) setTimeout(function () { if (!document.hidden) pbLoad(false); }, 4000);   // [V33.748] MY 를 열기 전에 AI 판정을 미리 받아 둔다(로그인한 사람만 · 접속당 1회 · 엣지 캐시 30초)   // [V33.741] 로그인한 사람은 MY 를 안 열어도 한 번 맞춰 둔다 — 종목 상세에서 산 것이 다른 기기의 새 기록을 옛 사본으로 덮지 않게(세션당 GET 1회)
+    if (isAuth()) setTimeout(function () { if (!document.hidden) { pbLoad(false); lbLoad(false); } }, 4000);   // [V33.758] 순위표도 미리   // [V33.748] MY 를 열기 전에 AI 판정을 미리 받아 둔다(로그인한 사람만 · 접속당 1회 · 엣지 캐시 30초)   // [V33.741] 로그인한 사람은 MY 를 안 열어도 한 번 맞춰 둔다 — 종목 상세에서 산 것이 다른 기기의 새 기록을 옛 사본으로 덮지 않게(세션당 GET 1회)
     setInterval(function () { if (!document.hidden && pg.classList.contains("active")) { pbLoad(false); var ae = document.activeElement; if (!$("mineSheet") && !(ae && (ae.id === "mineSearch" || /^mePw/.test(ae.id || "")))) draw(); } }, 60000);
   }
   /* [V33.734] ★첫 방문 동의 배너★ — 쿠키는 쓰지 않음 · 필수 저장소만 · 선택 2개(외부 글꼴 · 성능 진단). 고르기 전엔 선택 항목을 하지 않는다. */
