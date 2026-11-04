@@ -12,7 +12,7 @@ chk(/all\(\(w\.get\(rg_now\) or \{\}\)\.get\("n", 0\) >= NMIN and \(\(w\.get\(rg
     "실전 자격 = 지금 국면 [60,80%)·[80,100%) 둘 다 거래당 ≥ +5% · 표본 ≥ NMIN", "★실전 자격 문턱이 바뀌었다(사용자 승인 없이 낮추지 말 것)★");
 chk(/NMIN, TH = 750, 63, 20, 3\.0/.test(SL), "WIN 750 · 분기 63 · 표본 20 · 근거 문턱 +3%(사전 등록)", "★워크포워드 설정이 바뀌었다★");
 chk(/"sleeve": sleeve/.test(PB) && /import regime_sleeve as RSL/.test(PB), "학습기 업로드에 sleeve", "★학습기가 국면 전략을 안 올린다★");
-chk(/rec\.sleeve = \(body\.sleeve/.test(S) && /sleeve: r\.sleeve \|\| null/.test(S), "워커 저장 · /api/playbook 노출", "★워커가 sleeve 를 버린다★");
+chk(/rec\.sleeve = \(body\.sleeve/.test(S) && /sleeve: \(mk === "kr" && r\.sleeve && krMarketStateNow\(\) !== "REGULAR"\) \? pbSleeveWithExt\(r\.sleeve, st0\["kr_ext_reg"\], r\.day\) : \(r\.sleeve \|\| null\)/.test(S), "워커 저장 · /api/playbook 노출", "★워커가 sleeve 를 버린다★");
 /* [V33.706] 사용자 10/29 명시 승인 — 시험 투입(검증 ≥ +5% · 판정 > 0 · 각 n ≥ 20) 추가. 문턱이 더 느슨해지면 막는다. */
 chk(/!\(SL\.live \|\| trial \|\| ctx\.shadow\)\) return null/.test(S) && /if \(slp && \(st\.sleeve\.live \|\| slp\.trial \|\| ctx\.shadow\)\) return slp/.test(S), "워커는 실전 자격(live) 또는 시험 투입일 때만 실제로 고른다 · 아니면 관측", "★자격 없이 국면 전략으로 산다★");
 chk(/const PB_SLEEVE_TRIAL = \{ vMin: 5, hMin: 0, nMin: 20 \};/.test(S), "시험 투입 문턱(검증 ≥ +5% · 판정 > 0 · n ≥ 20 · 사용자 승인 10/29)", "★시험 투입 문턱이 바뀌었다(사용자 승인 필요)★");
@@ -24,5 +24,11 @@ chk(/RG\.map\(\(r\) => \{ const b = BR\[r\]/.test(UI) && /"thin": True/.test(PB)
 chk(/st\["regGate"\] = _reg_gate\(_pick\(tabs1\[rule\.get\("decay"\)\], va, rule, hist=df\), pk\)/.test(PB) && /REG_GATE_N = 20/.test(PB) && /if n >= REG_GATE_N and mu is not None and mu <= 0:/.test(PB),
     "국면 게이트: 검증 구간 손실 국면만(판정 구간 안 봄 · 사전 등록 문턱)", "★국면 게이트가 판정 구간을 보거나 문턱이 바뀌었다★");
 chk(/ctx\.shadow \|\| \(!pbRegGateOff\(st\) && pbDailyTrialOk/.test(S) && /GO\.indexOf\(r\) >= 0/.test(UI), "워커 매수 게이트 · 화면 표시", "★국면 게이트가 워커·화면에 안 이어졌다★");
+// [V33.756] 한국 국면 = 코스피 지수 · 시간외 가상 하루로 국면 다시 판단(문턱·자격 식은 그대로)
+chk(/REG_INDEX = \{"kr": "\^KS11"\}/.test(SL) && /reg5, M3s, ext_tail = regime_from_returns\(rix\)/.test(SL) && /"regSrc": reg_src, "bySyms": by_syms/.test(SL),
+    "[V33.756] 한국 국면 지수 = 코스피(없으면 KODEX 200 → 등가중) · 국면별 오늘 종목·청산 내보냄", "★국면 지수/시간외 재료가 빠졌다★");
+chk(/const cr = e <= -th1 \|\| r5 <= -th5 \|\| \(X\.cr \|\| \[\]\)\.some\(Boolean\)/.test(S) && /_num\(w\.n, 0\) >= 20 && _num\(w\.mean, -99\) >= 5/.test(S) && /String\(xr\.day\) !== String\(day\)/.test(S),
+    "[V33.756] 시간외 국면 = 학습기와 같은 식(하루 ±2.5% · 5일 ±6% · 3일 안) · 바뀐 국면의 자격도 +5%·20건 · 학습기 판이 바뀌면 버림", "★시간외 국면 식/자격이 학습기와 어긋난다★");
+chk(/__sr = Object\.assign\(\{\}, __sr, \{ sleeve: pbSleeveWithExt\(__sr\.sleeve, _xr, __sr\.day\) \}\)/.test(S), "[V33.756] 매매 사이클이 시간외 반영 국면으로 산다", "★매매 사이클에 시간외 국면이 안 붙는다★");
 if (fails) { console.log("✗ 국면 전략 계약 실패 " + fails); process.exit(1); }
 console.log("✓ 국면 전략 계약 통과");

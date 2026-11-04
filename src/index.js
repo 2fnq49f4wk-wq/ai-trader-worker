@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.755";
+const _BUILD_VER = "V33.756";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -14414,6 +14414,55 @@ function pbSleeveTrial(SL) {
   const v = SL.wf && SL.wf.V && SL.wf.V[SL.reg], h = SL.wf && SL.wf.H && SL.wf.H[SL.reg];
   return !!(v && h && _num(v.n, 0) >= PB_SLEEVE_TRIAL.nMin && _num(h.n, 0) >= PB_SLEEVE_TRIAL.nMin && _num(v.mean, -99) >= PB_SLEEVE_TRIAL.vMin && _num(h.mean, -99) > PB_SLEEVE_TRIAL.hMin);
 }
+/* [V33.756] ★시간외를 국면 판단에 넣는다★(사용자 11/4 "국면 파악에 시간외 데이터도 포함") — 학습기 국면은 어제 정규장 종가까지다.
+   장후(15:40~20:00 · 그 뒤 밤)·장전(08:00~08:50)에 코스피 대형주 바구니(학습기 sleeve.ext.basket · 거래대금 비중 30종)의
+   시간외 체결가 변화를 '가상의 하루' 로 덧붙여 학습기와 ★같은 식★(하루 ±2.5% · 5일 ±6% · 3일 안)으로 폭락·폭등을 다시 정한다.
+   국면이 바뀌면 그 국면의 전략·종목·청산(학습기 by[국면].pr · bySyms)으로 바꾸고, 실전/시험 자격도 그 국면의 워크포워드로 다시 본다(문턱 그대로).
+   비용: 크론의 한국 사이클에서만 3분에 한 번 30행 읽기 · 결과는 kr_ext_reg 1행(화면은 같은 묶음 읽기에 끼워 추가 쿼리 0). */
+const PB_EXT_REG = { minN: 10, minCov: 0.5, cacheMs: 180000, maxAgeMs: 14 * 3600000 };
+function pbExtRegime(SL, e) {
+  const X = SL && SL.ext; if (!X || !Array.isArray(X.r) || !(typeof e === "number" && isFinite(e))) return null;
+  let r5 = 1 + e; X.r.forEach(function (x) { r5 *= 1 + _num(x, 0); }); r5 -= 1;
+  const th1 = _num(X.th1, 0.025), th5 = _num(X.th5, 0.06);
+  const cr = e <= -th1 || r5 <= -th5 || (X.cr || []).some(Boolean), su = e >= th1 || r5 >= th5 || (X.su || []).some(Boolean);
+  return cr ? "CRASH" : su ? "SURGE" : String(X.base || SL.reg);
+}
+function pbSleeveWithExt(SL, xr, day) {
+  if (!SL || !xr || !xr.reg || !(Date.now() - _num(xr.ts, 0) < PB_EXT_REG.maxAgeMs) || String(xr.day) !== String(day)) return SL;   // 학습기 판(day)이 바뀌면 옛 시간외 판정을 버린다
+  const info = { from: SL.reg, e: xr.e, n: xr.n, cov: xr.cov, sess: xr.sess, ts: xr.ts };
+  if (xr.reg === SL.reg) return Object.assign({}, SL, { extReg: info });
+  const b = SL.by && SL.by[xr.reg], RK = { SURGE: "폭등", BULL: "상승", NEUTRAL: "보합", BEAR: "하락", CRASH: "폭락" };
+  const ok = function (w) { return !!(w && _num(w.n, 0) >= 20 && _num(w.mean, -99) >= 5); };
+  const live = !!(b && ok(SL.wf && SL.wf.V && SL.wf.V[xr.reg]) && ok(SL.wf && SL.wf.H && SL.wf.H[xr.reg]));
+  return Object.assign({}, SL, { reg: xr.reg, regKo: RK[xr.reg] || xr.reg, cur: b || null, syms: b ? ((SL.bySyms && SL.bySyms[xr.reg]) || []).slice(0, 12) : [],
+    prof: b && b.pr ? b.pr : SL.prof, live: live, extReg: info });
+}
+let __pbExtMove = { at: 0, v: null };
+async function pbKrExtUpdate(DB, sr) {
+  const SL = sr && sr.sleeve, X = SL && SL.ext;
+  if (!X || !X.basket) return null;
+  if (Date.now() - __pbExtMove.at < PB_EXT_REG.cacheMs) return __pbExtMove.v;
+  __pbExtMove.at = Date.now();
+  const ms = krMarketStateNow(), kst = getKST(new Date()), today = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10).replace(/-/g, "");
+  const usePost = (ms === "POST" || (ms === "CLOSED" && kst.totalMin >= 940)) && String(sr.day) === today;
+  const usePre = ms === "PRE" && String(sr.day) < today;
+  if (!usePost && !usePre) { __pbExtMove.v = null; return null; }
+  const syms = Object.keys(X.basket).slice(0, 40), Q = await _luxQuotes(DB, syms);
+  let sw = 0, se = 0, n = 0;
+  for (const k of syms) {
+    const q = Q[k], w = _num(X.basket[k], 0), ref = q && _num(q.price, 0), xp = q && _num(usePost ? q.post : q.pre, 0);
+    if (!(w > 0 && ref > 0 && xp > 0)) continue;
+    const m = xp / ref - 1; if (!(Math.abs(m) < 0.3)) continue;
+    sw += w; se += w * m; n++;
+  }
+  const cov = sw;
+  if (n < PB_EXT_REG.minN || cov < PB_EXT_REG.minCov) { __pbExtMove.v = null; return null; }
+  const e = se / sw, reg = pbExtRegime(SL, e);
+  const v = { reg: reg, e: +(e * 100).toFixed(2) / 100, n: n, cov: +cov.toFixed(2), sess: usePost ? "post" : "pre", ts: Date.now(), day: String(sr.day || "") };
+  __pbExtMove.v = v;
+  try { await setState(DB, "kr_ext_reg", v); } catch (e2) {}
+  return v;
+}
 function pbSleevePick(st, ctx, dWin) {
   const SL = st.sleeve, D = ctx.D, trial = pbSleeveTrial(SL);
   if (!pbSleeveHas(st, ctx.symbol) || !D || !D.c || D.c.length < 61 || !(dWin || ctx.shadow) || !(SL.live || trial || ctx.shadow)) return null;
@@ -25184,6 +25233,7 @@ async function runTradingCycle(env) {
       /* [V33.603] 매매법 선택 AI 경로 — 외부 선택 · 이번 사이클/오늘 체결 · 관리 중 보유 */
       let __sr = null, __srBought = 0, __srToday = null, __srOpen = 0;
       try { if (STRAT_ROUTE.enabled && (market === "us" || market === "kr")) __sr = await getState(DB, "playbook:" + market, null); } catch (e) { __sr = null; }   // [V33.607] 모의 시뮬 표
+      try { if (market === "kr" && __sr && __sr.sleeve && __sr.sleeve.ext) { const _xr = await pbKrExtUpdate(DB, __sr); if (_xr) __sr = Object.assign({}, __sr, { sleeve: pbSleeveWithExt(__sr.sleeve, _xr, __sr.day) }); } } catch (e) {}   // [V33.756] 시간외 반영 국면
       const __pbEv = pbEvNear(Date.now()), __pbMtc = minutesToClose(market, new Date());
       let __pbFetch = 0;   // [V33.608] 이번 사이클 후보 분봉 조회 수
       const __pbLive = [];   // [V33.610] 이번 사이클 후보별 매매법 판정(관측창)
@@ -32085,7 +32135,7 @@ async function handleRequest(request, env, ctx, _inner) {
     if (path === "/api/playbook") {
       /* [V33.692] ★D1 한 왕복★ — 종전엔 순차 질의 9번(playbook·제동·장부·포지션·라이브 판정)이라 캐시가 빈 순간 4초까지 걸렸다(폰 실측 01 화면 4.8초).
          매매법 표(daily.table · intra.table — 칸 수천 개)는 화면이 '칸 수' 만 쓰므로 D1(json_remove · json_each COUNT)이 떼고 센다 — 워커는 수십 KB 만 푼다. */
-      const PBK = ["playbook:us", "playbook:kr", "pb_brake:us", "pb_brake:kr", "pb_live:us", "pb_live:kr"];
+      const PBK = ["playbook:us", "playbook:kr", "pb_brake:us", "pb_brake:kr", "pb_live:us", "pb_live:kr", "kr_ext_reg"];   // [V33.756] 시간외 반영 국면
       const st0 = {}, cellN = {};
       let recent = [], exits = [], open = [];
       try {
@@ -32103,7 +32153,7 @@ async function handleRequest(request, env, ctx, _inner) {
       const out = {};
       for (const mk of ["us", "kr"]) {
         const r = st0["playbook:" + mk] || null, cn = cellN["playbook:" + mk] || { d: 0, i: 0 };
-        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, regime3: r.regime3 || null, sleeve: r.sleeve || null, panic: r.panic === true, panicBook: r.panicBook || null,
+        out[mk] = r ? { ts: r.ts, day: r.day, regime: r.regime, regime3: r.regime3 || null, sleeve: (mk === "kr" && r.sleeve && krMarketStateNow() !== "REGULAR") ? pbSleeveWithExt(r.sleeve, st0["kr_ext_reg"], r.day) : (r.sleeve || null), panic: r.panic === true, panicBook: r.panicBook || null,
                         pass: Object.assign({}, r.pass || {}, { absTrial: !(r.pass && r.pass.daily) && !_pbTradeOk(r.daily && r.daily.val) && !!(PB_ABS_TRIAL[mk] && _pbAbsOk(r.daily && r.daily.val)), trialWhy: pbTrialWhy(r.daily && r.daily.val, mk) }), primary: pbPrimaryOn(r, Date.now()), passStreak: r.passStreak || 0, indep: pbIndepPasses(r.passLog),   // [V33.669] pass.absTrial(미국 절대 기준 시험 매수)
                         brake: st0["pb_brake:" + mk] || null,
                         daily: r.daily && { val: r.daily.val, cells: cn.d, pb: r.daily.pb, gate: r.daily.gate || null,

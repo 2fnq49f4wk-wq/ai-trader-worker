@@ -27,6 +27,9 @@ export const pbName = (k: string) => { const i = k.indexOf("+"); if (i < 0) retu
   const b = k.slice(0, i), f = k.slice(i + 1); return (PB_NAMES[b] || b) + " 수정판(" + ({ T: "추세", TL: "추세+주도주", V: "거래량" } as Record<string, string>)[f] + ")"; };
 const fin = (x: any): x is number => typeof x === "number" && Number.isFinite(x);
 const sg = (x: any, k = 2) => (fin(x) ? (x >= 0 ? "+" : "") + x.toFixed(k) : "—");
+// [V33.756] 국면 전략 시험 투입(검증 ≥ +5% · 표본 외 > 0 · 각 20건) — 워커 pbSleeveTrial 과 같은 식
+const slTrial = (SL: any) => { if (!SL || !SL.cur || SL.live || !SL.wf) return false; const v = SL.wf.V && SL.wf.V[SL.reg], h = SL.wf.H && SL.wf.H[SL.reg];
+  return !!(v && h && fin(v.mean) && fin(h.mean) && v.n >= 20 && h.n >= 20 && v.mean >= 5 && h.mean > 0); };
 const n0 = (x: any) => (fin(x) ? x.toLocaleString("ko-KR") : "—");
 const col = (x: any) => (!fin(x) ? MUTE : x > 0 ? POS : x < 0 ? NEG : INK);
 const pos = (x: number, lim: number) => Math.max(0, Math.min(100, 50 + (x / lim) * 50));
@@ -159,7 +162,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
         <div style={{ ...card, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={kick}>실전 상태</div>
           {[["매매법 AI", R.primary ? "본운용(정상 비중)" : pass ? "검증 통과 · 본운용 승격 대기" : R.pass && (R.pass.absTrial || TW === "trade") ? "시험 운용(비중 50%)" : "관찰 모드(매수 없음)", R.primary || pass ? POS : R.pass && (R.pass.absTrial || TW === "trade") ? HL : NEG],
-            ["국면 전략", R.sleeve ? (R.sleeve.live ? "실전 투입" : "관찰") : "—", R.sleeve && R.sleeve.live ? POS : MUTE],
+            ["국면 전략", R.sleeve ? (R.sleeve.live ? "실전 투입" : slTrial(R.sleeve) ? "시험 투입(비중 50%)" : "관찰") : "—", R.sleeve && R.sleeve.live ? POS : R.sleeve && slTrial(R.sleeve) ? HL : MUTE],   // [V33.756] 시험 투입도 표시
             ["손실 제동", R.brake && R.brake.on ? "켜짐" : "꺼짐", R.brake && R.brake.on ? NEG : MUTE],
             ["레거시 진입 경로", "비활성(위원회·단타·규칙)", MUTE]].map(([k, v, c]) => (
             <div key={k} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13 }}><span style={{ color: DIM }}>{k}</span><b style={{ color: c, fontWeight: 500, textAlign: "right" }}>{v}</b></div>))}
@@ -241,6 +244,9 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
             <b style={{ color: INK, fontWeight: 500 }}>{SL.cur ? SL.cur.famKo + " · " + SL.cur.profKo : "미운용"}</b>
             <span style={{ color: SL.live ? POS : SLtr ? HL : MUTE }}>{SL.live ? "실전 투입 중" : SLtr ? "시험 투입 중(비중 50%) — 검증 ≥ +5% · 표본 외 수익" : "관찰 — 투입 기준(검증 ≥ +5% · 표본 외 수익 · 20건 이상) 미달"}</span>
             <span style={{ color: MUTE, fontFamily: MONO, fontSize: 12 }}>편입 후보 {(SL.syms || []).join(" · ") || "—"}</span>
+            {/* [V33.756] 국면 지수 · 시간외 반영(사용자 11/4) */}
+            <span style={{ flexBasis: "100%", color: DIM, fontSize: 12 }}>국면 기준 <b style={{ color: INK, fontWeight: 500 }}>{SL.regSrc || "등가중 유니버스"}</b>
+              {SL.extReg ? <> · 시간외 반영 <b style={{ color: INK, fontWeight: 500, fontFamily: MONO }}>{(SL.extReg.sess === "pre" ? "장전 " : "장후 ") + sg(SL.extReg.e * 100) + "%"}</b> <span style={{ color: FAINT }}>(대형주 {n0(SL.extReg.n)}종 · 비중 {Math.round((SL.extReg.cov || 0) * 100)}%)</span>{SL.extReg.from !== SL.reg ? <b style={{ color: HL, fontWeight: 500 }}> · 국면 {(KO[SL.extReg.from] || SL.extReg.from) + " → " + (KO[SL.reg] || SL.reg)}</b> : " · 국면 그대로"}</> : SL.ext ? <span style={{ color: FAINT }}> · 시간외 반영: 장전·장후에만(지금 정규장 또는 시간외 체결 부족)</span> : null}</span>
           </div>}
           {RGt && <div style={{ ...card, padding: "10px 14px", display: "flex", flexWrap: "wrap", gap: 14, alignItems: "center", fontSize: 12 }}>
             <b style={{ color: INK, fontWeight: 600 }}>국면 게이트</b>
@@ -252,7 +258,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
             <ul style={{ margin: "10px 0 4px", paddingLeft: 18, fontSize: 12, lineHeight: 1.7, color: DIM }}>
               <li>10년 일봉을 시간순 분할: 앞 60% 학습 · <b style={{ color: INK }}>[60,80%) 검증 구간</b> = 설정 선택에 사용 · <b style={{ color: INK }}>[80,100%) 표본 외 구간</b> = 학습·선택에 쓰지 않은 마지막 20%(약 2년).</li>
               <li><b style={{ color: INK }}>+5%</b> = 표본 외 구간 거래당 실현수익률(비용 차감 · 매수~청산 · 연환산 아님) 목표.</li>
-              <li>시장 국면 = 유니버스 등가중 지수 기준. 급등장·급락장 = 최근 3거래일 안 하루 ±2.5% 또는 5일 ±6%(미·한 동일 정의). 미국은 해당 일수가 적어 표본 부족이 나올 수 있음.</li>
+              <li>[V33.756] 한국 국면 전략의 국면 = 코스피 지수 기준(장전·장후엔 대형주 30종 시간외 체결 변화를 하루로 덧붙여 다시 판단) · 그 밖 시장 국면 = 유니버스 등가중 지수 기준. 급등장·급락장 = 최근 3거래일 안 하루 ±2.5% 또는 5일 ±6%(미·한 동일 정의). 미국은 해당 일수가 적어 표본 부족이 나올 수 있음.</li>
               <li>국면 전략 실전 투입 = 현재 국면이 검증·표본 외 두 구간 모두 거래당 +5% 이상 · 각 20건 이상(사전 등록). 시험 투입(비중 50%) = 검증 ≥ +5% · 표본 외 플러스 · 각 20건 이상(사용자 승인 10/29).</li>
             </ul>
           </details>

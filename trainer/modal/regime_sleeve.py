@@ -21,6 +21,7 @@ CELL_REGS = CELL_SETS["s5"]   # [V33.736] 국면 세분화(사용자 11/2) — 5
 SCORE = "lcb"   # [V33.696] 고르기 점수 = 평균 − 표준오차(표본 적은 우연을 덜 탄다)
 CRASH_EXIT = False   # 국면 깨짐 청산 — 실험실 A/B(검증 구간만 비교)에서 우열 없음 → 단순한 쪽(끔). 켜면 워커도 cfg.crashExit 로 따른다
 CAP_DAY = 6
+SEASON_ON = False   # [V33.756] 계절 거름(산타·양도세 1월 반등·중간선거) — 실험실 A/B 로 켤지 정한다
 REG5 = ("SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH")
 REG_KO = {"SURGE": "폭등", "BULL": "상승", "NEUTRAL": "보합", "BEAR": "하락", "CRASH": "폭락"}
 PROFS = {"h10": dict(stop=8, atr=3, hold=10, tpR=None, be=0), "h20": dict(stop=10, atr=3, hold=20, tpR=None, be=0),
@@ -38,6 +39,9 @@ FAM_KO = {"rs60t5": "60일 상대강도 상위 5% · 20일선 위", "rs120t5": "
           "lowvol_lead": "저변동 주도주(120일 강세 · 50일선 위)", "above200_lo20": "200일선 위 20일 저점 근처 강세주", "crash_quality": "200일선 위 종목의 5일 −7% 뒤 첫 양봉",
           "gap_rev": "[단타] 3% 넘게 갭 하락 뒤 시가보다 높게 마감(50일선 위)", "os3_up": "[단타] 3일 연속 하락 · 5일 −6% 뒤 첫 양봉(200일선 위)",
           "vol_brk20": "[단타] 거래량 2배 · 20일 고점 돌파", "st_rev": "[단타] 5일 낙폭 하위 5% 강세주(60일 상위 30%) 반등 양봉",
+          "santa_lead": "[계절] 연말 랠리(12/15~1/5) · 60일 주도주 50일선 위", "santa_mega": "[계절] 연말 랠리 · 대형주 20일선 위",
+          "jan_rebound": "[계절] 12월 양도세 매도로 20일 낙폭 큰 중소형주 첫 양봉(1월 반등)", "midterm_lead": "[계절] 미 중간선거 해 10월~이듬해 3월 · 60일 주도주",
+          "midterm_mega": "[계절] 미 중간선거 해 10월~3월 · 대형주 50일선 위", "midterm_dip": "[계절] 미 중간선거 해 10월~3월 · 강세주 10일 −8% 뒤 첫 양봉",
           "sec_lead": "[업종] 20일 강한 업종(상위 25%) 안 60일 주도주 · 50일선 위", "sec_lead_dip": "[업종] 강한 업종 안 강세주의 20일선 눌림(50일선 위)"}
 for _k, _v in {"lev": "레버리지 지수 ETF", "idx": "지수 ETF", "inv": "인버스 ETF", "inv2": "인버스 2배 ETF"}.items():
     FAM_KO["etf_" + _k] = _v
@@ -98,6 +102,18 @@ def families(P, mk, L3, M3, S3, st):
                 F["sec_lead_dip"] = (secr >= .75) & (r60r >= .7) & (C < ma20) & (C > ma50)
     except Exception:  # noqa: BLE001
         pass
+    # [V33.753] ★계절성★(사용자 11/4 "중간선거 · 크리스마스 랠리 같은 것도 매매법 AI 가 학습하게") — 날짜만으로 아는 달력 창(미래 정보 없음).
+    #   같은 고르기(직전 3년 끝난 거래 · 평균−표준오차)·같은 관문(국면별 워크포워드 두 구간 ≥ +5%)으로만 쓰인다 — 창이 맞아도 성적이 없으면 안 뽑힌다.
+    SW = season_masks(P["close"].index, T)
+    if SEASON_ON:
+      with np.errstate(invalid="ignore"):
+          lead = (r60r >= .8) & (C > ma50)
+          F["santa_lead"] = SW["santa"][:, None] & lead
+          F["santa_mega"] = SW["santa"][:, None] & (dvr >= .8) & (C > ma20)
+          F["jan_rebound"] = SW["taxsell"][:, None] & (dvr <= .6) & (r20r <= .15) & (C > ma200 * .8) & up1
+          F["midterm_lead"] = SW["midterm"][:, None] & lead
+          F["midterm_mega"] = SW["midterm"][:, None] & (dvr >= .9) & (r60r >= .5) & (C > ma50)
+          F["midterm_dip"] = SW["midterm"][:, None] & (r120r >= .7) & (r10 <= -.08) & up1
     cols = list(P["close"].columns)
     for k_, s_ in ETFS.get(mk, {}).items():
         m = np.zeros((T, N), bool)
@@ -107,6 +123,85 @@ def families(P, mk, L3, M3, S3, st):
         F["etf_" + k_ + "_up1"] = m & up1
         F["etf_" + k_ + "_dn5"] = m & (r5 <= -.04)
     return F, r60r
+
+
+# [V33.756] ★한국 국면은 코스피 지수로★(사용자 11/4 "한국장 실전 투입 가능할 때까지 전략·수식 수정") — 실험실 krlab(야후 일봉 443종 2003~ · 변형 128종 동시):
+#   국면 정의 4종(등가중 · 문턱 3%/7% · 코스피 ^KS11 · 거래대금 상위 30%) × 창 2 × 점수 2 × 칸 2 × 계절 2 × 긴 보유 2 를 ★검증 구간만★ 으로 비교 —
+#   요인별 평균(검증 거래 가중) 코스피 5.11% vs 등가중 2.26% · 상위 10개 전부 코스피. 등가중 지수는 소형주 잡음으로 폭락·폭등이 너무 자주 켜졌다.
+#   나머지 손잡이(창 750 · 점수 lcb1 · 계절 끔 · 긴 보유 끔)는 지금 값이 검증에서 가장 좋거나 같았다 → 바꾸는 것은 국면 지수 하나뿐(사전 규칙).
+#   판정 구간(한 번만 봄): 상승 +9.21%(n247) 실전 · 폭락 +3.07%(n204) 시험 · 보합 +5.63% · 폭등 +2.58% · 하락 −2.47%(종전 −1.51/+7.11/+0.17/+1.64/+0.38).
+#   코스피 지수가 없으면 KODEX 200(069500.KS) → 그것도 없으면 종전 등가중(regSrc 로 알린다).
+REG_INDEX = {"kr": "^KS11"}
+KR_IDX_ETF = "069500.KS"
+
+
+def fetch_index_close(sym, index, log=print):
+    """야후 일봉 종가(한국 시각 날짜 키) → index 에 맞춘 Series(없는 날 NaN). 실패하면 None."""
+    try:
+        import datetime
+        import time as _t
+        import requests
+        r = requests.get("https://query1.finance.yahoo.com/v8/finance/chart/%s?period1=946684800&period2=%d&interval=1d" % (sym, int(_t.time())),
+                         headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+        j = r.json()["chart"]["result"][0]
+        d = [int((datetime.datetime.utcfromtimestamp(x) + datetime.timedelta(hours=9)).strftime("%Y%m%d")) for x in j["timestamp"]]
+        s = pd.Series(j["indicators"]["quote"][0]["close"], index=d, dtype=float).groupby(level=0).last()
+        out = s.reindex([int(x) for x in index])
+        out.index = index
+        return out if out.notna().sum() > 500 else None
+    except Exception as e:  # noqa: BLE001
+        log("   ⚠️ [국면전략] 지수 %s 못 받음 %s" % (sym, e))
+        return None
+
+
+def regime_from_returns(r, th1=0.025, th5=0.06):
+    """playbook_sim._regime 과 같은 식 — 지수 하루 수익률 r 로 5국면 + 중기 칸(UP·FLAT·DOWN) + 시간외 덧붙이기용 꼬리."""
+    r = pd.Series(np.asarray(r, float)).fillna(0)
+    idx = (1 + r).cumprod()
+    m200, m50 = idx.rolling(200, min_periods=120).mean(), idx.rolling(50, min_periods=40).mean()
+    up = m50 > m50.shift(10)
+    base = np.where((idx > m200) & up, "BULL", np.where((idx < m200) & ~up, "BEAR", "NEUTRAL"))
+    r5 = (1 + r).rolling(5).apply(np.prod, raw=True) - 1
+    cr1 = (r <= -th1) | (r5 <= -th5)
+    su1 = (r >= th1) | (r5 >= th5)
+    crash = cr1.astype(float).rolling(3, min_periods=1).max() > 0
+    surge = su1.astype(float).rolling(3, min_periods=1).max() > 0
+    reg = np.where(crash.values, "CRASH", np.where(surge.values, "SURGE", base))
+    M = np.where((idx > m50) & up, "UP", np.where((idx < m50) & ~up, "DOWN", "FLAT"))
+    tail = {"r": [round(float(x), 5) for x in r.values[-4:]], "cr": [bool(x) for x in cr1.values[-2:]], "su": [bool(x) for x in su1.values[-2:]],
+            "base": str(base[-1]), "th1": th1, "th5": th5}
+    return np.asarray(reg).astype(str), np.asarray(M).astype(str), tail
+
+
+def index_returns(P, mk, log=print):
+    """국면 지수 하루 수익률과 출처 — (r, src). 한국 = 코스피 → KODEX 200 → 등가중."""
+    cl = P["close"]
+    ew = cl.pct_change(fill_method=None).mean(axis=1)
+    sym = REG_INDEX.get(mk)
+    if sym:
+        s = fetch_index_close(sym, cl.index, log)
+        if s is not None:
+            return s.ffill().pct_change().values, "코스피 지수(" + sym + ")"
+        if mk == "kr" and KR_IDX_ETF in cl.columns and cl[KR_IDX_ETF].notna().sum() > 500:
+            return cl[KR_IDX_ETF].ffill().pct_change().values, "KODEX 200(" + KR_IDX_ETF + ")"
+    return ew.values, "등가중 유니버스"
+
+
+MIDTERM_YEARS = tuple(range(2002, 2100, 4))   # 미국 중간선거 해(2002 · 2006 · … · 2026)
+
+
+def season_masks(index, T):
+    """날짜(YYYYMMDD) → 달력 창 3종(bool 배열).
+    santa   = 12/15 ~ 1/5  (연말 랠리 — 미국 '산타 랠리' 와 한국 연말 배당·윈도드레싱)
+    taxsell = 12/1 ~ 12/27 (한국 대주주 양도세 회피 매도가 몰리는 12월 — 낙폭 큰 중소형주를 사서 1월 반등을 노린다)
+    midterm = 중간선거 해 10/1 ~ 이듬해 3/31 (선거 전후 불확실성 해소 랠리 · 대통령 임기 주기 3년차 강세)"""
+    d = np.asarray([int(x) for x in index])[:T]
+    y, md = d // 10000, d % 10000
+    santa = (md >= 1215) | (md <= 105)
+    taxsell = (md >= 1201) & (md <= 1227)
+    my = np.isin(y, MIDTERM_YEARS)
+    midterm = (my & (md >= 1001)) | (np.isin(y - 1, MIDTERM_YEARS) & (md <= 331))
+    return {"santa": santa, "taxsell": taxsell, "midterm": midterm}
 
 
 def _trades(S, ex, xo, C, r60r, mcum, cost, S3, crash_start):
@@ -199,6 +294,12 @@ def run(P, mk, PB, log=print):
     L3, M3, S3, _ = PB.regime3(P["close"])
     S3 = np.asarray(S3).astype(str)
     M3s = np.asarray(M3).astype(str)
+    # [V33.756] 국면·중기 칸은 국면 지수로(한국 = 코스피) — 거래 수익(mcum)은 종전 그대로
+    rix, reg_src = index_returns(P, mk, log)
+    ext_tail = None
+    if reg_src != "등가중 유니버스":
+        reg5, M3s, ext_tail = regime_from_returns(rix)
+    log("   · [국면전략] %s 국면 지수 %s" % (mk, reg_src))
     crash_start = (S3 == "CRASH") & np.concatenate([[False], S3[:-1] != "CRASH"])
     st = PB._daily_state(P, ())
     atr = st[4]
@@ -234,6 +335,25 @@ def run(P, mk, PB, log=print):
         by[rg] = ({"fam": p[0][0], "prof": p[0][1], "mean": p[1], "n": p[2], "famKo": FAM_KO.get(p[0][0], p[0][0]), "profKo": PROF_KO.get(p[0][1], p[0][1]),
                    "cell": used} if p else None)   # cell = 이 국면을 오늘 중기 방향 칸으로 골랐으면 그 칸
     rg_now = str(reg5[-1])
+    # [V33.756] 국면마다 오늘 종목·청산(워커가 시간외로 국면을 다시 정하면 그 국면 것으로 바꿔 쓴다)
+    by_syms = {}
+    for rg in REG5:
+        b_ = by.get(rg)
+        if not b_:
+            continue
+        sig_ = F[b_["fam"]][-1]
+        jj_ = np.nonzero(sig_ & np.isfinite(C[-1]))[0]
+        jj_ = jj_[np.argsort(-np.nan_to_num(r60r[-1, jj_]))][:CAP_DAY]
+        by_syms[rg] = [str(P["close"].columns[j]) for j in jj_]
+        b_["pr"] = {k: v for k, v in PROFS[b_["prof"]].items() if v is not None}
+    # 시간외 바구니 = 60일 거래대금 상위 30종(비중 = 거래대금 몫) — 지수 대용
+    basket = {}
+    try:
+        dv_ = (P["close"] * P["volume"]).iloc[-60:].mean()
+        dv_ = dv_[[c for c in dv_.index if not str(c).startswith(("069500", "122630", "114800", "252670"))]].dropna().sort_values(ascending=False)[:30]
+        basket = {str(k): round(float(v / dv_.sum()), 4) for k, v in dv_.items()}
+    except Exception:  # noqa: BLE001
+        basket = {}
     cur = by.get(rg_now)
     syms = []
     if cur:
@@ -246,7 +366,8 @@ def run(P, mk, PB, log=print):
     pr = PROFS[cur["prof"]] if cur else None
     out = {"reg": rg_now, "regKo": REG_KO.get(rg_now, rg_now), "cur": cur, "syms": syms, "live": ok, "by": by, "wf": {"V": wfV, "H": wfH},
            "prof": ({k: v for k, v in pr.items() if v is not None} if pr else None), "cfg": {"win": WIN, "step": STEP, "nmin": NMIN, "th": TH, "capDay": CAP_DAY, "target": 5.0, "crashExit": CRASH_EXIT, "score": SCORE, "cellRegs": list(CELL_REGS), "cellSet": pick_cs, "cellCmp": {k: {"v": round(v[2], 3), "n": v[3]} for k, v in alt.items()}}, "mNow": m_now,
-           "cut": [str(P["close"].index[c1]), str(P["close"].index[c2])]}
+           "cut": [str(P["close"].index[c1]), str(P["close"].index[c2])],
+           "regSrc": reg_src, "bySyms": by_syms, "ext": (dict(ext_tail, basket=basket) if ext_tail else None)}
     log("   · [국면전략] %s 지금 %s → %s · 오늘 %d종 · 실전 %s · 워크포워드 판정 %s" % (
         mk, REG_KO.get(rg_now), (cur["famKo"] + " · " + cur["profKo"] + " (직전 3년 %+.2f%% n%d)" % (cur["mean"], cur["n"])) if cur else "쉼(근거 부족)", len(syms),
         "켬" if ok else "관측", " · ".join("%s %s(%d)" % (REG_KO[r], ("%+.2f%%" % v["mean"]) if v["mean"] is not None else "—", v["n"]) for r, v in wfH.items())))
