@@ -6925,3 +6925,4 @@ AW-2 check-dead-knobs 가 AI_PARAMS 를 통째 면제해 AW-1 을 못 잡았다.
     한국 하락·폭등·보합 · 미국 보합은 고른 판에서 기준 미달 → 쉼이 정직(문턱 그대로). 다른 후보의 판정 구간은 보지 않았다(오염 방지 · 판정 뒤 반복 없음).
   · 화면: 두뇌관측 국면 기준 옆에 급등락 정의(cfg.regTh) · 용어 안내 갱신 · studio 재빌드. 워커 변경 없음(청산 pr 은 hold·stop·atr·trail 일반형). US 학습 시간 ≈ +70초.
 - V33.760: CDN 실측 — ① 워커 경로 `*.lux-inv.com/*`(와일드카드)가 data.lux-inv.com 을 가로채 R2 공개 도메인이 안 답했다 → cf-inspect.yml(exclude_data)로 `data.lux-inv.com/*` 워커 없는 예외 경로 추가(와일드카드는 그대로 · 되돌리려면 그 경로만 지움). ② R2 직접 응답이 되자 cf-cache-status: DYNAMIC — .json 은 기본 캐시 확장자가 아니고 토큰에 캐시 규칙 권한이 없다 → 공개 사본 키를 pub/state.js 로(내용 JSON). 토큰 권한(점검 결과): zone #worker:edit·#zone:read · DNS/캐시 규칙 없음.
+- V33.761: 위 "V33.760 국면 전략 한·미" 항목의 ★코드★ 반영판(그 기록은 CDN 커밋에 먼저 섞여 들어갔다 · 코드는 이 판) — regime_sleeve.py(MK_CFG · 미 국면 지수 ^GSPC 2%/5% · 방어 거름 · 미 긴 보유 · 비용 이중 가산 수정) · check-regime-sleeve · PlaybookDeck/brain-studio.js 재빌드. 다음 학습 회차(OMNI-Q GHA)부터 운영 자격에 반영.

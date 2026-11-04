@@ -246,6 +246,8 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
             <span style={{ color: MUTE, fontFamily: MONO, fontSize: 12 }}>편입 후보 {(SL.syms || []).join(" · ") || "—"}</span>
             {/* [V33.756] 국면 지수 · 시간외 반영(사용자 11/4) */}
             <span style={{ flexBasis: "100%", color: DIM, fontSize: 12 }}>국면 기준 <b style={{ color: INK, fontWeight: 500 }}>{SL.regSrc || "등가중 유니버스"}</b>
+              {/* [V33.760] 시장별 급등락 정의(미국 S&P500 = 하루 ±2% · 5일 ±5%) */}
+              {SL.cfg && SL.cfg.regTh ? <span style={{ color: FAINT }}> · 급등락 = 3거래일 안 하루 ±{(SL.cfg.regTh[0] * 100).toFixed(1)}% · 5일 ±{(SL.cfg.regTh[1] * 100).toFixed(0)}%</span> : null}
               {SL.extReg ? <> · 시간외 반영 <b style={{ color: INK, fontWeight: 500, fontFamily: MONO }}>{(SL.extReg.sess === "pre" ? "장전 " : "장후 ") + sg(SL.extReg.e * 100) + "%"}</b> <span style={{ color: FAINT }}>(대형주 {n0(SL.extReg.n)}종 · 비중 {Math.round((SL.extReg.cov || 0) * 100)}%)</span>{SL.extReg.from !== SL.reg ? <b style={{ color: HL, fontWeight: 500 }}> · 국면 {(KO[SL.extReg.from] || SL.extReg.from) + " → " + (KO[SL.reg] || SL.reg)}</b> : " · 국면 그대로"}</> : SL.ext ? <span style={{ color: FAINT }}> · 시간외 반영: 장전·장후에만(지금 정규장 또는 시간외 체결 부족)</span> : null}</span>
           </div>}
           {RGt && <div style={{ ...card, padding: "10px 14px", display: "flex", flexWrap: "wrap", gap: 14, alignItems: "center", fontSize: 12 }}>
@@ -258,7 +260,8 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
             <ul style={{ margin: "10px 0 4px", paddingLeft: 18, fontSize: 12, lineHeight: 1.7, color: DIM }}>
               <li>10년 일봉을 시간순 분할: 앞 60% 학습 · <b style={{ color: INK }}>[60,80%) 검증 구간</b> = 설정 선택에 사용 · <b style={{ color: INK }}>[80,100%) 표본 외 구간</b> = 학습·선택에 쓰지 않은 마지막 20%(약 2년).</li>
               <li><b style={{ color: INK }}>+5%</b> = 표본 외 구간 거래당 실현수익률(비용 차감 · 매수~청산 · 연환산 아님) 목표.</li>
-              <li>[V33.756] 한국 국면 전략의 국면 = 코스피 지수 기준(장전·장후엔 대형주 30종 시간외 체결 변화를 하루로 덧붙여 다시 판단) · 그 밖 시장 국면 = 유니버스 등가중 지수 기준. 급등장·급락장 = 최근 3거래일 안 하루 ±2.5% 또는 5일 ±6%(미·한 동일 정의). 미국은 해당 일수가 적어 표본 부족이 나올 수 있음.</li>
+              <li>[V33.756·V33.760] 국면 전략의 국면 = 한국 코스피 지수(장전·장후엔 대형주 30종 시간외 체결 변화를 하루로 덧붙여 다시 판단) · 미국 S&P500 지수 기준 · 그 밖 시장 국면 = 유니버스 등가중 지수 기준. 급등장·급락장 = 최근 3거래일 안 하루 ±2.5% 또는 5일 ±6%(미국 국면 전략은 S&P500 이 덜 출렁여 ±2% · ±5%).</li>
+              <li>[V33.760] 국면 전략 후보 = 종목 거름(주도주·대형주·신고가·단타·ETF + [방어] 투매 반등·저변동 우량·안전자산·인버스 추세) × 청산(미국은 120일 넓은 손절 등 긴 보유 포함) · 시장별 묶음은 검증 구간으로만 정했다. 거래 수익은 비용 뺀 값.</li>
               <li>국면 전략 실전 투입 = 현재 국면이 검증·표본 외 두 구간 모두 거래당 +5% 이상 · 각 20건 이상(사전 등록). 시험 투입(비중 50%) = 검증 ≥ +5% · 표본 외 플러스 · 각 20건 이상(사용자 승인 10/29).</li>
             </ul>
           </details>

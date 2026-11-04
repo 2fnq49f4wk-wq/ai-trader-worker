@@ -22,6 +22,25 @@ SCORE = "lcb"   # [V33.696] 고르기 점수 = 평균 − 표준오차(표본 �
 CRASH_EXIT = False   # 국면 깨짐 청산 — 실험실 A/B(검증 구간만 비교)에서 우열 없음 → 단순한 쪽(끔). 켜면 워커도 cfg.crashExit 로 따른다
 CAP_DAY = 6
 SEASON_ON = False   # [V33.756] 계절 거름(산타·양도세 1월 반등·중간선거) — 실험실 A/B 로 켤지 정한다
+# [V33.760] ★모든 국면용 추가 거름★(사용자 11/4 "한국·미국 모두 모든 국면에서 작동하게") — 알려진 효과에 근거한 거름 12종을 후보에 더할 수 있다.
+#   def(하락·폭락 방어) = 투매(거래량 급증) 뒤 반등 · 대형주 투매 반등 · 저변동 우량 · 안전자산 ETF 추세 · 인버스 ETF 추세 · 대형주 1달 낙폭 반등
+#   mom(폭등·보합 추세) = 거래량 동반 60일 돌파 · 실적 갭(갭 +4% · 거래량 3배 · 갭 유지) 뒤 표류 · 상승 추세 속 눌림 · 업종 ETF 순환 1~3위 · 12-1 모멘텀
+#   실험실 rlab(시장별 후보 80 = 국면 정의 5 × 거름 묶음 8 × 청산 2 · 사전 등록)의 ★검증 구간★ 요인 평균으로 시장마다 정했다(아래 MK_CFG · run 이 시장별로 켠다).
+#     한국: 국면 코스피 유지 · def(하락·폭락 한정) 5.16 vs 없음 4.68 · 긴 보유 4.87 vs 4.87(차이 없음 → 끔)
+#     미국: 국면 S&P500(2%/5%) 8.94 vs 등가중 7.92 · def 9.62 vs 없음 8.14 · 긴 보유 10.34 vs 6.80 → 켬
+#     mom 묶음은 두 시장 모두 검증에서 없음보다 나빠 끔(코드만 남김). 계절 묶음도 요인 평균에서 밀려 끔.
+FAM_X = ()           # 켠 추가 거름 묶음 — ("def",) · ("mom",) · ("def", "mom") — run() 이 MK_CFG 로 바꾼다
+FAM_REG_ON = False   # 켜면 추가 거름은 의도한 국면에서만 고른다(def → 하락·폭락 · mom → 폭등·상승·보합)
+X_FAMS = {"def": ("cap_vol", "cap_mega", "lowvol_q", "def_etf", "etf_inv_tr", "etf_inv2_tr", "rev_mega20"),
+          "mom": ("brk_vol60", "pead_gap", "pb_trend", "sec_etf_lead", "mom12_1")}
+X_REGS = {"def": ("BEAR", "CRASH"), "mom": ("SURGE", "BULL", "NEUTRAL")}
+FAM_REGS = {f: X_REGS[g] for g, fs in X_FAMS.items() for f in fs}
+DEF_ETF = {"us": ("TLT", "GLD", "XLU", "XLP", "XLV"), "kr": ("132030.KS", "133690.KS", "360750.KS", "379800.KS")}   # 한국 = 금 · 미국 지수 ETF(원화 약세 때 방어)
+SEC_ETF = {"us": ("XLK", "XLF", "XLE", "XLV", "XLY", "XLI", "XLP", "XLU", "XLB", "XLC", "XLRE"), "kr": ("091160.KS", "091170.KS", "117460.KS", "305720.KS", "305540.KS", "463250.KS")}
+PROF_X_ON = False    # 켜면 긴 보유·짧은 추적 청산 4종(r20 · r40 · h120w · r120)을 더한다
+MK_CFG = {"kr": {"famX": ("def",), "famRegOn": True, "profX": False}, "us": {"famX": ("def",), "famRegOn": False, "profX": True}}
+PROFS_X = {"r20": dict(stop=8, atr=3, hold=20, trail=10, trailAct=5, tpR=None, be=0), "r40": dict(stop=10, atr=3, hold=40, trail=15, trailAct=8, tpR=None, be=0),
+           "h120w": dict(stop=25, atr=6, hold=120, tpR=None, be=0), "r120": dict(stop=15, atr=5, hold=120, trail=25, trailAct=15, tpR=None, be=0)}
 REG5 = ("SURGE", "BULL", "NEUTRAL", "BEAR", "CRASH")
 REG_KO = {"SURGE": "폭등", "BULL": "상승", "NEUTRAL": "보합", "BEAR": "하락", "CRASH": "폭락"}
 PROFS = {"h10": dict(stop=8, atr=3, hold=10, tpR=None, be=0), "h20": dict(stop=10, atr=3, hold=20, tpR=None, be=0),
@@ -47,7 +66,13 @@ for _k, _v in {"lev": "레버리지 지수 ETF", "idx": "지수 ETF", "inv": "�
     FAM_KO["etf_" + _k] = _v
     FAM_KO["etf_" + _k + "_up1"] = _v + " · 양봉 날"
     FAM_KO["etf_" + _k + "_dn5"] = _v + " · 5일 −4% 뒤"
-PROF_KO = {"d2": "단타 2일(손절 4%)", "d3": "단타 3일(손절 5%)", "d5": "단타 5일(손절 6%)", "h10": "10일 보유", "h20": "20일 보유", "h40": "40일 보유", "h60": "60일 보유", "r60": "따라붙는 손절(고점 −20%) · 60일", "h60w": "넓은 손절(20%) · 60일"}
+FAM_KO.update({"cap_vol": "[방어] 투매(3일 안 거래량 2.5배) 5일 −8% 뒤 첫 양봉", "cap_mega": "[방어] 대형주 투매(거래량 1.5배) 5일 −7% 뒤 첫 양봉",
+               "lowvol_q": "[방어] 저변동 우량주(120일 변동 하위 20% · 1년 강세 · 200일선 위)", "def_etf": "[방어] 안전자산 ETF(채권·금·필수소비 등) 50일선 위",
+               "etf_inv_tr": "[방어] 인버스 ETF 상승 추세(20일선 위 · 5일 상승)", "etf_inv2_tr": "[방어] 인버스 2배 ETF 상승 추세", "rev_mega20": "[방어] 대형주 1달 낙폭 하위 10% 반등(200일선 위)",
+               "brk_vol60": "[추세] 거래량 1.5배 · 60일 고점 돌파(120일 강세)", "pead_gap": "[추세] 실적 갭(+4% · 거래량 3배 · 갭 유지) 뒤 표류",
+               "pb_trend": "[추세] 상승 추세(50일선 > 200일선) 속 RSI 40 아래 눌림", "sec_etf_lead": "[추세] 업종 ETF 60일 강세 1~3위(50일선 위)", "mom12_1": "[추세] 12-1 모멘텀 상위 5%(50일선 위)"})
+PROF_KO = {"d2": "단타 2일(손절 4%)", "d3": "단타 3일(손절 5%)", "d5": "단타 5일(손절 6%)", "h10": "10일 보유", "h20": "20일 보유", "h40": "40일 보유", "h60": "60일 보유", "r60": "따라붙는 손절(고점 −20%) · 60일", "h60w": "넓은 손절(20%) · 60일",
+           "r20": "따라붙는 손절(고점 −10%) · 20일", "r40": "따라붙는 손절(고점 −15%) · 40일", "h120w": "넓은 손절(25%) · 120일", "r120": "따라붙는 손절(고점 −25%) · 120일"}
 
 
 def families(P, mk, L3, M3, S3, st):
@@ -115,6 +140,31 @@ def families(P, mk, L3, M3, S3, st):
           F["midterm_mega"] = SW["midterm"][:, None] & (dvr >= .9) & (r60r >= .5) & (C > ma50)
           F["midterm_dip"] = SW["midterm"][:, None] & (r120r >= .7) & (r10 <= -.08) & up1
     cols = list(P["close"].columns)
+    if FAM_X:   # [V33.760] 추가 거름(위 X_FAMS) — 모두 그날 종가까지의 값만 쓴다(진입은 다음 날)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            vsp3 = pd.DataFrame(V / vma20).rolling(3, min_periods=1).max().values
+            vol120 = pd.DataFrame(np.log(C)).diff().rolling(120, min_periods=90).std().rank(axis=1, pct=True).values
+            ma20d = Cd.rolling(20, min_periods=15).mean().diff(5).values
+            colm = lambda names: np.isin(np.asarray(cols, dtype=object), list(names))[None, :]
+            if "def" in FAM_X:
+                F["cap_vol"] = (r5 <= -.08) & (vsp3 >= 2.5) & up1
+                F["cap_mega"] = (dvr >= .8) & (r5 <= -.07) & (vsp3 >= 1.5) & up1
+                F["lowvol_q"] = (vol120 <= .2) & (r250r >= .5) & (C > ma200)
+                F["def_etf"] = colm(DEF_ETF.get(mk, ())) & (C > ma50) & ((Cd / Cd.shift(60) - 1).values > 0)
+                for k_, nm_ in (("inv", "etf_inv_tr"), ("inv2", "etf_inv2_tr")):
+                    s_ = ETFS.get(mk, {}).get(k_)
+                    F[nm_] = colm((s_,) if s_ else ()) & (C > ma20) & (r5 > 0) & (ma20d > 0)
+                F["rev_mega20"] = (dvr >= .7) & (r20r <= .1) & (C > ma200) & up1
+            if "mom" in FAM_X:
+                hi60p = Cd.rolling(60, min_periods=40).max().shift(1).values
+                F["brk_vol60"] = (C > hi60p) & (V > 1.5 * vma20) & (r120r >= .7)
+                F["pead_gap"] = (gap >= .04) & (V > 3 * vma20) & (C >= O) & (C > ma50)
+                F["pb_trend"] = (ma50 > ma200) & (C > ma200) & (rsi < 40) & (r120r >= .7)
+                sm = colm(SEC_ETF.get(mk, ()))
+                r60s = np.where(sm, (Cd / Cd.shift(60) - 1).values, np.nan)
+                srk = pd.DataFrame(r60s).rank(axis=1, ascending=False).values
+                F["sec_etf_lead"] = sm & (srk <= 3) & (C > ma50)
+                F["mom12_1"] = ((Cd.shift(21) / Cd.shift(252) - 1).rank(axis=1, pct=True).values >= .95) & (C > ma50)
     for k_, s_ in ETFS.get(mk, {}).items():
         m = np.zeros((T, N), bool)
         if s_ in cols:
@@ -131,11 +181,17 @@ def families(P, mk, L3, M3, S3, st):
 #   나머지 손잡이(창 750 · 점수 lcb1 · 계절 끔 · 긴 보유 끔)는 지금 값이 검증에서 가장 좋거나 같았다 → 바꾸는 것은 국면 지수 하나뿐(사전 규칙).
 #   판정 구간(한 번만 봄): 상승 +9.21%(n247) 실전 · 폭락 +3.07%(n204) 시험 · 보합 +5.63% · 폭등 +2.58% · 하락 −2.47%(종전 −1.51/+7.11/+0.17/+1.64/+0.38).
 #   코스피 지수가 없으면 KODEX 200(069500.KS) → 그것도 없으면 종전 등가중(regSrc 로 알린다).
-REG_INDEX = {"kr": "^KS11"}
+# [V33.760] ★미국 국면은 S&P500 지수로(하루 ±2% · 5일 ±5%)★ — 실험실 rlab 검증 구간 요인 평균 S&P500 2/5 8.94% · 2.5/6 8.91% · 나스닥100 8.70% · 거래대금 상위 30% 8.40% · 등가중 7.92%.
+#   S&P500 은 등가중보다 덜 출렁여 2.5%/6% 로는 폭락·폭등 날이 적다 — 문턱은 국면 '정의' 이지 관문이 아니다(관문 +5%·20건은 그대로).
+REG_INDEX = {"kr": "^KS11", "us": "^GSPC"}
 KR_IDX_ETF = "069500.KS"
 
 
-def fetch_index_close(sym, index, log=print):
+REG_TH = {"us": (0.02, 0.05)}   # 시장별 폭락·폭등 정의(하루, 5일) — 없으면 (2.5%, 6%) 그대로
+IDX_TZ = {"kr": 9, "us": -4}   # 야후 일봉 시각 → 그 시장 날짜
+
+
+def fetch_index_close(sym, index, log=print, tz=9):
     """야후 일봉 종가(한국 시각 날짜 키) → index 에 맞춘 Series(없는 날 NaN). 실패하면 None."""
     try:
         import datetime
@@ -144,7 +200,7 @@ def fetch_index_close(sym, index, log=print):
         r = requests.get("https://query1.finance.yahoo.com/v8/finance/chart/%s?period1=946684800&period2=%d&interval=1d" % (sym, int(_t.time())),
                          headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
         j = r.json()["chart"]["result"][0]
-        d = [int((datetime.datetime.utcfromtimestamp(x) + datetime.timedelta(hours=9)).strftime("%Y%m%d")) for x in j["timestamp"]]
+        d = [int((datetime.datetime.utcfromtimestamp(x) + datetime.timedelta(hours=tz)).strftime("%Y%m%d")) for x in j["timestamp"]]
         s = pd.Series(j["indicators"]["quote"][0]["close"], index=d, dtype=float).groupby(level=0).last()
         out = s.reindex([int(x) for x in index])
         out.index = index
@@ -174,17 +230,25 @@ def regime_from_returns(r, th1=0.025, th5=0.06):
 
 
 def index_returns(P, mk, log=print):
-    """국면 지수 하루 수익률과 출처 — (r, src). 한국 = 코스피 → KODEX 200 → 등가중."""
+    """국면 지수 하루 수익률과 출처 — (r, src). 한국 = 코스피 → KODEX 200 → 등가중 · 'DV30' = 60일 거래대금 상위 30% 등가중."""
     cl = P["close"]
     ew = cl.pct_change(fill_method=None).mean(axis=1)
     sym = REG_INDEX.get(mk)
+    if sym == "DV30":
+        dv = (cl * P["volume"]).rolling(60, min_periods=40).mean().shift(1).rank(axis=1, pct=True)
+        return cl.pct_change(fill_method=None).where(dv >= .7).mean(axis=1).values, "거래대금 상위 30% 등가중"
     if sym:
-        s = fetch_index_close(sym, cl.index, log)
+        s = fetch_index_close(sym, cl.index, log, IDX_TZ.get(mk, 9))
         if s is not None:
-            return s.ffill().pct_change().values, "코스피 지수(" + sym + ")"
+            return s.ffill().pct_change().values, IDX_NAME.get(sym, "지수") + "(" + sym + ")"
         if mk == "kr" and KR_IDX_ETF in cl.columns and cl[KR_IDX_ETF].notna().sum() > 500:
             return cl[KR_IDX_ETF].ffill().pct_change().values, "KODEX 200(" + KR_IDX_ETF + ")"
+        if mk == "us" and "SPY" in cl.columns and cl["SPY"].notna().sum() > 500 and sym in ("^GSPC", "SPY"):
+            return cl["SPY"].ffill().pct_change().values, "S&P500 ETF(SPY)"
     return ew.values, "등가중 유니버스"
+
+
+IDX_NAME = {"^KS11": "코스피 지수", "^GSPC": "S&P500 지수", "^NDX": "나스닥100 지수", "RSP": "S&P500 등가중 ETF", "SPY": "S&P500 ETF"}
 
 
 MIDTERM_YEARS = tuple(range(2002, 2100, 4))   # 미국 중간선거 해(2002 · 2006 · … · 2026)
@@ -204,6 +268,10 @@ def season_masks(index, T):
     return {"santa": santa, "taxsell": taxsell, "midterm": midterm}
 
 
+def all_profs():
+    return dict(PROFS, **PROFS_X) if PROF_X_ON else dict(PROFS)
+
+
 def _trades(S, ex, xo, C, r60r, mcum, cost, S3, crash_start):
     T, N = C.shape
     S = np.vstack([np.zeros((1, N), bool), S[:-1]]) & np.isfinite(ex)   # 하루 늦은 진입
@@ -218,7 +286,9 @@ def _trades(S, ex, xo, C, r60r, mcum, cost, S3, crash_start):
             continue
         keep.append((a, b)); busy[b] = xo[a, b]; dayn[a] = dayn.get(a, 0) + 1
     ti = np.array([k[0] for k in keep]); jj = np.array([k[1] for k in keep]); x = xo[ti, jj].astype(int).copy()
-    raw = ex[ti, jj] + (mcum[np.minimum(x + 1, T)] / mcum[ti + 1] - 1) * 100 + cost
+    # [V33.760] ★비용 빼기 고침★ — ex = 원수익 − 시장 − 비용 이므로 실제(순) 수익 = ex + 시장. 종전 '+ cost' 는 비용을 되돌려 더해 원수익(비용 전)이었다
+    #   (한국 +0.30%p · 미국 +0.10%p 부풀림). 고치면 관문이 더 엄격해진다(문턱 그대로).
+    raw = ex[ti, jj] + (mcum[np.minimum(x + 1, T)] / mcum[ti + 1] - 1) * 100
     for n_ in (range(len(ti)) if CRASH_EXIT else ()):   # 국면 깨짐 청산
         t0 = ti[n_]
         if S3[t0] == "CRASH":
@@ -238,6 +308,8 @@ def pick_at(TR, rg, q, cell=None):
     점수 = SCORE(lcb: 평균 − 표준오차) · 평균 ≥ TH 인 후보만."""
     best, bs, bm, bn = None, -1e9, None, 0
     for k, (ti, rr, x, rg_, m3_) in TR.items():
+        if FAM_REG_ON and rg not in FAM_REGS.get(k[0], REG5):   # [V33.760] 추가 거름은 의도한 국면에서만
+            continue
         m = (rg_ == rg) & (ti >= q - WIN) & (x < q)
         if cell is not None:
             m &= (m3_ == cell)
@@ -287,6 +359,9 @@ def run(P, mk, PB, log=print):
     T, N = C.shape
     if T < 1100:
         return None
+    global FAM_X, FAM_REG_ON, PROF_X_ON   # [V33.760] 시장별 후보 묶음(MK_CFG — 실험실 검증 구간으로 정함)
+    _mc = MK_CFG.get(mk, {})
+    FAM_X, FAM_REG_ON, PROF_X_ON = tuple(_mc.get("famX", ())), bool(_mc.get("famRegOn")), bool(_mc.get("profX"))
     O, H, L = P["open"].values, P["high"].values, P["low"].values
     reg5, mret = PB._regime(P["close"])
     reg5 = np.asarray(reg5).astype(str)
@@ -298,7 +373,7 @@ def run(P, mk, PB, log=print):
     rix, reg_src = index_returns(P, mk, log)
     ext_tail = None
     if reg_src != "등가중 유니버스":
-        reg5, M3s, ext_tail = regime_from_returns(rix)
+        reg5, M3s, ext_tail = regime_from_returns(rix, *REG_TH.get(mk, (0.025, 0.06)))
     log("   · [국면전략] %s 국면 지수 %s" % (mk, reg_src))
     crash_start = (S3 == "CRASH") & np.concatenate([[False], S3[:-1] != "CRASH"])
     st = PB._daily_state(P, ())
@@ -306,7 +381,7 @@ def run(P, mk, PB, log=print):
     cost = PB.COST_RT[mk]
     F, r60r = families(P, mk, L3, M3, S3, st)
     TR = {}
-    for pn, pr in PROFS.items():
+    for pn, pr in all_profs().items():
         ex, xo = PB._sim_profile(O, H, L, C, atr, mcum, pr, cost)
         for fn, S in F.items():
             r = _trades(S, ex, xo, C, r60r, mcum, cost, S3, crash_start)
@@ -345,7 +420,7 @@ def run(P, mk, PB, log=print):
         jj_ = np.nonzero(sig_ & np.isfinite(C[-1]))[0]
         jj_ = jj_[np.argsort(-np.nan_to_num(r60r[-1, jj_]))][:CAP_DAY]
         by_syms[rg] = [str(P["close"].columns[j]) for j in jj_]
-        b_["pr"] = {k: v for k, v in PROFS[b_["prof"]].items() if v is not None}
+        b_["pr"] = {k: v for k, v in all_profs()[b_["prof"]].items() if v is not None}
     # 시간외 바구니 = 60일 거래대금 상위 30종(비중 = 거래대금 몫) — 지수 대용
     basket = {}
     try:
@@ -363,11 +438,12 @@ def run(P, mk, PB, log=print):
         syms = [str(P["close"].columns[j]) for j in jj]
     # 실전 자격(사전 등록): 지금 국면의 [60,80%) · [80,100%) 워크포워드 둘 다 거래당 ≥ +5% · 각 표본 ≥ 20
     ok = bool(cur) and all((w.get(rg_now) or {}).get("n", 0) >= NMIN and ((w.get(rg_now) or {}).get("mean") or -99) >= 5.0 for w in (wfV, wfH))
-    pr = PROFS[cur["prof"]] if cur else None
+    pr = all_profs()[cur["prof"]] if cur else None
     out = {"reg": rg_now, "regKo": REG_KO.get(rg_now, rg_now), "cur": cur, "syms": syms, "live": ok, "by": by, "wf": {"V": wfV, "H": wfH},
-           "prof": ({k: v for k, v in pr.items() if v is not None} if pr else None), "cfg": {"win": WIN, "step": STEP, "nmin": NMIN, "th": TH, "capDay": CAP_DAY, "target": 5.0, "crashExit": CRASH_EXIT, "score": SCORE, "cellRegs": list(CELL_REGS), "cellSet": pick_cs, "cellCmp": {k: {"v": round(v[2], 3), "n": v[3]} for k, v in alt.items()}}, "mNow": m_now,
+           "prof": ({k: v for k, v in pr.items() if v is not None} if pr else None), "cfg": {"win": WIN, "step": STEP, "nmin": NMIN, "th": TH, "capDay": CAP_DAY, "target": 5.0, "crashExit": CRASH_EXIT, "score": SCORE, "cellRegs": list(CELL_REGS), "cellSet": pick_cs, "cellCmp": {k: {"v": round(v[2], 3), "n": v[3]} for k, v in alt.items()},
+                   "regTh": list(REG_TH.get(mk, (0.025, 0.06))), "famX": list(FAM_X), "famRegOn": FAM_REG_ON, "profX": PROF_X_ON}, "mNow": m_now,
            "cut": [str(P["close"].index[c1]), str(P["close"].index[c2])],
-           "regSrc": reg_src, "bySyms": by_syms, "ext": (dict(ext_tail, basket=basket) if ext_tail else None)}
+           "regSrc": reg_src, "bySyms": by_syms, "ext": (dict(ext_tail, basket=basket) if ext_tail and mk == "kr" else None)}
     log("   · [국면전략] %s 지금 %s → %s · 오늘 %d종 · 실전 %s · 워크포워드 판정 %s" % (
         mk, REG_KO.get(rg_now), (cur["famKo"] + " · " + cur["profKo"] + " (직전 3년 %+.2f%% n%d)" % (cur["mean"], cur["n"])) if cur else "쉼(근거 부족)", len(syms),
         "켬" if ok else "관측", " · ".join("%s %s(%d)" % (REG_KO[r], ("%+.2f%%" % v["mean"]) if v["mean"] is not None else "—", v["n"]) for r, v in wfH.items())))

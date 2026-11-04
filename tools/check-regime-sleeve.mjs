@@ -25,10 +25,15 @@ chk(/st\["regGate"\] = _reg_gate\(_pick\(tabs1\[rule\.get\("decay"\)\], va, rule
     "국면 게이트: 검증 구간 손실 국면만(판정 구간 안 봄 · 사전 등록 문턱)", "★국면 게이트가 판정 구간을 보거나 문턱이 바뀌었다★");
 chk(/ctx\.shadow \|\| \(!pbRegGateOff\(st\) && pbDailyTrialOk/.test(S) && /GO\.indexOf\(r\) >= 0/.test(UI), "워커 매수 게이트 · 화면 표시", "★국면 게이트가 워커·화면에 안 이어졌다★");
 // [V33.756] 한국 국면 = 코스피 지수 · 시간외 가상 하루로 국면 다시 판단(문턱·자격 식은 그대로)
-chk(/REG_INDEX = \{"kr": "\^KS11"\}/.test(SL) && /reg5, M3s, ext_tail = regime_from_returns\(rix\)/.test(SL) && /"regSrc": reg_src, "bySyms": by_syms/.test(SL),
+chk(/REG_INDEX = \{"kr": "\^KS11", "us": "\^GSPC"\}/.test(SL) && /reg5, M3s, ext_tail = regime_from_returns\(rix, \*REG_TH\.get\(mk, \(0\.025, 0\.06\)\)\)/.test(SL) && /"regSrc": reg_src, "bySyms": by_syms/.test(SL),
     "[V33.756] 한국 국면 지수 = 코스피(없으면 KODEX 200 → 등가중) · 국면별 오늘 종목·청산 내보냄", "★국면 지수/시간외 재료가 빠졌다★");
 chk(/const cr = e <= -th1 \|\| r5 <= -th5 \|\| \(X\.cr \|\| \[\]\)\.some\(Boolean\)/.test(S) && /_num\(w\.n, 0\) >= 20 && _num\(w\.mean, -99\) >= 5/.test(S) && /String\(xr\.day\) !== String\(day\)/.test(S),
     "[V33.756] 시간외 국면 = 학습기와 같은 식(하루 ±2.5% · 5일 ±6% · 3일 안) · 바뀐 국면의 자격도 +5%·20건 · 학습기 판이 바뀌면 버림", "★시간외 국면 식/자격이 학습기와 어긋난다★");
 chk(/__sr = Object\.assign\(\{\}, __sr, \{ sleeve: pbSleeveWithExt\(__sr\.sleeve, _xr, __sr\.day\) \}\)/.test(S), "[V33.756] 매매 사이클이 시간외 반영 국면으로 산다", "★매매 사이클에 시간외 국면이 안 붙는다★");
+// [V33.760] 미국 국면 = S&P500(정의 2%/5%) · 시장별 후보 묶음(MK_CFG) · 거래 수익은 비용 뺀 값(ex + 시장 — 비용을 되돌려 더하지 않음)
+chk(/raw = ex\[ti, jj\] \+ \(mcum\[np\.minimum\(x \+ 1, T\)\] \/ mcum\[ti \+ 1\] - 1\) \* 100\n/.test(SL) && !/raw = ex\[ti, jj\][^\n]*\+ cost/.test(SL),
+    "[V33.760] 국면 전략 거래 수익 = 비용 뺀 실제 수익(관문이 비용 전 수익을 보지 않음)", "★국면 전략 거래 수익에 비용이 다시 더해졌다(관문 부풀림)★");
+chk(/MK_CFG = \{"kr": \{"famX": \("def",\), "famRegOn": True, "profX": False\}, "us": \{"famX": \("def",\), "famRegOn": False, "profX": True\}\}/.test(SL) && /FAM_X, FAM_REG_ON, PROF_X_ON = tuple\(_mc\.get\("famX", \(\)\)\)/.test(SL) && /REG_TH = \{"us": \(0\.02, 0\.05\)\}/.test(SL),
+    "[V33.760] 시장별 후보 묶음(한국 방어 거름 · 미국 방어 거름 + 긴 보유) · 미국 국면 정의 S&P500 2%/5%", "★시장별 국면 전략 설정(MK_CFG · REG_TH)이 빠졌다★");
 if (fails) { console.log("✗ 국면 전략 계약 실패 " + fails); process.exit(1); }
 console.log("✓ 국면 전략 계약 통과");
