@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.758";
+const _BUILD_VER = "V33.759";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -22784,6 +22784,29 @@ async function stateR2Refresh(env, maxAgeMs) {
   return { ms: at - t0, kb: Math.round(str.length / 1024), prevAgeS: isFinite(age) ? Math.round(age / 1000) : null };
 }
 
+/* [V33.759] ★CDN 공개 사본★(사용자 11/4 "CDN 구조로") — 모두에게 같은 화면 데이터(시세·지수·포지션·엔진 상태)를 R2 공개 버킷(lux-public ·
+   data.lux-inv.com)에 1분마다 쓴다. 화면은 그 주소(CDN 캐시 30초)를 먼저 읽어 ★워커 요청·CPU·D1 이 방문자 수와 무관★ 해진다.
+   비용: 크론 1분에 R2 쓰기 1번 + 시세 범위 읽기 1번(사람 수와 무관). 개인 데이터(MY)는 여기 없다 — /api/me 그대로. */
+const STATE_PUB_KEY = "pub/state.json";
+async function statePubWrite(env) {
+  const PUB = env && env.PUB; if (!PUB) return null;
+  let body = null, at = 0;
+  const c = globalThis.__stateCache;
+  if (c && c.str && Date.now() - c.ts < 150000) { body = c.str; at = c.ts; }
+  else {
+    const R2 = (typeof _bigR2 === "function") ? _bigR2() : null; if (!R2) return null;
+    const g = await R2.get(STATE_R2_KEY); if (!g) return null;
+    at = g.customMetadata ? +(g.customMetadata.at || 0) : 0;
+    if (!(Date.now() - at < 600000)) { try { if (g.body && g.body.cancel) g.body.cancel(); } catch (e) {} return null; }   // 10분 넘게 묵은 사본은 싣지 않는다(화면이 워커로 물러선다)
+    body = await g.text();
+  }
+  if (Date.now() - at > 50000) { try { const pb = await _patchStateQuotes(env.DB, body); if (pb) body = pb; } catch (e) {} }   // 시세만 새로(D1 범위 읽기 1번)
+  if (!body || body.charAt(0) !== "{") return null;
+  const out = '{"_pubAt":' + Date.now() + "," + body.slice(1);
+  await PUB.put(STATE_PUB_KEY, out, { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "public, max-age=30, s-maxage=30" } });
+  return { kb: Math.round(out.length / 1024) };
+}
+
 async function refreshPriceShard(env, market, shard) {
   const DB = env.DB;
   const t0 = Date.now();
@@ -29642,7 +29665,7 @@ const SECHDR = {
     "style-src 'self' 'unsafe-inline'; " +
     "img-src 'self' data: blob: https:; " +
     "font-src 'self' data:; " +
-    "connect-src 'self'; " +
+    "connect-src 'self' https://data.lux-inv.com; " +   // [V33.759] CDN 공개 사본
     "frame-ancestors 'self'; " +
     "base-uri 'self'; " +
     "form-action 'self'; " +
@@ -33933,6 +33956,10 @@ async function handleRequest(request, env, ctx, _inner) {
       if (request.method !== "POST") return Response.json({ ok: false, error: "POST" }, { status: 405, headers: cors });
       try { return Response.json(await luxAuthApi(env.DB, path.split("/").pop(), request), { headers: Object.assign({ "cache-control": "no-store" }, cors) }); }
       catch (e) { const c = e && e.code; return Response.json({ ok: false, error: String(e && e.message || e) }, { status: c === 400 || c === 401 || c === 409 || c === 429 ? c : 503, headers: cors }); }
+    }
+    if (path === "/api/alive") {   // [V33.759] CDN 으로 보는 화면이 '열려 있음' 만 알린다(크론이 공개 사본을 계속 짓게) — 아이솔레이트당 1분에 1번만 D1 쓰기
+      if (!globalThis.__aliveAt || Date.now() - globalThis.__aliveAt > 60000) { globalThis.__aliveAt = Date.now(); try { const _p = setState(env.DB, "state_last_req", Date.now()).catch(function () {}); if (ctx && ctx.waitUntil) ctx.waitUntil(_p); } catch (e) {} }
+      return new Response(null, { status: 204, headers: Object.assign({ "cache-control": "no-store" }, cors) });
     }
     if (path === "/api/me") {
       const uid = String(request.headers.get("x-lux-uid") || "");
@@ -57489,6 +57516,7 @@ export default {
           if (Date.now() - _w > 1800000) { await setState(env.DB, "state_r2_warn", Date.now());
             await log(env.DB, "WARN", null, "[STATE-R2] 상태 사본 사전 빌드 실패: " + ((e && e.message) || e)); } } catch (e2) {}
       }
+      try { if (env.PUB) { const _lr2 = _num(await getState(env.DB, "state_last_req", 0), 0); if (Date.now() - _lr2 < 15 * 60000) await statePubWrite(env); } } catch (e) {}   // [V33.759] CDN 공개 사본(1분마다 · 화면이 열려 있을 때만)
 
       __prof.mark("backfill");
       // 1.5) [V12.8] 신규 편입 종목 즉시 백필 + [V12.9] 오염 quote 전량 재기록 마이그레이션.

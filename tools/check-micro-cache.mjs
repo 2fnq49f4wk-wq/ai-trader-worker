@@ -98,7 +98,7 @@ console.log("⑤ 전수 대조(V33.526) — 화면이 부르는 /api/* GET 은 �
   const mcSrc = (S.match(/const MICRO_CACHE_TTL = \{[\s\S]*?\};/) || [""])[0];
   /* 일부러 캐시하지 않는 것 — 이유를 같이 적는다 */
   const ALLOW = { "/api/auth/signup": "회원가입(POST · V33.729)", "/api/auth/login": "로그인(POST)", "/api/auth/password": "비밀번호 바꾸기(POST)", "/api/me": "내 맞춤 프로필 — 기기 토큰별 · no-store(공유 캐시 금지) · 한 행 조회(V33.721)", "/api/cfg": "설정 — 바꾼 즉시 보여야 한다", "/api/build": "판 확인 — no-store 한 줄(D1 없음)", "/api/client-perf": "기기 기록(POST 위주)",
-    "/api/state": "자체 L1/L2/R2 + 크론 사본", "/api/omni-structure": "자체 R2 사본(6시간)" };
+    "/api/state": "자체 L1/L2/R2 + 크론 사본", "/api/alive": "CDN 화면의 '열림' 신호(204 · 본문 없음 · 아이솔레이트당 분 1회 D1 쓰기 · 탭당 10분 1회 · V33.759)", "/api/omni-structure": "자체 R2 사본(6시간)" };
   const miss = [];
   for (const e of eps) {
     const i = S.indexOf('path === "' + e + '"');

@@ -40,6 +40,11 @@ database_id = "77db8a94-9d85-473a-9f43-9659ee8374c0"
 binding = "MODELS"
 bucket_name = "ai-trader-models"
 
+# [V33.759] CDN 공개 사본(data.lux-inv.com) — 모두에게 같은 화면 데이터만. 비밀·개인 데이터는 절대 넣지 않는다(MODELS 와 분리)
+[[r2_buckets]]
+binding = "PUB"
+bucket_name = "lux-public"
+
 # [V33.642] 계량·관측은 Analytics Engine 으로(D1 쓰기 0 · 워커는 쓰기만 · 읽기는 GitHub Actions 가 SQL API 로)
 [[analytics_engine_datasets]]
 binding = "AE"
