@@ -528,3 +528,17 @@ LIVE · {n}초 전 · 첫 사이클 대기 중	LIVE · {n}s ago · waiting for f
 목요일	Thursday
 금요일	Friday
 토요일	Saturday
+AI 매도 의견	AI sell view
+보유 유지	Hold
+일부 익절 검토	Consider partial take-profit
+손절 검토	Consider stop-loss
+주의 · 관찰	Caution · watch
+손절선·목표 사이 · 과열·이탈 신호 없음	Between stop and target · no overheating or breakdown signal
+AI 순위 하위 {n}%	AI rank bottom {n}%
+AI 순위 상위 {n}%	AI rank top {n}%
+AI 손절	AI stop
+기준 손절	Base stop
+단기 과열	Short-term overheated
+볼린저 상단 위	above upper Bollinger band
+단기 추세 이탈	Short-term trend break
+20일선 아래	below 20-day MA

@@ -179,17 +179,59 @@
   function ensureAccts() { if (!isAuth() || !synced) return; var made = 0; ["us", "kr"].forEach(function (m) { if (!prof.pf || !prof.pf[m]) { acct(m); made++; } }); if (made) { persist(); draw(); } }
   function has(mk) { return !!(prof.pf && prof.pf[mk]); }
   function held(sym) { var mk = isKr(sym) ? "kr" : "us"; return has(mk) && prof.pf[mk].pos[sym] ? prof.pf[mk].pos[sym].q : 0; }
+  /* [V33.770] ★'오늘' = 시세가 속한 장(세션)★ — 종전엔 달력 날짜(미 동부 자정)로 갈라, 자정이 지나 다음 장이 열리기 전엔 어제 장에서 산 종목을
+     '오늘 산 것 아님' 으로 보고 전일 종가 기준(+$118)으로 셌다(총손익 −$31 과 불일치 · 사용자 11/4). 이제 지금 시세의 기준 전일 종가가 정해진 뒤(직전 장 마감 뒤)에 산 보유는 평단 기준.
+     장 시각: 미 09:30~16:00 ET · 한 09:00~15:30 KST · 주말 건너뜀(휴장일은 모름 — 드묾). 장전(PRE)은 곧 열 장을 '지금 장' 으로 본다(전일 종가가 넘어와 있다). */
+  function _tzParts(tz, ts) { var o = {}; try { new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(new Date(ts)).forEach(function (x) { o[x.type] = x.value; }); } catch (e) {} return { y: +o.year, m: +o.month, d: +o.day, h: +o.hour % 24, mi: +o.minute }; }
+  function _sessOpen(mk, ts) {   // ts 이전(포함) 가장 최근 장 시작 시각(ms)
+    var tz = mk === "kr" ? "Asia/Seoul" : "America/New_York", om = mk === "kr" ? 540 : 570, L = _tzParts(tz, ts);
+    if (!L.y) return ts - 86400000;
+    for (var k = 0; k < 8; k++) {
+      var D = new Date(Date.UTC(L.y, L.m - 1, L.d - k)), wd = D.getUTCDay();
+      if (wd === 0 || wd === 6 || (k === 0 && L.h * 60 + L.mi < om)) continue;
+      var g = Date.UTC(D.getUTCFullYear(), D.getUTCMonth(), D.getUTCDate(), Math.floor(om / 60), om % 60), P2 = _tzParts(tz, g);
+      return g - (Date.UTC(P2.y, P2.m - 1, P2.d, P2.h, P2.mi) - g);
+    }
+    return ts - 86400000;
+  }
+  function _refCloseAt(mk, sym) {   // 지금 등락(전일 종가 대비)의 '전일 종가' 가 찍힌 시각 — 이 뒤에 산 보유는 평단 기준
+    var x = q(sym), now = Date.now(), ref = x && x.mstate === "PRE" ? now + 12 * 3600000 : now;
+    var cur = _sessOpen(mk, ref), prev = _sessOpen(mk, cur - 60000);
+    return prev + 390 * 60000;
+  }
+  function posDay(mk, s, p, x) {   // → [오늘 손익, 오늘 %] (보유 기준)
+    var c = dayPct(s);
+    if (p.t > 1e12 && p.t > _refCloseAt(mk, s)) return [p.q * (x - p.avg), p.avg > 0 ? (x / p.avg - 1) * 100 : null];
+    return c != null && c > -100 ? [p.q * x * (c / (100 + c)), c] : [0, null];
+  }
   function todayKey(mk, ts) { try { return new Date(ts || Date.now()).toLocaleDateString("en-CA", { timeZone: mk === "kr" ? "Asia/Seoul" : "America/New_York" }); } catch (e) { return new Date(ts || Date.now()).toDateString(); } }
   function dayPct(sym) { var c = chg(q(sym)); if (c == null) { var it = liveItem(sym); if (it && typeof it.dp === "number") c = it.dp; } return c; }
   function val(mk) {
     /* [V33.741] 평가는 priceOf(관심종목 밖 AI 후보 시세까지) · 오늘 변동(보유 × 오늘 등락) · 시작일이 비정상이면 1일(테스트·옛 기록에서 '20760일' 로 보였다) */
     if (!has(mk)) return null; var a = prof.pf[mk], eq = a.cash, cost = 0, mv = 0, day = 0;
     /* [V33.746] ★오늘 손익★ — 오늘 산 종목은 전일 종가가 아니라 산 값(평단)이 기준이다(종전: 오늘 산 1종목이 '오늘 +$144' 인데 총손익은 −$5 로 보였다) */
-    var today = todayKey(mk);
-    Object.keys(a.pos).forEach(function (s) { var p = a.pos[s], x = priceOf(s) || p.avg, c = dayPct(s); eq += p.q * x; mv += p.q * x; cost += p.q * p.avg;
-      if (p.t > 1e12 && todayKey(mk, p.t) === today) day += p.q * (x - p.avg); else if (c != null && c > -100) day += p.q * x * (c / (100 + c)); });
+    Object.keys(a.pos).forEach(function (s) { var p = a.pos[s], x = priceOf(s) || p.avg; eq += p.q * x; mv += p.q * x; cost += p.q * p.avg; day += posDay(mk, s, p, x)[0]; });
     var t0 = a.t0 > 1e12 ? a.t0 : (a.hist.length && a.hist[a.hist.length - 1][0] > 1e12 ? a.hist[a.hist.length - 1][0] : Date.now());
     return { eq: eq, cash: a.cash, mv: mv, upl: mv - cost, ret: (eq / a.start - 1) * 100, n: Object.keys(a.pos).length, day: day, dayPct: eq - day > 0 ? day / (eq - day) * 100 : 0, days: Math.max(1, Math.round((Date.now() - t0) / 86400000)) };
+  }
+  /* [V33.770] ★AI 매도 의견★(사용자 11/4 "매도도 어시스트 · 의견 제공") — 화면이 계산(서버 비용 0). 근거를 같이 보여 준다:
+     ① 손절선 = AI 매매법이 그 종목에 쓰는 손절 %(있으면) · 없으면 평균 변동폭(ATR) 2배(4~15%) ② 목표 = 손절 폭의 2배(손익비 1:2 · 최대 +40%)
+     ③ 과열 = RSI ≥ 75 또는 볼린저 상단 위 ④ 추세 이탈 = 20일선 아래 + 5일 −8% 이하 ⑤ AI 순위(OMNI-Q 백분위)가 하위 30% 로 떨어졌는가.
+     판정 순서: 손절 검토 → 일부 익절(목표·과열) → 주의(추세 이탈·AI 약화) → 보유 유지. 투자 권유가 아니라 기준 안내다. */
+  function sellView(mk, s, p, cur) {
+    var x = q(s) || {}, it = liveItem(s), r = (cur / p.avg - 1) * 100;
+    var atrP = x.atr > 0 && cur > 0 ? x.atr / cur * 100 : 3;
+    var aiStop = it && typeof it.stop === "number" && it.stop >= 1 && it.stop <= 30 ? it.stop : null;
+    var stopP = aiStop != null ? aiStop : Math.min(15, Math.max(4, 2 * atrP)), tpP = Math.min(40, 2 * stopP);   // 목표 = 손절 폭의 2배(손익비 1:2 · 최대 +40%) — ATR 3배는 3배 레버리지 ETF 에서 +54% 처럼 비현실적이었다
+    var sl = p.slPx || p.avg * (1 - stopP / 100), tp = p.tpPx || p.avg * (1 + tpP / 100), why = [], v = "hold";
+    if (cur <= sl) { v = "cut"; why.push("손절선 " + pxS(mk, sl) + " 아래 (평단 대비 " + pctS(r) + ")"); }
+    else if (cur >= tp) { v = "trim"; why.push("목표 " + pxS(mk, tp) + " 도달 (평단 대비 " + pctS(r) + ")"); }
+    if (v === "hold" && ((x.rsi >= 75) || (x.bbUpper > 0 && cur >= x.bbUpper))) { v = "trim"; why.push("단기 과열" + (x.rsi >= 75 ? " · RSI " + Math.round(x.rsi) : "") + (x.bbUpper > 0 && cur >= x.bbUpper ? " · 볼린저 상단 위" : "")); }
+    if (v === "hold" && x.dailyMaShort > 0 && cur < x.dailyMaShort && x.return5 <= -8) { v = "watch"; why.push("단기 추세 이탈 · 20일선 아래 · 5일 " + pctS(x.return5)); }
+    if (it && typeof it.q === "number") { if (it.q <= 0.3) { if (v === "hold") v = "watch"; why.push("AI 순위 하위 " + Math.max(1, Math.round(it.q * 100)) + "%"); } else if (it.q >= 0.8) why.push("AI 순위 상위 " + Math.max(1, Math.round((1 - it.q) * 100)) + "%"); }
+    if (!why.length) why.push("손절선·목표 사이 · 과열·이탈 신호 없음");
+    var KO = { hold: "보유 유지", trim: "일부 익절 검토", cut: "손절 검토", watch: "주의 · 관찰" };
+    return { v: v, ko: KO[v], why: why.slice(0, 3), sl: sl, tp: tp, stopP: stopP, ai: aiStop != null };
   }
   function trade(side, sym, qty) {
     var mk = isKr(sym) ? "kr" : "us", a = acct(mk), price = priceOf(sym);
@@ -252,6 +294,8 @@
       "html[data-theme=light] #minePv{--m-up:#C92A2A;--m-dn:#1B5FCC}html[data-theme=light] #minePv.on{background:rgba(16,24,40,.45)}html[data-theme=light] #minePv .pvb{background:#fff;color:#101828}html[data-theme=light] #minePv .pvc,html[data-theme=light] #minePv .pvs div,html[data-theme=light] #minePv .pvhd,html[data-theme=light] #minePv .seg{background:#F2F4F7}html[data-theme=light] #minePv .seg button.on{background:#101828}html[data-theme=light] #minePv .x{background:#F2F4F7;color:#101828}html[data-theme=light] #minePv .pvai,html[data-theme=light] #minePv .pvhd{color:#344054}html[data-theme=light] #minePv .pvai{background:#E6F7F2;border-color:#CDEBE2}html[data-theme=light] #minePv .pvai b{color:#0B7A66}html[data-theme=light] #minePv .pva .wbtn2{border-color:#D0D5DD;color:#344054}html[data-theme=light] #minePv .pvgo{background:#101828;color:#fff}html[data-theme=light] #minePv .sb,html[data-theme=light] #minePv .pvs span{color:#667085}",
       "#mineRoot .pill.hold{background:rgba(226,199,102,.16);color:#E2C766}html[data-theme=light] #mineRoot .pill.hold{background:#FEF3C7;color:#7A5A00}",
       "#mineRoot .today{margin-top:4px;font-size:13px;color:var(--m-mute)}#mineRoot .today b{font-weight:600}",
+      /* [V33.770] AI 매도 의견 줄 */
+      "#mineRoot .so{display:flex;flex-direction:column;gap:2px;margin:8px 0 2px;padding:8px 10px;border-radius:10px;background:var(--m-soft,rgba(127,140,160,.08));border-left:3px solid #7FA6FF;font-size:12.5px}#mineRoot .so .sv b{font-weight:700;margin-right:6px;color:var(--m-mu,#98A2B3)}#mineRoot .so .sw{color:var(--m-mu,#98A2B3);font-size:12px}#mineRoot .so.trim{border-left-color:#F04452}#mineRoot .so.cut{border-left-color:#3182F6}#mineRoot .so.watch{border-left-color:#E2C766}#mineRoot .so.hold .sv{color:#3DD6B5}#mineRoot .so.trim .sv{color:#F04452}#mineRoot .so.cut .sv{color:#3182F6}#mineRoot .so.watch .sv{color:#E2C766}",
       "#mineRoot .hold{padding:13px 0 12px;border-top:1px solid var(--m-line);cursor:pointer}#mineRoot .ct+.hold,#mineRoot .ct+.row{border-top:0}#mineRoot .ht{display:flex;align-items:center;gap:10px}#mineRoot .hm{display:flex;flex-wrap:wrap;gap:4px 14px;margin:8px 0 0 18px;font-size:12.5px;color:var(--m-mute)}#mineRoot .hm b{font-weight:600;color:var(--fg,#EEF1F5)}#mineRoot .hm b.up{color:var(--m-up)}#mineRoot .hm b.dn{color:var(--m-dn)}",
       "#mineRoot .ha{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:6px;margin:10px 0 0 18px}#mineRoot .ha button{min-height:40px;justify-content:center}#mineRoot .bs{flex:0 0 auto;font-size:11.5px;font-weight:700;padding:3px 7px;border-radius:6px}#mineRoot .bs.b{color:var(--m-up);background:rgba(255,92,92,.12)}#mineRoot .bs.s{color:var(--m-dn);background:rgba(77,141,255,.12)}#mineRoot .more{width:100%;margin-top:8px;min-height:42px}#mineRoot .cashbar{background:#2A303B}",
       "html[data-theme=light] #mineRoot .hm b{color:#101828}html[data-theme=light] #mineRoot .hm b.up{color:var(--m-up)}html[data-theme=light] #mineRoot .hm b.dn{color:var(--m-dn)}html[data-theme=light] #mineRoot .cashbar{background:#D0D5DD}html[data-theme=light] #mineRoot .sync.bad{color:#B42318}",
@@ -367,12 +411,13 @@
       '<div class="kv kv4"><div><span>주문 가능</span>' + fmt(mk, v.cash) + '</div><div><span>주식</span>' + fmt(mk, v.mv) + '</div><div><span>평가손익</span><b class="' + cls(v.upl) + '" style="font-weight:600">' + fmt(mk, v.upl, true) + '</b></div><div><span>실현손익</span><b class="' + cls(v.eq - a.start - v.upl) + '" style="font-weight:600">' + fmt(mk, v.eq - a.start - v.upl, true) + "</b></div></div></section>";
     /* [V33.741] ★보유 종목 카드 재배치★ — 폰에서 평단·익절가가 '…' 로 잘리고 버튼 셋이 한 줄에 끼었다. 위: 이름·평가액·손익 / 가운데: 수량·평단·비중·오늘·TP/SL / 아래: 버튼 3개.
        정렬: 평가액 · 수익률 · 오늘 */
-    var ord2 = ks.map(function (s) { var p = a.pos[s], cur = priceOf(s) || p.avg; return { s: s, p: p, cur: cur, mv: p.q * cur, r: (cur / p.avg - 1) * 100, d: dayPct(s) }; });
+    var ord2 = ks.map(function (s) { var p = a.pos[s], cur = priceOf(s) || p.avg; return { s: s, p: p, cur: cur, mv: p.q * cur, r: (cur / p.avg - 1) * 100, d: posDay(mk, s, p, cur)[1] }; });   // [V33.770] 오늘 % 도 보유 기준(이번 장에 산 것은 평단 대비)
     ord2.sort(function (x, y) { return hSort === "ret" ? y.r - x.r : hSort === "day" ? (y.d == null ? -1e9 : y.d) - (x.d == null ? -1e9 : x.d) : y.mv - x.mv; });
     h += '<section class="card"><div class="ct" style="margin-bottom:2px"><span class="h2" style="color:inherit">보유 ' + ks.length + '종목</span>' + (ks.length > 1 ? '<span class="seg">' + [["val", "평가액"], ["ret", "수익률"], ["day", "오늘"]].map(function (c) { return '<button type="button" data-hs="' + c[0] + '" class="' + (hSort === c[0] ? "on" : "") + '">' + c[1] + "</button>"; }).join("") + "</span>" : "") + "</div>" + (ks.length ? ord2.map(function (o) {
       var s = o.s, p = o.p, ci = ks.indexOf(s);
       return '<div class="hold" data-open="' + esc(s) + '"><div class="ht"><span class="dot" style="background:' + ACOL[ci % ACOL.length] + '" aria-hidden="true"></span><div class="l"><span class="nm">' + esc(nm(s)) + pill(sigOf(s)) + '</span><span class="sb">' + p.q.toLocaleString() + "주 · 평단 " + pxS(mk, p.avg) + " · 현재 " + pxS(mk, o.cur) + '</span></div><div class="r"><span class="p">' + fmt(mk, o.mv) + '</span><span class="' + cls(o.r) + '" style="font-size:12.5px">' + fmt(mk, o.mv - p.q * p.avg, true) + " (" + pctS(o.r) + ")</span></div></div>" +
         '<div class="hm"><span>비중 <b>' + (v.eq > 0 ? (o.mv / v.eq * 100).toFixed(0) : 0) + '%</b></span><span>오늘 <b class="' + cls(o.d) + '">' + pctS(o.d) + "</b></span>" + (p.tpPx ? '<span>익절 <b class="up">' + pxS(mk, p.tpPx) + "</b></span>" : "") + (p.slPx ? '<span>손절 <b class="dn">' + pxS(mk, p.slPx) + "</b></span>" : "") + "</div>" +
+        (function () { var sv = sellView(mk, s, p, o.cur); return '<div class="so ' + sv.v + '"><span class="sv"><b>AI 매도 의견</b> ' + sv.ko + '</span><span class="sw">' + sv.why.map(esc).join(" · ") + '</span><span class="sw">' + (sv.ai ? "AI 손절 " : "기준 손절 ") + pxS(mk, sv.sl) + " · 목표 " + pxS(mk, sv.tp) + "</span></div>"; })() +
         '<div class="ha"><button type="button" class="tag2 wbtn" data-risk="' + esc(s) + '" aria-label="익절 손절 설정">' + (p.tpPx || p.slPx ? "TP/SL 수정" : "TP/SL 설정") + "</button>" + buyBtn(s) + '<button type="button" class="sell" data-sell="' + esc(s) + '">매도</button></div></div>';
     }).join("") : '<div class="empty">홈의 AI 후보나 관심종목에서 [매수]를 눌러 보세요</div>') + "</section>";
     var od = a.ord || [];
@@ -500,7 +545,8 @@
     var a = acct(mk), p = priceOf(sym); if (!p) { alert("지금 시세가 없어 주문할 수 없습니다"); return; }
     var pos = a.pos[sym], hq = pos ? pos.q : 0;
     var S = { side: side === "R" ? "R" : side, type: "mkt", px: rt(mk, p), qty: 0, frac: 0.25, tpOn: false, tp: rt(mk, p * 1.1), sl: rt(mk, p * 0.95) };
-    if (S.side === "R") { S.tpOn = true; if (pos && pos.tpPx) S.tp = pos.tpPx; if (pos && pos.slPx) S.sl = pos.slPx; }
+    if (S.side === "R") { S.tpOn = true; if (pos && !pos.tpPx && !pos.slPx) { var sv0 = sellView(mk, sym, pos, p); S.tp = rt(mk, sv0.tp); S.sl = rt(mk, sv0.sl); }   // [V33.770] 처음 걸 때는 AI 매도 의견의 손절·목표로 채워 둔다
+      if (pos && pos.tpPx) S.tp = pos.tpPx; if (pos && pos.slPx) S.sl = pos.slPx; }
     var unit = function () { return S.type === "lim" ? S.px : p; };
     var maxQ = function () { return S.side === "B" ? Math.floor(a.cash / unit()) : hq; };
     var setF = function (f) { S.frac = f; S.qty = Math.floor(maxQ() * f); };
