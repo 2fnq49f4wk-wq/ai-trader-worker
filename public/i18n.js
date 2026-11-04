@@ -6,15 +6,36 @@
 (function () {
   "use strict";
   var KEY = "lux-lang";
+  var SRCV = ((document.currentScript && document.currentScript.src) || "").split("?v=")[1] || "";   // 빌드 표시(meta)가 없는 단독 페이지의 사전 캐시 구분
   var lang = "ko";
   try { lang = localStorage.getItem(KEY) === "en" ? "en" : "ko"; } catch (e) {}
   var HANGUL = /[가-힣]/;
   var NUM = /[+\-−]?\d[\d,]*(?:\.\d+)?/g;
   var T = null, G = null, GRE = null, cache = new Map();
   var UNITS = [[/(\d)\s?개월/g, "$1mo"], [/(\d)\s?시간/g, "$1h"], [/(\d)\s?거래일/g, "$1 trading days"], [/(\d)\s?영업일/g, "$1 business days"],
-               [/(\d)\s?일/g, "$1d"], [/(\d)\s?분/g, "$1m"], [/(\d)\s?초/g, "$1s"], [/(\d)\s?주/g, "$1wk"], [/(\d)\s?년/g, "$1y"],
-               [/(\d)\s?건/g, "$1"], [/(\d)\s?개/g, "$1"], [/(\d)\s?종목/g, "$1 symbols"], [/(\d)\s?종/g, "$1 kinds"], [/(\d)\s?회/g, "$1x"],
-               [/(\d)\s?억/g, "$1×100M"], [/(\d)\s?만/g, "$1×10k"], [/(\d)\s?원/g, "$1 KRW"], [/(\d)\s?위/g, "#$1"], [/(\d)\s?차/g, "$1th"]];
+               [/(\d)\s?일(?![가-힣])/g, "$1d"], [/(\d)\s?분(?![가-힣])/g, "$1m"], [/(\d)\s?초(?![가-힣])/g, "$1s"], [/(\d)\s?주(?=\s?(?:전|후|간|동안)?(?![가-힣]))/g, "$1wk"], [/(\d)\s?년(?![가-힣])/g, "$1y"],
+               [/(\d)\s?건/g, "$1"], [/(\d)\s?개(?![가-힣])/g, "$1"], [/(\d)\s?종목/g, "$1 symbols"], [/(\d)\s?종(?![가-힣])/g, "$1 kinds"], [/(\d)\s?회(?![가-힣])/g, "$1x"],
+               [/(\d)\s?배(?![가-힣])/g, "$1x"], [/(\d)\s?표(?![가-힣])/g, "$1 votes"], [/(\d)\s?[인명곳](?![가-힣])/g, "$1"],
+               [/(\d)\s?위(?![가-힣])/g, "#$1"], [/(\d)\s?차(?![가-힣])/g, "$1th"],
+               [/(\d(?:s|m|h|d|wk|mo|y))\s?전(?![가-힣])/g, "$1 ago"], [/(\d(?:s|m|h|d|wk|mo|y))\s?후(?![가-힣])/g, "$1 later"]];
+  /* [V33.758] 한국식 큰 수(조·억·만)를 영어식(T·B·M·K)으로 — 종전 '×100M'·'×10k' 는 '1조 3,961×100M' 처럼 읽을 수 없었다.
+     '1조 3,961억' → 1.40T · '7,630억원' → ₩763B(앞에 ₩ 가 있으면 원은 지우고, 없으면 KRW) */
+  var KMONEY = /(₩\s?)?([+\-−]?\d[\d,]*(?:\.\d+)?)\s?(조|억|만)(?:\s?(\d[\d,]*(?:\.\d+)?)\s?(억|만))?(\s?원)?(?![가-힣])/g;
+  var KMUL = { "조": 1e12, "억": 1e8, "만": 1e4 };
+  function kfmt(v) {
+    var a = Math.abs(v), u = "", d = 1;
+    if (a >= 1e12) { u = "T"; d = 1e12; } else if (a >= 1e9) { u = "B"; d = 1e9; } else if (a >= 1e6) { u = "M"; d = 1e6; } else if (a >= 1e3) { u = "K"; d = 1e3; }
+    var x = v / d, ax = Math.abs(x);
+    return String(+x.toFixed(ax >= 1000 ? 0 : ax >= 100 ? 1 : 2)) + u;
+  }
+  function kmoney(s) {
+    return s.replace(KMONEY, function (m, won, n1, u1, n2, u2, wonSuffix) {
+      var sign = /^[\-−]/.test(n1) ? "-" : (/^\+/.test(n1) ? "+" : "");
+      var v = Math.abs(parseFloat(n1.replace(/[+\-−,]/g, ""))) * KMUL[u1] + (n2 ? parseFloat(n2.replace(/,/g, "")) * KMUL[u2] : 0);
+      if (!isFinite(v)) return m;
+      return sign + (won || wonSuffix ? "₩" : "") + kfmt(v);
+    }).replace(/(\d)\s?원(?![가-힣])/g, "$1 KRW");
+  }
   // 영어 뒤에 남은 조사(은·는·이·가·을·를·의·에·로·와·과·도·만)를 지운다 — "model 이" → "model"
   var PART = /([A-Za-z0-9%)\]])\s?(?:으로|에서|에게|까지|부터|이다|이며|이고|이면|은|는|이|가|을|를|의|에|로|와|과|도|만)(?=[\s·,.)\]:—-]|$)/g;
 
@@ -23,11 +44,13 @@
     if (!s || !HANGUL.test(s) || !T) return s;
     var c = cache.get(s); if (c !== undefined) return c;
     var lead = s.match(/^\s*/)[0], trail = s.match(/\s*$/)[0], core = s.trim();
-    var nums = core.match(NUM) || [], key = core.replace(NUM, "{n}"), out = null;
-    if (Object.prototype.hasOwnProperty.call(T, key)) out = fill(T[key], nums);
+    var nums = core.match(NUM) || [], key = core.replace(NUM, "{n}"), out = null, hit = Object.prototype.hasOwnProperty.call(T, key), raw = !hit && core.length > 160;
+    if (hit) out = fill(T[key], nums);
+    else if (/\n/.test(core) && core.length <= 400) { out = core.split("\n").map(tr).join("\n"); raw = true; }   // [V33.758] 여러 줄 title(학습 상태 풍선 등)은 줄마다 틀을 찾는다
     else if (core.length > 160) out = core;   // 긴 자동 생성 글(월간 리포트 등)은 단어만 바꾸면 한영이 섞여 더 읽기 어렵다 — 사전에 없으면 원문
-    else {
-      out = GRE ? core.replace(GRE, function (m) { return G[m] != null ? G[m] : m; }) : core;
+    else out = GRE ? core.replace(GRE, function (m) { return G[m] != null ? G[m] : m; }) : core;
+    if (!raw && HANGUL.test(out)) {   // 틀·용어가 남긴 한국 단위(조·억·만·일·전…)와 영어 뒤 조사를 정리 — 긴 글 원문은 손대지 않는다
+      out = kmoney(out);
       for (var k = 0; k < UNITS.length; k++) out = out.replace(UNITS[k][0], UNITS[k][1]);
       out = out.replace(PART, "$1");
     }
@@ -91,6 +114,7 @@
   function start() {
     document.documentElement.setAttribute("lang", "en");
     ["nav.sidebar", ".m-appbar", ".m-tabbar", ".m-drawer", ".page.active", ".modal.show", "header"].forEach(function (sel) { document.querySelectorAll(sel).forEach(walkLazy); });
+    if (!document.querySelector(".page")) walkLazy(document.body);   // [V33.758] 약관·개인정보·쿠키 정책처럼 화면(.page) 구조가 없는 단독 페이지는 본문 전체
     document.querySelectorAll(".page:not(.active), .modal:not(.show)").forEach(function (e) { dirty.add(e); });
     if (document.title && HANGUL.test(document.title)) document.title = tr(document.title);
     new MutationObserver(function (ms) {
@@ -107,7 +131,7 @@
   }
 
   function load() {
-    var ver = (document.querySelector('meta[name="lux-build"]') || {}).content || "";
+    var ver = (document.querySelector('meta[name="lux-build"]') || {}).content || SRCV;
     fetch("/i18n-en.json?v=" + encodeURIComponent(ver)).then(function (r) { return r.json(); }).then(function (d) {
       T = d.t || {}; G = d.g || {};
       var ks = Object.keys(G).sort(function (a, b) { return b.length - a.length; })

@@ -183,13 +183,13 @@ S&P{n} {n}x 숏 · SPXU	S&P{n} {n}x short · SPXU
 실측 사분면 로짓 적용 (n {n})	Measured quadrant logit applied (n {n})
 거래 {n}건 · 전부 평균 {n}%	{n} trades · all avg {n}%
 가중 {n} × 시총순위 점수 {n}	Weight {n} × Market-cap rank score {n}
-누적 {n}만 / {n}만 ({n}%)	Cumulative {n}×10k / {n}×10k ({n}%)
+누적 {n}만 / {n}만 ({n}%)	Cumulative {n}만 / {n}만 ({n}%)
 미국 중기국채 {n}{n}년 (IEF)	US mid Treasury {n}{n}Y (IEF)
 미국 단기국채 {n}{n}년 (SHY)	US short Treasury {n}{n}Y (SHY)
 평균이익 {n}% / 평균손실 {n}%	Avg gain {n}% / Avg loss {n}%
 활성화됨 · 거래/조건 데이터 수집 중	Active · collecting trade/condition data
 방향 분리 · 오름과 내림을 따로 본다	Direction split · rises and falls seen separately
-누적 {n}억 / {n}억 ({n}%)	Cumulative {n}00M / {n}00M ({n}%)
+누적 {n}억 / {n}억 ({n}%)	Cumulative {n}억 / {n}억 ({n}%)
 이 수익 넘으면 트레일 확대(추세 런)	Widen trail above this gain (trend run)
 CASH MANAGEMENT (입출금)	CASH MANAGEMENT (deposits/withdrawals)
 보조 방향 모델 · 위원회 투표와 구분	Auxiliary direction model · separate from committee vote

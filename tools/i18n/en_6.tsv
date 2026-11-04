@@ -69,7 +69,7 @@ LIVE · 방금 갱신	LIVE · just updated
 {n}건 청산 · 최고 +${n} · 최저 -${n}	{n} exits · best +${n} · worst -${n}
 {n}건 청산 · 최고 +${n} · 최저 -${n}K	{n} exits · best +${n} · worst -${n}K
 {n}건 청산 · 최고 +${n}K · 최저 -${n}K	{n} exits · best +${n}K · worst -${n}K
-{n}건 청산 · 최고 +₩{n}만 · 최저 -₩{n}만	{n} exits · best +₩{n}×10k · worst -₩{n}×10k
+{n}건 청산 · 최고 +₩{n}만 · 최저 -₩{n}만	{n} exits · best +₩{n}만 · worst -₩{n}만
 이번 사이클 · 평가 {n}종목	This cycle · {n} symbols evaluated
 코스피 지수 · 전일 종가 대비 · 규정 기준 그대로	KOSPI index · vs previous close · official basis
 코스닥 지수 · 전일 종가 대비 · 규정 기준 그대로	KOSDAQ index · vs previous close · official basis

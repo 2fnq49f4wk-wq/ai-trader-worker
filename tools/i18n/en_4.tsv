@@ -9,7 +9,7 @@ XGB · LGB · CAT (외부 부스터 {n}종)	XGB · LGB · CAT ({n} external boos
 홀드아웃 t {n} < {n} — 잡음과 구별되지 않는다	Holdout t {n} < {n} — indistinguishable from noise
 · 하락 {n}%(n{n}) · 폭락 {n}%(n{n})	· Bear {n}%(n{n}) · Crash {n}%(n{n})
 지평 {n}분 · 피처 v{n}×{n} · 합류 {n}표	Horizon {n}m · Features v{n}×{n} · {n} votes joined
-주기 끝 예상 {n}만 ({n}%) · {n}시간 {n}	Expected at cycle end {n}×10k ({n}%) · {n}h {n}
+주기 끝 예상 {n}만 ({n}%) · {n}시간 {n}	Expected at cycle end {n}만 ({n}%) · {n}h {n}
 종목/페이지 검색…  (예: NVDA, 삼성, 대시보드)	Search symbols/pages…  (e.g. NVDA, Samsung, Dashboard)
 시장 {n}일 하락·고변동이면 {n}순위 추세 매매법 쉼	Rank-{n} trend playbooks pause when market {n}d falls with high volatility
 RSI({n}) — {n} 이상 과열, {n} 이하 과매도	RSI({n}) — above {n} overbought, below {n} oversold
@@ -67,10 +67,10 @@ MACD({n}) 히스토그램 — 가격 대비 %로 정규화. 양수=상승 모멘
 이동평균 정배열도 {n}~{n} (MA{n}>{n}>{n}>{n} 이면 {n})	MA alignment {n}–{n} ({n} if MA{n}>{n}>{n}>{n})
 — 수익률은 시간가중수익률(TWR)로 계산되어 입출금 시점마다 구간이 분리됩니다.	— Returns use time-weighted return (TWR), split at each deposit/withdrawal.
 — 그래서 한 표도 넣지 않는다. 문턱은 내리지 않는다. · 학습·추론 정합 오차	— so it casts no vote. Thresholds are not lowered. · Train/infer consistency error
-주기 끝 예상 {n}만 ({n}%) · {n}시간 {n}만 ({n}% / 일 한도)	Expected at cycle end {n}×10k ({n}%) · {n}h {n}×10k ({n}% / daily limit)
+주기 끝 예상 {n}만 ({n}%) · {n}시간 {n}만 ({n}% / 일 한도)	Expected at cycle end {n}만 ({n}%) · {n}h {n}만 ({n}% / daily limit)
 확인 {n}/{n} {n}:{n} · 네이버 증권(레피니티브) 국채 {n}년 실시간	Checked {n}/{n} {n}:{n} · Naver Finance (Refinitiv) KTB {n}Y live
 S&P {n} 히트맵 · 상자 크기 = 시가총액, 색상 = 등락 · 섹터별 그룹 ·	S&P {n} heatmap · box size = market cap, color = change · grouped by sector ·
-주기 끝 예상 {n}억 ({n}%) · {n}시간 {n}만 ({n}% / 일 한도)	Expected at cycle end {n}00M ({n}%) · {n}h {n}×10k ({n}% / daily limit)
+주기 끝 예상 {n}억 ({n}%) · {n}시간 {n}만 ({n}% / 일 한도)	Expected at cycle end {n}억 ({n}%) · {n}h {n}만 ({n}% / daily limit)
 현재 TREND 설정을 과거 {n}년에 적용해 성과를 검증합니다. (수십 초 소요)	Validates current TREND settings over the past {n} years. (takes tens of seconds)
 대형주 {n}일 신고가 · 따라붙는 손절(고점 {n}%) · {n}일 · 중기 보합	Large-cap {n}d new high · Trailing stop (peak {n}%) · {n}d · mid-term flat
 변동성 {n}그룹마다 조율 · 시스템을 안 낮춘 것만 실전(‘미지수 · 조율’ 탭)	Tuned per {n} volatility groups · only non-degrading ones go live ('Unknowns · Tuning' tab)
@@ -84,7 +84,7 @@ Displaced MA({n} {n}봉) — 이동평균선을 {n}봉 앞으로 민 선(점선)
 Modal 학습기를 재배포하고 즉시 {n}회 재학습(GitHub Actions 수동 실행)	Redeploy the Modal trainer and retrain {n}x now (manual GitHub Actions run)
 → 신규 진입 관문·포지션 크기에 반영(폭락 국면은 매매법 AI 표의 국면 칸으로도 갈린다)	→ Applied to new-entry gates and position size (crash regime is also split by the Playbook AI regime cells)
 목표가에 도달하면 토스트와 브라우저 알림으로 알려줍니다. 종목 상세에서도 추가할 수 있어요.	Notifies with a toast and browser alert when the target is hit. You can also add from Stock Detail.
-워커 자체 계량(오늘 {n}{n}{n}): D{n} 읽은 행 {n}만 / 차단 상한 {n}억	Worker self-metering (today {n}{n}{n}): D{n} rows read {n}×10k / block cap {n}00M
+워커 자체 계량(오늘 {n}{n}{n}): D{n} 읽은 행 {n}만 / 차단 상한 {n}억	Worker self-metering (today {n}{n}{n}): D{n} rows read {n}만 / block cap {n}억
 모델 교체·정식 합류는 독립 검증 후 결정됩니다. 과거 성과는 미래 수익을 보장하지 않습니다.	Model replacement and official joining are decided after independent validation. Past performance does not guarantee future returns.
 추가 요금(포함량 초과): 지금까지 ${n} · 주기 끝 예상 ${n} (기본 ${n} 별도)	Overage charges: so far ${n} · expected at cycle end ${n} (base ${n} separate)
 한 거래 최대손실 = 자산 × Risk%. 손절거리로 수량을 역산해 변동성에 맞춰 자동 조절.	Max loss per trade = equity × Risk%. Quantity is derived from stop distance, auto-scaled to volatility.
