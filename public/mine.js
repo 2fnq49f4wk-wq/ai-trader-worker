@@ -233,8 +233,23 @@
     var KO = { hold: "보유 유지", trim: "일부 익절 검토", cut: "손절 검토", watch: "주의 · 관찰" };
     return { v: v, ko: KO[v], why: why.slice(0, 3), sl: sl, tp: tp, stopP: stopP, ai: aiStop != null };
   }
+  /* [V33.771] ★장이 모두 닫힌 시간엔 체결하지 않는다★(사용자 11/4 "프리·애프터·정규장 다 닫힌 시간엔 예약 매수만") —
+     열린 창: 미 04:00~20:00 ET(프리·정규·애프터) · 한 08:00~08:50 · 09:00~15:30 · 15:40~20:00 KST(넥스트레이드 프리·정규·애프터) · 주말 휴장.
+     휴장일은 시세의 장 상태(CLOSED 등 · 15분 안 시세)로 안다. 닫혀 있으면 시장가는 막고 예약(지정가)만 받는다 · 예약·익절·손절도 열린 시간에만 체결. */
+  function mktOpen(mk, sym) {
+    var L = _tzParts(mk === "kr" ? "Asia/Seoul" : "America/New_York", Date.now()); if (!L.y) return true;
+    var wd = new Date(Date.UTC(L.y, L.m - 1, L.d)).getUTCDay(), mins = L.h * 60 + L.mi;
+    if (wd === 0 || wd === 6) return false;
+    var win = mk === "kr" ? [[480, 530], [540, 930], [940, 1200]] : [[240, 1200]];
+    if (!win.some(function (w) { return mins >= w[0] && mins < w[1]; })) return false;
+    var x = sym ? q(sym) : null;
+    if (x && x.mstate && Date.now() - (Number(x.ts) || 0) < 15 * 60000 && /^(CLOSED|POSTPOST|PREPRE|HOLIDAY)$/.test(x.mstate)) return false;
+    return true;
+  }
+  function mktNext(mk) { return mk === "kr" ? "다음 장(08:00 프리마켓)" : "다음 장(04:00 ET 프리마켓)"; }
   function trade(side, sym, qty) {
     var mk = isKr(sym) ? "kr" : "us", a = acct(mk), price = priceOf(sym);
+    if (!mktOpen(mk, sym)) return "지금은 장이 모두 닫혀 있어요 — 예약 주문만 걸 수 있습니다(" + mktNext(mk) + "에 가격이 닿으면 체결)";
     qty = Math.floor(qty);
     if (!price) return "시세가 없어 체결할 수 없습니다";
     if (!(qty > 0)) return "수량을 1주 이상으로 정해 주세요";
@@ -544,7 +559,9 @@
     var mk = isKr(sym) ? "kr" : "us";
     var a = acct(mk), p = priceOf(sym); if (!p) { alert("지금 시세가 없어 주문할 수 없습니다"); return; }
     var pos = a.pos[sym], hq = pos ? pos.q : 0;
-    var S = { side: side === "R" ? "R" : side, type: "mkt", px: rt(mk, p), qty: 0, frac: 0.25, tpOn: false, tp: rt(mk, p * 1.1), sl: rt(mk, p * 0.95) };
+    var shut = !mktOpen(mk, sym);   // [V33.771] 장이 모두 닫혀 있으면 예약만
+    var S = { side: side === "R" ? "R" : side, type: shut ? "lim" : "mkt", px: rt(mk, p), qty: 0, frac: 0.25, tpOn: false, tp: rt(mk, p * 1.1), sl: rt(mk, p * 0.95) };
+    if (shut && S.side !== "R") S.px = rt(mk, p * (S.side === "B" ? 0.97 : 1.05));
     if (S.side === "R") { S.tpOn = true; if (pos && !pos.tpPx && !pos.slPx) { var sv0 = sellView(mk, sym, pos, p); S.tp = rt(mk, sv0.tp); S.sl = rt(mk, sv0.sl); }   // [V33.770] 처음 걸 때는 AI 매도 의견의 손절·목표로 채워 둔다
       if (pos && pos.tpPx) S.tp = pos.tpPx; if (pos && pos.slPx) S.sl = pos.slPx; }
     var unit = function () { return S.type === "lim" ? S.px : p; };
@@ -562,7 +579,8 @@
       var h = head;
       if (!risk) {
         h += '<div class="tabs2" role="tablist"><button type="button" role="tab" data-side="B" class="' + (buy ? "on b" : "") + '">매수</button><button type="button" role="tab" data-side="S" class="' + (!buy ? "on s" : "") + '"' + (hq ? "" : " disabled") + ">매도" + (hq ? "" : " (보유 없음)") + "</button></div>" +
-          '<div class="typ">' + [["mkt", "시장가"], ["lim", "예약 (지정가)"]].map(function (t) { return '<button type="button" data-type="' + t[0] + '" class="' + (S.type === t[0] ? "on" : "") + '">' + t[1] + "</button>"; }).join("") + "</div>";
+          '<div class="typ">' + [["mkt", shut ? "시장가 (장 마감)" : "시장가"], ["lim", "예약 (지정가)"]].map(function (t) { return '<button type="button" data-type="' + t[0] + '" class="' + (S.type === t[0] ? "on" : "") + '"' + (shut && t[0] === "mkt" ? " disabled" : "") + ">" + t[1] + "</button>"; }).join("") + "</div>" +
+          (shut ? '<div class="note2">지금은 프리마켓·정규장·애프터마켓이 모두 닫혀 있어 예약 주문만 받습니다 — ' + mktNext(mk) + "에 가격이 닿으면 체결됩니다.</div>" : "");
         if (S.type === "lim") h += '<div class="fld"><span>' + (buy ? "이 가격 이하로 내려오면 매수" : "이 가격 이상으로 오르면 매도") + '</span><div class="stp2"><button type="button" data-pxs="-1" aria-label="가격 내리기">−</button><input id="shPx" inputmode="decimal" aria-label="예약 가격" value="' + (mk === "kr" ? Math.round(S.px) : S.px.toFixed(2)) + '"><button type="button" data-pxs="1" aria-label="가격 올리기">+</button></div><em>현재가 대비 ' + pct(S.px, p) + "</em></div>";
         h += '<div class="fld"><span>수량 <i>' + (buy ? "최대 " + maxQ().toLocaleString() + "주" : "보유 " + hq.toLocaleString() + "주") + '</i></span><div class="stp2"><button type="button" data-qs="-1" aria-label="1주 빼기">−</button><input id="shQ" inputmode="numeric" aria-label="수량" value="' + S.qty + '"><button type="button" data-qs="1" aria-label="1주 더하기">+</button></div></div>' +
           '<div class="pre">' + [0.1, 0.25, 0.5, 1].map(function (f) { return '<button type="button" data-f="' + f + '" class="' + (f === S.frac ? "on" : "") + '">' + (f === 1 ? (buy ? "최대" : "전부") : f * 100 + "%") + "</button>"; }).join("") + "</div>";
@@ -595,7 +613,7 @@
       var b = ev.target.closest("button"); if (!b) return; var d = b.dataset;
       if (d.close) { w.remove(); return; }
       if (d.side) { S.side = d.side; setF(S.side === "S" ? 1 : 0.25); }
-      else if (d.type) { S.type = d.type; if (S.type === "lim") S.px = rt(mk, p * (S.side === "B" ? 0.97 : 1.05)); S.tp = rt(mk, unit() * 1.1); S.sl = rt(mk, unit() * 0.95); setF(S.frac > 0 ? S.frac : 0.25); }
+      else if (d.type) { if (shut && d.type === "mkt") return; S.type = d.type; if (S.type === "lim") S.px = rt(mk, p * (S.side === "B" ? 0.97 : 1.05)); S.tp = rt(mk, unit() * 1.1); S.sl = rt(mk, unit() * 0.95); setF(S.frac > 0 ? S.frac : 0.25); }
       else if (d.pxs) { S.px = rt(mk, S.px + Number(d.pxs) * tick(mk, S.px)); }
       else if (d.qs) { S.qty += Number(d.qs); S.frac = -1; }
       else if (d.f) { setF(Number(d.f)); }
@@ -610,7 +628,7 @@
           if (S.tpOn) { if (S.tp <= cur || S.sl >= cur) { alert("익절가는 현재가보다 높게, 손절가는 현재가보다 낮게 정해 주세요"); return; } a.pos[sym].tpPx = S.tp; a.pos[sym].slPx = S.sl; msg = "익절·손절을 걸었어요"; }
           else { delete a.pos[sym].tpPx; delete a.pos[sym].slPx; msg = "익절·손절을 껐어요"; }
           persist();
-        } else if (S.type === "lim" && (S.side === "B" ? S.px < cur : S.px > cur)) {
+        } else if (S.type === "lim" && (shut || (S.side === "B" ? S.px < cur : S.px > cur))) {   // [V33.771] 닫혀 있으면 이미 닿은 가격도 예약으로(열리면 체결)
           if (!a.ord) a.ord = []; if (a.ord.length >= 20) { alert("예약 주문은 시장당 20건까지입니다"); return; }
           var o = { id: oid(), side: S.side, s: sym, px: S.px, q: S.qty, t: Date.now() };
           if (S.side === "B" && S.tpOn) { o.tpPx = S.tp; o.slPx = S.sl; }
@@ -702,7 +720,9 @@
     if (!prof.pf) return; var changed = [];
     ["us", "kr"].forEach(function (mk) {
       var a = prof.pf[mk]; if (!a) return;
+      if (!mktOpen(mk)) return;   // [V33.771] 장이 모두 닫혀 있으면 예약·익절·손절을 체결하지 않는다(묵은 시세로 체결 방지)
       (a.ord || []).slice().forEach(function (o) {
+        if (!mktOpen(mk, o.s)) return;
         var p = priceOf(o.s); if (!p) return;
         var hit = o.side === "B" ? p <= o.px : p >= o.px; if (!hit) return;
         a.ord = a.ord.filter(function (x) { return x.id !== o.id; });
@@ -714,7 +734,7 @@
         changed.push("예약 " + (o.side === "B" ? "매수" : "매도") + " 체결 · " + nm(o.s) + " " + q.toLocaleString() + "주 @ " + pxS(mk, p));
       });
       Object.keys(a.pos).forEach(function (s) {
-        var h = a.pos[s], p = priceOf(s); if (!p || !(h.tpPx || h.slPx)) return;
+        var h = a.pos[s], p = priceOf(s); if (!p || !(h.tpPx || h.slPx) || !mktOpen(mk, s)) return;
         var why = h.tpPx && p >= h.tpPx ? "익절" : h.slPx && p <= h.slPx ? "손절" : null; if (!why) return;
         var q = h.q; if (trade("S", s, q)) return;
         changed.push(why + " 체결 · " + nm(s) + " " + q.toLocaleString() + "주 @ " + pxS(mk, p));
