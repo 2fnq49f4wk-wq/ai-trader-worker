@@ -1,0 +1,521 @@
+코스피 지수로 대용 측정 — 규정 기준은 선물이라 실제 발동과 다를 수 있어요	Measured on the KOSPI index as a proxy — the official rule uses futures, so actual triggers may differ
+코스닥 지수로 대용 측정 — 규정 기준은 선물이라 실제 발동과 다를 수 있어요	Measured on the KOSDAQ index as a proxy — the official rule uses futures, so actual triggers may differ
+장후 시간외	After-hours
+장전 시간외	Pre-market
+학습 표본 축적 중 — 곧 활성화	Collecting training samples — activating soon
+종목 목록으로	Back to symbol list
+자산 · 부채 (연간)	Assets & liabilities (annual)
+자산총계	Total assets
+유동자산	Current assets
+현금성자산	Cash & equivalents
+매출채권	Receivables
+재고자산	Inventory
+유형자산	Net PP&E
+부채총계	Total liabilities
+유동부채	Current liabilities
+총차입금	Total debt
+자기자본	Shareholders' equity
+이익잉여금	Retained earnings
+영업 현금흐름 · 잉여현금흐름 (연간)	Operating & free cash flow (annual)
+영업 현금흐름	Operating cash flow
+영업활동 현금흐름	Operating cash flow
+설비투자(CAPEX)	Capital expenditure (CAPEX)
+잉여현금흐름	Free cash flow
+감가상각	Depreciation
+순위 기준 z점수 · QMJ(Asness·Frazzini·Pedersen 2019, RAS) 방식 · 지표 출처는 각 항목에 표시	Rank-based z-score · QMJ method (Asness·Frazzini·Pedersen 2019, RAS) · indicator sources shown per item
+기업 자료가 아직 없습니다.	No company data yet.
+재무 자료가 아직 없어 배수를 계산할 수 없습니다.	Multiples can't be calculated yet — no financial data.
+재무 자료가 아직 없습니다.	No financial data yet.
+재무제표가 아직 없습니다.	No financial statements yet.
+IR 자료를 불러오지 못했습니다.	Couldn't load IR materials.
+최근 신고가 없습니다.	No recent filings.
+최근 신고자	Recent filers
+적자 — 계산 안 함	Net loss — not calculated
+상승 여력	Upside
+같은 업종 {n}개와 비교	Compared with {n} peers in the same sector
+{n}개 지표 모두 보기 ›	View all {n} metrics ›
+예상 EPS {n}	Est. EPS {n}
+ · 장 마감 후	 · After close
+ · 장 시작 전	 · Before open
+패턴 {n}개 · 점수 {n} · 일봉 6개월	{n} patterns · score {n} · daily, 6 months
+{n}/{n}종목 스캔 · 패턴 {n}유형 · {n}분 전	{n}/{n} symbols scanned · {n} pattern types · {n}m ago
+재무 우량 — 수익성·건전성·이익질 지표 다수 통과	Strong financials — most profitability, soundness and earnings-quality indicators pass
+재무 양호 — 일부 지표 개선 여지	Healthy financials — room to improve some indicators
+재무 보통 — 혼재된 신호, 추세 확인 필요	Average financials — mixed signals, trend needs confirming
+재무 취약 — 수익성 또는 건전성 경고	Weak financials — profitability or soundness warning
+재무 위험 — 다수 지표 미달	Risky financials — many indicators below threshold
+이익조작 신호(M>-1.78)	Earnings-manipulation signal (M>-1.78)
+부도위험(O확률>50%)	Default risk (O-probability>50%)
+발생액 과다(이익질 저하)	Excessive accruals (lower earnings quality)
+재무항목이 없어 건너뛴 지표: 이자비용	Indicators skipped for missing financial items: interest expense
+영업수익성은 이자비용을 빼지 않은 값이에요(해당 항목 미제공)	Operating profitability is before interest expense (item not provided)
+Yahoo Finance (발표 컨센서스)	Yahoo Finance (published consensus)
+증권사 자료 불러오는 중…	Loading broker data…
+현재가 ₩{n} · 애널리스트 {n}명	Price ₩{n} · {n} analysts
+국내 증권사 리포트 · {n}건	Domestic broker reports · {n}
+표본이 모자라요 — 같은 업종에서 재무를 받아 둔 종목이 {n}개(최소 {n}개 필요)	Not enough samples — {n} symbols in the same sector have financials loaded (at least {n} needed)
+다른 종목 상세를 열어 두면 표본이 쌓여 자동으로 채워집니다	Open other symbol details and samples will accumulate and fill in automatically
+확인 {n}/{n} {n}:{n} · 뉴욕연은 EFFR 목표범위(실효 {n}%)	Checked {n}/{n} {n}:{n} · NY Fed EFFR target range (effective {n}%)
+추격 매수는 피하고 이익 일부 실현	Avoid chasing; take partial profits
+신규는 작게, 손절선 올려 이익 지키기	Keep new positions small; raise stops to protect gains
+추세 종목 짧게, 손절 엄수	Short trades in trending stocks; strict stops
+AI 후보 중 분할 매수	Scale into AI candidates
+주도주 비중 확대, 추세 길게	Add to leaders; ride the trend
+신호 뜬 종목만 골라 짧게	Pick only signaled stocks; keep trades short
+신규 매수 줄이고 현금·방어주	Cut new buys; favor cash and defensives
+관망 · 첫 양봉 뒤 소액만	Stand aside · small size only after the first up candle
+비밀번호 가리기	Hide password
+비밀번호 보기	Show password
+저장됨	Saved
+시세가 없어 체결할 수 없습니다	Can't fill — no quote available
+수량을 1주 이상으로 정해 주세요	Set a quantity of at least 1 share
+주문 가능 금액이 부족합니다	Insufficient buying power
+보유 종목은 30개까지입니다	Up to 30 holdings are allowed
+보유하지 않은 종목입니다	You don't hold this stock
+좋은 아침이에요	Good morning
+좋은 오후예요	Good afternoon
+좋은 저녁이에요	Good evening
+님	
+가상 {n}으로 AI 후보를 따라 사 보세요	Follow AI candidates with virtual {n}
+가상 ${n}으로 AI 후보를 따라 사 보세요	Follow AI candidates with virtual ${n}
+가상 ₩{n}으로 AI 후보를 따라 사 보세요	Follow AI candidates with virtual ₩{n}
+실제 돈은 쓰지 않습니다 · 내 성적이 이 기기에만 쌓입니다	No real money is used · your results are kept on this device only
+AI 신호	AI signal
+관심 해제	Remove from watchlist
+모의계좌가 아직 없습니다	No paper account yet
+가상 ${n}으로 시작 · 실제 돈은 쓰지 않습니다	Start with virtual ${n} · no real money is used
+가상 ₩{n}으로 시작 · 실제 돈은 쓰지 않습니다	Start with virtual ₩{n} · no real money is used
+계좌 만들기	Create account
+총자산 · {n}일째	Total assets · day {n}
+실현손익	Realized P&L
+평가손익	Unrealized P&L
+주문 가능	Buying power
+주식	Stocks
+예약 주문 {n}건	{n} scheduled orders
+예약 주문·익절·손절은 이 사이트가 열려 있을 때 15초마다 시세를 보고 체결합니다(닫혀 있으면 다시 열 때 확인).	Scheduled orders, take-profit and stop-loss are checked against quotes every 15 seconds while this site is open (checked again when you reopen it).
+더 보기 ({n}건)	Show more ({n})
+체결가 = 그 순간 화면 시세(시간외 포함) · 수수료·세금 없음 · 최근 60건까지 보관 · 모의투자	Fill price = on-screen quote at that moment (incl. extended hours) · no fees or taxes · last 60 kept · paper trading
+거래 내역 {n}건	Trade history · {n}
+보유 {n}종목	{n} holdings
+이 성향에 맞춰 홈의 시장 안내와 AI 순위 설명이 바뀝니다.	Market guidance and AI ranking notes on Home adapt to this profile.
+성향 바꾸기	Change profile
+비밀번호 바꾸기	Change password
+로그아웃	Log out
+{n}계좌 처음부터	Reset {n} account
+계좌 처음부터	Reset account
+이 브라우저는 지원하지 않음	Not supported in this browser
+허용	Allowed
+거부	Denied
+글꼴 허용 · 진단 허용	Fonts allowed · diagnostics allowed
+글꼴 허용 · 진단 거부	Fonts allowed · diagnostics denied
+글꼴 거부 · 진단 허용	Fonts denied · diagnostics allowed
+글꼴 거부 · 진단 거부	Fonts denied · diagnostics denied
+선택 전	Not chosen
+Tester · 비밀번호 확인값만 저장	Tester · only a password check value is stored
+· 비밀번호 확인값만 저장	 · only a password check value is stored
+{n}판	{n} edition
+4항목	4 items
+{n}개	{n}
+내 순위 · 미국	My rank · US
+내 순위 · 한국	My rank · Korea
+{n}위	#{n}
+순위 밖	Unranked
+{n}명 중	of {n}
+미국 모의계좌가 아직 없어요	No US paper account yet
+한국 모의계좌가 아직 없어요	No Korea paper account yet
+다음 정각 계산에 반영되거나 상위 100 밖이에요	Will be included at the next hourly calculation, or you're outside the top 100
+내 수익률	My return
+서버가 실제 시세로 1시간마다 다시 계산합니다	Recalculated by the server hourly from live quotes
+기준	as of
+ · 가상 자금 · 투자 권유 아님	 · virtual funds · not investment advice
+국면 전략 종목 위주로 분할 매수	Scale into regime-strategy stocks
+현금 비중 유지, 관망	Hold cash; stand aside
+박스권 반등 매매, 목표 짧게	Trade range bounces; short targets
+소액·분할만, 손절 엄수	Small, scaled entries only; strict stops
+인버스·단기 반등만 짧게	Inverse ETFs and short rebounds only
+신규 매수 멈추고 현금 보존	Stop new buys; preserve cash
+공황 반등 단타만, 손절 짧게	Panic-rebound scalps only; tight stops
+안정형	Conservative
+중립형	Balanced
+공격형	Aggressive
+단타	Day trading
+스윙	Swing
+중장기	Mid–long term
+처음	Beginner
+경험	Experienced
+전문가	Expert
+급등장	Surging market
+상승장	Bull market
+횡보장	Sideways market
+하락장	Bear market
+급락장	Crashing market
+투자 처음	New to investing
+경험 있음	Experienced
+홈	Home
+관심	Watchlist
+계좌	Account
+순위	Ranking
+내 정보	Profile
+MY 메뉴	MY menu
+모의계좌 총자산	Paper account total assets
+AI 매수 추천 순위	AI buy ranking
+AI 판정을 불러오는 중이거나 아직 오늘 판정이 없습니다.	Loading AI verdicts, or none yet today.
+관찰중	Watching
+관찰	Watch
+관찰에 추가	Add to watch
+관찰에 담김	Added to watch
+내 계좌 보기	View my account
+종목 찾기	Find stocks
+{n} 시장	{n} market
+미국 시장	US market
+한국 시장	Korea market
+미국 계좌 만들기	Create US account
+한국 계좌 만들기	Create Korea account
+이름이나 코드 (엔비디아, NVDA, 삼성전자)	Name or code (Nvidia, NVDA, Samsung)
+종목 검색	Search stocks
+전체 {n}	All {n}
+AI 신호 {n}	AI signals {n}
+보유 {n}	Held {n}
+보유	Held
+매수	Buy
+매도	Sell
+이 조건에 맞는 종목이 없습니다	No stocks match this filter
+위 검색창에서 종목을 찾아 추가하거나 바로 사 보세요	Find and add stocks with the search box above, or buy right away
+찾는 종목이 없습니다(추적 중인 미국·한국 종목 안에서 찾습니다)	No match (searching tracked US and Korean stocks)
+내 모의계좌	My paper account
+평가액	Value
+수익률	Return
+오늘	Today
+평단	Avg cost
+비중	Weight
+익절	Take-profit
+손절	Stop-loss
+TP/SL 수정	Edit TP/SL
+TP/SL 설정	Set TP/SL
+홈의 AI 후보나 관심종목에서 [매수]를 눌러 보세요	Press [Buy] on an AI candidate on Home or in your watchlist
+{n}주 · 평단 ${n} · 현재 ${n}	{n} sh · avg ${n} · now ${n}
+{n}주 · 평단 ₩{n} · 현재 ₩{n}	{n} sh · avg ₩{n} · now ₩{n}
+예약 매수	Scheduled buy
+예약 매도	Scheduled sell
+예약	Scheduled
+이하	or below
+이상	or above
+도달 시	when reached
+취소	Cancel
+현재	Now
+이 조건의 거래가 없습니다	No trades match this filter
+아직 거래가 없습니다	No trades yet
+전체	All
+모의투자 · 가상 자금 · 투자 권유가 아닙니다	Paper trading · virtual funds · not investment advice
+로그인하지 않음	Not logged in
+게스트	Guest
+● 로그인됨	● Logged in
+ · {n}/{n}/{n} 가입	 · joined {n}/{n}/{n}
+미국 계좌	US account
+한국 계좌	Korea account
+관심종목	Watchlist
+투자 성향	Investor profile
+처음이면 네 가지만 골라 주세요	First time? Just pick four things
+답에 맞춰 홈의 시장 안내와 AI 순위 설명이 바뀝니다	Home market guidance and AI ranking notes adapt to your answers
+위험 성향	Risk profile
+보유 기간	Holding period
+관심 시장	Markets of interest
+투자 경험	Experience
+완료	Done
+시작하기	Get started
+계정	Account
+지금 비밀번호	Current password
+새 비밀번호(8자 이상)	New password (8+ characters)
+새 비밀번호 확인	Confirm new password
+로그인 · 회원가입	Log in · Sign up
+언어	Language
+모의계좌	Paper account
+없음	None
+알림	Notifications
+체결 알림	Fill alerts
+켜짐	On
+꺼짐	Off
+약관 · 정책	Terms & policies
+이용약관	Terms of Service
+개인정보처리방침	Privacy Policy
+쿠키 · 저장소 정책	Cookie & Storage Policy
+운영자 정보	Operator info
+내 데이터	My data
+약관 동의	Terms consent
+없음(로그인 안 함)	None (not logged in)
+아직 없음	None yet
+보관 장소	Storage location
+Cloudflare(미국) · 마지막 사용 후 1년 자동 삭제	Cloudflare (US) · auto-deleted 1 year after last use
+지금 서버에 저장	Save to server now
+보낼 변경 있음	Changes pending
+최신	Up to date
+마지막 {n}:{n}	Last {n}:{n}
+내 데이터 · 계정 삭제	Delete my data · account
+· 모의투자 서비스입니다. 가상 자금이며 실제 주문·자금 이동이 없습니다.	· This is a paper-trading service. Funds are virtual; no real orders or money transfers occur.
+· 화면의 후보·안내는 투자 권유가 아니며, 수익을 약속하지 않습니다. 투자 판단과 결과의 책임은 본인에게 있습니다.	· Candidates and guidance shown are not investment advice and promise no returns. You are responsible for your investment decisions and results.
+· 저장 항목: 닉네임 · 비밀번호 확인값(비밀번호 자체는 저장하지 않음) · 성향 · 관심종목 · 모의계좌. 마지막 사용 후 1년이 지나면 자동 삭제되며, [내 데이터 · 계정 삭제]로 언제든 지울 수 있습니다.	· Stored: nickname · password check value (not the password itself) · profile · watchlist · paper accounts. Auto-deleted 1 year after last use, or delete anytime via [Delete my data · account].
+모의투자 수익률 순위	Paper-trading return ranking
+{n}일째 · 보유 {n}종목	Day {n} · {n} holdings
+나	Me
+아직 순위에 오른 계좌가 없습니다. 첫 번째가 되어 보세요.	No ranked accounts yet. Be the first.
+순위를 불러오는 중…	Loading ranking…
+상위 100 밖	Outside top 100
+차트 불러오는 중…	Loading chart…
+자세히 보기 ›	View details ›
+간단히 보기	Quick view
+전일 종가	Prev. close
+{n}개월	{n}M
+{n}년	{n}Y
+프리마켓	Pre-market
+장 마감	Market closed
+시간외	Extended hours
+익절 · 손절 (TP / SL)	Take-profit · Stop-loss (TP / SL)
+익절가	Take-profit price
+손절가	Stop-loss price
+현재가 대비 {n}%	vs. current {n}%
+수량	Quantity
+최대 {n}주	Max {n} sh
+보유 {n}주	Held {n} sh
+최대	Max
+전부	All
+시장가	Market
+예약 (지정가)	Scheduled (limit)
+이 가격 이하로 내려오면 매수	Buy when price falls to this or below
+이 가격 이상으로 오르면 매도	Sell when price rises to this or above
+모의 주문	Paper order
+닫기	Close
+매도 (보유 없음)	Sell (none held)
+보유 {n}주 · 평단 ${n} — 현재가가 익절가 이상이면 전부 팔고, 손절가 이하이면 전부 팝니다.	Held {n} sh · avg ${n} — sells all if price reaches take-profit or falls to stop-loss.
+보유 {n}주 · 평단 ₩{n} — 현재가가 익절가 이상이면 전부 팔고, 손절가 이하이면 전부 팝니다.	Held {n} sh · avg ₩{n} — sells all if price reaches take-profit or falls to stop-loss.
+예약 금액	Scheduled amount
+주문 금액	Order amount
+체결 조건	Fill condition
+도달 시 · 취소 전까지 유지	when reached · stays until cancelled
+익절·손절 저장	Save TP/SL
+익절·손절 끄기	Turn off TP/SL
+주문 가능 금액이 1주보다 적습니다	Buying power is less than 1 share
+팔 수량이 없습니다	Nothing to sell
+가상 자금 주문 · 실제 증권 주문이 아닙니다	Virtual-funds order · not a real securities order
+익절가는 손절가보다 높아야 합니다	Take-profit must be above stop-loss
+익절가는 현재가보다 높게, 손절가는 현재가보다 낮게 정해 주세요	Set take-profit above and stop-loss below the current price
+익절·손절을 걸었어요	TP/SL set
+익절·손절을 껐어요	TP/SL turned off
+예약 주문은 시장당 20건까지입니다	Up to 20 scheduled orders per market
+예약 주문을 취소했어요	Scheduled order cancelled
+지금 시세가 없어 주문할 수 없습니다	No quote available — can't place order
+{n}주 매수 체결 · ${n}	Bought {n} sh · ${n}
+{n}주 매도 체결 · ${n}	Sold {n} sh · ${n}
+{n}주 매수 체결 · ₩{n}	Bought {n} sh · ₩{n}
+{n}주 매도 체결 · ₩{n}	Sold {n} sh · ₩{n}
+로그아웃할까요? 다시 쓰려면 닉네임과 비밀번호로 로그인하면 됩니다.	Log out? Log in again with your nickname and password to continue.
+MY(내 투자)	MY (My investing)
+포지션	Positions
+뉴스·환율	News · FX
+AI 작동원리 보기	How the AI works
+거래 기록	Trade log
+AI 리포트	AI report
+이 메뉴	This menu
+LUX-INV 로그인	LUX-INV login
+닉네임 하나로	With just a nickname,
+모의투자를 시작하세요	start paper trading
+다시 오셨네요	Welcome back
+MY(내 투자)는 로그인 후 쓸 수 있어요. 대시보드와 종목 상세는 로그인 없이 볼 수 있습니다.	MY (My investing) requires login. Dashboard and stock details are viewable without logging in.
+포지션는 로그인 후 쓸 수 있어요. 대시보드와 종목 상세는 로그인 없이 볼 수 있습니다.	Positions requires login. Dashboard and stock details are viewable without logging in.
+뉴스·환율는 로그인 후 쓸 수 있어요. 대시보드와 종목 상세는 로그인 없이 볼 수 있습니다.	News · FX requires login. Dashboard and stock details are viewable without logging in.
+AI 작동원리 보기는 로그인 후 쓸 수 있어요. 대시보드와 종목 상세는 로그인 없이 볼 수 있습니다.	How the AI works requires login. Dashboard and stock details are viewable without logging in.
+거래 기록는 로그인 후 쓸 수 있어요. 대시보드와 종목 상세는 로그인 없이 볼 수 있습니다.	Trade log requires login. Dashboard and stock details are viewable without logging in.
+AI 리포트는 로그인 후 쓸 수 있어요. 대시보드와 종목 상세는 로그인 없이 볼 수 있습니다.	AI report requires login. Dashboard and stock details are viewable without logging in.
+WHAT-IF는 로그인 후 쓸 수 있어요. 대시보드와 종목 상세는 로그인 없이 볼 수 있습니다.	WHAT-IF requires login. Dashboard and stock details are viewable without logging in.
+이 메뉴는 로그인 후 쓸 수 있어요. 대시보드와 종목 상세는 로그인 없이 볼 수 있습니다.	This menu requires login. Dashboard and stock details are viewable without logging in.
+로그인	Log in
+회원가입	Sign up
+닉네임	Nickname
+2~12자 한글·영문·숫자	2–12 chars: Korean, English, digits
+비밀번호	Password
+8자 이상	8+ characters
+한 번 더	Once more
+비밀번호 확인	Confirm password
+약관 동의	Agree to terms
+전체 동의	Agree to all
+[필수] 이용약관 동의 — 모의투자이며 투자 권유가 아님을 이해했습니다	[Required] Terms of Service — I understand this is paper trading, not investment advice
+[필수] 개인정보 수집·이용 동의	[Required] Consent to collection and use of personal data
+[필수]	[Required]
+동의 — 모의투자이며 투자 권유가 아님을 이해했습니다	agreed — I understand this is paper trading, not investment advice
+개인정보 수집·이용	Collection & use of personal data
+동의	agreed
+수집 항목	Collected
+닉네임 · 비밀번호 확인값(비밀번호 자체는 저장 안 함) · 성향·관심종목·모의계좌	Nickname · password check value (password itself not stored) · profile · watchlist · paper accounts
+목적	Purpose
+로그인 · 모의투자 · 순위 표시	Login · paper trading · ranking display
+마지막 사용 후 1년 또는 탈퇴 즉시 삭제 · 동의를 거부할 수 있으나 거부하면 가입할 수 없습니다	Deleted 1 year after last use or immediately on withdrawal · you may refuse consent, but then you can't sign up
+[필수] 만 14세 이상입니다	[Required] I am 14 or older
+가입하고 시작하기	Sign up and start
+나중에 · 대시보드로 계속	Later · continue to dashboard
+이메일·이름·전화번호를 받지 않습니다 · 비밀번호는 서버에 저장되지 않고 확인용 값만 남습니다	We don't collect email, name or phone number · your password isn't stored on the server, only a check value
+이메일·이름·전화번호를 받지 않습니다 · 비밀번호는 서버에 저장되지 않고 확인용 값만 남습니다 · 로그인 없이 쓰던 관심종목·모의계좌는 이 계정으로 옮겨집니다	We don't collect email, name or phone number · your password isn't stored on the server, only a check value · watchlist and paper accounts used without login move to this account
+비밀번호를 잊으면 되찾을 수 없어요(이메일을 받지 않기 때문) — 꼭 기억해 두세요.	If you forget your password it can't be recovered (we don't collect email) — please remember it.
+닉네임은 2~12자 한글·영문·숫자·_ 만 쓸 수 있어요	Nickname: 2–12 characters — Korean, English, digits or _ only
+비밀번호는 8자 이상으로 정해 주세요	Password must be at least 8 characters
+비밀번호 확인이 다릅니다	Passwords don't match
+필수 항목 세 가지에 모두 동의해 주세요	Please agree to all three required items
+비밀번호를 넣어 주세요	Please enter your password
+가입하는 중…	Signing up…
+로그인하는 중…	Logging in…
+가입하지 못했어요	Couldn't sign up
+로그인하지 못했어요	Couldn't log in
+모의계좌 기록이 서버 시세와 맞지 않아 마지막으로 확인된 상태로 되돌렸습니다	Paper account records didn't match server quotes, so they were reverted to the last verified state
+모의계좌를 처음 상태로 되돌릴까요?	Reset the paper account to its initial state?
+서버에 저장된 내 계정(닉네임)·성향·관심종목·모의계좌를 모두 지웁니다. 되돌릴 수 없어요. 지울까요?	This deletes your account (nickname), profile, watchlist and paper accounts stored on the server. It can't be undone. Delete?
+삭제했습니다.	Deleted.
+삭제하지 못했습니다. 잠시 뒤 다시 시도해 주세요.	Couldn't delete. Please try again shortly.
+새 비밀번호는 8자 이상으로 정해 주세요	New password must be at least 8 characters
+새 비밀번호 확인이 다릅니다	New passwords don't match
+비밀번호를 바꿨어요.	Password changed.
+바꾸지 못했어요	Couldn't change it
+바꾸지 못했어요. 잠시 뒤 다시 시도해 주세요	Couldn't change it. Please try again shortly.
+자산 비중	Asset weight
+{n}주 빼기	Remove {n} share
+{n}주 더하기	Add {n} share
+익절 손절 켜기	Enable take-profit / stop-loss
+가격 내리기	Lower price
+가격 올리기	Raise price
+예약 가격	Scheduled price
+일봉 차트	Daily chart
+${n} 이하 도달 시 · 취소 전까지 유지	When ${n} or below is reached · stays until cancelled
+${n} 이상 도달 시 · 취소 전까지 유지	When ${n} or above is reached · stays until cancelled
+₩{n} 이하 도달 시 · 취소 전까지 유지	When ₩{n} or below is reached · stays until cancelled
+₩{n} 이상 도달 시 · 취소 전까지 유지	When ₩{n} or above is reached · stays until cancelled
+${n} 도달 시 {n}주 예약 매수	When ${n} is reached, scheduled buy of {n} sh
+${n} 도달 시 {n}주 예약 매도	When ${n} is reached, scheduled sell of {n} sh
+₩{n} 도달 시 {n}주 예약 매수	When ₩{n} is reached, scheduled buy of {n} sh
+₩{n} 도달 시 {n}주 예약 매도	When ₩{n} is reached, scheduled sell of {n} sh
+{n}주 시장가 매수	Buy {n} sh at market
+{n}주 시장가 매도	Sell {n} sh at market
+{n}{n}{n} 판	{n}{n}{n} edition
+서버가 실제 시세로 1시간마다 다시 계산합니다 · {n}:{n}:{n} AM 기준 · 가상 자금 · 투자 권유 아님	Recalculated by the server hourly from live quotes · as of {n}:{n}:{n} AM · virtual funds · not investment advice
+서버가 실제 시세로 1시간마다 다시 계산합니다 · {n}:{n}:{n} PM 기준 · 가상 자금 · 투자 권유 아님	Recalculated by the server hourly from live quotes · as of {n}:{n}:{n} PM · virtual funds · not investment advice
+서버가 실제 시세로 1시간마다 다시 계산합니다 · 가상 자금 · 투자 권유 아님	Recalculated by the server hourly from live quotes · virtual funds · not investment advice
+선택(기록)	Chosen (logged)
+정규장 마감 전 30분 · 프리·애프터에 매수 판정	30 min before regular-session close · buy decisions in pre/after-hours
+개요	Overview
+모델	Model
+성과	Performance
+시스템	System
+바로가기	Shortcuts
+열린 종목창	Open stock windows
+열린 종목창 없음	No open stock windows
+종목 상세를 열면 여기에	Open a stock detail and it
+미니 상세 카드로 쌓입니다.	stacks here as a mini card.
+＋ 종목 열기	+ Open stock
+로 바로 검색하세요.	to search right away.
+전체 닫기	Close all
+터미널 밀도 — 대시보드를 조밀한 터미널 그리드로 전환/해제	Terminal density — switch the dashboard to/from a dense terminal grid
+{n} / {n} symbols 봉 날짜를 갖고 있다. {n}% 되면 소급생성이 근사 없이 정확한 봉을 고른다.	{n} / {n} symbols have bar dates. At {n}%, back-fill picks exact bars without approximation.
+사이드바 구역	Sidebar sections
+국면 전략 관측(투입 기준 미달 — 검증 ≥ {n}% · 표본 외 수익 · 각 {n}건 이상 · 지금 검증 {n}%({n}) 표본 외 {n}%({n}))	Regime strategy: observing (below deployment criteria — validation ≥ {n}% · out-of-sample return · at least {n} each · now validation {n}% ({n}), out-of-sample {n}% ({n}))
+· 검증 중	· validating
+장기 상승 · 중기 보합 · 단기 안정	Long-term up · mid-term flat · short-term stable
+표	table
+공황 아님	No panic
+매매 프로세스	Trading process
+① 유니버스 선별	① Universe selection
+OMNI-Q 거름 없음	No OMNI-Q filter
+② 진입 신호	② Entry signal
+손절 · 보유기간 · 트레일링	Stop-loss · holding period · trailing
+실전 상태	Live status
+시험 운용(비중 {n}%)	Trial run ({n}% size)
+레거시 진입 경로	Legacy entry route
+비활성(위원회·단타·규칙)	Inactive (committee · day trading · rules)
+표본 외 검증 · 거래당 평균 초과수익률(시장 대비)	Out-of-sample validation · avg excess return per trade (vs. market)
+무작위 기준선	Random baseline
+시험 운용(비중 {n}%) — 거래 단위 기준(t ≥ {n} · 기준선 초과) 충족 · 월별 기준 미달로 본운용 승격 보류 · 사용자 선택 {n}/{n}	Trial run ({n}% size) — per-trade criterion met (t ≥ {n} · above baseline) · promotion to full run on hold as monthly criterion not met · user choice {n}/{n}
+월별 유의성 t (동월 초과)	Monthly significance t (same-month excess)
+기준 ≥ {n} · 거래 단위 t {n}(과대 추정)	Threshold ≥ {n} · per-trade t {n} (overestimated)
+승률 · 거래 수	Win rate · trades
+본운용 승격	Promotion to full run
+독립 표본 외 구간 통과 · 연속 {n} / {n}	Independent out-of-sample window passed · streak {n} / {n}
+국면별 성적 · 거래당 실현수익률	Results by regime · realized return per trade
+초록 = 목표 {n}% 이상 · 노랑 = {n}~{n}% · 주황 = 손실 · 괄호 = 거래 수	Green = target {n}% or more · yellow = {n}–{n}% · orange = loss · brackets = trades
+매매법 AI 기본 선택	Playbook AI default pick
+— OMNI-Q 상위 후보 → 그날 뜬 매매법 중 하나를 칸 성적으로 고름 · 보유 {n}~{n}주	— OMNI-Q top candidates → pick one of the day's fired playbooks by cell record · hold {n}–{n} wk
+— 지금 국면에 맞는 전략 하나를 통째로 · OMNI-Q 거름 없이 전 종목에서 · 보유 {n}~{n}일	— one strategy matched to the current regime, whole · across all stocks with no OMNI-Q filter · hold {n}–{n} d
+표본 외 기간 {n}%	Out-of-sample period {n}%
+{n}년 상대강도 상위 {n}% · {n}일선 위 · 따라붙는 손절(고점 {n}%) · {n}일 · 중기 하락	{n}y relative strength top {n}% · above {n}d MA · trailing stop (peak {n}%) · {n}d · mid-term down
+주도주 {n}일 {n}% 급락 뒤 첫 양봉 · 넓은 손절({n}%) · {n}일	Leader drops {n}% in {n}d, then first up candle · wide stop ({n}%) · {n}d
+국면 게이트 · 매수 쉼	Regime gate · buying paused
+{n}년 상대강도 상위 {n}% · {n}일선 위 · 넓은 손절({n}%) · {n}일	{n}y relative strength top {n}% · above {n}d MA · wide stop ({n}%) · {n}d
+[단타] {n}% 넘게 갭 하락 뒤 시가보다 높게 마감({n}일선 위) · {n}일 보유 · 중기 하락	[Day trade] Gap down over {n}% then close above the open (above {n}d MA) · hold {n}d · mid-term down
+현재 국면 전략	Current regime strategy
+관찰 — 투입 기준(검증 ≥ {n}% · 표본 외 수익 · {n}건 이상) 미달	Watching — below deployment criteria (validation ≥ {n}% · out-of-sample return · {n}+ trades)
+편입 후보	Inclusion candidates
+· 급등락 = {n}거래일 안 하루 ±	· Surge/crash = a single day of ±
+검증 구간 거래당 손실 국면(≥	Regimes with per-trade loss in validation (≥
+건)은 매매법 AI 신규 매수 중단 · 대상	trades) halt new buys by Playbook AI · target
+) → 적용 후	) → after applying
+용어 안내 — 검증 구간 · 표본 외 구간 · {n}%	Glossary — validation window · out-of-sample window · {n}%
+{n}년 일봉을 시간순 분할: 앞 {n}% 학습 ·	{n}-year daily bars split chronologically: first {n}% training ·
+= 설정 선택에 사용 ·	= used to choose settings ·
+= 학습·선택에 쓰지 않은 마지막 {n}%(약 {n}년).	= final {n}% not used for training or selection (about {n} years).
+= 표본 외 구간 거래당 실현수익률(비용 차감 · 매수~청산 · 연환산 아님) 목표.	= target of realized return per trade in the out-of-sample window (net of costs · buy to exit · not annualized).
+[V33.756·V33.760] 국면 전략의 국면 = 한국 코스피 지수(장전·장후엔 대형주 30종 시간외 체결 변화를 하루로 덧붙여 다시 판단) · 미국 S&P500 지수 기준 · 그 밖 시장 국면 = 유니버스 등가중 지수 기준. 급등장·급락장 = 최근 3거래일 안 하루 ±2.5% 또는 5일 ±6%(미국 국면 전략은 S&P500 이 덜 출렁여 ±2% · ±5%).	Regime for the regime strategy = KOSPI for Korea (pre/after-hours: adds the extended-hours move of 30 large caps as one day and re-judges) · S&P 500 for the US · other markets = equal-weight universe index. Surge/crash = a single-day move of ±2.5% within the last 3 trading days or ±6% over 5 days (US regime strategy uses ±2% · ±5% since the S&P 500 swings less).
+[V33.760] 국면 전략 후보 = 종목 거름(주도주·대형주·신고가·단타·ETF + [방어] 투매 반등·저변동 우량·안전자산·인버스 추세) × 청산(미국은 120일 넓은 손절 등 긴 보유 포함) · 시장별 묶음은 검증 구간으로만 정했다. 거래 수익은 비용 뺀 값.	[V33.760] Regime strategy candidates = stock filter (leaders · large caps · new highs · day trading · ETFs + [defensive] capitulation rebound · low-volatility quality · safe assets · inverse trend) × exit (incl. long holds such as the US 120-day wide stop) · per-market bundles were chosen using the validation window only. Trade returns are net of costs.
+국면 전략 실전 투입 = 현재 국면이 검증·표본 외 두 구간 모두 거래당 +5% 이상 · 각 20건 이상(사전 등록). 시험 투입(비중 50%) = 검증 ≥ +5% · 표본 외 플러스 · 각 20건 이상(사용자 승인 10/29).	Regime strategy live deployment = the current regime is at least +5% per trade in both validation and out-of-sample windows · at least 20 trades each (pre-registered). Trial deployment (50% size) = validation ≥ +5% · out-of-sample positive · at least 20 each (user approved 10/29).
+판단 흐름	Decision flow
+한 종목이 매수 후보가 되기까지 — 단계마다 지금 쓰는 실제 값	How a stock becomes a buy candidate — the actual values in use at each step
+거름 없음	No filter
+OMNI-Q 거름 없음(전 종목 · 검증이 고름) · 하루·동시 상한이 차면 OMNI-Q 순위 높은 후보부터 산다(시뮬·실전 같은 순서)	No OMNI-Q filter (all stocks · validation selects) · when daily/concurrent caps fill, higher OMNI-Q-ranked candidates are bought first (same order in sim and live)
+신호 · 일봉 매매법	Signals · daily-bar playbooks
+{n}순위 {n} · 보조 {n} — 보조는 {n}순위가 안 뜬 종목에만	Tier 1: {n} · auxiliary: {n} — auxiliary only for stocks where tier 1 didn't fire
+종목 그룹 · 미지수	Stock groups · unknowns
+그룹 조율 {n}칸	Group tuning: {n} cell
+구조 거르개	Structure filter
+공황 날 OMNI-Q 후보 바구니 {n}일 · 앞{n}% {n}%(t {n} · n {n}) · 뒤{n}% {n}%(t {n}) — 사전 등록: 앞{n}% t ≥ {n} · 뒤{n}% 양수면 시험 후보	OMNI-Q candidate basket on panic days, {n}d · first {n}% {n}% (t {n} · n {n}) · last {n}% {n}% (t {n}) — pre-registered: first {n}% t ≥ {n} and last {n}% positive makes it a trial candidate
+{n}칸	{n} cells
+국면 × RSI × 이격 × 수익 × 거래량 칸마다 수축 평균	Shrunk average per cell of regime × RSI × deviation × return × volume
+칸 평균 < {n} · n ≥ {n}	Cell average < {n} · n ≥ {n}
+지금 국면 칸이 손실이면 규칙과 무관하게 버린다	If the current regime cell is a loser, discard it regardless of the rule
+월별 초과 판정	Monthly excess verdict
+동월 기준선 대비 · 월별 t {n} (≥ {n}) · 이긴 달 {n}/{n} · 실전 상한(하루 {n} · 동시 {n})	vs. same-month baseline · monthly t {n} (≥ {n}) · months won {n}/{n} · live caps (daily {n} · concurrent {n})
+전진 구간 · 최종	Forward window · final
+{n}{n}{n} 동결 이후(아무도 본 적 없는 표본) · 거래 {n} → 쌓는 중 — 주력 전환은 이것까지 통과해야	Since the freeze on {n}{n}{n} (samples nobody has seen) · {n} trades → accumulating — switching to primary requires passing this too
+초과 t {n} · 통과 — 확실한 악화(t ≤ {n})만 막음	Excess t {n} · passed — only blocks clear deterioration (t ≤ {n})
+미지수 · 조율	Unknowns · tuning
+규칙 비교	Rule comparison
+후보 폭 비교	Candidate breadth comparison
+매매법 카드	Playbook cards
+근거 · 청산 진단	Evidence · exit diagnostics
+표본 내 = 학습·검증 구간 · 표본 외 = 학습·선택에 쓰지 않은 최근 구간 · 선택 수 = 표본 외 구간에서 실제 선택된 거래 · 머리글을 누르면 정렬	In-sample = training/validation window · out-of-sample = recent window not used for training or selection · picks = trades actually selected in the out-of-sample window · click a header to sort
+표본 내 n	In-sample n
+표본 내 평균	In-sample avg
+표본 외 평균 막대	Out-of-sample avg bar
+선택 수	Picks
+갭 메움(일봉)	Gap fill (daily)
+갭 상승 {n}일 유지	Gap up held {n}d
+{n}일 낙폭 과대	{n}d oversold drop
+주도주 일시 부진	Leader temporary slump
+거래량 마른 눌림	Low-volume pullback
+수치 = 학습기(GitHub Actions)가 올린 매매법 시뮬 표(10년 일봉) · 표본 외 구간 =	Figures = playbook simulation table uploaded by the trainer (GitHub Actions) (10-year daily bars) · out-of-sample window =
+{n}{n}{n} 이후 ·	{n}{n}{n} onward ·
+평균 = 거래당 % · 시장(등가중) 대비 · 비용 뺀 값	Average = % per trade · vs. market (equal-weight) · net of costs
+재무 미달 매수금지: score {n}<{n}, AltmanZ {n}<{n}	Financials below threshold, buying banned: score {n}<{n}, AltmanZ {n}<{n}
+지금 한눈에	Now at a glance
+판정 요약	Verdict summary
+국면별 한눈에	By-regime at a glance
+표 고르기	Choose table
+국면 기준	Regime basis
+연결 중... · 첫 사이클 대기 중	Connecting... · waiting for first cycle
+· 🇺🇸🔴 장 종료 (EST) 🇰🇷🟢 정규장 OPEN (실시간)	· 🇺🇸🔴 Market closed (EST) 🇰🇷🟢 Regular session OPEN (live)
+🇺🇸 🔴 장 종료 (EST) · 🇰🇷 🟢 정규장 OPEN (실시간)	🇺🇸 🔴 Market closed (EST) · 🇰🇷 🟢 Regular session OPEN (live)
+엔진 · 확인 중...	Engine · checking...
+연결 · 연결 중...	Connection · connecting...
+학습 · 학습 상태 확인 중…	Training · checking status…
+⛔ D1 읽은 행	⛔ D1 rows read
+주기 끝 예상 {n}만 ({n}%) · {n}시간 {n}만	Projected at cycle end {n}만 ({n}%) · {n}h {n}만
+{n} = 평균 대비 {n}%	{n} = {n}% vs. average
+{n}개 그룹별 성과로 베팅 크기를 자동 차등합니다. 잘 되는 그룹↑·안 되는 그룹↓ (그룹 거래 {n}건+ 부터 반영, 적으면 ×{n} 중립).	Bet size is scaled automatically by the performance of {n} groups: better groups up, weaker groups down (applied from {n}+ trades per group; fewer = ×{n} neutral).
+이동	Go
+선택	Select
+닫기	Close
+종목/페이지 검색…  (예: NVDA, 삼성, 대시보드)	Search stocks/pages…  (e.g. NVDA, Samsung, Dashboard)
+LIVE · {n}초 전 · 첫 사이클 대기 중	LIVE · {n}s ago · waiting for first cycle
+첫 사이클 대기 중	Waiting for first cycle

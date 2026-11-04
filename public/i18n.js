@@ -113,7 +113,7 @@
 
   function start() {
     document.documentElement.setAttribute("lang", "en");
-    ["nav.sidebar", ".m-appbar", ".m-tabbar", ".m-drawer", ".page.active", ".modal.show", "header"].forEach(function (sel) { document.querySelectorAll(sel).forEach(walkLazy); });
+    ["nav.sidebar", ".m-appbar", ".m-tabbar", ".m-drawer", ".page.active", ".modal.show", "header", ".cmdk-fab", ".cmdk-overlay", ".rail", "#luxConsent", "#minePv", "#mineSheet"].forEach(function (sel) { document.querySelectorAll(sel).forEach(walkLazy); });
     if (!document.querySelector(".page")) walkLazy(document.body);   // [V33.758] 약관·개인정보·쿠키 정책처럼 화면(.page) 구조가 없는 단독 페이지는 본문 전체
     document.querySelectorAll(".page:not(.active), .modal:not(.show)").forEach(function (e) { dirty.add(e); });
     if (document.title && HANGUL.test(document.title)) document.title = tr(document.title);
