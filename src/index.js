@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.775";
+const _BUILD_VER = "V33.776";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -22843,7 +22843,7 @@ async function statePubWrite(env) {
 const PUB_FEEDS = { "/api/trades?limit=50": 60, "/api/kr-halt": 60, "/api/heatmap": 60, "/api/ai-mode": 120, "/api/ai-picks": 120, "/api/news-picks": 300,
   "/api/commodities": 120, "/api/news": 120, "/api/pipeline": 120, "/api/diag": 120, "/api/fx": 120, "/api/bonds": 120, "/api/alerts": 120,
   "/api/crisis": 180, "/api/events": 240, "/api/trades?limit=3000": 300, "/api/shard_meta": 600, "/api/econ": 600, "/api/earnings": 900,
-  "/api/insider": 600, "/api/econ-impact": 900, "/api/ta-screener": 600, "/api/leaderboard": 600 };
+  "/api/insider": 600, "/api/econ-impact": 900, "/api/ta-screener": 600, "/api/leaderboard": 600, "/api/playbook": 180 };   // [V33.776] 매매법 AI(MY·초보자 대시보드 공용)
 function pubFeedKey(u) { return "pub/f/" + String(u).replace(/^\/api\//, "").replace(/[^A-Za-z0-9]+/g, "_") + ".js"; }
 async function feedPubWrite(env, ctx, budgetMs) {
   const PUB = env && env.PUB; if (!PUB) return null;
