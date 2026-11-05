@@ -226,25 +226,44 @@
   var LEV = /(^|[^a-z])(2x|3x|ultra|bull|bear|inverse)([^a-z]|$)|레버리지|인버스|2배|3배|곱버스/i, LEVSYM = { TQQQ: 1, SQQQ: 1, SOXL: 1, SOXS: 1, UPRO: 1, SPXU: 1, TNA: 1, TZA: 1, LABU: 1, LABD: 1, FAS: 1, FAZ: 1, TECL: 1, TECS: 1, NVDL: 1, TSLL: 1, SH: 1, PSQ: 1, "122630.KS": 1, "252670.KS": 1, "114800.KS": 1, "233740.KS": 1, "251340.KS": 1 };
   function isLev(s) { return !!LEVSYM[s] || LEV.test(nm(s) || ""); }
   function heldDays(p) { return p && p.t > 1e12 ? Math.max(0, Math.floor((Date.now() - p.t) / 864e5)) : null; }
+  /* [V33.773] ★매도 의견을 백테스트 근거로★ — 규칙별 과거 성적(public/sell-stats.json · 정적 파일 · 한 번 받아 기억 · 서버 비용 0):
+     한·미 20년 일봉 · 보유 포지션에서 신호가 처음 뜬 날 뒤 10일, 같은 날 다른 보유 대비 초과수익(ex) · 추가 하락 확률(down) · 최근 30% 기간 홀드아웃.
+     결과(에이전트 · trainer/research/sell_rules_eval.py): 매도 신호로 확인 = 한국 50일선 하향 이탈 하나 · 손절선·목표·RSI·볼린저·추세 이탈은 근거 약함(한국 과열은 오히려 더 오름).
+     그래서 판정 = 위험 한도(손절선 · 손실 상한 장치) → 주의(확인된 신호 · 실적 임박 · AI 순위 하위) → 보유 유지. 과열·목표·추세 이탈은 '참고' 로만 · 근거 숫자를 같이 보여 준다. */
+  var SST = null, sstBusy = false;
+  function sstLoad() { if (SST || sstBusy) return; sstBusy = true; fetch("/sell-stats.json").then(function (r) { return r.json(); }).then(function (j) { SST = j && j.markets ? j : null; var pm = $("page-mine"); if (SST && pm && pm.classList.contains("active")) draw(); }).catch(function () { sstBusy = false; }); }
+  function sst(mk, k) { return SST && SST.markets[mk] && SST.markets[mk][k] || null; }
+  function sstTxt(mk, k) { var o = sst(mk, k); if (!o || !o.h10) return ""; var ex = o.h10.ex; return "과거 10일 " + (ex >= 0 ? "+" : "−") + Math.abs(ex).toFixed(1) + "%p" + (o.label === "sell" ? " · 확인된 신호" : ex > 0 ? " · 오히려 더 오른 편(근거 약함)" : " · 근거 약함"); }
+  function rs(a, b) { return b ? [a, b] : [a]; }   // 근거 = [본문, 과거 성적] — 따로 그려 영어 사전이 각각 맞춘다
+  function rsH(x) { var a = Array.isArray(x) ? x : [x]; return "<span>" + esc(a[0]) + "</span>" + (a[1] ? ' <span class="st">(' + esc(a[1]) + ")</span>" : ""); }
   function sellView(mk, s, p, cur) {
+    sstLoad();
     var x = q(s) || {}, it = liveItem(s), r = (cur / p.avg - 1) * 100;
     var atrP = x.atr > 0 && cur > 0 ? x.atr / cur * 100 : 3;
     var aiStop = it && typeof it.stop === "number" && it.stop >= 1 && it.stop <= 30 ? it.stop : null;
-    var stopP = aiStop != null ? aiStop : Math.min(15, Math.max(4, 2 * atrP)), tpP = Math.min(40, 2 * stopP);   // 목표 = 손절 폭의 2배(손익비 1:2 · 최대 +40%) — ATR 3배는 3배 레버리지 ETF 에서 +54% 처럼 비현실적이었다
-    var sl = p.slPx || p.avg * (1 - stopP / 100), tp = p.tpPx || p.avg * (1 + tpP / 100), why = [], v = "hold";
-    if (cur <= sl) { v = "cut"; why.push("손절선 " + pxS(mk, sl) + " 아래 (평단 대비 " + pctS(r) + ")"); }
-    else if (cur >= tp) { v = "trim"; why.push("목표 " + pxS(mk, tp) + " 도달 (평단 대비 " + pctS(r) + ")"); }
-    if (v === "hold" && ((x.rsi >= 75) || (x.bbUpper > 0 && cur >= x.bbUpper))) { v = "trim"; why.push("단기 과열" + (x.rsi >= 75 ? " · RSI " + Math.round(x.rsi) : "") + (x.bbUpper > 0 && cur >= x.bbUpper ? " · 볼린저 상단 위" : "")); }
-    if (v === "hold" && x.dailyMaShort > 0 && cur < x.dailyMaShort && x.return5 <= -8) { v = "watch"; why.push("단기 추세 이탈 · 20일선 아래 · 5일 " + pctS(x.return5)); }
-    if (it && typeof it.q === "number") { if (it.q <= 0.3) { if (v === "hold") v = "watch"; why.push("AI 순위 하위 " + Math.max(1, Math.round(it.q * 100)) + "%"); } else if (it.q >= 0.8) why.push("AI 순위 상위 " + Math.max(1, Math.round((1 - it.q) * 100)) + "%"); }
+    var stopP = aiStop != null ? aiStop : Math.min(15, Math.max(4, 2 * atrP)), tpP = Math.min(40, 2 * stopP);   // 목표 = 손절 폭의 2배(손익비 1:2 · 최대 +40%)
+    var sl = p.slPx || p.avg * (1 - stopP / 100), tp = p.tpPx || p.avg * (1 + tpP / 100), why = [], ref = [], v = "hold";
+    var useful = function (k) { var o = sst(mk, k); return !!(o && o.label === "sell"); };
+    // ① 위험 한도(손실 상한 장치 — 추가 하락 예측력은 약하다는 것을 같이 알린다)
+    if (cur <= sl) { v = "cut"; why.push(rs("손절선 " + pxS(mk, sl) + " 아래 (평단 대비 " + pctS(r) + ")", sstTxt(mk, "stop_atr2"))); }
+    // ② 주의 — 확인된 신호(50일선 하향 이탈: 어제 종가 ≥ 50일선 > 지금가)
+    if (x.ma50 > 0 && x.prevClose >= x.ma50 && cur < x.ma50) { (useful("ma50_break") ? why : ref).push(rs("50일선 " + pxS(mk, x.ma50) + " 하향 이탈", sstTxt(mk, "ma50_break"))); if (v === "hold" && useful("ma50_break")) v = "watch"; }
+    if (x.vol > 0 && x.avgVol20 > 0 && x.vol >= 3 * x.avgVol20 && cur < (x.prevClose || cur)) { (useful("vol_spike3_down") ? why : ref).push(rs("거래량 " + (x.vol / x.avgVol20).toFixed(1) + "배 + 하락", sstTxt(mk, "vol_spike3_down"))); if (v === "hold" && useful("vol_spike3_down")) v = "watch"; }
+    if (it && typeof it.q === "number") { if (it.q <= 0.3) { if (v === "hold") v = "watch"; why.push("AI 순위 하위 " + Math.max(1, Math.round(it.q * 100)) + "%"); } else if (it.q >= 0.8) ref.push("AI 순위 상위 " + Math.max(1, Math.round((1 - it.q) * 100)) + "%"); }
     var ed = earnDays(s); if (ed != null && ed <= 7) { why.push("실적 발표 " + (ed === 0 ? "오늘" : "D-" + ed) + " · 발표 전후 변동 확대"); if (v === "hold") v = "watch"; }
+    // ③ 참고(근거 약함 — 판정을 바꾸지 않는다)
+    if (cur >= tp && cur > sl) ref.push(rs("목표 " + pxS(mk, tp) + " 도달 (평단 대비 " + pctS(r) + ")", sstTxt(mk, "target_2r")));
+    if (x.rsi >= 75) ref.push(rs("RSI " + Math.round(x.rsi) + " 과열", sstTxt(mk, "rsi75")));
+    else if (x.bbUpper > 0 && cur >= x.bbUpper) ref.push(rs("볼린저 상단 위", sstTxt(mk, "bb_upper")));
+    if (x.ma > 0 && cur < x.ma && x.return5 <= -8) ref.push(rs("20일선 아래 · 5일 " + pctS(x.return5), sstTxt(mk, "trend_break")));   // [V33.773] 종전엔 5일선(dailyMaShort)을 20일선이라 적었다
     var hd = heldDays(p), aiHold = it && typeof it.hold === "number" ? it.hold : null;
     if (isLev(s) && hd != null && hd >= 10) why.push("레버리지·인버스 ETF " + hd + "일 보유 · 오래 들수록 변동성 손실 누적");
-    if (aiHold && hd != null && hd > aiHold) why.push("AI 매매법 보유 기간(" + aiHold + "일) 지남");
-    if (!why.length) why.push("손절선·목표 사이 · 과열·이탈 신호 없음");
-    var KO = { hold: "보유 유지", trim: "일부 익절 검토", cut: "손절 검토", watch: "주의 · 관찰" };
-    return { v: v, ko: KO[v], why: why.slice(0, 4), sl: sl, tp: tp, stopP: stopP, ai: aiStop != null };
+    if (aiHold && hd != null && hd > aiHold) ref.push("AI 매매법 보유 기간(" + aiHold + "일) 지남");
+    if (!why.length && !ref.length) why.push("손절선·목표 사이 · 확인된 매도 신호 없음");
+    var KO = { hold: "보유 유지", cut: "위험 한도 도달", watch: "주의 · 관찰" };
+    return { v: v, ko: KO[v], why: why.slice(0, 3), ref: ref.slice(0, 3), sl: sl, tp: tp, stopP: stopP, ai: aiStop != null };
   }
+
   /* [V33.771] ★장이 모두 닫힌 시간엔 체결하지 않는다★(사용자 11/4 "프리·애프터·정규장 다 닫힌 시간엔 예약 매수만") —
      열린 창: 미 04:00~20:00 ET(프리·정규·애프터) · 한 08:00~08:50 · 09:00~15:30 · 15:40~20:00 KST(넥스트레이드 프리·정규·애프터) · 주말 휴장.
      휴장일은 시세의 장 상태(CLOSED 등 · 15분 안 시세)로 안다. 닫혀 있으면 시장가는 막고 예약(지정가)만 받는다 · 예약·익절·손절도 열린 시간에만 체결. */
@@ -324,7 +343,7 @@
       /* [V33.772] 계좌 진단 */
       "#mineRoot .diag .dl{display:flex;gap:9px;align-items:flex-start;font-size:13px;line-height:1.45;padding:3px 0}#mineRoot .diag .dl i{flex:0 0 8px;height:8px;border-radius:50%;margin-top:6px;background:#3DD6B5}#mineRoot .diag .dl.w i{background:#F04452}#mineRoot .diag .dl.i i{background:#E2C766}",
       /* [V33.770] AI 매도 의견 줄 */
-      "#mineRoot .so{display:flex;flex-direction:column;gap:2px;margin:8px 0 2px;padding:8px 10px;border-radius:10px;background:var(--m-soft,rgba(127,140,160,.08));border-left:3px solid #7FA6FF;font-size:12.5px}#mineRoot .so .sv b{font-weight:700;margin-right:6px;color:var(--m-mu,#98A2B3)}#mineRoot .so .sw{color:var(--m-mu,#98A2B3);font-size:12px}#mineRoot .so.trim{border-left-color:#F04452}#mineRoot .so.cut{border-left-color:#3182F6}#mineRoot .so.watch{border-left-color:#E2C766}#mineRoot .so.hold .sv{color:#3DD6B5}#mineRoot .so.trim .sv{color:#F04452}#mineRoot .so.cut .sv{color:#3182F6}#mineRoot .so.watch .sv{color:#E2C766}",
+      "#mineRoot .so{display:flex;flex-direction:column;gap:2px;margin:8px 0 2px;padding:8px 10px;border-radius:10px;background:var(--m-soft,rgba(127,140,160,.08));border-left:3px solid #7FA6FF;font-size:12.5px}#mineRoot .so .sv b{font-weight:700;margin-right:6px;color:var(--m-mu,#98A2B3)}#mineRoot .so .sw{color:var(--m-mu,#98A2B3);font-size:12px}#mineRoot .so .rf{opacity:.8}#mineRoot .so.cut{border-left-color:#3182F6}#mineRoot .so.watch{border-left-color:#E2C766}#mineRoot .so.hold .sv{color:#3DD6B5}#mineRoot .so.trim .sv{color:#F04452}#mineRoot .so.cut .sv{color:#3182F6}#mineRoot .so.watch .sv{color:#E2C766}",
       "#mineRoot .hold{padding:13px 0 12px;border-top:1px solid var(--m-line);cursor:pointer}#mineRoot .ct+.hold,#mineRoot .ct+.row{border-top:0}#mineRoot .ht{display:flex;align-items:center;gap:10px}#mineRoot .hm{display:flex;flex-wrap:wrap;gap:4px 14px;margin:8px 0 0 18px;font-size:12.5px;color:var(--m-mute)}#mineRoot .hm b{font-weight:600;color:var(--fg,#EEF1F5)}#mineRoot .hm b.up{color:var(--m-up)}#mineRoot .hm b.dn{color:var(--m-dn)}",
       "#mineRoot .ha{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:6px;margin:10px 0 0 18px}#mineRoot .ha button{min-height:40px;justify-content:center}#mineRoot .bs{flex:0 0 auto;font-size:11.5px;font-weight:700;padding:3px 7px;border-radius:6px}#mineRoot .bs.b{color:var(--m-up);background:rgba(255,92,92,.12)}#mineRoot .bs.s{color:var(--m-dn);background:rgba(77,141,255,.12)}#mineRoot .more{width:100%;margin-top:8px;min-height:42px}#mineRoot .cashbar{background:#2A303B}",
       "html[data-theme=light] #mineRoot .hm b{color:#101828}html[data-theme=light] #mineRoot .hm b.up{color:var(--m-up)}html[data-theme=light] #mineRoot .hm b.dn{color:var(--m-dn)}html[data-theme=light] #mineRoot .cashbar{background:#D0D5DD}html[data-theme=light] #mineRoot .sync.bad{color:#B42318}",
@@ -462,7 +481,7 @@
       var s = o.s, p = o.p, ci = ks.indexOf(s);
       return '<div class="hold" data-open="' + esc(s) + '"><div class="ht"><span class="dot" style="background:' + ACOL[ci % ACOL.length] + '" aria-hidden="true"></span><div class="l"><span class="nm">' + esc(nm(s)) + pill(sigOf(s)) + '</span><span class="sb">' + p.q.toLocaleString() + "주 · 평단 " + pxS(mk, p.avg) + " · 현재 " + pxS(mk, o.cur) + '</span></div><div class="r"><span class="p">' + fmt(mk, o.mv) + '</span><span class="' + cls(o.r) + '" style="font-size:12.5px">' + fmt(mk, o.mv - p.q * p.avg, true) + " (" + pctS(o.r) + ")</span></div></div>" +
         '<div class="hm"><span>비중 <b>' + (v.eq > 0 ? (o.mv / v.eq * 100).toFixed(0) : 0) + '%</b></span><span>오늘 <b class="' + cls(o.d) + '">' + pctS(o.d) + "</b></span>" + (p.tpPx ? '<span>익절 <b class="up">' + pxS(mk, p.tpPx) + "</b></span>" : "") + (p.slPx ? '<span>손절 <b class="dn">' + pxS(mk, p.slPx) + "</b></span>" : "") + "</div>" +
-        (function () { var sv = sellView(mk, s, p, o.cur); return '<div class="so ' + sv.v + '"><span class="sv"><b>AI 매도 의견</b> ' + sv.ko + '</span><span class="sw">' + sv.why.map(esc).join(" · ") + '</span><span class="sw">' + (sv.ai ? "AI 손절 " : "기준 손절 ") + pxS(mk, sv.sl) + " · 목표 " + pxS(mk, sv.tp) + "</span></div>"; })() +
+        (function () { var sv = sellView(mk, s, p, o.cur); return '<div class="so ' + sv.v + '"><span class="sv"><b>AI 매도 의견</b> ' + sv.ko + '</span><span class="sw">' + sv.why.map(rsH).join(" · ") + '</span>' + (sv.ref.length ? '<span class="sw rf"><span>참고</span> · ' + sv.ref.map(rsH).join(" · ") + "</span>" : "") + '<span class="sw">' + (sv.ai ? "AI 손절 " : "기준 손절 ") + pxS(mk, sv.sl) + " · 목표 " + pxS(mk, sv.tp) + "</span></div>"; })() +
         '<div class="ha"><button type="button" class="tag2 wbtn" data-risk="' + esc(s) + '" aria-label="익절 손절 설정">' + (p.tpPx || p.slPx ? "TP/SL 수정" : "TP/SL 설정") + "</button>" + buyBtn(s) + '<button type="button" class="sell" data-sell="' + esc(s) + '">매도</button></div></div>';
     }).join("") : '<div class="empty">홈의 AI 후보나 관심종목에서 [매수]를 눌러 보세요</div>') + "</section>";
     var od = a.ord || [];

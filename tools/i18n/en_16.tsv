@@ -562,3 +562,18 @@ AI 매매법 보유 기간({n}일) 지남	Past the AI playbook holding period ({
 한 종목 쏠림	concentrated in one stock
 손절선 3% 안	Within 3% of stop
 실적 발표 임박	Earnings soon
+위험 한도 도달	Risk limit reached
+참고	Reference
+과거 10일 {n}%p · 확인된 신호	past 10d {n}pp · confirmed signal
+과거 10일 {n}%p · 근거 약함	past 10d {n}pp · weak evidence
+과거 10일 {n}%p · 오히려 더 오른 편(근거 약함)	past 10d {n}pp · tended to rise further (weak evidence)
+손절선 ${n} 아래 (평단 대비 {n}%)	Below stop ${n} ({n}% vs avg cost)
+손절선 ₩{n} 아래 (평단 대비 {n}%)	Below stop ₩{n} ({n}% vs avg cost)
+50일선 ${n} 하향 이탈	Broke below 50-day MA ${n}
+50일선 ₩{n} 하향 이탈	Broke below 50-day MA ₩{n}
+목표 ${n} 도달 (평단 대비 {n}%)	Target ${n} reached ({n}% vs avg cost)
+목표 ₩{n} 도달 (평단 대비 {n}%)	Target ₩{n} reached ({n}% vs avg cost)
+거래량 {n}배 + 하락	Volume {n}x + down
+RSI {n} 과열	RSI {n} overheated
+20일선 아래 · 5일 {n}%	Below 20-day MA · 5d {n}%
+손절선·목표 사이 · 확인된 매도 신호 없음	Between stop and target · no confirmed sell signal

@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.772";
+const _BUILD_VER = "V33.773";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -17670,6 +17670,7 @@ async function saveQuote(DB, symbol, market, q) {
     extTs: _keepExt("extTs", _mask.pre || _mask.post),
     dayPct: q.dayPct, rsi: q.dailyRsi, ma: q.dailyMa, atr: q.dailyAtr,
     dailyAtr: q.dailyAtr, dailyMa: q.dailyMa, dailyMaShort: q.dailyMaShort,
+    ma50: _keep("ma50"),   // [V33.773] 50일선(MY 매도 의견 '50일선 하향 이탈' — 백테스트로 한국에서 유일하게 확인된 신호)
     bbLower: q.bbLower, bbUpper: q.bbUpper,
     return20: q.return20,
     return5: q.return5, return60: q.return60,  // [V66] 히트맵 기간 토글용 (1주·3개월)
@@ -22565,6 +22566,7 @@ async function refreshQuotesOnly(env, market) {
         mstate: intra.mstate, pre: intra.pre, prePct: intra.prePct,
         post: intra.post, postPct: intra.postPct, extTs: intra.extTs,
         dailyRsi: dailyRsi, dailyMa: dailyMa, dailyMaShort: dailyMaShort, dailyAtr: dailyAtr,
+        ma50: closes.length >= 50 ? getMA(closes, 50) : null,   // [V33.773]
         bbLower: bb ? bb.lower : null, bbUpper: bb ? bb.upper : null,
         return20: return20,
         return5: getNDayReturn(closes, 5), return60: getNDayReturn(closes, 60),  // [V66]
@@ -25742,7 +25744,7 @@ async function runTradingCycle(env) {
           market: market, price: bq.price, prevClose: bq.prevClose, dayPct: bq.dayPct,
           rsi: prevQ ? prevQ.rsi : null, ma: prevQ ? prevQ.ma : null, atr: prevQ ? prevQ.atr : null,
           dailyAtr: prevQ ? prevQ.dailyAtr : null, dailyMa: prevQ ? prevQ.dailyMa : null,
-          dailyMaShort: prevQ ? prevQ.dailyMaShort : null,
+          dailyMaShort: prevQ ? prevQ.dailyMaShort : null, ma50: prevQ ? (prevQ.ma50 ?? null) : null,   // [V33.773] 50일선 보존
           bbLower: prevQ ? prevQ.bbLower : null, bbUpper: prevQ ? prevQ.bbUpper : null,
           return20: prevQ ? prevQ.return20 : null,
           // [V67 FIX] 1W/3M 미작동 원인 — return5/return60이 매분 여기서 소실됐다. 장기 필드 전부 보존.
@@ -26736,6 +26738,7 @@ async function runTradingCycle(env) {
                 ...quoteSessionFields(_quoteSource),
                 rsi: dailyRsi, ma: dailyMa, atr: dailyAtr,
                 dailyAtr: dailyAtr, dailyMa: dailyMa, dailyMaShort: dailyMaShort,
+                ma50: closes.length >= 50 ? getMA(closes, 50) : (_quoteSource.ma50 ?? null),   // [V33.773] 50일선(평가 루프가 매 사이클 통째로 덮어쓴다 — 여기서도 계산)
                 bbLower: bb ? bb.lower : null, bbUpper: bb ? bb.upper : null,
                 return20: return20,
                 // [V67] 1주·3개월·1년·5년·거래량 — 평가루프가 매 사이클 덮어쓰며 소실되던 문제 해결
