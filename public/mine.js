@@ -60,7 +60,7 @@
   function dirty(on) { try { if (on) localStorage.setItem(DIRTYK, String(Date.now())); else localStorage.removeItem(DIRTYK); } catch (e) {} }
   function isDirty() { try { return !!localStorage.getItem(DIRTYK); } catch (e) { return false; } }
   function syncHtml() {
-    var st = sync.st, t = st === "saving" || st === "pending" ? ["sv", "저장 중…"] : st === "fail" ? ["bad", "저장 실패 · 곧 다시 보냄"] : st === "offline" ? ["bad", "오프라인 · 연결되면 저장"] : st === "ok" ? ["ok", "저장됨 " + new Date(sync.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })] : isDirty() ? ["sv", "저장 대기"] : ["ok", "서버와 같음"];
+    var st = sync.st, t = st === "saving" || st === "pending" ? ["sv", "저장 중…"] : st === "fail" ? ["bad", "저장 실패 · 곧 다시 보냄"] : st === "offline" ? ["bad", "오프라인 · 연결되면 저장"] : st === "ok" ? ["ok", "<span>저장됨</span> <span>" + new Date(sync.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + "</span>"] : isDirty() ? ["sv", "저장 대기"] : ["ok", "서버와 같음"];
     return '<span id="mineSync" class="sync ' + t[0] + '" role="status" aria-live="polite"><i aria-hidden="true"></i>' + t[1] + "</span>";
   }
   function setSync(st) { sync.st = st; if (st === "ok") sync.ts = Date.now(); var el = $("mineSync"); if (el) el.outerHTML = syncHtml(); }
@@ -235,7 +235,7 @@
   function sst(mk, k) { return SST && SST.markets[mk] && SST.markets[mk][k] || null; }
   function sstTxt(mk, k) { var o = sst(mk, k); if (!o || !o.h10) return ""; var ex = o.h10.ex; return "과거 10일 " + (ex >= 0 ? "+" : "−") + Math.abs(ex).toFixed(1) + "%p" + (o.label === "sell" ? " · 확인된 신호" : ex > 0 ? " · 오히려 더 오른 편(근거 약함)" : " · 근거 약함"); }
   function rs(a, b) { return b ? [a, b] : [a]; }   // 근거 = [본문, 과거 성적] — 따로 그려 영어 사전이 각각 맞춘다
-  function rsH(x) { var a = Array.isArray(x) ? x : [x]; return "<span>" + esc(a[0]) + "</span>" + (a[1] ? ' <span class="st">(' + esc(a[1]) + ")</span>" : ""); }
+  function rsH(x) { var a = Array.isArray(x) ? x : [x]; return "<span>" + esc(a[0]) + "</span>" + (a[1] ? ' <span class="st">(<span>' + esc(a[1]) + "</span>)</span>" : ""); }
   function sellView(mk, s, p, cur) {
     sstLoad();
     var x = q(s) || {}, it = liveItem(s), r = (cur / p.avg - 1) * 100;
@@ -469,11 +469,11 @@
       var top = ord2.slice().sort(function (x, y) { return y.mv - x.mv; })[0], topW = top ? top.mv / v.eq * 100 : 0, levW = 0, near = [], earn = [], losers = 0;
       ord2.forEach(function (o) { if (isLev(o.s)) levW += o.mv / v.eq * 100; var sv = sellView(mk, o.s, o.p, o.cur); if (o.cur > sv.sl && o.cur <= sv.sl * 1.03) near.push(nm(o.s)); var e2 = earnDays(o.s); if (e2 != null && e2 <= 7) earn.push(nm(o.s) + " D-" + e2); if (o.r < 0) losers++; });
       var L = [];
-      if (band) L.push([cashP < band[0] ? "w" : cashP > band[1] ? "i" : "ok", "현금 " + cashP.toFixed(0) + "% · 지금 " + (RK[rg] || rg) + " 국면 참고 범위 " + band[0] + "~" + band[1] + "%"]);
-      L.push([topW >= 40 ? "w" : "ok", "가장 큰 종목 " + esc(nm(top.s)) + " " + topW.toFixed(0) + "%" + (topW >= 40 ? " · 한 종목 쏠림" : "")]);
-      if (levW > 0) L.push([levW >= 30 ? "w" : "i", "레버리지·인버스 ETF " + levW.toFixed(0) + "%" + (levW >= 30 ? " · 변동성 큼" : "")]);
-      if (near.length) L.push(["w", "손절선 3% 안: " + near.map(esc).join(", ")]);
-      if (earn.length) L.push(["i", "실적 발표 임박: " + earn.map(esc).join(", ")]);
+      if (band) L.push([cashP < band[0] ? "w" : cashP > band[1] ? "i" : "ok", "<span>현금 " + cashP.toFixed(0) + "%</span> · <span>지금 " + (RK[rg] || rg) + " 국면</span> · <span>참고 범위 " + band[0] + "~" + band[1] + "%</span>"]);
+      L.push([topW >= 40 ? "w" : "ok", "<span>가장 큰 종목</span> " + esc(nm(top.s)) + " " + topW.toFixed(0) + "%" + (topW >= 40 ? " · <span>한 종목 쏠림</span>" : "")]);
+      if (levW > 0) L.push([levW >= 30 ? "w" : "i", "<span>레버리지·인버스 ETF " + levW.toFixed(0) + "%</span>" + (levW >= 30 ? " · <span>변동성 큼</span>" : "")]);
+      if (near.length) L.push(["w", "<span>손절선 3% 안:</span> " + near.map(esc).join(", ")]);
+      if (earn.length) L.push(["i", "<span>실적 발표 임박:</span> " + earn.map(esc).join(", ")]);
       L.push([losers > ks.length / 2 ? "i" : "ok", "손실 " + losers + " · 이익 " + (ks.length - losers) + "종목"]);
       h += '<section class="card diag"><div class="h2" style="margin-bottom:6px">계좌 진단 <span class="sb" style="font-weight:400">AI 참고 지표</span></div>' + L.map(function (x) { return '<div class="dl ' + x[0] + '"><i aria-hidden="true"></i><span>' + x[1] + "</span></div>"; }).join("") + "</section>";
     })();
@@ -481,7 +481,7 @@
       var s = o.s, p = o.p, ci = ks.indexOf(s);
       return '<div class="hold" data-open="' + esc(s) + '"><div class="ht"><span class="dot" style="background:' + ACOL[ci % ACOL.length] + '" aria-hidden="true"></span><div class="l"><span class="nm">' + esc(nm(s)) + pill(sigOf(s)) + '</span><span class="sb">' + p.q.toLocaleString() + "주 · 평단 " + pxS(mk, p.avg) + " · 현재 " + pxS(mk, o.cur) + '</span></div><div class="r"><span class="p">' + fmt(mk, o.mv) + '</span><span class="' + cls(o.r) + '" style="font-size:12.5px">' + fmt(mk, o.mv - p.q * p.avg, true) + " (" + pctS(o.r) + ")</span></div></div>" +
         '<div class="hm"><span>비중 <b>' + (v.eq > 0 ? (o.mv / v.eq * 100).toFixed(0) : 0) + '%</b></span><span>오늘 <b class="' + cls(o.d) + '">' + pctS(o.d) + "</b></span>" + (p.tpPx ? '<span>익절 <b class="up">' + pxS(mk, p.tpPx) + "</b></span>" : "") + (p.slPx ? '<span>손절 <b class="dn">' + pxS(mk, p.slPx) + "</b></span>" : "") + "</div>" +
-        (function () { var sv = sellView(mk, s, p, o.cur); return '<div class="so ' + sv.v + '"><span class="sv"><b>AI 매도 의견</b> ' + sv.ko + '</span><span class="sw">' + sv.why.map(rsH).join(" · ") + '</span>' + (sv.ref.length ? '<span class="sw rf"><span>참고</span> · ' + sv.ref.map(rsH).join(" · ") + "</span>" : "") + '<span class="sw">' + (sv.ai ? "AI 손절 " : "기준 손절 ") + pxS(mk, sv.sl) + " · 목표 " + pxS(mk, sv.tp) + "</span></div>"; })() +
+        (function () { var sv = sellView(mk, s, p, o.cur); return '<div class="so ' + sv.v + '"><span class="sv"><b>AI 매도 의견</b> ' + sv.ko + '</span><span class="sw">' + sv.why.map(rsH).join(" · ") + '</span>' + (sv.ref.length ? '<span class="sw rf"><span>참고</span> · ' + sv.ref.map(rsH).join(" · ") + "</span>" : "") + '<span class="sw"><span>' + (sv.ai ? "AI 손절" : "기준 손절") + "</span> " + pxS(mk, sv.sl) + " · <span>목표</span> " + pxS(mk, sv.tp) + "</span></div>"; })() +
         '<div class="ha"><button type="button" class="tag2 wbtn" data-risk="' + esc(s) + '" aria-label="익절 손절 설정">' + (p.tpPx || p.slPx ? "TP/SL 수정" : "TP/SL 설정") + "</button>" + buyBtn(s) + '<button type="button" class="sell" data-sell="' + esc(s) + '">매도</button></div></div>';
     }).join("") : '<div class="empty">홈의 AI 후보나 관심종목에서 [매수]를 눌러 보세요</div>') + "</section>";
     var od = a.ord || [];

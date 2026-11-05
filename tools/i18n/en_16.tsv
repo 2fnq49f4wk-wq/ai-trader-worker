@@ -392,8 +392,8 @@ ${n} 도달 시 {n}주 예약 매도	When ${n} is reached, scheduled sell of {n}
 {n}주 시장가 매수	Buy {n} sh at market
 {n}주 시장가 매도	Sell {n} sh at market
 {n}{n}{n} 판	{n}{n}{n} edition
-서버가 실제 시세로 1시간마다 다시 계산합니다 · {n}:{n}:{n} AM 기준 · 가상 자금 · 투자 권유 아님	Recalculated by the server hourly from live quotes · as of {n}:{n}:{n} AM · virtual funds · not investment advice
-서버가 실제 시세로 1시간마다 다시 계산합니다 · {n}:{n}:{n} PM 기준 · 가상 자금 · 투자 권유 아님	Recalculated by the server hourly from live quotes · as of {n}:{n}:{n} PM · virtual funds · not investment advice
+서버가 실제 시세로 1시간마다 다시 계산합니다 · {n}:{n}:{n} AM 기준 · 가상 자금 · 투자 권유 아님	Recalculated by the server every 1h from live quotes · as of {n}:{n}:{n} AM · virtual funds · not investment advice
+서버가 실제 시세로 1시간마다 다시 계산합니다 · {n}:{n}:{n} PM 기준 · 가상 자금 · 투자 권유 아님	Recalculated by the server every 1h from live quotes · as of {n}:{n}:{n} PM · virtual funds · not investment advice
 서버가 실제 시세로 1시간마다 다시 계산합니다 · 가상 자금 · 투자 권유 아님	Recalculated by the server hourly from live quotes · virtual funds · not investment advice
 선택(기록)	Chosen (logged)
 정규장 마감 전 30분 · 프리·애프터에 매수 판정	30 min before regular-session close · buy decisions in pre/after-hours
@@ -465,7 +465,7 @@ OMNI-Q 거름 없음	No OMNI-Q filter
 거름 없음	No filter
 OMNI-Q 거름 없음(전 종목 · 검증이 고름) · 하루·동시 상한이 차면 OMNI-Q 순위 높은 후보부터 산다(시뮬·실전 같은 순서)	No OMNI-Q filter (all stocks · validation selects) · when daily/concurrent caps fill, higher OMNI-Q-ranked candidates are bought first (same order in sim and live)
 신호 · 일봉 매매법	Signals · daily-bar playbooks
-{n}순위 {n} · 보조 {n} — 보조는 {n}순위가 안 뜬 종목에만	Tier 1: {n} · auxiliary: {n} — auxiliary only for stocks where tier 1 didn't fire
+{n}순위 {n} · 보조 {n} — 보조는 {n}순위가 안 뜬 종목에만	Tier {n}: {n} · auxiliary: {n} — auxiliary only for stocks where Tier {n} didn't fire
 종목 그룹 · 미지수	Stock groups · unknowns
 그룹 조율 {n}칸	Group tuning: {n} cell
 구조 거르개	Structure filter
@@ -577,3 +577,15 @@ AI 매매법 보유 기간({n}일) 지남	Past the AI playbook holding period ({
 RSI {n} 과열	RSI {n} overheated
 20일선 아래 · 5일 {n}%	Below 20-day MA · 5d {n}%
 손절선·목표 사이 · 확인된 매도 신호 없음	Between stop and target · no confirmed sell signal
+현금 {n}%	Cash {n}%
+지금 폭등 국면	now: surge regime
+지금 상승 국면	now: bull regime
+지금 보합 국면	now: neutral regime
+지금 하락 국면	now: bear regime
+지금 폭락 국면	now: crash regime
+참고 범위 {n}~{n}%	reference range {n}–{n}%
+가장 큰 종목	Largest holding
+변동성 큼	high volatility
+손절선 {n}% 안:	Within {n}% of stop:
+실적 발표 임박:	Earnings soon:
+목표	Target

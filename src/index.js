@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.773";
+const _BUILD_VER = "V33.774";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -23066,7 +23066,8 @@ async function refreshDailyShard(env, market, shard) {
         dailyRsi: closes.length >= mcfg.rsiPeriod + 1 ? getRSI(closes, mcfg.rsiPeriod) : null,
         dailyMa: closes.length >= mcfg.maPeriod ? getMA(closes, mcfg.maPeriod) : null,
         dailyMaShort: closes.length >= mcfg.maShortPeriod ? getMA(closes, mcfg.maShortPeriod) : null,
-        dailyAtr: closes.length >= mcfg.atrPeriod + 1 ? getATR(closes, mcfg.atrPeriod, highs, lows) : null
+        dailyAtr: closes.length >= mcfg.atrPeriod + 1 ? getATR(closes, mcfg.atrPeriod, highs, lows) : null,
+        ma50: closes.length >= 50 ? getMA(closes, 50) : null   // [V33.774] 일봉 갱신 경로도 50일선 계산(미국 장외 시간에도 MY 매도 의견이 쓸 수 있게)
       };
       const bb = getBollingerBands(closes, mcfg.maPeriod, mcfg.bbStdMult);
       const return20 = getNDayReturn(closes, 20);
@@ -23094,6 +23095,7 @@ async function refreshDailyShard(env, market, shard) {
         market: market, price: price, prevClose: prevClose, dayPct: dayPct,
         dailyRsi: r.ind.dailyRsi, rsi: r.ind.dailyRsi,
         dailyMa: r.ind.dailyMa, ma: r.ind.dailyMa, dailyMaShort: r.ind.dailyMaShort,
+        ma50: (r.ind.ma50 != null ? r.ind.ma50 : (prev.ma50 ?? null)),
         dailyAtr: r.ind.dailyAtr, atr: r.ind.dailyAtr,
         bbLower: r.bb ? r.bb.lower : null, bbUpper: r.bb ? r.bb.upper : null,
         return20: r.return20,
