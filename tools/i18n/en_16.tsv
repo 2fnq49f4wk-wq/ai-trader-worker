@@ -549,3 +549,16 @@ AI 손절	AI stop
 지금은 장이 모두 닫혀 있어요 — 예약 주문만 걸 수 있습니다(다음 장(04:00 ET 프리마켓)에 가격이 닿으면 체결)	All sessions are closed — only reserved orders can be placed (filled when the price is reached in the next session, 04:00 ET pre-market)
 지금은 프리마켓·정규장·애프터마켓이 모두 닫혀 있어 예약 주문만 받습니다 — 다음 장(08:00 프리마켓)에 가격이 닿으면 체결됩니다.	Pre-market, regular and after-hours sessions are all closed, so only reserved orders are accepted — they fill when the price is reached in the next session (08:00 pre-market).
 지금은 프리마켓·정규장·애프터마켓이 모두 닫혀 있어 예약 주문만 받습니다 — 다음 장(04:00 ET 프리마켓)에 가격이 닿으면 체결됩니다.	Pre-market, regular and after-hours sessions are all closed, so only reserved orders are accepted — they fill when the price is reached in the next session (04:00 ET pre-market).
+계좌 진단	Account check
+AI 참고 지표	AI reference indicators
+실적 발표 D-{n} · 발표 전후 변동 확대	Earnings in {n}d · higher volatility around the report
+실적 발표 오늘 · 발표 전후 변동 확대	Earnings today · higher volatility around the report
+레버리지·인버스 ETF {n}일 보유 · 오래 들수록 변동성 손실 누적	Leveraged/inverse ETF held {n}d · volatility decay grows over time
+AI 매매법 보유 기간({n}일) 지남	Past the AI playbook holding period ({n}d)
+손익 {n} · 이익 {n}종목	{n} losing · {n} winning
+손실 {n} · 이익 {n}종목	{n} losing · {n} winning
+레버리지·인버스 ETF {n}%	Leveraged/inverse ETFs {n}%
+레버리지·인버스 ETF {n}% · 변동성 큼	Leveraged/inverse ETFs {n}% · high volatility
+한 종목 쏠림	concentrated in one stock
+손절선 3% 안	Within 3% of stop
+실적 발표 임박	Earnings soon

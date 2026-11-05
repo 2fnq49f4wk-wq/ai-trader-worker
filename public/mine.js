@@ -218,6 +218,14 @@
      ① 손절선 = AI 매매법이 그 종목에 쓰는 손절 %(있으면) · 없으면 평균 변동폭(ATR) 2배(4~15%) ② 목표 = 손절 폭의 2배(손익비 1:2 · 최대 +40%)
      ③ 과열 = RSI ≥ 75 또는 볼린저 상단 위 ④ 추세 이탈 = 20일선 아래 + 5일 −8% 이하 ⑤ AI 순위(OMNI-Q 백분위)가 하위 30% 로 떨어졌는가.
      판정 순서: 손절 검토 → 일부 익절(목표·과열) → 주의(추세 이탈·AI 약화) → 보유 유지. 투자 권유가 아니라 기준 안내다. */
+  /* [V33.772] ★보유 종목 리포트 재료★ — 실적 발표 일정(공용 CDN 피드 /api/earnings · 한 번 받아 기억) · 레버리지/인버스 ETF · 보유 기간 · 계좌 비중 */
+  var EARN = null, earnBusy = false;
+  function earnLoad() { if (EARN || earnBusy) return; earnBusy = true; fetch("/api/earnings").then(function (r) { return r.json(); }).then(function (j) { var m = {}, now = Date.now() - 864e5;
+    ((j && j.items) || []).forEach(function (x) { if (x && x.symbol && x.ts > now && (!m[x.symbol] || x.ts < m[x.symbol])) m[x.symbol] = x.ts; }); EARN = m; var pm = $("page-mine"); if (pm && pm.classList.contains("active")) draw(); }).catch(function () { earnBusy = false; }); }
+  function earnDays(s) { var t = EARN && EARN[s]; return t ? Math.max(0, Math.ceil((t - Date.now()) / 864e5)) : null; }
+  var LEV = /(^|[^a-z])(2x|3x|ultra|bull|bear|inverse)([^a-z]|$)|레버리지|인버스|2배|3배|곱버스/i, LEVSYM = { TQQQ: 1, SQQQ: 1, SOXL: 1, SOXS: 1, UPRO: 1, SPXU: 1, TNA: 1, TZA: 1, LABU: 1, LABD: 1, FAS: 1, FAZ: 1, TECL: 1, TECS: 1, NVDL: 1, TSLL: 1, SH: 1, PSQ: 1, "122630.KS": 1, "252670.KS": 1, "114800.KS": 1, "233740.KS": 1, "251340.KS": 1 };
+  function isLev(s) { return !!LEVSYM[s] || LEV.test(nm(s) || ""); }
+  function heldDays(p) { return p && p.t > 1e12 ? Math.max(0, Math.floor((Date.now() - p.t) / 864e5)) : null; }
   function sellView(mk, s, p, cur) {
     var x = q(s) || {}, it = liveItem(s), r = (cur / p.avg - 1) * 100;
     var atrP = x.atr > 0 && cur > 0 ? x.atr / cur * 100 : 3;
@@ -229,9 +237,13 @@
     if (v === "hold" && ((x.rsi >= 75) || (x.bbUpper > 0 && cur >= x.bbUpper))) { v = "trim"; why.push("단기 과열" + (x.rsi >= 75 ? " · RSI " + Math.round(x.rsi) : "") + (x.bbUpper > 0 && cur >= x.bbUpper ? " · 볼린저 상단 위" : "")); }
     if (v === "hold" && x.dailyMaShort > 0 && cur < x.dailyMaShort && x.return5 <= -8) { v = "watch"; why.push("단기 추세 이탈 · 20일선 아래 · 5일 " + pctS(x.return5)); }
     if (it && typeof it.q === "number") { if (it.q <= 0.3) { if (v === "hold") v = "watch"; why.push("AI 순위 하위 " + Math.max(1, Math.round(it.q * 100)) + "%"); } else if (it.q >= 0.8) why.push("AI 순위 상위 " + Math.max(1, Math.round((1 - it.q) * 100)) + "%"); }
+    var ed = earnDays(s); if (ed != null && ed <= 7) { why.push("실적 발표 " + (ed === 0 ? "오늘" : "D-" + ed) + " · 발표 전후 변동 확대"); if (v === "hold") v = "watch"; }
+    var hd = heldDays(p), aiHold = it && typeof it.hold === "number" ? it.hold : null;
+    if (isLev(s) && hd != null && hd >= 10) why.push("레버리지·인버스 ETF " + hd + "일 보유 · 오래 들수록 변동성 손실 누적");
+    if (aiHold && hd != null && hd > aiHold) why.push("AI 매매법 보유 기간(" + aiHold + "일) 지남");
     if (!why.length) why.push("손절선·목표 사이 · 과열·이탈 신호 없음");
     var KO = { hold: "보유 유지", trim: "일부 익절 검토", cut: "손절 검토", watch: "주의 · 관찰" };
-    return { v: v, ko: KO[v], why: why.slice(0, 3), sl: sl, tp: tp, stopP: stopP, ai: aiStop != null };
+    return { v: v, ko: KO[v], why: why.slice(0, 4), sl: sl, tp: tp, stopP: stopP, ai: aiStop != null };
   }
   /* [V33.771] ★장이 모두 닫힌 시간엔 체결하지 않는다★(사용자 11/4 "프리·애프터·정규장 다 닫힌 시간엔 예약 매수만") —
      열린 창: 미 04:00~20:00 ET(프리·정규·애프터) · 한 08:00~08:50 · 09:00~15:30 · 15:40~20:00 KST(넥스트레이드 프리·정규·애프터) · 주말 휴장.
@@ -309,6 +321,8 @@
       "html[data-theme=light] #minePv{--m-up:#C92A2A;--m-dn:#1B5FCC}html[data-theme=light] #minePv.on{background:rgba(16,24,40,.45)}html[data-theme=light] #minePv .pvb{background:#fff;color:#101828}html[data-theme=light] #minePv .pvc,html[data-theme=light] #minePv .pvs div,html[data-theme=light] #minePv .pvhd,html[data-theme=light] #minePv .seg{background:#F2F4F7}html[data-theme=light] #minePv .seg button.on{background:#101828}html[data-theme=light] #minePv .x{background:#F2F4F7;color:#101828}html[data-theme=light] #minePv .pvai,html[data-theme=light] #minePv .pvhd{color:#344054}html[data-theme=light] #minePv .pvai{background:#E6F7F2;border-color:#CDEBE2}html[data-theme=light] #minePv .pvai b{color:#0B7A66}html[data-theme=light] #minePv .pva .wbtn2{border-color:#D0D5DD;color:#344054}html[data-theme=light] #minePv .pvgo{background:#101828;color:#fff}html[data-theme=light] #minePv .sb,html[data-theme=light] #minePv .pvs span{color:#667085}",
       "#mineRoot .pill.hold{background:rgba(226,199,102,.16);color:#E2C766}html[data-theme=light] #mineRoot .pill.hold{background:#FEF3C7;color:#7A5A00}",
       "#mineRoot .today{margin-top:4px;font-size:13px;color:var(--m-mute)}#mineRoot .today b{font-weight:600}",
+      /* [V33.772] 계좌 진단 */
+      "#mineRoot .diag .dl{display:flex;gap:9px;align-items:flex-start;font-size:13px;line-height:1.45;padding:3px 0}#mineRoot .diag .dl i{flex:0 0 8px;height:8px;border-radius:50%;margin-top:6px;background:#3DD6B5}#mineRoot .diag .dl.w i{background:#F04452}#mineRoot .diag .dl.i i{background:#E2C766}",
       /* [V33.770] AI 매도 의견 줄 */
       "#mineRoot .so{display:flex;flex-direction:column;gap:2px;margin:8px 0 2px;padding:8px 10px;border-radius:10px;background:var(--m-soft,rgba(127,140,160,.08));border-left:3px solid #7FA6FF;font-size:12.5px}#mineRoot .so .sv b{font-weight:700;margin-right:6px;color:var(--m-mu,#98A2B3)}#mineRoot .so .sw{color:var(--m-mu,#98A2B3);font-size:12px}#mineRoot .so.trim{border-left-color:#F04452}#mineRoot .so.cut{border-left-color:#3182F6}#mineRoot .so.watch{border-left-color:#E2C766}#mineRoot .so.hold .sv{color:#3DD6B5}#mineRoot .so.trim .sv{color:#F04452}#mineRoot .so.cut .sv{color:#3182F6}#mineRoot .so.watch .sv{color:#E2C766}",
       "#mineRoot .hold{padding:13px 0 12px;border-top:1px solid var(--m-line);cursor:pointer}#mineRoot .ct+.hold,#mineRoot .ct+.row{border-top:0}#mineRoot .ht{display:flex;align-items:center;gap:10px}#mineRoot .hm{display:flex;flex-wrap:wrap;gap:4px 14px;margin:8px 0 0 18px;font-size:12.5px;color:var(--m-mute)}#mineRoot .hm b{font-weight:600;color:var(--fg,#EEF1F5)}#mineRoot .hm b.up{color:var(--m-up)}#mineRoot .hm b.dn{color:var(--m-dn)}",
@@ -428,6 +442,22 @@
        정렬: 평가액 · 수익률 · 오늘 */
     var ord2 = ks.map(function (s) { var p = a.pos[s], cur = priceOf(s) || p.avg; return { s: s, p: p, cur: cur, mv: p.q * cur, r: (cur / p.avg - 1) * 100, d: posDay(mk, s, p, cur)[1] }; });   // [V33.770] 오늘 % 도 보유 기준(이번 장에 산 것은 평단 대비)
     ord2.sort(function (x, y) { return hSort === "ret" ? y.r - x.r : hSort === "day" ? (y.d == null ? -1e9 : y.d) - (x.d == null ? -1e9 : x.d) : y.mv - x.mv; });
+    earnLoad();
+    /* [V33.772] ★계좌 진단★(화면 계산 · 서버 0) — 현금 비중 ↔ 지금 국면 · 한 종목 쏠림 · 레버리지 비중 · 손절선 근처 · 실적 임박. 참고 지표이지 권유가 아니다. */
+    if (ks.length && v.eq > 0) (function () {
+      var rg = PB && PB.markets && PB.markets[mk] && PB.markets[mk].regime, cashP = v.cash / v.eq * 100;
+      var band = { SURGE: [10, 40], BULL: [10, 40], NEUTRAL: [30, 60], BEAR: [50, 80], CRASH: [50, 90] }[rg] || null, RK = { SURGE: "폭등", BULL: "상승", NEUTRAL: "보합", BEAR: "하락", CRASH: "폭락" };
+      var top = ord2.slice().sort(function (x, y) { return y.mv - x.mv; })[0], topW = top ? top.mv / v.eq * 100 : 0, levW = 0, near = [], earn = [], losers = 0;
+      ord2.forEach(function (o) { if (isLev(o.s)) levW += o.mv / v.eq * 100; var sv = sellView(mk, o.s, o.p, o.cur); if (o.cur > sv.sl && o.cur <= sv.sl * 1.03) near.push(nm(o.s)); var e2 = earnDays(o.s); if (e2 != null && e2 <= 7) earn.push(nm(o.s) + " D-" + e2); if (o.r < 0) losers++; });
+      var L = [];
+      if (band) L.push([cashP < band[0] ? "w" : cashP > band[1] ? "i" : "ok", "현금 " + cashP.toFixed(0) + "% · 지금 " + (RK[rg] || rg) + " 국면 참고 범위 " + band[0] + "~" + band[1] + "%"]);
+      L.push([topW >= 40 ? "w" : "ok", "가장 큰 종목 " + esc(nm(top.s)) + " " + topW.toFixed(0) + "%" + (topW >= 40 ? " · 한 종목 쏠림" : "")]);
+      if (levW > 0) L.push([levW >= 30 ? "w" : "i", "레버리지·인버스 ETF " + levW.toFixed(0) + "%" + (levW >= 30 ? " · 변동성 큼" : "")]);
+      if (near.length) L.push(["w", "손절선 3% 안: " + near.map(esc).join(", ")]);
+      if (earn.length) L.push(["i", "실적 발표 임박: " + earn.map(esc).join(", ")]);
+      L.push([losers > ks.length / 2 ? "i" : "ok", "손실 " + losers + " · 이익 " + (ks.length - losers) + "종목"]);
+      h += '<section class="card diag"><div class="h2" style="margin-bottom:6px">계좌 진단 <span class="sb" style="font-weight:400">AI 참고 지표</span></div>' + L.map(function (x) { return '<div class="dl ' + x[0] + '"><i aria-hidden="true"></i><span>' + x[1] + "</span></div>"; }).join("") + "</section>";
+    })();
     h += '<section class="card"><div class="ct" style="margin-bottom:2px"><span class="h2" style="color:inherit">보유 ' + ks.length + '종목</span>' + (ks.length > 1 ? '<span class="seg">' + [["val", "평가액"], ["ret", "수익률"], ["day", "오늘"]].map(function (c) { return '<button type="button" data-hs="' + c[0] + '" class="' + (hSort === c[0] ? "on" : "") + '">' + c[1] + "</button>"; }).join("") + "</span>" : "") + "</div>" + (ks.length ? ord2.map(function (o) {
       var s = o.s, p = o.p, ci = ks.indexOf(s);
       return '<div class="hold" data-open="' + esc(s) + '"><div class="ht"><span class="dot" style="background:' + ACOL[ci % ACOL.length] + '" aria-hidden="true"></span><div class="l"><span class="nm">' + esc(nm(s)) + pill(sigOf(s)) + '</span><span class="sb">' + p.q.toLocaleString() + "주 · 평단 " + pxS(mk, p.avg) + " · 현재 " + pxS(mk, o.cur) + '</span></div><div class="r"><span class="p">' + fmt(mk, o.mv) + '</span><span class="' + cls(o.r) + '" style="font-size:12.5px">' + fmt(mk, o.mv - p.q * p.avg, true) + " (" + pctS(o.r) + ")</span></div></div>" +
