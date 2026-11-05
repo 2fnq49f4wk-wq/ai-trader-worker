@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.774";
+const _BUILD_VER = "V33.775";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -25200,6 +25200,7 @@ async function runTradingCycle(env) {
         // [V33.110] R2 가 없으면 폴백하지 않는다 — 대신 그 사실을 크게 남긴다.
         //   조용한 폴백이 'R2 가 꺼져 있는데 잘 돌고 있는 줄 아는' 상태를 만들었다.
         if (_bigR2() && !COMMITTEE_RETIRED) __stinPend = await _stinLoadPend();   // [V33.617] 장중 단타 표본(위원회용) 수집 퇴역
+        else if (COMMITTEE_RETIRED) { __stinPend = null; }   // [V33.775] 퇴역이라 안 모은다 — 종전엔 이 경우도 'R2 미바인딩' ERROR 를 시간마다 남겼다(거짓 경보 · R2 는 정상)
         else {
           __stinPend = null;
           try {
@@ -51637,6 +51638,14 @@ async function runTailRiskHedge(DB, market, mcfg, equity, vixValue, cash, opts) 
     const band = (tr.hedgeRebalanceBandPct || 0.5) / 100 * equity;
     const shortfall = targetValue - curValue;
     if (Math.abs(shortfall) <= band && vixOn) return cash;   // 밴드 내 — 유지(트리거 ON일 때만)
+    /* [V33.775] 신규 매수 두 경로만(V33.649 · 사용자 10/22) — 헤지 매수(TAILHEDGE)도 executeBuy 입구에서 막혀 매 사이클 '목표 → 거부' 로그 2줄만 남겼다(D1 쓰기 · 체결 0).
+       막힌 동안은 시도하지 않는다(시간당 한 번만 알림). 청산·축소는 그대로. 허용 여부는 사용자가 정한다. */
+    if (shortfall > band && typeof ENTRY_ROUTES_ONLY !== "undefined" && ENTRY_ROUTES_ONLY && !ENTRY_ROUTES.has("TAILHEDGE")) {
+      const _hk = "__hedgeBlk_" + market;
+      if (!globalThis[_hk] || Date.now() - globalThis[_hk] > 3600000) { globalThis[_hk] = Date.now();
+        try { await log(DB, "INFO", null, "[HEDGE] " + market + " 헤지 목표 " + (market === "kr" ? "₩" : "$") + Math.round(targetValue).toLocaleString() + " — 신규 매수 두 경로만(V33.649)이라 집행 안 함"); } catch (e) {} }
+      return cash;
+    }
     if (shortfall > band) {
       // 헤지 확대 — 캐시시세 있는 첫 수단으로 매수
       for (const sym of instruments) {
@@ -51645,7 +51654,7 @@ async function runTailRiskHedge(DB, market, mcfg, equity, vixValue, cash, opts) 
         const feeR = (market === "us" ? mcfg.feeUS : mcfg.feeKR) || 0;
         const qty = Math.floor(shortfall / (px * (1 + feeR)));
         if (qty <= 0) break;
-        await log(DB, "INFO", sym, "[HEDGE] VIX " + (vixValue || 0).toFixed(1) + " 꼬리위험 헤지 매수 목표$" + Math.round(targetValue) + " 현재$" + Math.round(curValue) + " → " + qty + "주");
+        await log(DB, "INFO", sym, "[HEDGE] VIX " + (vixValue || 0).toFixed(1) + " 꼬리위험 헤지 매수 목표" + (market === "kr" ? "₩" : "$") + Math.round(targetValue) + " 현재" + (market === "kr" ? "₩" : "$") + Math.round(curValue) + " → " + qty + "주");
         cash = await executeBuy(DB, market, sym, "hedge", qty, px, { name: "TAILHEDGE", members: ["TAILHEDGE"] }, null, mcfg, cash, { stopPctOverride: 8 });
         break;
       }
