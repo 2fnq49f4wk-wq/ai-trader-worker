@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.776";
+const _BUILD_VER = "V33.777";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -9086,6 +9086,12 @@ function applyDisplayOverMarket(q) {
     q.dispPrice = q.price; q.dispPct = q.dayPct;
     return q;
   }
+  /* [V33.777] ★등락률 = 표시 가격 vs 전일 종가★(사용자 11/5 "미국장 시간외 등락률 값이 다르다") — 라이브 실측(18:21 ET · 네이버·야후 대조):
+     가격은 애프터 가격(NVDA 179.30)인데 등락률은 '오늘 종가 대비 애프터 변동'(−1.27%)이라 하루 −10.4% 빠진 종목이 거의 안 빠진 것처럼 보였고,
+     MY(가격÷전일 종가 = −10.41%)·다른 앱과 숫자가 달랐다. 이제 가격과 등락률이 같은 기준(전일 종가)이다. 세션만의 변동은 postPct/prePct 로 그대로 나간다. */
+  //   장전(PRE)은 저장값이 아직 전 거래일 것(price = 마지막 종가 · prevClose = 그 전날)이라 prePct(마지막 종가 대비)가 이미 같은 기준 → 그대로.
+  //   장후(POST)는 price = 오늘 종가 · prevClose = 전일 종가 → 애프터 가격 ÷ 전일 종가.
+  if (st !== "PRE" && q.prevClose > 0 && q.dispPrice > 0) q.dispPct = (q.dispPrice / q.prevClose - 1) * 100;
   // 프런트 기존 렌더(dayPct/price 직접 사용)를 위해 표시값으로 덮어쓴다.
   q.price = q.dispPrice; q.dayPct = q.dispPct;
   return q;
