@@ -321,14 +321,14 @@ window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{
 window.__luxAct=Date.now();['pointerdown','keydown','touchstart','wheel'].forEach(function(e){addEventListener(e,function(){window.__luxAct=Date.now();},{passive:true,capture:true});});
 window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600000;};
 </script>
-<meta name="lux-build" content="V33.781">
-<script src="/i18n.js?v=33.781" defer></script>
-<script src="/outlook.js?v=33.781" defer></script>
-<script src="/ovn-live.js?v=33.781" defer></script>
-<script src="/mine.js?v=33.781" defer></script>
-<script src="/easy-dash.js?v=33.781" defer></script>
-<script src="/stock-info.js?v=33.781" defer></script>
-<script src="/neural-observatory.js?v=33.781" defer></script>
+<meta name="lux-build" content="V33.782">
+<script src="/i18n.js?v=33.782" defer></script>
+<script src="/outlook.js?v=33.782" defer></script>
+<script src="/ovn-live.js?v=33.782" defer></script>
+<script src="/mine.js?v=33.782" defer></script>
+<script src="/easy-dash.js?v=33.782" defer></script>
+<script src="/stock-info.js?v=33.782" defer></script>
+<script src="/neural-observatory.js?v=33.782" defer></script>
 <title>LUX-INV</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -9315,12 +9315,12 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
   #page-detail .detail-main .detail-chart{height:46vh !important;min-height:300px !important}
 }
 </style>
-<link rel="stylesheet" href="/brain-console.css?v=33.781">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.781">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.781">
-<link rel="stylesheet" href="/model-evidence.css?v=33.781">
+<link rel="stylesheet" href="/brain-console.css?v=33.782">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.782">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.782">
+<link rel="stylesheet" href="/model-evidence.css?v=33.782">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.781">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.782">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -17590,7 +17590,9 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
       var models = ['mind','gbdt','xgb','lgb','cat'].map(function(k){
         return ({mind:'MIND',gbdt:'GBDT',xgb:'XGB',lgb:'LGB',cat:'Cat'})[k] + ' ' + LUXR.dot(k);
       }).join(' &nbsp; ');
-      var html = '<div style="letter-spacing:.2px;"><span style="color:var(--t3);">위원회</span> &nbsp; '+models+'</div>'
+      var html = (d && (d.committeeRetired || (d.alt && d.alt.committeeRetired)))   // [V33.782] 위원회 퇴역
+        ? '<div style="letter-spacing:.2px;"><span style="color:var(--t3);">위원회 · 단타 엔진</span> &nbsp; <b style="color:#8a93a3">퇴역</b></div><div style="color:var(--t3,#889);font-size:9.5px;margin-top:2px;">신규 매수는 OMNI-Q · 매매법 AI 두 경로만 · 위원회 모델은 학습·채점·사이클 읽기 모두 중단</div>'
+        : '<div style="letter-spacing:.2px;"><span style="color:var(--t3);">위원회</span> &nbsp; '+models+'</div>'
         + '<div style="color:var(--t3,#889);font-size:9.5px;margin-top:2px;">● 정식 합류 · ◐ 잠정 합류(가중 축소·투표 중) · ○ 보류/미학습</div>';
       // [V33.81] 신규 3모델 — 학습 대기 중이어도 표본 진행이 보이게 한다.
       try {
@@ -20693,6 +20695,7 @@ setTimeout(function(){
       });
       h += sec('섹터 온도') + tbl(sRows);
 
+    var __cmtCut = h.length;   // [V33.782] 위원회·단타 퇴역이면 아래 세 칸(단타 엔진·스윙 표본·위원회)을 한 줄로 바꾼다
     // ③ 단타 엔진 — 표본이 0이어도 항상 표시
     var sc = mode.scalp || {};
     var need = sc.need || 3000;
@@ -21058,6 +21061,8 @@ setTimeout(function(){
           })()
         ]);
 
+    if (mode.committeeRetired || (mode.alt && mode.alt.committeeRetired)) h = h.slice(0, __cmtCut) + sec('위원회 · 단타 엔진', col('퇴역', '#8a93a3'))
+      + tbl([['신규 매수', 'OMNI-Q · 매매법 AI 두 경로만(V33.649)'], ['위원회·단타', '학습 · 채점 · 매 사이클 모델 읽기 모두 중단(V33.782 · CPU 0)']]);
     /* [V33.562] OMNI-Q — 투표선은 없지만 발언·잠정 발언이면 신규진입을 좁힌다. 상태는 서버 omniqView 그대로. */
     if(typeof window !== 'undefined' && window.LUX_omq){
       var _oq = alt.omniQ || {}, _L = window.LUX_omq;
@@ -22141,8 +22146,8 @@ setTimeout(function(){
   window.addEventListener('load', function(){ setTimeout(function(){ try{ boot(); }catch(e){} }, 0); });
 })();
 </script>
-<script src="/model-evidence.js?v=33.781"></script>
-<script src="/workspace-ui.js?v=33.781"></script>
+<script src="/model-evidence.js?v=33.782"></script>
+<script src="/workspace-ui.js?v=33.782"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {

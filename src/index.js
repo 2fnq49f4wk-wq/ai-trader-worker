@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.781";
+const _BUILD_VER = "V33.782";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -24453,6 +24453,8 @@ async function mlAiReadyState(DB) {
   try {
     const _auto = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
     if (!_auto.enabled || typeof LUXML === "undefined" || !LUXML.enabled) return false;
+    /* [V33.782] 위원회 퇴역 — 신규 매수는 AI 두 경로(OMNI-Q·매매법 AI)가 정한다 · 규칙엔진 신규진입 차단(종전과 같은 결과)은 유지하고 모델은 안 읽는다 */
+    if (COMMITTEE_RETIRED && ENTRY_ROUTES_ONLY) return true;
     const _mind = await mlMindLoad(DB);
     if (!_mind) return false;
     const _gt = await getState(DB, "gbdt_trust", null);
@@ -25255,7 +25257,7 @@ async function runTradingCycle(env) {
     let __scalpLive = false;
     try {
       const _sc0 = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.aiScalp : null;
-      if (_sc0 && _sc0.enabled) { const _L0 = await mlScalpLoad(DB); __scalpLive = !!_L0; }
+      if (_sc0 && _sc0.enabled && !ENTRY_ROUTES_ONLY) { const _L0 = await mlScalpLoad(DB); __scalpLive = !!_L0; }   // [V33.782] 단타 엔진 퇴역 — 모델 읽기 안 함
     } catch (e) {}
     // [V33.42] 실제 실적 서프라이즈 맵 — 사이클당 1회만 읽어 평가 루프에서 재사용(D1 왕복 1회).
     // [V33.67] 학습된 뉴스 어휘가중을 사이클 1회 로드(10분 메모) — 동기 스코어러가 참조한다.
@@ -26390,10 +26392,16 @@ async function runTradingCycle(env) {
       const __aiPicks = [];   // [V5] AI 픽 — 위원회가 이번 사이클 평가한 종목별 승률예측(대시보드/리포트 노출)
       try {
         if (typeof LUXML !== "undefined" && LUXML.enabled) {
+          /* [V33.782] ★위원회 완전 퇴역 — 매 사이클 모델 읽기도 안 한다★(사용자 11/6 "AI 두뇌에 위원회 7개 중 6개 돌아간다 · 단타 엔진 · CPU 낭비 · 완전히 은퇴")
+             실측: 학습·표본 수집·야간 적합은 V33.634~712 에 이미 껐는데, 거래 사이클이 매분 시장마다 위원회 모델(MIND·앙상블·밴딧·GBDT·SEQ·MEMO·이중헤드·후보 분포)을
+             읽고 있었다 — 신규 매수는 OMNI-Q·매매법 AI 두 경로뿐(V33.649)이라 이 값을 쓰는 곳이 없다(진입 판정은 이미 건너뜀 · AI_EXIT 은 __aiReady 가 꺼지면 같이 꺼진다).
+             남기는 것: 지수 종가(__idxCloses — 변동성 타게팅)·원장 성과(__portStats — 시장 거버너 사이징)·낙폭 — 위험 관리용이라 두 경로에도 쓰인다. */
+          if (!COMMITTEE_RETIRED) {
           try { __mlModel = await mlLoadModel(DB); } catch (e) {}
           try { __ensemble = await mlBrainLoad(DB); } catch (e) {}
           try { __mind = await mlMindLoad(DB); } catch (e) {}
           try { __guard = await mlGuardState(DB); } catch (e) {}
+          }
           /* [V33.422] DNN 퇴역 — 신뢰기록도 21MB 망도 안 읽는다. 매 사이클 비용이 0 이 된다. */
           /* [V33.422] DNN 퇴역 — 신뢰기록도 21MB 망도 안 읽는다(매 사이클 비용 0). */
           /* [V33.576] ★위원회 입력 상태 15개 묶음 읽기★ — 단계 시각: 프리페치→평가 시작 20~27s(프리페치 ~10s · 나머지는 모델·상태 읽기가 줄지어).
@@ -26401,11 +26409,11 @@ async function runTradingCycle(env) {
           let __mlS = {};
           try { __mlS = await getStates(DB, ["gbdt_trust", "committee_cal", "ml_evstats", "port_stats", "xs_panel", "tech_prior_k", "final_cal", "decision_blend_k",
                                              "social_k", "noise_filter", "sector_news_sentiment"]
-                                            .concat(MEMOML.enabled ? ["memo_model"] : [])
-                                            .concat(DUALHEAD.enabled ? ["dual_bull_model", "dual_bear_model", "dual_quad_shift"] : [])); } catch (e) { __mlS = {}; }
+                                            .concat(MEMOML.enabled && !COMMITTEE_RETIRED ? ["memo_model"] : [])
+                                            .concat(DUALHEAD.enabled && !COMMITTEE_RETIRED ? ["dual_bull_model", "dual_bear_model", "dual_quad_shift"] : [])); } catch (e) { __mlS = {}; }   // [V33.782] 퇴역 위원 모델 본문은 안 읽는다
           const __mv = function (k) { const v = __mlS[k]; return v === undefined ? null : v; };
           try { __gbdtTrust = __mv("gbdt_trust"); } catch (e) {}
-          try { if (__gbdtTrust && __gbdtTrust.trusted) __gbdt = await mlGBDTLoad(DB, market); } catch (e) {}   // [V33.76] 시장 전용 모델 우선
+          try { if (!COMMITTEE_RETIRED && __gbdtTrust && __gbdtTrust.trusted) __gbdt = await mlGBDTLoad(DB, market); } catch (e) {}   // [V33.76] 시장 전용 모델 우선
           try { __cal = __mv("committee_cal"); } catch (e) {}
           try { __evStats = __mv("ml_evstats"); } catch (e) {}
           // [V33.90] 실제 원장 기준 성과통계 — EV 게이트가 표본풀 대신 이 값을 우선한다(사이클 1회).
@@ -26422,21 +26430,21 @@ async function runTradingCycle(env) {
           //   각자 자기 스위치로만 걸리게 분리한다.
           /* [V33.422] flow·xalpha·stack 퇴역 — 사이클마다 하던 세 번의 읽기를 안 한다. */
           /* [V33.422] flow·xalpha·stack 퇴역 — 사이클마다 하던 세 번의 읽기를 안 한다. */
-          try { if (SEQML.enabled) __seqModel = await _seqCached(DB); } catch (e2) {}
-          try { if (MEMOML.enabled) __memoModel = __mv("memo_model"); } catch (e2) {}
+          try { if (SEQML.enabled && !COMMITTEE_RETIRED) __seqModel = await _seqCached(DB); } catch (e2) {}   // [V33.782] 퇴역
+          try { if (MEMOML.enabled && !COMMITTEE_RETIRED) __memoModel = __mv("memo_model"); } catch (e2) {}
           try { __techK = __mv("tech_prior_k"); __finalCal = __mv("final_cal"); __blendK = __mv("decision_blend_k"); } catch (e2) {}
           // [V33.109] 소셜 계수(측정 전엔 0) — 사이클 1회 로드.
           try { __socialK = __mv("social_k"); } catch (e2) {}
-          try { if (DUALHEAD.enabled) { __dualBull = __mv("dual_bull_model"); __dualBear = __mv("dual_bear_model"); __dualShift = __mv("dual_quad_shift"); } } catch (e2) {}
+          try { if (DUALHEAD.enabled && !COMMITTEE_RETIRED) { __dualBull = __mv("dual_bull_model"); __dualBear = __mv("dual_bear_model"); __dualShift = __mv("dual_quad_shift"); } } catch (e2) {}
           /* [V33.482] ★엄격히 읽는다★ — 느슨한 읽기는 D1 오류를 '없음(null)' 으로 돌려주고, 사이클 끝의 병합이 그걸 빈 배열로 알고
              새 몇십 건으로 ★2,000건을 덮어썼다★(실측 2026-10-05: ai_pdist:us 25건 · 9/14 엔 2,000건). 못 읽었으면 표시만 하고 쓰지 않는다. */
-          try { __pDistCache = await getState(DB, "ai_pdist:" + market, null, true); __pDistReadOk = true; } catch (e2) { __pDistReadOk = false; __pDistCache = null; }
+          if (!COMMITTEE_RETIRED) try { __pDistCache = await getState(DB, "ai_pdist:" + market, null, true); __pDistReadOk = true; } catch (e2) { __pDistReadOk = false; __pDistCache = null; }   // [V33.782] 위원회 후보 분포 — 퇴역
           // ↑ [V33.99] ★배포를 17커밋 동안 막고 있던 중괄호 누락★
           //   V33.82 가 이 자리에 블록을 끼워 넣으면서 위의 `try {` + `if (FLOWML.enabled) {`
           //   짝을 닫지 않았고, 아래에 같은 헤더를 새로 열었다(중복). 파일 전체 중괄호가 2개 모자란다.
           //   node --check 가 이걸 못 잡은 이유는 아래 게이트 주석 참조 — 게이트가 무력했다.
           // [V33.82] 단타 실측 엣지(켈리) + 현재 드로다운 — 레버리지 개방 판단의 두 축.
-          try {
+          if (!ENTRY_ROUTES_ONLY) try {   // [V33.782] 단타 엔진 퇴역(신규 매수 두 경로만) — 단타 모델·신호 통계 읽기 안 함(낙폭은 아래에서 따로)
             // [V33.84 ★버그수정★] 종전엔 "stin_trust" 를 읽었는데 그 키는 코드 어디에서도
             //   기록하지 않는다(읽기 2곳, 쓰기 0곳). 항상 null → trusted:false →
             //   ★단타 레버리지 게이트가 영원히 열리지 않는 죽은 코드였다★.
@@ -27877,7 +27885,7 @@ async function runTradingCycle(env) {
             //   → 게이트 이전에 후보를 먼저 적재한다. 매수 여부와 무관하게 관측만 남기므로 거래 영향 0.
             //     아래 기존 적재는 __candSyms 중복가드가 있어 이중 적재되지 않는다.
             try {
-              if (typeof LUXML !== "undefined" && LUXML.enabled && daily && daily.closes
+              if (typeof LUXML !== "undefined" && LUXML.enabled && !COMMITTEE_RETIRED && daily && daily.closes   // [V33.782] 위원회 반사실 후보 표본 — 퇴역
                   && daily.closes.length >= 55 && !__candSyms.has(symbol)) {
                 const _cday0 = Math.floor(Date.now() / 86400000);
                 if (__candDayGuard.day !== _cday0) __candDayGuard = { day: _cday0, set: new Set() };
@@ -30897,6 +30905,7 @@ async function handleRequest(request, env, ctx, _inner) {
                [V33.422] flow·xalpha·stack 칸 삭제 — 퇴역. 소급생성 진행률도 같이 사라진다. */
             roster: await buildRoster(env.DB)
           };
+          _alt.committeeRetired = !!COMMITTEE_RETIRED;   // [V33.782]
           try { _alt.omniQ = await omniqViewAll(env.DB); } catch (e) {}   // [V33.562] 사이드바 OMNI-Q 줄
           // [V33.92] MEMO — ml_samples 를 원형으로 압축해 쓰므로 표본 풀은 스윙과 같다.
           try {
@@ -42419,6 +42428,7 @@ async function buildRoster(DB) {
        읽으므로(V33.301), 여기서 한 번 막으면 두 화면에서 동시에 사라진다 — 화면마다
        따로 지우면 또 갈라진다. 좌석 수(n/m 가동)도 자동으로 줄어든다. */
     if (_retired(key)) return null;
+    if (COMMITTEE_RETIRED && key !== "omni") return null;   // [V33.782] 위원회 완전 퇴역 — 명부엔 진입 경로(OMNI-Q)만
     const e = {
       key: key, name: name, role: role, seat: !!ROSTER_SEAT_ROLES[role],
       trained: !!o.trained,
