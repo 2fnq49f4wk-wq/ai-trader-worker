@@ -101,8 +101,9 @@
   function vOv() {
     need("prof"); var p = C[sym].prof; if (!p) return loading; if (p.err || !p.ok) return '<div class="emp">기업 자료가 아직 없습니다.</div>';
     var st = p.stats || {}, fx = p.facts || [];
+    var lmx = window.luxMiniView ? window.luxMiniView.html(sym) : "";   // [V33.783] LUX-Mini 단기·중기·장기
     var pos = st.pos52 != null ? Math.max(0, Math.min(100, st.pos52)) : null;
-    var h = '<section class="hero"><div class="hr"><span class="k">52주 범위</span><span class="k">현재 위치 <b>' + (pos != null ? Math.round(pos) + "%" : "—") + "</b></span></div>" +
+    var h = lmx + '<section class="hero"><div class="hr"><span class="k">52주 범위</span><span class="k">현재 위치 <b>' + (pos != null ? Math.round(pos) + "%" : "—") + "</b></span></div>" +
       '<div class="rg" aria-hidden="true">' + (pos != null ? '<i style="left:' + pos.toFixed(1) + '%"></i>' : "") + "</div>" +
       '<div class="hr s"><span>저점 ' + esc(st.lo52 || "—") + "</span><span>고점 " + esc(st.hi52 || "—") + "</span></div>" +
       '<div class="h2c"><div><span class="k">고점 대비</span><b class="' + cls(st.fromHi52) + '">' + pct(st.fromHi52) + '</b></div><div><span class="k">저점 대비</span><b class="' + cls(st.fromLo52) + '">' + pct(st.fromLo52) + "</b></div></div></section>";
@@ -215,5 +216,6 @@
     if (!el.__b) { el.__b = 1; el.addEventListener("click", function (ev) { var b = ev.target.closest("button"); if (!b) return; if (b.dataset.lxt) { tab = b.dataset.lxt; draw(); } else if (b.dataset.fs) { fsTab = b.dataset.fs; draw(); } else if (b.dataset.vmore) { valMore = !valMore; draw(); } }); }
     draw();
   }
+  window.addEventListener("lux:luxmini", function () { if (sym && tab === "ov") try { draw(); } catch (e) {} });   // [V33.783]
   window.luxInfo = { open: open };
 })();

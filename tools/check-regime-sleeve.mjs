@@ -35,5 +35,11 @@ chk(/raw = ex\[ti, jj\] \+ \(mcum\[np\.minimum\(x \+ 1, T\)\] \/ mcum\[ti \+ 1\]
     "[V33.760] 국면 전략 거래 수익 = 비용 뺀 실제 수익(관문이 비용 전 수익을 보지 않음)", "★국면 전략 거래 수익에 비용이 다시 더해졌다(관문 부풀림)★");
 chk(/MK_CFG = \{"kr": \{"famX": \("def",\), "famRegOn": True, "profX": False\}, "us": \{"famX": \("def",\), "famRegOn": False, "profX": True\}\}/.test(SL) && /FAM_X, FAM_REG_ON, PROF_X_ON = tuple\(_mc\.get\("famX", \(\)\)\)/.test(SL) && /REG_TH = \{"us": \(0\.02, 0\.05\)\}/.test(SL),
     "[V33.760] 시장별 후보 묶음(한국 방어 거름 · 미국 방어 거름 + 긴 보유) · 미국 국면 정의 S&P500 2%/5%", "★시장별 국면 전략 설정(MK_CFG · REG_TH)이 빠졌다★");
+// [11/6 폭락 반등 확인] 미국 폭락 국면은 신호 날 지수 +1% 초과일 때만 산다(사전 등록 xlab C4b · 한국은 판정 t 0.61 미달로 끔).
+//   고르기(pick_at)엔 걸지 않는다 — 실현 거래(walk)와 오늘 종목에만. 문턱을 낮추거나 한국에 켜려면 새 사전 등록 실험이 필요하다.
+chk(/CRASH_CONFIRM = \{"us": 0\.01\}\n/.test(SL) && /if rg == "CRASH" and _CONF is not None:\s*#[^\n]*\n\s*m &= _CONF\[ti\]/.test(SL)
+    && /_CONF = np\.concatenate\(\[\[False\], _rx\[:-1\] > cth\]\)/.test(SL) && /if rg_now == "CRASH" and conf_now is False:[^\n]*\n\s*syms = \[\]/.test(SL)
+    && !/def pick_at[\s\S]*?_CONF[\s\S]*?def pick_cell/.test(SL),
+    "[11/6] 폭락 반등 확인(미국 · 신호 날 지수 > +1% · 실현 거래·오늘 종목에만 · 고르기 불변 · 진입일 t ← 신호 날 t−1)", "★폭락 반등 확인 배선/문턱이 바뀌었다(한국 켜기·문턱 변경은 새 사전 등록 실험 필요)★");
 if (fails) { console.log("✗ 국면 전략 계약 실패 " + fails); process.exit(1); }
 console.log("✓ 국면 전략 계약 통과");

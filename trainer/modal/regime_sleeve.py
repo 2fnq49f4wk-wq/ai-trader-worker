@@ -21,6 +21,12 @@ CELL_REGS = CELL_SETS["s5"]   # [V33.736] 국면 세분화(사용자 11/2) — 5
 SCORE = "lcb"   # [V33.696] 고르기 점수 = 평균 − 표준오차(표본 적은 우연을 덜 탄다)
 CRASH_EXIT = False   # 국면 깨짐 청산 — 실험실 A/B(검증 구간만 비교)에서 우열 없음 → 단순한 쪽(끔). 켜면 워커도 cfg.crashExit 로 따른다
 CAP_DAY = 6
+# [11/6 폭락 반등 확인] ★폭락 반등 확인(미국만)★ — 사용자 11/6 "국면→전략 구조 강화". 폭락 국면 거래는 ★신호 날 국면 지수가 +1% 넘게 오른 날★ 에만 산다(다음 날 진입).
+#   고르기(pick_at)는 그대로 — 확인은 실제로 사는 거래(walk 의 실현 거래 · 오늘 종목)에만 건다. 실험실 xlab(사전 등록 PREREG.md · 후보 10종 중 검증 구간 규칙으로 하나만 골라 판정 구간 한 번):
+#     미 검증 [60,80%) 거래당 11.41 → 11.76%(t 2.88 · n 510 · 분기 시작 4가지 중 3) · 판정 [80,100%) 12.28 → 12.66%(t 4.12 · n 676 · 3/4) → 통과.
+#     한 검증 6.39 → 6.70%(4/4) 였으나 판정 t 0.61 < 2 → 미달 → 한국은 끔. 문턱(+5% 자격 · 20건)은 그대로 — 폭락 국면 거래가 줄어 표본 20 미달이면 그 국면은 관측이 된다(더 엄격).
+CRASH_CONFIRM = {"us": 0.01}
+_CONF = None   # run() 이 채운다: _CONF[t] = 거래 진입일 t 의 전날(신호 날) 국면 지수 수익 > 문턱
 SEASON_ON = False   # [V33.756] 계절 거름(산타·양도세 1월 반등·중간선거) — 실험실 A/B 로 켤지 정한다
 # [V33.760] ★모든 국면용 추가 거름★(사용자 11/4 "한국·미국 모두 모든 국면에서 작동하게") — 알려진 효과에 근거한 거름 12종을 후보에 더할 수 있다.
 #   def(하락·폭락 방어) = 투매(거래량 급증) 뒤 반등 · 대형주 투매 반등 · 저변동 우량 · 안전자산 ETF 추세 · 인버스 ETF 추세 · 대형주 1달 낙폭 반등
@@ -349,6 +355,8 @@ def walk(TR, a0, b0):
                 m = (rg_ == rg) & (ti >= q) & (ti < min(q + STEP, b0))
                 if cl is not None:
                     m &= (m3_ == cl)
+                if rg == "CRASH" and _CONF is not None:   # [11/6 폭락 반등 확인] 폭락 반등 확인 — 실현 거래에만(고르기는 그대로)
+                    m &= _CONF[ti]
                 res[rg] += list(rr[m])
     return {r: ({"n": len(v), "mean": round(float(np.mean(v)), 3), "win": round(float(np.mean(np.array(v) > 0) * 100), 1)} if v else {"n": 0, "mean": None, "win": None}) for r, v in res.items()}
 
@@ -375,6 +383,11 @@ def run(P, mk, PB, log=print):
     if reg_src != "등가중 유니버스":
         reg5, M3s, ext_tail = regime_from_returns(rix, *REG_TH.get(mk, (0.025, 0.06)))
     log("   · [국면전략] %s 국면 지수 %s" % (mk, reg_src))
+    global _CONF
+    cth = CRASH_CONFIRM.get(mk)
+    _rx = np.nan_to_num(np.asarray(rix, dtype=float))
+    _CONF = np.concatenate([[False], _rx[:-1] > cth]) if cth is not None else None   # 진입일 t ← 신호 날 t−1 지수 수익
+    conf_now = bool(_rx[-1] > cth) if cth is not None else None                       # 오늘 신호 → 워커는 다음 거래일에 산다
     crash_start = (S3 == "CRASH") & np.concatenate([[False], S3[:-1] != "CRASH"])
     st = PB._daily_state(P, ())
     atr = st[4]
@@ -419,7 +432,7 @@ def run(P, mk, PB, log=print):
         sig_ = F[b_["fam"]][-1]
         jj_ = np.nonzero(sig_ & np.isfinite(C[-1]))[0]
         jj_ = jj_[np.argsort(-np.nan_to_num(r60r[-1, jj_]))][:CAP_DAY]
-        by_syms[rg] = [str(P["close"].columns[j]) for j in jj_]
+        by_syms[rg] = [str(P["close"].columns[j]) for j in jj_] if not (rg == "CRASH" and conf_now is False) else []   # [11/6 폭락 반등 확인] 반등 확인 전엔 폭락 국면 종목 없음
         b_["pr"] = {k: v for k, v in all_profs()[b_["prof"]].items() if v is not None}
     # 시간외 바구니 = 60일 거래대금 상위 30종(비중 = 거래대금 몫) — 지수 대용
     basket = {}
@@ -436,12 +449,15 @@ def run(P, mk, PB, log=print):
         jj = np.nonzero(sig & np.isfinite(C[-1]))[0]
         jj = jj[np.argsort(-np.nan_to_num(r60r[-1, jj]))][:CAP_DAY]
         syms = [str(P["close"].columns[j]) for j in jj]
+        if rg_now == "CRASH" and conf_now is False:   # [11/6 폭락 반등 확인] 폭락 국면 · 오늘 지수 반등(+1%↑) 없음 → 사지 않는다
+            syms = []
     # 실전 자격(사전 등록): 지금 국면의 [60,80%) · [80,100%) 워크포워드 둘 다 거래당 ≥ +5% · 각 표본 ≥ 20
     ok = bool(cur) and all((w.get(rg_now) or {}).get("n", 0) >= NMIN and ((w.get(rg_now) or {}).get("mean") or -99) >= 5.0 for w in (wfV, wfH))
     pr = all_profs()[cur["prof"]] if cur else None
     out = {"reg": rg_now, "regKo": REG_KO.get(rg_now, rg_now), "cur": cur, "syms": syms, "live": ok, "by": by, "wf": {"V": wfV, "H": wfH},
            "prof": ({k: v for k, v in pr.items() if v is not None} if pr else None), "cfg": {"win": WIN, "step": STEP, "nmin": NMIN, "th": TH, "capDay": CAP_DAY, "target": 5.0, "crashExit": CRASH_EXIT, "score": SCORE, "cellRegs": list(CELL_REGS), "cellSet": pick_cs, "cellCmp": {k: {"v": round(v[2], 3), "n": v[3]} for k, v in alt.items()},
-                   "regTh": list(REG_TH.get(mk, (0.025, 0.06))), "famX": list(FAM_X), "famRegOn": FAM_REG_ON, "profX": PROF_X_ON}, "mNow": m_now,
+                   "regTh": list(REG_TH.get(mk, (0.025, 0.06))), "famX": list(FAM_X), "famRegOn": FAM_REG_ON, "profX": PROF_X_ON,
+                   "crashConfirm": cth, "crashConfirmOk": conf_now, "ixRet": round(float(_rx[-1]), 5)}, "mNow": m_now,
            "cut": [str(P["close"].index[c1]), str(P["close"].index[c2])],
            "regSrc": reg_src, "bySyms": by_syms, "ext": (dict(ext_tail, basket=basket) if ext_tail and mk == "kr" else None)}
     log("   · [국면전략] %s 지금 %s → %s · 오늘 %d종 · 실전 %s · 워크포워드 판정 %s" % (

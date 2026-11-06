@@ -1200,6 +1200,14 @@ jobs:
       #   ts 결측)은 ★안 만드는지★ 를 함께 본다. 파이썬이 달력을 재구현하면 실패시킨다.
       - name: 달력 소급복원 검사 (라이브 동일값 · 기권 조건 · 단일 구현)
         run: node tools/check-cal-backfill.mjs
+      # AI 전망 엔진 역사 보정 — 가중치 0 아닌 규칙은 홀드아웃 t>=2 · 가중치 없이도 옛 규칙으로 동작
+      - name: AI 전망 엔진 검사 (보정 가중치 · 폴백 · 라벨 경계)
+        run: node tools/check-outlook.mjs
+      # LUX-Mini — 화면이 직접 도는 작은 주식 판단 모델(public/luxmini.js + luxmini.json · 서버 CPU 0).
+      #   가중치와 JS 가 어긋나면 엉뚱한 점수가 조용히 나가고, 검증 미달 머리가 '검증 통과' 로 보이면 거짓 표시다.
+      #   파이썬 점수 패리티 · 출력 모양/NaN/결정성 · usable 머리의 홀드아웃 문턱 · 돌연변이로 검사가 헛돌지 않는지 본다.
+      - name: LUX-Mini 검사 (패리티 · 모양 · 결정성 · 검증 문턱 · 서버 호출 0)
+        run: node tools/check-luxmini.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

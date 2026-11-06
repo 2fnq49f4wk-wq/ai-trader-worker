@@ -248,6 +248,8 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
             <span style={{ flexBasis: "100%", color: DIM, fontSize: 12 }}>국면 기준 <b style={{ color: INK, fontWeight: 500 }}>{SL.regSrc || "등가중 유니버스"}</b>
               {/* [V33.760] 시장별 급등락 정의(미국 S&P500 = 하루 ±2% · 5일 ±5%) */}
               {SL.cfg && SL.cfg.regTh ? <span style={{ color: FAINT }}> · 급등락 = 3거래일 안 하루 ±{(SL.cfg.regTh[0] * 100).toFixed(1)}% · 5일 ±{(SL.cfg.regTh[1] * 100).toFixed(0)}%</span> : null}
+              {/* [11/6] 폭락 반등 확인 — 폭락 국면은 신호 날 지수 +1% 넘게 오른 날만 산다(학습기 cfg.crashConfirm · 미국만) */}
+              {SL.cfg && SL.cfg.crashConfirm != null ? <span style={{ color: SL.reg === "CRASH" ? (SL.cfg.crashConfirmOk ? POS : HL) : FAINT }}> · 폭락 반등 확인: 지수 하루 +{(SL.cfg.crashConfirm * 100).toFixed(0)}% 넘은 날만 매수{SL.reg === "CRASH" ? (SL.cfg.crashConfirmOk ? " — 오늘 충족" : " — 오늘 미충족(" + sg((SL.cfg.ixRet || 0) * 100) + "%) · 매수 쉼") : ""}</span> : null}
               {SL.extReg ? <> · 시간외 반영 <b style={{ color: INK, fontWeight: 500, fontFamily: MONO }}>{(SL.extReg.sess === "pre" ? "장전 " : "장후 ") + sg(SL.extReg.e * 100) + "%"}</b> <span style={{ color: FAINT }}>(대형주 {n0(SL.extReg.n)}종 · 비중 {Math.round((SL.extReg.cov || 0) * 100)}%)</span>{SL.extReg.from !== SL.reg ? <b style={{ color: HL, fontWeight: 500 }}> · 국면 {(KO[SL.extReg.from] || SL.extReg.from) + " → " + (KO[SL.reg] || SL.reg)}</b> : " · 국면 그대로"}</> : SL.ext ? <span style={{ color: FAINT }}> · 시간외 반영: 장전·장후에만(지금 정규장 또는 시간외 체결 부족)</span> : null}</span>
           </div>}
           {RGt && <div style={{ ...card, padding: "10px 14px", display: "flex", flexWrap: "wrap", gap: 14, alignItems: "center", fontSize: 12 }}>

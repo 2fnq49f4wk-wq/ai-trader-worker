@@ -12,6 +12,16 @@
 
 ## Current handoff
 
+- V33.783 (11/6) ★에이전트 4종 결과 통합★ — 사용자 11/6 구조 지적(국면 단정 → 연쇄 오류 · 뒤늦은 국면 · 경직된 국면→전략 · 회전율 · 제안: HMM/GMM 확률 국면 섞기 · 메타 라벨 · 거시 선행 지표 · 국면 무관 위험 덧씌움)을 사전 등록 실험으로 객관 판정.
+  ① 매매 AI(trainer/modal/regime_sleeve.py) — 채택 1건: 미국 폭락 국면 '반등 확인'(CRASH_CONFIRM us 0.01 · 신호 날 S&P500 +1% 초과일만 국면 전략 매수 · 판정 구간 거래당 12.28→12.66% · 4개 분기 시작 중 3개 우위 · 한국은 t 0.61 미달로 끔).
+     미달(넣지 않음 · 문턱 안 낮춤): 메타 라벨 C1a/b · 상위 전략 앙상블 · 변동성 크기 · 시간 손절 · 최소 머묾 2·3일(한 D1 검증 7.60%/t3.59 → 판정 t1.55 미달) · 부드러운 국면(반감기 3일 섞기) · 거시 선행 다항 로지스틱(VIX·VIX/VIX3M·HYG/IEF·장단기차·UUP) · 위험 덧씌움 O1~O3(낙폭↓ 이나 샤프↓ · 미 O2 +0.05 < 기준 +0.10).
+     측정: 국면 전환 연 26~30회 · 머묾 중앙 3일 · 한 판정 구간 전환 5일 안 진입 0.72% vs 그 밖 3.22%(검증 구간엔 차이 없음) · 한 회전 비용 끌림 연 ~9%p. 기존 crashGate·volTarget·leverageDecide·일일 손실 차단은 OMNI-Q·SROUTE 매수 둘 다에 이미 걸린다(빈틈 없음).
+     다음 과제: OMNI-Q 표본 밖 점수로 메타 라벨 · 한국 최소 머묾 재검(표본 늘면). 실험 코드 scratchpad xlab(PREREG.md). 다음 학습 회차 뒤 /api/playbook markets.us.sleeve.cfg.crashConfirm===0.01 · kr null 확인. studio 번들 재빌드(PlaybookDeck '폭락 반등 확인' 줄).
+     ※ studio `npm run build` 의 tsc 가 TS5101(baseUrl deprecated) 로 멈춘다 — 코드 오류 아님 · `npx vite build` 후 dist/brain-studio.js → public/ 복사.
+  ② AI 전망 보정(public/outlook.js · outlook-weights.json · trainer/research/outlook_eval.py · check-outlook) — 규칙별 홀드아웃 가중치 · 미국 검증 통과 규칙 0 · 한국 약한 주의 규칙 5 · '긍정' 은 안 나온다(정직). 라벨에 과거 p/ex/n.
+  ③ AI 코치(public/advisor.js · mine.js coachCard·advHoldHtml · en_18.tsv) — 규칙/템플릿 계좌 조언 · 질문 칩 · 보유 종목 조언(브라우저 계산 · 서버 0).
+  ④ LUX-Mini(public/luxmini.js · luxmini.json 125KB · trainer/research/luxmini_train.py · check-luxmini) — 브라우저 LightGBM 머리 6개(한·미 × 5·20·120일). 검증 통과 = 한국 20일 · 미국 5일뿐 · AUC 0.51~0.53.
+     화면: 새 public/luxmini-view.js — 종목 상세 개요 탭 맨 위 · MY 보유 카드(AI 전망 아래)에 '단기·중기·장기 n/10 라벨' 칩 · 펼치면 분위·과거 초과수익·근거 3줄 · 미달 머리는 점선 + '참고(검증 미달)'. 가중치는 처음 필요할 때 1회 · 'lux:luxmini' 이벤트로 다시 그림. 서버 CPU·요청 0.
 - V33.782 (11/6) ★위원회·단타 엔진 완전 퇴역(사이클 CPU)★ 사용자: "AI 두뇌에 위원회 7개 중 6개 돌아간다 · 단타 엔진 · CPU 낭비 · 완전히 은퇴".
   실측: 학습·표본·야간 적합은 V33.634~712 에 이미 끔 · 외부 학습은 OMNI-Q·매매법 AI 2개뿐. 그런데 거래 사이클이 매분 시장마다 위원회 모델(MIND·앙상블·밴딧·가드·GBDT·SEQ·MEMO·이중헤드·후보 p분포)과
   단타 모델·신호 통계를 읽고, 반사실 후보 피처를 만들었다(신규 매수는 V33.649 부터 OMNI-Q·SROUTE 만이라 쓰는 곳 없음). → COMMITTEE_RETIRED/ENTRY_ROUTES_ONLY 로 전부 건너뜀.

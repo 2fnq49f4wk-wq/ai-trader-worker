@@ -118,6 +118,7 @@
     }).catch(function () { loadingNow = false; loaded = false; });
   }
   function quotes() { return window.__lastQuotesArr || []; }
+  window.addEventListener("lux:luxmini", function () { var pm = $("page-mine"); if (pm && pm.classList.contains("active")) try { draw(); } catch (e) {} });   // [V33.783] LUX-Mini 가중치 도착 → 다시 그리기
   var _qT = 0; window.addEventListener("lux:quotes", function () { var pm = $("page-mine"); if (!pm || !pm.classList.contains("active") || Date.now() - _qT < 5000) return; _qT = Date.now(); try { draw(); } catch (e) {} });   // [V33.780] 데이마켓 실시간
   function q(sym) { var a = quotes(); for (var i = 0; i < a.length; i++) if (a[i].symbol === sym) return a[i]; return null; }
   /* [V33.746] 등락률은 ★보여 주는 가격과 같은 기준★(전일 종가 대비) — 종전엔 가격은 시간외 체결가인데 등락은 정규장 값이라 서로 안 맞았다 */
@@ -490,6 +491,35 @@
     }).join("") : '<div class="empty">' + (all.length ? "이 조건에 맞는 종목이 없습니다" : "위 검색창에서 종목을 찾아 추가하거나 바로 사 보세요") + "</div>") + "</section>";
     return h;
   }
+  /* [V33.778] ★AI 코치·종목 조언★ — public/advisor.js(규칙·템플릿 · 브라우저 계산 · 서버 0). 이 화면이 가진 값만 넘긴다. */
+  function advCtx(mk) {
+    var st = window.__lastState, want = mk === "kr" ? "^KS11" : "^GSPC", md = null;
+    ((st && st.indices) || []).forEach(function (x) { if (x.symbol === want && typeof x.dayPct === "number") md = x.dayPct; });
+    return { mk: mk, regime: PB && PB.markets && PB.markets[mk] && PB.markets[mk].regime, mktDay: md };
+  }
+  function advHoldings(mk, ord2) {
+    return ord2.map(function (o) { var sv = sellView(mk, o.s, o.p, o.cur);
+      return { s: o.s, name: nm(o.s), p: o.p, cur: o.cur, mv: o.mv, r: o.r, d: o.d, dayAmt: posDay(mk, o.s, o.p, o.cur)[0], q: q(o.s), ol: outlookOf(o.s), sv: sv, lev: isLev(o.s), earn: earnDays(o.s), hd: heldDays(o.p) }; });
+  }
+  function coachCard(mk, v, hs) {
+    var AD = window.luxAdvisor; if (!AD) return "";
+    AD.css();
+    var ctx = advCtx(mk), av = { eq: v.eq, cash: v.cash, mv: v.mv, upl: v.upl, ret: v.ret, day: v.day, dayPct: v.dayPct, n: v.n }, acc = AD.account(mk, av, hs, ctx);
+    var ans = coachQ ? AD.coach(coachQ, mk, av, hs, ctx) : null;
+    return '<section class="card coach" aria-label="AI 코치"><div class="ct"><span class="h2" style="color:inherit">AI 코치</span><span class="sb">내 계좌 숫자로 계산</span></div>' +
+      '<p class="adv-p"><i class="adv-t ' + acc.tone + '" aria-hidden="true"></i>' + AD.span(acc) + "</p>" +
+      (acc.actions.length ? '<div class="sb" style="margin-bottom:4px">다음에 할 일</div><ul class="adv-a">' + acc.actions.map(function (a) { return "<li>" + AD.span(a) + "</li>"; }).join("") + "</ul>" : "") +
+      '<div class="sb" style="margin-bottom:2px">질문을 눌러 보세요</div><div class="adv-c">' + AD.INTENTS.map(function (c) { return '<button type="button" data-coach="' + c.id + '" class="' + (coachQ === c.id ? "on" : "") + '" aria-pressed="' + (coachQ === c.id) + '">' + AD.span(c) + "</button>"; }).join("") + "</div>" +
+      (ans && ans.ko ? '<div class="adv-q"><b>' + AD.span(AD.INTENTS.filter(function (c) { return c.id === coachQ; })[0]) + "</b>" + AD.span(ans) +
+        (ans.actions.length ? '<ul class="adv-a" style="margin-top:8px">' + ans.actions.map(function (a) { return "<li>" + AD.span(a) + "</li>"; }).join("") + "</ul>" : "") + "</div>" : "") +
+      '<div class="adv-n">' + AD.span(acc.note) + "</div></section>";
+  }
+  function advHoldHtml(mk, v, hx) {
+    var AD = window.luxAdvisor; if (!AD || !hx) return "";
+    var a = AD.holding(hx.s, hx.p, hx.q, { mk: mk, name: hx.name, cur: hx.cur, eq: v.eq, mv: hx.mv, sell: hx.sv, outlook: hx.ol, earnDays: hx.earn, heldDays: hx.hd, lev: hx.lev, regime: advCtx(mk).regime });
+    return '<details class="adv-h ' + a.tone + '"><summary><b>AI 조언</b><span class="adv-s">' + AD.span(a.short) + "</span></summary><div class=\"adv-b\"><p class=\"adv-p\">" + AD.span(a) + "</p>" +
+      '<ul class="adv-a">' + a.actions.map(function (x) { return "<li>" + AD.span(x) + "</li>"; }).join("") + '</ul><div class="adv-n">' + AD.span(a.note) + "</div></div></details>";
+  }
   function acctTab() {
     var mk = acMk, h = '<div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 12px"><span class="h2">내 모의계좌</span><span class="seg">' + ["us", "kr"].map(function (m) { return '<button type="button" data-acmk="' + m + '" class="' + (m === mk ? "on" : "") + '">' + MK[m] + "</button>"; }).join("") + "</span></div>";
     if (!has(mk)) return h + '<section class="card"><div class="h2">' + MK[mk] + ' 모의계좌가 아직 없습니다</div><div class="note" style="margin-top:4px">가상 ' + fmt(mk, START[mk]) + '으로 시작 · 실제 돈은 쓰지 않습니다</div><div class="btns"><button type="button" class="b pri" data-open-acct="' + mk + '">계좌 만들기</button></div></section>';
@@ -502,6 +532,8 @@
     var ord2 = ks.map(function (s) { var p = a.pos[s], cur = priceOf(s) || p.avg; return { s: s, p: p, cur: cur, mv: p.q * cur, r: (cur / p.avg - 1) * 100, d: posDay(mk, s, p, cur)[1] }; });   // [V33.770] 오늘 % 도 보유 기준(이번 장에 산 것은 평단 대비)
     ord2.sort(function (x, y) { return hSort === "ret" ? y.r - x.r : hSort === "day" ? (y.d == null ? -1e9 : y.d) - (x.d == null ? -1e9 : x.d) : y.mv - x.mv; });
     earnLoad();
+    var advHs = advHoldings(mk, ord2), advMap = {}; advHs.forEach(function (x) { advMap[x.s] = x; });
+    if (v.eq > 0) h += coachCard(mk, v, advHs);
     /* [V33.772] ★계좌 진단★(화면 계산 · 서버 0) — 현금 비중 ↔ 지금 국면 · 한 종목 쏠림 · 레버리지 비중 · 손절선 근처 · 실적 임박. 참고 지표이지 권유가 아니다. */
     if (ks.length && v.eq > 0) (function () {
       var rg = PB && PB.markets && PB.markets[mk] && PB.markets[mk].regime, cashP = v.cash / v.eq * 100;
@@ -526,7 +558,7 @@
       var s = o.s, p = o.p, ci = ks.indexOf(s);
       return '<div class="hold" data-open="' + esc(s) + '"><div class="ht"><span class="dot" style="background:' + ACOL[ci % ACOL.length] + '" aria-hidden="true"></span><div class="l"><span class="nm">' + esc(nm(s)) + pill(sigOf(s)) + '</span><span class="sb">' + p.q.toLocaleString() + "주 · 평단 " + pxS(mk, p.avg) + " · 현재 " + pxS(mk, o.cur) + '</span></div><div class="r"><span class="p">' + fmt(mk, o.mv) + '</span><span class="' + cls(o.r) + '" style="font-size:12.5px">' + fmt(mk, o.mv - p.q * p.avg, true) + " (" + pctS(o.r) + ")</span></div></div>" +
         '<div class="hm"><span>비중 <b>' + (v.eq > 0 ? (o.mv / v.eq * 100).toFixed(0) : 0) + '%</b></span><span>오늘 <b class="' + cls(o.d) + '">' + pctS(o.d) + "</b></span>" + (p.tpPx ? '<span>익절 <b class="up">' + pxS(mk, p.tpPx) + "</b></span>" : "") + (p.slPx ? '<span>손절 <b class="dn">' + pxS(mk, p.slPx) + "</b></span>" : "") + "</div>" +
-        (function () { var sv = sellView(mk, s, p, o.cur); return '<div class="so ' + sv.v + '"><span class="sv"><b>AI 매도 의견</b> ' + sv.ko + '</span><span class="sw">' + sv.why.map(rsH).join(" · ") + '</span>' + (sv.ref.length ? '<span class="sw rf"><span>참고</span> · ' + sv.ref.map(rsH).join(" · ") + "</span>" : "") + '<span class="sw"><span>' + (sv.ai ? "AI 손절" : "기준 손절") + "</span> " + pxS(mk, sv.sl) + " · <span>목표</span> " + pxS(mk, sv.tp) + "</span></div>"; })() + outlookHtml(s) +
+        (function () { var sv = sellView(mk, s, p, o.cur); return '<div class="so ' + sv.v + '"><span class="sv"><b>AI 매도 의견</b> ' + sv.ko + '</span><span class="sw">' + sv.why.map(rsH).join(" · ") + '</span>' + (sv.ref.length ? '<span class="sw rf"><span>참고</span> · ' + sv.ref.map(rsH).join(" · ") + "</span>" : "") + '<span class="sw"><span>' + (sv.ai ? "AI 손절" : "기준 손절") + "</span> " + pxS(mk, sv.sl) + " · <span>목표</span> " + pxS(mk, sv.tp) + "</span></div>"; })() + outlookHtml(s) + (window.luxMiniView ? window.luxMiniView.html(s) : "") + advHoldHtml(mk, v, advMap[s]) +
         '<div class="ha"><button type="button" class="tag2 wbtn" data-risk="' + esc(s) + '" aria-label="익절 손절 설정">' + (p.tpPx || p.slPx ? "TP/SL 수정" : "TP/SL 설정") + "</button>" + buyBtn(s) + '<button type="button" class="sell" data-sell="' + esc(s) + '">매도</button></div></div>';
     }).join("") : '<div class="empty">홈의 AI 후보나 관심종목에서 [매수]를 눌러 보세요</div>') + "</section>";
     var od = a.ord || [];
@@ -543,6 +575,7 @@
   /* [V33.729] ★내 정보 새 디자인★(사용자 11/2) — 프로필 머리(닉네임·가입일·두 계좌 수익률·관심 수) → 투자 성향(요약 칩 · [바꾸기]로 펼침)
      → 계정(비밀번호 바꾸기·언어·로그아웃) → 모의계좌(시장별 초기화) → 데이터·약관(처리방침·내 데이터 삭제). 설정 앱처럼 줄 단위 목록. */
   var meEdit = false, pwOpen = false;
+  var coachQ = "";   // [V33.778] AI 코치 — 고른 질문
   var hSort = "val", hFlt = "all", hMore = false;   // [V33.741] 보유 정렬 · 거래 내역 거르기
   function me() {
     var ops = function (k, map, cols, multi) { return '<div class="ops" data-k="' + k + '" style="grid-template-columns:repeat(' + cols + ',minmax(0,1fr))">' + Object.keys(map).map(function (v) {
@@ -931,10 +964,11 @@
   }
 
   function onClick(ev) {
-    if (ev.target.closest("details.olx")) return;   // [V33.778] AI 전망 펼치기는 종목 열기와 따로
+    if (ev.target.closest("details.olx,details.adv-h")) return;   // [V33.778] AI 전망 펼치기는 종목 열기와 따로
     var t = ev.target.closest("button,[data-open]"); if (!t || !$("mineRoot").contains(t)) return;
     var d = t.dataset;
     if (d.tab) { tab = d.tab; draw(); return; }
+    if (d.coach) { coachQ = coachQ === d.coach ? "" : d.coach; draw(); return; }   // [V33.778] AI 코치 칩
     if (d.buy) { ev.stopPropagation(); sheet("B", d.buy); return; }
     if (d.sell) { ev.stopPropagation(); sheet("S", d.sell); return; }
     if (d.risk) { ev.stopPropagation(); sheet("R", d.risk); return; }
