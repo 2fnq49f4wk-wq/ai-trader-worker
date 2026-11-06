@@ -215,3 +215,5 @@ AI 전망 주의 비중 · 단기 {n}% · 중기 {n}%	AI outlook caution weight 
 장기 보유에 맞지 않는 상품 {n}%	Products unsuited to long holds {n}%
 비중 {n}%	Weight {n}%
 외 {n}종목	+{n} more
+정규장	Regular
+시간외 포함	Incl. extended

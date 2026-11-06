@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.778";
+const _BUILD_VER = "V33.779";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -57557,6 +57557,11 @@ export default {
          거래 사이클(락) 앞에서 매분 받는다 — 사이클이 다른 시장을 평가하거나 락이 잡혀 있어도 시세는 멈추지 않는다. */
       __prof.mark("extSweep");
       try { await extQuoteSweep(env); } catch (e) {}
+      /* [V33.779] ★방금 받은 시세를 거래 사이클 전에 CDN 에 한 번 더★(사용자 11/6 "맵 수치가 실시간 동기화가 안 된다") — 라이브 실측(19:32~19:35 ET):
+         지도 = 받은 시세와 같았지만 시세가 1~2.5분 늦었다(NVDA 애프터 184.36 vs 네이버 185.57). 원인: 공개 사본(pub/state.js)을 무거운 거래 사이클(30~60초+) ★뒤에서만★ 써서
+         방금 받은 시세가 한 사이클 늦게 나갔다(사본 나이 최대 102초). 시세 직후에도 쓴다 — 비용: 분당 D1 범위 읽기 1번(~1,000행) + R2 쓰기 1번(포함량 안) · CPU < 20ms. */
+      __prof.mark("statePubEarly");
+      try { if (env.PUB) { const _lrE = _num(await getState(env.DB, "state_last_req", 0), 0); if (Date.now() - _lrE < 15 * 60000) await statePubWrite(env); } } catch (e) {}
       __prof.mark("usOvn");   // [V33.629] 미국 데이마켓(야간) — 2분마다 네이버 해외주식(스로틀 · 엄격 읽기)
       try {
         if (usOvernightNow(new Date())) {
