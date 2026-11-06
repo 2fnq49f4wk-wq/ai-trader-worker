@@ -12,6 +12,13 @@
 
 ## Current handoff
 
+- V33.780 (11/6) ★데이마켓(미국 야간 20:00~04:00 ET) 실시간 시세★ 사용자: "데이마켓 어떻게든 · 전 세계 무료 · 2분 말고 실시간".
+  조사: 네이버·웹불 공개 시세엔 야간 값 없음 · Blue Ocean 원천은 유료(Alpaca 별도 계약·Databento·dxFeed·QUODD) · 증권사 내부 API(토스·로빈후드)는 봇 차단 우회라 안 씀.
+  채택: ① Hyperliquid trade.xyz 주식 시장(공개 API · 143종 · Pyth 주식 시세 추종 · SOXL 24h 7.6억 달러) ② Kraken xStocks(공개 API · 177종 · 호가차 ≤3%만).
+  브라우저 public/ovn-live.js: 야간·화면 보일 때만 wss://api.hyperliquid.xyz/ws allMids(dex xyz · ~5초) → 시세 객체에 ovn·가격·등락(전일 종가 대비)·dispSess='day' 덮고 'lux:quotes' 이벤트
+     (TOP MOVERS·지도·종목 상세 목록·초보자·MY 가 다시 그림 · __lastQuotesArr 대입 순간에도 다시 얹음). CSP connect-src 에 wss://api.hyperliquid.xyz.
+  서버: 야간 2분마다 hlOvnSweep(REST metaAndAssetCtxs · oraclePx) → 빈 종목만 krakenOvnSweep · 상품·지수 이름 막기(CL·GOLD…) · 정규 종가 ±35% 넘으면 버림 · saveQuote 가 ovn* 보존.
+  applyDisplayOverMarket: 정규·프리 아니고 20분 안 ovn 이면 표시 가격 = ovn(등락 전일 종가 대비). 라이브 23:39 ET: SOXL 45.15(정규 종가 대비 +10.5%) · NVDA 185.2 — 0~5초 신선.
 - V33.779 (11/6) ★TOP MOVERS 시간외 포함 전환 · 시세 직후 CDN 사본 · 사용량·애프터 가격 실측★
   TOP MOVERS 머리에 '정규장 | 시간외 포함'(lux-mv-ext · 기기별) — 시간외 포함 = 지금 가격 ÷ 전일 종가(q.price·dayPct · V33.777 기준) · 프리/애프터 이름표. 게이트가 잘라 실행하는 구간 밖에 설정 코드(typeof MVX 가드).
   지도·애프터 지연 실측(11/5 19:32~19:35 ET): 지도 = 받은 시세와 같음 · 시세가 1~2.5분 늦음(공개 사본을 거래 사이클 뒤에서만 씀) → extQuoteSweep 직후 statePubWrite 한 번 더(statePubEarly).

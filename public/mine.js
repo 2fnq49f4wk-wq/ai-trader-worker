@@ -118,6 +118,7 @@
     }).catch(function () { loadingNow = false; loaded = false; });
   }
   function quotes() { return window.__lastQuotesArr || []; }
+  var _qT = 0; window.addEventListener("lux:quotes", function () { var pm = $("page-mine"); if (!pm || !pm.classList.contains("active") || Date.now() - _qT < 5000) return; _qT = Date.now(); try { draw(); } catch (e) {} });   // [V33.780] 데이마켓 실시간
   function q(sym) { var a = quotes(); for (var i = 0; i < a.length; i++) if (a[i].symbol === sym) return a[i]; return null; }
   /* [V33.746] 등락률은 ★보여 주는 가격과 같은 기준★(전일 종가 대비) — 종전엔 가격은 시간외 체결가인데 등락은 정규장 값이라 서로 안 맞았다 */
   function chg(x) { if (!x) return null; if (x.price > 0 && x.prevClose > 0) return (x.price / x.prevClose - 1) * 100; var v = typeof x.dayPct === "number" ? x.dayPct : x.regPct; return typeof v === "number" ? v : null; }

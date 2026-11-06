@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.779";
+const _BUILD_VER = "V33.780";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -9078,7 +9078,10 @@ function applyDisplayOverMarket(q) {
   // [V12.10] V12.7의 postPct 역산 "자가치유" 제거 — post/postPct가 서로 다른 시점 값(COALESCE 잔존)이면
   //   오히려 정상 장중 가격을 오염시킬 수 있음. 오염 데이터는 V12.9 전량 재기록으로 근본 해결됨.
   q.regPrice = q.price; q.regPct = q.dayPct;   // 정규장 값 보존(프런트가 필요시 사용)
-  if (st === "PRE" && typeof q.pre === "number" && q.pre > 0) {
+  /* [V33.780] 데이마켓(야간) — 정규·프리가 아니고 20분 안의 야간 시세가 있으면 그것을 지금 가격으로(등락 = 전일 종가 대비 · 아래 공통식) */
+  if (st !== "REGULAR" && st !== "PRE" && typeof q.ovn === "number" && q.ovn > 0 && typeof q.ovnTs === "number" && Date.now() - q.ovnTs < 20 * 60000) {
+    q.dispPrice = q.ovn; q.dispPct = q.dayPct; q.dispSess = "day";
+  } else if (st === "PRE" && typeof q.pre === "number" && q.pre > 0) {
     q.dispPrice = q.pre; q.dispPct = (typeof q.prePct === "number") ? q.prePct : q.dayPct;
   } else if ((st === "POST" || st === "POSTPOST") && typeof q.post === "number" && q.post > 0) {
     q.dispPrice = q.post; q.dispPct = (typeof q.postPct === "number") ? q.postPct : q.dayPct;
@@ -9100,7 +9103,7 @@ function applyDisplayOverMarket(q) {
 
 /* [V33.493] /api/state 직렬화 — 소수는 유효숫자 6자리로 줄이되(용량 ~30%↓) ★가격 칸은 소수 4자리까지 그대로★.
    종전엔 가격도 6자리라 27,477.31 → 27,477.3 · 12,345.67 → 12,345.7 처럼 끝자리가 잘렸다(지수·고가 종목). */
-const _STATE_PRICE_KEYS = { price: 1, prevClose: 1, pre: 1, post: 1, regPrice: 1, dispPrice: 1, avg: 1 };
+const _STATE_PRICE_KEYS = { price: 1, prevClose: 1, pre: 1, post: 1, ovn: 1, regPrice: 1, dispPrice: 1, avg: 1 };
 /* [V33.547] ★같은 값을 두 이름으로 두 번 보내지 않는다★ — 관심종목 1,004개 × (dailyRsi=rsi · dailyMa=ma · dailyAtr=atr · dispPrice=price · dispPct=dayPct).
    화면은 앞쪽 이름(dailyRsi·dailyMa·dailyAtr·dispPrice·dispPct)을 한 번도 읽지 않는다(정적 검사 — check-load-speed).
    ★값이 짝과 똑같을 때만★ 뺀다 — 다르면(시간외 등) 그대로 나간다. 서버 판단 경로(quote: 원본)는 손대지 않는다. */
@@ -17676,6 +17679,7 @@ async function saveQuote(DB, symbol, market, q) {
     extTs: _keepExt("extTs", _mask.pre || _mask.post),
     dayPct: q.dayPct, rsi: q.dailyRsi, ma: q.dailyMa, atr: q.dailyAtr,
     dailyAtr: q.dailyAtr, dailyMa: q.dailyMa, dailyMaShort: q.dailyMaShort,
+    ovn: _keep("ovn"), ovnPct: _keep("ovnPct"), ovnTs: _keep("ovnTs"), ovnBase: _keep("ovnBase"), ovnSrc: _keep("ovnSrc"),   // [V33.780] 데이마켓 값 보존(정규 갱신이 지우지 않게 · 표시는 20분 신선도로 거른다)
     ma50: _keep("ma50"),   // [V33.773] 50일선(MY 매도 의견 '50일선 하향 이탈' — 백테스트로 한국에서 유일하게 확인된 신호)
     bbLower: q.bbLower, bbUpper: q.bbUpper,
     return20: q.return20,
@@ -23226,6 +23230,66 @@ async function nvUsCodeMap(DB, syms) {
   for (const y of syms) { const c = nvUsCandidates(y).filter(function (k) { return got[k]; })[0]; map[y] = c || null; }   // 못 찾으면 null(다음 주 다시)
   try { await setState(DB, "nv_us_rc", { ts: Date.now(), map: map }); } catch (e) {}
   return map;
+}
+/* [V33.780] ★데이마켓(미국 야간 20:00~04:00 ET) 시세 — Kraken xStocks(토큰화 주식) 공개 시세★(사용자 11/6 "데이마켓 어떻게든 얻어와라 · 무료인 곳")
+   조사: 네이버·웹불 공개 시세엔 야간 값이 없다(ovn 0/557) · Blue Ocean 원천은 전부 유료(Alpaca 별도 계약 · Databento · dxFeed · QUODD).
+   Kraken 공개 API(인증 없음 · 문서화된 무료 시세)는 미국 주식·ETF 177종의 토큰을 24시간 거래한다 — 라이브 11/5 23:26 ET: NVDA·TSLA·AAPL·AMD 호가차 0~0.1% ·
+   SOXL 1.8%(중간값 +10.8% vs 정규 종가). 토큰은 차익거래로 실제 주식을 따라가는 '참고 시세' 라 화면에 출처를 적는다. 호가차 3% 넘으면 안 쓴다.
+   비용: 야간에만 2분마다 외부 호출 1~3번 + 바뀐 종목만 D1 쓰기(최대 ~130행) · 목록은 7일에 한 번. */
+const KRX_TICK = "https://api.kraken.com/0/public/Ticker?asset_class=tokenized_asset&pair=";
+const KRX_PAIRS = "https://api.kraken.com/0/public/AssetPairs?aclass_base=tokenized_asset";
+const KRX_MAX_SPREAD = 0.03;
+function _krxSym(y) { return String(y || "").replace(/-/g, "."); }
+/* [V33.780] ★Hyperliquid trade.xyz 주식 시장(143종 · 24시간 · 공개 API)★ — 거래대금이 커서(라이브 11/5 23:37 ET: SOXL 24h 7.6억 달러 · NVDA 3.4억) Kraken 보다 먼저 쓴다.
+   기준 가격(oraclePx)은 Pyth 주식 시세. 상품·지수·환율 이름(CL=원유 · GOLD=금 …)이 우리 종목 코드와 겹치므로 이름 막기 + 정규 종가 대비 ±35% 넘으면 버린다. */
+const HL_INFO = "https://api.hyperliquid.xyz/info";
+const HL_NONEQ = new Set(["XYZ100", "GOLD", "SILVER", "COPPER", "NATGAS", "URANIUM", "ALUMINIUM", "PLATINUM", "PALLADIUM", "CL", "BRENTOIL", "CORN", "WHEAT", "TTF", "VIX", "VOL", "DXY", "JPY", "EUR", "GBP", "KRW", "SP500", "JP225", "KR200", "NIFTY", "IBOV", "H100", "DRAM", "PURRDAT", "BIRD"]);
+async function hlOvnSweep(env) {
+  const DB = env.DB, now = Date.now(), done = new Set(), stmts = [];
+  let d = null;
+  try { const r = await fetch(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "metaAndAssetCtxs", dex: "xyz" }), signal: AbortSignal.timeout(10000) }); d = await r.json(); } catch (e) { return done; }
+  const U = d && d[0] && d[0].universe, C = d && d[1]; if (!Array.isArray(U) || !Array.isArray(C)) return done;
+  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+  const ours = new Set(cfg.usTickers || []);
+  for (let i = 0; i < U.length; i++) {
+    const nm = String((U[i] && U[i].name) || "").replace(/^xyz:/, ""); if (!nm || HL_NONEQ.has(nm)) continue;
+    const y = ours.has(nm) ? nm : (ours.has(nm.replace(/\./g, "-")) ? nm.replace(/\./g, "-") : null); if (!y) continue;
+    const c = C[i] || {}, px = Number(c.oraclePx) > 0 ? Number(c.oraclePx) : Number(c.midPx || c.markPx); if (!(px > 0)) continue;
+    stmts.push(DB.prepare("UPDATE state SET v = json_set(v, '$.ovn', ?2, '$.ovnPct', (?2 / json_extract(v, '$.price') - 1) * 100, '$.ovnTs', ?3, '$.ovnBase', json_extract(v, '$.price'), '$.ovnSrc', 'hl'), updated_ts = ?3 WHERE k = ?1 AND json_valid(v) AND json_extract(v, '$.price') > 0 AND ABS(?2 / json_extract(v, '$.price') - 1) < 0.35 AND COALESCE(json_extract(v, '$.ovn'), 0) <> ?2")
+      .bind("quote:" + y, Math.round(px * 10000) / 10000, now));
+    done.add(y);
+  }
+  for (let i = 0; i < stmts.length; i += 100) { try { await DB.batch(stmts.slice(i, i + 100)); } catch (e) {} }
+  return done;
+}
+async function krakenOvnSweep(env, skip) {
+  const DB = env.DB;
+  let mp = null; try { mp = await getState(DB, "krx_pairs", null, true); } catch (e) { mp = false; }   // 엄격 읽기 — 실패면 되쓰지 않는다
+  if (mp !== false && (!mp || !Array.isArray(mp.list) || Date.now() - _num(mp.ts, 0) > 7 * 86400000)) {
+    try { const r = await fetch(KRX_PAIRS, { signal: AbortSignal.timeout(10000) }); const j = await r.json();
+      const list = Object.values((j && j.result) || {}).map(function (v) { return v && v.altname; }).filter(function (a) { return a && /xUSD$/.test(a); }).map(function (a) { return a.slice(0, -4); });
+      if (list.length) { mp = { ts: Date.now(), list: Array.from(new Set(list)) }; await setState(DB, "krx_pairs", mp); }
+    } catch (e) {}
+  }
+  if (!mp || !Array.isArray(mp.list) || !mp.list.length) return 0;
+  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+  const have = new Set(mp.list), pairs = {};
+  for (const y of (cfg.usTickers || [])) { if (skip && skip.has(y)) continue; const k = _krxSym(y); if (have.has(k)) pairs[k + "xUSD"] = y; }
+  const keys = Object.keys(pairs), now = Date.now(), stmts = [];
+  for (let i = 0; i < keys.length; i += 50) {
+    let res = null;
+    try { const r = await fetch(KRX_TICK + keys.slice(i, i + 50).join(","), { signal: AbortSignal.timeout(10000) }); const j = await r.json(); res = j && j.result; } catch (e) { continue; }
+    for (const k in (res || {})) {
+      const y = pairs[k] || pairs[String(k).replace("/", "")]; const v = res[k]; if (!y || !v) continue;
+      const b = Number(v.b && v.b[0]), a = Number(v.a && v.a[0]), n = Number(v.t && v.t[1]);
+      if (!(b > 0 && a > 0 && a >= b) || !(n > 0)) continue;
+      const mid = (a + b) / 2; if ((a - b) / mid > KRX_MAX_SPREAD) continue;
+      stmts.push(DB.prepare("UPDATE state SET v = json_set(v, '$.ovn', ?2, '$.ovnPct', CASE WHEN json_extract(v, '$.price') > 0 THEN (?2 / json_extract(v, '$.price') - 1) * 100 ELSE NULL END, '$.ovnTs', ?3, '$.ovnBase', json_extract(v, '$.price'), '$.ovnSrc', 'kraken'), updated_ts = ?3 WHERE k = ?1 AND json_valid(v) AND json_extract(v, '$.price') > 0 AND ABS(?2 / json_extract(v, '$.price') - 1) < 0.35 AND COALESCE(json_extract(v, '$.ovn'), 0) <> ?2")
+        .bind("quote:" + y, Math.round(mid * 10000) / 10000, now));
+    }
+  }
+  for (let i = 0; i < stmts.length; i += 100) { try { await DB.batch(stmts.slice(i, i + 100)); } catch (e) {} }
+  return stmts.length;
 }
 /* 미국 전 종목 네이버 시세 → 데이마켓(ovn) 값 기록 · (opts.fill) 시간외·정규 2차 원천으로도 쓴다. 반환: 기록 수 */
 async function usNaverSweep(env, opts) {
@@ -29735,7 +29799,7 @@ const SECHDR = {
     "style-src 'self' 'unsafe-inline'; " +
     "img-src 'self' data: blob: https:; " +
     "font-src 'self' data:; " +
-    "connect-src 'self' https://data.lux-inv.com; " +   // [V33.759] CDN 공개 사본
+    "connect-src 'self' https://data.lux-inv.com wss://api.hyperliquid.xyz; " +   // [V33.780] 데이마켓 실시간(브라우저 → Hyperliquid 공개 웹소켓 · 서버 0)   // [V33.759] CDN 공개 사본
     "frame-ancestors 'self'; " +
     "base-uri 'self'; " +
     "form-action 'self'; " +
@@ -57566,7 +57630,7 @@ export default {
       try {
         if (usOvernightNow(new Date())) {
           let _ov = null; try { _ov = await getState(env.DB, "us_ovn_at", null, true); } catch (e) { _ov = false; }
-          if (_ov !== false && Date.now() - _num(_ov, 0) >= 110000) { await setState(env.DB, "us_ovn_at", Date.now()); await usNaverSweep(env, null); }
+          if (_ov !== false && Date.now() - _num(_ov, 0) >= 110000) { await setState(env.DB, "us_ovn_at", Date.now()); await usNaverSweep(env, null); let _hlDone = null; try { _hlDone = await hlOvnSweep(env); } catch (e) {} try { await krakenOvnSweep(env, _hlDone); } catch (e) {} }
         }
       } catch (e) {}
       __prof.mark("dataHealth");   // [V33.628] 데이터 감시·자가 복구 — 거래보다 먼저

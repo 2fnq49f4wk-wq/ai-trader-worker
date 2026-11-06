@@ -227,6 +227,7 @@
   }
   function extOf(q) {
     if (!q) return "";
+    if (q.dispSess === "day" && q.ovn > 0 && typeof q.ovnPct === "number") return '<div class="x">' + T("데이마켓 " + pct(q.ovnPct), "Overnight " + pct(q.ovnPct)) + "</div>";
     if (q.mstate === "POST" && q.post > 0 && typeof q.postPct === "number") return '<div class="x">' + T("애프터 " + pct(q.postPct), "After hours " + pct(q.postPct)) + "</div>";
     if (q.mstate === "PRE" && q.pre > 0 && typeof q.prePct === "number") return '<div class="x">' + T("프리 " + pct(q.prePct), "Pre-market " + pct(q.prePct)) + "</div>";
     return "";
@@ -343,6 +344,8 @@
     load();
   }, 30000);
   D.addEventListener("visibilitychange", function () { if (!D.hidden && H.classList.contains("lux-easy")) load(); });
+  var _qT = 0; window.addEventListener("lux:quotes", function () { if (!H.classList.contains("lux-easy") || Date.now() - _qT < 5000) return; var pg = D.querySelector(".page.active"); if (!pg || pg.id !== "page-dashboard" || !ST) return; _qT = Date.now();   // [V33.780] 데이마켓 실시간
+    var m = {}; (window.__lastQuotesArr || []).forEach(function (x) { m[x.symbol] = x; }); (ST.watchlist || []).forEach(function (x, i) { var y = m[x.symbol]; if (y && y.dispSess === "day") ST.watchlist[i] = y; }); draw(); });
 
   function boot() {
     css(); mountToggle();
