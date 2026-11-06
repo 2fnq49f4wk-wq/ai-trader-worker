@@ -14,7 +14,7 @@
   function T(ko, en) { return '<span data-en="' + esc(en) + '">' + esc(ko) + "</span>"; }   // 숫자·이름이 섞인 문장은 영어를 직접 붙인다(i18n.js data-en)
   function wonEn(v) { v = Math.round(v); var a = Math.abs(v), f = function (x) { return x.toFixed(2).replace(/\.?0+$/, ""); }; return "₩" + (a >= 1e9 ? f(v / 1e9) + "B" : a >= 1e6 ? f(v / 1e6) + "M" : a >= 1e3 ? Math.round(v / 1e3).toLocaleString() + "K" : v.toLocaleString()); }
   function enName(n) { try { return (window.luxLang && window.luxLang.t) ? window.luxLang.t(n) : n; } catch (e) { return n; } }
-  function getMode() { try { return localStorage.getItem(KEY) === "easy" ? "easy" : "pro"; } catch (e) { return "pro"; } }
+  function getMode() { try { return localStorage.getItem(KEY) === "pro" ? "pro" : "easy"; } catch (e) { return "easy"; } }   // [V33.778] 처음 오는 사람은 초보자 화면부터(사용자 11/6) · 전문가를 고르면 그대로 기억
   function isEn() { try { return !!(window.luxLang && window.luxLang.get && window.luxLang.get() === "en"); } catch (e) { return false; } }
 
   // ── 익숙한 회사(초보자가 이름만 들어도 아는 곳) — 무엇을 하는 회사인지 한 줄 ──
@@ -62,7 +62,7 @@
       "#easyDash .pro{flex:none;background:none;border:1px solid var(--e-bd);color:var(--e-m);border-radius:10px;padding:8px 12px;font-size:12.5px;cursor:pointer}#easyDash .pro:hover{color:var(--e-t)}" +
       "#easyDash .g{display:grid;gap:12px;margin-top:12px}#easyDash .g2{grid-template-columns:repeat(2,minmax(0,1fr))}#easyDash .g32{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}" +
       "#easyDash .c{background:var(--e-c);border:1px solid var(--e-bd);border-radius:16px;padding:16px;min-width:0}" +
-      "#easyDash .ch{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 12px}#easyDash .ch b{font-size:16px;font-weight:800;letter-spacing:-.3px}#easyDash .ch span{font-size:12px;color:var(--e-mm)}" +
+      "#easyDash .ch{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 10px;margin:0 0 12px}#easyDash .ch b{font-size:16px;font-weight:800;letter-spacing:-.3px}#easyDash .ch span{font-size:12px;color:var(--e-mm)}" +
       "#easyDash .ixs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}" +
       "#easyDash .ix{background:var(--e-c);border:1px solid var(--e-bd);border-radius:14px;padding:12px 12px 8px;min-width:0}#easyDash .ix .n{font-size:12px;color:var(--e-m);display:flex;justify-content:space-between}#easyDash .ix .v{font-size:19px;font-weight:800;margin-top:4px;letter-spacing:-.3px}#easyDash .ix .d{font-size:12.5px;font-weight:700;margin-top:1px}#easyDash .ix svg{display:block;width:100%;height:38px;margin-top:6px}" +
       "#easyDash .up{color:var(--e-up)}#easyDash .dn{color:var(--e-dn)}#easyDash .fl{color:var(--e-m)}" +
@@ -80,6 +80,10 @@
       "#easyDash .tm{font-size:18px;font-weight:800;margin:0 0 6px}#easyDash .lnk{margin-top:10px;border:0;background:none;color:var(--e-acc);font-weight:700;font-size:12.5px;cursor:pointer;padding:0}" +
       "#easyDash .cap{font-size:12px;font-weight:700;color:var(--e-m);margin:2px 0 2px}#easyDash .ld{color:var(--e-mm);font-size:13px;padding:14px 0}" +
       "#easyDash .cta{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}#easyDash .cta b{font-size:16px}#easyDash .cta p{margin:4px 0 0;color:var(--e-m);font-size:13px}#easyDash .cta button{border:0;border-radius:10px;padding:11px 18px;font-weight:800;font-size:13.5px;background:var(--e-acc);color:#06241D;cursor:pointer}" +
+      "#easyDash .olg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}#easyDash .olc{background:var(--e-c2);border-radius:12px;padding:12px}#easyDash .olh{display:flex;justify-content:space-between;align-items:center;font-weight:800;font-size:15px}#easyDash .old{font-size:11.5px;color:var(--e-mm);margin:2px 0 6px}" +
+      "#easyDash .olb{font-size:12.5px;font-weight:800;border-radius:7px;padding:3px 9px;background:rgba(127,140,160,.18);color:var(--e-m)}#easyDash .olb.pos,#easyDash .olb.pos1{background:rgba(240,68,82,.16);color:var(--e-up)}#easyDash .olb.neg,#easyDash .olb.neg1{background:rgba(49,130,246,.18);color:var(--e-dn)}" +
+      "#easyDash .olc ul{margin:0;padding-left:16px;font-size:12.5px;color:var(--e-m);line-height:1.55}#easyDash .olc li{margin:2px 0}" +
+      "@media(max-width:760px){#easyDash .olg{grid-template-columns:minmax(0,1fr)}#easyDash .ch .seg button{padding:5px 8px;font-size:12px}}" +
       "@media(max-width:1100px){#easyDash .ixs{grid-template-columns:repeat(3,minmax(0,1fr))}#easyDash .g32{grid-template-columns:minmax(0,1fr)}}" +
       "@media(max-width:760px){#easyDash{padding:0 12px 30px}#easyDash .g2,#easyDash .br{grid-template-columns:minmax(0,1fr)}#easyDash .hd h1{font-size:21px}#easyDash .ixs{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding-left:12px;margin:0 -12px;padding:0 12px 2px;scrollbar-width:none}#easyDash .ixs::-webkit-scrollbar{display:none}#easyDash .ix{flex:0 0 42%;scroll-snap-align:start}#easyDash .map{height:340px}#easyDash .c{padding:14px 12px;border-radius:14px}#easyDash td.k{display:none}#easyDash .wv{font-size:24px}}" +
       /* 사이드바 슬라이드 전환 */
@@ -135,7 +139,7 @@
     if (busy) return; var now = Date.now();
     if (!force && ST && now - stAt < 30000) { draw(); return; }
     busy = true;
-    fetch("/api/state").then(function (r) { return r.json(); }).then(function (j) { busy = false; if (j && j.watchlist) { ST = j; stAt = Date.now(); } draw(); }).catch(function () { busy = false; draw(); });
+    fetch("/api/state").then(function (r) { return r.json(); }).then(function (j) { busy = false; if (j && j.watchlist) { ST = j; stAt = Date.now(); window.__lastState = j; if (!window.__lastQuotesArr) window.__lastQuotesArr = j.watchlist; } draw(); }).catch(function () { busy = false; draw(); });
     pbGet();
   }
   function pbGet() {
@@ -271,6 +275,18 @@
     var sub = function (x) { return x.mk === "kr" ? "한국" : "미국"; };
     return '<div class="g g2" style="margin-top:0;gap:0 24px"><div><div class="cap up">▲ 상승 상위</div>' + rowsOf(up, sub) + '</div><div><div class="cap dn">▼ 하락 상위</div>' + rowsOf(dn, sub) + '</div></div><div class="note"><span>시가총액 상위 300곳 중 · 레버리지·ETF 제외</span></div>';
   }
+  // ── [V33.778] AI 업종 전망(단기·중기·장기) — outlook.js 규칙 엔진 ──
+  var olKey = "semis", olOpen = false;
+  function outlookCard() {
+    var L = window.luxOutlook; if (!L || !ST) return "";
+    var B = L.BASKETS, mk = B[olKey].mk, rg = PB && PB.markets && PB.markets[mk] && PB.markets[mk].regime, o = L.basket(olKey, ST, rg);
+    var tabs = '<span class="seg">' + Object.keys(B).map(function (k) { return '<button type="button" data-olk="' + k + '" class="' + (k === olKey ? "on" : "") + '">' + esc(B[k].ko) + "</button>"; }).join("") + "</span>";
+    if (!o) return '<div class="c" style="margin-top:12px"><div class="ch"><b>AI 업종 전망</b>' + tabs + '</div><div class="ld">불러오는 중…</div></div>';
+    var col = function (k, t, d) { var v = o[k], w = olOpen ? v.why : v.why.slice(0, 2);
+      return '<div class="olc"><div class="olh"><span>' + t + '</span><span class="olb ' + v.cls + '">' + v.label + '</span></div><div class="old">' + d + '</div><ul>' + w.map(function (x) { return "<li>" + L.whyHtml(x, esc) + "</li>"; }).join("") + "</ul></div>"; };
+    return '<div class="c" style="margin-top:12px"><div class="ch"><b>AI 업종 전망</b>' + tabs + '</div><div class="olg">' + col("s", "단기", "1~4주") + col("m", "중기", "1~6개월") + col("l", "장기", "1년 이상") + "</div>" +
+      '<div class="note"><button type="button" class="lnk" data-olopen="1" style="margin:0 10px 0 0">' + (olOpen ? "근거 접기" : "근거 모두 보기") + "</button><span>" + o.n + "종목 평균 · 가격·추세·시장 흐름 규칙으로 계산(재무는 아직 반영 안 함) · 투자 권유가 아니에요</span></div></div>";
+  }
   function term() {
     if (termI == null) { var d = new Date(); termI = (d.getFullYear() * 400 + (d.getMonth() + 1) * 31 + d.getDate()) % TERMS.length; }
     var t = TERMS[termI];
@@ -299,6 +315,7 @@
       (ST ? ixTiles() + '<div class="br">' + breadth("us") + breadth("kr") + "</div>" : '<div class="c">' + L + "</div>") +
       '<div class="g g32">' + mapHtml() +
         '<div class="c"><div class="ch"><b>1년 전에 투자했다면</b><span>지난 1년</span></div>' + (ST ? whatIf() : L) + '<div style="border-top:1px solid var(--e-bd);margin:14px 0 12px"></div><div class="ch" style="margin-bottom:8px"><b>오늘의 투자 용어</b><span>하루 한 개</span></div>' + term() + "</div></div>" +
+      outlookCard() +
       '<div class="c" style="margin-top:12px"><div class="ch"><b>인기 종목</b><span>누르면 차트·주문</span></div>' + (ST ? popular() : L) + "</div>" +
       '<div class="g g2"><div class="c"><div class="ch"><b>AI 관심 종목</b><span>매일 새로 계산</span></div>' + aiPicks() + '</div><div class="c"><div class="ch"><b>오늘의 급등·급락</b><span>전일 종가 대비</span></div>' + (ST ? movers() : L) + "</div></div>" +
       '<div class="c cta" style="margin-top:12px"><div><b>가상 1억 원으로 모의투자</b><p>실제 돈 없이 사고팔기 · 손절 · 수익률 순위까지 연습해 보세요</p></div><button type="button" data-mine="1">모의투자 시작하기</button></div>';
@@ -306,7 +323,9 @@
     if (window.scrollY !== keep) try { window.scrollTo(0, keep); } catch (e) {}
   }
   function onClick(e) {
-    var t = e.target.closest("[data-sym],[data-wsym],[data-wamt],[data-term],[data-pro],[data-mine],[data-mapmk]"); if (!t) return;
+    var t = e.target.closest("[data-sym],[data-wsym],[data-wamt],[data-term],[data-pro],[data-mine],[data-mapmk],[data-olk],[data-olopen]"); if (!t) return;
+    if (t.hasAttribute("data-olk")) { olKey = t.getAttribute("data-olk"); draw(); return; }
+    if (t.hasAttribute("data-olopen")) { olOpen = !olOpen; draw(); return; }
     if (t.hasAttribute("data-mapmk")) { mapMk = t.getAttribute("data-mapmk"); draw(); return; }
     if (t.hasAttribute("data-wsym")) { whatSym = t.getAttribute("data-wsym"); draw(); return; }
     if (t.hasAttribute("data-wamt")) { whatAmt = +t.getAttribute("data-wamt"); draw(); return; }

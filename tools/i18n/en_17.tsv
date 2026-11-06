@@ -138,3 +138,80 @@ AI 관심 종목	AI watchlist
 ▼ 하락 상위	▼ Top losers
 가상 1억 원으로 모의투자	Paper trade with ₩100M in virtual money
 실제 돈 없이 사고팔기 · 손절 · 수익률 순위까지 연습해 보세요	Practise buying, selling, stop-losses and return rankings — no real money needed
+AI 업종 전망	AI sector outlook
+미국 반도체	US semiconductors
+미국 빅테크	US big tech
+한국 반도체	Korean semiconductors
+단기	Short term
+중기	Mid term
+장기	Long term
+1~4주	1–4 weeks
+1~6개월	1–6 months
+1년 이상	1 year +
+긍정	Positive
+약간 긍정	Slightly positive
+중립	Neutral
+약간 주의	Slight caution
+주의	Caution
+근거 모두 보기	Show all reasons
+근거 접기	Hide reasons
+근거	Reasons
+AI 전망	AI outlook
+단기 1~4주	Short term 1–4 wks
+중기 1~6개월	Mid term 1–6 mo
+장기 1년+	Long term 1 yr+
+가격·추세·시장 흐름 규칙으로 계산 · 재무(실적·PER)는 아직 반영 안 함 · 투자 권유 아님	Rule-based on price, trend and market breadth · financials (earnings, P/E) not yet included · not investment advice
+AI 보유 중	AI holding
+AI 매수함	AI bought
+AI 포트폴리오	AI portfolio
+서버 AI 모의계좌	Server AI paper account
+주식	Stocks
+현금	Cash
+지금은 주식 없이 현금만 들고 있어요 · 시장 국면이 나쁠 때 AI 는 현금 비중을 높입니다	All cash right now · the AI raises cash when the market regime is weak
+AI 전망 · 단기·중기 주의 신호 없음	AI outlook · no short/mid-term caution signals
+RSI {n} 과매도 — 짧은 반등이 자주 나오는 구간	RSI {n} oversold — short rebounds are common here
+RSI {n} 과열 — 숨 고르기가 잦은 구간	RSI {n} overbought — pauses are common here
+5일 {n}% 급락 — 낙폭이 커 되돌림 여지	5d {n}% plunge — room for a rebound after a big drop
+5일 {n}% 급등 — 차익 매물 나오기 쉬움	5d {n}% surge — profit-taking is likely
+5일선이 20일선 아래 · 가격도 20일선 아래 — 단기 하락 흐름	5-day MA below 20-day MA · price below 20-day MA — short-term downtrend
+5일선이 20일선 위 · 가격도 20일선 위 — 단기 상승 흐름	5-day MA above 20-day MA · price above 20-day MA — short-term uptrend
+시장 전체 투매(상승 종목 {n}% · 지수 {n}%) — 바닥 확인 전엔 변동이 크다	Market-wide selling (gainers {n}% · index {n}%) — volatile until a bottom forms
+시장 대부분이 상승(상승 종목 {n}%)	Most of the market is up (gainers {n}%)
+가격이 50일선 위({n}%) — 중기 추세 유지	Price above 50-day MA ({n}%) — mid-term trend intact
+가격이 50일선 아래({n}%) — 중기 추세 꺾임	Price below 50-day MA ({n}%) — mid-term trend broken
+20일선이 50일선 위 — 정배열	20-day MA above 50-day MA — bullish alignment
+20일선이 50일선 아래 — 역배열	20-day MA below 50-day MA — bearish alignment
+60일 수익 {n}% · 지수보다 {n}% 강함	60d return {n}% · {n}% stronger than the index
+60일 수익 {n}% · 지수보다 {n}% 약함	60d return {n}% · {n}% weaker than the index
+매매법 AI 시장 국면 폭락 — 새 매수에 불리	Playbook AI regime: crash — unfavourable for new buys
+매매법 AI 시장 국면 하락 — 새 매수에 불리	Playbook AI regime: bear — unfavourable for new buys
+매매법 AI 시장 국면 폭등	Playbook AI regime: surge
+매매법 AI 시장 국면 상승	Playbook AI regime: bull
+레버리지·인버스 상품 — 오래 들수록 변동성 손실이 쌓여 장기 보유에 맞지 않음	Leveraged/inverse product — volatility decay builds up, not suited to long holds
+1년 {n}% — 장기 상승 추세	1yr {n}% — long-term uptrend
+1년 {n}% — 장기 약세	1yr {n}% — long-term weakness
+5년 {n}% — 오래 성장해 온 회사	5yr {n}% — a long-time grower
+5년 {n}% — 5년 전보다 낮음	5yr {n}% — below where it was 5 years ago
+AI 데이터센터 투자가 2027년에도 늘 전망(빅테크 설비투자 2026년 약 7,000억 달러 → 2027년 1조 달러 안팎 전망) ({n}-{n} 검토)	AI data-center spending expected to keep rising in 2027 (big-tech capex ~$700B in 2026 → ~$1T in 2027) (reviewed {n}-{n})
+위험: 사이클 산업 — 메모리 가격·설비투자 증가율이 꺾이면 크게 흔들린다 · 규제·수출 통제 변수	Risk: cyclical — swings hard when memory prices or capex growth turn · regulation and export controls
+클라우드·AI 매출 성장 지속 · 현금 창출력 큼 ({n}-{n} 검토)	Cloud and AI revenue still growing · strong cash generation (reviewed {n}-{n})
+위험: AI 투자 회수 지연·규제 강화 우려	Risk: slow payback on AI spending · tighter regulation
+HBM(고대역폭 메모리) 수요 확대 — 2028년까지 연 40% 안팎 성장 전망 ({n}-{n} 검토)	HBM (high-bandwidth memory) demand expanding — ~40% annual growth expected through 2028 (reviewed {n}-{n})
+위험: 메모리 사이클 · 환율 · 미국 반도체 흐름에 크게 연동	Risk: memory cycle · FX · closely tied to US chip stocks
+업종 평균 오늘 {n}% · 5일 {n}% · 상승 {n}/{n}종목	Sector avg today {n}% · 5d {n}% · up {n}/{n} stocks
+5일 만에 두 자릿수 하락 — 과거엔 짧은 반등이 자주 나왔지만, 원인(규제·수요)이 풀리기 전엔 변동이 크다	Double-digit drop in 5 days — short rebounds often followed in the past, but it stays volatile until the cause (regulation, demand) clears
+시장 전체가 같이 빠지는 날 — 업종 고유 악재보다 위험 회피 성격	The whole market is falling together — more risk-off than sector-specific news
+50일선 위 종목 {n}/{n} · 60일 평균 {n}% (지수 {n}%)	Above 50-day MA {n}/{n} · 60d avg {n}% (index {n}%)
+50일선 위 종목 {n}/{n} · 60일 평균 {n}%	Above 50-day MA {n}/{n} · 60d avg {n}%
+대부분 50일선 아래 — 중기 추세 회복엔 시간이 필요	Most are below the 50-day MA — the mid-term trend needs time to recover
+대부분 50일선 위 — 중기 추세 살아 있음	Most are above the 50-day MA — mid-term trend still alive
+매매법 AI 국면 폭락	Playbook AI regime: crash
+매매법 AI 국면 하락	Playbook AI regime: bear
+실적 발표 D-{n} — 발표 전후 크게 움직일 수 있음	Earnings in {n}d — may move sharply around the report
+실적 발표 오늘 — 발표 전후 크게 움직일 수 있음	Earnings today — may move sharply around the report
+{n}종목 평균 · 가격·추세·시장 흐름 규칙으로 계산(재무는 아직 반영 안 함) · 투자 권유가 아니에요	Average of {n} stocks · rule-based on price, trend and market breadth (financials not yet included) · not investment advice
+AI 전망 주의 비중 · 단기 {n}% · 중기 {n}%	AI outlook caution weight · short {n}% · mid {n}%
+추세가 꺾인 종목이 많아요 — 손절선·비중 점검	Many holdings have broken trends — check stops and position sizes
+장기 보유에 맞지 않는 상품 {n}%	Products unsuited to long holds {n}%
+비중 {n}%	Weight {n}%
+외 {n}종목	+{n} more
