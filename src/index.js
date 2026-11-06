@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.780";
+const _BUILD_VER = "V33.781";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -17679,7 +17679,7 @@ async function saveQuote(DB, symbol, market, q) {
     extTs: _keepExt("extTs", _mask.pre || _mask.post),
     dayPct: q.dayPct, rsi: q.dailyRsi, ma: q.dailyMa, atr: q.dailyAtr,
     dailyAtr: q.dailyAtr, dailyMa: q.dailyMa, dailyMaShort: q.dailyMaShort,
-    ovn: _keep("ovn"), ovnPct: _keep("ovnPct"), ovnTs: _keep("ovnTs"), ovnBase: _keep("ovnBase"), ovnSrc: _keep("ovnSrc"),   // [V33.780] 데이마켓 값 보존(정규 갱신이 지우지 않게 · 표시는 20분 신선도로 거른다)
+    ovn: _keep("ovn"), ovnPct: _keep("ovnPct"), ovnTs: _keep("ovnTs"), ovnBase: _keep("ovnBase"), ovnSrc: _keep("ovnSrc"), ovnPair: _keep("ovnPair"), ovnN: _keep("ovnN"),   // [V33.780] 데이마켓 값 보존(정규 갱신이 지우지 않게 · 표시는 20분 신선도로 거른다)
     ma50: _keep("ma50"),   // [V33.773] 50일선(MY 매도 의견 '50일선 하향 이탈' — 백테스트로 한국에서 유일하게 확인된 신호)
     bbLower: q.bbLower, bbUpper: q.bbUpper,
     return20: q.return20,
@@ -23231,62 +23231,74 @@ async function nvUsCodeMap(DB, syms) {
   try { await setState(DB, "nv_us_rc", { ts: Date.now(), map: map }); } catch (e) {}
   return map;
 }
-/* [V33.780] ★데이마켓(미국 야간 20:00~04:00 ET) 시세 — Kraken xStocks(토큰화 주식) 공개 시세★(사용자 11/6 "데이마켓 어떻게든 얻어와라 · 무료인 곳")
-   조사: 네이버·웹불 공개 시세엔 야간 값이 없다(ovn 0/557) · Blue Ocean 원천은 전부 유료(Alpaca 별도 계약 · Databento · dxFeed · QUODD).
-   Kraken 공개 API(인증 없음 · 문서화된 무료 시세)는 미국 주식·ETF 177종의 토큰을 24시간 거래한다 — 라이브 11/5 23:26 ET: NVDA·TSLA·AAPL·AMD 호가차 0~0.1% ·
-   SOXL 1.8%(중간값 +10.8% vs 정규 종가). 토큰은 차익거래로 실제 주식을 따라가는 '참고 시세' 라 화면에 출처를 적는다. 호가차 3% 넘으면 안 쓴다.
-   비용: 야간에만 2분마다 외부 호출 1~3번 + 바뀐 종목만 D1 쓰기(최대 ~130행) · 목록은 7일에 한 번. */
+/* [V33.781] ★데이마켓 원천 4곳 통합(사용자 11/6 "더 많은 종목 실시간")★ — 라이브 실측 11/5 23:40 ET · 우리 미국 557종 중:
+   Hyperliquid 주식 시장 3곳(xyz·para·io · 공개 API · Pyth 주식 시세 추종) 60 · Kraken xStocks 83 · Gate(xStocks·Ondo 토큰) 43 · MEXC 91 → 합집합 134(종전 94).
+   ★엉뚱한 짝 막기★: 코인 토큰이 주식 코드처럼 보인다(ELON→EL · GMX→GM · CFX→CF) → 최신 가격(애프터 or 종가) 대비 ±15% 밖이면 버림 · 호가차 3% 초과 버림 ·
+   상품·지수 이름(CL=원유 · GOLD=금 …) 막기. 고르는 법: Hyperliquid 있으면 그것(거래대금 최대) · 없으면 나머지의 중간값 · 원천 하나뿐이고 호가차 > 1.5% 면 안 씀.
+   브라우저 실시간(ovn-live.js)이 어느 원천·코드를 구독할지 시세에 남긴다(ovnSrc · ovnPair). 비용: 야간에만 2분마다 외부 7번 안팎 · 시세 범위 읽기 1번 · 바뀐 종목만 쓰기. */
+const HL_INFO = "https://api.hyperliquid.xyz/info";
+const HL_DEXES = ["xyz", "para", "io"];
+const HL_NONEQ = new Set(["XYZ100", "GOLD", "SILVER", "COPPER", "NATGAS", "URANIUM", "ALUMINIUM", "PLATINUM", "PALLADIUM", "CL", "BRENTOIL", "CORN", "WHEAT", "TTF", "VIX", "VOL", "DXY", "JPY", "EUR", "GBP", "KRW", "SP500", "JP225", "KR200", "NIFTY", "IBOV", "H100", "DRAM", "PURRDAT", "BIRD"]);
 const KRX_TICK = "https://api.kraken.com/0/public/Ticker?asset_class=tokenized_asset&pair=";
 const KRX_PAIRS = "https://api.kraken.com/0/public/AssetPairs?aclass_base=tokenized_asset";
-const KRX_MAX_SPREAD = 0.03;
-function _krxSym(y) { return String(y || "").replace(/-/g, "."); }
-/* [V33.780] ★Hyperliquid trade.xyz 주식 시장(143종 · 24시간 · 공개 API)★ — 거래대금이 커서(라이브 11/5 23:37 ET: SOXL 24h 7.6억 달러 · NVDA 3.4억) Kraken 보다 먼저 쓴다.
-   기준 가격(oraclePx)은 Pyth 주식 시세. 상품·지수·환율 이름(CL=원유 · GOLD=금 …)이 우리 종목 코드와 겹치므로 이름 막기 + 정규 종가 대비 ±35% 넘으면 버린다. */
-const HL_INFO = "https://api.hyperliquid.xyz/info";
-const HL_NONEQ = new Set(["XYZ100", "GOLD", "SILVER", "COPPER", "NATGAS", "URANIUM", "ALUMINIUM", "PLATINUM", "PALLADIUM", "CL", "BRENTOIL", "CORN", "WHEAT", "TTF", "VIX", "VOL", "DXY", "JPY", "EUR", "GBP", "KRW", "SP500", "JP225", "KR200", "NIFTY", "IBOV", "H100", "DRAM", "PURRDAT", "BIRD"]);
-async function hlOvnSweep(env) {
-  const DB = env.DB, now = Date.now(), done = new Set(), stmts = [];
-  let d = null;
-  try { const r = await fetch(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "metaAndAssetCtxs", dex: "xyz" }), signal: AbortSignal.timeout(10000) }); d = await r.json(); } catch (e) { return done; }
-  const U = d && d[0] && d[0].universe, C = d && d[1]; if (!Array.isArray(U) || !Array.isArray(C)) return done;
-  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
-  const ours = new Set(cfg.usTickers || []);
-  for (let i = 0; i < U.length; i++) {
-    const nm = String((U[i] && U[i].name) || "").replace(/^xyz:/, ""); if (!nm || HL_NONEQ.has(nm)) continue;
-    const y = ours.has(nm) ? nm : (ours.has(nm.replace(/\./g, "-")) ? nm.replace(/\./g, "-") : null); if (!y) continue;
-    const c = C[i] || {}, px = Number(c.oraclePx) > 0 ? Number(c.oraclePx) : Number(c.midPx || c.markPx); if (!(px > 0)) continue;
-    stmts.push(DB.prepare("UPDATE state SET v = json_set(v, '$.ovn', ?2, '$.ovnPct', (?2 / json_extract(v, '$.price') - 1) * 100, '$.ovnTs', ?3, '$.ovnBase', json_extract(v, '$.price'), '$.ovnSrc', 'hl'), updated_ts = ?3 WHERE k = ?1 AND json_valid(v) AND json_extract(v, '$.price') > 0 AND ABS(?2 / json_extract(v, '$.price') - 1) < 0.35 AND COALESCE(json_extract(v, '$.ovn'), 0) <> ?2")
-      .bind("quote:" + y, Math.round(px * 10000) / 10000, now));
-    done.add(y);
-  }
-  for (let i = 0; i < stmts.length; i += 100) { try { await DB.batch(stmts.slice(i, i + 100)); } catch (e) {} }
-  return done;
-}
-async function krakenOvnSweep(env, skip) {
-  const DB = env.DB;
-  let mp = null; try { mp = await getState(DB, "krx_pairs", null, true); } catch (e) { mp = false; }   // 엄격 읽기 — 실패면 되쓰지 않는다
-  if (mp !== false && (!mp || !Array.isArray(mp.list) || Date.now() - _num(mp.ts, 0) > 7 * 86400000)) {
-    try { const r = await fetch(KRX_PAIRS, { signal: AbortSignal.timeout(10000) }); const j = await r.json();
-      const list = Object.values((j && j.result) || {}).map(function (v) { return v && v.altname; }).filter(function (a) { return a && /xUSD$/.test(a); }).map(function (a) { return a.slice(0, -4); });
-      if (list.length) { mp = { ts: Date.now(), list: Array.from(new Set(list)) }; await setState(DB, "krx_pairs", mp); }
+const OVN_MAX_SPREAD = 0.03;
+const OVN_MAX_DEV = 0.15;
+function _ovnMed(a) { const b = a.slice().sort(function (x, y) { return x - y; }), n = b.length; return n % 2 ? b[(n - 1) / 2] : (b[n / 2 - 1] + b[n / 2]) / 2; }
+async function _ovnJson(url, init) { const r = await fetch(url, Object.assign({ signal: AbortSignal.timeout(10000) }, init || {})); if (!r.ok) throw new Error(url.slice(8, 30) + " " + r.status); return r.json(); }
+async function ovnSweepAll(env) {
+  const DB = env.DB, now = Date.now();
+  // 기준 가격(최신 애프터 또는 정규 종가) — 엉뚱한 짝을 거르는 데만 쓴다(시세 범위 읽기 1번)
+  const qr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'quote:' AND k < 'quote;'").all();
+  const REF = {};
+  for (const r of (qr.results || [])) { let q = null; try { q = JSON.parse(r.v); } catch (e) {} if (!q || q.market !== "us") continue; const p = (q.post > 0 ? q.post : q.price); if (p > 0) REF[r.k.slice(6)] = p; }
+  const cand = {};   // sym → [{src, pair, px, sp}]
+  const add = function (src, sym, pair, px, sp) {
+    const ref = REF[sym]; if (!ref || !(px > 0) || !(sp >= 0) || sp > OVN_MAX_SPREAD || Math.abs(px / ref - 1) > OVN_MAX_DEV) return;
+    (cand[sym] = cand[sym] || []).push({ src: src, pair: pair, px: px, sp: sp });
+  };
+  const toSym = function (raw) { const k = String(raw || "").toUpperCase().replace(/\./g, "-"); return REF[k] ? k : null; };
+  // ① Hyperliquid 주식 시장 3곳(기준 가격 = oraclePx)
+  for (const dex of HL_DEXES) {
+    try { const d = await _ovnJson(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "metaAndAssetCtxs", dex: dex }) });
+      const U = d && d[0] && d[0].universe, C = d && d[1]; if (!Array.isArray(U) || !Array.isArray(C)) continue;
+      for (let i = 0; i < U.length; i++) { const full = String((U[i] && U[i].name) || ""), nm = full.split(":").pop(); if (HL_NONEQ.has(nm)) continue; const y = toSym(nm), c = C[i] || {};
+        if (!y || !(Number(c.dayNtlVlm) > 0)) continue; const px = Number(c.oraclePx) > 0 ? Number(c.oraclePx) : Number(c.midPx); add("hl", y, full, px, 0); }
     } catch (e) {}
   }
-  if (!mp || !Array.isArray(mp.list) || !mp.list.length) return 0;
-  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
-  const have = new Set(mp.list), pairs = {};
-  for (const y of (cfg.usTickers || [])) { if (skip && skip.has(y)) continue; const k = _krxSym(y); if (have.has(k)) pairs[k + "xUSD"] = y; }
-  const keys = Object.keys(pairs), now = Date.now(), stmts = [];
-  for (let i = 0; i < keys.length; i += 50) {
-    let res = null;
-    try { const r = await fetch(KRX_TICK + keys.slice(i, i + 50).join(","), { signal: AbortSignal.timeout(10000) }); const j = await r.json(); res = j && j.result; } catch (e) { continue; }
-    for (const k in (res || {})) {
-      const y = pairs[k] || pairs[String(k).replace("/", "")]; const v = res[k]; if (!y || !v) continue;
-      const b = Number(v.b && v.b[0]), a = Number(v.a && v.a[0]), n = Number(v.t && v.t[1]);
-      if (!(b > 0 && a > 0 && a >= b) || !(n > 0)) continue;
-      const mid = (a + b) / 2; if ((a - b) / mid > KRX_MAX_SPREAD) continue;
-      stmts.push(DB.prepare("UPDATE state SET v = json_set(v, '$.ovn', ?2, '$.ovnPct', CASE WHEN json_extract(v, '$.price') > 0 THEN (?2 / json_extract(v, '$.price') - 1) * 100 ELSE NULL END, '$.ovnTs', ?3, '$.ovnBase', json_extract(v, '$.price'), '$.ovnSrc', 'kraken'), updated_ts = ?3 WHERE k = ?1 AND json_valid(v) AND json_extract(v, '$.price') > 0 AND ABS(?2 / json_extract(v, '$.price') - 1) < 0.35 AND COALESCE(json_extract(v, '$.ovn'), 0) <> ?2")
-        .bind("quote:" + y, Math.round(mid * 10000) / 10000, now));
+  // ② Kraken xStocks(목록 7일 · 엄격 읽기)
+  try {
+    let mp = null; try { mp = await getState(DB, "krx_pairs", null, true); } catch (e) { mp = false; }
+    if (mp !== false && (!mp || !Array.isArray(mp.list) || now - _num(mp.ts, 0) > 7 * 86400000)) {
+      const j = await _ovnJson(KRX_PAIRS); const list = Object.values((j && j.result) || {}).map(function (v) { return v && v.altname; }).filter(function (a) { return a && /xUSD$/.test(a); }).map(function (a) { return a.slice(0, -4); });
+      if (list.length) { mp = { ts: now, list: Array.from(new Set(list)) }; await setState(DB, "krx_pairs", mp); }
     }
+    const pairs = ((mp && mp.list) || []).filter(function (a) { return toSym(a); });
+    for (let i = 0; i < pairs.length; i += 50) {
+      try { const j = await _ovnJson(KRX_TICK + pairs.slice(i, i + 50).map(function (a) { return a + "xUSD"; }).join(","));
+        for (const k in ((j && j.result) || {})) { const v = j.result[k], b = Number(v.b && v.b[0]), a = Number(v.a && v.a[0]), base = String(k).replace(/xUSD$/, ""), y = toSym(base);
+          if (y && b > 0 && a >= b) add("kraken", y, base + "x/USD", (a + b) / 2, (a - b) / ((a + b) / 2)); }
+      } catch (e) {}
+    }
+  } catch (e) {}
+  // ③ Gate(xStocks ·X · Ondo ·ON)
+  try { const d = await _ovnJson("https://api.gateio.ws/api/v4/spot/tickers");
+    for (const t of (Array.isArray(d) ? d : [])) { const m = /^([A-Z.]+?)(X|ON)_USDT$/.exec(t.currency_pair || ""); if (!m) continue; const y = toSym(m[1]), b = Number(t.highest_bid), a = Number(t.lowest_ask);
+      if (y && b > 0 && a >= b) add("gate", y, t.currency_pair, (a + b) / 2, (a - b) / ((a + b) / 2)); }
+  } catch (e) {}
+  // ④ MEXC(브라우저 직접 호출 불가 — 서버 2분 값만)
+  try { const d = await _ovnJson("https://api.mexc.com/api/v3/ticker/bookTicker");
+    for (const t of (Array.isArray(d) ? d : [])) { const m = /^([A-Z.]+?)(X|ON)USDT$/.exec(t.symbol || ""); if (!m) continue; const y = toSym(m[1]), b = Number(t.bidPrice), a = Number(t.askPrice);
+      if (y && b > 0 && a >= b) add("mexc", y, t.symbol, (a + b) / 2, (a - b) / ((a + b) / 2)); }
+  } catch (e) {}
+  // 고르기 + 쓰기
+  const stmts = [], PRI = { hl: 0, kraken: 1, gate: 2, mexc: 3 };
+  for (const y in cand) {
+    const L = cand[y], hl = L.filter(function (x) { return x.src === "hl"; })[0];
+    let px = null, src = null, pair = null;
+    if (hl) { px = hl.px; src = "hl"; pair = hl.pair; }
+    else { if (L.length === 1 && L[0].sp > 0.015) continue; px = _ovnMed(L.map(function (x) { return x.px; })); const best = L.slice().sort(function (a, b) { return PRI[a.src] - PRI[b.src]; })[0]; src = best.src; pair = best.pair; }
+    stmts.push(DB.prepare("UPDATE state SET v = json_set(v, '$.ovn', ?2, '$.ovnPct', (?2 / json_extract(v, '$.price') - 1) * 100, '$.ovnTs', ?3, '$.ovnBase', json_extract(v, '$.price'), '$.ovnSrc', ?4, '$.ovnPair', ?5, '$.ovnN', ?6), updated_ts = ?3 WHERE k = ?1 AND json_valid(v) AND json_extract(v, '$.price') > 0")
+      .bind("quote:" + y, Math.round(px * 10000) / 10000, now, src, pair, L.length));
   }
   for (let i = 0; i < stmts.length; i += 100) { try { await DB.batch(stmts.slice(i, i + 100)); } catch (e) {} }
   return stmts.length;
@@ -29799,7 +29811,7 @@ const SECHDR = {
     "style-src 'self' 'unsafe-inline'; " +
     "img-src 'self' data: blob: https:; " +
     "font-src 'self' data:; " +
-    "connect-src 'self' https://data.lux-inv.com wss://api.hyperliquid.xyz; " +   // [V33.780] 데이마켓 실시간(브라우저 → Hyperliquid 공개 웹소켓 · 서버 0)   // [V33.759] CDN 공개 사본
+    "connect-src 'self' https://data.lux-inv.com wss://api.hyperliquid.xyz wss://ws.kraken.com wss://api.gateio.ws; " +   // [V33.780] 데이마켓 실시간(브라우저 → Hyperliquid 공개 웹소켓 · 서버 0)   // [V33.759] CDN 공개 사본
     "frame-ancestors 'self'; " +
     "base-uri 'self'; " +
     "form-action 'self'; " +
@@ -57630,7 +57642,7 @@ export default {
       try {
         if (usOvernightNow(new Date())) {
           let _ov = null; try { _ov = await getState(env.DB, "us_ovn_at", null, true); } catch (e) { _ov = false; }
-          if (_ov !== false && Date.now() - _num(_ov, 0) >= 110000) { await setState(env.DB, "us_ovn_at", Date.now()); await usNaverSweep(env, null); let _hlDone = null; try { _hlDone = await hlOvnSweep(env); } catch (e) {} try { await krakenOvnSweep(env, _hlDone); } catch (e) {} }
+          if (_ov !== false && Date.now() - _num(_ov, 0) >= 110000) { await setState(env.DB, "us_ovn_at", Date.now()); await usNaverSweep(env, null); try { await ovnSweepAll(env); } catch (e) {} }
         }
       } catch (e) {}
       __prof.mark("dataHealth");   // [V33.628] 데이터 감시·자가 복구 — 거래보다 먼저

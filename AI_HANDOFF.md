@@ -12,6 +12,11 @@
 
 ## Current handoff
 
+- V33.781 (11/6) ★데이마켓 원천 4곳 · 실시간 3곳★ 사용자: "더 많은 종목 실시간". 실측(23:40 ET): 우리 미국 557 중 Hyperliquid 주식 시장 xyz·para·io 60 · Kraken xStocks 83 · Gate(X·ON 토큰) 43 · MEXC 91 → 합집합 134(종전 94).
+  서버 ovnSweepAll(야간 2분): 4곳 수집 → 최신 가격(애프터 or 종가) ±15% 밖(코인 토큰 오짝: ELON→EL · GMX→GM · CFX→CF) · 호가차 3% 초과 버림 · Hyperliquid 우선 · 없으면 중간값 · 원천 하나+호가차>1.5% 면 안 씀.
+     시세에 ovnSrc · ovnPair · ovnN 기록(saveQuote 보존). 시세 범위 읽기 1번/2분(야간만).
+  브라우저 ovn-live.js: Hyperliquid allMids(xyz·para·io) + Kraken ws v2 ticker(bbo) + Gate spot.book_ticker — 서버가 고른 원천·코드대로 구독 · 2초 묶음 갱신. MEXC 만 있는 종목은 서버 2분 값(MEXC 는 브라우저 CORS 불가).
+  CSP connect-src += wss://ws.kraken.com wss://api.gateio.ws.
 - V33.780 (11/6) ★데이마켓(미국 야간 20:00~04:00 ET) 실시간 시세★ 사용자: "데이마켓 어떻게든 · 전 세계 무료 · 2분 말고 실시간".
   조사: 네이버·웹불 공개 시세엔 야간 값 없음 · Blue Ocean 원천은 유료(Alpaca 별도 계약·Databento·dxFeed·QUODD) · 증권사 내부 API(토스·로빈후드)는 봇 차단 우회라 안 씀.
   채택: ① Hyperliquid trade.xyz 주식 시장(공개 API · 143종 · Pyth 주식 시세 추종 · SOXL 24h 7.6억 달러) ② Kraken xStocks(공개 API · 177종 · 호가차 ≤3%만).
