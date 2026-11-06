@@ -4,3 +4,4 @@ studio/node_modules
 studio/dist/
 public/_b/
 public/full.html
+.claude/worktrees/
