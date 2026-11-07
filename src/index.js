@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.784";
+const _BUILD_VER = "V33.786";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8705,6 +8705,11 @@ function applyKrOverMarket(o, d) {
   const nxt = d.nxtOverMarketPriceInfo || null;
   if (!inPre && !inPost) {
     o.mstate = "CLOSED";
+    /* [V33.785] ★장 닫힌 뒤(20:00~08:00 · 주말) nv = KRX 공식 종가★ — 사용자 11/7 "한국장 가격도 제대로 나오는지". 라이브 실측(토 01:05 KST): 우리 삼성 188,700 · 하이닉스 1,132,000
+       인데 공식 종가 193,500 · 1,176,000(네이버 일봉 fchart). 386/446 종목이 장 마감 동시호가(15:20~15:30) 전 값에 멈춰 있었다 — 장 밖에서 저장 가격을 지키는데(regFreeze)
+       15:30~15:40 틈에 종가를 못 받으면 그 전 값이 종가로 굳는다. 실측 60/60: 장 닫힌 뒤 nv = 공식 종가(넥스트레이드 애프터 마지막과 다름: 삼성 nxt 193,400 · nv 193,500).
+       그래서 닫힌 시간엔 nv 를 종가로 다시 맞춘다(병합에서 · 같은 거래일일 때만). */
+    if (o.price > 0) o.krClose = true;
     /* [V33.743] ★장후 시간외가 20:00 뒤에 사라졌다★(사용자 11/3 23:31 KST "국장 시간외 데이터가 안 들어온다") — 실측: 삼성 KRX 종가 219,500(−4.15% · 야후 일치)
        · 넥스트레이드 애프터 마지막 222,000(20:00 체결)인데 화면엔 시간외 값이 없었다. 창(15:30~20:00) 밖이면 바로 돌아가 post 를 안 채웠기 때문.
        미국처럼 장 마감 뒤에도 ★마지막 장후 체결을 보여만★ 준다(extTs 0 — 거래 가격으로 안 씀 · Codex V33.346 원칙). 64시간 안 · 15:30~20:00 체결만(주말 넘김 · 낡은 값 차단). */
@@ -9644,6 +9649,7 @@ async function fetchBatchQuotes(symbols, opts) {
             nq.price = nq.prevClose; nq.dayPct = 0; nq.regKept = 1; nq.dayRoll = 1;
             continue;
           }
+          if (nq.krClose && nq.prevClose > 0) { nq.dayPct = ((nq.price - nq.prevClose) / nq.prevClose) * 100; nq.regKept = 1; continue; }   // [V33.785] 공식 종가 · 네이버 기준가
           nq.price = pq.price;
           if (_num(pq.prevClose, 0) > 0) nq.prevClose = pq.prevClose;
           nq.dayPct = (nq.prevClose > 0) ? ((nq.price - nq.prevClose) / nq.prevClose) * 100 : _num(pq.dayPct, 0);
@@ -23158,19 +23164,19 @@ function extSweepMarkets(now) {
    비용: 하루 1회 한국 샤드 한 바퀴(네이버 일괄 몇 요청). 받는 값은 보여 주기만(extTs 0 · applyKrOverMarket CLOSED 분기). */
 function krPostFillKey(now) {
   if (marketSessionNow("kr", now) !== "CLOSED") return null;
-  const k = getKST(now); if (!(k.totalMin >= 1205 || k.totalMin < 470)) return null;
+  const k = getKST(now), _we = k.day === 0 || k.day === 6; if (!_we && !(k.totalMin >= 1205 || k.totalMin < 470)) return null;
   const d = new Date(now.getTime() + 9 * 3600000 - (k.totalMin < 470 ? 86400000 : 0)); const wd = d.getUTCDay();
-  if (wd === 0 || wd === 6) return null;   // 주말 밤은 금요일 몫을 이미 받았다
-  return d.toISOString().slice(0, 10);
+  if (wd === 0 || wd === 6) d.setUTCDate(d.getUTCDate() - (wd === 0 ? 2 : 1));   // [V33.785] 주말 = 금요일 몫(놓쳤으면 주말에 받는다 · 받았으면 키가 같아 안 돈다)
+  return d.toISOString().slice(0, 10) + "c";   // "c" = V33.785 종가 규칙판(옛 키로 이미 돈 날도 한 번 더)
 }
 /* [V33.784] ★미국 장후 마감 뒤 확정 시세 한 번 더(하루 1회)★ — 사용자 11/7 "미국장 가격이 목요일 가격으로 나온다". 실측: 금 20:00:19 ET(애프터 끝 직후)
    마지막 쓰기가 하루 전 봉을 받아 굳었고, 주말·밤엔 미국 시세를 다시 안 받아 이틀 넘게 그대로였다. 20:10 ET 이후(~04:00) 그 거래일 몫을 한 번 더 받는다
    (원천 일봉이 확정된 뒤). 비용: 거래일마다 미국 샤드 한 바퀴 1회. */
 function usPostFillKey(now) {
   if (marketSessionNow("us", now) !== "CLOSED") return null;
-  const t = getUSEt(now); if (!(t.totalMin >= 1210 || t.totalMin < 240)) return null;
+  const t = getUSEt(now), _we = t.day === 0 || t.day === 6; if (!_we && !(t.totalMin >= 1210 || t.totalMin < 240)) return null;
   const off = getUSEtOffset(now), d = new Date(now.getTime() + off * 3600000 - (t.totalMin < 240 ? 86400000 : 0)), wd = d.getUTCDay();
-  if (wd === 0 || wd === 6) return null;   // 주말 밤은 금요일 몫(금 20:10 뒤)을 이미 받았다
+  if (wd === 0 || wd === 6) d.setUTCDate(d.getUTCDate() - (wd === 0 ? 2 : 1));   // [V33.785] 주말 = 금요일 몫(놓쳤으면 받는다)
   return d.toISOString().slice(0, 10);
 }
 async function extQuoteSweep(env) {
@@ -23198,6 +23204,62 @@ async function extQuoteSweep(env) {
   return n;
 }
 
+
+/* [V33.786] 분기 실적·전망 묶음 — /api/qearn */
+function _qeNum(v) { if (v == null) return null; if (typeof v === "number") return isFinite(v) ? v : null; if (typeof v === "object" && typeof v.raw === "number") return isFinite(v.raw) ? v.raw : null; const n = Number(String(v).replace(/,/g, "")); return isFinite(n) && String(v).trim() !== "" && String(v).trim() !== "-" ? n : null; }
+async function qearnBuild(sym) {
+  const kr = /\.(KS|KQ)$/.test(sym), out = { ok: false, symbol: sym, kr: kr, ts: Date.now(), q: [], y: [], eps: [], trend: [], val: {} };
+  if (kr) {
+    const code = sym.split(".")[0], H = { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" }, signal: AbortSignal.timeout(8000) };
+    const rd = async function (kind) {
+      const r = await fetch("https://m.stock.naver.com/api/stock/" + code + "/finance/" + kind, H); if (!r.ok) return [];
+      const j = await r.json(), fi = j && j.financeInfo; if (!fi) return [];
+      const cols = (fi.trTitleList || []).map(function (t) { return { k: t.key, t: t.title, est: t.isConsensus === "Y" }; });
+      const get = function (name) { const row = (fi.rowList || []).filter(function (x) { return x.title === name; })[0]; return row ? row.columns : {}; };
+      const rev = get("매출액"), op = get("영업이익"), ni = get("당기순이익"), eps = get("EPS"), per = get("PER"), roe = get("ROE"), opm = get("영업이익률");
+      return cols.map(function (c) {
+        const v = function (m) { return m[c.k] ? _qeNum(m[c.k].value) : null; };
+        return { p: String(c.k).slice(0, 4) + "." + String(c.k).slice(4, 6), est: c.est, rev: v(rev), op: v(op), ni: v(ni), eps: v(eps), per: v(per), roe: v(roe), opm: v(opm) };
+      });
+    };
+    try { out.q = await rd("quarter"); } catch (e) {}
+    try { out.y = await rd("annual"); } catch (e) {}
+    out.unit = "억원"; out.src = "네이버 증권(기업 재무 · 컨센서스=에프앤가이드)";
+    out.ok = out.q.length > 0 || out.y.length > 0;
+    return out;
+  }
+  const mods = "earnings,earningsHistory,earningsTrend,defaultKeyStatistics,summaryDetail,financialData";
+  const j = await yahooFetch("https://query1.finance.yahoo.com/v10/finance/quoteSummary/" + encodeURIComponent(sym) + "?modules=" + mods);
+  const r = j && j.quoteSummary && j.quoteSummary.result && j.quoteSummary.result[0];
+  if (!r) return out;
+  try {
+    const fc = (r.earnings && r.earnings.financialsChart && r.earnings.financialsChart.quarterly) || [];
+    out.q = fc.map(function (x) { return { p: String(x.date || ""), rev: _qeNum(x.revenue), ni: _qeNum(x.earnings), est: false }; });
+    const fy = (r.earnings && r.earnings.financialsChart && r.earnings.financialsChart.yearly) || [];
+    out.y = fy.map(function (x) { return { p: String(x.date || ""), rev: _qeNum(x.revenue), ni: _qeNum(x.earnings), est: false }; });
+  } catch (e) {}
+  try {
+    out.eps = ((r.earningsHistory && r.earningsHistory.history) || []).map(function (x) {
+      return { p: x.quarter && x.quarter.fmt ? x.quarter.fmt : (x.period || ""), act: _qeNum(x.epsActual), est: _qeNum(x.epsEstimate), surp: _qeNum(x.surprisePercent) };
+    }).filter(function (x) { return x.act != null || x.est != null; });
+  } catch (e) {}
+  try {
+    out.trend = ((r.earningsTrend && r.earningsTrend.trend) || []).map(function (x) {
+      const ee = x.earningsEstimate || {}, re = x.revenueEstimate || {};
+      return { per: x.period, end: x.endDate || null, g: _qeNum(x.growth), eps: _qeNum(ee.avg), epsLo: _qeNum(ee.low), epsHi: _qeNum(ee.high), epsYa: _qeNum(ee.yearAgoEps), nEps: _qeNum(ee.numberOfAnalysts),
+               rev: _qeNum(re.avg), revG: _qeNum(re.growth), revYa: _qeNum(re.yearAgoRevenue),
+               d30: x.epsTrend ? _qeNum(x.epsTrend["30daysAgo"]) : null, cur: x.epsTrend ? _qeNum(x.epsTrend.current) : null };
+    });
+  } catch (e) {}
+  try {
+    const ks = r.defaultKeyStatistics || {}, sd = r.summaryDetail || {}, fd = r.financialData || {};
+    out.val = { pe: _qeNum(sd.trailingPE), fpe: _qeNum(sd.forwardPE) || _qeNum(ks.forwardPE), peg: _qeNum(ks.pegRatio), beta: _qeNum(sd.beta), pb: _qeNum(ks.priceToBook),
+                epsT: _qeNum(ks.trailingEps), epsF: _qeNum(ks.forwardEps), gm: _qeNum(fd.grossMargins), om: _qeNum(fd.operatingMargins), revG: _qeNum(fd.revenueGrowth), eG: _qeNum(fd.earningsGrowth), dy: _qeNum(sd.dividendYield) };
+  } catch (e) {}
+  out.unit = "USD"; out.src = "Yahoo Finance(발표 실적 · 애널리스트 컨센서스)";
+  out.ok = out.q.length > 0 || out.eps.length > 0 || out.trend.length > 0;
+  return out;
+}
 /* ══ [V33.629] ★미국 데이마켓(야간 대체거래소 · 20:00~04:00 ET) 가격 + 미국 시세 2차 원천(네이버 해외주식)★ ══════════════
    사용자(10/16): "미국 데이마켓 가격도 가져와 · 미국장 항상 가격 제대로 · 서머타임 엄격 · 자동으로 돌되 오류 절대 안 됨".
    네이버 해외주식 실시간(polling …/worldstock/stock/코드,코드)은 한 번에 여러 종목 · 정규 종가(closePrice) · 시간외 체결(overMarketPriceInfo:
@@ -35011,6 +35073,14 @@ async function handleRequest(request, env, ctx, _inner) {
       return Response.json({ ok: true, cash: newCash, deposits: deposits, outflows: outflows, before: before, added: { us: addUs, kr: addKr } }, { headers: cors });
     }
     // [V33.162] 종목별 발표 애널리스트 자료 — 목표가·투자의견·증권사별 등급 변경
+    /* [V33.786] ★분기 실적·전망(종목 분석 카드용)★ — 사용자 11/7 "그래프·실적·분기 실적 전망을 분석해서 · CPU·D1 낭비 없이". 종목을 연 사람이 있을 때만 · 종목당 6시간에 외부 1~2회.
+       D1 은 안 쓴다(swrJson = 메모리·엣지·R2). 미국: 야후 quoteSummary(earnings · earningsHistory · earningsTrend · defaultKeyStatistics · summaryDetail) · 한국: 네이버 증권 분기·연간 재무(컨센서스 포함).
+       값은 원천 그대로(발표·컨센서스) — 우리가 지어내는 숫자는 없다. */
+    if (path === "/api/qearn") {
+      const sym = (url.searchParams.get("symbol") || "").trim().toUpperCase();
+      if (!sym || sym.length > 16 || !/^[A-Z0-9.\-]+$/.test(sym)) return Response.json({ ok: false, why: "bad symbol" }, { status: 400, headers: cors });
+      return await swrJson("qearn:" + sym, 6 * 3600000, 3 * 86400000, async function () { return await qearnBuild(sym); });
+    }
     if (path === "/api/analyst") {
       const sym = (url.searchParams.get("symbol") || "").trim();
       if (!sym) return Response.json({ ok: false, why: "symbol 이 필요해요" }, { status: 400, headers: cors });

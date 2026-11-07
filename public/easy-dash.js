@@ -86,6 +86,16 @@
       "@media(max-width:760px){#easyDash .olg{grid-template-columns:minmax(0,1fr)}#easyDash .ch .seg button{padding:5px 8px;font-size:12px}}" +
       "@media(max-width:1100px){#easyDash .ixs{grid-template-columns:repeat(3,minmax(0,1fr))}#easyDash .g32{grid-template-columns:minmax(0,1fr)}}" +
       "@media(max-width:760px){#easyDash{padding:0 12px 30px}#easyDash .g2,#easyDash .br{grid-template-columns:minmax(0,1fr)}#easyDash .hd h1{font-size:21px}#easyDash .ixs{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding-left:12px;margin:0 -12px;padding:0 12px 2px;scrollbar-width:none}#easyDash .ixs::-webkit-scrollbar{display:none}#easyDash .ix{flex:0 0 42%;scroll-snap-align:start}#easyDash .map{height:340px}#easyDash .c{padding:14px 12px;border-radius:14px}#easyDash td.k{display:none}#easyDash .wv{font-size:24px}}" +
+      /* UI 다듬기: 토스식 — 테두리 줄이고 위계·숫자 정렬 · 접는 카드 */
+      "#easyDash{font-variant-numeric:tabular-nums}#easyDash .c{border:0;border-radius:18px;padding:18px}html[data-theme=light] #easyDash .c{box-shadow:0 1px 2px rgba(16,24,40,.05)}" +
+      "#easyDash .hd{margin:0 2px 16px}#easyDash .hd h1{font-size:26px;letter-spacing:-.7px}#easyDash .pro{border:0;background:var(--e-c2);border-radius:999px;padding:7px 12px}" +
+      "#easyDash .ch{margin:0 0 14px}#easyDash .ch b{font-size:17px}#easyDash .ch span{color:var(--e-mm)}" +
+      "#easyDash .ix,#easyDash .bri{border:0}#easyDash .ix .v{letter-spacing:-.4px}#easyDash .br{gap:8px;margin-top:8px}#easyDash .bri{padding:12px 14px}" +
+      "#easyDash .g{gap:10px;margin-top:10px}#easyDash .note{margin-top:12px}#easyDash td{padding:11px 4px}" +
+      "#easyDash .fz .fb{display:none}#easyDash .fz.open>.fb{display:block}#easyDash .fz .fzh{display:flex;align-items:center;gap:10px;min-width:0;flex:1 1 auto;border:0;background:none;padding:0;color:inherit;font:inherit;text-align:left;cursor:pointer}" +
+      "#easyDash .fz .fzh .fzs{flex:1;min-width:0;font-size:12.5px;color:var(--e-mm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}#easyDash .fz .chev{flex:0 0 8px;width:8px;height:8px;border-right:2px solid var(--e-mm);border-bottom:2px solid var(--e-mm);transform:rotate(45deg) translate(-2px,-2px);transition:transform .2s}#easyDash .fz.open>.ch .chev,#easyDash .fz.open>.fzh .chev{transform:rotate(225deg) translate(-2px,-2px)}" +
+      "#easyDash .fz:not(.open)>.ch .seg{display:none}#easyDash .fz>.ch{margin-bottom:0}#easyDash .fz.open>.ch{margin-bottom:14px}#easyDash .fz .fb{min-width:0}" +
+      "@media(max-width:760px){#easyDash .c{padding:16px}#easyDash .hd h1{font-size:24px}#easyDash .fz .fzh .fzs{text-align:right}}" +
       /* 사이드바 슬라이드 전환 */
       ".sb-mode{margin:2px 10px 10px;padding:4px;border-radius:12px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.07);display:flex;position:relative;user-select:none;cursor:pointer}" +
       "html[data-theme=light] .sb-mode{background:rgba(16,24,40,.05);border-color:rgba(16,24,40,.08)}" +
@@ -277,16 +287,17 @@
     return '<div class="g g2" style="margin-top:0;gap:0 24px"><div><div class="cap up">▲ 상승 상위</div>' + rowsOf(up, sub) + '</div><div><div class="cap dn">▼ 하락 상위</div>' + rowsOf(dn, sub) + '</div></div><div class="note"><span>시가총액 상위 300곳 중 · 레버리지·ETF 제외</span></div>';
   }
   // ── [V33.778] AI 업종 전망(단기·중기·장기) — outlook.js 규칙 엔진 ──
-  var olKey = "semis", olOpen = false;
+  var olKey = "semis", olOpen = false, ezOpen = {};   // ezOpen: 접어 둔 카드의 펼침 상태(이 화면에서만)
   function outlookCard() {
     var L = window.luxOutlook; if (!L || !ST) return "";
     var B = L.BASKETS, mk = B[olKey].mk, rg = PB && PB.markets && PB.markets[mk] && PB.markets[mk].regime, o = L.basket(olKey, ST, rg);
     var tabs = '<span class="seg">' + Object.keys(B).map(function (k) { return '<button type="button" data-olk="' + k + '" class="' + (k === olKey ? "on" : "") + '">' + esc(B[k].ko) + "</button>"; }).join("") + "</span>";
-    if (!o) return '<div class="c" style="margin-top:12px"><div class="ch"><b>AI 업종 전망</b>' + tabs + '</div><div class="ld">불러오는 중…</div></div>';
+    if (!o) return '<div class="c" style="margin-top:12px"><div class="ch"><b>AI 업종 전망</b></div><div class="ld">불러오는 중…</div></div>';
     var col = function (k, t, d) { var v = o[k], w = olOpen ? v.why : v.why.slice(0, 2);
       return '<div class="olc"><div class="olh"><span>' + t + '</span><span class="olb ' + v.cls + '">' + v.label + '</span></div><div class="old">' + d + '</div><ul>' + w.map(function (x) { return "<li>" + L.whyHtml(x, esc) + "</li>"; }).join("") + "</ul></div>"; };
-    return '<div class="c" style="margin-top:12px"><div class="ch"><b>AI 업종 전망</b>' + tabs + '</div><div class="olg">' + col("s", "단기", "1~4주") + col("m", "중기", "1~6개월") + col("l", "장기", "1년 이상") + "</div>" +
-      '<div class="note"><button type="button" class="lnk" data-olopen="1" style="margin:0 10px 0 0">' + (olOpen ? "근거 접기" : "근거 모두 보기") + "</button><span>" + o.n + "종목 평균 · 가격·추세·시장 흐름 규칙으로 계산(재무는 아직 반영 안 함) · 투자 권유가 아니에요</span></div></div>";
+    var fo = !!ezOpen.ol;
+    return '<div class="c fz' + (fo ? " open" : "") + '" style="margin-top:12px"><div class="ch"><button type="button" class="fzh" data-ez="ol" aria-expanded="' + fo + '"><b>AI 업종 전망</b><span class="fzs">' + esc(B[olKey].ko) + " · 단기 " + o.s.label + " · 중기 " + o.m.label + '</span><i class="chev" aria-hidden="true"></i></button>' + tabs + '</div><div class="fb"><div class="olg">' + col("s", "단기", "1~4주") + col("m", "중기", "1~6개월") + col("l", "장기", "1년 이상") + "</div>" +
+      '<div class="note"><button type="button" class="lnk" data-olopen="1" style="margin:0 10px 0 0">' + (olOpen ? "근거 접기" : "근거 모두 보기") + "</button><span>" + o.n + "종목 평균 · 가격·추세·시장 흐름 규칙으로 계산(재무는 아직 반영 안 함) · 투자 권유가 아니에요</span></div></div></div>";
   }
   function term() {
     if (termI == null) { var d = new Date(); termI = (d.getFullYear() * 400 + (d.getMonth() + 1) * 31 + d.getDate()) % TERMS.length; }
@@ -315,7 +326,7 @@
       '<div class="hd"><div><h1>오늘의 시장</h1><p>' + today() + (ST ? sessTxt("us") + sessTxt("kr") : "") + '</p></div><button type="button" class="pro" data-pro="1">전문가 화면 →</button></div>' +
       (ST ? ixTiles() + '<div class="br">' + breadth("us") + breadth("kr") + "</div>" : '<div class="c">' + L + "</div>") +
       '<div class="g g32">' + mapHtml() +
-        '<div class="c"><div class="ch"><b>1년 전에 투자했다면</b><span>지난 1년</span></div>' + (ST ? whatIf() : L) + '<div style="border-top:1px solid var(--e-bd);margin:14px 0 12px"></div><div class="ch" style="margin-bottom:8px"><b>오늘의 투자 용어</b><span>하루 한 개</span></div>' + term() + "</div></div>" +
+        '<div class="c"><div class="ch"><b>1년 전에 투자했다면</b><span>지난 1년</span></div>' + (ST ? whatIf() : L) + '<div style="border-top:1px solid var(--e-bd);margin:14px 0 12px"></div><div class="fz' + (ezOpen.tm ? " open" : "") + '"><div class="ch" style="margin-bottom:8px"><button type="button" class="fzh" data-ez="tm" aria-expanded="' + !!ezOpen.tm + '"><b>오늘의 투자 용어</b><span class="fzs">하루 한 개</span><i class="chev" aria-hidden="true"></i></button></div><div class="fb">' + term() + "</div></div></div></div>" +
       outlookCard() +
       '<div class="c" style="margin-top:12px"><div class="ch"><b>인기 종목</b><span>누르면 차트·주문</span></div>' + (ST ? popular() : L) + "</div>" +
       '<div class="g g2"><div class="c"><div class="ch"><b>AI 관심 종목</b><span>매일 새로 계산</span></div>' + aiPicks() + '</div><div class="c"><div class="ch"><b>오늘의 급등·급락</b><span>전일 종가 대비</span></div>' + (ST ? movers() : L) + "</div></div>" +
@@ -324,7 +335,8 @@
     if (window.scrollY !== keep) try { window.scrollTo(0, keep); } catch (e) {}
   }
   function onClick(e) {
-    var t = e.target.closest("[data-sym],[data-wsym],[data-wamt],[data-term],[data-pro],[data-mine],[data-mapmk],[data-olk],[data-olopen]"); if (!t) return;
+    var t = e.target.closest("[data-sym],[data-wsym],[data-wamt],[data-term],[data-pro],[data-mine],[data-mapmk],[data-olk],[data-olopen],[data-ez]"); if (!t) return;
+    if (t.hasAttribute("data-ez")) { var ek = t.getAttribute("data-ez"); ezOpen[ek] = !ezOpen[ek]; draw(); return; }
     if (t.hasAttribute("data-olk")) { olKey = t.getAttribute("data-olk"); draw(); return; }
     if (t.hasAttribute("data-olopen")) { olOpen = !olOpen; draw(); return; }
     if (t.hasAttribute("data-mapmk")) { mapMk = t.getAttribute("data-mapmk"); draw(); return; }

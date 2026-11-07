@@ -8,8 +8,8 @@
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
   var esc = function (s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); };
-  var TABS = [["ov", "개요"], ["val", "밸류에이션"], ["kpi", "KPI"], ["fs", "재무제표"], ["er", "실적 · 전망"], ["ir", "IR 자료"], ["ins", "내부자 거래"]];
-  var sym = null, tab = "val", fsTab = "is", C = {};   // C[sym] = { fund, prof, ir }
+  var TABS = [["ai", "AI 분석"], ["ov", "개요"], ["val", "밸류에이션"], ["kpi", "KPI"], ["fs", "재무제표"], ["er", "실적 · 전망"], ["ir", "IR 자료"], ["ins", "내부자 거래"]];
+  var sym = null, tab = "ai", fsTab = "is", C = {};   // C[sym] = { fund, prof, ir }
   var INS = null, insTs = 0, EARN = null, earnTs = 0;
   var isKr = function (s) { return /\.(KS|KQ)$/.test(s || ""); };
   function q() { var a = window.__lastQuotesArr || []; for (var i = 0; i < a.length; i++) if (a[i].symbol === sym) return a[i]; return null; }
@@ -203,10 +203,17 @@
     h += "<h4" + (feed.length ? "" : ' style="margin-top:0"') + ">내부자 지분 변동 신고 (Form 4) · " + ins.length + "건</h4>" + (ins.length ? ins.map(function (x) { return '<a class="li" href="' + esc(x.u) + '" target="_blank" rel="noopener"><span class="tg">' + esc(x.form === "4/A" ? "4 정정" : "Form 4") + '</span><span class="t">임원·이사·10% 주주의 매수·매도 신고</span><span class="d">' + esc(x.date) + "</span></a>"; }).join("") : '<div class="emp">최근 신고가 없습니다.</div>');
     return h + '<p class="nt">Form 4 = 내부자가 주식을 사거나 팔면 2영업일 안에 SEC 에 내는 신고 · 원문에 수량·가격이 있습니다.</p>';
   }
+  /* [V33.786] AI 분석 탭 — public/stock-analysis.js(브라우저 계산) · 업종 비교는 상세 화면이 받는 /api/fundamentals 를 같이 쓴다 */
+  function vAi() {
+    need("fund");
+    if (!window.luxAnalysis) return '<div class="emp">분석 모듈을 불러오는 중…</div>';
+    var f = C[sym] && C[sym].fund;
+    return window.luxAnalysis.view(sym, { fund: f && !f.err ? f : null, quote: q(), redraw: function () { if (tab === "ai") draw(); } });
+  }
   var valMore = false;
   function draw() {
     var el = $("luxInfo"); if (!el || !sym) return; css();
-    var body = tab === "ov" ? vOv() : tab === "val" ? vVal() : tab === "kpi" ? vKpi() : tab === "fs" ? vFs() : tab === "er" ? vEr() : tab === "ir" ? vIr() : vIns();
+    var body = tab === "ai" ? vAi() : tab === "ov" ? vOv() : tab === "val" ? vVal() : tab === "kpi" ? vKpi() : tab === "fs" ? vFs() : tab === "er" ? vEr() : tab === "ir" ? vIr() : vIns();
     var x = q(), hd = x && x.price > 0 ? '<div class="lxh"><span><b>' + esc(x.name || sym) + "</b> " + esc(isKr(sym) ? sym.split(".")[0] : sym) + '</span><span><b>' + money(x.price, isKr(sym)).replace(/\.00$/, "") + '</b> <span class="' + cls(x.dayPct) + '">' + pct(x.dayPct, 2) + "</span></span></div>" : "";
     el.innerHTML = '<div class="lxs">' + hd + '<nav class="lxt" role="tablist" aria-label="종목 정보">' + TABS.map(function (t) { return '<button type="button" role="tab" aria-selected="' + (t[0] === tab) + '" data-lxt="' + t[0] + '" class="' + (t[0] === tab ? "on" : "") + '">' + t[1] + "</button>"; }).join("") + "</nav></div>" + body;
     if (tab === "fs") el.querySelectorAll(".tw").forEach(function (t) { if (t.scrollWidth > t.clientWidth) t.scrollLeft = t.scrollWidth; });   // [V33.750] 재무 표는 최신 연도부터 보이게(왼쪽으로 밀면 이전 해)

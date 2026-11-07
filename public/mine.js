@@ -409,7 +409,25 @@
       "#mineSheet .grab{width:40px;height:4px;border-radius:2px;background:#2E3542;align-self:center}#mineSheet .pre{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}",
       "#mineSheet .pre button{min-height:44px;border-radius:12px;border:1px solid #2E3542;background:transparent;color:#C7CDD6;font-size:14px;cursor:pointer}#mineSheet .pre button.on{border:2px solid var(--c);color:var(--c);font-weight:700}",
       "#mineSheet .stp{display:flex;align-items:center;justify-content:space-between;background:#0D1014;border-radius:14px;padding:6px 8px}#mineSheet .stp button{width:44px;height:44px;border-radius:12px;border:0;background:#20262F;color:#EEF1F5;font-size:22px;cursor:pointer}",
-      "#mineSheet .go{min-height:54px;border-radius:14px;border:0;font-size:16px;font-weight:700;color:#fff;background:var(--c);cursor:pointer}#mineSheet .go:disabled{opacity:.45;cursor:default}#mineSheet .kv2{display:flex;justify-content:space-between;font-size:12.5px;color:#98A2B3}"
+      "#mineSheet .go{min-height:54px;border-radius:14px;border:0;font-size:16px;font-weight:700;color:#fff;background:var(--c);cursor:pointer}#mineSheet .go:disabled{opacity:.45;cursor:default}#mineSheet .kv2{display:flex;justify-content:space-between;font-size:12.5px;color:#98A2B3}",
+      /* UI 다듬기: 토스식 위계 · 보유 종목 한 줄 요약 + 펼치기 · 보조 카드 접기 */
+      "#mineRoot{--m-tx:#EEF1F5;font-variant-numeric:tabular-nums}html[data-theme=light] #mineRoot{--m-tx:#101828}#mineRoot .ct .h2,#mineRoot .fh .h2{color:var(--m-tx)}#mineRoot .fold .fb{overflow-wrap:anywhere}#mineRoot .fold .fb *{min-width:0;max-width:100%}",
+      "#mineRoot{font-variant-numeric:tabular-nums}#mineRoot .card{border-radius:18px;padding:16px 18px;margin:0 0 10px}#mineRoot .ct{margin-bottom:8px;font-size:12.5px}",
+      "#mineRoot .h1{font-size:28px;font-weight:800;letter-spacing:-.6px;line-height:1.2}#mineRoot .h2{font-size:15.5px;font-weight:700;letter-spacing:-.2px}#mineRoot .today{margin-top:6px}",
+      "#mineRoot .hi{margin:2px 4px 10px;font-size:14px}#mineRoot .wx{border-radius:14px;padding:12px 14px}#mineRoot .wx b{font-size:16px;margin:2px 0 4px}",
+      "#mineRoot .btns{margin-top:14px}#mineRoot .b{min-height:44px;border-radius:12px}",
+      "#mineRoot .hold{padding:12px 0;border-top:1px solid var(--m-line)}#mineRoot .ht .nm{font-size:15px}#mineRoot .ht .l .sb{white-space:normal;line-height:1.4}#mineRoot .ht .r .p{font-size:15px;font-weight:700}",
+      "#mineRoot .hm{display:flex;align-items:center;flex-wrap:wrap;gap:2px 12px;margin:6px 0 0 18px;font-size:12px;color:var(--m-mute)}#mineRoot .hm b{font-weight:600}",
+      "#mineRoot .hxb{margin-left:auto;min-height:28px;padding:0 10px;border-radius:14px;border:1px solid var(--m-line);background:transparent;color:var(--m-mute);font-size:12px;font-weight:600;cursor:pointer}#mineRoot .hold.open .hxb{color:var(--m-acc);border-color:var(--m-acc)}",
+      "#mineRoot .hold .hx{display:none;margin:2px 0 0 18px}#mineRoot .hold.open .hx{display:block}#mineRoot .hold .hx>*{min-width:0;max-width:100%}",
+      "#mineRoot .ha{margin:10px 0 0 18px;gap:8px}#mineRoot .ha button{min-height:38px;border-radius:10px;font-size:13px}",
+      "#mineRoot .fold{padding:0}#mineRoot .fold .fh{display:flex;align-items:center;gap:10px;width:100%;min-height:52px;padding:0 18px;border:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}",
+      "#mineRoot .fold .fh .h2{flex:0 0 auto}#mineRoot .fold .fh .sb{flex:1;min-width:0;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+      "#mineRoot .fold .chev{flex:0 0 8px;width:8px;height:8px;border-right:2px solid var(--m-mute);border-bottom:2px solid var(--m-mute);transform:rotate(45deg) translate(-2px,-2px);transition:transform .2s}#mineRoot .fold.open .chev{transform:rotate(225deg) translate(-2px,-2px)}",
+      "#mineRoot .fold .fb{display:none;padding:0 18px 16px}#mineRoot .fold.open .fb{display:block}",
+      "#mineRoot .alloc{margin-top:16px}#mineRoot .kv{margin-top:14px}#mineRoot .kv span{font-size:12px}",
+      "#mineRoot .row{padding:11px 2px}#mineRoot .nm,#mineRoot .sb{min-width:0}",
+      "@media (max-width:520px){#mineRoot .card{padding:14px 16px}#mineRoot .fold{padding:0}#mineRoot .fold .fh{padding:0 16px}#mineRoot .fold .fb{padding:0 16px 14px}#mineRoot .h1{font-size:26px}#mineRoot .hm,#mineRoot .hold .hx,#mineRoot .ha{margin-left:0}}",
     ].join("");
     document.head.appendChild(st);
   }
@@ -445,11 +463,12 @@
     var tot = cash + stk; if (!(tot > 0)) return "";
     rows.sort(function (a, b) { return b.mv - a.mv; });
     var sp = stk / tot * 100;
-    return '<section class="card aipf" aria-label="AI 포트폴리오"><div class="ct"><span class="h2" style="color:inherit">AI 포트폴리오</span><span class="sb">' + MK[mk] + " · 서버 AI 모의계좌</span></div>" +
+    var fo = !!foldOpen.aipf;
+    return '<section class="card fold aipf' + (fo ? " open" : "") + '" aria-label="AI 포트폴리오"><button type="button" class="fh" data-fold="aipf" aria-expanded="' + fo + '"><span class="h2">AI 포트폴리오</span><span class="sb">' + MK[mk] + " · 주식 " + sp.toFixed(0) + '%</span><i class="chev" aria-hidden="true"></i></button><div class="fb">' +
       '<div class="h1" style="font-size:22px">' + fmt(mk, tot) + '</div><div class="cashbar"><i style="width:' + sp.toFixed(1) + '%"></i></div>' +
       '<div class="aipk"><span><i class="d1"></i>주식 <b>' + sp.toFixed(1) + "%</b> " + fmt(mk, stk) + '</span><span><i class="d2"></i>현금 <b>' + (100 - sp).toFixed(1) + "%</b> " + fmt(mk, cash) + "</span></div>" +
       (rows.length ? rows.slice(0, 6).map(function (r) { return '<div class="row" data-open="' + esc(r.s) + '"><div class="av">' + esc(short(r.s).slice(0, 4)) + '</div><div class="l"><span class="nm">' + esc(nm(r.s)) + '</span><span class="sb">비중 ' + (r.mv / tot * 100).toFixed(1) + '%</span></div><div class="r"><span class="p">' + fmt(mk, r.mv) + '</span><span class="' + cls(r.r) + '" style="font-size:12.5px">' + pctS(r.r) + "</span></div></div>"; }).join("") + (rows.length > 6 ? '<div class="note">외 ' + (rows.length - 6) + "종목</div>" : "") : '<div class="note" style="margin-top:6px">지금은 주식 없이 현금만 들고 있어요 · 시장 국면이 나쁠 때 AI 는 현금 비중을 높입니다</div>') +
-      "</section>";
+      "</div></section>";
   }
   function pill(sig) { return !sig ? "" : sig.watch ? '<span class="pill w">관찰</span>' : sig.sl ? '<span class="pill s">국면 전략</span>' : '<span class="pill">AI 후보</span>'; }
   function buyBtn(sym) { return '<button type="button" class="buy" data-buy="' + esc(sym) + '">매수</button>'; }
@@ -506,13 +525,14 @@
     AD.css();
     var ctx = advCtx(mk), av = { eq: v.eq, cash: v.cash, mv: v.mv, upl: v.upl, ret: v.ret, day: v.day, dayPct: v.dayPct, n: v.n }, acc = AD.account(mk, av, hs, ctx);
     var ans = coachQ ? AD.coach(coachQ, mk, av, hs, ctx) : null;
-    return '<section class="card coach" aria-label="AI 코치"><div class="ct"><span class="h2" style="color:inherit">AI 코치</span><span class="sb">내 계좌 숫자로 계산</span></div>' +
+    var fo = !!(foldOpen.coach || coachQ);
+    return '<section class="card fold coach' + (fo ? " open" : "") + '" aria-label="AI 코치"><button type="button" class="fh" data-fold="coach" aria-expanded="' + fo + '"><span class="h2">AI 코치</span><span class="sb">내 계좌 숫자로 계산</span><i class="chev" aria-hidden="true"></i></button><div class="fb">' +
       '<p class="adv-p"><i class="adv-t ' + acc.tone + '" aria-hidden="true"></i>' + AD.span(acc) + "</p>" +
       (acc.actions.length ? '<div class="sb" style="margin-bottom:4px">다음에 할 일</div><ul class="adv-a">' + acc.actions.map(function (a) { return "<li>" + AD.span(a) + "</li>"; }).join("") + "</ul>" : "") +
       '<div class="sb" style="margin-bottom:2px">질문을 눌러 보세요</div><div class="adv-c">' + AD.INTENTS.map(function (c) { return '<button type="button" data-coach="' + c.id + '" class="' + (coachQ === c.id ? "on" : "") + '" aria-pressed="' + (coachQ === c.id) + '">' + AD.span(c) + "</button>"; }).join("") + "</div>" +
       (ans && ans.ko ? '<div class="adv-q"><b>' + AD.span(AD.INTENTS.filter(function (c) { return c.id === coachQ; })[0]) + "</b>" + AD.span(ans) +
         (ans.actions.length ? '<ul class="adv-a" style="margin-top:8px">' + ans.actions.map(function (a) { return "<li>" + AD.span(a) + "</li>"; }).join("") + "</ul>" : "") + "</div>" : "") +
-      '<div class="adv-n">' + AD.span(acc.note) + "</div></section>";
+      '<div class="adv-n">' + AD.span(acc.note) + "</div></div></section>";
   }
   function advHoldHtml(mk, v, hx) {
     var AD = window.luxAdvisor; if (!AD || !hx) return "";
@@ -552,13 +572,15 @@
         if (sw > 0 || mw > 0) L.push([mw >= 40 ? "w" : "i", "<span>AI 전망 주의 비중 · 단기 " + sw.toFixed(0) + "% · 중기 " + mw.toFixed(0) + "%</span>" + (mw >= 40 ? " · <span>추세가 꺾인 종목이 많아요 — 손절선·비중 점검</span>" : "")]);
         if (lw > 0) L.push(["w", "<span>장기 보유에 맞지 않는 상품 " + lw.toFixed(0) + "%</span>"]);
         if (!(sw > 0 || mw > 0) && ord2.length) L.push(["ok", "<span>AI 전망 · 단기·중기 주의 신호 없음</span>"]); })();
-      h += '<section class="card diag"><div class="h2" style="margin-bottom:6px">계좌 진단 <span class="sb" style="font-weight:400">AI 참고 지표</span></div>' + L.map(function (x) { return '<div class="dl ' + x[0] + '"><i aria-hidden="true"></i><span>' + x[1] + "</span></div>"; }).join("") + "</section>";
+      var nW = L.filter(function (x) { return x[0] === "w"; }).length, fo = !!foldOpen.diag;
+      h += '<section class="card fold diag' + (fo ? " open" : "") + '"><button type="button" class="fh" data-fold="diag" aria-expanded="' + fo + '"><span class="h2">계좌 진단</span><span class="sb">' + (nW ? "주의 " + nW + "건" : "이상 없음") + '</span><i class="chev" aria-hidden="true"></i></button><div class="fb">' + L.map(function (x) { return '<div class="dl ' + x[0] + '"><i aria-hidden="true"></i><span>' + x[1] + "</span></div>"; }).join("") + "</div></section>";
     })();
     h += '<section class="card"><div class="ct" style="margin-bottom:2px"><span class="h2" style="color:inherit">보유 ' + ks.length + '종목</span>' + (ks.length > 1 ? '<span class="seg">' + [["val", "평가액"], ["ret", "수익률"], ["day", "오늘"]].map(function (c) { return '<button type="button" data-hs="' + c[0] + '" class="' + (hSort === c[0] ? "on" : "") + '">' + c[1] + "</button>"; }).join("") + "</span>" : "") + "</div>" + (ks.length ? ord2.map(function (o) {
       var s = o.s, p = o.p, ci = ks.indexOf(s);
-      return '<div class="hold" data-open="' + esc(s) + '"><div class="ht"><span class="dot" style="background:' + ACOL[ci % ACOL.length] + '" aria-hidden="true"></span><div class="l"><span class="nm">' + esc(nm(s)) + pill(sigOf(s)) + '</span><span class="sb">' + p.q.toLocaleString() + "주 · 평단 " + pxS(mk, p.avg) + " · 현재 " + pxS(mk, o.cur) + '</span></div><div class="r"><span class="p">' + fmt(mk, o.mv) + '</span><span class="' + cls(o.r) + '" style="font-size:12.5px">' + fmt(mk, o.mv - p.q * p.avg, true) + " (" + pctS(o.r) + ")</span></div></div>" +
-        '<div class="hm"><span>비중 <b>' + (v.eq > 0 ? (o.mv / v.eq * 100).toFixed(0) : 0) + '%</b></span><span>오늘 <b class="' + cls(o.d) + '">' + pctS(o.d) + "</b></span>" + (p.tpPx ? '<span>익절 <b class="up">' + pxS(mk, p.tpPx) + "</b></span>" : "") + (p.slPx ? '<span>손절 <b class="dn">' + pxS(mk, p.slPx) + "</b></span>" : "") + "</div>" +
-        (function () { var sv = sellView(mk, s, p, o.cur); return '<div class="so ' + sv.v + '"><span class="sv"><b>AI 매도 의견</b> ' + sv.ko + '</span><span class="sw">' + sv.why.map(rsH).join(" · ") + '</span>' + (sv.ref.length ? '<span class="sw rf"><span>참고</span> · ' + sv.ref.map(rsH).join(" · ") + "</span>" : "") + '<span class="sw"><span>' + (sv.ai ? "AI 손절" : "기준 손절") + "</span> " + pxS(mk, sv.sl) + " · <span>목표</span> " + pxS(mk, sv.tp) + "</span></div>"; })() + outlookHtml(s) + (window.luxMiniView ? window.luxMiniView.html(s) : "") + advHoldHtml(mk, v, advMap[s]) +
+      var hxo = !!hxOpen[s];
+      return '<div class="hold' + (hxo ? " open" : "") + '" data-open="' + esc(s) + '"><div class="ht"><span class="dot" style="background:' + ACOL[ci % ACOL.length] + '" aria-hidden="true"></span><div class="l"><span class="nm">' + esc(nm(s)) + pill(sigOf(s)) + '</span><span class="sb">' + p.q.toLocaleString() + "주 · 평단 " + pxS(mk, p.avg) + " · 현재 " + pxS(mk, o.cur) + '</span></div><div class="r"><span class="p">' + fmt(mk, o.mv) + '</span><span class="' + cls(o.r) + '" style="font-size:12.5px">' + fmt(mk, o.mv - p.q * p.avg, true) + " (" + pctS(o.r) + ")</span></div></div>" +
+        '<div class="hm"><span>비중 <b>' + (v.eq > 0 ? (o.mv / v.eq * 100).toFixed(0) : 0) + '%</b></span><span>오늘 <b class="' + cls(o.d) + '">' + pctS(o.d) + "</b></span>" + (p.tpPx ? '<span>익절 <b class="up">' + pxS(mk, p.tpPx) + "</b></span>" : "") + (p.slPx ? '<span>손절 <b class="dn">' + pxS(mk, p.slPx) + "</b></span>" : "") + '<button type="button" class="hxb" data-hx="' + esc(s) + '" aria-expanded="' + hxo + '">' + (hxo ? "접기" : "AI 의견") + "</button></div>" +
+        '<div class="hx">' + (function () { var sv = sellView(mk, s, p, o.cur); return '<div class="so ' + sv.v + '"><span class="sv"><b>AI 매도 의견</b> ' + sv.ko + '</span><span class="sw">' + sv.why.map(rsH).join(" · ") + '</span>' + (sv.ref.length ? '<span class="sw rf"><span>참고</span> · ' + sv.ref.map(rsH).join(" · ") + "</span>" : "") + '<span class="sw"><span>' + (sv.ai ? "AI 손절" : "기준 손절") + "</span> " + pxS(mk, sv.sl) + " · <span>목표</span> " + pxS(mk, sv.tp) + "</span></div>"; })() + outlookHtml(s) + (window.luxMiniView ? window.luxMiniView.html(s) : "") + advHoldHtml(mk, v, advMap[s]) + '</div>' +
         '<div class="ha"><button type="button" class="tag2 wbtn" data-risk="' + esc(s) + '" aria-label="익절 손절 설정">' + (p.tpPx || p.slPx ? "TP/SL 수정" : "TP/SL 설정") + "</button>" + buyBtn(s) + '<button type="button" class="sell" data-sell="' + esc(s) + '">매도</button></div></div>';
     }).join("") : '<div class="empty">홈의 AI 후보나 관심종목에서 [매수]를 눌러 보세요</div>') + "</section>";
     var od = a.ord || [];
@@ -576,7 +598,7 @@
      → 계정(비밀번호 바꾸기·언어·로그아웃) → 모의계좌(시장별 초기화) → 데이터·약관(처리방침·내 데이터 삭제). 설정 앱처럼 줄 단위 목록. */
   var meEdit = false, pwOpen = false;
   var coachQ = "";   // [V33.778] AI 코치 — 고른 질문
-  var hSort = "val", hFlt = "all", hMore = false;   // [V33.741] 보유 정렬 · 거래 내역 거르기
+  var hSort = "val", hFlt = "all", hMore = false, hxOpen = {}, foldOpen = {};   // [V33.741] 보유 정렬 · 거래 내역 거르기
   function me() {
     var ops = function (k, map, cols, multi) { return '<div class="ops" data-k="' + k + '" style="grid-template-columns:repeat(' + cols + ',minmax(0,1fr))">' + Object.keys(map).map(function (v) {
       var on = multi ? prof[k].indexOf(v) >= 0 : prof[k] === v; return '<button type="button" data-v="' + v + '" class="' + (on ? "on" : "") + '">' + map[v] + "</button>"; }).join("") + "</div>"; };
@@ -968,6 +990,8 @@
     var t = ev.target.closest("button,[data-open]"); if (!t || !$("mineRoot").contains(t)) return;
     var d = t.dataset;
     if (d.tab) { tab = d.tab; draw(); return; }
+    if (d.hx) { ev.stopPropagation(); hxOpen[d.hx] = !hxOpen[d.hx]; draw(); return; }   // 보유 종목 상세 접기/펴기(이 화면에서만 기억)
+    if (d.fold) { ev.stopPropagation(); foldOpen[d.fold] = !foldOpen[d.fold]; draw(); return; }   // 보조 카드(AI 코치·계좌 진단·AI 포트폴리오) 접기/펴기
     if (d.coach) { coachQ = coachQ === d.coach ? "" : d.coach; draw(); return; }   // [V33.778] AI 코치 칩
     if (d.buy) { ev.stopPropagation(); sheet("B", d.buy); return; }
     if (d.sell) { ev.stopPropagation(); sheet("S", d.sell); return; }
