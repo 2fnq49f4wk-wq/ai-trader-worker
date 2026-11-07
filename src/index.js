@@ -8551,7 +8551,9 @@ function parseSparkQuotes(j, chunk) {
       let li = -1; const raw = closesRaw || [];   // 마지막 '유효' 종가의 봉 시각(오늘 봉이 있어도 종가가 비면 그 봉은 없는 것)
       for (let i = raw.length - 1; i >= 0; i--) if (typeof raw[i] === "number" && isFinite(raw[i]) && raw[i] > 0) { li = i; break; }
       const lastT = li >= 0 ? Number(tsArr[li]) : 0;
-      if (lastT > 0 && Math.floor((mt + go) / 86400) > Math.floor((lastT + go) / 86400)) { prev = cl[cl.length - 1]; price = mp; }
+      // meta 가 옛 종가를 그대로 들고 오는 깨진 응답(11/6 HLT: meta 376.53 = 수 종가)은 믿지 않는다
+      const stale = cl.length >= 2 && Math.abs(mp - cl[cl.length - 2]) < 1e-6;
+      if (!stale && lastT > 0 && Math.floor((mt + go) / 86400) > Math.floor((lastT + go) / 86400)) { prev = cl[cl.length - 1]; price = mp; }
     }
     if (!(price > 0)) return;
     out[sym] = { price: price, prevClose: prev || price, dayPct: prev ? ((price - prev) / prev) * 100 : 0 };
