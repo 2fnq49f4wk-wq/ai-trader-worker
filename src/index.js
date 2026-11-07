@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.786";
+const _BUILD_VER = "V33.787";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -23377,13 +23377,18 @@ async function ovnSweepAll(env) {
     for (const t of (Array.isArray(d) ? d : [])) { const m = /^([A-Z.]+?)(X|ON)_USDT$/.exec(t.currency_pair || ""); if (!m) continue; const y = toSym(m[1]), b = Number(t.highest_bid), a = Number(t.lowest_ask);
       if (y && b > 0 && a >= b) add("gate", y, t.currency_pair, (a + b) / 2, (a - b) / ((a + b) / 2)); }
   } catch (e) {}
+  // ③-2 OKX 현물 xStocks(X<심볼>-USDT · 호가 · 공개 웹소켓 있음 — 브라우저 직접 구독)
+  try { const d = await _ovnJson("https://www.okx.com/api/v5/market/tickers?instType=SPOT");
+    for (const t of ((d && d.data) || [])) { const m = /^X([A-Z.]+)-USDT$/.exec(t.instId || ""); if (!m) continue; const y = toSym(m[1]), b = Number(t.bidPx), a = Number(t.askPx);
+      if (y && b > 0 && a >= b) add("okx", y, t.instId, (a + b) / 2, (a - b) / ((a + b) / 2)); }
+  } catch (e) {}
   // ④ MEXC(브라우저 직접 호출 불가 — 서버 2분 값만)
   try { const d = await _ovnJson("https://api.mexc.com/api/v3/ticker/bookTicker");
     for (const t of (Array.isArray(d) ? d : [])) { const m = /^([A-Z.]+?)(X|ON)USDT$/.exec(t.symbol || ""); if (!m) continue; const y = toSym(m[1]), b = Number(t.bidPrice), a = Number(t.askPrice);
       if (y && b > 0 && a >= b) add("mexc", y, t.symbol, (a + b) / 2, (a - b) / ((a + b) / 2)); }
   } catch (e) {}
   // 고르기 + 쓰기
-  const stmts = [], PRI = { hl: 0, kraken: 1, gate: 2, mexc: 3 };
+  const stmts = [], PRI = { hl: 0, kraken: 1, okx: 2, gate: 3, mexc: 4 };
   for (const y in cand) {
     const L = cand[y], hl = L.filter(function (x) { return x.src === "hl"; })[0];
     let px = null, src = null, pair = null;
@@ -29911,7 +29916,7 @@ const SECHDR = {
     "style-src 'self' 'unsafe-inline'; " +
     "img-src 'self' data: blob: https:; " +
     "font-src 'self' data:; " +
-    "connect-src 'self' https://data.lux-inv.com wss://api.hyperliquid.xyz wss://ws.kraken.com wss://api.gateio.ws; " +   // [V33.780] 데이마켓 실시간(브라우저 → Hyperliquid 공개 웹소켓 · 서버 0)   // [V33.759] CDN 공개 사본
+    "connect-src 'self' https://data.lux-inv.com wss://api.hyperliquid.xyz wss://ws.kraken.com wss://api.gateio.ws wss://ws.okx.com; " +   // [V33.780] 데이마켓 실시간(브라우저 → Hyperliquid 공개 웹소켓 · 서버 0)   // [V33.759] CDN 공개 사본
     "frame-ancestors 'self'; " +
     "base-uri 'self'; " +
     "form-action 'self'; " +

@@ -33,7 +33,7 @@
        ⑶ neural-observatory.js 에 defer — 이 파일의 NeuralObservatory 는 boot() 이후에만 쓴다.
      ※ .lux-booting 은 인트로가 사라질 때 벗긴다. 그래서 라이트 테마의 오버스크롤 영역이
        어두워지는 부작용이 없다(인트로 동안에만 적용된다). -->
-<script>try{if(localStorage.getItem("lux-dmode")!=="pro")document.documentElement.classList.add("lux-easy")}catch(e){document.documentElement.classList.add("lux-easy")}</script><style>html.lux-easy #page-dashboard>*:not(#easyDash):not(#easyDashSnap){display:none!important}#easyDashSnap.ez-snap{pointer-events:none}#easyDashSnap.ez-snap::before{content:"";position:fixed;left:0;right:0;top:0;height:2px;z-index:9999;background:linear-gradient(90deg,transparent,#3b82f6,transparent);background-size:50% 100%;animation:ezSnapBar 1s linear infinite}@keyframes ezSnapBar{from{background-position:-50% 0}to{background-position:150% 0}}</style>
+<script>try{if(localStorage.getItem("lux-dmode")!=="pro")document.documentElement.classList.add("lux-easy")}catch(e){document.documentElement.classList.add("lux-easy")}</script><style>html.lux-easy #page-dashboard>*:not(#easyDash):not(#easyDashSnap){display:none!important}html.lux-easy #page-dashboard>#easyDashSnap.ez-snap{display:block!important;pointer-events:none}#page-dashboard:has(>#easyDashSnap.ez-snap){display:block}#easyDashSnap.ez-snap::before{content:"";position:fixed;left:0;right:0;top:0;height:2px;z-index:9999;background:linear-gradient(90deg,transparent,#3b82f6,transparent);background-size:50% 100%;animation:ezSnapBar 1s linear infinite}@keyframes ezSnapBar{from{background-position:-50% 0}to{background-position:150% 0}}</style>
 <style>html.lux-booting{background:#000}html.lux-booting body{background:#000}html.lux-nointro #lux-intro-overlay{display:none!important}
 /* [V33.621] ★디자인 파일이 오기 전엔 본문을 감춘다★ — 사용자 10/15 "로딩이 안 되면 옛날 디자인 화면이 뜬다". 디자인 시트 5개(리퀴드 메탈 등)는 본문 맨 뒤에 있어
    (본문 안 인라인 스타일을 덮어야 해서 머리로 못 올린다) 늦거나 실패하면 그 앞 본문이 ★옛 기본 디자인★ 으로 먼저 칠해졌다.
@@ -339,18 +339,18 @@ window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{
 window.__luxAct=Date.now();['pointerdown','keydown','touchstart','wheel'].forEach(function(e){addEventListener(e,function(){window.__luxAct=Date.now();},{passive:true,capture:true});});
 window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600000;};
 </script>
-<meta name="lux-build" content="V33.786">
-<script src="/i18n.js?v=33.786" defer></script>
-<script src="/outlook.js?v=33.786" defer></script>
-<script src="/advisor.js?v=33.786" defer></script>
-<script src="/luxmini.js?v=33.786" defer></script>
-<script src="/luxmini-view.js?v=33.786" defer></script>
-<script src="/ovn-live.js?v=33.786" defer></script>
-<script src="/mine.js?v=33.786" defer></script>
-<script src="/easy-dash.js?v=33.786" defer></script>
-<script src="/stock-analysis.js?v=33.786" defer></script>
-<script src="/stock-info.js?v=33.786" defer></script>
-<script src="/neural-observatory.js?v=33.786" defer></script>
+<meta name="lux-build" content="V33.787">
+<script src="/i18n.js?v=33.787" defer></script>
+<script src="/outlook.js?v=33.787" defer></script>
+<script src="/advisor.js?v=33.787" defer></script>
+<script src="/luxmini.js?v=33.787" defer></script>
+<script src="/luxmini-view.js?v=33.787" defer></script>
+<script src="/ovn-live.js?v=33.787" defer></script>
+<script src="/mine.js?v=33.787" defer></script>
+<script src="/easy-dash.js?v=33.787" defer></script>
+<script src="/stock-analysis.js?v=33.787" defer></script>
+<script src="/stock-info.js?v=33.787" defer></script>
+<script src="/neural-observatory.js?v=33.787" defer></script>
 <title>LUX-INV</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4759,7 +4759,7 @@ window.LUX_NV = {
       <!-- [V33.786] ★화면 먼저★(사용자 11/7 "가장 빠르게 보여야 할 것은 유저에게 보이는 화면") — 지난번 초보자 화면을 이 기기 저장본으로 ★문서가 읽히는 즉시★ 그린다.
            새 시세가 와서 진짜 화면(#easyDash)이 그려지면 바로 걷힌다. 저장본은 보여 주기만(클릭은 진짜 화면이 뜬 뒤) · 6시간 넘은 저장본은 안 쓴다 · 서버 일 0. -->
       <div id="easyDashSnap" aria-hidden="true"></div>
-      <script>(function(){try{if(!document.documentElement.classList.contains("lux-easy"))return;var j=JSON.parse(localStorage.getItem("luxEzSnap")||"null");if(!j||!j.h||Date.now()-j.t>216e5)return;var e=document.getElementById("easyDashSnap");e.innerHTML=j.h;e.className="ez-snap";}catch(x){}})();</script>
+      <script>(function(){try{if(!document.documentElement.classList.contains("lux-easy"))return;if(location.hash&&location.hash.length>1)return;var j=JSON.parse(localStorage.getItem("luxEzSnap")||"null");if(!j||!j.h||Date.now()-j.t>216e5)return;var e=document.getElementById("easyDashSnap");if(j.c){var st=document.createElement("style");st.id="ezSnapCss";st.textContent=j.c;document.head.appendChild(st);}e.innerHTML=j.h;e.className="ez-snap";}catch(x){}})();</script>
 
       <!-- [V10.2] ENGINE PIPELINE — 8단계 서브시스템 상태 모니터 -->
       <!-- [V33.193] ★접기 버튼이 안 보인다는 지적 — 다른 파이프라인에 달았었다.★
@@ -9341,12 +9341,12 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
   #page-detail .detail-main .detail-chart{height:46vh !important;min-height:300px !important}
 }
 </style>
-<link rel="stylesheet" href="/brain-console.css?v=33.786">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.786">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.786">
-<link rel="stylesheet" href="/model-evidence.css?v=33.786">
+<link rel="stylesheet" href="/brain-console.css?v=33.787">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.787">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.787">
+<link rel="stylesheet" href="/model-evidence.css?v=33.787">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.786">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.787">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -22172,8 +22172,8 @@ setTimeout(function(){
   window.addEventListener('load', function(){ setTimeout(function(){ try{ boot(); }catch(e){} }, 0); });
 })();
 </script>
-<script src="/model-evidence.js?v=33.786"></script>
-<script src="/workspace-ui.js?v=33.786"></script>
+<script src="/model-evidence.js?v=33.787"></script>
+<script src="/workspace-ui.js?v=33.787"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {
@@ -22194,11 +22194,12 @@ window.__luxWarnLogs = function () {
 /* [V33.786] 초보자 화면 저장본 — 진짜 화면(#easyDash)이 그려지면 저장본을 걷고, 바뀐 화면을 조용히(유휴 시간 · 10초에 한 번 이하) 이 기기에 저장한다(최대 ~250KB). */
 (function () {
   var last = 0, tm = 0;
-  function snapOff() { var s = document.getElementById("easyDashSnap"); if (s && s.innerHTML) { s.innerHTML = ""; s.className = ""; } }
+  function snapOff() { var s = document.getElementById("easyDashSnap"); if (s && s.innerHTML) { s.innerHTML = ""; s.className = ""; } var c = document.getElementById("ezSnapCss"); if (c) c.remove(); }
   function save() {
     tm = 0; var e = document.getElementById("easyDash"); if (!window.__lastState || !e || !e.innerHTML || e.innerHTML.length < 2000) return;
     var h = e.innerHTML; if (h.length > 250000) return;
-    try { localStorage.setItem("luxEzSnap", JSON.stringify({ t: Date.now(), h: h })); last = Date.now(); } catch (x) {}
+    var cs = document.getElementById("ezCss"), css = cs ? String(cs.textContent || "").split("#easyDash").join("#easyDashSnap").split(":not(#easyDashSnap)").join(":not(#easyDash):not(#easyDashSnap)") + "#easyDashSnap.ez-snap{display:block!important}" : "";   // 저장본용 스타일(선택자만 저장본 칸으로)
+    try { localStorage.setItem("luxEzSnap", JSON.stringify({ t: Date.now(), h: h, c: css })); last = Date.now(); } catch (x) {}
   }
   function kick() {
     var e = document.getElementById("easyDash"); if (!e || !e.innerHTML || !window.__lastState) return;   // 시세가 온 진짜 화면일 때만(‘불러오는 중’ 뼈대로 저장본을 걷지 않는다)

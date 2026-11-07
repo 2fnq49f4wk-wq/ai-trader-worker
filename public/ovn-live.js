@@ -80,7 +80,15 @@
     if (m.channel !== "spot.book_ticker" || m.event !== "update" || !m.result) return;
     var sym = GTMAP[m.result.s], x = mid(m.result.b, m.result.a); if (sym && x) put(sym, x, "gate");
   });
-  var FEEDS = [hl, kr, gt];
+  var OKMAP = {};
+  var ok = new Feed("okx", "wss://ws.okx.com/ws/v5/public", function () {
+    OKMAP = wanted("okx"); var p = Object.keys(OKMAP); if (!p.length) return null;
+    return { key: p.sort().join(","), msgs: [{ op: "subscribe", args: p.map(function (id) { return { channel: "bbo-tbt", instId: id }; }) }] };
+  }, function (m) {
+    if (!m.arg || m.arg.channel !== "bbo-tbt" || !m.data || !m.data[0]) return;
+    var d = m.data[0], sym = OKMAP[m.arg.instId], x = mid(d.bids && d.bids[0] && d.bids[0][0], d.asks && d.asks[0] && d.asks[0][0]); if (sym && x) put(sym, x, "okx");
+  });
+  var FEEDS = [hl, kr, gt, ok];
 
   function tick() {
     var on = overnight() && !document.hidden;

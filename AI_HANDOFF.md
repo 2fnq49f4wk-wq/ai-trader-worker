@@ -12,6 +12,10 @@
 
 ## Current handoff
 
+- V33.787 (11/7) 데이마켓 원천 +OKX(에이전트 실측 · 토 오전): OKX 현물 X<심볼>-USDT 88종 유효(±15%·호가차 3% 필터 통과 · 불일치 0) 중 신규 9 → 합집합 ~137 → ~146.
+  서버 ovnSweepAll 에 OKX tickers 1요청(야간에만) · 우선순위 hl>kraken>okx>gate>mexc · 브라우저 ovn-live.js OKX 공개 WS(bbo-tbt) · CSP wss://ws.okx.com.
+  + 초보자 저장본 화면 실제로 보이게: 저장 때 ezCss 도 함께(선택자 #easyDash→#easyDashSnap) · easy-dash 의 숨김 규칙보다 구체적인 표시 규칙 · 해시 경로면 안 씀. 실측(상태 2.5초 지연 흉내): 0.6초에 전체 화면.
+  미채택: Bitget(신규 ~4 · 응답 1.1MB) · LBank/BingX/KuCoin/Backpack(신규 0) · Phemex(스케일 불일치) · Bybit 403 · Binance 451 · Jupiter(신규 1).
 - V33.786 (11/7) 사용자 요청 묶음: "항상 실시간 · 로딩 더 빠르게 · 화면에 보이는 데이터를 가장 먼저 · 초보자·MY 디자인 · 종목 차트·실적·분기 전망 분석(AI 예시 문장처럼)".
   ① 화면 먼저: index.html — 초보자 화면 저장본(luxEzSnap · 6시간 · 이 기기 localStorage)을 #easyDashSnap 에 문서 파싱 즉시 그림 → 새 시세가 온 진짜 화면이 그려지면 걷음(8초 상한).
      첫 2.5초(또는 상태 도착 전)엔 첫 화면에 안 쓰는 /api 피드(뉴스 116KB·거래 3000건·지도·스크리너 등)를 잠깐 보류 — 상태(341KB)가 대역을 먼저 쓴다(playbook·me·auth·state 는 즉시).
