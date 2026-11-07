@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.787";
+const _BUILD_VER = "V33.788";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -23201,7 +23201,49 @@ async function extQuoteSweep(env) {
       try { const r = await refreshPriceShard(env, m, sh); n += _num(r && r.ok, 0); } catch (e) {}
     }
   }
+  if (_uk && last.usPostFill === _uk) { try { await usCloseAudit(env, cfg); } catch (e) {} }   // [V33.788] 마감 확정 시세 대조
   return n;
+}
+/* [V33.788] ★미국 종가 대조(하루 1회 · 마감 재수집 직후)★ — 사용자 11/7 "금요일 미장이 실시간으로 안 들어왔다 · 다시는 안 일어나게 · 항상 신선한 데이터".
+   원인(V33.784): 금 20:00:19 ET 한 원천(야후 일봉)이 오늘 봉 빠진 응답을 줘 557종이 하루 전 값으로 덮였고, 장 닫힌 동안 아무도 다시 받지 않았다.
+   그래서 마감 재수집 뒤 ★다른 원천(나스닥 공식 마감가)★ 으로 큰 종목 40개를 대조한다 — 0.3% 넘게 어긋나면 그 자리에서 나스닥 값으로 고치고 WARN 을 남긴다.
+   비용: 거래일마다 외부 2요청 · D1 읽기 1번(40행) · 어긋난 종목만 쓰기. */
+async function usCloseAudit(env, cfg, all) {
+  const DB = env.DB, syms0 = (cfg.usTickers || []).filter(function (x) { return !/^\^|=/.test(x); }), syms = all ? syms0 : syms0.slice(0, 40), ref = {};
+  for (let i = 0; i < syms.length; i += 20) {
+    const ch = syms.slice(i, i + 20);
+    try {
+      const q = ch.map(function (s0) { return "symbol=" + encodeURIComponent(nasdaqSym(s0) + "|stocks"); }).join("&");
+      const r = await fetch("https://api.nasdaq.com/api/quote/watchlist?" + q, { headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        "Accept": "application/json", "Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/" }, signal: AbortSignal.timeout(8000) });
+      if (!r.ok) continue;
+      const j = await r.json(), want = {}; for (const s0 of ch) want[nasdaqSym(s0).toUpperCase()] = s0;
+      for (const x of ((j && j.data) || [])) {
+        const y = x && want[String(x.symbol || "").toUpperCase()]; if (!y || !/closed/i.test(String(x.marketStatus || ""))) continue;
+        const px = _nqNum(x.lastSalePrice), chg = _nqNum(x.netChange); if (!(px > 0) || chg == null || !(px - chg > 0)) continue;
+        ref[y] = { price: px, prevClose: +(px - chg).toFixed(4) };
+      }
+    } catch (e) {}
+  }
+  const keys = Object.keys(ref); if (keys.length < 10) return 0;   // 대조 원천이 비면 판단하지 않는다
+  const st = DB.prepare("SELECT k, json_extract(v, '$.price') AS p, json_extract(v, '$.prevClose') AS pc FROM state WHERE k IN (" + keys.map(function () { return "?"; }).join(",") + ")");
+  const rw = await st.bind.apply(st, keys.map(function (y) { return "quote:" + y; })).all();
+  const bad = [], stmts = [], now = Date.now();
+  for (const r of ((rw && rw.results) || [])) {
+    const y = String(r.k).slice(6), R = ref[y], p = _num(r.p, 0); if (!R || !(p > 0)) continue;
+    if (Math.abs(p / R.price - 1) > 0.003) {
+      bad.push(y + " " + p + "→" + R.price);
+      stmts.push(DB.prepare("UPDATE state SET v = json_set(v, '$.price', ?2, '$.prevClose', ?3, '$.dayPct', ?4, '$.ts', ?5), updated_ts = ?5 WHERE k = ?1 AND json_valid(v)")
+        .bind("quote:" + y, R.price, R.prevClose, (R.price / R.prevClose - 1) * 100, now));
+    }
+  }
+  if (stmts.length) { for (let i = 0; i < stmts.length; i += 100) { try { await DB.batch(stmts.slice(i, i + 100)); } catch (e) {} } }
+  if (!all && bad.length >= Math.max(4, keys.length * 0.2)) {   // 표본의 20% 넘게 어긋남 = 원천 전체가 틀렸다 → 전 종목 대조(외부 ~28요청 · 드문 일)
+    try { await log(DB, "WARN", null, "[종가대조] 표본 " + bad.length + "/" + keys.length + " 어긋남 — 미국 전 종목 나스닥 대조로 넓힌다"); } catch (e) {}
+    return await usCloseAudit(env, cfg, true);
+  }
+  try { await log(DB, bad.length ? "WARN" : "INFO", null, "[종가대조] 미국 " + (all ? "전 종목 " : "") + keys.length + "종 나스닥 마감가 대조 · 어긋남 " + bad.length + (bad.length ? " → 고침: " + bad.slice(0, 6).join(" · ") : " (정상)")); } catch (e) {}
+  return bad.length;
 }
 
 
@@ -28667,7 +28709,7 @@ async function runTradingCycle(env) {
                 // 반사실 후보 로깅 — 실매수 무관, 종목당 1회만 배치수집(사이클 끝에 1회 커밋 → D1 write 절약).
                 //   손절폭(stopDist/price)도 저장 → 라벨 시 손절 반영(buy&hold 낙관편향 제거).
                 try {
-                  if (!__candSyms.has(symbol)) {
+                  if (!COMMITTEE_RETIRED && !__candSyms.has(symbol)) {   // [V33.788] 위원회 퇴역 — 라벨러가 꺼져 아무도 안 읽는 후보를 매 사이클 쓰던 낭비(실측 하루 INSERT 11,733회 · 35k행) 중단
                     // [V12.97] 하루 1회만 기록 — 아이솔레이트 일일 가드로 분당 중복 삽입 차단(라벨 중복제거 유지).
                     const _cday = Math.floor(Date.now() / 86400000);
                     if (__candDayGuard.day !== _cday) __candDayGuard = { day: _cday, set: new Set() };
@@ -35939,6 +35981,11 @@ async function handleRequest(request, env, ctx, _inner) {
         globalThis.__newsForceAt = Date.now();
         try { ctx.waitUntil((async function () { resetFetchBudget(80); await updateSectorNewsSentiment(env.DB, cfg, true); })().catch(function () {})); } catch (e) {}
         return Response.json(Object.assign({}, cached, { refreshing: true }), { headers: cors });
+      } else if (cached && cached.ts && Date.now() - cached.ts > 2 * 3600000 && Date.now() - (globalThis.__newsStaleAt || 0) > 600000) {
+        /* [V33.788] ★장 닫힌 동안 뉴스가 멈췄다★(라이브 점검 11/7 토: '17.1시간 전 수집') — 갱신이 거래 사이클(장중)에만 있었다. 2시간 넘게 묵었으면
+           뒤에서 갱신(아이솔레이트당 10분에 한 번 · 공개 사본을 짓는 크론이 이 길을 부른다) — 주말·밤에도 2시간 주기. */
+        globalThis.__newsStaleAt = Date.now();
+        try { ctx.waitUntil((async function () { resetFetchBudget(80); await updateSectorNewsSentiment(env.DB, cfg, false); })().catch(function () {})); } catch (e) {}
       }
       return Response.json(cached || { empty: true }, { headers: cors });
     }
