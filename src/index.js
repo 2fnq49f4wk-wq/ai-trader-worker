@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.783";
+const _BUILD_VER = "V33.784";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8543,6 +8543,16 @@ function parseSparkQuotes(j, chunk) {
     let price = null, prev = null;
     if (cl.length >= 2) { price = cl[cl.length - 1]; prev = cl[cl.length - 2]; }
     else if (cl.length === 1) { price = cl[0]; prev = cpc || price; }
+    /* [V33.784] ★오늘 봉이 빠진 응답★ — 일봉 배열의 마지막 봉 날짜가 meta.regularMarketTime(마지막 정규장 체결) 날짜보다 이르면
+       배열 마지막 값은 '어제 종가' 다(장 마감 직후 일봉 확정 전 등). 그때는 meta 가격이 오늘 값 · 배열 마지막이 전일 종가. */
+    const mp = meta && Number(meta.regularMarketPrice), mt = meta && Number(meta.regularMarketTime), go = meta && Number(meta.gmtoffset) || 0;
+    const tsArr = meta && Array.isArray(meta.__ts) ? meta.__ts : null;
+    if (mp > 0 && mt > 0 && tsArr && cl.length) {
+      let li = -1; const raw = closesRaw || [];   // 마지막 '유효' 종가의 봉 시각(오늘 봉이 있어도 종가가 비면 그 봉은 없는 것)
+      for (let i = raw.length - 1; i >= 0; i--) if (typeof raw[i] === "number" && isFinite(raw[i]) && raw[i] > 0) { li = i; break; }
+      const lastT = li >= 0 ? Number(tsArr[li]) : 0;
+      if (lastT > 0 && Math.floor((mt + go) / 86400) > Math.floor((lastT + go) / 86400)) { prev = cl[cl.length - 1]; price = mp; }
+    }
     if (!(price > 0)) return;
     out[sym] = { price: price, prevClose: prev || price, dayPct: prev ? ((price - prev) / prev) * 100 : 0 };
     /* [V33.646] 오늘 정규장 누적 거래량(실시간) — 일봉 캐시의 오늘 봉은 장중에 받은 그 순간 값에 멈춘다(실측 AAPL 우리 2,060만 vs 실제 3,561만) */
@@ -8554,13 +8564,13 @@ function parseSparkQuotes(j, chunk) {
     for (const it of res) {
       const r0 = it && Array.isArray(it.response) ? it.response[0] : null;
       const q = r0 && r0.indicators && r0.indicators.quote && r0.indicators.quote[0];
-      put(it && it.symbol, q && q.close, r0 && r0.meta);
+      put(it && it.symbol, q && q.close, r0 && r0.meta ? Object.assign({ __ts: r0.timestamp }, r0.meta) : null);
     }
     return out;
   }
   for (const sym of (chunk || [])) {
     const v = j[sym];
-    if (v && Array.isArray(v.close)) put(sym, v.close, v);
+    if (v && Array.isArray(v.close)) put(sym, v.close, Object.assign({ __ts: v.timestamp }, v));
   }
   return out;
 }
@@ -22971,14 +22981,20 @@ async function refreshPriceShard(env, market, shard) {
           "'$.vol', COALESCE(?16, json_extract(v, '$.vol'))) " +   // [V33.645] 실시간 누적 거래량(있을 때만)
           "ELSE ?2 END, updated_ts = ?6" +
           // [V33.642] 값이 같고 90초 안이면 안 쓴다(쓴 행 0) — 지울 값(clr)이 남아 있거나 하나라도 바뀌면 쓴다
-          " WHERE NOT json_valid(state.v) OR state.updated_ts < ?6 - " + QUOTE_SAME_MS +
+          " WHERE (NOT json_valid(state.v) OR state.updated_ts < ?6 - " + QUOTE_SAME_MS +
           " OR json_extract(state.v, '$.price') IS NOT ?3 OR json_extract(state.v, '$.dayPct') IS NOT ?5 OR json_extract(state.v, '$.prevClose') IS NOT ?4" +
           " OR (?7 IS NOT NULL AND json_extract(state.v, '$.mstate') IS NOT ?7)" +
           " OR (?8 IS NOT NULL AND json_extract(state.v, '$.pre') IS NOT ?8) OR (?10 IS NOT NULL AND json_extract(state.v, '$.post') IS NOT ?10)" +
           " OR (?14 IS NOT NULL AND json_extract(state.v, '$.extTs') IS NOT ?14)" +
           " OR (?12 = 1 AND json_extract(state.v, '$.pre') IS NOT NULL) OR (?13 = 1 AND json_extract(state.v, '$.post') IS NOT NULL)" +
           " OR (?15 = 1 AND json_extract(state.v, '$.extTs') IS NOT NULL)" +
-          " OR (?16 IS NOT NULL AND json_extract(state.v, '$.vol') IS NOT ?16)"
+          " OR (?16 IS NOT NULL AND json_extract(state.v, '$.vol') IS NOT ?16))" +
+          /* [V33.784] ★하루 되감기 거부★(사용자 11/7 "미국장 가격이 목요일 가격으로 나온다") — 라이브 실측: 금 20:00:19 ET 한 번의 쓰기가 미국 557종을
+             (가격 = 목 종가 · 전일 종가 = 수 종가)로 덮었다(NVDA 181.60/200.13 · 실제 금 186.64/181.60). 그 뒤 주말 내내 미국 시세를 안 받아 그대로 굳었다.
+             모양: 새 가격 = 저장된 전일 종가 · 새 전일 종가 ≠ 저장된 가격·전일 종가 → 원천이 하루 전 봉을 '오늘' 로 준 것. 다음 거래일 정상 갱신은
+             새 전일 종가 = 저장된 가격이라 걸리지 않는다. */
+          " AND NOT (json_valid(state.v) AND json_extract(state.v, '$.prevClose') > 0 AND ABS(json_extract(state.v, '$.prevClose') - ?3) < 1e-9" +
+          " AND ABS(json_extract(state.v, '$.price') - ?4) > 1e-9 AND ABS(json_extract(state.v, '$.prevClose') - ?4) > 1e-9)"
         ).bind("quote:" + r.symbol, JSON.stringify(fresh), r.price, r.prevClose, r.dayPct, nowTs,
           _m, _pre, _prePct, _post, _postPct, _clrPre, _clrPost, _extTs, _clrExt, (r.vol > 0 ? r.vol : null))
       );
@@ -23145,14 +23161,26 @@ function krPostFillKey(now) {
   if (wd === 0 || wd === 6) return null;   // 주말 밤은 금요일 몫을 이미 받았다
   return d.toISOString().slice(0, 10);
 }
+/* [V33.784] ★미국 장후 마감 뒤 확정 시세 한 번 더(하루 1회)★ — 사용자 11/7 "미국장 가격이 목요일 가격으로 나온다". 실측: 금 20:00:19 ET(애프터 끝 직후)
+   마지막 쓰기가 하루 전 봉을 받아 굳었고, 주말·밤엔 미국 시세를 다시 안 받아 이틀 넘게 그대로였다. 20:10 ET 이후(~04:00) 그 거래일 몫을 한 번 더 받는다
+   (원천 일봉이 확정된 뒤). 비용: 거래일마다 미국 샤드 한 바퀴 1회. */
+function usPostFillKey(now) {
+  if (marketSessionNow("us", now) !== "CLOSED") return null;
+  const t = getUSEt(now); if (!(t.totalMin >= 1210 || t.totalMin < 240)) return null;
+  const off = getUSEtOffset(now), d = new Date(now.getTime() + off * 3600000 - (t.totalMin < 240 ? 86400000 : 0)), wd = d.getUTCDay();
+  if (wd === 0 || wd === 6) return null;   // 주말 밤은 금요일 몫(금 20:10 뒤)을 이미 받았다
+  return d.toISOString().slice(0, 10);
+}
 async function extQuoteSweep(env) {
   const DB = env.DB, _now = new Date(), mk = extSweepMarkets(_now);
   let _fk = krPostFillKey(_now); if (_fk && globalThis.__krPostFillDone === _fk) _fk = null;   // 이 isolate 가 이미 확인함 — 밤새 매분 상태 읽기(D1) 안 함
-  if (!mk.length && !_fk) return 0;
+  let _uk = usPostFillKey(_now); if (_uk && globalThis.__usPostFillDone === _uk) _uk = null;
+  if (!mk.length && !_fk && !_uk) return 0;
   let last = null;
   try { last = (await getState(DB, "ext_sweep", null, true)) || {}; } catch (e) { return 0; }   // 못 읽으면 이번 분은 건너뛴다(사이클이 받는다)
   const due = mk.filter(function (m) { return Date.now() - _num(last[m], 0) >= EXT_SWEEP_MS; });
   if (_fk) { globalThis.__krPostFillDone = _fk; if (last.krPostFill !== _fk && due.indexOf("kr") < 0) { due.push("kr"); last.krPostFill = _fk; } }
+  if (_uk) { globalThis.__usPostFillDone = _uk; if (last.usPostFill !== _uk && due.indexOf("us") < 0) { due.push("us"); last.usPostFill = _uk; } }
   if (!due.length) return 0;
   for (const m of due) last[m] = Date.now();
   try { await setState(DB, "ext_sweep", last); } catch (e) {}
