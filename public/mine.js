@@ -428,6 +428,47 @@
       "#mineRoot .alloc{margin-top:16px}#mineRoot .kv{margin-top:14px}#mineRoot .kv span{font-size:12px}",
       "#mineRoot .row{padding:11px 2px}#mineRoot .nm,#mineRoot .sb{min-width:0}",
       "@media (max-width:520px){#mineRoot .card{padding:14px 16px}#mineRoot .fold{padding:0}#mineRoot .fold .fh{padding:0 16px}#mineRoot .fold .fb{padding:0 16px 14px}#mineRoot .h1{font-size:26px}#mineRoot .hm,#mineRoot .hold .hx,#mineRoot .ha{margin-left:0}}",
+      // [V33.789] MY 디자인 다듬기 — 간격 4/8/12/16/24 · 카드 20 · 히어로 · 탭 · 보유 · 순위 상위 3 · 성향 분할 버튼 · 빈 화면
+      "#mineRoot{--s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--m-up-bg:color-mix(in srgb,var(--m-up) 13%,transparent);--m-dn-bg:color-mix(in srgb,var(--m-dn) 14%,transparent);--m-acc-bg:color-mix(in srgb,var(--m-acc) 14%,transparent);--m-hair:color-mix(in srgb,var(--m-mute) 22%,transparent)}",
+      "#mineRoot .tabs{top:var(--s2);padding:4px;gap:2px;margin:0 0 var(--s4);border-radius:18px;background:color-mix(in srgb,var(--m-card) 86%,transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid var(--m-hair);box-shadow:0 6px 20px -12px rgba(0,0,0,.45)}",
+      "#mineRoot .tabs button{min-height:42px;border-radius:14px;font-size:14px;font-weight:600;letter-spacing:-.2px;white-space:nowrap;transition:background .18s,color .18s}#mineRoot .tabs button.on{background:var(--m-acc-bg);color:var(--m-acc);font-weight:800;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--m-acc) 32%,transparent)}",
+      "#mineRoot .tabs button:focus-visible,#mineRoot .b:focus-visible,#mineRoot .ops button:focus-visible,#mineRoot .seg button:focus-visible{outline:2px solid var(--m-acc);outline-offset:2px}",
+      "#mineRoot .card{border-radius:20px;padding:var(--s4) 20px;margin:0 0 var(--s3);border:1px solid var(--m-hair)}#mineRoot .ct{font-size:12.5px;font-weight:600;letter-spacing:.1px;margin-bottom:var(--s3)}",
+      "#mineRoot .sec{font-size:12px;font-weight:700;letter-spacing:.6px;margin:var(--s5) 4px var(--s2)}#mineRoot .hi{margin:var(--s1) 4px var(--s3);font-size:13.5px}#mineRoot .hi b{color:var(--m-acc)}",
+      "#mineRoot .seg{background:var(--m-bg);padding:3px;border-radius:12px;border:1px solid var(--m-hair)}#mineRoot .seg button{min-height:30px;padding:0 14px;border-radius:9px;font-weight:600}#mineRoot .seg button.on{background:var(--m-card);color:var(--m-tx);box-shadow:0 1px 3px rgba(0,0,0,.3),0 0 0 1px var(--m-hair)}",
+      /* 히어로: 총자산 · 손익 알약 */
+      "#mineRoot section[aria-label=\"모의계좌\"]{position:relative;padding:20px 20px var(--s4);background:radial-gradient(120% 90% at 0% 0%,var(--m-acc-bg) 0%,transparent 62%),var(--m-card);border-color:color-mix(in srgb,var(--m-acc) 28%,transparent)}",
+      "#mineRoot section[aria-label=\"모의계좌\"] .h1{font-size:36px;font-weight:800;letter-spacing:-1.2px;line-height:1.1;margin:var(--s1) 0 var(--s3);color:var(--m-tx);overflow:hidden;text-overflow:ellipsis}",
+      "#mineRoot section[aria-label=\"모의계좌\"] .h1+div{display:inline-block;max-width:100%;padding:6px 12px;border-radius:12px;font-size:13.5px;font-weight:700;line-height:1.35}#mineRoot section[aria-label=\"모의계좌\"] .h1+.up{background:var(--m-up-bg)}#mineRoot section[aria-label=\"모의계좌\"] .h1+.dn{background:var(--m-dn-bg)}",
+      "#mineRoot .today{display:flex;flex-wrap:wrap;gap:2px 8px;align-items:baseline;margin-top:var(--s3);padding-top:var(--s3);border-top:1px solid var(--m-hair);font-size:13px}",
+      "#mineRoot .btns{gap:var(--s2);margin-top:var(--s4)}#mineRoot .b{min-height:46px;border-radius:14px;font-weight:700;letter-spacing:-.2px;transition:transform .12s,filter .12s}#mineRoot .b:active{transform:scale(.98)}#mineRoot .b.pri:hover{filter:brightness(1.06)}#mineRoot .b.line{border:1px solid var(--m-hair);color:var(--m-tx)}",
+      "#mineRoot .wx{border:1px solid var(--m-hair);padding:var(--s3) var(--s4)}#mineRoot .wx>.mu{font-size:11.5px;font-weight:600;letter-spacing:.3px}#mineRoot .wx b{font-size:17px;font-weight:800;margin:var(--s1) 0 6px}",
+      /* 목록 · 보유 종목 */
+      "#mineRoot .row{gap:var(--s3);padding:var(--s3) 2px;border-top:1px solid var(--m-hair)}#mineRoot .row:first-of-type{border-top:0}#mineRoot .av{flex:0 0 40px;height:40px;border-radius:14px;font-size:11px;letter-spacing:-.2px;background:var(--m-chip);color:var(--m-tx)}",
+      "#mineRoot .nm{font-size:15px;font-weight:700;letter-spacing:-.2px}#mineRoot .r .p,#mineRoot .r .up,#mineRoot .r .dn{font-variant-numeric:tabular-nums}#mineRoot .r .p{font-weight:700}",
+      "#mineRoot .r .up,#mineRoot .r .dn{font-weight:700}#mineRoot .hold{border-top:1px solid var(--m-hair);padding:var(--s4) 0}#mineRoot .hold:first-of-type{border-top:0}",
+      "#mineRoot .hold .l,#mineRoot .hold .ht{min-width:0}#mineRoot .hm{gap:2px 14px;margin-top:var(--s2);font-variant-numeric:tabular-nums}#mineRoot .hxb{min-height:30px;padding:0 12px;border-radius:15px;border-color:var(--m-hair)}",
+      "#mineRoot .buy,#mineRoot .sell,#mineRoot .tag2{border-radius:12px;font-weight:700}#mineRoot .tag2.wbtn,#mineRoot .wbtn{border-color:var(--m-hair);color:var(--m-tx)}",
+      "#mineRoot .pill{font-weight:700;letter-spacing:.1px;border-radius:7px}",
+      /* 빈 화면 */
+      "#mineRoot .empty{display:flex;align-items:center;justify-content:center;text-align:center;min-height:112px;margin:var(--s2) 0;padding:var(--s5) var(--s4);border:1px dashed var(--m-hair);border-radius:16px;background:color-mix(in srgb,var(--m-bg) 55%,transparent);font-size:13.5px;line-height:1.6;color:var(--m-mute)}",
+      "#mineRoot .note{line-height:1.6}",
+      /* 순위: 상위 3 강조 */
+      "#mineRoot .rkrow{padding:var(--s3) var(--s2);border-radius:14px;border-top:0;gap:var(--s3)}#mineRoot .rkrow+.rkrow{margin-top:2px}#mineRoot .rk{flex:0 0 30px;width:30px;height:30px;line-height:30px;border-radius:15px;font-size:14px;font-weight:800;color:var(--m-mute);background:var(--m-chip)}",
+      "#mineRoot .rkrow.top1{background:linear-gradient(90deg,rgba(226,170,40,.16),transparent 85%)}#mineRoot .rkrow.top2{background:linear-gradient(90deg,rgba(160,172,190,.16),transparent 85%)}#mineRoot .rkrow.top3{background:linear-gradient(90deg,rgba(205,127,74,.16),transparent 85%)}",
+      "#mineRoot .rk.hot{color:#3A2A00;background:#E5B93C}#mineRoot .top2 .rk.hot{color:#1F2630;background:#B9C2D0}#mineRoot .top3 .rk.hot{color:#2D1606;background:#D08A57}",
+      "#mineRoot .top1 .nm{font-size:16.5px;font-weight:800}#mineRoot .top1 .r .p{font-size:16.5px}#mineRoot .rkrow.me{box-shadow:inset 0 0 0 1.5px var(--m-acc);background:var(--m-acc-bg)}",
+      "#mineRoot .myrk{border-color:color-mix(in srgb,var(--m-acc) 30%,transparent);background:radial-gradient(110% 120% at 100% 0%,var(--m-acc-bg),transparent 65%),var(--m-card);padding:20px}#mineRoot .myrk .h1{font-size:30px;letter-spacing:-.8px;color:var(--m-tx)}",
+      /* 내 정보: 프로필 · 성향 분할 버튼 */
+      "#mineRoot .pf{padding:20px;background:radial-gradient(120% 100% at 0% 0%,var(--m-acc-bg),transparent 60%),var(--m-card);border-color:color-mix(in srgb,var(--m-acc) 28%,transparent)}#mineRoot .st3{border-top-color:var(--m-hair);margin-top:var(--s4);padding-top:var(--s4)}#mineRoot .st3 b{font-size:17px;font-weight:800}",
+      "#mineRoot .tg span{background:var(--m-chip);border:1px solid var(--m-hair);font-weight:600;font-size:13px;padding:7px 13px}",
+      "#mineRoot .ops{display:grid;grid-template-columns:repeat(var(--n,3),minmax(0,1fr));gap:2px;padding:3px;margin:var(--s2) 0 var(--s4);background:var(--m-bg);border:1px solid var(--m-hair);border-radius:14px}#mineRoot .ops button{min-height:42px;padding:0 6px;border:0;border-radius:11px;background:transparent;color:var(--m-mute);font-size:13.5px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:background .15s,color .15s}",
+      "#mineRoot .ops button.on{background:var(--m-acc);color:#04110D;font-weight:800;box-shadow:0 1px 4px rgba(0,0,0,.25)}html[data-theme=light] #mineRoot .ops button.on{color:#fff}",
+      "#mineRoot .card>span.mu[style]{display:block;font-size:12px!important;font-weight:700;letter-spacing:.4px}#mineRoot .lst .li{min-height:56px}#mineRoot .li .ic{border-radius:10px}",
+      "html[data-theme=light] #mineRoot .card{box-shadow:0 1px 2px rgba(16,24,40,.04),0 6px 18px -12px rgba(16,24,40,.12)}html[data-theme=light] #mineRoot .tabs{box-shadow:0 6px 18px -12px rgba(16,24,40,.25)}",
+      "@media (max-width:520px){#mineRoot{padding:4px 0 96px}#mineRoot .card{padding:var(--s4)}#mineRoot section[aria-label=\"모의계좌\"]{padding:var(--s4)}#mineRoot section[aria-label=\"모의계좌\"] .h1{font-size:32px}#mineRoot .tabs button{font-size:13.5px}#mineRoot .row{gap:10px}#mineRoot .pf,#mineRoot .myrk{padding:var(--s4)}}",
+      "#mineRoot .card.fold{padding:0}html[data-theme=light] #mineRoot .tabs button.on{background:var(--m-acc-bg);color:var(--m-acc)}html[data-theme=light] #mineRoot .seg button.on{background:#fff;color:#101828}html[data-theme=light] #mineRoot .tabs{border-color:#DCE1E8}",
+      "@media (prefers-reduced-motion:reduce){#mineRoot *{transition:none!important}}"
     ].join("");
     document.head.appendChild(st);
   }
@@ -655,7 +696,7 @@
       (myI >= 0 ? (LB && LB.cnt && LB.cnt[rkMk] ? LB.cnt[rkMk] : rows.length) + "명 중" : !mv ? MK[rkMk] + " 모의계좌가 아직 없어요" : "다음 정각 계산에 반영되거나 상위 100 밖이에요") + '</span></div><div class="r"><span class="sb">내 수익률</span><span class="h2 ' + (mv ? cls(mv.ret) : myI >= 0 ? cls(rows[myI].ret) : "mu") + '">' + (mv ? pctS(mv.ret) : myI >= 0 ? pctS(rows[myI].ret) : "—") + "</span></div></section>";
     h += '<section class="card">' + (rows.length ? rows.map(function (r, i) {
       var mine = me && r.nick === me;
-      return '<div class="row" style="cursor:default' + (mine ? ";background:rgba(61,214,181,.08);border-radius:10px" : "") + '"><span class="rk' + ((r.rk || i + 1) <= 3 ? " hot" : "") + '">' + (r.rk || i + 1) + '</span><div class="l"><span class="nm">' + esc(r.nick) + (mine ? ' <span class="pill">나</span>' : "") + '</span><span class="sb">' + r.days + "일째 · 보유 " + r.n + '종목</span></div><div class="r"><span class="p ' + cls(r.ret) + '">' + pctS(r.ret) + "</span></div></div>";
+      return '<div class="row rkrow' + ((r.rk || i + 1) <= 3 ? " top" + (r.rk || i + 1) : "") + (mine ? " me" : "") + '" style="cursor:default"><span class="rk' + ((r.rk || i + 1) <= 3 ? " hot" : "") + '">' + (r.rk || i + 1) + '</span><div class="l"><span class="nm">' + esc(r.nick) + (mine ? ' <span class="pill">나</span>' : "") + '</span><span class="sb">' + r.days + "일째 · 보유 " + r.n + '종목</span></div><div class="r"><span class="p ' + cls(r.ret) + '">' + pctS(r.ret) + "</span></div></div>";
     }).join("") : '<div class="empty">' + (LB ? "아직 순위에 오른 계좌가 없습니다. 첫 번째가 되어 보세요." : "순위를 불러오는 중…") + "</div>") +
       '<div class="note" style="margin-top:6px">서버가 실제 시세로 1시간마다 다시 계산합니다' + (LB && LB.ts ? " · " + new Date(LB.ts).toLocaleTimeString() + " 기준" : "") + " · 가상 자금 · 투자 권유 아님</div></section>";
     return h;
