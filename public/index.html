@@ -5127,7 +5127,7 @@ window.LUX_NV = {
         <div class="port-card" id="portCardUS">
           <div class="port-card-head">
             <span class="port-card-flag">🇺🇸</span>
-            <span class="port-card-title">US PORTFOLIO</span>
+            <span class="port-card-title">미국 포트폴리오</span>
             <span class="port-card-cur">USD</span>
           </div>
           <div class="port-card-body">
@@ -5147,16 +5147,18 @@ window.LUX_NV = {
             </div>
             <!-- [V65] 전략별 보유 분해 + 리스크 히트 + 적용 예산분배 -->
             <div class="port-strats" id="stratBreakUS" style="margin-top:10px;border-top:1px solid var(--bd2);padding-top:8px;"></div>
+            <details class="pz-more" id="pzMoreUS"><summary>세부 설정 · 리스크 한도</summary>
             <div class="port-heat" id="heatRowUS" style="margin-top:8px;"></div>
             <div class="port-budget" id="budgetRowUS" style="margin-top:6px;"></div>
             <div class="cfg-display" id="cfgDisplayUS"></div>
+            </details>
           </div>
           <div class="pz-hold" id="posHoldUS"></div>
         </div>
         <div class="port-card" id="portCardKR">
           <div class="port-card-head">
             <span class="port-card-flag">🇰🇷</span>
-            <span class="port-card-title">KR PORTFOLIO</span>
+            <span class="port-card-title">한국 포트폴리오</span>
             <span class="port-card-cur">KRW</span>
           </div>
           <div class="port-card-body">
@@ -5176,9 +5178,11 @@ window.LUX_NV = {
             </div>
             <!-- [V65] 전략별 보유 분해 + 리스크 히트 + 적용 예산분배 -->
             <div class="port-strats" id="stratBreakKR" style="margin-top:10px;border-top:1px solid var(--bd2);padding-top:8px;"></div>
+            <details class="pz-more" id="pzMoreKR"><summary>세부 설정 · 리스크 한도</summary>
             <div class="port-heat" id="heatRowKR" style="margin-top:8px;"></div>
             <div class="port-budget" id="budgetRowKR" style="margin-top:6px;"></div>
             <div class="cfg-display" id="cfgDisplayKR"></div>
+            </details>
           </div>
           <div class="pz-hold" id="posHoldKR"></div>
         </div>
@@ -11639,7 +11643,13 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
     var groups = ['TECH','FINANCE','HEALTH','CONSUMER','INDUSTRIAL','RESOURCES'];
     var groupLabel = { TECH:'기술', FINANCE:'금융', HEALTH:'헬스케어', CONSUMER:'소비재', INDUSTRIAL:'산업재', RESOURCES:'에너지·원자재' };
 
-    var html = '<div class="news-grid">';
+    var pulse = '<div class="news-pulse" aria-label="섹터별 뉴스 분위기">';
+    groups.forEach(function(g) {
+      var sc = data.scores && typeof data.scores[g] === 'number' ? data.scores[g] : null;
+      pulse += '<span class="np ' + (sc == null ? 'neu' : sc > 0.05 ? 'pos' : sc < -0.05 ? 'neg' : 'neu') + '"><b>' + groupLabel[g] + '</b>' + (sc == null ? '—' : (sc >= 0 ? '+' : '') + sc.toFixed(2)) + '</span>';
+    });
+    pulse += '</div>';
+    var html = pulse + '<div class="news-grid">';
     groups.forEach(function(grp) {
       var items = (data.headlines && data.headlines[grp]) || [];
       var score = data.scores && typeof data.scores[grp] === 'number' ? data.scores[grp] : null;
@@ -11659,7 +11669,7 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
         items.forEach(function(item) {
           var title = item.title || '';
           var link  = newsSafeUrl(item.link);
-          var pub   = item.pub   ? _fmtPubDate(item.pub) : '';
+          var pub   = item.pub   ? (_newsAgo(item.pub) || _fmtPubDate(item.pub)) : '';
           // 긍정/부정 키워드로 점 색 결정
           var low = title.toLowerCase();
           var isPos = ['beat','upgrade','surge','rally','strong','growth','record','profit','soar','rebound'].some(function(w){ return low.includes(w); });
@@ -11669,7 +11679,7 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
             '<span class="news-dot ' + dotCls + '"></span>' +
             '<div>' +
               (link ? '<a class="news-title" href="' + escapeHtml(link) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(title) + '</a>' : '<span class="news-title">' + escapeHtml(title) + '</span>') +
-              (pub ? '<div class="news-pub">' + escapeHtml(pub) + '</div>' : '') +
+              ((pub || link) ? '<div class="news-pub">' + (link ? '<span class="news-src">' + escapeHtml(_newsHost(link)) + '</span>' : '') + escapeHtml(pub) + '</div>' : '') +
             '</div>' +
           '</div>';
         });
@@ -11680,6 +11690,14 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
     body.innerHTML = html;
   }
 
+  /* [뉴스·환율 새 디자인] 출처(도메인)·'N시간 전' — 목록 한 줄을 훑기 쉽게 */
+  function _newsHost(u) { try { return new URL(u).hostname.replace(/^www\./, '').split('.').slice(-2).join('.'); } catch(e) { return ''; } }
+  function _newsAgo(str) {
+    var t = str ? new Date(str).getTime() : NaN; if (isNaN(t)) return '';
+    var m = Math.round((Date.now() - t) / 60000);
+    if (m < 1) return '방금'; if (m < 60) return m + '분 전'; if (m < 1440) return Math.floor(m / 60) + '시간 전';
+    return Math.floor(m / 1440) + '일 전';
+  }
   var _pubFmt = null;   // [V33.450] 서식기 재사용(뉴스 수백 건 × 10초마다)
   function _fmtPubDate(str) {
     try {
@@ -15584,7 +15602,7 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
       rows += '<tr>'+
         '<td class="ind-name">'+escapeHtml(r.label)+'<small>'+escapeHtml(r.sub || '')+'</small></td>'+
         '<td class="r">'+priceText+'</td>'+
-        '<td class="r '+dpCls+'">'+dpText+'</td>'+
+        '<td class="r '+dpCls+'">'+dpText+(typeof r.dayPct === 'number' ? '<span class="fx-bar"><i style="width:'+Math.min(100, Math.abs(r.dayPct) / 2 * 100).toFixed(0)+'%"></i></span>' : '')+'</td>'+
       '</tr>';
     });
     body.innerHTML = rows || '<tr><td colspan="3" style="color:var(--dim);padding:14px;">데이터 없음</td></tr>';

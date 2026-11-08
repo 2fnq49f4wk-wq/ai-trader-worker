@@ -223,3 +223,187 @@ html:is(:root,[data-theme]) body #page-nnviz.page .nnv-health-time { margin-left
 /* [V33.620] 01 작동 화면 = 매매법 AI 하나(옛 위원회 'AI 스캔 순회'·요약 띠는 매매법 AI 의 'AI 스캔 · 매매법 판정' 으로 합쳤다 — 사용자 10/15) */
 #page-nnviz[data-brain-view="operations"] .nnviz-content > :not(.nnv-head):not(.mission-nav):not(#pbObs) { display:none!important; }
 #page-nnviz[data-brain-view="models"] .nnviz-content > :not(.nnv-head):not(.mission-nav):not(#brain-studio) { display:none!important; }   /* [V33.621] 주력 여부와 무관 */
+
+/* ===== luxMacroV2: 뉴스·환율 + LUX-POSITION 새 디자인 ===== */
+/* 뉴스·환율 + LUX-POSITION 새 디자인 — 초보 대시보드(easy-dash)와 같은 말씨: 부드러운 카드, 8px 간격, 한국식 색(상승 빨강·하락 파랑).
+   layout: 요약 먼저 → 카드(테두리 없음) → 행 목록. 모든 규칙은 body #page-… 로 감싸 기존 규칙보다 앞선다. */
+body :is(#page-macro,#page-positions,#page-trades){--m2-bg:#0B0D11;--m2-c:#13161B;--m2-c2:#1A1E24;--m2-bd:rgba(255,255,255,.07);--m2-t:#F2F4F7;--m2-m:#A0A8B6;--m2-mm:#7B8494;--m2-up:#F04452;--m2-dn:#3182F6;--m2-acc:#3DD6B5;--m2-upbg:rgba(240,68,82,.14);--m2-dnbg:rgba(49,130,246,.16);--m2-r:16px;--m2-sh:0 1px 0 rgba(255,255,255,.03) inset}
+html[data-theme="light"] body :is(#page-macro,#page-positions,#page-trades){--m2-bg:#F4F5F7;--m2-c:#FFFFFF;--m2-c2:#F2F4F6;--m2-bd:rgba(16,24,40,.08);--m2-t:#191F28;--m2-m:#566070;--m2-mm:#6E7787;--m2-up:#E03140;--m2-dn:#2272EB;--m2-acc:#0B8F77;--m2-upbg:rgba(224,49,64,.10);--m2-dnbg:rgba(34,114,235,.10);--m2-sh:0 1px 2px rgba(16,24,40,.06)}
+body :is(#page-macro,#page-positions){--pos:var(--m2-up);--neg:var(--m2-dn)}
+/* ── 뉴스·환율 ── */
+body #page-macro{background:transparent;color:var(--m2-t);padding:clamp(12px,2vw,24px);max-width:1240px;margin-inline:auto;font-variant-numeric:tabular-nums}
+body #page-macro .market-header{border:0;padding:4px 2px 8px;gap:8px}
+body #page-macro .market-eyebrow{display:none}
+body #page-macro .market-header h1{font:800 26px/1.2 'Pretendard','Space Grotesk',sans-serif;letter-spacing:-.03em;margin:0 0 6px;color:var(--m2-t)}
+body #page-macro .market-header p{color:var(--m2-m);font-size:13px}
+body #page-macro .market-edition{display:none}
+body #page-macro .market-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:4px;margin:8px 0 16px;background:var(--m2-c);border-radius:14px;box-shadow:var(--m2-sh)}
+body #page-macro .market-tabs button{border:0;border-radius:10px;padding:0 4px;min-height:40px;font-size:13px;font-weight:600;color:var(--m2-m);background:transparent;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+body #page-macro .market-tabs button[aria-pressed="true"]{background:var(--m2-t);color:var(--m2-bg)}
+body #page-macro .market-grid,body #page-macro .market-data{gap:16px}
+body #page-macro .market-card{background:var(--m2-c);border:0;border-radius:var(--m2-r);padding:20px;box-shadow:var(--m2-sh);overflow:visible}
+body #page-macro .market-news-head h2{font-size:20px;font-weight:800;margin:0;letter-spacing:-.02em}
+body #page-macro #btnRefreshNews,body #page-macro .llm-btn{border:0;background:var(--m2-c2);color:var(--m2-m);border-radius:999px;min-height:36px;padding:0 14px;font-size:12px;font-weight:600}
+body #page-macro .market-stamp{font-size:12px;color:var(--m2-mm);margin:6px 0 12px}
+body #page-macro .market-sectors{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:6px;margin:0 0 12px;padding-bottom:2px;scrollbar-width:none}
+body #page-macro .market-sectors::-webkit-scrollbar{display:none}
+body #page-macro .market-sectors button{flex:none;border:0;background:var(--m2-c2);color:var(--m2-m);border-radius:999px;min-height:36px;padding:0 14px;font-size:13px;font-weight:600}
+body #page-macro .market-sectors button[aria-pressed="true"]{background:var(--m2-acc);color:#06201a}
+.news-pulse{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin:0 0 14px}
+.news-pulse::-webkit-scrollbar{display:none}
+.news-pulse .np{flex:none;display:inline-flex;align-items:baseline;gap:6px;padding:7px 12px;border-radius:12px;font-size:12px;font-weight:700;background:var(--m2-c2);color:var(--m2-m)}
+.news-pulse .np b{font-weight:600;color:var(--m2-t)}
+.news-pulse .np.pos{background:var(--m2-upbg);color:var(--m2-up)}.news-pulse .np.neg{background:var(--m2-dnbg);color:var(--m2-dn)}
+body #page-macro .news-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,380px),1fr));gap:12px}
+body #page-macro .news-sector{background:var(--m2-c2);border:0;border-radius:14px;min-width:0}
+body #page-macro .news-sector-head{background:transparent;border:0;padding:14px 16px 6px}
+body #page-macro .news-sector-name{display:flex;flex-direction:row-reverse;justify-content:flex-end;align-items:baseline;gap:8px;font-size:11px;letter-spacing:.8px;color:var(--m2-mm)}
+body #page-macro .news-sector-name small{font-size:16px !important;font-weight:800 !important;color:var(--m2-t) !important;letter-spacing:-.02em}
+body #page-macro .news-sector-chip{border:0;border-radius:999px;padding:4px 10px;font-size:12px;font-variant-numeric:tabular-nums}
+body #page-macro .news-sector-chip.pos{background:var(--m2-upbg);color:var(--m2-up)}
+body #page-macro .news-sector-chip.neg{background:var(--m2-dnbg);color:var(--m2-dn)}
+body #page-macro .news-sector-chip.neu{background:var(--m2-bd);color:var(--m2-m)}
+body #page-macro .news-item{padding:12px 16px;border:0;border-top:1px solid var(--m2-bd);border-radius:0;gap:10px;min-width:0}
+body #page-macro .news-item:first-of-type{border-top:0}
+body #page-macro .news-item>div{min-width:0}
+body #page-macro .news-dot{margin-top:7px;width:6px;height:6px;flex:none}
+body #page-macro .news-dot.pos{background:var(--m2-up)}body #page-macro .news-dot.neg{background:var(--m2-dn)}
+body #page-macro .news-title{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;font-size:14px;line-height:1.5;font-weight:600;color:var(--m2-t);text-decoration:none;overflow-wrap:anywhere}
+body #page-macro a.news-title:hover{text-decoration:underline}
+body #page-macro .news-pub{margin-top:4px;font-size:11px;color:var(--m2-mm)}
+.news-src{margin-right:8px;color:var(--m2-m);font-weight:600}
+body #page-macro .news-empty,body #page-macro .empty{color:var(--m2-m);padding:20px 16px;font-size:13px}
+body #page-macro .im-sec-head{display:flex;align-items:center;gap:10px;margin:0 0 12px;padding:0;border:0;flex-wrap:wrap}
+body #page-macro .im-sec-ico{display:none}
+body #page-macro .im-sec-title{font-size:20px;font-weight:800;letter-spacing:-.02em;color:var(--m2-t)}
+body #page-macro .im-sec-sub{font-size:12px;color:var(--m2-mm);flex:1 1 100%}
+body #page-macro .modal-macro{max-width:none !important;padding:0 !important;background:transparent !important;border:0 !important;box-shadow:none !important;min-width:0}
+body #page-macro .macro-table{min-width:0 !important;table-layout:auto}
+body #page-macro .macro-disclaimer{margin-top:14px;font-size:11.5px;color:var(--m2-mm);line-height:1.5}
+body #page-macro #macroStamp,body #page-macro #fxStamp{font-size:12px !important;color:var(--m2-mm) !important}
+body #page-macro .macro-mkt-head{display:flex;align-items:center;gap:8px;margin:18px 0 8px;font-size:14px;font-weight:700;color:var(--m2-t)}
+/* 경제지표: 다음 발표 = 타임라인 */
+body #page-macro .macro-next{display:flex;flex-direction:column;gap:0;margin:0 0 8px;padding-left:16px;border-left:2px solid var(--m2-bd)}
+body #page-macro .macro-next-card{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"l d" "n d" "t d";column-gap:12px;min-width:0;padding:10px 0 14px;border:0;background:transparent;border-radius:0}
+body #page-macro .macro-next-card::before{content:"";position:absolute;left:-23px;top:14px;width:12px;height:12px;border-radius:50%;background:var(--m2-c);border:3px solid var(--m2-acc)}
+body #page-macro .macro-next-card .lbl{grid-area:l;font-size:11px;letter-spacing:0;text-transform:none;color:var(--m2-mm)}
+body #page-macro .macro-next-card .nm{grid-area:n;font-size:15px;font-weight:700;color:var(--m2-t);margin:2px 0;font-family:inherit;overflow-wrap:anywhere}
+body #page-macro .macro-next-card .dt{grid-area:t;font-size:12px;color:var(--m2-m)}
+body #page-macro .macro-next-card .dday{grid-area:d;align-self:center;margin:0;padding:5px 12px;border-radius:999px;border:0;background:var(--m2-c2);color:var(--m2-m);font-size:12px;font-weight:800;animation:none}
+body #page-macro .macro-next-card .dday.soon{background:var(--m2-upbg);color:var(--m2-up)}
+body #page-macro .macro-next-card .dday.today{background:var(--m2-up);color:#fff}
+/* 표 → 행 카드 (id 와 마크업은 그대로, CSS 로만 바꾼다) */
+body #page-macro .macro-table-wrap{border:0;background:transparent;border-radius:0;overflow:visible;box-shadow:none}
+body #page-macro .macro-table,body #page-macro .macro-table tbody{display:block;width:100%}
+body #page-macro .macro-table thead{display:none}
+body #page-macro #macroUsBody,body #page-macro #macroKrBody{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:8px}
+body #page-macro #macroUsBody tr,body #page-macro #macroKrBody tr{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"n v" "d c" "x c";gap:2px 12px;align-items:center;padding:14px 16px;background:var(--m2-c2);border-radius:14px;min-width:0;box-shadow:none}
+body #page-macro .macro-table tbody tr:hover{background:var(--m2-c2);box-shadow:none}
+body #page-macro #macroUsBody tr:nth-child(even),body #page-macro #macroKrBody tr:nth-child(even),body #page-macro #fxBody tr:nth-child(even){background:var(--m2-c2)}
+body #page-macro .macro-table td{display:block;padding:0 !important;border:0 !important;white-space:normal;min-width:0;color:var(--m2-m);font-size:12px}
+body #page-macro #macroUsBody td:nth-child(1),body #page-macro #macroKrBody td:nth-child(1){grid-area:n;font-size:14px;font-weight:700;color:var(--m2-t)}
+body #page-macro #macroUsBody td:nth-child(2),body #page-macro #macroKrBody td:nth-child(2){grid-area:v;text-align:right}
+body #page-macro #macroUsBody td:nth-child(3),body #page-macro #macroKrBody td:nth-child(3){grid-area:d}
+body #page-macro #macroUsBody td:nth-child(3)::before,body #page-macro #macroKrBody td:nth-child(3)::before{content:"발표 "}
+body #page-macro #macroUsBody td:nth-child(4),body #page-macro #macroKrBody td:nth-child(4){grid-area:x}
+body #page-macro #macroUsBody td:nth-child(4)::before,body #page-macro #macroKrBody td:nth-child(4)::before{content:"다음 "}
+body #page-macro #macroUsBody td:nth-child(5),body #page-macro #macroKrBody td:nth-child(5){grid-area:c;text-align:right}
+body #page-macro .macro-table .ind-name small{display:block;color:var(--m2-mm);font-size:11px;font-weight:400;margin-top:2px;white-space:normal}
+body #page-macro .macro-table .val{font:800 17px/1.2 'IBM Plex Mono',ui-monospace,monospace;color:var(--m2-t)}
+body #page-macro .macro-table .val .unit{font-size:11px;color:var(--m2-mm)}
+body #page-macro .macro-table .dd{border:0;padding:4px 10px;border-radius:999px;background:var(--m2-bd);color:var(--m2-m);font-size:11px;animation:none}
+body #page-macro .macro-table .dd.soon{background:var(--m2-upbg);color:var(--m2-up)}
+body #page-macro .macro-table .dd.today{background:var(--m2-up);color:#fff}
+/* 환율: 컴팩트 타일 */
+body #page-macro #fxBody{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,160px),1fr));gap:8px}
+body #page-macro #fxBody tr{display:grid;grid-template-columns:minmax(0,1fr);gap:2px;padding:12px 14px;background:var(--m2-c2);border-radius:14px;min-width:0}
+body #page-macro #fxBody tr:has(td[colspan]){grid-column:1/-1;background:transparent;padding:10px 2px 0}
+body #page-macro #fxBody td[colspan]{font-size:12px !important;font-weight:700;color:var(--m2-mm) !important;padding:0 !important}
+body #page-macro #fxBody td.ind-name{font-size:13px;font-weight:700;color:var(--m2-t)}
+body #page-macro #fxBody td.ind-name small{display:inline;margin-left:6px;font-size:10.5px}
+body #page-macro #fxBody td.r{text-align:left}
+body #page-macro #fxBody .val{font-size:18px}
+body #page-macro #fxBody td.r.pos,body #page-macro #fxBody td.r.neg{font:700 12px/1.2 'IBM Plex Mono',ui-monospace,monospace}
+body #page-macro #fxBody td.r.pos{color:var(--m2-up)}body #page-macro #fxBody td.r.neg{color:var(--m2-dn)}
+.fx-bar{display:block;height:3px;border-radius:2px;background:var(--m2-bd);margin-top:8px;overflow:hidden}
+.fx-bar i{display:block;height:100%;border-radius:2px;background:currentColor}
+@media (max-width:640px){body #page-macro .market-card{padding:16px 14px}body #page-macro .market-header h1{font-size:24px}body #page-macro #fxBody{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* workspace-layout.css 의 !important 규칙(표 평면화)을 같은 힘으로 되돌린다 */
+html:is(:root,[data-theme]) body #page-macro .macro-table :is(th,td){padding:0!important;background:transparent!important;color:var(--m2-m)!important;font-size:12px!important}
+html:is(:root,[data-theme]) body #page-macro .macro-table td.ind-name{color:var(--m2-t)!important;font-size:14px!important}
+html:is(:root,[data-theme]) body #page-macro #fxBody td.ind-name{font-size:13px!important}
+html:is(:root,[data-theme]) body #page-macro .macro-table .val{color:var(--m2-t)!important;font-size:17px!important}
+html:is(:root,[data-theme]) body #page-macro #fxBody .val{font-size:18px!important}
+html:is(:root,[data-theme]) body #page-macro .macro-table .relday{color:var(--m2-mm)!important;font-size:11px!important}
+html:is(:root,[data-theme]) body #page-macro .macro-table td.pos,html:is(:root,[data-theme]) body #page-macro .macro-table td.pos .fx-bar{color:var(--m2-up)!important}
+html:is(:root,[data-theme]) body #page-macro .macro-table td.neg,html:is(:root,[data-theme]) body #page-macro .macro-table td.neg .fx-bar{color:var(--m2-dn)!important}
+html:is(:root,[data-theme]) body #page-macro :is(#macroUsBody,#macroKrBody,#fxBody) tr{background:var(--m2-c2)!important;border-radius:14px!important}
+html:is(:root,[data-theme]) body #page-macro #fxBody tr:has(td[colspan]){background:transparent!important}
+html:is(:root,[data-theme]) body #page-macro #fxBody td[colspan]{color:var(--m2-mm)!important;font-weight:700}
+html:is(:root,[data-theme]) body #page-macro .macro-table-wrap{overflow:visible!important}
+html:is(:root,[data-theme]) body #page-macro .news-sector-head{background:transparent!important}
+html:is(:root,[data-theme]) body #page-macro .macro-next-card{border:0!important;background:transparent!important;box-shadow:none!important;border-radius:0!important}
+html:is(:root,[data-theme]) body #page-macro .macro-mkt-head{border:0!important;padding:0!important}
+html:is(:root,[data-theme]) body #page-macro #macroUsBody tr td:nth-child(n+3){color:var(--m2-mm)!important;font-size:11px!important}
+/* ── LUX-POSITION ── */
+body :is(#page-positions,#page-trades) .page-header{border:0;padding:8px 12px 4px;margin:0 0 8px;gap:12px;flex-wrap:wrap;align-items:center}
+body :is(#page-positions,#page-trades) .page-title{font-size:20px;font-weight:800;letter-spacing:-.02em;color:var(--m2-t)}
+body :is(#page-positions,#page-trades) .lxp-sub{font-size:12px;color:var(--m2-mm);opacity:1;font-weight:500}
+body :is(#page-positions,#page-trades) .lxp-sw,body #page-positions .pz-tabs{background:var(--m2-c);border:0;border-radius:12px;padding:4px;gap:4px;box-shadow:var(--m2-sh)}
+body :is(#page-positions,#page-trades) .lxp-sw button,body #page-positions .pz-tabs button{border-radius:9px;color:var(--m2-m);font-weight:600;background:transparent}
+body :is(#page-positions,#page-trades) .lxp-sw button.on,body #page-positions .pz-tabs button[aria-selected="true"]{background:var(--m2-t);color:var(--m2-bg);box-shadow:none}
+body #page-positions .pz-tabs{margin-left:0;flex:1 1 100%}
+body #page-positions .pz-tabs button{flex:1;min-width:0}
+body #page-positions .pz-grid{display:grid;grid-template-columns:minmax(0,1fr) !important;gap:16px;align-items:start;padding:0 2px;max-width:1000px}
+body #page-positions[data-pz="us"] .pz-grid,body #page-positions[data-pz="kr"] .pz-grid{grid-template-columns:minmax(0,1fr) !important}
+body #page-positions .port-card{background:var(--m2-c);border:0;border-radius:20px;box-shadow:var(--m2-sh);min-width:0}
+body #page-positions .port-card:hover{border:0}
+body #page-positions .port-card-head{border:0;padding:18px 20px 0;gap:10px}
+body #page-positions .port-card-flag{font-size:20px}
+body #page-positions .port-card-title{font-size:14px;font-weight:700;letter-spacing:0;color:var(--m2-m)}
+body #page-positions .port-card-cur{border:0;background:var(--m2-c2);color:var(--m2-mm);padding:3px 8px;border-radius:999px;font-size:10px}
+body #page-positions .port-card-body{padding:8px 20px 16px}
+body #page-positions .port-card .port-total{font:800 32px/1.15 'IBM Plex Mono',ui-monospace,monospace;color:var(--m2-t);text-shadow:none;letter-spacing:-.02em;overflow-wrap:anywhere}
+body #page-positions .port-card .port-pnl{display:inline-block;margin-top:8px;padding:4px 10px;border-radius:999px;font-size:13px;background:var(--m2-c2);font-variant-numeric:tabular-nums}
+body #page-positions .port-card .port-pnl.pos{background:var(--m2-upbg);color:var(--m2-up)}
+body #page-positions .port-card .port-pnl.neg{background:var(--m2-dnbg);color:var(--m2-dn)}
+body #page-positions .port-pnl-caption{display:inline;margin-left:8px;font-size:11px;color:var(--m2-mm)}
+body #page-positions .port-alloc-bar{height:10px;border-radius:5px;background:var(--m2-c2);margin:16px 0 12px;box-shadow:inset 0 0 0 1px var(--m2-bd)}
+body #page-positions .port-alloc-bar .inv{background:var(--m2-acc);border-radius:5px}
+body #page-positions .port-card .port-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:0}
+body #page-positions .port-card .port-meta-item{padding:10px 12px;background:var(--m2-c2);border-radius:12px;min-width:0}
+body #page-positions .port-card .port-meta-label{font-size:11px;letter-spacing:0;text-transform:none;font-weight:600;color:var(--m2-mm);display:flex;align-items:center;gap:6px}
+body #page-positions .port-card .port-meta-value{font-size:15px;font-weight:700;color:var(--m2-t);overflow-wrap:anywhere}
+body #page-positions .port-dot.inv{background:var(--m2-acc)}body #page-positions .port-dot.cash{background:var(--m2-c2);box-shadow:inset 0 0 0 1.5px var(--m2-mm)}
+body #page-positions .port-strats{border:0 !important;margin-top:12px !important;padding:0 !important}
+body #page-positions .port-strats>div{font-size:12px !important;gap:10px !important;padding:8px 0;margin:0 !important;border-top:1px solid var(--m2-bd)}
+body #page-positions .port-strats>div:first-child{border-top:0}
+body #page-positions .port-strats>div[style*="opacity:.45"]{display:none !important}
+body #page-positions .pz-more{margin-top:12px;border-radius:12px;background:var(--m2-c2)}
+body #page-positions .pz-more>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;min-height:44px;padding:0 14px;font-size:13px;font-weight:600;color:var(--m2-m)}
+body #page-positions .pz-more>summary::-webkit-details-marker{display:none}
+body #page-positions .pz-more>summary::after{content:"▾";color:var(--m2-mm)}
+body #page-positions .pz-more[open]>summary::after{content:"▴"}
+body #page-positions .pz-more>div{padding:0 14px 12px;font-size:12px;overflow-wrap:anywhere}
+body #page-positions .pz-more .port-budget span{border-radius:999px !important;padding:2px 9px !important}
+body #page-positions .pz-hold{padding:0 20px 20px}
+body #page-positions .pz-btn{border:0;background:var(--m2-c2);border-radius:14px;min-height:50px;color:var(--m2-t)}
+body #page-positions .pz-btn .pz-n{color:var(--m2-acc);font-weight:700}
+body #page-positions .pz-list{border:0;border-radius:0;margin-top:6px}
+body #page-positions .pz-row{border-bottom:1px solid var(--m2-bd);padding:12px 4px;font-size:13px}
+body #page-positions .pz-hd{background:transparent;color:var(--m2-mm);font-size:11px;min-height:28px}
+body #page-positions .pz-sym b{font-weight:700;color:var(--m2-t)}
+body #page-positions .pz-nm{color:var(--m2-mm)}
+body #page-positions .pz-bar{background:var(--m2-bd)}
+body #page-positions .pz-bar i.pos{background:var(--m2-up)}body #page-positions .pz-bar i.neg{background:var(--m2-dn)}
+body #page-positions .pos-close-btn{border:0;background:var(--m2-c2);color:var(--m2-m);border-radius:10px;font-weight:600}
+body #page-positions .pos-close-btn:hover{background:var(--m2-dnbg);color:var(--m2-dn)}
+body #page-positions .pos-pnl-summary{background:var(--m2-c);border:0;border-radius:16px;margin:16px 2px 0;box-shadow:var(--m2-sh)}
+@media (max-width:640px){
+  body #page-positions .pz-hold{padding:0 12px 14px}
+  body #page-positions .pz-list{gap:8px}
+  body #page-positions .pz-row{border:0;background:var(--m2-c2);border-radius:14px;padding:12px 14px}
+  body #page-positions .port-card-body{padding:8px 16px 14px}
+  body #page-positions .port-card .port-total{font-size:28px}
+  body #page-positions .port-pnl-caption{display:block;margin:6px 0 0}
+}
