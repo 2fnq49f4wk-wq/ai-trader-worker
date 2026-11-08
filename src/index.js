@@ -34031,6 +34031,7 @@ async function handleRequest(request, env, ctx, _inner) {
             byMkt: sc.byMkt || null, scannedByMkt: sc.scannedByMkt || null,
             events: sc.events || null, marketConfirm: sc.marketConfirm != null ? sc.marketConfirm : null,
             tiltedN: sc.tiltedN != null ? sc.tiltedN : null, shock: sc.shock || null };
+          out.ts = Math.max(out.ts || 0, sc.ts || 0) || out.ts;   // 시장별 픽은 장중 사이클만 갱신 — 야간 스캔 시각도 '갱신 시각'에 반영(17일 전으로 보이던 것)
           for (const p of sc.picks) out.picks.push(p);
         }
       } catch (e) {}
