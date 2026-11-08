@@ -12,6 +12,10 @@
 
 ## Current handoff
 
+- V33.790 (11/8) 뉴스·환율 전면 재디자인 + LUX-POSITION 정리(에이전트 · artifact-design 원칙). CSS = workspace-layout.css 끝 luxMacroV2 블록(인라인은 check-load-speed HTML 220KB 한도 초과라 외부로).
+  뉴스·환율: 4칸 분할 탭 · 섹터 분위기 칩 줄 · 기사 3줄+출처 도메인+N시간 전(renderNews _newsHost/_newsAgo) · 환율 타일 격자(폰 2열)+등락 막대 · 경제지표 다음 발표 세로 타임라인·D-day 칩 · 지표 표 → 행 카드.
+  LUX-POSITION: 한글 제목 · 총자산 32px · 수익률 알약 · 투자/현금 막대+칩 · 보유 0 인 SCALP/SNAP 행 숨김 · HEAT·예산·설정은 details.pz-more '세부 설정 · 리스크 한도'(기본 닫힘) · 분할 탭.
+  색: 두 화면의 한국식 색(--m2-up/dn)은 초보자 모드(html.lux-easy)에서만 — 전문가 화면은 사이트 전체와 같은 초록 상승/빨강 하락(종목 상세와 같은 규칙).
 - V33.789 (11/8) 사용자: "데이터 신선도 전수 점검 · AI 분석 발전 · 종목상세 간결하게(지금 느낌 유지) · MY 디자인 개선".
   ① 신선도 점검(에이전트 · 일 19:27 UTC): 공개 피드 _pubAt 전부 0~6분 · fx·원자재·미국 시세는 주말 정지(합법) · KR/US/지수 원천 대조 일치. 고침 1건: /api/ai-picks ts 가 장중 시장별 픽 최댓값(17일 전)이라 야간 스캔 ts 를 max 로 합침.
      월요일 개장 뒤 fx·원자재 재갱신 확인 필요.

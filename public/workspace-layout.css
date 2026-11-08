@@ -229,7 +229,7 @@ html:is(:root,[data-theme]) body #page-nnviz.page .nnv-health-time { margin-left
    layout: 요약 먼저 → 카드(테두리 없음) → 행 목록. 모든 규칙은 body #page-… 로 감싸 기존 규칙보다 앞선다. */
 body :is(#page-macro,#page-positions,#page-trades){--m2-bg:#0B0D11;--m2-c:#13161B;--m2-c2:#1A1E24;--m2-bd:rgba(255,255,255,.07);--m2-t:#F2F4F7;--m2-m:#A0A8B6;--m2-mm:#7B8494;--m2-up:#F04452;--m2-dn:#3182F6;--m2-acc:#3DD6B5;--m2-upbg:rgba(240,68,82,.14);--m2-dnbg:rgba(49,130,246,.16);--m2-r:16px;--m2-sh:0 1px 0 rgba(255,255,255,.03) inset}
 html[data-theme="light"] body :is(#page-macro,#page-positions,#page-trades){--m2-bg:#F4F5F7;--m2-c:#FFFFFF;--m2-c2:#F2F4F6;--m2-bd:rgba(16,24,40,.08);--m2-t:#191F28;--m2-m:#566070;--m2-mm:#6E7787;--m2-up:#E03140;--m2-dn:#2272EB;--m2-acc:#0B8F77;--m2-upbg:rgba(224,49,64,.10);--m2-dnbg:rgba(34,114,235,.10);--m2-sh:0 1px 2px rgba(16,24,40,.06)}
-body :is(#page-macro,#page-positions){--pos:var(--m2-up);--neg:var(--m2-dn)}
+html.lux-easy body :is(#page-macro,#page-positions){--pos:var(--m2-up);--neg:var(--m2-dn)}
 /* ── 뉴스·환율 ── */
 body #page-macro{background:transparent;color:var(--m2-t);padding:clamp(12px,2vw,24px);max-width:1240px;margin-inline:auto;font-variant-numeric:tabular-nums}
 body #page-macro .market-header{border:0;padding:4px 2px 8px;gap:8px}
