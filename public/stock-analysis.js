@@ -267,6 +267,7 @@
     var px = t.px, up = (an.tgtMean / px - 1) * 100, lines = [], tg = an.tgtMean;
     var l1 = "평균 목표가 " + money(tg, kr) + "(현재가 대비 " + pct(up) + ")" + (an.tgtLow > 0 && an.tgtHigh > 0 ? " · 범위 " + rng(an.tgtLow, an.tgtHigh, kr) : "") + (an.n ? " · 애널리스트 " + an.n + "명" : "") + ".";
     lines.push(l1);
+    if (Math.abs(up) > 60) lines.push("현재가와 목표가 차이가 " + pct(up) + "로 매우 크다 — 최근 급등락 전에 낸 목표가가 섞였을 수 있어 그대로 믿기보다 방향만 참고하는 편이 낫다.");   // [V33.789]
     var d = an.dist, tot = d ? (d.strongBuy || 0) + (d.buy || 0) + (d.hold || 0) + (d.sell || 0) + (d.strongSell || 0) : 0;
     if (tot >= 5) { var b = (d.strongBuy || 0) + (d.buy || 0), sl = (d.sell || 0) + (d.strongSell || 0); lines.push("투자의견 매수 " + b + " · 중립 " + (d.hold || 0) + " · 매도 " + sl + "명(매수 비율 " + Math.round(b / tot * 100) + "%)" + (an.ratingMean ? " · 평균 점수 " + an.ratingMean.toFixed(1) + "(1=강력매수 · 5=강력매도)" : "") + "."); }
     var acts = (an.actions || []).filter(function (x) { return x.t > Date.now() - 30 * 86400000; });
@@ -366,6 +367,10 @@
       ".lxa-q i.a{background:#3DD6B5}.lxa-q i.a.miss{background:#F5A524}.lxa-q i.e{background:rgba(127,137,155,.45)}.lxa-q i.e.f{background:repeating-linear-gradient(45deg,rgba(127,137,155,.55) 0 3px,transparent 3px 6px);border:1px solid rgba(127,137,155,.6)}" +
       ".lxa-qb{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:6px;align-items:end}.lxa-qb>div{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0}.lxa-qb .bw{display:flex;align-items:flex-end;gap:2px;height:86px}" +
       ".lxa-qb .bw i{width:12px;border-radius:3px 3px 0 0}.lxa-qb .v{font-size:11px;font-variant-numeric:tabular-nums;opacity:.85;white-space:nowrap}.lxa-qb .p{font-size:10.5px;opacity:.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}" +
+      ".lxa details.lxa-f>summary{list-style:none;cursor:pointer;display:flex;flex-direction:column;gap:4px;position:relative;padding-right:22px}.lxa details.lxa-f>summary::-webkit-details-marker{display:none}" +
+      ".lxa details.lxa-f>summary h5{margin:0}.lxa details.lxa-f>summary .pv{font-size:12.5px;opacity:.62;line-height:1.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.lxa details.lxa-f[open]>summary .pv{display:none}" +
+      ".lxa details.lxa-f>summary::after{content:'';position:absolute;right:4px;top:5px;width:7px;height:7px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;opacity:.45;transform:rotate(45deg);transition:transform .15s}.lxa details.lxa-f[open]>summary::after{transform:rotate(-135deg);top:9px}" +
+      ".lxa details.lxa-f .fb{margin-top:10px}" +
       ".lxa .ft{font-size:11.5px;opacity:.58;line-height:1.5}.lxa .bx{min-width:0}.lxa p,.lxa li{overflow-wrap:anywhere;word-break:keep-all}" +
       ".lxa .sm{margin:0 0 8px;font-size:13px;font-weight:700;line-height:1.5;padding:7px 10px;border-radius:10px;background:rgba(124,196,255,.12)}html[data-theme=light] .lxa .sm{background:rgba(29,111,214,.09)}" +
       ".lxa-sc{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:8px}.lxa-sc>div{min-width:0;border-radius:12px;padding:10px 12px;font-size:13.5px;line-height:1.55;display:flex;flex-direction:column;gap:3px}.lxa-sc b{font-size:12.5px}" +
@@ -390,6 +395,8 @@
     var lv = levelText(t, kr), cps = checkpoints(t, ev, kr, rs);
     var dist = c.an && c.an.dist, dt = dist ? (dist.strongBuy || 0) + (dist.buy || 0) + (dist.hold || 0) + (dist.sell || 0) + (dist.strongSell || 0) : 0;
     var bar = dt >= 5 ? '<div class="lxa-db" role="img" aria-label="투자의견 분포"><i class="b" style="flex:' + ((dist.strongBuy || 0) + (dist.buy || 0)) + '"></i><i class="h" style="flex:' + (dist.hold || 0) + '"></i><i class="s" style="flex:' + ((dist.sell || 0) + (dist.strongSell || 0)) + '"></i></div>' : "";
+    /* [V33.789] ★간결하게★(사용자 11/8 "종목상세 간결하게 · 지금 느낌은 유지") — 요약·시나리오·차트는 그대로 펼치고, 근거 묶음은 한 줄 미리보기 + 펼치기 */
+    var fold = function (title, teaser, inner, open) { return '<details class="bx lxa-f"' + (open ? " open" : "") + '><summary><h5>' + esc(title) + '</h5><span class="pv">' + esc(String(teaser || "").slice(0, 90)) + '</span></summary><div class="fb">' + inner + "</div></details>"; };
     var ul = function (a) { return "<ul>" + a.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") + "</ul>"; };
     return '<div class="lxa">' +
       '<div class="bx"><div class="tag">' + tg + '</div><p class="sm">' + esc(summaryText(t, f, ev, kr)) + '</p><p class="ph"><em>' + esc(phaseText(t)) + "</em></p>" +
@@ -397,13 +404,13 @@
         '<p class="t">' + esc(linkText(t, f)) + "</p></div>" +
       '<div class="bx"><h5>시나리오</h5><div class="lxa-sc"><div class="u"><b>상승 시나리오</b><span>' + esc(sc.up.text) + '</span></div><div class="d"><b>하락 시나리오</b><span>' + esc(sc.dn.text) + "</span></div></div>" + (sc.rr ? '<p class="t rr">' + esc(sc.rr.text) + "</p>" : "") + "</div>" +
       '<div class="bx">' + chartSvg(bars, t, kr, c.an && c.an.ok ? c.an.tgtMean : null) + "</div>" +
-      (cps.length ? '<div class="bx"><h5>체크포인트</h5>' + ul(cps) + "</div>" : "") +
-      (an || rs ? '<div class="bx"><h5>애널리스트 · 시장 대비</h5>' + bar + ul((an ? an.lines : []).concat(an ? [an.link] : [], rs ? [rs.text] : [])) + "</div>" : "") +
-      '<div class="bx"><h5>차트 근거</h5><ul><li>' + esc(shortText(t)) + "</li><li>" + esc(t.longN + "일선 " + money(t.mL, kr) + " (20일 기울기 " + pct(t.slope, 2) + ") · 50일선 " + money(t.m50, kr) + " · 하루 평균 변동폭(ATR) " + money(t.atr, kr)) + "</li><li>" + esc(volText(t)) + "</li>" +
+      (cps.length ? fold("체크포인트", cps[0], ul(cps), true) : "") +
+      (an || rs ? fold("애널리스트 · 시장 대비", an ? an.lines[0] : rs.text, bar + ul((an ? an.lines : []).concat(an ? [an.link] : [], rs ? [rs.text] : []))) : "") +
+      fold("차트 근거", shortText(t), '<ul><li>' + esc(shortText(t)) + "</li><li>" + esc(t.longN + "일선 " + money(t.mL, kr) + " (20일 기울기 " + pct(t.slope, 2) + ") · 50일선 " + money(t.m50, kr) + " · 하루 평균 변동폭(ATR) " + money(t.atr, kr)) + "</li><li>" + esc(volText(t)) + "</li>" +
         (t.res ? "<li>" + esc("위 관문: " + rng(t.res.a, t.res.z, kr) + (t.res.k === "vp" ? " — 최근 120일 동안 거래가 가장 많이 쌓인 가격대(사 둔 사람이 많아 본전 매물이 나오는 자리)" : t.res.k === "ma" ? " — 위쪽에 두꺼운 매물대·스윙 고점이 가까이 없어 " + t.res.nm + "을 첫 회복 관문으로 본다" : " — 최근 120일의 직전 스윙 고점")) + "</li>" : "") +
-        (t.sup ? "<li>" + esc("아래 지지: " + rng(t.sup.a, t.sup.z, kr) + (t.sup.k === "vp" ? " — 거래가 많이 쌓인 아래쪽 가격대" : " — 직전 스윙 저점")) + "</li>" : "") + "</ul></div>" +
-      (f.lines.length || (c.qe && c.qe.ok) ? '<div class="bx"><h5>실적 · 재무 · 업종 비교</h5>' + qBars(sym, c.qe) + ul(f.lines) + "</div>" : (c.qe == null ? '<div class="bx"><div class="emp">실적 자료를 받는 중…</div></div>' : "")) +
-      (f.val.length ? '<div class="bx"><h5>밸류에이션 · 수익성</h5>' + ul(f.val) + "</div>" : "") +
+        (t.sup ? "<li>" + esc("아래 지지: " + rng(t.sup.a, t.sup.z, kr) + (t.sup.k === "vp" ? " — 거래가 많이 쌓인 아래쪽 가격대" : " — 직전 스윙 저점")) + "</li>" : "") + "</ul>") +
+      (f.lines.length || (c.qe && c.qe.ok) ? fold("실적 · 재무 · 업종 비교", f.lines[0] || "", qBars(sym, c.qe) + ul(f.lines), true) : (c.qe == null ? '<div class="bx"><div class="emp">실적 자료를 받는 중…</div></div>' : "")) +
+      (f.val.length ? fold("밸류에이션 · 수익성", f.val[0], ul(f.val)) : "") +
       '<p class="ft">규칙으로 쓴 해설이며 예측이 아닙니다 · 가격대는 최근 1년 일봉에서 계산 · 실적·컨센서스: ' + esc((c.qe && c.qe.src) || "—") + " · 목표가: " + esc((c.an && c.an.src) || "—") + " · 업종 비교: 같은 업종 재무 중앙값(표본 5 이상) · 투자 권유 아님</p></div>";
   }
   window.luxAnalysis = { view: view, _tech: techRead, _fund: fundRead };
