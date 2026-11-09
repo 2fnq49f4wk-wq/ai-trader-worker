@@ -8,7 +8,7 @@ on:
         required: false
         default: ''
       kind:
-        description: 'IMAGE / VIDEO / TEXT'
+        description: 'IMAGE / VIDEO / TEXT / CAROUSEL(이미지 여러 장 · 주소를 쉼표로)'
         required: false
         default: 'TEXT'
       media_url:

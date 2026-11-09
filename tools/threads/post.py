@@ -1,5 +1,5 @@
 """Threads 게시(GitHub Actions 전용) — 토큰은 secrets.THREADS_ACCESS_TOKEN(Bearer 헤더 · 로그에 안 찍힘).
-사용: python3 tools/threads/post.py <TEXT_FILE> <IMAGE|VIDEO|TEXT> <MEDIA_URL|-> <TOPIC_TAG|->   · check 만: python3 tools/threads/post.py --check"""
+사용: python3 tools/threads/post.py <TEXT_FILE> <IMAGE|VIDEO|TEXT|CAROUSEL> <MEDIA_URL|-> <TOPIC_TAG|->   · check 만: python3 tools/threads/post.py --check"""
 import json, os, sys, time, urllib.parse, urllib.request, urllib.error
 
 API = "https://graph.threads.net/v1.0/"
@@ -34,14 +34,26 @@ if kind == "IMAGE":
     p["image_url"] = media
 elif kind == "VIDEO":
     p["video_url"] = media
+def wait(cid):
+    st = {}
+    for _ in range(60):
+        st = call("GET", cid, {"fields": "status,error_message"})
+        if st.get("status") in ("FINISHED", "ERROR", "EXPIRED"):
+            break
+        time.sleep(5)
+    if st.get("status") != "FINISHED":
+        print("미디어 처리 실패", st); sys.exit(1)
+
+
+if kind == "CAROUSEL":   # 이미지 여러 장: media 에 쉼표로 구분한 주소 2~20개
+    kids = []
+    for u in [x.strip() for x in media.split(",") if x.strip()]:
+        k = call("POST", USER + "/threads", {"media_type": "IMAGE", "image_url": u, "is_carousel_item": "true"})["id"]
+        wait(k); kids.append(k)
+    p.pop("image_url", None)
+    p["children"] = ",".join(kids)
 cid = call("POST", USER + "/threads", p)["id"]
-for _ in range(60):
-    st = call("GET", cid, {"fields": "status,error_message"})
-    if st.get("status") in ("FINISHED", "ERROR", "EXPIRED"):
-        break
-    time.sleep(5)
-if st.get("status") != "FINISHED":
-    print("미디어 처리 실패", st); sys.exit(1)
+wait(cid)
 mid = call("POST", USER + "/threads_publish", {"creation_id": cid})["id"]
 info = call("GET", mid, {"fields": "permalink"})
 print("게시 완료:", info.get("permalink"))
