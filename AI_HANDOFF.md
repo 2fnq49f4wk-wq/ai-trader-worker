@@ -32,7 +32,7 @@
 - 회원가입: 비밀번호 확인칸 없음 · 필수 동의 체크 1개(gAgree 하나에 약관·개인정보·만14세) · 가입 후 홈.
 - 유입: 링크 ?r=xxx → POST /api/ref (기기·꼬리표당 하루 1번, 가입 때 ev=s) → state ref_stats:YYYY-MM-DD 1행 합산 · GET /api/ref-stats(14일 · 30분 SWR).
 - public/dev.html(/dev) = 개발 설정 공개 페이지 · 아래 버튼 /?r=dev.
-- AI 체험 매수(probation)·인버스 에이전트 작업은 사용량 한도로 중단 — 워크트리 agent-acf13d4eb0237d18c 에 미완 상태(이어서 할 것).
+- AI 체험 매수(probation)·인버스 작업은 V33.797 로 완료·배포됨.
 
 
 - V33.794 (11/9) ★독립 검토 남은 항목(에이전트)★
