@@ -430,3 +430,9 @@ body #page-positions .pos-pnl-summary{background:var(--m2-c);border:0;border-rad
   html.lux-mfull #page-detail .detail-mfull{opacity:.75}
 }
 @media (min-width:761px){#page-detail .detail-mfull{display:none}}
+/* [V33.793] 탭 바 위 1~2px 틈(소수점 픽셀)까지 탭 바 배경으로 덮는다 · 버튼줄이 그 덮개 위에 오게 */
+@media (max-width:760px){
+  #page-detail #luxInfo .lxs{box-shadow:0 -12px 0 0 var(--bg,#0D1014)}
+  html[data-theme=light] #page-detail #luxInfo .lxs{box-shadow:0 -12px 0 0 #F7F9FB}
+  #page-detail .page-header{z-index:8}
+}
