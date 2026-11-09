@@ -3064,8 +3064,8 @@ async function applySignalTypeWeights(DB, cfg) {
    단타 한 −0.24%/34% · 급등 레버리지 한 −1.85%/17%. 미국·한국 주식만 해당(원자재·채권 슬리브는 그대로). 청산·손절·트레일은 전부 그대로. */
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
-const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.796";
+const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
+const _BUILD_VER = "V33.797";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -16139,8 +16139,8 @@ async function riskPreTradeCheck(DB, o) {
     if (!RISKENG.enabled) return { ok: true, qty: qty };
     // ① 거래상태
     const st = await riskTradingState(DB, market);
-    if (st === TRADESTATE.HALTED) return deny("TRADING_HALTED");
-    if (st === TRADESTATE.REDUCING) return deny("TRADING_REDUCING_ONLY");
+    if (st === TRADESTATE.HALTED && !o.invLane) return deny("TRADING_HALTED");
+    if (st === TRADESTATE.REDUCING && !o.invLane) return deny("TRADING_REDUCING_ONLY");
     // ①-b [V33.94] 종목 단위 보호(freqtrade protections) — 계좌 게이트가 못 잡는 '한 종목 반복 손실'.
     if (!o.skipProtect) {
       const lock = await protectSymbolLocked(DB, market, symbol);
@@ -21178,10 +21178,31 @@ async function extBuyGuard(DB, market, qty, price, signal, cfg, opts, now) {
    → 옛 형식은 규칙엔진(RULE) 으로 센다 · 창을 180일로 — 최근 maxN(40)건만 판단에 쓰므로 '오래된 성적' 이 아니라
      '마지막 40건' 이다. 막힌 전략은 종전대로 7일 뒤 반 크기 시험(8건)으로만 다시 연다. 문턱(blockPf·minN)은 그대로. */
 const PERF_GATE = { windowDays: 180, maxN: 40, minN: 15, blockPf: 0.8, coolDays: 7, probationMult: 0.5, probationMinN: 8 };
+/* ══ [V33.797] ★맞으면서 배운다 — 시험 차선(probation lane) · 차선별 성적 · 자동 크기 축소★ (사용자 11/9 명시 지시 · 모의 자금) ══
+   실적 관문(합산 PF 0.505 · OMNI-Q 23건)이 몇 주째 AI 신규 매수를 0 으로 막아 ★성과 자료가 더 쌓이지 않았다★.
+   관문 판정 자체(막힘·시험·합산 · 문턱)는 그대로 두고, 막힌 매수를 ★작은 크기로★ 따로 들인다:
+     크기   정상 수량 × 0.3 × 차선 성적 배수 × (차선·신호) 성적 배수
+     상한   한 포지션 ≤ 총자산 5% · 시험 차선 전체 ≤ 총자산 20% · 시장별 하루 4건
+     표지   원장 reason 꼬리 ' · 시험차선' · 포지션 meta.probe=1 → 성적을 따로 센다(perfGateLoad lanes)
+     그대로 일일 손실 한도 · 크래시게이트 blockNew(개별주 롱) · 거래상태 HALTED/REDUCING · 리스크엔진 · 그림자 원장
+   차선 성적(lanes): 시장 × 차선(core 정상 · probe 시험 · inv 인버스) 그리고 차선 × 진입 꼬리표. 표본 15건 이상 · PF < 0.8 → ×0.5 ·
+   PF < 0.5 → ×0.35 (막지 않고 줄인다 — 약한 곳을 크기로 고친다). 원장 읽기는 관문이 이미 하던 같은 질의(추가 쿼리 0). */
+const PROBE_LANE = { enabled: true, mult: 0.3, maxPosFrac: 0.05, maxTotalFrac: 0.20, maxPerDay: 4, routes: ["AI-Q", "SROUTE", "INV"] };
+const LANE_ADAPT = { minN: 15, badPf: 0.8, shrink: 0.5, worstPf: 0.5, worstShrink: 0.35 };
+function _laneOf(reason) {
+  const s = String(reason || "");
+  if (/^\[INV\]/.test(s)) return "inv";
+  return s.indexOf("시험차선") >= 0 ? "probe" : "core";
+}
+function laneAdaptMult(st) {
+  if (!st || !(st.n >= LANE_ADAPT.minN) || st.pf == null) return 1;
+  return st.pf < LANE_ADAPT.worstPf ? LANE_ADAPT.worstShrink : (st.pf < LANE_ADAPT.badPf ? LANE_ADAPT.shrink : 1);
+}
 /* [V33.578] 진입 주체 꼬리표 — 원장 사유 · 실적 관문이 ★같은 함수★ 로 정한다(따로 적으면 갈라진다).
    실적 관문 구역 안에 둔다 — 관문 검사(tools/check-perf-gate)가 이 구역만 떼어 돌리므로, 밖에 두면 참조 오류가 catch 에 삼켜져 '막지 않음' 으로 샌다. */
 function _entryTag(signal) {
   // [V33.582] 패닉 단타는 PANIC 으로 따로 센다 — 평시 규칙 단타(kr:RULE:SCALP 막힘)의 성적으로 폭락날 인버스 단타를 막지 않는다(자기 성적으로 판정)
+  if (signal && signal.isInvLane) return "INV";   // [V33.797] 국면 인버스 차선 — 자기 성적으로 센다
   return (signal && signal.isPanicScalp) ? "PANIC" : (signal && signal.isSurgeScalp) ? "SURGE" : (signal && signal.isAiScalp) ? "AI-SCALP" : (signal && signal.isOmniQ) ? "AI-Q" : (signal && signal.isPair) ? "PAIR" : (signal && signal.isStratRoute) ? "SROUTE" : (signal && signal.isAiPrimary) ? "AI" : "RULE";
 }
 function _pgTag(reason) {
@@ -21237,10 +21258,10 @@ async function perfGateLoad(DB, force) {
   // 매도의 진입 주체는 같은 시장·종목의 먼저 들어온 매수(FIFO)에서 온다 — 창보다 30일 앞 매수까지 읽는다
   const rows = ((await DB.prepare("SELECT ts, market, symbol, side, qty, pnl_pct, reason FROM trades WHERE ts > ? ORDER BY ts")
     .bind(now - (PERF_GATE.windowDays + 30) * D).all()) || {}).results || [];
-  const book = new Map(), closed = {};
+  const book = new Map(), closed = {}, laneClosed = {};
   for (const t of rows) {
     const k = t.market + "|" + t.symbol;
-    if (!/sell/i.test(t.side)) { const tg = _pgTag(t.reason); (book.get(k) || book.set(k, []).get(k)).push({ qty: +t.qty, tag: tg }); continue; }
+    if (!/sell/i.test(t.side)) { const tg = _pgTag(t.reason); (book.get(k) || book.set(k, []).get(k)).push({ qty: +t.qty, tag: tg, lane: _laneOf(t.reason) }); continue; }
     const q = book.get(k) || []; let need = +t.qty, first = null;
     while (need > 1e-9 && q.length) { const b = q[0]; if (!first) first = b; const u = Math.min(need, b.qty); b.qty -= u; need -= u; if (b.qty <= 1e-9) q.shift(); }
     if (!first || !first.tag || t.pnl_pct == null) continue;
@@ -21252,6 +21273,8 @@ async function perfGateLoad(DB, force) {
     if (first.qty > 1e-9 || !(t.ts > now - PERF_GATE.windowDays * D) || !(first.pq > 0)) continue;   // 아직 남은 수량 → 다 팔릴 때 한 번
     const key = t.market + ":" + first.tag;
     (closed[key] || (closed[key] = [])).push({ ts: t.ts, pct: first.ps / first.pq });
+    // [V33.797] 차선별 성적 — 시장:차선 · 시장:차선:꼬리표(같은 표본 · 추가 쿼리 0)
+    for (const lk of [t.market + ":" + (first.lane || "core"), t.market + ":" + (first.lane || "core") + ":" + first.tag]) (laneClosed[lk] || (laneClosed[lk] = [])).push(first.ps / first.pq);
   }
   let changed = false;
   const keys = new Set(Object.keys(closed).concat(Object.keys(st.keys)));
@@ -21275,7 +21298,9 @@ async function perfGateLoad(DB, force) {
     out[key] = { mode: mode, since: k0.since || null, n: s2.n, mean: s2.mean, pf: s2.pf, win: s2.win, gp: s2.gp, gl: s2.gl };
   }
   if (changed && _rwPg) { st.at = now; try { await setState(DB, "perf_gate", st); } catch (e) {} }
-  g.__perfGate = { at: now, keys: out };
+  const lanes = {};
+  for (const lk in laneClosed) lanes[lk] = _pgStats(laneClosed[lk].slice(-PERF_GATE.maxN));
+  g.__perfGate = { at: now, keys: out, lanes: lanes };
   return g.__perfGate;
 }
 // 이 진입을 해도 되나 — { ok, mult, why }
@@ -21295,6 +21320,41 @@ async function perfGateCheck(DB, market, signal, strategy) {
     if (e.mode === "blocked") return { ok: false, mult: 0, key: market + ":" + tag, why: "최근 " + e.n + "건 평균 " + e.mean + "% · PF " + e.pf };
     return { ok: true, mult: PERF_GATE.probationMult, key: market + ":" + tag, why: "시험 중(반 크기)" };
   } catch (e) { return { ok: true, mult: 1 }; }   // 원장을 못 읽으면 막지 않는다(판정 불가 ≠ 손실)
+}
+
+/* [V33.797] 시험 차선 — 실적 관문이 막은 매수를 작은 크기로 들일지. { ok, mult, maxQty, why }
+   막힌 매수에서만 부른다(정상 매수는 이 함수를 안 지난다) · 읽기: 포지션 1 · 원장 현금 1 · (하루 첫 시도에만) 오늘 건수 1. */
+async function probeLaneCheck(DB, market, symbol, price, signal, pgRes, cfg) {
+  try {
+    if (!PROBE_LANE.enabled || (market !== "us" && market !== "kr")) return { ok: false, why: "시험 차선 꺼짐" };
+    const tag = _entryTag(signal);
+    if (PROBE_LANE.routes.indexOf(tag) < 0) return { ok: false, why: "시험 차선 대상 아님(" + tag + ")" };
+    const day = new Date().toISOString().slice(0, 10), G = globalThis.__probeDay || (globalThis.__probeDay = {});
+    let dc = G[market];
+    if (!dc || dc.day !== day) {
+      let n0 = PROBE_LANE.maxPerDay;
+      try { const r = await DB.prepare("SELECT COUNT(*) AS n FROM trades WHERE market = ? AND side = 'BUY' AND ts > ? AND reason LIKE '%시험차선%'").bind(market, Date.parse(day + "T00:00:00Z")).first(); n0 = _num(r && r.n, 0); } catch (e) {}
+      dc = G[market] = { day: day, n: n0 };
+    }
+    if (dc.n >= PROBE_LANE.maxPerDay) return { ok: false, why: "시험 차선 오늘 " + dc.n + "건(상한 " + PROBE_LANE.maxPerDay + ")" };
+    const pos = await getPositions(DB, market);
+    let held = 0, probeExp = 0;
+    for (const k in pos) { const p = pos[k]; const v = _num(p.avg, 0) * _num(p.qty, 0); held += v; if (p.meta && p.meta.probe) probeExp += v; }
+    const cash = await computeCashFromTrades(DB, market, cfg);
+    const equity = _num(cash, 0) + held;
+    if (!(equity > 0)) return { ok: false, why: "총자산 미상" };
+    const room = equity * PROBE_LANE.maxTotalFrac - probeExp;
+    if (room <= 0) return { ok: false, why: "시험 차선 노출 " + (probeExp / equity * 100).toFixed(1) + "% ≥ " + (PROBE_LANE.maxTotalFrac * 100) + "%" };
+    const maxQty = Math.floor(Math.min(room, equity * PROBE_LANE.maxPosFrac) / price);
+    if (maxQty <= 0) return { ok: false, why: "시험 차선 여유 부족" };
+    const pg = await perfGateLoad(DB, false), L = (pg && pg.lanes) || {};
+    const lane = tag === "INV" ? "inv" : "probe";
+    const aL = laneAdaptMult(L[market + ":" + lane]), aS = laneAdaptMult(L[market + ":" + lane + ":" + (pgRes && pgRes.key ? pgRes.key.slice(pgRes.key.indexOf(":") + 1) : tag)]);
+    const mult = Math.max(0.05, PROBE_LANE.mult * aL * aS);
+    dc.n++;
+    return { ok: true, mult: mult, maxQty: maxQty, why: "시험차선 ×" + mult.toFixed(2) + (aL < 1 ? " (차선 성적 ×" + aL + ")" : "") + (aS < 1 ? " (신호 성적 ×" + aS + ")" : "") +
+             " · 노출 " + (probeExp / equity * 100).toFixed(1) + "%/" + (PROBE_LANE.maxTotalFrac * 100) + "%" };
+  } catch (e) { return { ok: false, why: "시험 차선 판정 실패 " + (e && e.message) }; }
 }
 
 /* ══ [V33.791] ★그림자 원장 — 실적 관문이 막은 후보가 실제로 어땠나★ ══════════════════════════════
@@ -21407,7 +21467,19 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
 
   // [V33.459] 실적 관문 — 이 시장에서 이 진입 주체·전략이 원장상 지고 있으면 막거나(7일) 반 크기로 시험한다
   const _pg = (typeof perfGateCheck === "function") ? await perfGateCheck(DB, market, signal, strategy) : { ok: true, mult: 1 };
-  if (!_pg.ok) { await logEvery(DB, "INFO", "pg:" + _pg.key, symbol, "BUY 실적 관문 차단 [" + _pg.key + "] " + (_pg.why || "")); try { await shadowRecord(DB, market, symbol, price, _pg.key); } catch (e) {} return cash; }
+  if (!_pg.ok) {
+    try { await shadowRecord(DB, market, symbol, price, _pg.key); } catch (e) {}   // 그림자 원장은 그대로(시험 차선으로 들여도 '막혔을 후보' 로 센다)
+    /* [V33.797] 시험 차선 — 막힌 매수를 작은 크기로 들여 성과를 잰다(PROBE_LANE 주석) */
+    const _pb = (typeof probeLaneCheck === "function") ? await probeLaneCheck(DB, market, symbol, price, signal, _pg, cfg) : { ok: false };
+    if (!_pb.ok) { await logEvery(DB, "INFO", "pg:" + _pg.key, symbol, "BUY 실적 관문 차단 [" + _pg.key + "] " + (_pg.why || "") + (_pb.why ? " · " + _pb.why : "")); return cash; }
+    signal.probe = true;
+    _szNote(signal, "시험차선", _pb.mult);
+    qty = Math.min(Math.floor(qty * _pb.mult), _pb.maxQty);
+    if (qty <= 0) qty = Math.min(1, _pb.maxQty);
+    if (qty <= 0) return cash;
+    await logEvery(DB, "INFO", "probe:" + _pg.key, symbol, "BUY 시험차선 [" + _pg.key + "] " + (_pg.why || "") + " → " + _pb.why);
+    _pg.mult = 1;
+  }
   /* [V33.506] ★레버리지·인버스 ETF 에 AI·단타 진입 금지★ — 원장(한국): 레버리지/인버스 9건 PF 0.47 · −210만 원(한국 손실의 39%) —
      252670(인버스2X) AI 진입 하나가 −19.6% · −287만. 위원회는 개별주 피처로 학습했고, 손절(5%)·수량 산정은 1배 변동을 가정한다
      (2배 상품의 밤사이 갭이 손절을 뛰어넘는다). 스냅은 이미 제외 · 규칙 추세는 ADX 로 축소 중 · 꼬리위험 헤지(hedge)는 그대로. */
@@ -21457,7 +21529,8 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
       qty: qty, price: price, availCash: availCash, feeRate: feeRate,
       equity: (opts && _num(opts.equity, null)) || null,
       cashNow: (opts && _num(opts.cashNow, null)) != null ? _num(opts.cashNow, null) : availCash,
-      advNotional: (opts && _num(opts.advNotional, null)) || null
+      advNotional: (opts && _num(opts.advNotional, null)) || null,
+      invLane: !!(signal && signal.isInvLane)   // [V33.797] 인버스 차선은 거래상태(HALTED/REDUCING) 대신 자기 관문(일일 손실 한도)을 본다 — 노출을 줄이는 매수
     });
     if (!_pre.ok) {
       await log(DB, "WARN", symbol, "BUY 거부 [" + _pre.code + "] " + _pre.reason + (_pre.detail ? " (" + _pre.detail + ")" : ""));
@@ -21599,6 +21672,8 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
           // [V33.578] OMNI-Q 가 관리하는 보유 — 머리(5·20일) · 진입 점수 · 상태 · 채점일. 있으면 보유/청산을 OMNI-Q 띠가 정한다(omniqHoldOf).
           omq: (signal && signal.isOmniQ && signal.omq) ? signal.omq : null,
           pair: (signal && signal.isPair && signal.pair) ? signal.pair : null,
+          probe: (signal && signal.probe) ? 1 : null,   // [V33.797] 시험 차선 보유(노출 상한 20% 가 센다)
+          invLane: (signal && signal.isInvLane && signal.inv) ? signal.inv : null,   // [V33.797] 국면 인버스 차선 보유 — 청산은 runInverseLane
           sr: (signal && signal.isStratRoute && signal.sr) ? signal.sr : null,   // [V33.603] 매매법 선택 AI 관리 보유 — 그 매매법의 최대 보유일이 지나면 SR-TIME   // [V33.594] 페어 관리 보유 — z ≥ 0 이면 PAIR-REVERT
           tp1Done: false, originalQty: qty,
           // [LUX-AI] 청산 시 학습용 — 진입 피처/사건키/모델확률/밴딧 컨텍스트
@@ -21648,6 +21723,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
       reason: "[" + _entryTag(signal) + "][" + strategy.toUpperCase() + "] " + signal.name +
               (signal.detail != null && signal.detail !== "" ? " " + signal.detail : "") +
               ((signal.isAiPrimary || signal.isOmniQ) && typeof signal.mlMindP === "number" ? " · 위원회 p " + (signal.mlMindP * 100).toFixed(0) + "%" : "") +
+              (signal && signal.probe ? " · 시험차선" : "") +   // [V33.797] 차선 표지 — 관문 lanes 가 이 꼬리로 따로 센다
               (_szWhyStr(signal && signal._szm) ? " · 크기 " + _szWhyStr(signal._szm) : "")   // [V33.794] 같은 행에 실음(추가 쓰기 0)
     });
     const stmtPos = stmtSavePosition(DB, market, symbol, strategy, posToSave);
@@ -25808,6 +25884,7 @@ async function runTradingCycle(env) {
                   crashGate.reasons.push("DAILY_LOSS " + (_dp / portfolioValue * 100).toFixed(1) + "% but 반등장 +" + regime.avgDayPct.toFixed(1) + "% → size×0.5");
                 } else {
                   crashGate.blockNew = true;
+                  crashGate.dailyLoss = true;   // [V33.797] 인버스 차선도 이 한도에서는 신규 매수 안 함
                   crashGate.reasons.push("DAILY_LOSS " + (_dp / portfolioValue * 100).toFixed(1) + "%≤-" + _dll + "% (당일)");
                 }
               }
@@ -25926,6 +26003,8 @@ async function runTradingCycle(env) {
       //   평상시(VIX<activateVixAbove)엔 목표 0이라 무동작(드래그 0), 공포구간에서만 인버스/VIX 매수.
       //   crashGate.blockNew와 무관하게 동작(폭락장에 헤지를 사는 게 목적).
       try { cash = await runTailRiskHedge(DB, market, mcfg, portfolioValue, crashGate.vixValue || 0, cash, { panic: !!crashGate.panic }); } catch (e) {}
+      // [V33.797] 국면 인버스 차선 — 정식 국면 폭락·하락이면 AI 몫 일부를 인버스 ETF 로(INV_LANE 주석) · 같은 사이클 · 평시 D1 0
+      try { cash = await runInverseLane(DB, market, mcfg, portfolioValue, cash, { canon: regime && regime.canon, canTrade: canTrade, dailyLoss: !!crashGate.dailyLoss }); } catch (e) {}
 
       // [V52] SCALP 당일 손실 한도 — 세션 시작 이후 scalp 청산 PnL%(합)가 한도 이하면
       //   그날 해당 시장의 scalp 신규진입을 전면 중단(연속 칼날·틸트 방지). 사이클당 1쿼리.
@@ -31088,7 +31167,9 @@ async function handleRequest(request, env, ctx, _inner) {
         let _phase = null;
         // [V33.694] 매매법 AI 국면(학습기 · 장기·중기·단기)도 같은 질의로 — 오른쪽 칸이 '오늘 지수 흐름' 과 '매매법 AI 국면' 을 따로 보인다(10/28 사용자: 폭등 vs 폭락 충돌)
         let _pbReg = null;
-        try { const _pss = await getStates(env.DB, ["mkt_phase", "pb_regime", "mkt_context"]); const _ps = _pss["mkt_phase"]; _pbReg = _pss["pb_regime"] || null;
+        let _laneV = null;   // [V33.797] 차선 성적(사이클이 30분에 1행) + 차선 규칙 — 같은 질의에 끼움(추가 쿼리 0)
+        try { const _pss = await getStates(env.DB, ["mkt_phase", "pb_regime", "mkt_context", "lane_view"]); const _ps = _pss["mkt_phase"]; _pbReg = _pss["pb_regime"] || null;
+          _laneV = { view: _pss["lane_view"] || null, probe: PROBE_LANE, adapt: LANE_ADAPT, inv: { inst: INV_LANE.inst, budgetFrac: INV_LANE.budgetFrac, stopPct: INV_LANE.stopPct, tpPct: INV_LANE.tpPct, maxHoldDays: INV_LANE.maxHoldDays, maxPerDay: INV_LANE.maxPerDay } };
           const _mcx = _pss["mkt_context"] || null, _pr0 = _pbReg || {};
           if (_ps) _phase = { us: _ps.us, kr: _ps.kr, erUs: _ps.erUs, erKr: _ps.erKr,
           dayUs: _ps.dayUs, dayKr: _ps.dayKr, r5Us: _ps.r5Us, r5Kr: _ps.r5Kr, ts: _ps.ts,
@@ -31456,7 +31537,7 @@ async function handleRequest(request, env, ctx, _inner) {
                  committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk, xgb: xgb, lgb: lgb, cat: cat },
                  alt: _alt, thr: _thr,
                  diag: _diag,
-                 phase: _phase, pbRegime: _pbReg, xmkt: _xmkt, sectors: _sect,
+                 phase: _phase, pbRegime: _pbReg, lanes: _laneV, xmkt: _xmkt, sectors: _sect,
                  selfreview: review, scan: scan, samples: samples, degraded: false };
         // 마지막 정상 스냅샷 보관 — 다음에 조회가 실패해도 "규칙엔진 폴백"으로 오표시하지 않기 위해.
         try { ctx.waitUntil(setState(env.DB, "ai_mode_last_ok", _out)); } catch (e) {}
@@ -31597,7 +31678,7 @@ async function handleRequest(request, env, ctx, _inner) {
     // [V33.459] GET /api/perf-gate — 실적 관문의 현재 판정(시장 × 진입 주체 × 전략 · 최근 45일 원장)
     if (path === "/api/perf-gate") {
       const pg = await perfGateLoad(env.DB, url.searchParams.get("fresh") === "1");
-      return Response.json({ at: pg.at, rule: PERF_GATE, keys: pg.keys }, { headers: Object.assign({ "cache-control": "no-store" }, cors) });
+      return Response.json({ at: pg.at, rule: PERF_GATE, keys: pg.keys, lanes: pg.lanes || {}, probe: PROBE_LANE, adapt: LANE_ADAPT }, { headers: Object.assign({ "cache-control": "no-store" }, cors) });
     }
     // [V32.54] GET /api/selfcheck — 시스템 자가진단(사이트 오류·파이프라인 지연·모델 상태). SWR 1분.
     if (path === "/api/selfcheck") {
@@ -34401,7 +34482,7 @@ async function handleRequest(request, env, ctx, _inner) {
     if (path === "/api/leaderboard") {   // [V33.725] 수익률 순위 — 1시간 SWR · 누가 몇 번 봐도 계산은 1시간 1번
       return await swrJson("leaderboard4", 3600000, 6 * 3600000, async function () { return await luxLeaderboard(env.DB); });   // [V33.746] 키 바꿈 — 비어 있던(0명) 옛 캐시를 안 쓰게
     }
-    /* [V33.795] ★유입 꼬리표★(사용자 11/9 스레드 글별 유입 측정) — 링크 ?r=t09 로 들어온 첫 방문(v)·가입(s)만 센다.
+    /* [V33.797] ★유입 꼬리표★(사용자 11/9 스레드 글별 유입 측정) — 링크 ?r=t09 로 들어온 첫 방문(v)·가입(s)만 센다.
        브라우저가 기기당 꼬리표마다 하루 1번만 보낸다(localStorage) · 서버는 날짜별 1행(ref_stats:YYYY-MM-DD)에 합산 — 사람 수 ≠ 행 수. */
     if (path === "/api/ref" && request.method === "POST") {
       const ip = String(request.headers.get("cf-connecting-ip") || "-");
@@ -52069,6 +52150,7 @@ async function runTailRiskHedge(DB, market, mcfg, equity, vixValue, cash, opts) 
     for (const k in positions) {
       const p = positions[k];
       if (p.strategy !== "hedge" || instruments.indexOf(p.symbol) === -1 || !(p.qty > 0)) continue;
+      if (p.meta && p.meta.invLane) continue;   // [V33.797] 국면 인버스 차선 보유는 runInverseLane 이 관리한다(꼬리 헤지가 팔지 않게)
       const px = await _priceOf(p.symbol);
       if (px == null) continue;
       curValue += px * p.qty; held.push({ pos: p, price: px });
@@ -52112,6 +52194,107 @@ async function runTailRiskHedge(DB, market, mcfg, equity, vixValue, cash, opts) 
     }
     return cash;
   } catch (e) { try { await log(DB, "WARN", null, "[HEDGE] fail " + market + ": " + (e && e.message)); } catch (e2) {} return cash; }
+}
+
+/* ══ [V33.797] ★국면 인버스 차선 — 폭락·하락장에서 현금만 들고 있지 않는다★ (사용자 11/9 명시 지시 · 모의 자금) ══════════
+   정식 국면(regimeCanon · 가장 방어적인 값)이 CRASH 면 레버리지 인버스, BEAR 면 1배 인버스를 AI 몫 일부로 산다.
+     美  CRASH: SQQQ · SPXU · SOXS(3x) 중 5일 수익 가장 강한 것   BEAR: SH(1x)
+     韓  CRASH: 252670.KS KODEX 200선물인버스2X · 114800.KS KODEX 인버스   BEAR: 114800.KS
+     크기  CRASH 총자산 12% · BEAR 6% (× 차선 성적 배수 lanes 'inv') · 한 번에 그 절반 · 동시 2종목 · 시장별 하루 2건 · 45분 간격
+     청산  손절 1x −4% / 2x −6% / 3x −7% · 익절 +5 / +8 / +10% · 최대 보유 10 / 5 / 4 달력일(인버스는 시간이 지나면 녹는다) ·
+           국면 회복(정식 국면 NEUTRAL 이상) 즉시 · 레버리지(2x·3x)는 국면이 BEAR 로 풀리면 정리
+     관문  일일 손실 한도면 신규 없음 · 장 열린 시장만 · 실적 관문 키 INV:HEDGE(막히면 시험 차선) · 원장 [INV][HEDGE]
+   전략 태그 hedge(일반 매도 루프가 안 건드림) + meta.invLane(꼬리 헤지가 안 건드림) → 이 함수 하나가 사고판다.
+   비용: 국면이 정상이고 보유가 없으면 D1 0(메모리 표지) · 그 밖엔 사이클당 포지션 1 + 시세 행 몇 개 · 차선 성적 화면 행 30분에 1번. */
+const INV_LANE = { enabled: true,
+  inst: { us: { CRASH: ["SQQQ", "SPXU", "SOXS"], BEAR: ["SH"] }, kr: { CRASH: ["252670.KS", "114800.KS"], BEAR: ["114800.KS"] } },
+  budgetFrac: { CRASH: 0.12, BEAR: 0.06 }, sliceFrac: 0.5, maxOpen: 2, maxPerDay: 2, gapMs: 45 * 60000,
+  stopPct: { 1: 4, 2: 6, 3: 7 }, tpPct: { 1: 5, 2: 8, 3: 10 }, maxHoldDays: { 1: 10, 2: 5, 3: 4 } };
+function invLev(sym) { return (sym === "SQQQ" || sym === "SPXU" || sym === "SOXS") ? 3 : (sym === "252670.KS" ? 2 : 1); }
+// 지금 이 국면·보유로 무엇을 할지(순수 함수 — 검사가 그대로 돌린다). pos: { pnlPct, ageDays, lev } · canon: CRASH/BEAR/…
+function invExitWhy(canon, lev, pnlPct, ageDays) {
+  if (pnlPct != null && pnlPct <= -INV_LANE.stopPct[lev]) return "stop";
+  if (pnlPct != null && pnlPct >= INV_LANE.tpPct[lev]) return "tp";
+  if (ageDays >= INV_LANE.maxHoldDays[lev]) return "time";
+  if (canon !== "CRASH" && canon !== "BEAR") return "regime";
+  if (canon === "BEAR" && lev > 1) return "delever";
+  return null;
+}
+async function runInverseLane(DB, market, mcfg, equity, cash, o) {
+  if (!INV_LANE.enabled || (market !== "us" && market !== "kr") || !(equity > 0)) return cash;
+  const canon = (o && o.canon && o.canon.canon) || "NEUTRAL", inRoute = !!INV_LANE.budgetFrac[canon];
+  const H = globalThis.__invHeld || (globalThis.__invHeld = {});
+  const now = Date.now();
+  // 화면용 차선 성적 1행(30분에 한 번 · 두 시장 합쳐 1행) — 사람 수와 무관
+  try {
+    if (!globalThis.__laneViewAt || now - globalThis.__laneViewAt > 30 * 60000) {
+      globalThis.__laneViewAt = now;
+      const pg = await perfGateLoad(DB, false);
+      await setState(DB, "lane_view", { ts: now, lanes: (pg && pg.lanes) || {} });
+    }
+  } catch (e) {}
+  if (!inRoute && H[market] === false) return cash;   // 정상 국면 · 보유 없음(이 격리에서 확인됨) → D1 0
+  if (!(o && o.canTrade)) return cash;
+  const _px = async function (sym) {
+    try { const q = await getState(DB, "quote:" + sym, null); if (q && q.price > 0 && now - _num(q.ts, 0) < 30 * 60000) return { p: q.price, fresh: true }; } catch (e) {}
+    try { const d = await getState(DB, "daily:" + sym, null); const c = d && d.closes; if (Array.isArray(c) && c.length && c[c.length - 1] > 0) return { p: c[c.length - 1], fresh: false, closes: c }; } catch (e) {}
+    return null;
+  };
+  const positions = await getPositions(DB, market);
+  const held = [];
+  for (const k in positions) { const p = positions[k]; if (p.strategy === "hedge" && p.meta && p.meta.invLane && p.qty > 0) held.push(p); }
+  H[market] = held.length > 0;
+  // ── 청산 ──
+  let invExp = 0, sold = 0;
+  for (const p of held) {
+    const lev = invLev(p.symbol), q = await _px(p.symbol);
+    if (!q) { invExp += p.avg * p.qty; continue; }
+    const pnl = (q.p / p.avg - 1) * 100, age = (now - _num(p.opened_ts, now)) / 86400000;
+    const why = invExitWhy(canon, lev, q.fresh ? pnl : null, age);
+    if (why && (q.fresh || why === "regime" || why === "time" || why === "delever")) {
+      await log(DB, "INFO", p.symbol, "[INV] 청산 " + why + " · 국면 " + canon + " · " + lev + "x · " + (pnl >= 0 ? "+" : "") + pnl.toFixed(2) + "% · " + age.toFixed(1) + "일");
+      const r = await executeSell(DB, market, p.symbol, p, p.qty, q.p, "[INV] " + why + " " + (pnl >= 0 ? "+" : "") + pnl.toFixed(1) + "%", mcfg, cash);
+      if (r && r.cash) cash = r.cash;
+      sold++;
+    } else invExp += q.p * p.qty;
+  }
+  // ── 진입 ──
+  if (!inRoute || (o && o.dailyLoss)) return cash;
+  const G = globalThis.__invDay || (globalThis.__invDay = {}), day = new Date().toISOString().slice(0, 10);
+  let dc = G[market];
+  if (dc && now - _num(dc.lastTry, 0) < 5 * 60000) return cash;   // 진입 판정은 5분에 한 번
+  if (!dc || dc.day !== day) {
+    let n0 = INV_LANE.maxPerDay;
+    try { const r = await DB.prepare("SELECT COUNT(*) AS n, MAX(ts) AS t FROM trades WHERE market = ? AND side = 'BUY' AND ts > ? AND reason LIKE '[INV]%'").bind(market, Date.parse(day + "T00:00:00Z")).first(); n0 = _num(r && r.n, 0); dc = { day: day, n: n0, last: _num(r && r.t, 0) }; }
+    catch (e) { dc = { day: day, n: n0, last: now }; }
+    G[market] = dc;
+  }
+  dc.lastTry = now;
+  const openNow = held.length - sold;
+  if (dc.n >= INV_LANE.maxPerDay || now - _num(dc.last, 0) < INV_LANE.gapMs || openNow >= INV_LANE.maxOpen) return cash;
+  let aL = 1;
+  try { const pg = await perfGateLoad(DB, false); aL = laneAdaptMult(pg && pg.lanes && pg.lanes[market + ":inv"]); } catch (e) {}
+  const budget = equity * INV_LANE.budgetFrac[canon] * aL, room = budget - invExp;
+  if (room <= equity * 0.01) return cash;
+  const heldSyms = new Set(held.map(function (p) { return p.symbol; }));
+  let best = null;
+  for (const sym of INV_LANE.inst[market][canon]) {
+    if (heldSyms.has(sym)) continue;
+    if (positions[sym + "::hedge"] && positions[sym + "::hedge"].qty > 0) continue;   // 꼬리 헤지 보유와 섞지 않는다
+    const q = await _px(sym); if (!q || !q.fresh) continue;
+    let r5 = 0; try { const d = q.closes || ((await getState(DB, "daily:" + sym, null)) || {}).closes; if (Array.isArray(d) && d.length > 6 && d[d.length - 6] > 0) r5 = q.p / d[d.length - 6] - 1; } catch (e) {}
+    if (!best || r5 > best.r5) best = { sym: sym, p: q.p, r5: r5 };
+  }
+  if (!best) return cash;
+  const lev = invLev(best.sym), qty = Math.floor(Math.min(room, budget * INV_LANE.sliceFrac) / best.p);
+  if (qty <= 0) return cash;
+  const sig = { name: "INV_LANE", members: ["INV_LANE"], isInvLane: true, weight: 1,
+    inv: { lev: lev, canon: canon, at: now },
+    detail: "정식 국면 " + ((o.canon && o.canon.ko) || canon) + " → 인버스 " + lev + "x · 손절 −" + INV_LANE.stopPct[lev] + "% · 익절 +" + INV_LANE.tpPct[lev] + "% · 최대 " + INV_LANE.maxHoldDays[lev] + "일" + (aL < 1 ? " · 차선 성적 ×" + aL : "") };
+  const before = JSON.stringify(cash);
+  cash = await executeBuy(DB, market, best.sym, "hedge", qty, best.p, sig, null, mcfg, cash, { stopPctOverride: INV_LANE.stopPct[lev], equity: equity });
+  if (JSON.stringify(cash) !== before) { dc.n++; dc.last = now; H[market] = true; }
+  return cash;
 }
 
 // [V17] 예측 타겟 라벨러 — '무엇을 예측할지'(정답지) 설계. de Prado식 다중 타겟 지원.

@@ -8,7 +8,8 @@ const S = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
 let fails = 0;
 const chk = (c, ok, bad) => { if (c) console.log("  ok   " + ok); else { console.log("  FAIL " + bad); fails++; } };
 chk(/^const ENTRY_ROUTES_ONLY = true;$/m.test(S), "미·한 주식 신규 매수 경로 제한 켜짐(ENTRY_ROUTES_ONLY)", "★퇴역 경로(위원회·단타·규칙)가 다시 살 수 있다★");
-chk(/^const ENTRY_ROUTES = new Set\(\["AI-Q", "SROUTE"\]\);$/m.test(S), "허용 경로 = AI-Q · SROUTE 둘뿐", "★허용 경로 목록이 바뀌었다(사용자 승인 필요)★");
+// [V33.797] 사용자 11/9 명시 지시로 INV(국면 인버스 차선) 추가 승인 — 목록이 또 바뀌면 다시 사용자 승인 필요
+chk(/^const ENTRY_ROUTES = new Set\(\["AI-Q", "SROUTE", "INV"\]\);/m.test(S), "허용 경로 = AI-Q · SROUTE · INV(국면 인버스 · V33.797 사용자 승인)", "★허용 경로 목록이 바뀌었다(사용자 승인 필요)★");
 chk(/!ENTRY_ROUTES\.has\(_entryTag\(signal\)\)/.test(S), "executeBuy 입구에서 경로 검사", "★executeBuy 입구 경로 검사가 빠졌다★");
 const m = /^const SIZE_STOP_FLOOR_PCT = (\d+(?:\.\d+)?);/m.exec(S);
 chk(m && +m[1] >= 5, "수량 계산 손절폭 하한 ≥ 5%", "★수량 계산 손절폭 하한이 없거나 5% 미만(좁은 손절 = 큰 수량 재발)★");

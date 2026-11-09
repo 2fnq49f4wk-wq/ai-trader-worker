@@ -12,6 +12,20 @@
 
 ## Current handoff
 
+- V33.797 (11/9) ★사용자 명시 지시(모의 자금): "맞으면서 배운다" — 실적 관문 막힘·폭락 국면에도 AI 가 거래해 자료를 모으고 약한 곳은 크기로 고친다.★
+  ※ 종전 '위험 관문 완화 금지' 선호를 이 범위에서 사용자가 덮어씀. 관문 판정 자체(perf_gate 막힘·시험·합산·문턱)는 그대로 — 막힌 매수를 ★작게★ 따로 들인다.
+  ① 시험 차선(PROBE_LANE): 실적 관문이 막은 AI-Q·SROUTE·INV 매수 → 수량 ×0.3 × 차선 성적 배수 × 차선·신호 성적 배수 · 한 종목 ≤ 총자산 5% · 시험 차선 전체 ≤ 20% · 시장별 하루 4건.
+     원장 reason 꼬리 ' · 시험차선' · meta.probe=1 · 그림자 원장(shadowRecord)은 그대로 기록. 크래시게이트 blockNew(개별주 롱)·일일 손실 한도·거래상태·리스크엔진은 그대로.
+  ② 국면 인버스 차선(INV_LANE · runInverseLane · 꼬리 헤지 바로 뒤 같은 사이클): 정식 국면 CRASH → 美 SQQQ/SPXU/SOXS(5일 수익 가장 강한 것) · 韓 252670.KS/114800.KS · 총자산 12% ·
+     BEAR → 美 SH · 韓 114800.KS(1x) · 6%. 한 번에 절반 · 동시 2 · 하루 2건 · 45분 간격. 청산 손절 1x−4/2x−6/3x−7% · 익절 +5/+8/+10% · 최대 10/5/4일 · 국면 NEUTRAL↑ 즉시 · BEAR 로 풀리면 레버리지 정리.
+     전략 태그 hedge + meta.invLane(일반 매도 루프·꼬리 헤지가 안 건드림) · 원장 [INV][HEDGE] · ENTRY_ROUTES 에 INV 추가(check-loss-causes 갱신 — 사용자 승인) · 일일 손실 한도면 신규 없음 · 거래상태 HALTED/REDUCING 은 인버스만 면제(노출을 줄이는 매수).
+     티커 확인: SQQQ·SPXU·SOXS·SH·114800.KS·252670.KS 전부 유니버스·NAME_MAP·MCAP_RANK 에 이미 있음(추가 없음).
+  ③ 차선별 성적(perfGateLoad lanes · 같은 원장 질의): 시장:core/probe/inv · 시장:차선:꼬리표. 15건+ PF<0.8 → ×0.5 · PF<0.5 → ×0.35(막지 않음). /api/perf-gate 에 lanes.
+  ④ 빈도: OMNI-Q 상한(사이클 2 · 하루 3)은 그대로 — 막힘이 풀린 효과로 하루 최대 OMNI 3 + 인버스 2 /시장. 비용: 막힌 매수에서만 포지션·현금 읽기 · 인버스는 평시 D1 0 · 화면 행 lane_view 30분 1회.
+  ⑤ 화면: AI 두뇌 '정식 국면' 아래 '매매 차선 (맞으면서 배운다)' 표(차선 성적 · 축소 표시 · 국면별 배분) — ai-mode lanes(같은 getStates).
+  ⑥ 학습기 변경 없음(근거 부족 — 시험 차선 15건+ 쌓이면 lanes 로 판단). 새 게이트 tools/check-probe-lane.mjs.
+  다음: 배포 후 장중 로그 '[INV]'·'BUY 시험차선' · 원장 '시험차선' 꼬리 · 두뇌 차선 표 확인. 시험 차선이 15건+ PF<0.5 면 PROBE_LANE.mult 재검토.
+
 ### V33.796 — 링크 미리보기 카드(og:* · public/og-card.png 1200x630) · 가입 창 앞 소개 한 장(mine.js ask intro · 시작하기/로그인/앱 설치/구경)
 
 ### V33.795 — 회원가입 간단하게 · 유입 꼬리표 · /dev 공개 페이지
@@ -19,6 +33,7 @@
 - 유입: 링크 ?r=xxx → POST /api/ref (기기·꼬리표당 하루 1번, 가입 때 ev=s) → state ref_stats:YYYY-MM-DD 1행 합산 · GET /api/ref-stats(14일 · 30분 SWR).
 - public/dev.html(/dev) = 개발 설정 공개 페이지 · 아래 버튼 /?r=dev.
 - AI 체험 매수(probation)·인버스 에이전트 작업은 사용량 한도로 중단 — 워크트리 agent-acf13d4eb0237d18c 에 미완 상태(이어서 할 것).
+
 
 - V33.794 (11/9) ★독립 검토 남은 항목(에이전트)★
   ① 국면 원천 하나로: 원천이 셋이었다 — 지수 위상 analyzeMarketRegime().phase(RANGE/TREND_UP/MELTUP/TREND_DOWN/CRASH · mkt_phase) · 학습기 매매법 국면 pb_regime(SURGE/BULL/NEUTRAL/BEAR/CRASH) · 거시 mkt_context.regime(risk_on~risk_off).
