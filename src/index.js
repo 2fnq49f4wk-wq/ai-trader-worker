@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.790";
+const _BUILD_VER = "V33.791";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -21096,8 +21096,13 @@ async function extBuyGuard(DB, market, qty, price, signal, cfg, opts, now) {
   /* [V33.662] 매매법 AI(isStratRoute)는 위원회 확률이 없다 — 그 대신 학습기 검증 통과(_pbPass)가 진입의 관문이다(pbRoutePick 이 이미 확인).
      크기 ×sizeMult · 세션당 신규 수 · 체결시각 검증 가격은 아래에서 똑같이 건다. */
   const _pbRoute = !!(signal && signal.isStratRoute && signal.sr);
-  if (!_pbRoute && !(typeof p === "number" && Number.isFinite(p) && p >= _num(et.minPickP, 0.62)))
-    return { ok: false, why: "probability_floor" };
+  /* [V33.791] ★위원회 퇴역 뒤 시간외 관문이 퇴역 모델 확률을 요구했다★(독립 검토 11/9: 'probability_floor' 90분 344행 · 위원회 p 평균 0.49 최대 0.75 — 사실상 OMNI-Q 시간외 진입 전면 차단).
+     위원회가 퇴역했으면 OMNI-Q 는 ★자기 기준 중 가장 엄격한 것★ — 검증 통과 머리의 정식 발언(omq.mode "speak")일 때만 시간외에 들인다(잠정 머리 ×mult 는 정규장만).
+     크기 ×sizeMult · 세션당 신규 수 · 체결시각 검증 가격 · 실적 관문은 그대로 건다. */
+  const _cRet = typeof COMMITTEE_RETIRED !== "undefined" && COMMITTEE_RETIRED;
+  const _omqSpeak = !!(_cRet && signal && signal.isOmniQ && signal.omq && signal.omq.mode === "speak");
+  if (!_pbRoute && !(typeof p === "number" && Number.isFinite(p) && p >= _num(et.minPickP, 0.62)) && !_omqSpeak)
+    return { ok: false, why: _cRet && signal && signal.isOmniQ ? "omniq_not_speak" : "probability_floor" };
   /* [V33.351 · A-2] 세션 시작 시각도 marketWindows 한 곳에서 — 종전엔 여기에도 숫자가 박혀 있었다.
      반장이면 장후 시작이 16:00 이 아니라 13:00 이고, 수능일이면 장전이 09:00 부터다.
      그 날 이 숫자만 옛 값이면 '세션당 신규 종목 수' 를 엉뚱한 창에서 세게 된다. */
@@ -21257,6 +21262,68 @@ async function perfGateCheck(DB, market, signal, strategy) {
   } catch (e) { return { ok: true, mult: 1 }; }   // 원장을 못 읽으면 막지 않는다(판정 불가 ≠ 손실)
 }
 
+/* ══ [V33.791] ★그림자 원장 — 실적 관문이 막은 후보가 실제로 어땠나★ ══════════════════════════════
+   독립 검토(11/9): OMNI-Q 가 실적 관문(합산 PF 0.51)에 막혀 2주째 신규 매수 0 — '관문이 옳게 막는가' 를 잴 길이 없었다.
+   관문은 그대로(문턱·완화 경로 안 건드림) 두고, 막힌 후보를 하루 종목당 한 번 적어 7일·28일(≈5·20거래일) 뒤 수익을 잰다.
+   결과는 AI 두뇌 명부(OMNI)에 함께 적는다 — 막힌 후보가 계속 손실이면 관문이 옳고, 이익이면 그때 사람이 판단한다.
+   비용: 막힌 후보가 있는 날 시장·종목당 상태 1행 읽기·쓰기(하루 수십 건) · 라벨은 하루 1회(D1 읽기 수십 행). */
+async function shadowRecord(DB, market, symbol, price, key) {
+  if (!(price > 0) || !symbol) return;
+  const day = new Date().toISOString().slice(0, 10), dk = market + ":" + day + ":" + symbol;
+  const seen = globalThis.__shadowSeen || (globalThis.__shadowSeen = new Set());
+  if (seen.has(dk)) return;
+  seen.add(dk); if (seen.size > 3000) seen.clear();
+  const k = "shadow_led:" + day;
+  let cur = null;
+  try { cur = await getState(DB, k, null, true); } catch (e) { return; }   // 엄격 읽기 — 못 읽으면 쓰지 않는다
+  cur = (cur && Array.isArray(cur.rows)) ? cur : { day: day, rows: [] };
+  if (cur.rows.length >= 400 || cur.rows.some(function (r) { return r.m === market && r.s === symbol; })) return;
+  cur.rows.push({ m: market, s: symbol, px: +price, k: String(key || ""), ts: Date.now() });
+  await setState(DB, k, cur);
+}
+async function shadowLabelDaily(env) {
+  const DB = env.DB, today = new Date().toISOString().slice(0, 10);
+  if (globalThis.__shadowLabelDay === today) return null;
+  let st = null;
+  try { st = await getState(DB, "shadow_stats", null, true); } catch (e) { return null; }
+  st = st && typeof st === "object" ? st : { v: 1, byDay: {} };
+  if (!st.byDay || typeof st.byDay !== "object") st.byDay = {};
+  globalThis.__shadowLabelDay = today;
+  if (st.last === today) return null;
+  for (const h of [7, 28]) {
+    const day = new Date(Date.now() - h * 86400000).toISOString().slice(0, 10), bk = day + "|" + h;
+    if (st.byDay[bk]) continue;
+    let led = null; try { led = await getState(DB, "shadow_led:" + day, null); } catch (e) {}
+    const rows = (led && Array.isArray(led.rows)) ? led.rows : [];
+    if (!rows.length) { st.byDay[bk] = { n: 0 }; continue; }
+    const q = {}, qk = rows.map(function (r) { return "quote:" + r.s; });
+    for (let i = 0; i < qk.length; i += 90) Object.assign(q, await getStates(DB, qk.slice(i, i + 90)));   // D1 바인드 상한(100) 안으로
+    const agg = {};
+    for (const r of rows) {
+      const qq = q["quote:" + r.s]; const px = qq ? (_num(qq.regPrice, 0) > 0 ? _num(qq.regPrice, 0) : _num(qq.price, 0)) : 0;
+      if (!(px > 0) || !(r.px > 0)) continue;
+      const ret = (px / r.px - 1) * 100, a = agg[r.k] || (agg[r.k] = { n: 0, sum: 0, w: 0 });
+      a.n++; a.sum += ret; if (ret > 0) a.w++;
+    }
+    st.byDay[bk] = agg;
+  }
+  const keys = Object.keys(st.byDay).sort(); while (keys.length > 120) delete st.byDay[keys.shift()];   // 60일치 안팎
+  try { await DB.prepare("DELETE FROM state WHERE k = ?").bind("shadow_led:" + new Date(Date.now() - 35 * 86400000).toISOString().slice(0, 10)).run(); } catch (e) {}
+  st.last = today; st.at = Date.now();
+  try { await setState(DB, "shadow_stats", st); } catch (e) {}
+  return st;
+}
+// 요약 — 진입 키(예: kr:AI-Q:TREND)별 7일·28일 { n, mean, win }
+function shadowSummary(st) {
+  const out = {};
+  for (const bk in ((st && st.byDay) || {})) {
+    const h = bk.split("|")[1], agg = st.byDay[bk];
+    for (const k in agg) { if (k === "n") continue; const a = agg[k], o = (out[k] || (out[k] = {}))[h] || (out[k][h] = { n: 0, sum: 0, w: 0 }); o.n += a.n; o.sum += a.sum; o.w += a.w; }
+  }
+  for (const k in out) for (const h in out[k]) { const o = out[k][h]; o.mean = o.n ? +(o.sum / o.n).toFixed(2) : null; o.win = o.n ? Math.round(o.w / o.n * 100) : null; }
+  return out;
+}
+
 /* [V33.464] ★진입 손절가 = ATR 손절과 % 손절 중 '타이트한' 쪽★ — 사용자: "수익률이 점점 떨어진다".
    원장(90일): 한국 111건 중 18건이 손절선(5%)을 넘어 잃었다(−5.4 ~ −19.6% · 합계 −845만 = 한국 전체 손실 −539만보다 크다).
    장 시작 갭만이 아니었다 — 12:04 STOP −9.2% · 14:26 STOP −12.0% · TIME-STOP −9.0% · 장 마감 EOD-GAP −6~−8.8%.
@@ -21298,12 +21365,12 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   }
 
   const _extGuard = await extBuyGuard(DB, market, qty, price, signal, cfg, opts, Date.now());
-  if (!_extGuard.ok) { await log(DB, "INFO", symbol, "BUY 시간외 차단 [" + _extGuard.why + "]"); return cash; }
+  if (!_extGuard.ok) { await logEvery(DB, "INFO", "ext:" + market + ":" + _extGuard.why, symbol, "BUY 시간외 차단 [" + _extGuard.why + "]"); return cash; }   // [V33.791] 같은 사유 반복 로그 묶음(90분 344행 → 로그 창이 90분치뿐이던 원인)
   qty = _extGuard.qty;
 
   // [V33.459] 실적 관문 — 이 시장에서 이 진입 주체·전략이 원장상 지고 있으면 막거나(7일) 반 크기로 시험한다
   const _pg = (typeof perfGateCheck === "function") ? await perfGateCheck(DB, market, signal, strategy) : { ok: true, mult: 1 };
-  if (!_pg.ok) { await logEvery(DB, "INFO", "pg:" + _pg.key, symbol, "BUY 실적 관문 차단 [" + _pg.key + "] " + (_pg.why || "")); return cash; }
+  if (!_pg.ok) { await logEvery(DB, "INFO", "pg:" + _pg.key, symbol, "BUY 실적 관문 차단 [" + _pg.key + "] " + (_pg.why || "")); try { await shadowRecord(DB, market, symbol, price, _pg.key); } catch (e) {} return cash; }
   /* [V33.506] ★레버리지·인버스 ETF 에 AI·단타 진입 금지★ — 원장(한국): 레버리지/인버스 9건 PF 0.47 · −210만 원(한국 손실의 39%) —
      252670(인버스2X) AI 진입 하나가 −19.6% · −287만. 위원회는 개별주 피처로 학습했고, 손절(5%)·수량 산정은 1배 변동을 가정한다
      (2배 상품의 밤사이 갭이 손절을 뛰어넘는다). 스냅은 이미 제외 · 규칙 추세는 ADX 로 축소 중 · 꼬리위험 헤지(hedge)는 그대로. */
@@ -23188,7 +23255,8 @@ async function extQuoteSweep(env) {
   try { last = (await getState(DB, "ext_sweep", null, true)) || {}; } catch (e) { return 0; }   // 못 읽으면 이번 분은 건너뛴다(사이클이 받는다)
   const due = mk.filter(function (m) { return Date.now() - _num(last[m], 0) >= EXT_SWEEP_MS; });
   if (_fk) { globalThis.__krPostFillDone = _fk; if (last.krPostFill !== _fk && due.indexOf("kr") < 0) { due.push("kr"); last.krPostFill = _fk; } }
-  if (_uk) { globalThis.__usPostFillDone = _uk; if (last.usPostFill !== _uk && due.indexOf("us") < 0) { due.push("us"); last.usPostFill = _uk; } }
+  let _usFillNow = false;   // [V33.791] 종가 대조는 ★이번 호출이 마감 재수집을 한 때만★(종전: 기록만 맞으면 매분·아이솔레이트마다 돌았다 — 90분 46회)
+  if (_uk) { globalThis.__usPostFillDone = _uk; if (last.usPostFill !== _uk && due.indexOf("us") < 0) { due.push("us"); last.usPostFill = _uk; _usFillNow = true; } }
   if (!due.length) return 0;
   for (const m of due) last[m] = Date.now();
   try { await setState(DB, "ext_sweep", last); } catch (e) {}
@@ -23201,7 +23269,7 @@ async function extQuoteSweep(env) {
       try { const r = await refreshPriceShard(env, m, sh); n += _num(r && r.ok, 0); } catch (e) {}
     }
   }
-  if (_uk && last.usPostFill === _uk) { try { await usCloseAudit(env, cfg); } catch (e) {} }   // [V33.788] 마감 확정 시세 대조
+  if (_usFillNow) { try { await usCloseAudit(env, cfg); } catch (e) {} }   // [V33.788] 마감 확정 시세 대조
   return n;
 }
 /* [V33.788] ★미국 종가 대조(하루 1회 · 마감 재수집 직후)★ — 사용자 11/7 "금요일 미장이 실시간으로 안 들어왔다 · 다시는 안 일어나게 · 항상 신선한 데이터".
@@ -25693,7 +25761,7 @@ async function runTradingCycle(env) {
           } catch (e) {}
         }
         if (crashGate.reasons.length > 0) {
-          await log(DB, "INFO", null, "[V12 CRASH-GATE " + market.toUpperCase() + "] dd=" + crashGate.ddPct.toFixed(1) + "% L" + crashGate.ddLevel + (crashGate.blockNew ? " BLOCK-NEW" : (crashGate.sizeScale < 1 ? " size×" + crashGate.sizeScale : "")) + (crashGate.heatBlock ? " HEAT-BLOCK(scalp면제)" : "") + (crashGate.deRisk ? " DE-RISK" : "") + " · " + crashGate.reasons.join(", "));
+          await logEvery(DB, "INFO", "cg:" + market + ":" + crashGate.ddLevel + ":" + crashGate.sizeScale + ":" + (crashGate.blockNew ? 1 : 0), null, "[V12 CRASH-GATE " + market.toUpperCase() + "] dd=" + crashGate.ddPct.toFixed(1) + "% L" + crashGate.ddLevel + (crashGate.blockNew ? " BLOCK-NEW" : (crashGate.sizeScale < 1 ? " size×" + crashGate.sizeScale : "")) + (crashGate.heatBlock ? " HEAT-BLOCK(scalp면제)" : "") + (crashGate.deRisk ? " DE-RISK" : "") + " · " + crashGate.reasons.join(", "));
         }
         // [V33.90] ★크래시게이트 결론을 전역 거래상태로 승격 (NautilusTrader TradingState)★
         //   종전엔 blockNew/deRisk 가 이 함수 안의 지역 플래그라, 하위 실행경로(executeBuy 등)는
@@ -28680,7 +28748,7 @@ async function runTradingCycle(env) {
                     if (_fc) {
                       const _hg = financialHealthGate(evaluateFundamentals(_fc, null), _fp);
                       if (_hg.block) {
-                        await log(DB, "INFO", symbol, "[FUND-GATE] 재무 미달 매수금지: " + _hg.reasons.join(", "));
+                        await logEvery(DB, "INFO", "fund:" + symbol, symbol, "[FUND-GATE] 재무 미달 매수금지: " + _hg.reasons.join(", "), 6 * 3600000);   // [V33.791] 같은 종목 6시간에 1줄
                         incNobuy("fund_health", (_md && typeof _md.p === "number") ? _md.p : null); noteGateBlock("fund_health", symbol, (_md && typeof _md.p === "number") ? _md.p : null, price);
                         continue;
                       }
@@ -34035,6 +34103,32 @@ async function handleRequest(request, env, ctx, _inner) {
           for (const p of sc.picks) out.picks.push(p);
         }
       } catch (e) {}
+      /* [V33.791] ★위원회 퇴역 → AI 픽 = OMNI-Q 순위★(독립 검토 11/9: 야간 스캔이 퇴역 위원회 확률로 252990.KQ(20일 −36% · 기술 '적극매도')를 p 0.789 1위로 올렸다).
+         지금 실제 매수 경로인 OMNI-Q 의 그날 점수(분위 0~1)에서 진입 문턱(entryPct) 이상 · 다른 머리가 하위(lowPct) 아닌 종목만 · 시장별 상위 8. 낡았거나 머리가 꺼졌으면 비운다(지어내지 않는다). */
+      if (COMMITTEE_RETIRED) {
+        out.picks = []; out.src = "omniq";
+        try {
+          const now = Date.now();
+          for (const mk of ["us", "kr"]) {
+            let st = null; try { st = await getState(env.DB, "omniq:" + mk, null); } catch (e) {}   // getStates 는 점수를 떼고 읽는다(_STATE_LITE) — 점수가 필요해 한 건씩
+            if (!st || !omniqFresh(st, now)) continue;
+            const on5 = _omqHeadOn(st, 5), on20 = _omqHeadOn(st, 20); if (!on5 && !on20) continue;
+            const syms = Object.keys((st.scores || {})).concat(Object.keys((st.heads && st.heads.r20) || {}));
+            const seen = {}, rows = [];
+            for (const sym of syms) {
+              if (seen[sym]) continue; seen[sym] = 1;
+              const s5 = on5 ? _omqScore(st, 5, sym) : null, s20 = on20 ? _omqScore(st, 20, sym) : null;
+              if ((s5 != null && s5 < OMNIQ.lowPct) || (s20 != null && s20 < OMNIQ.lowPct)) continue;
+              const sc = Math.max(s5 == null ? -1 : s5, s20 == null ? -1 : s20); if (!(sc >= OMNIQ_ROUTE.entryPct)) continue;
+              const h = s5 != null && s5 === sc ? 5 : 20;
+              rows.push({ symbol: sym, market: mk, p: +sc.toFixed(3), rankP: +sc.toFixed(3), strategy: "omniq", h: h, mode: h === 5 ? on5 : on20, day: st.day || null });
+            }
+            rows.sort(function (x, y) { return y.p - x.p; });
+            for (const r of rows.slice(0, 8)) out.picks.push(r);
+            out.ts = Math.max(out.ts || 0, _num(st.scoredAt, 0) || _num(st.trainedAt, 0));
+          }
+        } catch (e) {}
+      }
       const bySym = {};
       for (const p of out.picks) if (!bySym[p.symbol] || p.p > bySym[p.symbol].p) bySym[p.symbol] = p;
       out.picks = Object.keys(bySym).map(function (k) { return bySym[k]; });
@@ -42761,12 +42855,27 @@ async function buildRoster(DB) {
   const _omMinute = !_om ? "분봉 머리: 업로드 없음"
        : (_om.v !== OMNI_VER ? ("분봉 머리: 판 불일치 v" + _om.v + " → v" + OMNI_VER)
        : (_omOk.length ? ("분봉 머리: 섀도우(문턱 넘은 지평 " + _omOk.join("·") + " · 매매 미사용)") : "분봉 머리: 섀도우(모든 지평 문턱 미달)"));
+  /* [V33.791] ★실적 관문 상태를 같이 적는다★(독립 검토 11/9: 화면은 '가동' 인데 실제론 실적 관문이 OMNI-Q 진입을 막고 있었다 — 美 12건 −1.5% · 韓 11건 −0.5% · 합산 PF 0.51) */
+  let _pgTxt = "";
+  try {
+    const _pg = await perfGateLoad(DB, false);
+    _pgTxt = " · 실적 관문: " + ["us", "kr"].map(function (mk) {
+      const tg = "AI-Q:TREND", e = _pg.keys[mk + ":" + tg]; let st = (e && e.mode) || "open";
+      const pl = (!e || e.mode === "open") ? _pgPooled(_pg.keys, mk, tg) : null;
+      if (pl) st = pl.probation ? "probation" : "blocked";
+      return (mk === "us" ? "美" : "韓") + " " + ({ open: "열림", blocked: "막힘(신규 매수 중단)", probation: "시험(반 크기)" })[st] + (e && e.n ? "(" + e.n + "건 평균 " + e.mean + "%" + (e.pf != null ? " · PF " + e.pf : "") + ")" : "");
+    }).join(" / ");
+    let _sh = null; try { _sh = shadowSummary(await getState(DB, "shadow_stats", null)); } catch (e) {}
+    const _shTxt = ["us", "kr"].map(function (mk) { const o = _sh && _sh[mk + ":AI-Q:TREND"]; const a = o && o["7"], b = o && o["28"];
+      return a && a.n ? (mk === "us" ? "美" : "韓") + " 7일 " + a.n + "건 평균 " + a.mean + "%(승률 " + a.win + "%)" + (b && b.n ? " · 28일 " + b.n + "건 " + b.mean + "%" : "") : ""; }).filter(Boolean).join(" / ");
+    _pgTxt += " · 막힌 후보 그림자 성적: " + (_shTxt || "측정 중(막힌 날로부터 7일 뒤 첫 결과)");
+  } catch (e) {}
   if (_oqOn.length) {
     const _r = function (mk) { const v = _oqv[mk]; return (mk === "us" ? "美" : "韓") + " " + (v.state === "speak" ? "발언" : "잠정") + " · 오늘 " + v.route.today + "건 · 보유 " + v.route.open; };
     add("omni", "OMNI (복합모델 — OMNI-Q 순위 머리 가동 · 분봉 머리 섀도우)", "route", {
       trained: true, featVerOk: true, tier: _oqFull ? "full" : "provisional", mult: _oqFull ? 1 : OMNIQ_ROUTE.provMult,
       why: "OMNI-Q 진입 경로 가동 — 그날 상위 10% 직접 매수" + (_oqFull ? "" : "(잠정 ×" + OMNIQ_ROUTE.provMult + ")") +
-           " · 상위 25% 밖이면 매도 · 하위 절반 신규진입 차단 — " + _oqOn.map(_r).join(" / ") + " · " + _omMinute
+           " · 상위 25% 밖이면 매도 · 하위 절반 신규진입 차단 — " + _oqOn.map(_r).join(" / ") + " · " + _omMinute + _pgTxt
     });
   } else {
     add("omni", "OMNI (복합모델 · 분봉 · 동료 대비 상대 · 장타+단타 한 모델)", "shadow", {
@@ -57197,7 +57306,10 @@ function _extTrainSummary(SS) {
       let newest = null, n = 0;
       for (const mk of ["us", "kr"]) { const q = SS["omniq:" + mk]; const t = q ? _num(q.trainedAt, 0) : 0; if (t > 0) { n++; if (newest == null || t > newest) newest = t; } }
       const ageH = newest ? +((Date.now() - newest) / 3600000).toFixed(1) : null;
-      const state = ageH == null ? "unknown" : ageH <= 36 ? "ok" : "warn";
+      /* [V33.791] ★주말 거짓 경보★(독립 검토 11/9: 학습 크론은 평일만 · 금 21:20 → 월 07:20 UTC 공백 ~58h 가 매주 '학습 지연' 으로 떴다) — 토·일(UTC) 시간을 빼고 잰다 */
+      let bizH = ageH;
+      if (newest) { bizH = 0; for (let t = newest; t < Date.now(); t += 3600000) { const wd = new Date(t).getUTCDay(); if (wd !== 0 && wd !== 6) bizH += Math.min(1, (Date.now() - t) / 3600000); } bizH = +bizH.toFixed(1); }
+      const state = ageH == null ? "unknown" : bizH <= 36 ? "ok" : "warn";
       return { state: state, ageH: ageH, models: n, total: 2, label: "학습", why: "OMNI-Q·매매법 AI(GitHub Actions 하루 2회) 마지막 학습 " + (ageH == null ? "기록 없음" : ageH + "시간 전") + " · 시장 " + n + "/2" };
     } catch (e) { return null; }
   }
@@ -57810,6 +57922,7 @@ export default {
       } catch (e) {}
       __prof.mark("dataHealth");   // [V33.628] 데이터 감시·자가 복구 — 거래보다 먼저
       try { await dataHealthRun(env); } catch (e) {}
+      try { await shadowLabelDaily(env); } catch (e) {}   // [V33.791] 그림자 원장 라벨(하루 1회 · 아이솔레이트 가드)
 
       __prof.mark("trading");
       // 1) 주식/지수 가격 갱신 + 거래 (가장 무거움)

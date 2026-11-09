@@ -50,7 +50,8 @@
     var chip = function (k) { var h = r[k]; if (!h) return ""; return '<span class="lc ' + h.cls + (h.usable ? "" : " ref") + '">' + sp(HN[k][0], HN[k][1], "i") + "<em>" + h.decile + "/10</em>" + sp(h.label, h.labelEn) + "</span>"; };
     var body = function (k) {
       var h = r[k]; if (!h) return "";
-      var g = h.usable ? '<span class="g ok" data-en="Validated">검증 통과</span>' : '<span class="g" data-en="Reference only (not validated)">참고(검증 미달)</span>';
+      var au = h.stats && typeof h.stats.auc === "number" ? " · AUC " + h.stats.auc.toFixed(2) : "";   // [V33.791] 독립 검토: AUC 0.51~0.53 인데 '검증 통과' 만 보이면 과장 — 정확도 수치를 같이
+      var g = h.usable ? '<span class="g ok" data-en="Passed holdout (weak edge)' + au + '">검증 통과(약한 우위)' + au + '</span>' : '<span class="g" data-en="Reference only (not validated)' + au + '">참고(검증 미달)' + au + '</span>';
       var st = '<span class="st">' + sp("시장 안 " + h.decile + "분위", "Market decile " + h.decile) + " · " +
         sp("과거 같은 분위 시장 대비 " + sg(h.ex) + "%p (가운데 절반 " + sg(h.exLo) + " ~ " + sg(h.exHi) + ")", "Past same-decile vs market " + sg(h.ex) + "pp (middle half " + sg(h.exLo) + " to " + sg(h.exHi) + ")") + "</span>";
       return '<div class="lw"><b>' + sp(HN[k][0], HN[k][1]) + " · " + sp(h.label, h.labelEn) + g + "</b>" + st +
