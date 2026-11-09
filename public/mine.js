@@ -390,7 +390,7 @@
       // [V33.734] 동의 배너 · 가입 동의서 · 내 데이터 요약
       "#luxConsent{position:fixed;left:12px;right:12px;bottom:calc(80px + env(safe-area-inset-bottom));z-index:10040;max-width:560px;margin:0 auto;background:#161A21;color:#EEF1F5;border:1px solid #2E3542;border-radius:16px;padding:14px 16px;box-shadow:0 14px 40px rgba(0,0,0,.4);font-size:13.5px;line-height:1.55}#luxConsent p{margin:0 0 10px}#luxConsent a{color:#7CC4FF}#luxConsent .cb{display:flex;gap:8px;justify-content:flex-end}#luxConsent button{min-height:44px;padding:0 16px;border-radius:12px;border:1px solid #3A4250;background:transparent;color:inherit;font:inherit;font-weight:600;cursor:pointer}#luxConsent button.pri{background:#EEF1F5;color:#0D1014;border-color:#EEF1F5}",
       "html[data-theme=light] #luxConsent{background:#FFFFFF;color:#101828;border-color:#DCE1E8;box-shadow:0 14px 40px rgba(16,24,40,.18)}html[data-theme=light] #luxConsent a{color:#1B4FB5}html[data-theme=light] #luxConsent button{border-color:#D0D5DD}html[data-theme=light] #luxConsent button.pri{background:#101828;color:#fff;border-color:#101828}",
-      "#luxGate .agf{border:1px solid #2E3542;border-radius:14px;padding:10px 12px;margin:0;display:flex;flex-direction:column;gap:10px}#luxGate .agf legend{font-size:12.5px;color:#98A2B3;padding:0 6px}#luxGate .ag.all{padding-bottom:8px;border-bottom:1px solid #2E3542}#luxGate .agt{font-size:12px;line-height:1.6;color:#C7CDD6;background:rgba(127,137,155,.12);border-radius:10px;padding:8px 10px}html[data-theme=light] #luxGate .agf,html[data-theme=light] #luxGate .ag.all{border-color:#DCE1E8}html[data-theme=light] #luxGate .agt{color:#344054;background:#F2F4F7}",
+      "#luxGate .ag.one{margin:4px 0 0}#luxGate .agd{font-size:12px;color:#98A2B3;margin:2px 0 0}#luxGate .agd summary{cursor:pointer}#luxGate .agd .agt{margin-top:6px}#luxGate .agf{border:1px solid #2E3542;border-radius:14px;padding:10px 12px;margin:0;display:flex;flex-direction:column;gap:10px}#luxGate .agf legend{font-size:12.5px;color:#98A2B3;padding:0 6px}#luxGate .ag.all{padding-bottom:8px;border-bottom:1px solid #2E3542}#luxGate .agt{font-size:12px;line-height:1.6;color:#C7CDD6;background:rgba(127,137,155,.12);border-radius:10px;padding:8px 10px}html[data-theme=light] #luxGate .agf,html[data-theme=light] #luxGate .ag.all{border-color:#DCE1E8}html[data-theme=light] #luxGate .agt{color:#344054;background:#F2F4F7}",
       "#mineRoot .kvl{display:flex;flex-direction:column}#mineRoot .kvl div{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid var(--m-line);font-size:13.5px}#mineRoot .kvl div:first-child{border-top:0}#mineRoot .kvl span{color:var(--m-mute);flex:0 0 auto}#mineRoot .kvl b{font-weight:600;text-align:right}",
       // [V33.732] 비밀번호 보기 · 언어 선택
       ".pwi{position:relative;display:flex}.pwi input{flex:1;min-width:0;padding-right:52px!important}.pwi .eye{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:44px;height:44px;border:0;border-radius:10px;background:transparent;color:#98A2B3;cursor:pointer;display:flex;align-items:center;justify-content:center}.pwi .eye.on{color:#3DD6B5}",
@@ -954,7 +954,7 @@
     acct("us"); acct("kr"); saveLocal();   // [V33.757] 가입과 함께 두 시장 모의계좌(시작금 $10,000 · ₩10,000,000)
     return api("POST", Object.assign({}, prof)).catch(function () {}).then(function () { return authPost("/api/auth/signup", { nick: nick, pw: pw, agree: TERMS_VER }); }).then(function (j) {
       if (!j || !j.ok) throw new Error((j && j.error) || "가입하지 못했어요");
-      remember(j.nick, j.created); prof.nick = j.nick; saveLocal(); return j;
+      remember(j.nick, j.created); prof.nick = j.nick; saveLocal(); try { var rf = localStorage.getItem("lux-ref"); if (rf) fetch("/api/ref", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ r: rf, ev: "s" }), keepalive: true }).catch(function () {}); } catch (e) {} return j;
     });
   }
   function login(nick, pw) {
@@ -983,16 +983,12 @@
       var su = m === "signup";
       w.innerHTML = '<div class="in"><div class="hd"><div class="lg"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3DD6B5" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 2v20M2 12h20M5 5l14 14M19 5L5 19"></path></svg></div>' +
         '<button type="button" class="x" id="gClose" aria-label="닫기">✕</button></div>' +
-        "<h1>" + (su ? "닉네임 하나로<br>모의투자를 시작하세요" : "다시 오셨네요") + '</h1><p class="lead">' + esc(PGN[target] || "이 메뉴") + "는 로그인 후 쓸 수 있어요. 대시보드와 종목 상세는 로그인 없이 볼 수 있습니다.</p>" +
+        "<h1>" + (su ? "닉네임 + 비밀번호면 끝<br>10초 만에 시작하세요" : "다시 오셨네요") + '</h1><p class="lead">' + esc(PGN[target] || "이 메뉴") + "는 로그인 후 쓸 수 있어요. 대시보드와 종목 상세는 로그인 없이 볼 수 있습니다.</p>" +
         '<div class="sw" role="tablist"><button type="button" role="tab" data-m="login" class="' + (su ? "" : "on") + '" aria-selected="' + !su + '">로그인</button><button type="button" role="tab" data-m="signup" class="' + (su ? "on" : "") + '" aria-selected="' + su + '">회원가입</button></div>' +
         '<form id="gForm" novalidate><label class="f"><span>닉네임</span><input id="gNick" autocomplete="username" maxlength="12" placeholder="2~12자 한글·영문·숫자" value="' + esc(authNick() || prof.nick || "") + '"></label>' +
         '<label class="f"><span>비밀번호</span><span class="pwi"><input id="gPw" type="password" autocomplete="' + (su ? "new-password" : "current-password") + '" maxlength="64" placeholder="' + (su ? "8자 이상" : "비밀번호") + '">' + EYE + '</span></label>' +
-        (su ? '<label class="f"><span>비밀번호 확인</span><span class="pwi"><input id="gPw2" type="password" autocomplete="new-password" maxlength="64" placeholder="한 번 더">' + EYE + '</span></label>' +
-              '<fieldset class="agf"><legend>약관 동의</legend><label class="ag all"><input type="checkbox" id="gAll"><span><b>전체 동의</b></span></label>' +
-              '<label class="ag"><input type="checkbox" class="gReq" id="gAgree"><span>[필수] <a href="/terms" target="_blank" rel="noopener">이용약관</a> 동의 — 모의투자이며 투자 권유가 아님을 이해했습니다</span></label>' +
-              '<label class="ag"><input type="checkbox" class="gReq" id="gPriv"><span>[필수] <a href="/privacy" target="_blank" rel="noopener">개인정보 수집·이용</a> 동의</span></label>' +
-              '<div class="agt" role="note"><b>수집 항목</b> 닉네임 · 비밀번호 확인값(비밀번호 자체는 저장 안 함) · 성향·관심종목·모의계좌<br><b>목적</b> 로그인 · 모의투자 · 순위 표시<br><b>보유 기간</b> 마지막 사용 후 1년 또는 탈퇴 즉시 삭제 · 동의를 거부할 수 있으나 거부하면 가입할 수 없습니다</div>' +
-              '<label class="ag"><input type="checkbox" class="gReq" id="gAge"><span>[필수] 만 14세 이상입니다</span></label></fieldset>' : "") +
+        (su ? '<label class="ag one"><input type="checkbox" class="gReq" id="gAgree"><span>[필수] 만 14세 이상이며 <a href="/terms" target="_blank" rel="noopener">이용약관</a> · <a href="/privacy" target="_blank" rel="noopener">개인정보 수집·이용</a>에 동의합니다 (모의투자 · 투자 권유 아님)</span></label>' +
+              '<details class="agd"><summary>수집 항목 보기</summary><div class="agt" role="note"><b>수집 항목</b> 닉네임 · 비밀번호 확인값(비밀번호 자체는 저장 안 함) · 성향·관심종목·모의계좌<br><b>목적</b> 로그인 · 모의투자 · 순위 표시<br><b>보유 기간</b> 마지막 사용 후 1년 또는 탈퇴 즉시 삭제 · 동의를 거부할 수 있으나 거부하면 가입할 수 없습니다</div></details>' : "") +
         '<p id="gErr" class="err" role="alert"></p><button type="submit" class="p1" id="gGo">' + (su ? "가입하고 시작하기" : "로그인") + "</button></form>" +
         '<button type="button" class="p3" id="gGuest">나중에 · 대시보드로 계속</button>' +
         '<p class="fine">이메일·이름·전화번호를 받지 않습니다 · 비밀번호는 서버에 저장되지 않고 확인용 값만 남습니다' + (su ? " · 로그인 없이 쓰던 관심종목·모의계좌는 이 계정으로 옮겨집니다" : "") + "<br>비밀번호를 잊으면 되찾을 수 없어요(이메일을 받지 않기 때문) — 꼭 기억해 두세요.</p></div>";
@@ -1016,11 +1012,10 @@
       if (!/^[가-힣A-Za-z0-9_]{2,12}$/.test(nick)) { err("닉네임은 2~12자 한글·영문·숫자·_ 만 쓸 수 있어요"); return; }
       if (m === "signup") {
         if (pw.length < 8) { err("비밀번호는 8자 이상으로 정해 주세요"); return; }
-        if (pw !== ($("gPw2").value || "")) { err("비밀번호 확인이 다릅니다"); return; }
-        if (!$("gAgree").checked || !$("gPriv").checked || !$("gAge").checked) { err("필수 항목 세 가지에 모두 동의해 주세요"); return; }
+        if (!$("gAgree").checked) { err("필수 동의에 체크해 주세요"); return; }
       } else if (!pw) { err("비밀번호를 넣어 주세요"); return; }
       busy = true; err(""); var g = $("gGo"); g.disabled = true; g.textContent = m === "signup" ? "가입하는 중…" : "로그인하는 중…";
-      (m === "signup" ? signup(nick, pw) : login(nick, pw)).then(function () { if (m === "signup" && !prof.done) tab = "me"; done(true); })
+      (m === "signup" ? signup(nick, pw) : login(nick, pw)).then(function () { if (m === "signup") tab = "home"; done(true); })
         .catch(function (e) { busy = false; g.disabled = false; g.textContent = m === "signup" ? "가입하고 시작하기" : "로그인"; err(String(e && e.message || e)); });
     });
     paint(); document.body.appendChild(w);

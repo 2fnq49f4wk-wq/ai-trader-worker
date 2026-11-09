@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI로 사이트 만드는 법 · LUX-INV 개발 노트</title>
+<meta name="description" content="코딩 잘 못하는 고등학생이 클로드 코드와 깃허브·클라우드플레어로 AI 모의주식 사이트를 만든 실제 설정 공개">
+<style>
+:root{--bg:#0d1117;--card:#161b22;--line:#2a313c;--tx:#e6edf3;--mut:#9aa4b2;--ac:#3DD6B5;--or:#d97757}
+@media (prefers-color-scheme:light){:root{--bg:#f7f9fb;--card:#fff;--line:#e3e8ef;--tx:#101828;--mut:#5b6575}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+main{max-width:760px;margin:0 auto;padding:40px 16px 80px}
+h1{font-size:30px;line-height:1.3;margin:0 0 8px}.lead{color:var(--mut);margin:0 0 28px}
+h2{font-size:21px;margin:36px 0 12px}section{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin:12px 0}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px}code{background:rgba(128,128,128,.15);padding:1px 6px;border-radius:6px}
+pre{background:rgba(128,128,128,.1);border-radius:10px;padding:12px 14px;overflow-x:auto;white-space:pre-wrap;margin:8px 0}
+ol,ul{padding-left:20px;margin:6px 0}li{margin:4px 0}.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-weight:600}
+.flow span{background:rgba(61,214,181,.12);color:var(--ac);padding:6px 12px;border-radius:999px}.flow i{color:var(--mut);font-style:normal}
+.cta{display:block;text-align:center;background:var(--ac);color:#04130f;font-weight:700;padding:16px;border-radius:14px;text-decoration:none;margin:32px 0 8px;font-size:17px}
+.fine{color:var(--mut);font-size:13px;text-align:center}
+</style>
+</head>
+<body>
+<main>
+<h1>코딩 잘 못하는 고딩이<br>AI로 사이트 만드는 실제 설정</h1>
+<p class="lead">LUX-INV(AI 모의주식 사이트)를 만들면서 실제로 쓰는 구조와 규칙을 그대로 공개함. 따라 하면 됨.</p>
+
+<h2>1. 전체 구조</h2>
+<section>
+<div class="flow"><span>폰으로 AI한테 말함</span><i>→</i><span>AI가 코드 고치고 깃허브에 올림</span><i>→</i><span>깃허브 액션 검사 226개</span><i>→</i><span>통과하면 클라우드플레어 자동 배포</span></div>
+<ul>
+<li>서버: 클라우드플레어 워커 하나. 데이터는 D1(데이터베이스), 파일은 R2</li>
+<li>코드: 깃허브 저장소 하나. <code>main</code> 에 올라가는 순간 배포됨</li>
+<li>연결: 클라우드플레어에서 API 토큰 하나 만들어서 깃허브 시크릿(<code>CLOUDFLARE_API_TOKEN</code>)에 넣으면 끝</li>
+</ul>
+<pre># .github/workflows/deploy.yml 핵심만
+on: push (main)
+steps:
+  - 검사 돌리기 (하나라도 실패하면 여기서 멈춤)
+  - wrangler deploy</pre>
+</section>
+
+<h2>2. CLAUDE.md — AI한테 주는 규칙 파일</h2>
+<section>
+<p>저장소 맨 위에 두면 클로드 코드가 매번 읽음. 우리가 실제로 넣어둔 규칙 중 효과 컸던 것:</p>
+<ol>
+<li><b>배포 순서 고정</b> — 검사 → 커밋 → 푸시. 검사 통과 못 하면 배포 안 함</li>
+<li><b>내 말도 그대로 믿지 말 것</b> — "장 닫혔어" 해도 실제 데이터로 확인하고 움직이게 함</li>
+<li><b>최신 코드 위에서만 작업</b> — 옛날 버전 위에서 작업하다 기능 날아간 사고 이후 생김</li>
+<li><b>비용 한도 안에서 설계</b> — 사람 수가 늘어도 서버 일이 안 늘게(캐시)</li>
+<li><b>AI 바꾸면 화면도 같이</b> — 기능만 바꾸고 화면은 옛날 그대로인 실수 방지</li>
+<li><b>인수인계 파일</b> — AI 여러 개를 쓰니까 끝날 때마다 <code>AI_HANDOFF.md</code> 에 뭘 했는지 적게 함</li>
+</ol>
+</section>
+
+<h2>3. 자주 쓰는 클로드 코드 명령어</h2>
+<section>
+<ul>
+<li><code>/init</code> 처음 한 번. CLAUDE.md 를 만들어 줌</li>
+<li><code>/compact</code> 대화가 길어지면 요약해서 이어감</li>
+<li><code>/resume</code> 어제 하던 대화 다시 불러오기</li>
+<li><code>/code-review</code> 올리기 전에 버그 찾기</li>
+<li><code>/loop</code> 정해진 간격으로 반복 확인</li>
+</ul>
+<p>스킬: <code>.claude/skills/이름/SKILL.md</code> 에 순서를 적어두면 <code>/이름</code> 으로 불러 쓰는 나만의 명령어가 됨.</p>
+</section>
+
+<h2>4. 돈 안 나가게 하는 규칙</h2>
+<section>
+<ul>
+<li>한 번 읽은 데이터는 캐시해서 모두가 같이 봄. 화면 열 때마다 DB 읽으면 청구서 나옴(실제로 나옴)</li>
+<li>개인 데이터는 화면이 계산하고 저장은 모아서 한 번에</li>
+<li>사용량은 매일 자동으로 재서 한도 넘으면 검사가 빨간불 켬</li>
+</ul>
+</section>
+
+<a class="cta" href="/?r=dev">이걸로 만든 사이트 구경하기 · 가입 없이 바로</a>
+<p class="fine">LUX-INV · 모의투자 연습용(실제 돈 아님) · 투자 권유 아님</p>
+</main>
+<script>(function(){try{var d=new Date(Date.now()+324e5).toISOString().slice(0,10),k="lux-ref-v:devpage";if(localStorage.getItem(k)===d)return;localStorage.setItem(k,d);fetch("/api/ref",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({r:"devpage",ev:"v"}),keepalive:true}).catch(function(){});}catch(e){}})();</script>
+</body>
+</html>

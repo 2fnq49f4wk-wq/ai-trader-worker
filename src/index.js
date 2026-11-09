@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.794";
+const _BUILD_VER = "V33.795";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -34400,6 +34400,28 @@ async function handleRequest(request, env, ctx, _inner) {
        서버는 토큰의 SHA-256 만 키로 쓰고 개인정보는 받지 않는다(성향·시장·기간·경험·관심종목만). 다른 기기는 같은 토큰(연결 코드)을 넣으면 같은 프로필. */
     if (path === "/api/leaderboard") {   // [V33.725] 수익률 순위 — 1시간 SWR · 누가 몇 번 봐도 계산은 1시간 1번
       return await swrJson("leaderboard4", 3600000, 6 * 3600000, async function () { return await luxLeaderboard(env.DB); });   // [V33.746] 키 바꿈 — 비어 있던(0명) 옛 캐시를 안 쓰게
+    }
+    /* [V33.795] ★유입 꼬리표★(사용자 11/9 스레드 글별 유입 측정) — 링크 ?r=t09 로 들어온 첫 방문(v)·가입(s)만 센다.
+       브라우저가 기기당 꼬리표마다 하루 1번만 보낸다(localStorage) · 서버는 날짜별 1행(ref_stats:YYYY-MM-DD)에 합산 — 사람 수 ≠ 행 수. */
+    if (path === "/api/ref" && request.method === "POST") {
+      const ip = String(request.headers.get("cf-connecting-ip") || "-");
+      if (!luxRateOk("ref:" + ip)) return Response.json({ ok: false }, { status: 429, headers: cors });
+      const b = await request.json().catch(function () { return null; }) || {};
+      const r = String(b.r || "").toLowerCase(), ev = b.ev === "s" ? "s" : "v";
+      if (!/^[a-z0-9_-]{1,16}$/.test(r)) return Response.json({ ok: false }, { status: 400, headers: cors });
+      const day = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10), k = "ref_stats:" + day, jp = "$." + JSON.stringify(r + "." + ev);
+      await env.DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, json_object(?, 1), ?) ON CONFLICT(k) DO UPDATE SET v = json_set(CASE WHEN json_valid(state.v) THEN state.v ELSE '{}' END, ?, COALESCE(json_extract(state.v, ?), 0) + 1), updated_ts = excluded.updated_ts")
+        .bind(k, r + "." + ev, Date.now(), jp, jp).run();
+      return Response.json({ ok: true }, { headers: cors });
+    }
+    if (path === "/api/ref-stats") {   // 최근 14일 합계 — 30분 SWR(보는 사람 수와 무관)
+      return await swrJson("ref_stats14", 1800000, 6 * 3600000, async function () {
+        const days = []; for (let i = 0; i < 14; i++) days.push("ref_stats:" + new Date(Date.now() + 9 * 3600000 - i * 86400000).toISOString().slice(0, 10));
+        const m = await getStates(env.DB, days), tot = {}, byDay = {};
+        days.forEach(function (k) { const v = m && m[k]; if (!v || typeof v !== "object") return; byDay[k.slice(10)] = v;
+          Object.keys(v).forEach(function (kk) { const i = kk.lastIndexOf("."), r = kk.slice(0, i), e = kk.slice(i + 1); tot[r] = tot[r] || { v: 0, s: 0 }; tot[r][e] = (tot[r][e] || 0) + Number(v[kk] || 0); }); });
+        return { ok: true, days: 14, total: tot, byDay: byDay, ts: Date.now() };
+      });
     }
     if (path === "/api/auth/signup" || path === "/api/auth/login" || path === "/api/auth/password") {   // [V33.729] 닉네임 + 비밀번호
       if (request.method !== "POST") return Response.json({ ok: false, error: "POST" }, { status: 405, headers: cors });

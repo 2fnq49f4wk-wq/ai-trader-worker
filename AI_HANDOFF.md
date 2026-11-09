@@ -12,6 +12,12 @@
 
 ## Current handoff
 
+### V33.795 — 회원가입 간단하게 · 유입 꼬리표 · /dev 공개 페이지
+- 회원가입: 비밀번호 확인칸 없음 · 필수 동의 체크 1개(gAgree 하나에 약관·개인정보·만14세) · 가입 후 홈.
+- 유입: 링크 ?r=xxx → POST /api/ref (기기·꼬리표당 하루 1번, 가입 때 ev=s) → state ref_stats:YYYY-MM-DD 1행 합산 · GET /api/ref-stats(14일 · 30분 SWR).
+- public/dev.html(/dev) = 개발 설정 공개 페이지 · 아래 버튼 /?r=dev.
+- AI 체험 매수(probation)·인버스 에이전트 작업은 사용량 한도로 중단 — 워크트리 agent-acf13d4eb0237d18c 에 미완 상태(이어서 할 것).
+
 - V33.794 (11/9) ★독립 검토 남은 항목(에이전트)★
   ① 국면 원천 하나로: 원천이 셋이었다 — 지수 위상 analyzeMarketRegime().phase(RANGE/TREND_UP/MELTUP/TREND_DOWN/CRASH · mkt_phase) · 학습기 매매법 국면 pb_regime(SURGE/BULL/NEUTRAL/BEAR/CRASH) · 거시 mkt_context.regime(risk_on~risk_off).
      라이브 11/9: 美 위상 TREND_UP vs 매매법 CRASH(11/6 판) · 韓 TREND_DOWN vs CRASH. → regimeCanon(phase, pb, ctx) = 셋을 5단으로 옮겨 ★가장 방어적인 값★(학습기 국면은 4일 넘게 멈추면 제외).
@@ -28,7 +34,7 @@
 - `.github/workflows/threads-post.yml`(수동 실행) + `tools/threads/post.py`. 토큰은 GitHub 비밀값 `THREADS_ACCESS_TOKEN`(장기 토큰 · 2027-01-08 경 만료 → 갱신 필요).
 - 홍보 영상은 항상 패드 화면(820x1180) 기준으로 캡처한다(사용자 지시 2026-11-09).
 - 글은 항상 살짝 어그로성 첫 줄(유인 멘트)을 넣는다. 2일에 1개 비용(AI·사이트) 관련 글을 자동 게시(예약 작업 · 사용자 지시 2026-11-09). 사실만 쓴다.
-- AI·사이트 만들기 관련 글 끝에는 항상 "고딩이 만든 AI 모의주식 사이트 회원가입해서 수익률 경쟁해봐요" + lux-inv.com 을 붙인다. 이미지·영상 첨부 글은 게시 전 사용자 확인.
+- 글 끝 문구는 글 종류별(사용자 11/9 승인): ① 개발·AI 팁·비용 → "이걸로 만든 사이트 직접 눌러봐 (가입 없이 구경 가능)" + https://lux-inv.com/?r=tNN (설정 공개 페이지 lux-inv.com/dev 도 가끔) ② AI 성적·실패담 → "AI 지금 뭐 사는지 실시간으로 보임" + https://lux-inv.com/?r=tNN ③ 광고 → "고딩이 만든 AI 모의주식 사이트 회원가입해서 수익률 경쟁해봐요" + https://lux-inv.com/?r=tNN. NN=글 번호. 유입은 /api/ref-stats(14일 · 방문 v · 가입 s). 이미지·영상 첨부 글은 게시 전 사용자 확인.
 - text_file 비우고 돌리면 토큰 확인만, 채우면 글 게시. 글 원문은 `promo/threads/devlog-0N.txt`, 미디어는 `public/promo/`.
 
 - (11/9) Threads 개발일지 홍보용 공개 파일 public/promo/(devlog1-server.jpg · devlog2-arch.jpg · devlog3-promo.mp4 · 광고 영상 v5 26.6초) — Threads API 는 공개 URL 미디어만 받는다. 코드 변경 없음(버전 그대로).
