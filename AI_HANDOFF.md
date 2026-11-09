@@ -12,6 +12,18 @@
 
 ## Current handoff
 
+- V33.794 (11/9) ★독립 검토 남은 항목(에이전트)★
+  ① 국면 원천 하나로: 원천이 셋이었다 — 지수 위상 analyzeMarketRegime().phase(RANGE/TREND_UP/MELTUP/TREND_DOWN/CRASH · mkt_phase) · 학습기 매매법 국면 pb_regime(SURGE/BULL/NEUTRAL/BEAR/CRASH) · 거시 mkt_context.regime(risk_on~risk_off).
+     라이브 11/9: 美 위상 TREND_UP vs 매매법 CRASH(11/6 판) · 韓 TREND_DOWN vs CRASH. → regimeCanon(phase, pb, ctx) = 셋을 5단으로 옮겨 ★가장 방어적인 값★(학습기 국면은 4일 넘게 멈추면 제외).
+     매매 경로 regimes[m].canon(사이클 · pb_regime 은 준비 묶음 getStates 에 끼움 · 추가 쿼리 0) · regime_snap 에 canon 저장 · 관문: 일일손실 반등 예외는 정식 국면 CRASH 면 안 열림(조이기만) ·
+     화면: ai-mode phase.canonUs/canonKr(같은 함수 · 같은 질의에 mkt_context 추가) → 두뇌 '정식 국면 (매매·관문이 쓰는 값)' 표(근거 원천 표시). 기존 국면별 배수·문턱(phaseAdapt 등)은 그대로 위상을 쓴다(완화 없음).
+  ② 겹친 크기 배수 기록: _szNote(signal, 이름, 배수) — 급락관문·시장전이·실적파급·국면·거시·섹터뉴스·뉴스예측·AI기본·변동성 + executeBuy 의 시간외·실적관문·OMNI잠정·매매법잠정·페어잠정·리스크엔진·예산.
+     포지션 meta.szWhy · 원장 reason 꼬리 '· 크기 …'(같은 행 · 추가 쓰기 0) · 배수 2개 이상이 깎은 매수만 sz_stack 1행 갱신(매수 때만 · 요청 수 무관) · logEvery 6시간 1줄 '[크기배수]' · OMNI 명부 why 에 '겹친 크기 배수'.
+  ③ 퇴역 위원회 야간 스캔(uniscan · mlUniverseScanNightly): 11/8 밤에도 656종목 위원회 추론 + 모델·일봉 읽기를 하고 있었다(소비처는 전부 꺼짐). → COMMITTEE_RETIRED 면 즉시 반환 · ai_picks:scan 을 한 번만 빈 retired 표지로 바꿈(리포트에 낡은 위원회 픽 안 남게) · 건강 점검 '스캔 낡음' 경고 제외 · AI 픽 시계 'OMNI-Q 순위 … (위원회 야간 스캔 정지)'.
+  ④ state.twr: 이상 없음 — 입출금 0 이라 factor 1 · lastValue=초기자본이 정답(현금흐름 때만 갱신 · 마지막 구간은 화면이 실시간 평가액으로 마감). 원장 재계산 현금+보유(원가) 美 100,922(+0.9%) · 韓 94,377,500(−5.6%)와 일치. 고칠 것 없음.
+  ⑤ 학습 변경: 적용 안 함 — OMNI-Q 실전 23건 · 그림자 라벨 0건(첫 7일 라벨 ~11/17)이라 홀드아웃 근거 없음. 그림자 7일 라벨 n≥30 이 되면 '막힌 후보 vs 체결분' 비교로 판단.
+  다음: 배포 후 두뇌 '정식 국면' 표 · 다음 매수 원장 reason '크기' 꼬리 · 다음 밤 [SCAN] 정지 로그 확인.
+
 ### Threads 게시 워크플로 (V33.793 이후 · 코드 변경 없음)
 - `.github/workflows/threads-post.yml`(수동 실행) + `tools/threads/post.py`. 토큰은 GitHub 비밀값 `THREADS_ACCESS_TOKEN`(장기 토큰 · 2027-01-08 경 만료 → 갱신 필요).
 - 홍보 영상은 항상 패드 화면(820x1180) 기준으로 캡처한다(사용자 지시 2026-11-09).

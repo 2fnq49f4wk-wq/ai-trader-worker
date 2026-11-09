@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE"]);
-const _BUILD_VER = "V33.793";
+const _BUILD_VER = "V33.794";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -7610,6 +7610,20 @@ async function log(DB, level, symbol, message) {
    실측(11/2 · 27분 로그 1,200행): 'BUY 실적 관문 차단'(종목마다 · 421행) · '[V64 CTX] 사이즈 배수'(≈350행) 가 쓰기의 ~85%.
    화면은 이 줄들을 읽지 않는다(판단은 메모리에서 이미 끝났다). 묶음(_logSeen)도 반복마다 UPDATE 쓰기 1회라 줄지 않았다 → 여기서 막는다. */
 const _logThrottle = new Map();
+/* [V33.794] ★겹친 크기 배수 기록★ — 국면·변동성·실적 관문·펀드 관문·급락 관문 등이 한 매수에 곱해지면 무엇이 얼마나 깎았는지 보이지 않았다.
+   신호 객체(메모리)에 [이름, 배수] 를 모으고, executeBuy 가 포지션 meta.szWhy · 원장 reason 꼬리(이미 쓰는 행 · 추가 쓰기 0)에 압축해 싣는다.
+   시장별 집계(__szAgg · 메모리)는 logEvery 로 6시간에 1줄만 남긴다 — 요청당 D1 쓰기 추가 없음. */
+function _szNote(signal, name, mult) {
+  if (!signal || typeof mult !== "number" || !isFinite(mult) || Math.abs(mult - 1) < 0.005) return;
+  if (!Array.isArray(signal._szm)) signal._szm = [];
+  if (signal._szm.length < 14) signal._szm.push([String(name), +mult.toFixed(3)]);
+}
+function _szWhyStr(szm) {
+  if (!Array.isArray(szm) || !szm.length) return null;
+  let prod = 1; for (const x of szm) prod *= _num(x[1], 1);
+  return (szm.map(function (x) { return x[0] + "×" + Number(x[1]).toFixed(2); }).join(" · ") + " = ×" + prod.toFixed(2)).slice(0, 240);
+}
+const __szAgg = {};
 async function logEvery(DB, level, key, symbol, message, ms) {
   const now = Date.now(), t = _logThrottle.get(key);
   if (t && now - t.ts < (ms || 1800000)) { t.n++; return; }
@@ -17417,6 +17431,27 @@ async function applyCashflowToTWR(DB, market, valueBeforeFlow, flow, cfg, pre) {
 }
 
 
+/* [V33.794] ★정식 국면(canonical regime) 하나★ — 국면 원천이 셋이라 화면·관문이 서로 다른 말을 했다
+   (예: 지수 위상 TREND_DOWN · 학습기 매매법 국면 CRASH · 거시 mkt_context caution).
+   셋을 같은 5단(SURGE>BULL>NEUTRAL>BEAR>CRASH)으로 옮겨 ★가장 방어적인 값★ 을 정식 국면으로 삼는다(조이기만 · 완화 없음).
+   매매 경로(regimes[m].canon) · 관문(반등 예외) · 화면(ai-mode phase.canonUs/Kr)이 모두 이 함수 하나를 부른다. 순수 함수 — D1·CPU 추가 없음. */
+const REGIME_CANON_RANK = { CRASH: 0, BEAR: 1, NEUTRAL: 2, BULL: 3, SURGE: 4 };
+const REGIME_CANON_KO = { CRASH: "폭락", BEAR: "하락", NEUTRAL: "보합", BULL: "상승", SURGE: "폭등" };
+function regimeCanon(phase, pbReg, ctxRegime) {
+  const PH = { CRASH: "CRASH", TREND_DOWN: "BEAR", RANGE: "NEUTRAL", TREND_UP: "BULL", MELTUP: "SURGE" };
+  const CX = { risk_off: "BEAR", caution: "NEUTRAL", neutral: null, mild_on: null, risk_on: null };
+  const parts = [];
+  if (phase && PH[phase]) parts.push({ src: "phase", raw: phase, v: PH[phase] });
+  const pr = pbReg && typeof pbReg === "object" ? pbReg : null;
+  const pv = pr ? String(pr.regime || "").toUpperCase() : String(pbReg || "").toUpperCase();
+  const pFresh = !pr || !(_num(pr.ts, 0) > 0) || (Date.now() - _num(pr.ts, 0)) < 4 * 86400000;   // 학습기 국면이 4일 넘게 멈췄으면 쓰지 않는다
+  if (pFresh && REGIME_CANON_RANK[pv] != null) parts.push({ src: "pb", raw: pv, v: pv });
+  if (ctxRegime && CX[ctxRegime]) parts.push({ src: "ctx", raw: ctxRegime, v: CX[ctxRegime] });
+  if (!parts.length) return { canon: "NEUTRAL", ko: REGIME_CANON_KO.NEUTRAL, src: "none", parts: [] };
+  let best = parts[0];
+  for (const x of parts) if (REGIME_CANON_RANK[x.v] < REGIME_CANON_RANK[best.v]) best = x;
+  return { canon: best.v, ko: REGIME_CANON_KO[best.v], src: best.src, parts: parts.map(function (x) { return x.src + ":" + x.raw; }) };
+}
 async function analyzeMarketRegime(DB, market) {
   const indices = market === "us" ? US_INDICES : KR_INDICES;
   let totalDayPct = 0, validIdx = 0;
@@ -21364,8 +21399,10 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
     await log(DB, "INFO", symbol, "BUY 거부 [V33.649 신규 매수는 OMNI-Q·매매법 AI 만] " + _entryTag(signal)); return cash;
   }
 
+  const _qty0 = qty;   // [V33.794] 크기 배수 기록용 — 상한·관문 전 수량
   const _extGuard = await extBuyGuard(DB, market, qty, price, signal, cfg, opts, Date.now());
   if (!_extGuard.ok) { await logEvery(DB, "INFO", "ext:" + market + ":" + _extGuard.why, symbol, "BUY 시간외 차단 [" + _extGuard.why + "]"); return cash; }   // [V33.791] 같은 사유 반복 로그 묶음(90분 344행 → 로그 창이 90분치뿐이던 원인)
+  if (_extGuard.qty < qty) _szNote(signal, "시간외", _extGuard.qty / qty);
   qty = _extGuard.qty;
 
   // [V33.459] 실적 관문 — 이 시장에서 이 진입 주체·전략이 원장상 지고 있으면 막거나(7일) 반 크기로 시험한다
@@ -21380,16 +21417,16 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
     await log(DB, "INFO", symbol, "BUY 레버리지·인버스 ETF — AI·단타 진입 제외(" + strategy + ")");
     return cash;
   }
-  if (_pg.mult < 1) { qty = Math.floor(qty * _pg.mult); if (qty <= 0) return cash; }
+  if (_pg.mult < 1) { _szNote(signal, "실적관문", _pg.mult); qty = Math.floor(qty * _pg.mult); if (qty <= 0) return cash; }
   /* [V33.578] OMNI-Q 잠정 크기 — 수량 상한·예산·실적 관문을 다 지난 ★뒤★ 곱한다(앞에서 곱하면 종목비중 상한에 눌려 반 크기가 사라진다). */
   if (signal && signal.isOmniQ && typeof signal.omqMult === "number" && signal.omqMult > 0 && signal.omqMult < 1) {
-    qty = Math.floor(qty * signal.omqMult); if (qty <= 0) return cash;
+    _szNote(signal, "OMNI잠정", signal.omqMult); qty = Math.floor(qty * signal.omqMult); if (qty <= 0) return cash;
   }
   if (signal && signal.isStratRoute && !(signal.sr && signal.sr.primary) && STRAT_ROUTE.mult > 0 && STRAT_ROUTE.mult < 1) {   // [V33.609] 주력 전환 시장은 ×1.0   // [V33.603] 매매법 선택 AI 잠정 크기
-    qty = Math.floor(qty * STRAT_ROUTE.mult); if (qty <= 0) return cash;
+    _szNote(signal, "매매법잠정", STRAT_ROUTE.mult); qty = Math.floor(qty * STRAT_ROUTE.mult); if (qty <= 0) return cash;
   }
   if (signal && signal.isPair && PAIR_ROUTE.mult > 0 && PAIR_ROUTE.mult < 1) {   // [V33.594] 페어 잠정 크기 — 같은 자리(상한 뒤)
-    qty = Math.floor(qty * PAIR_ROUTE.mult); if (qty <= 0) return cash;
+    _szNote(signal, "페어잠정", PAIR_ROUTE.mult); qty = Math.floor(qty * PAIR_ROUTE.mult); if (qty <= 0) return cash;
   }
 
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
@@ -21428,6 +21465,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
     }
     if (_pre.qty < qty) {
       await log(DB, "INFO", symbol, "BUY 수량 사전조정 " + qty + "→" + _pre.qty + " (리스크엔진)");
+      _szNote(signal, "리스크엔진", _pre.qty / qty);
       qty = _pre.qty;
     }
   } catch (e) {
@@ -21443,6 +21481,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   }
   if (qty > maxQty) {
     await log(DB, "INFO", symbol, "BUY 수량 자동 축소 " + qty + "→" + maxQty + " (예산 한도, 현금=" + Math.round(availCash) + ")");
+    _szNote(signal, "예산", maxQty / qty);
     qty = maxQty;
   }
 
@@ -21580,7 +21619,8 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
           // [V12.47] ★버그수정★ target:"alpha" 모드에선 idxRetPct 없으면 mlLogSample이 표본을
           //   버린다(_sampleLabel null) — 실거래 청산부(executeSell)가 이 값을 못 넘겨 실거래
           //   표본이 0건이던 원인. 진입 시점 지수종가를 남겨 청산 때 초과수익 계산에 쓴다.
-          entryIdxClose: __mlEntryIdxClose
+          entryIdxClose: __mlEntryIdxClose,
+          szWhy: _szWhyStr(signal && signal._szm)   // [V33.794] 겹친 크기 배수(무엇이 얼마나 깎았나) — 두뇌·명부 '왜' 문구
         }
       };
     }
@@ -21607,7 +21647,8 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
       //   AI 진입은 위원회 p 를 같이 남긴다(OMNI-Q 는 막지도 키우지도 않았지만 나중에 둘을 비교할 수 있게).
       reason: "[" + _entryTag(signal) + "][" + strategy.toUpperCase() + "] " + signal.name +
               (signal.detail != null && signal.detail !== "" ? " " + signal.detail : "") +
-              ((signal.isAiPrimary || signal.isOmniQ) && typeof signal.mlMindP === "number" ? " · 위원회 p " + (signal.mlMindP * 100).toFixed(0) + "%" : "")
+              ((signal.isAiPrimary || signal.isOmniQ) && typeof signal.mlMindP === "number" ? " · 위원회 p " + (signal.mlMindP * 100).toFixed(0) + "%" : "") +
+              (_szWhyStr(signal && signal._szm) ? " · 크기 " + _szWhyStr(signal._szm) : "")   // [V33.794] 같은 행에 실음(추가 쓰기 0)
     });
     const stmtPos = stmtSavePosition(DB, market, symbol, strategy, posToSave);
     await DB.batch([stmtTrade, stmtPos]);
@@ -21616,6 +21657,15 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
     await log(DB, "ERROR", symbol, "BUY transaction aborted (롤백됨, cash·포지션 무변동): " + e.message);
     return cash;
   }
+  // [V33.794] 겹친 크기 배수 집계(메모리) — 배수 2개 이상이 줄였으면 시장별로 세고 6시간에 1줄
+  try { const _sm = (signal && signal._szm) || [], _cut = _sm.filter(function (x) { return x[1] < 1; });
+    const A = __szAgg[market] || (__szAgg[market] = { n: 0, stacked: 0, minProd: 1, last: null });
+    A.n++; if (_cut.length >= 2) { A.stacked++; let _p = 1; _cut.forEach(function (x) { _p *= x[1]; }); if (_p < A.minProd) A.minProd = +_p.toFixed(3); A.last = symbol + " " + _szWhyStr(_sm) + " (" + _qty0 + "→" + qty + "주)"; }
+    /* 화면용 1행(sz_stack) — 매수가 일어난 때만(하루 매수 수 상한에 묶임 · 요청 수와 무관) · 시장별 최근 1건 + 누계 */
+    if (_cut.length >= 2) { const _ss = (await getState(DB, "sz_stack", null, true)) || {}; const _o = _ss[market] || { n: 0 };
+      _ss[market] = { n: _num(_o.n, 0) + 1, last: _szWhyStr(_sm), sym: symbol, q0: _qty0, q: qty, ts: Date.now() }; await setState(DB, "sz_stack", _ss); }
+    if (A.stacked) await logEvery(DB, "INFO", "szstack:" + market, null, "[크기배수] " + market.toUpperCase() + " 매수 " + A.n + "건 중 겹침 " + A.stacked + "건 · 최소 ×" + A.minProd + " · 최근 " + A.last, 6 * 3600000);
+  } catch (e) {}
   // DB 트랜잭션 성공 후, in-memory cash를 "실제 가용현금 − 이번 매수액"으로 재동기화.
   //   (단순 차감이 아니라 DB 재계산값 기준으로 덮어써 in-memory drift를 매 거래마다 교정)
   if (cash && typeof cash === "object") cash[market] = availCash - total;
@@ -25383,7 +25433,7 @@ async function runTradingCycle(env) {
        서로 독립인 상태 10개를 하나씩 읽으면 그것만 ~3s. 한 질의(getStates)로 읽고 아래는 그 값을 쓴다(같은 행 · 없거나 못 읽으면 종전 기본값). */
     let __prepS = {};
     try { __prepS = await getStates(DB, ["signal_stats", "signal_stats_mkt", "mkt_strat_stats", "xmkt_lead", "sector_pulse",
-                                         "sec_filings", "signal_type_stats", "rv_panel", "earnings_surprise", "mega_spill", "news_boost"]); } catch (e) { __prepS = {}; }
+                                         "sec_filings", "signal_type_stats", "rv_panel", "earnings_surprise", "mega_spill", "news_boost", "pb_regime"]); } catch (e) { __prepS = {}; }
     const __pv = function (k, def) { const v = __prepS[k]; return v === undefined ? def : v; };
     const signalStats = __pv("signal_stats", {});
     const signalStatsMkt = __pv("signal_stats_mkt", {});   // [V33.480] NEGEXP_SIG 는 시장별
@@ -25545,6 +25595,9 @@ async function runTradingCycle(env) {
     if (marketsToTrade.length > 0) {
       try { mktCtx = await updateMarketContext(DB, cfg); } catch (e) {}
     }
+    // [V33.794] 정식 국면 — 지수 위상 · 학습기 매매법 국면 · 거시 중 가장 방어적인 값(regimeCanon). 이후 관문·크기 기록이 이 값을 읽는다.
+    try { const _pbR = __pv("pb_regime", null) || {};
+      for (const _m of ["us", "kr"]) if (regimes[_m]) regimes[_m].canon = regimeCanon(regimes[_m].phase, _pbR[_m] || null, mktCtx && mktCtx.regime); } catch (e) {}
     // [섹터 뉴스] Yahoo Finance RSS 무료 감성 분석 — 6그룹 × 1 subreq, 6h 캐시. LLM 불필요.
     let sectorSentiment = null;
     // [V9.6] 뉴스 예측기 "내일 오를 종목" 사이징 부스트맵(제한적·경계) — 사이클당 1회 로드
@@ -25630,7 +25683,7 @@ async function runTradingCycle(env) {
         if (regime) await setState(DB, "regime_snap:" + market, {
           phase: regime.phase || null, regime: regime.regime || null,
           er: _num(regime.er, null), avgDayPct: _num(regime.avgDayPct, null),
-          idxReturn5: _num(regime.idxReturn5, null), ts: Date.now() });
+          idxReturn5: _num(regime.idxReturn5, null), canon: regime.canon || null, ts: Date.now() });
       } catch (e) {}
       let canTrade = marketsToTrade.indexOf(market) !== -1;
       // [V31] 매매 직전 락 소유권 재확인 — US 처리가 길어져 락이 만료·탈취됐으면
@@ -25748,7 +25801,8 @@ async function runTradingCycle(env) {
                 // 회복장 예외 — 한도의 목적은 '틸트(연속 뇌동매매) 차단'이지 반등을 통째로 포기하는 게 아니다.
                 //   시장이 실제로 강하게 반등 중이고 급락 국면이 아니면, 전면차단 대신 사이즈를 크게 줄여 참여한다.
                 const _rebound = (regime && typeof regime.avgDayPct === "number" && regime.avgDayPct >= 1.0
-                                  && regime.phase !== "CRASH" && regime.phase !== "TREND_DOWN");
+                                  && regime.phase !== "CRASH" && regime.phase !== "TREND_DOWN"
+                                  && !(regime.canon && regime.canon.canon === "CRASH"));   // [V33.794] 정식 국면 폭락이면 반등 예외 없음(조이기만)
                 if (_rebound) {
                   crashGate.sizeScale *= 0.5;
                   crashGate.reasons.push("DAILY_LOSS " + (_dp / portfolioValue * 100).toFixed(1) + "% but 반등장 +" + regime.avgDayPct.toFixed(1) + "% → size×0.5");
@@ -28304,6 +28358,7 @@ async function runTradingCycle(env) {
               const _floor = _spr.sizeScaleFloor != null ? _spr.sizeScaleFloor : 0.6;
               if (sizeScale < _floor) sizeScale = _floor;
             }
+            _szNote(signal, "급락관문", sizeScale);   // [V33.794] 급락 관문(변동성·폭·DD 묶음) — 단타 하한 반영 뒤 값
             if (_symInverse && regime && (regime.regime === "BEAR" || (typeof regime.worstDayPct === "number" && regime.worstDayPct <= -1.0))) sizeScale = (mcfg.inversePanicBoost || 1.3);
             // [V33.45] ★시장 간 전이(리드-래그)★ — 미국 반도체가 무너진 다음날 한국 기술주를 사지 않는다.
             //   2026년 7월 코스피 -23%(사상 최악)는 미국 반도체 조정이 넘어온 것이고, 미국장은
@@ -28311,14 +28366,15 @@ async function runTradingCycle(env) {
             try {
               const _xa = crossMarketAdjust(__xmktLead, market, getSectorGroup(symbol, mcfg));
               if (_xa.block) { incBlock("XMKT_SEMI[" + (_xa.note || "") + "]"); continue; }
-              if (_xa.mult !== 1) { sizeScale *= _xa.mult; if (_xa.note) signal.xmktNote = _xa.note; }
+              if (_xa.mult !== 1) { sizeScale *= _xa.mult; _szNote(signal, "시장전이", _xa.mult); if (_xa.note) signal.xmktNote = _xa.note; }
             } catch (e) {}
             // [V33.46] 메가캡 실적 파급 사이즈 반영(위 ctxScore 가점과 함께 곱연산).
-            if (typeof _spillMult === "number" && _spillMult !== 1 && !_symInverse) sizeScale *= _spillMult;
+            if (typeof _spillMult === "number" && _spillMult !== 1 && !_symInverse) { sizeScale *= _spillMult; _szNote(signal, "실적파급", _spillMult); }
             // [V33.44] ★국면 위상 적응★ — 국면 자체의 사이즈 배수 + 신호 성격(돌파/되돌림) 적합도.
             //   보합장에서 돌파신호는 휩쏘 확률이 높고(실거래 SC_VWAP 94건 -12.5%),
             //   폭등장에서 되돌림 대기는 기회를 통째로 놓친다 — 둘을 국면별로 반대 방향으로 조정한다.
             let _phBuy = null;
+            const _szPh0 = sizeScale;
             try {
               const _pa = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.phaseAdapt : null;
               _phBuy = (regime && regime.phase) ? regime.phase : null;
@@ -28339,22 +28395,23 @@ async function runTradingCycle(env) {
             // [신규·인터마켓] 시장 컨텍스트(risk-on/off) 반영 — risk-off면 축소, risk-on이면 소폭 확대.
             //   인버스 ETF는 risk-off가 호재라 면제(이미 부스트됨). 곱연산이라 크래시/패닉 축소와 안전하게 결합.
             if (mktCtx && typeof mktCtx.sizeScale === "number" && !_symInverse) {
-              sizeScale *= mktCtx.sizeScale;
+              _szNote(signal, "국면", sizeScale / (_szPh0 || 1));   // [V33.794] 국면 위상 배수 + 신호 적합도
+              sizeScale *= mktCtx.sizeScale; _szNote(signal, "거시", mktCtx.sizeScale);
             }
             // [섹터 뉴스] 섹터별 뉴스 감성에 따라 사이즈 소폭 조정 — 인버스 ETF 면제
             if (sectorSentiment && sectorSentiment.scales && !_symInverse) {
               const _newsGrp = getSectorGroup(symbol, mcfg);
               const _newsScale = sectorSentiment.scales[_newsGrp];
-              if (typeof _newsScale === "number") sizeScale *= _newsScale;
+              if (typeof _newsScale === "number") { sizeScale *= _newsScale; _szNote(signal, "섹터뉴스", _newsScale); }
             }
             // [V9.6] 뉴스 예측기 "내일 오를 종목" 부스트 — 심볼별 [0.9~1.15] 경계. 인버스 면제. 곱연산이라 다른 축소와 안전 결합.
             if (newsBoostMap && !_symInverse) {
               const _nb = newsBoostMap[symbol];
-              if (typeof _nb === "number") sizeScale *= _clamp(_nb, 0.9, 1.15);
+              if (typeof _nb === "number") { sizeScale *= _clamp(_nb, 0.9, 1.15); _szNote(signal, "뉴스예측", _clamp(_nb, 0.9, 1.15)); }
             }
 
             // [V12.64] AI 주도 진입은 규칙신호 없이 들어가므로 사이즈를 보수적으로 축소(baseWeight 배).
-            if (signal && signal.isAiPrimary) sizeScale *= ((AI_PARAMS.aiPrimary && AI_PARAMS.aiPrimary.baseWeight) || 0.6);
+            if (signal && signal.isAiPrimary) { sizeScale *= ((AI_PARAMS.aiPrimary && AI_PARAMS.aiPrimary.baseWeight) || 0.6); _szNote(signal, "AI기본", ((AI_PARAMS.aiPrimary && AI_PARAMS.aiPrimary.baseWeight) || 0.6)); }
             // [V33.119] 레버리지 결정의 공통 입력 — 실현변동성(아래에서 산출)과 총노출 사용률.
             //   총노출은 RISKENG 이 '넘으면 거부' 로만 쓰던 값이다. 절벽 직전에 갑자기 전량 거부되면
             //   그 사이클의 남은 후보가 통째로 막힌다 — Passivbot 처럼 완만히 감속시키려면
@@ -28412,7 +28469,7 @@ async function runTradingCycle(env) {
                         ddPct: _num(__ddPctNow, 0),
                         grossFrac: _lvGrossFrac, grossCapFrac: RISKENG.maxGrossFrac
                       });
-                      sizeScale *= _lvd.mult;
+                      sizeScale *= _lvd.mult; _szNote(signal, "변동성", _lvd.mult);
                       if (_lvd.mult < 0.85) signal.volTargetNote = "VOLTGT ×" + _lvd.mult.toFixed(2) + " (하방실현 " + _realVol.toFixed(0) + "%>목표 " + _tgt + "%)";
                       else if (_lvd.mult > 1.05) signal.volTargetNote = "LEV ×" + _lvd.mult.toFixed(2) + " (" + _lvd.why.join(" / ") + ")";
                     }
@@ -30923,7 +30980,7 @@ async function handleRequest(request, env, ctx, _inner) {
           xgb = _st("xgb"); lgb = _st("lgb"); cat = _st("cat");
         } catch (e) {}
         const review = S1["ai_selfreview"] || null, _s = S1["ai_picks:scan"] || null;
-        const scan = _s ? { ts: _s.ts, scanned: _s.scanned, total: _s.total, top: (_s.picks || []).slice(0, 8) } : null;
+        const scan = _s ? { ts: _s.ts, scanned: _s.scanned, total: _s.total, top: (_s.picks || []).slice(0, 8), retired: !!_s.retired } : null;   // [V33.794] retired = 야간 스캔 정지 표지
         // [V33.13] ★"오늘 하루 늘어난 학습 표본"★ — 두뇌 화면에서 표본이 실제로 자라는지 눈으로
         //   확인할 수 있게 총량/오늘/24h 를 함께 싣는다(인덱스 idx_samples_fv_ts 로 커버되는 카운트).
         // [V33.23] ★로딩 지연 회귀 수정★ V33.13c 에서 여기에 ml_samples COUNT 3개를 넣었는데,
@@ -31031,9 +31088,12 @@ async function handleRequest(request, env, ctx, _inner) {
         let _phase = null;
         // [V33.694] 매매법 AI 국면(학습기 · 장기·중기·단기)도 같은 질의로 — 오른쪽 칸이 '오늘 지수 흐름' 과 '매매법 AI 국면' 을 따로 보인다(10/28 사용자: 폭등 vs 폭락 충돌)
         let _pbReg = null;
-        try { const _pss = await getStates(env.DB, ["mkt_phase", "pb_regime"]); const _ps = _pss["mkt_phase"]; _pbReg = _pss["pb_regime"] || null;
+        try { const _pss = await getStates(env.DB, ["mkt_phase", "pb_regime", "mkt_context"]); const _ps = _pss["mkt_phase"]; _pbReg = _pss["pb_regime"] || null;
+          const _mcx = _pss["mkt_context"] || null, _pr0 = _pbReg || {};
           if (_ps) _phase = { us: _ps.us, kr: _ps.kr, erUs: _ps.erUs, erKr: _ps.erKr,
-          dayUs: _ps.dayUs, dayKr: _ps.dayKr, r5Us: _ps.r5Us, r5Kr: _ps.r5Kr, ts: _ps.ts }; } catch (e) {}
+          dayUs: _ps.dayUs, dayKr: _ps.dayKr, r5Us: _ps.r5Us, r5Kr: _ps.r5Kr, ts: _ps.ts,
+          // [V33.794] 정식 국면 — 매매 경로와 ★같은 함수★(regimeCanon) · 같은 질의에 mkt_context 만 끼움(추가 쿼리 0)
+          canonUs: regimeCanon(_ps.us, _pr0.us || null, _mcx && _mcx.regime), canonKr: regimeCanon(_ps.kr, _pr0.kr || null, _mcx && _mcx.regime) }; } catch (e) {}
         // [V33.45] 미국 반도체 → 한국 기술주 선행지표(전이 감시).
         let _xmkt = null;
         try { const _xl = await getState(env.DB, "xmkt_lead", null); if (_xl) _xmkt = { semi1d: _xl.semi1d, semi5d: _xl.semi5d, n: _xl.n, ts: _xl.ts }; } catch (e) {}
@@ -42869,6 +42929,10 @@ async function buildRoster(DB) {
     const _shTxt = ["us", "kr"].map(function (mk) { const o = _sh && _sh[mk + ":AI-Q:TREND"]; const a = o && o["7"], b = o && o["28"];
       return a && a.n ? (mk === "us" ? "美" : "韓") + " 7일 " + a.n + "건 평균 " + a.mean + "%(승률 " + a.win + "%)" + (b && b.n ? " · 28일 " + b.n + "건 " + b.mean + "%" : "") : ""; }).filter(Boolean).join(" / ");
     _pgTxt += " · 막힌 후보 그림자 성적: " + (_shTxt || "측정 중(막힌 날로부터 7일 뒤 첫 결과)");
+    /* [V33.794] 겹친 크기 배수 — 마지막으로 2개 이상이 크기를 깎은 매수(무엇이 얼마나) */
+    let _sz = null; try { _sz = await getState(DB, "sz_stack", null); } catch (e) {}
+    const _szT = ["us", "kr"].map(function (mk) { const o = _sz && _sz[mk]; return o && o.last ? (mk === "us" ? "美" : "韓") + " " + o.sym + " " + o.last + " (" + o.q0 + "→" + o.q + "주 · 누계 " + o.n + "건)" : ""; }).filter(Boolean).join(" / ");
+    _pgTxt += " · 겹친 크기 배수: " + (_szT || "기록 없음(배수 2개 이상이 깎은 매수가 아직 없다)");
   } catch (e) {}
   if (_oqOn.length) {
     const _r = function (mk) { const v = _oqv[mk]; return (mk === "us" ? "美" : "韓") + " " + (v.state === "speak" ? "발언" : "잠정") + " · 오늘 " + v.route.today + "건 · 보유 " + v.route.open; };
@@ -52990,6 +53054,15 @@ const SCAN_WALL_MS = 120000;
 
 async function mlUniverseScanNightly(DB, opts) {
   if (!LUXML.enabled) return null;
+  /* [V33.794] ★퇴역 위원회 야간 전종목 스캔 정지★ — 위원회가 퇴역(COMMITTEE_RETIRED)한 뒤에도 매일 밤 656종목에 위원회 추론(mlDeepDecide)을 돌려
+     ai_picks:scan 을 썼다(11/8 실측 ts 그대로 갱신). 그 픽을 쓰던 곳은 전부 꺼졌다: AI 픽 화면 = OMNI-Q 순위(V33.791) · 픽 풀(AI_PRIMARY)은 ENTRY_ROUTES_ONLY 로 정지 ·
+     장중 증분 스캔도 V33.649 에서 정지. 남은 소비처는 리포트·두뇌 화면 문구뿐이라 ★퇴역 위원회 확률을 'AI 픽' 으로 계속 내보이는 해★ 만 남았다.
+     → 모델 행 읽기(MIND·앙상블·GBDT)·전 일봉 읽기·추론 CPU 를 하지 않는다. 낡은 픽이 리포트에 남지 않게 ★한 번만★ 빈 '퇴역' 표지로 바꾼다(그 뒤엔 읽기 1·쓰기 0). */
+  if (COMMITTEE_RETIRED) {
+    try { const _cur = await getState(DB, "ai_picks:scan", null);
+      if (!(_cur && _cur.retired)) await setState(DB, "ai_picks:scan", { ts: Date.now(), retired: true, mode: "retired", scanned: 0, total: 0, picks: [] }); } catch (e) {}
+    return "[SCAN] 위원회 퇴역 — 야간 전종목 스캔 정지(AI 픽 = OMNI-Q 순위)";
+  }
   const _slice = (opts && opts.slice > 0) ? Math.floor(opts.slice) : 0;
   const _scanT0 = Date.now();   // [V32.55] 스캔 소요시간 측정
   try {
@@ -54481,7 +54554,8 @@ async function _luxSelfCheck(DB) {
     if (cal && cal.featVer != null && typeof LUXML !== "undefined" && cal.featVer !== LUXML.featVer) add("warn", "보정", "committee_cal featVer 불일치(" + cal.featVer + "≠" + LUXML.featVer + ") — 확률 보정 무시 중");
     // 파이프라인 신선도
     const scan = S["ai_picks:scan"], scH = ageH(scan && scan.ts);
-    if (scH == null) add("warn", "스캔", "야간 전종목 스캔 결과 없음(초기/미실행)");
+    if (scan && scan.retired) {}   // [V33.794] 위원회 퇴역으로 스캔 정지 — 낡음 경고 대상 아님
+    else if (scH == null) add("warn", "스캔", "야간 전종목 스캔 결과 없음(초기/미실행)");
     else if (scH > 30) add("warn", "스캔", "스캔 " + scH.toFixed(0) + "h 전 — 야간 파이프라인 지연 가능");
     const cgH = ageH(S["crisis_gauge"] && S["crisis_gauge"].ts);
     if (cgH == null) add("warn", "위기게이지", "데이터 없음(수집 대기)");
