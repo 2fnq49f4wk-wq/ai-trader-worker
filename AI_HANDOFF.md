@@ -27,6 +27,7 @@
 ### Threads 게시 워크플로 (V33.793 이후 · 코드 변경 없음)
 - `.github/workflows/threads-post.yml`(수동 실행) + `tools/threads/post.py`. 토큰은 GitHub 비밀값 `THREADS_ACCESS_TOKEN`(장기 토큰 · 2027-01-08 경 만료 → 갱신 필요).
 - 홍보 영상은 항상 패드 화면(820x1180) 기준으로 캡처한다(사용자 지시 2026-11-09).
+- 글은 항상 살짝 어그로성 첫 줄(유인 멘트)을 넣는다. 2일에 1개 비용(AI·사이트) 관련 글을 자동 게시(예약 작업 · 사용자 지시 2026-11-09). 사실만 쓴다.
 - text_file 비우고 돌리면 토큰 확인만, 채우면 글 게시. 글 원문은 `promo/threads/devlog-0N.txt`, 미디어는 `public/promo/`.
 
 - (11/9) Threads 개발일지 홍보용 공개 파일 public/promo/(devlog1-server.jpg · devlog2-arch.jpg · devlog3-promo.mp4 · 광고 영상 v5 26.6초) — Threads API 는 공개 URL 미디어만 받는다. 코드 변경 없음(버전 그대로).
