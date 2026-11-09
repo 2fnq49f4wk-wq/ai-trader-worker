@@ -407,3 +407,26 @@ body #page-positions .pos-pnl-summary{background:var(--m2-c);border:0;border-rad
   body #page-positions .port-card .port-total{font-size:28px}
   body #page-positions .port-pnl-caption{display:block;margin:6px 0 0}
 }
+
+/* ══ [V33.792] ★종목 상세 — 폰은 MTS 처럼 간단하게 · 패드/PC 는 HTS 그대로★(사용자 11/9)
+   폰(≤760px): 가격 → 주문 카드 → 기간 버튼 → 차트(짧게) → 정보 탭(AI 분석 · 개요 · 밸류 · KPI · 재무 …).
+   탭과 겹치는 창(시세 데이터 표 · 관련 뉴스 · 오른쪽 패널 전부 · 재무 평가 표)은 숨기고, 맨 아래 '전체 데이터 보기' 로 다시 펼친다(html.lux-mfull).
+   스크롤하면 탭이 위 버튼줄 바로 아래 붙는다(--dtop = 버튼줄 높이 · 종전엔 틈으로 아래 글이 비쳤다). */
+@media (max-width:760px){
+  html:not(.lux-mfull) #page-detail .detail-datawrap,
+  html:not(.lux-mfull) #page-detail #detailNews,
+  html:not(.lux-mfull) #page-detail .detail-side,
+  html:not(.lux-mfull) #page-detail #detailFund{display:none!important}
+  #page-detail .detail-ind,#page-detail .detail-zoom{display:none!important}
+  #page-detail .detail-toolbar{padding:0;margin:4px 0 8px;border:0;background:transparent}
+  #page-detail .detail-tf{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none}
+  #page-detail .detail-tf::-webkit-scrollbar{display:none}
+  #page-detail .detail-tf-btn{flex:0 0 auto;min-width:44px;padding:7px 10px;border-radius:999px}
+  #page-detail .detail-main .detail-chart{height:44vh!important;min-height:240px!important;max-height:400px!important;border:0;border-radius:14px}
+  #page-detail .detail-main{gap:0}
+  #page-detail .detail-below{margin-top:12px}
+  #page-detail #luxInfo .lxs{top:var(--dtop,0px)!important;margin-left:-12px;margin-right:-12px;padding-left:12px;padding-right:12px}
+  #page-detail .detail-mfull{display:block;width:100%;margin:16px 0 8px;padding:13px 16px;border-radius:14px;border:1px solid rgba(127,137,155,.25);background:transparent;color:inherit;font:inherit;font-size:14px;font-weight:600;cursor:pointer}
+  html.lux-mfull #page-detail .detail-mfull{opacity:.75}
+}
+@media (min-width:761px){#page-detail .detail-mfull{display:none}}

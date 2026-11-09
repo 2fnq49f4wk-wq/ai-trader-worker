@@ -105,6 +105,11 @@
       ".sb-mode.easy button[data-dm=easy],.sb-mode:not(.easy) button[data-dm=pro]{color:#0b0c0f}" +
       ".sb-mode-cap{margin:6px 14px 4px;font-size:10px;letter-spacing:.14em;color:#667085;text-transform:uppercase}" +
       ".m-appbar .m-ezsw{margin:0 6px 0 0;padding:3px;border-radius:10px;flex:none;width:92px}.m-appbar .m-ezsw i{top:3px;bottom:3px;left:3px;width:calc(50% - 3px);border-radius:7px}.m-appbar .m-ezsw button{padding:5px 0;font-size:11.5px}";
+    /* [V33.792] ★폰 초보자 화면 — 앱처럼 짧고 가볍게★(사용자 11/9) — 칩 줄은 가로로 밀기 · 인기 종목 5개+더 보기 · 급등락은 상승/하락 탭 · 카드 여백·제목 크기 정돈 */
+    s.textContent += "@media (max-width:760px){#easyDash .hd h1{font-size:22px}#easyDash .c{padding:16px;border-radius:20px}#easyDash .g{gap:10px}" +
+      "#easyDash .chips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:2px;margin-left:-2px;margin-right:-16px;padding-right:16px}#easyDash .chips::-webkit-scrollbar{display:none}#easyDash .chips button{flex:0 0 auto}" +
+      "#easyDash .more{display:block;width:100%;margin-top:8px;padding:11px;border:0;border-radius:12px;background:var(--e-c2);color:var(--e-m);font:inherit;font-size:13.5px;font-weight:600;cursor:pointer}" +
+      "#easyDash .mvseg{display:inline-flex;margin:0 0 6px}#easyDash .ch{margin-bottom:10px}#easyDash .note{font-size:11.5px}}";
     D.head.appendChild(s);
   }
 
@@ -248,6 +253,10 @@
       var mk = isKr(f[0]) ? "kr" : "us", nm = x.name || f[0];
       return '<tr data-sym="' + esc(f[0]) + '"><td><div class="nmw"><span class="lo" style="background:' + f[2] + (f[2] === "#FEE500" ? ";color:#3A1D1D" : "") + '">' + esc((isEn() ? enName(nm) : nm).slice(0, 1)) + '</span><div style="min-width:0"><div class="nm">' + esc(nm) + '</div><div class="sub">' + esc(f[1]) + '</div></div></div></td><td class="k">' + spark((x.spark || []).slice(-20), (x.dayPct || 0) >= 0, 84, 26) + '</td><td class="p w"><b>' + px(mk, x.price) + "</b>" + extOf(x) + '</td><td class="p" style="width:80px"><span class="pill ' + cls(x.dayPct) + '">' + pct(x.dayPct) + "</span></td></tr>";
     }).filter(Boolean);
+    if (isPhone()) {   // [V33.792] 폰 = MTS 처럼 짧게 — 5개 + 더 보기
+      var cut = popAll ? rows.length : Math.min(5, rows.length);
+      return "<table>" + rows.slice(0, cut).join("") + "</table>" + (rows.length > 5 ? '<button type="button" class="more" data-popall="1">' + (popAll ? "접기" : "더 보기 (" + (rows.length - 5) + ")") + "</button>" : "");
+    }
     var half = Math.ceil(rows.length / 2);
     return '<div class="g g2" style="margin-top:0;gap:0 24px"><table>' + rows.slice(0, half).join("") + "</table><table>" + rows.slice(half).join("") + "</table></div>";
   }
@@ -284,9 +293,16 @@
     var m = function (x) { return { s: x.symbol, nm: x.name || x.symbol, px: x.price, dp: x.dayPct, mk: isKr(x.symbol) ? "kr" : "us" }; };
     var up = big.slice().sort(function (a, b) { return b.dayPct - a.dayPct; }).slice(0, 4).map(m), dn = big.slice().sort(function (a, b) { return a.dayPct - b.dayPct; }).slice(0, 4).map(m);
     var sub = function (x) { return x.mk === "kr" ? "한국" : "미국"; };
+    if (isPhone()) {   // [V33.792] 폰 = 상승/하락 탭 하나만(길이 절반)
+      var up5 = big.slice().sort(function (a, b) { return b.dayPct - a.dayPct; }).slice(0, 5).map(m), dn5 = big.slice().sort(function (a, b) { return a.dayPct - b.dayPct; }).slice(0, 5).map(m);
+      return '<span class="seg mvseg"><button type="button" data-mv="up" class="' + (mvSide === "up" ? "on" : "") + '">▲ 상승</button><button type="button" data-mv="dn" class="' + (mvSide === "dn" ? "on" : "") + '">▼ 하락</button></span>' +
+        rowsOf(mvSide === "up" ? up5 : dn5, sub) + '<div class="note">시가총액 상위 300곳 중 · 레버리지·ETF 제외</div>';
+    }
     return '<div class="g g2" style="margin-top:0;gap:0 24px"><div><div class="cap up">▲ 상승 상위</div>' + rowsOf(up, sub) + '</div><div><div class="cap dn">▼ 하락 상위</div>' + rowsOf(dn, sub) + '</div></div><div class="note"><span>시가총액 상위 300곳 중 · 레버리지·ETF 제외</span></div>';
   }
   // ── [V33.778] AI 업종 전망(단기·중기·장기) — outlook.js 규칙 엔진 ──
+  var popAll = false, mvSide = "up";   // [V33.792] 폰 전용 상태
+  function isPhone() { try { return window.innerWidth <= 760; } catch (e) { return false; } }
   var olKey = "semis", olOpen = false, ezOpen = {};   // ezOpen: 접어 둔 카드의 펼침 상태(이 화면에서만)
   function outlookCard() {
     var L = window.luxOutlook; if (!L || !ST) return "";
@@ -335,6 +351,8 @@
     if (window.scrollY !== keep) try { window.scrollTo(0, keep); } catch (e) {}
   }
   function onClick(e) {
+    var t0 = e.target.closest("[data-popall],[data-mv]");
+    if (t0) { if (t0.hasAttribute("data-popall")) popAll = !popAll; else mvSide = t0.getAttribute("data-mv"); draw(); return; }
     var t = e.target.closest("[data-sym],[data-wsym],[data-wamt],[data-term],[data-pro],[data-mine],[data-mapmk],[data-olk],[data-olopen],[data-ez]"); if (!t) return;
     if (t.hasAttribute("data-ez")) { var ek = t.getAttribute("data-ez"); ezOpen[ek] = !ezOpen[ek]; draw(); return; }
     if (t.hasAttribute("data-olk")) { olKey = t.getAttribute("data-olk"); draw(); return; }
