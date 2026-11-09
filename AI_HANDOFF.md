@@ -12,6 +12,8 @@
 
 ## Current handoff
 
+### V33.796 — 링크 미리보기 카드(og:* · public/og-card.png 1200x630) · 가입 창 앞 소개 한 장(mine.js ask intro · 시작하기/로그인/앱 설치/구경)
+
 ### V33.795 — 회원가입 간단하게 · 유입 꼬리표 · /dev 공개 페이지
 - 회원가입: 비밀번호 확인칸 없음 · 필수 동의 체크 1개(gAgree 하나에 약관·개인정보·만14세) · 가입 후 홈.
 - 유입: 링크 ?r=xxx → POST /api/ref (기기·꼬리표당 하루 1번, 가입 때 ev=s) → state ref_stats:YYYY-MM-DD 1행 합산 · GET /api/ref-stats(14일 · 30분 SWR).
