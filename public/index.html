@@ -339,18 +339,18 @@ window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{
 window.__luxAct=Date.now();['pointerdown','keydown','touchstart','wheel'].forEach(function(e){addEventListener(e,function(){window.__luxAct=Date.now();},{passive:true,capture:true});});
 window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600000;};
 </script>
-<meta name="lux-build" content="V33.797">
-<script src="/i18n.js?v=33.797" defer></script>
-<script src="/outlook.js?v=33.797" defer></script>
-<script src="/advisor.js?v=33.797" defer></script>
-<script src="/luxmini.js?v=33.797" defer></script>
-<script src="/luxmini-view.js?v=33.797" defer></script>
-<script src="/ovn-live.js?v=33.797" defer></script>
-<script src="/mine.js?v=33.797" defer></script>
-<script src="/easy-dash.js?v=33.797" defer></script>
-<script src="/stock-analysis.js?v=33.797" defer></script>
-<script src="/stock-info.js?v=33.797" defer></script>
-<script src="/neural-observatory.js?v=33.797" defer></script>
+<meta name="lux-build" content="V33.798">
+<script src="/i18n.js?v=33.798" defer></script>
+<script src="/outlook.js?v=33.798" defer></script>
+<script src="/advisor.js?v=33.798" defer></script>
+<script src="/luxmini.js?v=33.798" defer></script>
+<script src="/luxmini-view.js?v=33.798" defer></script>
+<script src="/ovn-live.js?v=33.798" defer></script>
+<script src="/mine.js?v=33.798" defer></script>
+<script src="/easy-dash.js?v=33.798" defer></script>
+<script src="/stock-analysis.js?v=33.798" defer></script>
+<script src="/stock-info.js?v=33.798" defer></script>
+<script src="/neural-observatory.js?v=33.798" defer></script>
 <title>LUX-INV</title>
 <meta name="description" content="주식이 어려워? AI가 대신 보고 설명해 줌. 고딩이 만든 AI 모의투자 · 가입은 닉네임+비밀번호 · 실시간 수익률 순위 · 무료">
 <meta property="og:type" content="website"><meta property="og:site_name" content="LUX-INV"><meta property="og:url" content="https://lux-inv.com/">
@@ -4532,6 +4532,7 @@ html[data-theme="light"] .detail-browse .wl-name{color:#101828 !important}
    (자리 높이는 contain-intrinsic-size 로 미리 잡아 스크롤이 튀지 않게 · 한 번 그린 뒤엔 실제 높이를 기억 — auto). */
 #page-dashboard .fv3-grid, #page-dashboard .cmbd-grid { content-visibility: auto; contain-intrinsic-size: auto 1100px; }
 </style>
+<style id="mTopSlim">/* [V33.798] 폰 상단 = 로고 + 초보자/전문가 전환만 · 나머지(검색·메뉴·손익·상태)는 아래 탭/메뉴 */.m-appbar .m-ab-mid,.m-appbar .m-ab-pnl,.m-appbar #mAbSearch,.m-appbar #mAbMenu{display:none!important}.m-appbar{justify-content:space-between}.m-appbar .m-ezsw{margin-left:auto!important}</style>
 </head>
 <body>
 
@@ -9352,12 +9353,12 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
   #page-detail .detail-main .detail-chart{height:46vh !important;min-height:300px !important}
 }
 </style>
-<link rel="stylesheet" href="/brain-console.css?v=33.797">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.797">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.797">
-<link rel="stylesheet" href="/model-evidence.css?v=33.797">
+<link rel="stylesheet" href="/brain-console.css?v=33.798">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.798">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.798">
+<link rel="stylesheet" href="/model-evidence.css?v=33.798">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.797">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.798">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -19565,7 +19566,8 @@ setTimeout(function(){
     tabs.innerHTML = TABS.map(function(id){
       var n = NAVS.filter(function(x){ return x.id === id; })[0];
       return '<button type="button" class="m-tab" data-page="'+id+'"><span class="ic">'+n.ic+'</span><span class="tx">'+esc(n.tab||n.tx)+'</span></button>';
-    }).join('') + '<button type="button" class="m-tab" data-more="1"><span class="ic">'+NV.menu+'</span><span class="tx">메뉴</span></button>';
+    }).join('') + '<button type="button" class="m-tab" data-search="1"><span class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></span><span class="tx">검색</span></button>'
+      + '<button type="button" class="m-tab" data-more="1"><span class="ic">'+NV.menu+'</span><span class="tx">메뉴</span></button>';   /* [V33.798] 폰 상단 기능(검색·메뉴)을 아래 탭으로(사용자 11/10) — 위에는 초보자/전문가 전환만 */
     document.body.appendChild(tabs);
 
     var scrim = document.createElement('div'); scrim.className = 'm-drawer-scrim';
@@ -19602,7 +19604,7 @@ setTimeout(function(){
 
     tabs.addEventListener('click', function(e){
       var b = e.target.closest ? e.target.closest('.m-tab') : null; if(!b) return;
-      if(b.getAttribute('data-more')) openDrawer(); else go(b.getAttribute('data-page'));
+      if(b.getAttribute('data-more')) openDrawer(); else if(b.getAttribute('data-search')){ var fab = $id('cmdkFab'); if(fab) fab.click(); } else go(b.getAttribute('data-page'));
     });
     dr.addEventListener('click', function(e){
       var lb = e.target.closest ? e.target.closest('[data-dlang]') : null;
@@ -22229,8 +22231,8 @@ setTimeout(function(){
   window.addEventListener('load', function(){ setTimeout(function(){ try{ boot(); }catch(e){} }, 0); });
 })();
 </script>
-<script src="/model-evidence.js?v=33.797"></script>
-<script src="/workspace-ui.js?v=33.797"></script>
+<script src="/model-evidence.js?v=33.798"></script>
+<script src="/workspace-ui.js?v=33.798"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {
