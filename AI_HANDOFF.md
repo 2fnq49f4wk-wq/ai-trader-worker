@@ -12,6 +12,10 @@
 
 ## Current handoff
 
+### Threads 게시 워크플로 (V33.793 이후 · 코드 변경 없음)
+- `.github/workflows/threads-post.yml`(수동 실행) + `tools/threads/post.py`. 토큰은 GitHub 비밀값 `THREADS_ACCESS_TOKEN`(장기 토큰 · 2027-01-08 경 만료 → 갱신 필요).
+- text_file 비우고 돌리면 토큰 확인만, 채우면 글 게시. 글 원문은 `promo/threads/devlog-0N.txt`, 미디어는 `public/promo/`.
+
 - (11/9) Threads 개발일지 홍보용 공개 파일 public/promo/(devlog1-server.jpg · devlog2-arch.jpg · devlog3-promo.mp4 · 광고 영상 v5 26.6초) — Threads API 는 공개 URL 미디어만 받는다. 코드 변경 없음(버전 그대로).
   Threads 토큰은 세션 스크래치패드에만(저장소에 넣지 않음) · 계정 @blauenacht08 · 앱 ID 1899137921249896.
 - V33.793 (11/9) 폰 종목상세 탭 바 틈(사용자 아이폰 스크린샷 · ~10px 사이로 본문 비침) — V33.792 의 --dtop(버튼줄 높이)이 아이폰 사파리에선 기준이 달랐다.

@@ -1,0 +1,38 @@
+name: Threads 게시
+# 손으로 실행(Actions → Threads 게시 → Run workflow) · 토큰 = secrets.THREADS_ACCESS_TOKEN(로그에 안 찍힘)
+on:
+  workflow_dispatch:
+    inputs:
+      text_file:
+        description: '글 파일(저장소 경로) · 비우면 토큰 확인만'
+        required: false
+        default: ''
+      kind:
+        description: 'IMAGE / VIDEO / TEXT'
+        required: false
+        default: 'TEXT'
+      media_url:
+        description: '공개 미디어 주소(https://lux-inv.com/promo/...) · TEXT 면 -'
+        required: false
+        default: '-'
+      topic:
+        description: '토픽 태그(하나) · 없으면 -'
+        required: false
+        default: '-'
+permissions:
+  contents: read
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: 게시
+        env:
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          IN_FILE: ${{ inputs.text_file }}
+          IN_KIND: ${{ inputs.kind }}
+          IN_MEDIA: ${{ inputs.media_url }}
+          IN_TOPIC: ${{ inputs.topic }}
+        run: |
+          if [ -z "$IN_FILE" ]; then python3 tools/threads/post.py --check; else python3 tools/threads/post.py "$IN_FILE" "$IN_KIND" "$IN_MEDIA" "$IN_TOPIC"; fi
