@@ -12,6 +12,12 @@
 
 ## Current handoff
 
+- V33.797-pb (11/9 · 버전 그대로 · 에이전트) 매매법 실적 점검 — 원장 포지션 단위(180일 · FIFO · 앞/뒤 절반=홀드아웃):
+  美 core PF 0.62 끌어내린 것: RULE:SCALP SC_VWAP 76건 PF 0.53(뒤 0.35 · 관문 시험 중) · AI-SCALP 22건 0.41(시험) · ★AI:SNAP SN_RSI 14건 PF 0.22(앞 0.03/뒤 0.41)★ · AI-Q:TREND 12건 0.38(시험차선 대상 — V33.797 설계 유지).
+  같은 SN_RSI 의 규칙 경로 RULE:SNAP 20건 PF 4.05(뒤 10.5) · AI:TREND 115건 1.11 · RULE:TREND TR_PULLBACK 76건 1.02(뒤 1.23) · TR_RS_LEADER 9건 2.5.
+  조치: AI_ROUTE_RETIRE={us:[snap]} — 미국 AI 주도 경로에서 스냅 후보 제외(추세로 감). 규칙 스냅·한국 그대로. 화면: 두뇌 '매매 차선' 표에 '퇴출 매매법' 행 · /api/perf-gate retiredAiRoutes.
+  남은 손실(관문이 이미 막음/시험): 韓 RULE:SCALP(다른 에이전트 범위) · 韓 AI:TREND 96건 PF 0.60(뒤 0.51 · 관문 시험) · cm CM-SWING 34건 0.59(뒤 1.08 회복 중). 백테스트로 새 규칙을 만들진 않음(홀드아웃 PF≥1.1 근거 없는 수정은 안 넣음).
+  다음: 美 AI:TREND 건수·PF 가 스냅 퇴출 뒤 유지되는지 /api/perf-gate us:AI:TREND 확인.
 - (11/9 · 에이전트 · 버전 안 올림 — 통합자가 올림) ★KR 규칙 단타 퇴출★ KR_RULE_SCALP_RETIRED(src/index.js SCALP 상수 옆) — `_ruleScalpOk` 가 저장 cfg usOnly 와 무관하게 한국 평시 규칙 단타(SC_VWAP·SC_PULLBACK·SC_MOMENTUM·SC_VBURST)를 막는다.
   진단: lanes kr:core:RULE:SCALP 40건(PF 0.397)은 전부 6/9~7/1 원장(그 뒤 usOnly=true 로 이미 0건 · 관문 probation n0). 손실 = 40분 시간컷(대개 −0.4~−1%) + 1.2~2.2% 손절이 정상 흔들림에 털림 + 왕복 비용 ~0.21%(매도세 0.18+수수료)가 +1.2% 익절의 1/6. 비용 빼도 총평균 음수.
   백테스트(네이버 1분봉 50종목 11/2~11/9 · 정규장만 · 비용 0.23% · 2폴드 3일/3일): 옛 규칙 학습 PF 1.21(n9) → 홀드아웃 PF 0(n5) · 전 6일 PF 0.56(n14) · 일봉 필터 없이 PF 0.60(n530).

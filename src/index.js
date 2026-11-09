@@ -21197,6 +21197,12 @@ const PERF_GATE = { windowDays: 180, maxN: 40, minN: 15, blockPf: 0.8, coolDays:
    차선 성적(lanes): 시장 × 차선(core 정상 · probe 시험 · inv 인버스) 그리고 차선 × 진입 꼬리표. 표본 15건 이상 · PF < 0.8 → ×0.5 ·
    PF < 0.5 → ×0.35 (막지 않고 줄인다 — 약한 곳을 크기로 고친다). 원장 읽기는 관문이 이미 하던 같은 질의(추가 쿼리 0). */
 const PROBE_LANE = { enabled: true, mult: 0.3, maxPosFrac: 0.05, maxTotalFrac: 0.20, maxPerDay: 4, routes: ["AI-Q", "SROUTE", "INV"] };
+/* [V33.797-pb] ★AI 주도 경로의 매매법 퇴출★ — 원장 포지션 단위(11/9 · 180일 · 매수 FIFO):
+     us:AI:SNAP(SN_RSI) 14건 평균 −2.28% · PF 0.22 — 앞 절반 PF 0.03 · 뒤 절반(홀드아웃) PF 0.41 둘 다 손실
+     ↔ 같은 SN_RSI 신호의 규칙 경로 us:RULE:SNAP 20건 PF 4.05 · AI 추세 us:AI:TREND 115건 PF 1.11.
+   AI 주도 경로는 스냅 신호가 있으면 추세보다 먼저 스냅을 고른다(selectAiEntryRoute) → 미국에선 이긴 AI 추세 자리를 지는 스냅이 먹었다.
+   → 미국 AI 주도 경로에서만 스냅 후보를 빼 추세로 간다(규칙 스냅 · 한국은 그대로). 막는 쪽 변경(관문 완화 없음). */
+const AI_ROUTE_RETIRE = { us: ["snap"], kr: [] };
 const LANE_ADAPT = { minN: 15, badPf: 0.8, shrink: 0.5, worstPf: 0.5, worstShrink: 0.35 };
 function _laneOf(reason) {
   const s = String(reason || "");
@@ -27861,7 +27867,7 @@ async function runTradingCycle(env) {
               // and self-healing have already run. Do not introduce a second weaker evaluator.
               const _snapCandidate = _aiSetups.find(function(sr){return sr.strategy === "snap";});
               const _trendCandidate = _aiSetups.find(function(sr){return sr.strategy === "trend";});
-              const _snapEntry = _snapCandidate && _snapCandidate.signal;
+              const _snapEntry = (AI_ROUTE_RETIRE[market] || []).indexOf("snap") >= 0 ? null : (_snapCandidate && _snapCandidate.signal);   // [V33.797-pb] 미국 AI 스냅 퇴출
               // [V33.596] 시장별 허용 셋업(setupByMarket) — 있으면 그 규칙 셋업이 뜬 경우만 추세 경로 후보
               const _setOk = (_ap.setupByMarket && Array.isArray(_ap.setupByMarket[market])) ? _ap.setupByMarket[market] : null;
               const _trendEl = _setOk ? !!(_trendCandidate && _trendCandidate.signal && _setOk.indexOf(_trendCandidate.signal.name) >= 0)
@@ -31178,7 +31184,7 @@ async function handleRequest(request, env, ctx, _inner) {
         let _pbReg = null;
         let _laneV = null;   // [V33.797] 차선 성적(사이클이 30분에 1행) + 차선 규칙 — 같은 질의에 끼움(추가 쿼리 0)
         try { const _pss = await getStates(env.DB, ["mkt_phase", "pb_regime", "mkt_context", "lane_view"]); const _ps = _pss["mkt_phase"]; _pbReg = _pss["pb_regime"] || null;
-          _laneV = { view: _pss["lane_view"] || null, probe: PROBE_LANE, adapt: LANE_ADAPT, krScalp: KR_RULE_SCALP_RETIRED, inv: { inst: INV_LANE.inst, budgetFrac: INV_LANE.budgetFrac, stopPct: INV_LANE.stopPct, tpPct: INV_LANE.tpPct, maxHoldDays: INV_LANE.maxHoldDays, maxPerDay: INV_LANE.maxPerDay } };
+          _laneV = { view: _pss["lane_view"] || null, probe: PROBE_LANE, adapt: LANE_ADAPT, krScalp: KR_RULE_SCALP_RETIRED, retired: AI_ROUTE_RETIRE, inv: { inst: INV_LANE.inst, budgetFrac: INV_LANE.budgetFrac, stopPct: INV_LANE.stopPct, tpPct: INV_LANE.tpPct, maxHoldDays: INV_LANE.maxHoldDays, maxPerDay: INV_LANE.maxPerDay } };
           const _mcx = _pss["mkt_context"] || null, _pr0 = _pbReg || {};
           if (_ps) _phase = { us: _ps.us, kr: _ps.kr, erUs: _ps.erUs, erKr: _ps.erKr,
           dayUs: _ps.dayUs, dayKr: _ps.dayKr, r5Us: _ps.r5Us, r5Kr: _ps.r5Kr, ts: _ps.ts,
@@ -31687,7 +31693,7 @@ async function handleRequest(request, env, ctx, _inner) {
     // [V33.459] GET /api/perf-gate — 실적 관문의 현재 판정(시장 × 진입 주체 × 전략 · 최근 45일 원장)
     if (path === "/api/perf-gate") {
       const pg = await perfGateLoad(env.DB, url.searchParams.get("fresh") === "1");
-      return Response.json({ at: pg.at, rule: PERF_GATE, keys: pg.keys, lanes: pg.lanes || {}, probe: PROBE_LANE, adapt: LANE_ADAPT }, { headers: Object.assign({ "cache-control": "no-store" }, cors) });
+      return Response.json({ at: pg.at, rule: PERF_GATE, keys: pg.keys, lanes: pg.lanes || {}, retiredAiRoutes: AI_ROUTE_RETIRE, probe: PROBE_LANE, adapt: LANE_ADAPT }, { headers: Object.assign({ "cache-control": "no-store" }, cors) });
     }
     // [V32.54] GET /api/selfcheck — 시스템 자가진단(사이트 오류·파이프라인 지연·모델 상태). SWR 1분.
     if (path === "/api/selfcheck") {
