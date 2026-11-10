@@ -1,0 +1,39 @@
+/* [V33.802] 첫 방문 배너 스타일 — index.html 무게(로딩 계약 220KB) 때문에 분리. 배너를 띄울 때만 받는다. */
+#luxHero{display:none}
+html.lux-hero #luxHero{display:flex;visibility:visible!important;position:fixed;inset:0;z-index:100000;flex-direction:column;overflow:hidden auto;color:#eef2f7;font-family:'Helvetica Neue','Segoe UI','Apple SD Gothic Neo','Malgun Gothic',Arial,sans-serif;
+ background:radial-gradient(90% 60% at 18% 8%,rgba(61,214,181,.22),transparent 60%),radial-gradient(80% 55% at 88% 22%,rgba(106,92,255,.26),transparent 62%),radial-gradient(120% 70% at 50% 120%,rgba(79,140,255,.20),transparent 60%),linear-gradient(180deg,#0b0f17 0%,#0e1320 55%,#0a0d14 100%);animation:lhIn .9s ease both}
+html.lux-hero #luxHero::before,html.lux-hero #luxHero::after{content:"";position:absolute;width:70vmax;height:70vmax;border-radius:50%;filter:blur(70px);opacity:.38;pointer-events:none;will-change:transform}
+html.lux-hero #luxHero::before{left:-30vmax;top:-34vmax;background:radial-gradient(circle,rgba(61,214,181,.55),transparent 65%);animation:lhDrift 16s ease-in-out infinite alternate}
+html.lux-hero #luxHero::after{right:-34vmax;bottom:-40vmax;background:radial-gradient(circle,rgba(106,92,255,.55),transparent 65%);animation:lhDrift 20s ease-in-out infinite alternate-reverse}
+#luxHero .lh-top{position:relative;z-index:1;display:flex;align-items:center;justify-content:space-between;padding:calc(14px + env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) 14px max(20px,env(safe-area-inset-left));border-bottom:1px solid rgba(255,255,255,.07);font-size:12px;letter-spacing:.14em;color:#aeb7c6}
+#luxHero .lh-top b{font-size:13px;letter-spacing:.22em;color:#fff;font-weight:700}#luxHero .lh-top b i{font-style:normal;color:#3DD6B5}
+#luxHero .lh-wrap{position:relative;z-index:1;flex:1;width:min(560px,100%);margin:0 auto;padding:clamp(24px,6vh,64px) 22px calc(22px + env(safe-area-inset-bottom));display:flex;flex-direction:column;justify-content:center}
+#luxHero h1{margin:0;font-size:clamp(30px,8.4vw,46px);line-height:1.2;font-weight:800;letter-spacing:-.02em;animation:lhUp .9s .15s cubic-bezier(.22,.9,.3,1) both}
+#luxHero h1 em{font-style:normal;background:linear-gradient(90deg,#3DD6B5,#7aa5ff 60%,#9d8cff);-webkit-background-clip:text;background-clip:text;color:transparent}
+#luxHero .lh-sub{margin:14px 0 0;font-size:14.5px;line-height:1.6;color:#aab4c4;animation:lhUp .9s .3s cubic-bezier(.22,.9,.3,1) both}
+#luxHero .lh-chips{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0 0}
+#luxHero .lh-chip{display:inline-flex;align-items:center;gap:7px;padding:8px 13px;border-radius:999px;font-size:13px;font-weight:600;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);animation:lhUp .8s cubic-bezier(.22,.9,.3,1) both}
+#luxHero .lh-chip:nth-child(1){animation-delay:.45s}#luxHero .lh-chip:nth-child(2){animation-delay:.6s}#luxHero .lh-chip:nth-child(3){animation-delay:.75s}
+#luxHero .lh-chip s{width:7px;height:7px;border-radius:50%;background:#3DD6B5;text-decoration:none;box-shadow:0 0 10px #3DD6B5}
+#luxHero .lh-mock{margin:24px 0 0;display:grid;grid-template-columns:1.25fr 1fr;gap:10px;animation:lhUp 1s .85s cubic-bezier(.22,.9,.3,1) both}
+#luxHero .lh-card{border-radius:18px;padding:13px 14px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.11);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);box-shadow:0 18px 40px -20px rgba(0,0,0,.6);min-width:0}
+#luxHero .lh-card small{display:block;font-size:11px;color:#98a3b6;letter-spacing:.04em}#luxHero .lh-num{display:block;font-size:22px;font-weight:800;margin-top:2px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+#luxHero .lh-card svg{display:block;width:100%;height:44px;margin-top:6px}
+#luxHero .lh-bub{font-size:12.5px;line-height:1.5;color:#dfe6f1}#luxHero .lh-bub b{color:#3DD6B5}
+#luxHero .lh-rk{display:flex;justify-content:space-between;font-size:12px;color:#c9d1de;padding:3px 0}#luxHero .lh-rk i{font-style:normal;color:#3DD6B5;font-weight:700}
+#luxHero .lh-cta{display:flex;flex-direction:column;gap:10px;margin-top:26px;animation:lhUp .9s 1s cubic-bezier(.22,.9,.3,1) both}
+#luxHero .lh-go{min-height:54px;border:0;border-radius:999px;background:linear-gradient(135deg,#3DD6B5,#4f8cff);color:#04110D;font:inherit;font-size:16px;font-weight:800;cursor:pointer;box-shadow:0 14px 34px -10px rgba(61,214,181,.55);transition:transform .2s}
+#luxHero .lh-go:active{transform:scale(.97)}
+#luxHero .lh-skip{min-height:46px;border-radius:999px;border:1px solid rgba(255,255,255,.16);background:transparent;color:#dbe2ee;font:inherit;font-size:14.5px;font-weight:600;cursor:pointer}
+#luxHero .lh-fine{margin:4px 0 0;text-align:center;font-size:11.5px;color:#7f8aa0}
+html[data-theme="light"].lux-hero #luxHero{color:#1b2559;background:radial-gradient(90% 60% at 18% 8%,rgba(61,214,181,.22),transparent 60%),radial-gradient(80% 55% at 88% 22%,rgba(106,92,255,.18),transparent 62%),linear-gradient(180deg,#f4f7fe,#e9effc)}
+html[data-theme="light"] #luxHero .lh-top{border-color:rgba(60,80,150,.1);color:#4a5578}html[data-theme="light"] #luxHero .lh-top b{color:#1b2559}
+html[data-theme="light"] #luxHero .lh-sub,html[data-theme="light"] #luxHero .lh-card small,html[data-theme="light"] #luxHero .lh-fine{color:#566182}
+html[data-theme="light"] #luxHero .lh-chip,html[data-theme="light"] #luxHero .lh-card{background:rgba(255,255,255,.72);border-color:rgba(255,255,255,.9);box-shadow:0 18px 40px -22px rgba(80,100,180,.35)}
+html[data-theme="light"] #luxHero .lh-bub,html[data-theme="light"] #luxHero .lh-rk{color:#2b3560}html[data-theme="light"] #luxHero .lh-skip{color:#2b3560;border-color:rgba(60,80,150,.22)}
+@keyframes lhIn{from{opacity:0}to{opacity:1}}@keyframes lhUp{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+@keyframes lhDrift{from{transform:translate3d(0,0,0) scale(1)}to{transform:translate3d(6vmax,4vmax,0) scale(1.12)}}
+@keyframes lhDash{from{stroke-dashoffset:220}to{stroke-dashoffset:0}}
+#luxHero .lh-line{stroke-dasharray:220;animation:lhDash 2s .6s ease-out both}
+@media (prefers-reduced-motion:reduce){html.lux-hero #luxHero,html.lux-hero #luxHero *,html.lux-hero #luxHero::before,html.lux-hero #luxHero::after{animation:none!important}}
+@media (max-height:640px){#luxHero .lh-mock{display:none}}

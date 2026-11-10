@@ -12,6 +12,8 @@
 
 ## Current handoff
 
+### V33.802 — 새 디자인 배포(lux-polish.css · lux-motion.js + vendor/anime.min.js · 첫 방문 배너 #luxHero · 가입 전 3장 홍보). 되돌리기 = lux-polish.css 링크 제거
+
 ### [UI1] 테마 폴리시 · anime.js 모션 · 첫 방문 소개 배너 · 가입 홍보 슬라이드 (에이전트 · 푸시 안 함 · _BUILD_VER 안 올림)
 - 새 파일: public/lux-polish.css(덧입힘 한 장 · 지우면 복구) · public/lux-motion.js(미끄럼 알약 표시기 사이드바/.m-tabbar · 페이지 전환 · 카드 등장 · 카운트업) · public/vendor/anime.min.js(v3.2.2 로컬).
 - index.html: 머리 판정 스크립트(첫 방문·비로그인·앱 아님·봇 아님·?intro=0 아님, ?intro=hero 강제) + body 첫머리 #luxHero 인라인 배너 + 링크 2줄. mine.js: ask() 3번째 인자(arguments[2])=소개 건너뛰기 · 가입 소개 3장 자동 회전 슬라이드(gStart·gApp·gGuest·data-m 유지).
