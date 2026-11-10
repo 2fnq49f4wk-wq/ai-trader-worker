@@ -23172,7 +23172,27 @@ async function statePubWrite(env) {
   if (!body || body.charAt(0) !== "{") return null;
   const out = '{"_pubAt":' + Date.now() + "," + body.slice(1);
   await PUB.put(STATE_PUB_KEY, out, { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "public, max-age=30, s-maxage=30" } });
+  try { await statePubTop(PUB, body); } catch (e) {}
   return { kb: Math.round(out.length / 1024) };
+}
+/* [V33.806] ★대시보드 첫 화면 전용 작은 사본★(사용자 11/10 "전문가 대시보드 지수 카드·TOP MOVERS 가 느리다") — pub/state.js 는 시세 1,000여 종목이 든 800KB(압축 237KB)라
+   첫 방문엔 그걸 다 받고 JSON 파싱해야 지수·TOP MOVERS 가 그려졌다. 같은 본문에서 지수 + 시장별 상·하위 후보(정규장·시간외 기준 각 20)만 뽑아 따로 쓴다.
+   크론 1분에 R2 쓰기 1번 추가(방문자 수와 무관). 화면은 이걸 먼저 그리고 전체 상태가 오면 그대로 덮는다. */
+async function statePubTop(PUB, body) {
+  const st = JSON.parse(body), wl = Array.isArray(st.watchlist) ? st.watchlist : [], keep = {};
+  const reg = function (q) { return typeof q.regPct === "number" ? q.regPct : (typeof q.dayPct === "number" ? q.dayPct : null); };
+  const ext = function (q) { return (q.price > 0 && q.prevClose > 0) ? (q.price / q.prevClose - 1) * 100 : null; };
+  ["us", "kr"].forEach(function (m) {
+    const a = wl.filter(function (q) { return q && (q.market || (/\.(KS|KQ)$/.test(q.symbol) ? "kr" : "us")) === m; });
+    [reg, ext].forEach(function (f) {
+      const b = a.filter(function (q) { return typeof f(q) === "number"; }).sort(function (x, y) { return f(y) - f(x); });
+      b.slice(0, 20).concat(b.slice(-20)).forEach(function (q) { keep[q.symbol] = q; });
+    });
+  });
+  const F = ["symbol", "name", "market", "isEtf", "price", "prevClose", "dayPct", "regPct", "regPrice", "mstate", "pre", "prePct", "post", "postPct", "dispSess", "ts", "extTs"];
+  const w2 = Object.keys(keep).map(function (k) { const q = keep[k], o = {}; F.forEach(function (f) { if (q[f] !== undefined) o[f] = q[f]; }); return o; });
+  await PUB.put("pub/f/dash_top.js", '{"_pubAt":' + Date.now() + ',"d":' + JSON.stringify({ indices: st.indices || [], watchlist: w2 }) + "}",
+    { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "public, max-age=30, s-maxage=30" } });
 }
 
 /* [V33.762] ★공용 피드도 CDN 으로★(사용자 11/4 "유저가 늘 때 문제 · 비용부터") — 상태(V33.759) 다음으로 요청이 많은 공용 GET(누구에게나 같은 응답)을

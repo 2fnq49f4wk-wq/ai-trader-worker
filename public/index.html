@@ -179,6 +179,14 @@ html.lux-cssw:not([data-theme="light"]) .sidebar .nav-item.active .nav-item-icon
         if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
       });
       window.__earlyState['catch'](function () {});
+      /* [V33.806] ★지수 카드·TOP MOVERS 전용 작은 사본(~30KB)★ — 전체 상태(800KB)보다 먼저 도착해 첫 화면을 그린다(워커 요청 0 · R2 공개 사본). 못 받으면 조용히 버린다. */
+      window.__earlyTop = fetch('https://data.lux-inv.com/pub/f/dash_top.js', { mode: 'cors', credentials: 'omit', cache: 'no-cache' }).then(function (r) {
+        if (!r.ok) throw 0; return r.text();
+      }).then(function (t) {
+        var m = /^\{"_pubAt":(\d+),"d":/.exec(t); if (!m || !(Date.now() - +m[1] < 300000)) throw 0;
+        return JSON.parse(t.slice(m[0].length, -1));
+      });
+      window.__earlyTop['catch'](function () {});
     }
   } catch (e) { window.__earlyState = null; }
 })();
@@ -10204,13 +10212,14 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
     })['catch'](function(){ if (badge) badge.textContent = '조회 실패'; });
   }
   function renderFvDeck(state) {
-    try { renderAiModePanel(); } catch(e) {}
-    try { bindAiAskPanel(); } catch(e) {}
+    var PART = !!state.__partial;   // [V33.806] 작은 사본(지수 + 무버 후보)으로 먼저 그리는 중 — 지수·TOP MOVERS 만 그린다
+    if (!PART) { try { renderAiModePanel(); } catch(e) {}
+    try { bindAiAskPanel(); } catch(e) {} }
     /* [V33.683] ★이 함수는 상태 폴링(10초)마다 불린다★ — 종전엔 부를 때마다 위기·이슈·한국장 정지·알림을 다시 받아(각 분당 12회 실측)
        타이머(3분·4분·1분)가 무의미했다. 처음 한 번만 그리고 그 뒤는 타이머에 맡긴다. */
-    try { if (!__crisisTimer) { renderCrisisPanel(); __crisisTimer = setInterval(function(){ if (!document.hidden) renderCrisisPanel(); }, 180000); } } catch(e) {}
-    try { if (!__eventsTimer) { renderEventsPanel(); __eventsTimer = setInterval(function(){ if (!document.hidden) renderEventsPanel(); }, 240000); } } catch(e) {}
-    try { if (!__krHaltTimer) startKrHalt(); } catch(e) {}   // [V33.159] 한국장 사이드카·서킷브레이커 감시
+    if (!PART) try { if (!__crisisTimer) { renderCrisisPanel(); __crisisTimer = setInterval(function(){ if (!document.hidden) renderCrisisPanel(); }, 180000); } } catch(e) {}
+    if (!PART) try { if (!__eventsTimer) { renderEventsPanel(); __eventsTimer = setInterval(function(){ if (!document.hidden) renderEventsPanel(); }, 240000); } } catch(e) {}
+    if (!PART) try { if (!__krHaltTimer) startKrHalt(); } catch(e) {}   // [V33.159] 한국장 사이드카·서킷브레이커 감시
     // ① 지수 패널 행
     var row = $('fvIndexRow');
     if (row && state.indices && state.indices.length) {
@@ -10229,7 +10238,7 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
     }
     // ② 시장폭 — 워치리스트 등락 종목 수 (US/KR)
     var br = $('fvBreadthRow');
-    if (br) {
+    if (br && !PART) {
       // [V9.11 버그수정] 신선도(24h) 필터만 걸면 주말·휴장(마지막 시세=금요일 종가, >24h 경과) 때
       //   전종목이 필터에 걸려 표본이 거의 0으로 줄고, 우연히 통과한 1~2종목만으로 "Declining 100%" 같은
       //   오해성 표시가 뜸(KR은 완전 공백, US는 표본1개). → 신선표본이 최소치(minSample) 미달이면
@@ -10361,6 +10370,7 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
       l.innerHTML = pickSide(false).map(function(it){ return moverRow(it, false); }).join('') || '<tr><td colspan="4" class="empty">—</td></tr>';
       bindDblTapDetail(g); bindDblTapDetail(l);   // [V12.68] 더블클릭/더블탭 → 종목상세 (위임, 1회 바인딩)
     }
+    if (PART) return;   // [V33.806] 작은 사본은 여기까지(헤드라인 등은 전체 상태가 오면)
     // ④ 헤드라인 — 섹터 뉴스 플랫 리스트
     var hl = $('fvHeadlines');
     if (hl && state.sectorNews && state.sectorNews.headlines) {
@@ -16041,8 +16051,21 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
        ★다 와야★ _apply 가 돌아, 무거운 거래 내역을 기다리는 동안 TOP MOVERS·시총맵이 비어 있었다.
        상태가 오는 즉시 대시보드 덱만 먼저 그린다(나머지는 종전대로 다 모인 뒤). */
     var _stateP = api('/api/state');
+    /* [V33.806] 작은 사본(__earlyTop)이 전체 상태보다 먼저 오면 지수·TOP MOVERS 만 먼저 그린다. 저장된 사본(bootBundle)이 이미 그렸거나 전체 상태가 먼저 왔으면 건드리지 않는다. */
+    try {
+      if (window.__earlyTop && !window.__fvFull) window.__earlyTop.then(function(tp){
+        try {
+          if (window.__fvFull || !tp || !isPage('dashboard') || Object.keys(lastQuotes).length) return;
+          var q1 = tp.watchlist || []; if (!q1.length) return;
+          lastQuotes = {}; q1.forEach(function(q){ lastQuotes[q.symbol] = q; });
+          renderFvDeck({ __partial: 1, indices: tp.indices || [], watchlist: q1 });
+          window.__fvTopAt = Math.round(performance.now());
+        } catch(e){}
+      })['catch'](function(){});
+    } catch(e){}
     _stateP.then(function(st){
       try {
+        window.__fvFull = 1;
         if (!st || !isPage('dashboard')) return;
         var q0 = st.watchlist || [];
         if (q0.length) { lastQuotes = {}; q0.forEach(function(q){ lastQuotes[q.symbol] = q; }); window.__lastQuotesArr = q0; }

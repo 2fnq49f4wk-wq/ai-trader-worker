@@ -12,6 +12,11 @@
 
 ## Current handoff
 
+### [PERF] 전문가 대시보드 지수 카드·TOP MOVERS 첫 화면 단축 (에이전트 · 푸시 안 함 · _BUILD_VER 안 올림)
+- 원인: 둘 다 pub/state.js(800KB · br 237KB · 시세 1,004종목)가 와서 파싱돼야 그려졌다(서버 응답은 빠름 · CDN HIT). 실측(Playwright, 1440x900): 빠른 망 콜드 1.4s·웜 0.7s(저장 사본) / 1.6Mbps·150ms 에서 2.8~3.6s.
+- 수정: 크론 statePubWrite 가 같은 본문에서 지수 + 시장별 상·하위 후보(정규·시간외 각 20 · 93종목 · 28KB)만 뽑아 R2 `pub/f/dash_top.js` 에 1분마다 씀(R2 쓰기 +1/분 · 방문자 수와 무관). index.html 머리에서 `__earlyTop` 로 /api/state 와 동시에 받아, 전체 상태보다 먼저 오면 renderFvDeck({__partial:1}) 로 지수·TOP MOVERS 만 그림(시장폭·타이머·헤드라인은 전체 상태가 오면). 저장 사본이 그렸거나 전체 상태가 먼저면 무시. 전체 상태 도착 뒤 목록은 동일함을 확인.
+- 실측(소스 HTML + 가짜 dash_top, 수정 전→후): 빠른 망 0.78~1.34s → 0.47~0.52s · 느린 망 2.8~3.6s → 1.3~1.5s. 라이브 확인은 배포 뒤 `window.__fvTopAt` 로(없으면 dash_top.js 미생성/CDN 실패).
+
 ### V33.805 — 패드 종목 목록 이름 잘림 수정(detail-v3b.css) · sticky 탭 바 불투명
 
 ### V33.804 — 종목 상세 v3.1 배포(detail-v3.css/js · detail-v3b.css 가독성 · 컴팩트 머리 64px · 패드는 차트 아래 AI 분석). 남은 것: 영어 문구 일부 · 차트 눈금 글자(축소 렌더)
