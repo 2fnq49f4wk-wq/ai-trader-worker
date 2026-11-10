@@ -162,3 +162,8 @@ html:not([data-theme="light"])::before{background:
   radial-gradient(54vmax 44vmax at 92% 22%,rgba(14,34,80,.35),transparent 66%),
   linear-gradient(180deg,#05070d,#020306)!important}
 html:not([data-theme="light"]) body{background:#020306!important}
+/* [V33.814] 종목 상세 기간(1분~월)·정보 탭: 선택 버튼 자체를 칠한다(떠다니는 알약 위치가 패드 사파리에서 어긋나 흰 글자가 안 보이던 것) */
+html:root #page-detail .dv3-tfpill,html:root #page-detail #luxInfo .lxt .dv3-tabpill,html:root #page-detail .lxt-pill,html:root #page-detail #luxInfo .lxpill{display:none!important}
+html:root body #page-detail #detailTf .detail-tf-btn.active,html:root body #page-detail .detail-tf-btn.active,html:root body #page-detail #luxInfo .lxt button.on{
+  background:linear-gradient(160deg,#3b82f6,#1f6bff)!important;color:#fff!important;-webkit-text-fill-color:#fff!important;border-color:transparent!important;
+  box-shadow:0 6px 16px -8px rgba(31,107,255,.8),inset 0 1px 0 rgba(255,255,255,.3)!important;border-radius:999px!important;font-weight:700!important}
