@@ -796,6 +796,9 @@ jobs:
       # [V33.695] 국면 전략 — 국면마다 전략 묶음을 분기 워크포워드로 · 실전 자격 = 두 구간 모두 거래당 ≥ +5%
       - name: 국면 전략 검사
         run: node tools/check-regime-sleeve.mjs
+      # [위상 안전장치] 지수 위상 안전장치 — 하락장 반등일(MA50 −5% 아래·5일 음수)은 상승 위상 불가 · MA50 −5% 아래·20일 음수면 폭등(MELTUP·SURGE) 불가(11/10 韓 +4% 반등 MELTUP 재현)
+      - name: 지수 위상 안전장치 검사
+        run: node tools/check-regime-phase-sanity.mjs
       # [V33.703] 손해 원인 재발 방지 — 퇴역 경로 차단 · 수량 계산 손절폭 하한 5%
       - name: 손해 원인 재발 방지 검사
         run: node tools/check-loss-causes.mjs

@@ -22,8 +22,8 @@ function grab(name) {
   return SRC.slice(i, j + 1) + (SRC[i] === "c" ? ";" : "");
 }
 const lib = new Function(["function _num(v,d){v=Number(v);return isFinite(v)?v:d;}",
-  grab("REGIME_CANON_RANK"), grab("REGIME_CANON_KO"), grab("REGIME_CANON_CFG"), grab("regimeFeat"), grab("regimeCanon"),
-  "return {regimeFeat, regimeCanon, CFG: REGIME_CANON_CFG, RANK: REGIME_CANON_RANK};"].join("\n"))();
+  grab("REGIME_CANON_RANK"), grab("REGIME_CANON_KO"), grab("REGIME_CANON_CFG"), grab("regimeFeat"), grab("regimeCanon"), grab("regimePhase"),
+  "return {regimeFeat, regimeCanon, regimePhase, CFG: REGIME_CANON_CFG, RANK: REGIME_CANON_RANK};"].join("\n"))();
 
 /* 자체 시험(데이터 없이) — 11/9 사고 재현: 美 위상 MELTUP · 학습기 CRASH(3일 묵음) → CRASH 가 아니어야 · 진짜 폭락은 CRASH */
 { const now = Date.now(), A = (c, m) => { if (!c) { console.log("FAIL " + m); process.exit(1); } };
@@ -91,13 +91,12 @@ function build(mk) {
       ers.push(Math.abs(seg[20] - seg[0]) / p); r5s.push((seg[20] / seg[15] - 1) * 100); }
     const av = a => a.reduce((x, y) => x + y, 0) / a.length;
     const today = tot / hists.length, r5 = av(r5s), r20 = av(r20s), erv = av(ers);
-    let phase; if (worst <= -2.5 || today <= -2 || (today <= -1 && r5 <= -4)) phase = "CRASH";
-    else if (today >= 2 || (today >= 1 && r5 >= 3) || (erv >= .34 && r20 >= 6 && above >= below)) phase = "MELTUP";
-    else if (today >= .8 || (r5 >= 2 && today >= 0) || (erv >= .22 && r20 >= 1.5 && above >= below)) phase = "TREND_UP";
-    else if (today <= -.8 || (r5 <= -2 && today <= 0) || (erv >= .22 && r20 <= -1.5)) phase = "TREND_DOWN"; else phase = "RANGE";
+    const feat = Object.assign(lib.regimeFeat(hists), { day: today });
+    // [위상 안전장치] 워커와 같은 순수 함수(추세 안전장치 포함) — 환경변수 PHASE_OLD=1 이면 안전장치 전 원래 분기(raw)로 비교
+    const _ph = lib.regimePhase({ worst, today, r5, r20, er: erv, above, below, vs50: feat.vs50 });
+    const phase = process.env.PHASE_OLD === "1" ? _ph.raw : _ph.phase;
     const pbv = pbReg[i - 1], pbAge = (Date.parse(d) - Date.parse(dates[i - 1])) / 864e5;
     let ctx; if (mk === "us") ctx = ctxByDate[d]; else { let j = usDates.findIndex(x => x >= d) - 1; ctx = ctxByDate[usDates[Math.max(0, j)]]; }
-    const feat = Object.assign(lib.regimeFeat(hists), { day: today });
     // 정답
     const c0 = tr[i]; let mdd = 0; for (let j = i + 1; j <= i + 20; j++) mdd = Math.min(mdd, tr[j] / c0 - 1);
     const f5 = tr[i + 5] / c0 - 1, f20 = tr[i + 20] / c0 - 1;

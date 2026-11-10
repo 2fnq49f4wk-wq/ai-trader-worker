@@ -17531,12 +17531,38 @@ function regimeCanon(phase, pbReg, ctxRegime, feat, opt) {
   if (C.acuteFloor && phase === "CRASH" && REGIME_CANON_RANK[canon] > 1) { canon = "BEAR"; why = "phase"; }   // 오늘 지수가 무너지는 중이면 최소 하락(전환 탐지 지연 방지)
   if (canon === "CRASH" && C.crashNeedDd != null && f.dd60 != null && f.dd60 > C.crashNeedDd) canon = "BEAR";   // 낙폭 없는 '폭락' = 하루 흔들림 → 하락으로(거짓 폭락 억제)
   if ((f.day != null && f.day <= -3) || (f.dd60 != null && f.dd60 <= -15 && f.r5 != null && f.r5 < 0)) { canon = "CRASH"; why = "override"; }
+  // [위상 안전장치] 폭등(SURGE)은 추세가 받칠 때만 — MA50 −5% 아래 또는 20일 수익 음수면 상승(BULL)까지(하락장 반등일 폭등 판정 금지)
+  if (canon === "SURGE" && ((f.vs50 != null && f.vs50 < -5) || (f.r20 != null && f.r20 < 0))) { canon = "BULL"; why = "surgeGuard"; }
   const dir = REGIME_CANON_RANK[canon] - 2, push = function (x) { return (dir <= 0 ? -1 : 1) * x.v * x.w; };
   let best = comps[0]; for (const x of comps) if (push(x) > push(best)) best = x;
   const agree = comps.filter(function (x) { return Math.sign(x.v) === Math.sign(score); }).length / comps.length;
   const conf = +Math.min(1, 0.6 * Math.min(1, Math.abs(score) / 1.2) + 0.4 * agree).toFixed(2);
   return { canon: canon, ko: REGIME_CANON_KO[canon], src: why || best.src, parts: comps.map(function (x) { return x.src + ":" + x.raw; }),
            comps: comps, score: +score.toFixed(2), conf: conf };
+}
+/* [위상 안전장치] ★지수 위상 분류(순수 함수)★ — analyzeMarketRegime · tools/eval-regime-canon.mjs · tools/check-regime-phase-sanity.mjs 가 같이 쓴다.
+   11/10 사고: 코스피 +4.5%·코스닥 +3.8% 하루 반등(5일 −6.6% · 20일 −17% · MA50 −17% · 60일 고점 −26%)에 위상이 MELTUP(폭등).
+     원인 = 'today ≥ +2% → MELTUP' 분기가 추세를 전혀 보지 않았다(V33.54 가 '오늘'을 1급 신호로 올리며 생긴 빈틈). 입력(^KS11·^KQ11 지수 · dayPct)은 맞았다.
+     美 11/9 도 같은 분기: 4지수 평균 +2.6%(20일 −2% · 나스닥 MA50 −4.5%) → MELTUP.
+     MELTUP 은 레버리지 천장 2.2 · 폭등 단타(레버리지 ETF) · 넓은 트레일 · 늦은 익절을 켠다 — 하락장 반등일에 켜지면 안 된다.
+   안전장치: MELTUP 은 지수 평균이 MA50 −5% 아래이거나 20일 수익 음수면 불가 → TREND_UP.
+             하락장 안의 반등일(MA50 −5% 아래 · 5일 수익 음수)은 상승 위상(MELTUP·TREND_UP) 자체가 불가 → RANGE(보합 — 반등일, 추세 아님).
+   x = { worst, today, r5, r20, er, above, below, vs50 } (%) · vs50·r20 은 null 이면 그 조건을 안 본다. */
+function regimePhase(x) {
+  const n = function (v, d) { return (v != null && isFinite(v)) ? +v : d; };
+  const worst = n(x.worst, 0), today = n(x.today, 0), r5 = n(x.r5, 0), r20 = n(x.r20, 0), erv = n(x.er, 0.25);
+  const above = n(x.above, 0), below = n(x.below, 0), vs50 = n(x.vs50, null), r20v = n(x.r20, null);
+  let phase;
+  if (worst <= -2.5 || today <= -2 || (today <= -1 && r5 <= -4)) phase = "CRASH";
+  else if (today >= 2 || (today >= 1 && r5 >= 3) || (erv >= 0.34 && r20 >= 6 && above >= below)) phase = "MELTUP";
+  else if (today >= 0.8 || (r5 >= 2 && today >= 0) || (erv >= 0.22 && r20 >= 1.5 && above >= below)) phase = "TREND_UP";
+  else if (today <= -0.8 || (r5 <= -2 && today <= 0) || (erv >= 0.22 && r20 <= -1.5)) phase = "TREND_DOWN";
+  else phase = "RANGE";
+  const raw = phase, deep = vs50 != null && vs50 < -5, neg20 = r20v != null && r20v < 0;
+  let guard = null;
+  if ((phase === "MELTUP" || phase === "TREND_UP") && deep && r5 < 0) { phase = "RANGE"; guard = "bounce"; }
+  else if (phase === "MELTUP" && (deep || neg20)) { phase = "TREND_UP"; guard = deep ? "belowMa50" : "neg20"; }
+  return { phase: phase, raw: raw, guard: guard };
 }
 async function analyzeMarketRegime(DB, market) {
   const indices = market === "us" ? US_INDICES : KR_INDICES;
@@ -17620,17 +17646,15 @@ async function analyzeMarketRegime(DB, market) {
   //   → 오늘 등락률을 1급 신호로 올리고, 5일 수익률을 중간 속도 신호로 추가한다.
   //     20일·ER 은 '추세의 질'을 보는 배경 신호로 남긴다(장기 문맥은 유지).
   //   ★CRASH 는 '지금 무너지는 중'일 때만★ — 과거에 무너졌다는 사실만으로는 CRASH 가 아니다.
-  let phase;
-  if (worstDayPct <= -2.5 || _today <= -2 || (_today <= -1 && _r5 <= -4)) phase = "CRASH";
-  else if (_today >= 2 || (_today >= 1 && _r5 >= 3) || (_erv >= 0.34 && _r20 >= 6 && aboveMa >= belowMa)) phase = "MELTUP";
-  else if (_today >= 0.8 || (_r5 >= 2 && _today >= 0) || (_erv >= 0.22 && _r20 >= 1.5 && aboveMa >= belowMa)) phase = "TREND_UP";
-  else if (_today <= -0.8 || (_r5 <= -2 && _today <= 0) || (_erv >= 0.22 && _r20 <= -1.5)) phase = "TREND_DOWN";
-  else phase = "RANGE";
   let feat = null;   // [V33.797 국면] 정식 국면 특징(추세·낙폭·변동성) — 이미 읽은 지수 이력으로(추가 D1 0)
   try { feat = Object.assign(regimeFeat(indices.map(function (sym) { return _idxCache[sym] && _idxCache[sym].history; })), { day: +avgDayPct.toFixed(2) }); } catch (e) { feat = null; }
+  // [위상 안전장치] 위상 분기는 순수 함수 regimePhase 로(평가 도구·게이트가 같은 식을 쓴다) — 추세 확인 없는 '하루 반등 = 폭등' 금지
+  const _ph = regimePhase({ worst: worstDayPct, today: _today, r5: _r5, r20: (avgIdxReturn != null) ? avgIdxReturn : null, er: _erv,
+    above: aboveMa, below: belowMa, vs50: feat ? feat.vs50 : null });
+  const phase = _ph.phase;
   return { regime: regime, avgDayPct: avgDayPct, worstDayPct: worstDayPct, aboveMa: aboveMa, belowMa: belowMa,
     idxReturn20: avgIdxReturn, idxReturn5: (r5 != null) ? +r5.toFixed(2) : null,
-    phase: phase, er: (er != null) ? +er.toFixed(3) : null, feat: feat };
+    phase: phase, phaseRaw: _ph.raw, phaseGuard: _ph.guard, er: (er != null) ? +er.toFixed(3) : null, feat: feat };
 }
 
 // ============================================================
@@ -25595,7 +25619,9 @@ async function runTradingCycle(env) {
         erUs: regimes.us.er, erKr: regimes.kr.er,
         dayUs: (typeof regimes.us.avgDayPct === "number") ? +regimes.us.avgDayPct.toFixed(2) : null,
         dayKr: (typeof regimes.kr.avgDayPct === "number") ? +regimes.kr.avgDayPct.toFixed(2) : null,
-        r5Us: regimes.us.idxReturn5, r5Kr: regimes.kr.idxReturn5, ts: Date.now() });
+        r5Us: regimes.us.idxReturn5, r5Kr: regimes.kr.idxReturn5,
+        rawUs: regimes.us.phaseRaw || null, rawKr: regimes.kr.phaseRaw || null, guardUs: regimes.us.phaseGuard || null, guardKr: regimes.kr.phaseGuard || null,   // [위상 안전장치] 안전장치가 고친 원래 위상
+        vs50Us: regimes.us.feat ? regimes.us.feat.vs50 : null, vs50Kr: regimes.kr.feat ? regimes.kr.feat.vs50 : null, ts: Date.now() });
     } catch (e) {}
 
     cfg = await autoTune(DB, cfg, regimes);
@@ -31274,6 +31300,7 @@ async function handleRequest(request, env, ctx, _inner) {
           const _mcx = _pss["mkt_context"] || null, _pr0 = _pbReg || {};
           if (_ps) _phase = { us: _ps.us, kr: _ps.kr, erUs: _ps.erUs, erKr: _ps.erKr,
           dayUs: _ps.dayUs, dayKr: _ps.dayKr, r5Us: _ps.r5Us, r5Kr: _ps.r5Kr, ts: _ps.ts,
+          rawUs: _ps.rawUs || null, rawKr: _ps.rawKr || null, guardUs: _ps.guardUs || null, guardKr: _ps.guardKr || null, vs50Us: _ps.vs50Us, vs50Kr: _ps.vs50Kr,
           // [V33.794] 정식 국면 — 매매 경로와 ★같은 함수★(regimeCanon) · 같은 질의에 mkt_context 만 끼움(추가 쿼리 0)
           // [V33.797 국면] 매매 사이클이 실제로 쓴 값(regime_snap · 2시간 안)을 우선 — 없으면 같은 함수로 다시 잰다(특징·히스테리시스 없이)
           canonUs: _snapCanon(_pss["regime_snap:us"]) || regimeCanon(_ps.us, _pr0.us || null, _mcx || null, null, { market: "us" }),

@@ -14,6 +14,26 @@
 
 ### V33.800 — 정식 국면 가중 투표(regimeCanon · REGIME_CANON_CFG · 사용자 승인 11/10) · 인버스 차선은 10년 대리 손익 음수 경고에도 사용자 지시로 그대로 유지(실전 성적으로 재판단)
 
+- [위상 안전장치] (11/10 · 에이전트 · 판 번호·_BUILD_VER 는 통합자가 붙임 — 소스 표식 "[위상 안전장치]") ★지수 위상 안전장치 — 하락장 반등일 MELTUP 금지★
+  증상: 라이브 /api/ai-mode 韓 phase MELTUP(정식 국면 원천 phase +2 ×1.4) 인데 같은 표 추세 'MA50 −17.1%'. 美도 MELTUP.
+  1차 자료 확인: 입력은 맞았다 — 네이버 코스피 +4.49%·코스닥 +3.84%(11/10 12:07 KST 장중) = mkt_phase dayKr 4.07 · ^KS11/^KQ11/069500.KS /api/chart 같은 흐름
+    (코스피 60일 고점 −26% · MA50 −17.1% · 5일 −7.2% · 20일 −13%). 지수 기호(^KS11·^KQ11) 정상 · 단위(%) 정상 · 美 자료 섞임 없음.
+    美 11/9 4지수 평균 +2.6%(S&P +2.35 · 나스닥 +2.74) · 20일 평균 −2.0% · 나스닥 MA50 −4.5%.
+  원인: analyzeMarketRegime 위상 분기 'today ≥ +2% → MELTUP'(V33.54 가 오늘 등락을 1급 신호로 올림)이 추세(MA50·20일·5일)를 전혀 안 봄 → 하루 반등 = 폭등.
+    MELTUP 은 레버리지 천장 2.2 · 폭등 단타(레버리지 ETF) · 넓은 트레일·늦은 익절 · sizeMult 1.15 를 켠다.
+  고침: ① 순수 함수 regimePhase(x) 로 분기 이동(워커·평가 도구·게이트가 같은 식) · 안전장치 —
+          하락장 반등일(지수 평균 MA50 −5% 아래 · 5일 음수)은 MELTUP·TREND_UP 불가 → RANGE(guard bounce) ·
+          그 밖에 MA50 −5% 아래 또는 20일 음수면 MELTUP 불가 → TREND_UP(guard belowMa50/neg20). vs50 은 이미 읽은 60봉 regimeFeat(추가 D1 0).
+        ② regimeCanon: SURGE 는 MA50 −5% 아래 또는 20일 음수면 BULL 로(src surgeGuard).
+        ③ mkt_phase 에 rawUs/rawKr·guardUs/guardKr·vs50Us/vs50Kr → /api/ai-mode phase → 화면 '오늘 지수 흐름' 에 '(폭등 → 보합 · 하락장 반등일 — 추세 아님)' · MA50 표시.
+        ④ tools/eval-regime-canon.mjs 가 식 복제 대신 grab("regimePhase") (PHASE_OLD=1 이면 안전장치 전 raw 로 비교).
+        ⑤ 게이트 tools/check-regime-phase-sanity.mjs(deploy.yml 등록) — 진짜 analyzeMarketRegime 에 11/10 지수 60봉 → 韓 옛 MELTUP ⇒ RANGE · 美 옛 MELTUP ⇒ TREND_UP 재현.
+  지금 자료 전/후: 韓 위상 MELTUP → RANGE · 정식 국면 CRASH(점수 0.00) → CRASH(점수 −0.70 · 근거 override: 60일 고점 −27% · 5일 음수 — 그대로).
+                  美 위상 MELTUP → TREND_UP · 정식 국면(특징 포함 재계산) NEUTRAL(−0.12) → BEAR(−0.33; 정식 문턱 −0.2) — 美 BEAR 면 인버스 차선 SH 6% 대상.
+  10년 평가(2022~ 검증, 전→후): 美 위상 뒤집힘/년 143→139 · 정식 방향 55.4→55.7 · 거짓폭락 40→38.4% · 인버스 대리 Sharpe −0.64→−0.52 ·
+                  韓 위상 지금국면 33.5→34.8 · 정식 방향 48.1→47.3(약간 약화) · 폭락일 179→182 · 놓침 0 유지. 대체로 중립 — 정확성 안전장치로 채택.
+  남은 것: pb_regime.us day=20261106 인데 ts 는 11/10 업로드 시각 → regimeCanon 의 학습기 나이(ts 기준)가 실제보다 젊게 잡힘(美 pb CRASH 가중 0.24). 다음 국면 작업에서 day 기준 나이 검토.
+  검사: node --check 통과 · check-regime-phase-sanity 통과 · bash tools/verify-gates.sh "228종 전부 통과"(check-walk-forward 포함).
 - V33.797 국면 (11/9 · 국면 에이전트 · _BUILD_VER 안 올림) ★정식 국면 정확도 — 'min' → 가중 투표★
   원인: 11/9 美 지수 위상 MELTUP 인데 pb_regime 이 11/6 CRASH(3일 끈적임+하루 늦음) → 정식 CRASH → 인버스 차선이 폭등장에 인버스 매수.
   ① regimeCanon(phase, pb, ctx, feat, {market, prev}) — 원천 점수(−2…+2)×가중치 평균: 지수 위상 · 학습기(반감기 1일 · 4일 넘으면 제외) · 거시(ts 하루 넘으면 반감) ·

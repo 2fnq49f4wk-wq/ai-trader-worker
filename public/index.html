@@ -20694,13 +20694,17 @@ setTimeout(function(){
     var ph = mode.phase || {};
     var PH = { MELTUP:['폭등',C.pos], TREND_UP:['상승추세',C.pos], RANGE:['보합',C.amb],
                TREND_DOWN:['하락추세',C.neg], CRASH:['급락',C.neg] };
-    var phCell = function(p, day, r5, er){
+    /* [위상 안전장치] 안전장치가 고친 위상 — 하락장 반등일(MA50 −5% 아래 · 5일 음수)은 상승 위상 불가 · MA50 −5% 아래·20일 음수면 폭등 불가 */
+    var PHG = { bounce:'하락장 반등일 — 추세 아님', belowMa50:'MA50 −5% 아래 — 폭등 아님', neg20:'20일 음수 — 폭등 아님' };
+    var phCell = function(p, day, r5, er, raw, guard, vs50){
       if(!has(p)) return null;
       var d = PH[p] || [String(p), C.dim], ev = [];
       if(has(day)) ev.push('오늘 '+(day>0?'+':'')+day+'%');
       if(has(r5))  ev.push('5일 '+(r5>0?'+':'')+r5+'%');
+      if(has(vs50)) ev.push('MA50 '+(vs50>0?'+':'')+(+vs50).toFixed(1)+'%');
       if(has(er))  ev.push('ER '+er);
-      return col('<b>'+d[0]+'</b>', d[1]) + (ev.length ? ' <span class="sub">'+ev.join(' · ')+'</span>' : '');
+      var g = (guard && raw && raw!==p) ? ' '+col('('+((PH[raw]||[raw])[0])+' → '+d[0]+' · '+(PHG[guard]||guard)+')', C.amb) : '';
+      return col('<b>'+d[0]+'</b>', d[1]) + g + (ev.length ? ' <span class="sub">'+ev.join(' · ')+'</span>' : '');
     };
     var semi = null;
     if(has(ph) && has(mode.xmkt) && has(mode.xmkt.semi1d)){
@@ -20714,7 +20718,7 @@ setTimeout(function(){
     /* [V33.696] 사용자 10/28 "한국 폭락 국면 아닌 것 같다" — 같은 칸에 '폭등(오늘 지수)' 과 매매법 AI '폭락' 이 따로 떠 충돌해 보였다.
        위 = 오늘 지수 흐름(분 단위 · 진입 문턱·사이즈용) · 아래 = 매매법 AI 국면 3단(학습기 · 장기 200일선 · 중기 50일선 · 단기 3일 충격 — 매매법 표가 쓰는 국면). */
     /* [V33.794→V33.797 국면] 정식 국면 — 매매 경로·관문·인버스 차선이 실제로 쓰는 하나의 값. 원천별 점수(−2 폭락…+2 폭등)×가중치(신선도 감쇠 포함)의 가중 평균 + 히스테리시스 */
-    var cnC = { CRASH:C.neg, BEAR:C.neg, NEUTRAL:C.amb, BULL:C.pos, SURGE:C.pos }, cnS = { phase:'지수 위상', pb:'매매법 AI', ctx:'거시', trend:'추세', dd:'낙폭', vol:'변동성', breadth:'시장폭', override:'급락 안전장치', none:'원천 없음' };
+    var cnC = { CRASH:C.neg, BEAR:C.neg, NEUTRAL:C.amb, BULL:C.pos, SURGE:C.pos }, cnS = { phase:'지수 위상', pb:'매매법 AI', ctx:'거시', trend:'추세', dd:'낙폭', vol:'변동성', breadth:'시장폭', override:'급락 안전장치', surgeGuard:'폭등 안전장치(추세 확인)', none:'원천 없음' };
     var cnCell = function(x){ if(!x || !x.canon) return null;
       var top = col('<b>'+(x.ko||x.canon)+'</b>', cnC[x.canon]||'var(--t2)')+(has(x.score)?' <span class="sub">점수 '+(x.score>0?'+':'')+x.score+(has(x.conf)?' · 신뢰 '+Math.round(x.conf*100)+'%':'')+' · 근거 '+(cnS[x.src]||x.src)+'</span>':' <span class="sub">근거 '+(cnS[x.src]||x.src)+'</span>');
       if(!Array.isArray(x.comps) || !x.comps.length) return top + (x.parts&&x.parts.length?' <span class="sub">'+x.parts.join(' · ')+'</span>':'');
@@ -20755,8 +20759,8 @@ setTimeout(function(){
     }
     h += sec('오늘 지수 흐름', (phAge!=null && phAge>=3) ? '<span style="color:'+C.amb+';">'+phAge+'분 전</span>' : null)
       + tbl([
-          ['US',      phCell(ph.us, ph.dayUs, ph.r5Us, ph.erUs)],
-          ['KR',      phCell(ph.kr, ph.dayKr, ph.r5Kr, ph.erKr)],
+          ['US',      phCell(ph.us, ph.dayUs, ph.r5Us, ph.erUs, ph.rawUs, ph.guardUs, ph.vs50Us)],
+          ['KR',      phCell(ph.kr, ph.dayKr, ph.r5Kr, ph.erKr, ph.rawKr, ph.guardKr, ph.vs50Kr)],
           ['美반도체', semi]
         ]);
     var pr3 = mode.pbRegime || {};
