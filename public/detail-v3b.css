@@ -1,0 +1,179 @@
+/* ═══ [UI v3.1] 가독성 대폭 상향 · 컴팩트 히어로 · 패드 배치(차트 → AI 분석 → 나머지) — detail-v3.css 위에 덧입힌다 ═══
+   사용자 11/10 "패드·데스크톱에서 글씨가 너무 안 읽힌다". 카드는 거의 불투명(번짐 없음) · 글자색은 변수로 대비 ≥4.5:1 · 12px 미만 글자 없음 · 숫자는 굵게(tabular-nums). 전부 #page-detail 안. */
+#page-detail{
+  --dv-glass:rgba(16,23,40,.95);--dv-glass2:rgba(27,37,62,.92);--dv-bd:rgba(150,178,255,.24);--dv-t2:#CBD4E8;--dv-track:rgba(150,170,220,.24);
+  --t1:#F4F7FD;--t2:#D5DDEE;--t3:#AEB9D0;--pos:#FF7A7F;--neg:#6EA8FF;font-size:15px;line-height:1.55;
+}
+html[data-theme="light"] #page-detail{
+  --dv-glass:rgba(255,255,255,.97);--dv-glass2:#EFF3FA;--dv-bd:rgba(70,100,170,.26);--dv-t2:#364156;--dv-track:rgba(70,100,170,.2);
+  --t1:#0A1120;--t2:#2A3549;--t3:#46526B;--pos:#BF242A;--neg:#1B55C6;
+}
+html #page-detail .detail-head,html #page-detail .detail-chart,html #page-detail #luxInfo .lxt,html #page-detail .detail-tf,html #page-detail .lxa .bx,html #page-detail #luxInfo :is(.hero,.ls,.pc,.fc,.tl>div,.cd,.g4,.g3,.tw){-webkit-backdrop-filter:none !important;backdrop-filter:none !important}
+#page-detail .detail-sec{font-size:15px !important;font-weight:800 !important;color:var(--t1) !important;letter-spacing:0 !important;margin:14px 0 8px !important}
+/* ── 컴팩트 히어로: 한 줄(이름 · 가격 · 등락 · 스파크 · 버튼) ── */
+html #page-detail .detail-head{display:flex !important;flex-wrap:nowrap;align-items:center;gap:6px 14px;padding:10px 16px !important;min-height:64px;margin-bottom:10px;border-radius:16px !important}
+html #page-detail .detail-head::before{display:none}
+#page-detail .detail-id{flex:0 1 auto;min-width:0;display:flex;flex-direction:column;gap:0}
+html #page-detail .detail-sym{font-size:19px !important;line-height:1.2;font-weight:800;color:var(--t1)}
+html #page-detail .detail-name{font-size:13.5px;line-height:1.25;color:var(--dv-t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+html #page-detail .detail-px{flex:0 0 auto;display:flex;flex-wrap:nowrap;align-items:center;gap:8px}
+html #page-detail .detail-price{font-size:30px !important;line-height:1.1 !important;letter-spacing:-.8px !important;font-weight:800 !important;background:none !important;-webkit-text-fill-color:currentColor !important;color:var(--t1) !important}
+html #page-detail .detail-change{font-size:14.5px !important;font-weight:800 !important;padding:3px 10px !important}
+html #page-detail .detail-ext{flex:0 0 auto;font-size:12.5px;white-space:nowrap}
+html #page-detail .detail-ohlc{display:none !important}
+html #page-detail .dv3-meta{flex:1 1 90px;min-width:70px;max-width:170px;flex-direction:row;align-items:center;justify-content:flex-end}
+#page-detail .dv3-spark{height:40px;width:100%}
+html #page-detail .dv3-act{flex:0 0 auto;margin-left:auto}
+#page-detail .dv3-live{font-size:12.5px;padding:2px 9px 2px 7px;color:var(--dv-t2);align-self:flex-start;margin-top:2px}
+#page-detail .dv3-live.on{color:#2FD3AE}html[data-theme="light"] #page-detail .dv3-live.on{color:#0B7A66}
+#page-detail .dv3-live.ext{color:#F5B13C}html[data-theme="light"] #page-detail .dv3-live.ext{color:#8A5A00}
+html #page-detail .dv3-act #mineDetailBar .buy,html #page-detail .dv3-act #mineDetailBar .sell,html #page-detail .dv3-act #mineDetailBar .wbtn2{min-height:38px;padding:0 16px;font-size:14.5px}
+@media (min-width:761px){html #page-detail .detail-head.dv3-compact{padding:6px 16px !important;min-height:52px}#page-detail .detail-head.dv3-compact .dv3-meta{display:none}}
+@media (max-width:900px) and (min-width:761px){#page-detail .dv3-meta{max-width:100px}html #page-detail .detail-name{max-width:120px}}
+@media (max-width:760px){
+  html #page-detail .detail-head{display:grid !important;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"id px" "meta act";gap:6px 12px;padding:10px 14px !important;min-height:0}
+  html #page-detail .detail-name{max-width:none}
+  html #page-detail .detail-price{font-size:26px !important}
+  html #page-detail .dv3-meta{max-width:none;justify-content:flex-start}#page-detail .dv3-spark{height:34px;max-width:140px}
+  html #page-detail .dv3-act #mineDetailBar .mdb{display:flex !important}
+  html #page-detail .dv3-act #mineDetailBar .buy,html #page-detail .dv3-act #mineDetailBar .sell,html #page-detail .dv3-act #mineDetailBar .wbtn2{min-height:40px;padding:0 14px;flex:1}
+}
+/* ── 패드(761~1180): 차트 바로 아래에 AI 분석(정보 탭) → 시세 데이터 · 뉴스 · 오른쪽 패널 · 재무 ── */
+@media (min-width:761px) and (max-width:1180px){
+  #page-detail #detailContent:not([style*="none"]){display:flex;flex-direction:column}
+  #page-detail .detail-main,#page-detail .detail-left,#page-detail .detail-below{display:contents}
+  #page-detail .detail-head{order:0}#page-detail .detail-toolbar{order:1}#page-detail .detail-chart{order:2;height:46vh !important;max-height:520px;min-height:300px;margin-bottom:14px !important}
+  #page-detail #luxInfo{order:3;margin-bottom:18px}#page-detail .detail-datawrap{order:4}#page-detail #detailNews{order:5}
+  #page-detail .detail-side{order:6;width:100% !important;flex:0 0 auto !important;max-height:none !important;margin-top:14px}
+  #page-detail #detailFund{order:7}#page-detail .detail-mfull{order:8}
+}
+/* ── 글자 크기 · 대비 ── */
+#page-detail .detail-ind-btn,#page-detail .detail-tf-btn,#page-detail .detail-zoom-btn{font-size:13px !important}
+#page-detail .page-header .btn,#page-detail .detail-alertbtn,#page-detail #detailBackBtn{font-size:13.5px !important}
+#page-detail .detail-chart .pc-axis{font-size:11.5px !important}#page-detail .detail-chart .pc-axis2{font-size:10.5px !important;opacity:1 !important}
+#page-detail .detail-chart .pc-hilo{font-size:11px !important}#page-detail .detail-chart .pc-legend,#page-detail .detail-chart .pc-legend tspan{font-size:11.5px !important}
+#page-detail .detail-data{font-size:14px}
+#page-detail .detail-data .l{font-size:13.5px !important;color:var(--dv-t2) !important}
+#page-detail .detail-data .v{font-size:14.5px !important;font-weight:800 !important;font-variant-numeric:tabular-nums}
+#page-detail .dn-head{font-size:14px !important;color:var(--t1) !important;font-weight:700}#page-detail .dn-grp{font-size:12px !important;color:var(--dv-t2) !important}#page-detail .dn-t{font-size:14.5px !important;line-height:1.5}
+#page-detail .crowd-k{font-size:14px !important}#page-detail .crowd-sub{font-size:13px !important;color:var(--dv-t2) !important}#page-detail .crowd-n{font-size:12.5px !important}#page-detail .crowd-verdict{font-size:14.5px !important;font-weight:800}
+#page-detail .detail-crowd .pos,#page-detail .detail-crowd .neg{font-size:13.5px !important;font-weight:700}
+#page-detail .tfsum-k{font-size:13.5px !important}#page-detail .tfsum-v{font-size:14px !important;font-weight:700}
+#page-detail .vt-h{font-size:13.5px !important;color:var(--t1) !important;font-weight:800}#page-detail .vt-sub{font-size:13px !important;color:var(--dv-t2) !important}#page-detail .vt-big{font-size:16px !important;font-weight:800}
+#page-detail .detail-prof span,#page-detail .detail-prof b,#page-detail .detail-prof div{font-size:max(12.5px,1em)}
+#page-detail .anl-src,#page-detail .anl-meta,#page-detail .anl-acts-h{font-size:12.5px !important;color:var(--dv-t2) !important}
+#page-detail .detail-anl :is(.sb,.b,.h,.s,.k,.m,.f,.d,i,em){font-size:12.5px !important}
+#page-detail .detail-anl .f,#page-detail .detail-anl .d,#page-detail .detail-anl .m{font-size:13px !important;color:var(--dv-t2) !important}
+#page-detail .detail-anl .f{color:var(--t1) !important;font-weight:600}
+#page-detail .detail-anl b{font-size:13px !important;font-weight:800}
+#page-detail .detail-anl span:not([class]){font-size:12.5px !important}
+#page-detail .detail-fund{font-size:14px}
+#page-detail .detail-fund .fund-tbl,#page-detail .detail-below .fund-tbl{font-size:14.5px !important}
+#page-detail .detail-fund .fund-tbl th,#page-detail .detail-fund .fund-tbl td,#page-detail .detail-below .fund-tbl th,#page-detail .detail-below .fund-tbl td{padding:11px 14px !important;font-variant-numeric:tabular-nums;font-weight:600}
+#page-detail .detail-fund .fund-tbl th{font-size:13.5px !important;color:var(--dv-t2) !important}
+#page-detail .fund-warn,#page-detail .fund-note,#page-detail .fp-sub,#page-detail .fp-d,#page-detail .fp-pct{font-size:13px !important;color:var(--dv-t2) !important;opacity:1 !important}
+#page-detail .fund-fbit{font-size:13px !important;padding:4px 10px !important}
+#page-detail .fp-h{font-size:14.5px !important;font-weight:800;color:var(--t1) !important}#page-detail .fp-nm,#page-detail .fp-v{font-size:13.5px !important}#page-detail .fp-v{font-weight:800}
+#page-detail .fp-row i,#page-detail .fp-row em{font-size:12px !important;color:var(--dv-t2) !important}
+#page-detail .detail-fund :is(span,b,div):not([class]){font-size:max(13px,1em)}
+#page-detail .detail-fund .pos,#page-detail .detail-fund .neg{font-weight:700}
+#page-detail .detail-fund>*{font-variant-numeric:tabular-nums}
+/* 정보 탭(luxInfo) · AI 분석 */
+html #page-detail #luxInfo{font-size:15px;line-height:1.55}
+html #page-detail #luxInfo .lxt button{font-size:15px;min-height:42px}
+html #page-detail #luxInfo .k{font-size:13.5px;opacity:1;color:var(--dv-t2)}
+html #page-detail #luxInfo .s,html #page-detail #luxInfo .cd .s{font-size:13px;opacity:1;color:var(--dv-t2);line-height:1.5}
+html #page-detail #luxInfo .nt,html #page-detail #luxInfo .lg,html #page-detail #luxInfo .yl{font-size:13px;opacity:1;color:var(--dv-t2);line-height:1.6;max-width:70ch}
+html #page-detail #luxInfo .gp{font-size:14.5px;opacity:1;color:var(--t1);font-weight:800;margin:18px 2px 10px}
+html #page-detail #luxInfo .ls .l .k{font-size:15.5px;color:var(--t1)}
+html #page-detail #luxInfo .ls .v b,html #page-detail #luxInfo .h2c b,html #page-detail #luxInfo .cd .v{font-size:19px;font-weight:800;font-variant-numeric:tabular-nums}
+html #page-detail #luxInfo .ls .r{min-height:60px}
+html #page-detail #luxInfo .tl b{font-size:26px;font-weight:800}
+html #page-detail #luxInfo .tl .kt{font-size:13.5px;opacity:1;color:var(--dv-t2)}
+html #page-detail #luxInfo table{font-size:15px;font-variant-numeric:tabular-nums}
+html #page-detail #luxInfo th{font-size:13.5px;color:var(--dv-t2) !important;font-weight:700}
+html #page-detail #luxInfo th,html #page-detail #luxInfo td{padding:13px 14px;font-weight:600}
+html #page-detail #luxInfo td:first-child,html #page-detail #luxInfo th:first-child{background:var(--dv-glass) !important}
+html #page-detail #luxInfo .li .tg{font-size:12.5px}html #page-detail #luxInfo .li .t{font-size:15px}
+html #page-detail #luxInfo .emp{font-size:15px;opacity:1;color:var(--dv-t2)}
+html #page-detail #luxInfo .mo{font-size:14px;color:var(--dv-a1);font-weight:700}
+html[data-theme="light"] #page-detail #luxInfo .mo{color:#1B4FB5}
+html #page-detail .lxa .tag span{font-size:13px;padding:4px 11px;font-weight:600}
+html #page-detail .lxa .tag span.up{color:var(--pos)}html #page-detail .lxa .tag span.dn{color:var(--neg)}
+html #page-detail .lxa h5{font-size:14.5px;opacity:1;color:var(--t1);font-weight:800}
+html #page-detail .lxa p.t{font-size:15.5px;line-height:1.7;max-width:70ch;opacity:1;color:var(--t2)}
+html #page-detail .lxa .ph{font-size:20px;line-height:1.55;max-width:60ch}
+html #page-detail .lxa .ph em{color:#7FBBFF}html[data-theme="light"] #page-detail .lxa .ph em{color:#12489F}
+html #page-detail .lxa .sm{font-size:14.5px;line-height:1.6;color:var(--t1)}
+html #page-detail .lxa ul,html #page-detail .lxa li{font-size:15px;line-height:1.65}
+html #page-detail .lxa ul{max-width:76ch}
+html #page-detail .lxa details.lxa-f>summary .pv{font-size:13.5px;opacity:1;color:var(--dv-t2)}
+html #page-detail .lxa .ft{font-size:12.5px;opacity:1;color:var(--dv-t2);line-height:1.6;max-width:76ch}
+html #page-detail .lxa-lg{font-size:12.5px;opacity:1;color:var(--dv-t2)}
+html #page-detail .lxa-qb .v{font-size:12.5px;opacity:1;font-weight:700}html #page-detail .lxa-qb .p{font-size:12px;opacity:1;color:var(--dv-t2)}html #page-detail .lxa-qh{font-size:13.5px}html #page-detail .lxa-qh span{opacity:1;color:var(--dv-t2)}
+html #page-detail .lxa-sc>div{font-size:15px;line-height:1.65}html #page-detail .lxa-sc b{font-size:14.5px !important}
+html #page-detail .lxa-sc .u b,html #page-detail .lxa-sc .u b i{color:var(--pos)}html #page-detail .lxa-sc .d b,html #page-detail .lxa-sc .d b i{color:var(--neg)}
+html #page-detail .lxa-lv .tk{font-size:12px}html #page-detail .lxa-lv .tk b{opacity:1;color:var(--dv-t2)}html #page-detail .lxa-lv .tk em{font-size:14px;font-weight:800}
+html #page-detail .lxa-lv .tk.s em{color:var(--neg)}html #page-detail .lxa-lv .tk.r em,html #page-detail .lxa-lv .tk.g em{color:var(--pos)}
+html #page-detail .lxa-rg b{font-size:16px}html #page-detail .lxa-rg span{font-size:13px;opacity:1;color:var(--dv-t2)}
+html #page-detail .lxa-ch{height:230px}
+html #page-detail .lxa-ch text{font-size:12px}
+html #page-detail #luxInfo .up,html #page-detail .lxa .up{color:var(--pos)}html #page-detail #luxInfo .dn,html #page-detail .lxa .dn{color:var(--neg)}
+html[data-theme="light"] #page-detail #luxInfo .dl.gd{color:#0B6E5C}html[data-theme="light"] #page-detail #luxInfo .dl.bd{color:#8A5A00}
+#page-detail #luxInfo .dl{font-size:12.5px}
+/* ── 왼쪽 사이드바 상태 글자(종목 상세를 볼 때) ── */
+html:has(#page-detail.active) .sb-brand-name{font-size:14px}
+html:has(#page-detail.active) .sb-brand-sub{font-size:12px !important}
+html:has(#page-detail.active) :is(.sb-train-txt,.sb-pnl,.sb-pnl span,.sb-market-row,.sb-market-row b,.sb-auto-tx,.sb-mode-cap,.sb-btn,.sb-theme-btn,.nav-item-label){font-size:12.5px !important}
+html:has(#page-detail.active) .sb-auto-sub{font-size:12px !important}
+html:has(#page-detail.active) :is(.sb-mode-cap,.sb-auto-sub){opacity:1 !important}
+@media (min-width:761px) and (max-width:1180px){#page-detail .dv3-live b{display:none}#page-detail .dv3-live{padding:5px}}
+/* ── 색 대비 보정: 상승/하락 글자색 · 사이드바 보조 글자 · 작은 라벨 ── */
+#page-detail :is(.pos,.up){color:var(--pos) !important}#page-detail :is(.neg,.dn){color:var(--neg) !important}
+#page-detail .detail-change.pos{color:var(--pos) !important}#page-detail .detail-change.neg{color:var(--neg) !important}
+html:has(#page-detail.active) .sidebar{--t3:#B4BFD6;--t2:#D5DDEE;--pos:#FF7A7F;--neg:#6EA8FF}
+html[data-theme="light"]:has(#page-detail.active) .sidebar{--t3:#3C485F;--t2:#27324A;--pos:#BF242A;--neg:#1B55C6}
+html:has(#page-detail.active) .sidebar :is(.sb-brand-sub,.sb-mode-cap,.sb-auto-sub,.sb-train-txt,.sb-pnl,.sb-market-row){color:var(--t3) !important}
+html:has(#page-detail.active) .sidebar :is(.sb-pnl .pos,.sb-pnl span.pos){color:var(--pos) !important}html:has(#page-detail.active) .sidebar :is(.sb-pnl .neg,.sb-pnl span.neg){color:var(--neg) !important}
+html:has(#page-detail.active) .sidebar .market-status-closed{color:#FF8A8E !important}html[data-theme="light"]:has(#page-detail.active) .sidebar .market-status-closed{color:#B3201F !important}
+html:has(#page-detail.active) .sidebar .market-status-open{color:#35D9B0 !important}html[data-theme="light"]:has(#page-detail.active) .sidebar .market-status-open{color:#0B6E5C !important}
+html:has(#page-detail.active) .sidebar :is(.sb-auto-tx,.sb-brand-name){color:var(--t2) !important}
+html:has(#page-detail.active) .sidebar span[style*="font-size"]{font-size:12.5px !important}
+#page-detail .wl-ext-tag{font-size:12px !important;line-height:18px !important;padding:0 6px !important}
+#page-detail .detail-prof .k,#page-detail .detail-prof .s,#page-detail .detail-prof span{font-size:max(12.5px,1em) !important}
+#page-detail #luxInfo :is(.i,.lm,.st,.g,.ft)[class]{opacity:1}
+#page-detail .lxmx,#page-detail .lmx{color:var(--t1)}
+#page-detail :is(.pos,.up,.detail-change.pos){color:#FF7A7F !important}#page-detail :is(.neg,.dn,.detail-change.neg){color:#6EA8FF !important}
+html[data-theme="light"] #page-detail :is(.pos,.up,.detail-change.pos){color:#BF242A !important}html[data-theme="light"] #page-detail :is(.neg,.dn,.detail-change.neg){color:#1B55C6 !important}
+html #page-detail .lxa-sc .u b{color:#FF7A7F !important}html #page-detail .lxa-sc .d b{color:#6EA8FF !important}
+html[data-theme="light"] #page-detail .lxa-sc .u b{color:#BF242A !important}html[data-theme="light"] #page-detail .lxa-sc .d b{color:#1B55C6 !important}
+html:has(#page-detail.active) .sidebar :is(.pos){color:#FF7A7F !important}html:has(#page-detail.active) .sidebar :is(.neg){color:#6EA8FF !important}
+html[data-theme="light"]:has(#page-detail.active) .sidebar .pos{color:#BF242A !important}html[data-theme="light"]:has(#page-detail.active) .sidebar .neg{color:#1B55C6 !important}
+html:has(#page-detail.active) :is(.sb-engine,.sb-market,.sb-live,.live-indicator,.sb-live *,.sb-engine *){font-size:12.5px !important}
+#page-detail .detail-anl .sb{background:#A8222A !important;color:#fff !important}#page-detail .detail-anl .b{background:#C2323A !important;color:#fff !important}#page-detail .detail-anl .h{background:#4A5568 !important;color:#fff !important}#page-detail .detail-anl .s{background:#2461C8 !important;color:#fff !important}
+#page-detail .fund-fbit{color:var(--t1) !important}#page-detail .fund-fbit.ok{border-color:rgba(48,204,90,.7)}#page-detail .fund-fbit.no{border-color:rgba(246,53,56,.75)}
+#page-detail .detail-fund :is(.k,.s,.sub){font-size:12.5px !important;opacity:1 !important}
+html #page-detail .lxa-sc b i{background:rgba(127,137,155,.08)}
+html #page-detail .lmx .lw .g{color:var(--t1)}html #page-detail .lmx .lw .g.ok{color:#4ADE80}html[data-theme="light"] #page-detail .lmx .lw .g.ok{color:#0B6B33}
+html #page-detail #luxInfo .seg button{opacity:1;color:var(--dv-t2)}html #page-detail #luxInfo .seg button.on{color:var(--t1)}
+#page-detail .detail-chart .pc-axis2{font-size:11.5px !important}
+html #page-detail .lxa-sc b i{color:inherit !important}
+html #page-detail .lxa-lv .tks{height:auto}
+html #page-detail .dv3-live{white-space:nowrap;flex:0 0 auto}
+html #page-detail .detail-ext{display:flex;align-items:center;gap:6px;max-width:260px;overflow:hidden;text-overflow:ellipsis}html #page-detail .detail-ext *{white-space:nowrap}
+#page-detail .detail-chart .pc-axis2{display:none !important}
+@media (min-width:761px){html #page-detail #luxInfo .lxs{background:transparent !important;padding:0 !important;margin:0 0 12px !important;-webkit-backdrop-filter:none;backdrop-filter:none}}
+@media (min-width:761px) and (max-width:900px){html #page-detail .detail-price{font-size:26px !important}html #page-detail .dv3-act #mineDetailBar .buy,html #page-detail .dv3-act #mineDetailBar .sell,html #page-detail .dv3-act #mineDetailBar .wbtn2{padding:0 12px;min-height:36px}#page-detail .dv3-live{display:none}html #page-detail .detail-head{gap:6px 10px}html #page-detail .detail-ext{display:none}}
+@media (min-width:901px) and (max-width:1180px){html #page-detail .detail-ext{max-width:150px}}
+@media (min-width:761px) and (max-width:900px){#page-detail .detail-chart .pc-hilo{font-size:15.5px !important}#page-detail .detail-chart .pc-legend,#page-detail .detail-chart .pc-legend tspan{font-size:15.5px !important}}
+#page-detail{--dv-grad:linear-gradient(135deg,#2D66E0,#5A3DD6)}
+html #page-detail .dv3-act #mineDetailBar .buy{background:linear-gradient(135deg,#D93A40,#B32A30) !important}html #page-detail .dv3-act #mineDetailBar .sell{background:linear-gradient(135deg,#2F6BE8,#1F54C0) !important}
+#page-detail :is(.neu,.anl-note,.fp-miss){font-size:12.5px !important;opacity:1 !important}
+html #page-detail .lxa-ch text{font-size:13.5px}
+html #page-detail .detail-tf-btn.active,html #page-detail #luxInfo .lxt button.on{color:#fff !important}
+html[data-theme="light"] #page-detail .fund-grade-big{color:#0B7A3E !important}html[data-theme="light"] #page-detail #luxInfo .tl .ic{color:#2D66E0}
+html[data-theme="light"] #page-detail .lxa-sc .u b i{color:#BF242A !important}html[data-theme="light"] #page-detail .lxa-sc .d b i{color:#1B55C6 !important}
+html #page-detail #luxInfo{background:transparent !important;border:0 !important;box-shadow:none !important;padding:0 !important;-webkit-backdrop-filter:none !important;backdrop-filter:none !important}
+#page-detail .dv3-meta{min-width:0;overflow:hidden}
+@media (max-width:760px){#page-detail .dv3-live b{display:none}#page-detail .dv3-live{padding:5px}html #page-detail .detail-head{grid-template-columns:minmax(0,1fr) auto}#page-detail .dv3-spark{flex:1 1 60px;min-width:50px}}
+@media (max-width:760px){html #page-detail .detail-ext{display:none !important}html #page-detail .detail-px{flex-wrap:wrap;gap:4px 8px}}

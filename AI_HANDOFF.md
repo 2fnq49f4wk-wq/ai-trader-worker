@@ -26,6 +26,9 @@
 - index.html: 머리 판정 스크립트(첫 방문·비로그인·앱 아님·봇 아님·?intro=0 아님, ?intro=hero 강제) + body 첫머리 #luxHero 인라인 배너 + 링크 2줄. mine.js: ask() 3번째 인자(arguments[2])=소개 건너뛰기 · 가입 소개 3장 자동 회전 슬라이드(gStart·gApp·gGuest·data-m 유지).
 - 통합자: 새 파일 ?v= 는 판 올릴 때 같이(현재 33.801 로 적어 둠). 다음: 라이브 확인 · easy-dash 카운트업 실데이터 확인.
 
+- [종목 상세 UI v3.1] (11/10 · 에이전트) 가독성 상향 · 컴팩트 히어로 · 패드 배치. 새 파일 `public/detail-v3b.css`(detail-v3.css 뒤에 덧입힘) — 카드 거의 불투명 · 글자색 변수(#page-detail 의 --t1/2/3 · --pos/--neg 상향) · 12px 미만 글자 제거 · 사이드바 상태 글자(html:has(#page-detail.active)) · luxmini-view.js 글자·대비 상향.
+  히어로 한 줄 64px(폰 ~110px) — 시고저종 칩은 툴팁(title)로. 패드(761~1180px)는 #detailContent 를 flex column + .detail-main/.detail-left/.detail-below display:contents 로 풀어 차트 → AI 분석(#luxInfo) → 시세 데이터 · 뉴스 · 오른쪽 패널 · 재무 순.
+  한계: 패드 세로(820)의 캔들 차트 눈금 숫자는 SVG 축소로 ~8px(축을 키우면 오른쪽이 잘림) · 폰 차트 글자 ~5px(원래 SVG 축소). 사이드바 초보자/전문가 토글 글자색은 JS 주입이라 못 건드림.
 - [종목 상세 UI v3] (11/10 · 에이전트 · 판 번호·_BUILD_VER 는 통합자가 붙임 — 소스 표식 "[UI v3]") ★종목 상세 글래스 핀테크 리디자인★
   새 파일 `public/detail-v3.css`(전부 `#page-detail` 안으로 변수·선택자를 가둠 · index.html 에서 workspace-layout.css 뒤에 링크) · `public/detail-v3.js`(index.html 에서 stock-info.js 뒤에 defer).
   히어로: 라이브 점(장 상태) · 큰 가격 카운트업 · 그려지는 스파크라인(/api/chart 1y 1d — AI 분석 탭과 같은 주소라 캐시 공유) · 시세 칩 · 주문 버튼(mine.js 의 #mineDetailBar 를 #dv3Act 로 옮김 · id 그대로).

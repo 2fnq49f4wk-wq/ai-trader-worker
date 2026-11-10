@@ -13,13 +13,13 @@
   function css() {
     if (document.getElementById("luxMiniCss")) return;
     var s = document.createElement("style"); s.id = "luxMiniCss";
-    s.textContent = ".lmx{margin:6px 0 2px;font-size:12.5px}.lmx summary{display:flex;flex-wrap:wrap;align-items:center;gap:6px;cursor:pointer;list-style:none}.lmx summary::-webkit-details-marker{display:none}" +
-      ".lmx summary>b{font-size:12px;opacity:.7;margin-right:2px;letter-spacing:.02em}.lmx .lc{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;border:1px solid rgba(128,128,128,.28);font-size:11.5px;line-height:1.5}" +
-      ".lmx .lc .i{opacity:.65}.lmx .lc em{font-style:normal;font-weight:700;font-variant-numeric:tabular-nums}.lmx .lc.ref{opacity:.62;border-style:dashed}" +
-      ".lmx .lc.pos em,.lmx .lc.pos1 em{color:#e5484d}.lmx .lc.neg em,.lmx .lc.neg1 em{color:#3b82f6}.lmx .lm{opacity:.55;font-size:11px}" +
+    s.textContent = ".lmx{margin:8px 0 4px;font-size:14px}.lmx summary{display:flex;flex-wrap:wrap;align-items:center;gap:6px;cursor:pointer;list-style:none}.lmx summary::-webkit-details-marker{display:none}" +
+      ".lmx summary>b{font-size:13px;opacity:1;margin-right:2px;letter-spacing:.02em}.lmx .lc{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;border:1px solid rgba(128,128,128,.28);font-size:13px;line-height:1.5}" +
+      ".lmx .lc .i{opacity:1;color:var(--dv-t2,inherit)}.lmx .lc em{font-style:normal;font-weight:700;font-variant-numeric:tabular-nums}.lmx .lc.ref{opacity:.85;border-style:dashed}" +
+      ".lmx .lc.pos em,.lmx .lc.pos1 em{color:var(--pos,#e5484d)}.lmx .lc.neg em,.lmx .lc.neg1 em{color:var(--neg,#3b82f6)}.lmx .lm{opacity:1;color:var(--dv-t2,inherit);font-size:12.5px}" +
       ".lmx .lw{margin:8px 0 0;padding:8px 10px;border-radius:10px;background:rgba(128,128,128,.07);display:flex;flex-direction:column;gap:4px;line-height:1.45}" +
-      ".lmx .lw b{font-size:12px}.lmx .lw .g{font-size:10.5px;padding:1px 6px;border-radius:6px;margin-left:6px;background:rgba(128,128,128,.14)}.lmx .lw .g.ok{background:rgba(34,197,94,.16);color:#16a34a}" +
-      ".lmx .lw .st{opacity:.7;font-size:11.5px;font-variant-numeric:tabular-nums}.lmx .lw .y{opacity:.9}.lmx .ft{opacity:.6;font-size:11px;margin-top:6px;display:block}";
+      ".lmx .lw b{font-size:13.5px}.lmx .lw .g{font-size:12px;padding:1px 6px;border-radius:6px;margin-left:6px;background:rgba(128,128,128,.14)}.lmx .lw .g.ok{background:rgba(34,197,94,.16);color:#16a34a}" +
+      ".lmx .lw .st{opacity:1;color:var(--dv-t2,inherit);font-size:13px;font-variant-numeric:tabular-nums}.lmx .lw .y{opacity:.9}.lmx .ft{opacity:1;color:var(--dv-t2,inherit);font-size:12.5px;margin-top:6px;display:block}";
     document.head.appendChild(s);
   }
   function ctxOf(mk) {

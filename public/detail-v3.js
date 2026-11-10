@@ -44,7 +44,7 @@
     else if (st === "POST" || st === "POSTPOST") { ko = "시간외"; en = "After hours"; cls = "ext"; }
     else if (st === "CLOSED") { ko = "장 마감"; en = "Closed"; }
     else { ko = isKr(s) ? "한국장" : "미국장"; en = isKr(s) ? "KR market" : "US market"; }
-    el.className = "dv3-live " + cls; var b = el.querySelector("b"); if (b) { b.textContent = ko; b.setAttribute("data-en", en); }
+    el.className = "dv3-live " + cls; el.title = ko; var b = el.querySelector("b"); if (b) { b.textContent = ko; b.setAttribute("data-en", en); }
   }
   function spark(s) {
     var svg = $("dv3Spark"); if (!svg) return; var seq = ++sparkSeq; svg.innerHTML = ""; svg.removeAttribute("data-dir");
@@ -108,6 +108,8 @@
     if (!sy || !pr) return;
     new MutationObserver(function () { symChanged(); priceChanged(); }).observe(sy, { childList: true, characterData: true, subtree: true });
     new MutationObserver(priceChanged).observe(pr, { childList: true, characterData: true, subtree: true });
+    var oh = $("detailOhlc"), hd = oh && oh.closest(".detail-head");   // 시고저종 칩은 좁은 머리에 안 들어가 툴팁(title)로 — 같은 값이 '시세 데이터' 창에도 있다
+    if (oh && hd) { var tip = function () { var t = oh.textContent.replace(/\s+/g, " ").trim(); if (hd.title !== t) hd.title = t; }; new MutationObserver(tip).observe(oh, { childList: true, characterData: true, subtree: true }); tip(); }
     if (dc) new MutationObserver(moveBar).observe(dc, { childList: true });
     if (tf) { new MutationObserver(function () { place(true); }).observe(tf, { attributes: true, attributeFilter: ["class"], subtree: true }); if (window.ResizeObserver) new ResizeObserver(function () { place(false); }).observe(tf); }
     addEventListener("resize", function () { place(false); onScroll(); }); addEventListener("scroll", onScroll, { passive: true, capture: true });

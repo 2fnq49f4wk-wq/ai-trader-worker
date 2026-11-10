@@ -364,9 +364,12 @@
     var lo = t.px, hi = t.px; pts.forEach(function (z) { lo = Math.min(lo, z.a); hi = Math.max(hi, z.z); }); var sp = (hi - lo) || 1; lo -= sp * 0.08; hi += sp * 0.08; sp = hi - lo;
     var X = function (p) { return Math.max(0, Math.min(100, (p - lo) / sp * 100)); };
     var seg = function (z, c) { return z ? '<i class="z ' + c + '" style="left:' + X(z.a).toFixed(1) + "%;width:" + Math.max(1.5, X(z.z) - X(z.a)).toFixed(1) + '%"></i>' : ""; };
-    var tk = function (p, c, lab, v) { return '<span class="tk ' + c + '" style="left:' + X(p).toFixed(1) + '%"><b>' + esc(lab) + "</b><em>" + esc(v) + "</em></span>"; };
-    return '<div class="lxa-lv" role="img" aria-label="핵심 가격대"><div class="trk">' + seg(t.sup, "s") + seg(t.res, "r") + seg(t.tgt, "g") + '<i class="px" style="left:' + X(t.px).toFixed(1) + '%"></i></div><div class="tks">' +
-      (t.sup ? tk(mid(t.sup), "s", "지지", money(mid(t.sup), kr)) : "") + tk(t.px, "p", "현재", money(t.px, kr)) + (t.res ? tk(mid(t.res), "r", "관문", money(mid(t.res), kr)) : "") + (t.tgt ? tk(mid(t.tgt), "g", "목표", money(mid(t.tgt), kr)) : "") + "</div></div>";
+    var tl = [];
+    if (t.sup) tl.push([mid(t.sup), "s", "지지"]); tl.push([t.px, "p", "현재"]); if (t.res) tl.push([mid(t.res), "r", "관문"]); if (t.tgt) tl.push([mid(t.tgt), "g", "목표"]);
+    tl.sort(function (x, y) { return x[0] - y[0]; });
+    var last = [-99, -99], two = false;   // 라벨이 겹치면(가까운 가격대) 다음 줄로 내린다
+    var tks = tl.map(function (x) { var pc = X(x[0]), r = 0; if (pc - last[0] < 25) r = last[1] ? 0 : 1; if (r) two = true; last = [pc, r]; return '<span class="tk ' + x[1] + '" style="left:' + pc.toFixed(1) + "%;top:" + (r * 44) + 'px"><b>' + esc(x[2]) + "</b><em>" + esc(money(x[0], kr)) + "</em></span>"; }).join("");
+    return '<div class="lxa-lv" role="img" aria-label="핵심 가격대"><div class="trk">' + seg(t.sup, "s") + seg(t.res, "r") + seg(t.tgt, "g") + '<i class="px" style="left:' + X(t.px).toFixed(1) + '%"></i></div><div class="tks" style="height:' + (two ? 90 : 46) + 'px">' + tks + "</div></div>";
   }
   function ring(p, lab, sub) { p = Math.max(0, Math.min(100, p)); var R = 26, C = 2 * Math.PI * R; return '<div class="lxa-rg"><svg viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="lxaRg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4F8CFF"/><stop offset="1" stop-color="#7C5CFF"/></linearGradient></defs><circle cx="32" cy="32" r="' + R + '" class="bg"/><circle cx="32" cy="32" r="' + R + '" class="fg" stroke="url(#lxaRg)" stroke-dasharray="' + (C * p / 100).toFixed(1) + " " + C.toFixed(1) + '" transform="rotate(-90 32 32)"/></svg><div><b>' + esc(lab) + "</b><span>" + esc(sub) + "</span></div></div>"; }
   function css() {
