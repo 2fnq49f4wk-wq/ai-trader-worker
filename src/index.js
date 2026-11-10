@@ -32650,7 +32650,8 @@ async function handleRequest(request, env, ctx, _inner) {
       const part = function (x) { return (x && typeof x === "object") ? { val: x.val || {}, table: (x.table && typeof x.table === "object") ? x.table : {}, pb: x.pb || {},
                                                                           cross: (x.cross && typeof x.cross === "object") ? x.cross : {}, gate: (x.gate && typeof x.gate === "object") ? x.gate : null,
                                                                           tier2: Array.isArray(x.tier2) ? x.tier2.map(String) : [], grp: _obj(x.grp), rs6: _obj(x.rs6), ptune: _obj(x.ptune), epDef: _obj(x.epDef), epLad: _obj(x.epLad),
-                                                                          meta: _obj(x.meta), metaFeats: Array.isArray(x.metaFeats) ? x.metaFeats.map(String) : null, flow: _obj(x.flow) } : null; };   // [V33.704] flow = 한국 수급 과열 백분위   // [V33.672] 고차원 수식 선택 기록
+                                                                          meta: _obj(x.meta), metaFeats: Array.isArray(x.metaFeats) ? x.metaFeats.map(String) : null, flow: _obj(x.flow),
+                                                                          shadow: _obj(x.shadow) } : null; };   // [신규 매매법 · 그림자] 그림자 매매법 성적(실전 목록 없음 · 화면 표시만)   // [V33.704] flow = 한국 수급 과열 백분위   // [V33.672] 고차원 수식 선택 기록
       const rec = { ts: Date.now(), day: String(body.day || ""), regime: String(body.regime || "NEUTRAL"), daily: part(body.daily), intra: part(body.intra),
                     sector: (body.sector && typeof body.sector === "object") ? body.sector : null,
                     panic: body.panic === true,
@@ -32704,6 +32705,7 @@ async function handleRequest(request, env, ctx, _inner) {
                         daily: r.daily && { val: r.daily.val, cells: cn.d, pb: r.daily.pb, gate: r.daily.gate || null,
                                             tier2: r.daily.tier2 || [], ptune: r.daily.ptune || null, epDef: r.daily.epDef || null, epLad: r.daily.epLad || null,   // [V33.664]
                                             meta: r.daily.meta || null, metaFeats: r.daily.metaFeats || null,   // [V33.672]
+                                            shadow: r.daily.shadow || null,   // [신규 매매법 · 그림자] 그림자 매매법(실전 안 씀)
                                             flow: r.daily.flow || null,   // [V33.705] 한국 수급 과열 백분위(종목 → 0~1) — 화면 '수급 과열 거름' · 종전엔 빠져 화면에 안 보였다
                                             grpN: r.daily.grp ? Object.values(r.daily.grp).reduce(function (a, g) { a[g] = (a[g] || 0) + 1; return a; }, {}) : null,
                                             cross: Object.fromEntries(Object.keys(r.daily.cross || {}).map(function (k) { return [k, (r.daily.cross[k] || []).length]; })) },

@@ -12,6 +12,16 @@
 
 ## Current handoff
 
+- V33.798(에이전트 · _BUILD_VER 안 올림) ★신규 매매법 7종 × 2시장 — 정식 2순위 4종씩 · 나머지 그림자★
+  검증 trainer/research/newpb_eval.py(10년 일봉 · 하루 늦은 종가 진입 · 비용 미0.10/한0.30% · 앞 70% 에서 청산 5종 중 PF 로 고름 · 뒤 30% 판정).
+  채택 = 판정 PF≥1.1 · n≥100 · 앞 PF≥1.0 · 판정 시장초과>0. 고른 청산 전부 손절 10% · 30일(NEW_EXIT_V798).
+  美 정식 GAPGO_VOL(n347 PF1.56 승49.6 초과+1.03) · HI52_VOLBRK(2109 · 1.55 · 52.9 · +0.37) · VCP_BRK(2728 · 1.64 · 55.0 · +0.20) · INSIDE_BRK(3623 · 1.50 · 53.4 · +0.05)
+     그림자 RSI2_UPTR(PF1.49 이지만 초과 −0.01) · FLUSH_RS(n78) · MA200_RECLAIM(PF1.03)
+  韓 정식 HI52_VOLBRK(1811 · 1.58 · 37.9 · +1.36) · RSI2_UPTR(5908 · 1.46 · 39.3 · +0.77) · VCP_BRK(1438 · 1.58 · 38.7 · +1.06) · INSIDE_BRK(2129 · 1.42 · 37.9 · +0.82)
+     그림자 GAPGO_VOL(PF1.20 초과 −0.17) · FLUSH_RS(PF1.04) · MA200_RECLAIM(PF0.99)
+  배선: playbook_sim NEW_PB 에 정식 추가(2순위 · 기존 매매법 손 안 댐) · 그림자는 shadow_eval → body.daily.shadow → 워커 /api/playbook 저장·GET → 두뇌 매매법 표 '그림자' 표지(실전 매수 없음).
+  한글 이름표 PlaybookDeck PB_NAMES · brain-studio.js 재빌드. ※ 판정 구간이 상승장이라 PF 는 부풀려짐 — 시장초과가 진짜 우위. 생존 편향 주의.
+  다음: 다음 학습기 회차 로그 '[그림자매매법]' · pbStat 에서 신규 정식의 판정 전/판정(OMNI-Q 후보 거름 뒤) 확인 — 음수면 NEW_PB_V798 에서 빼 그림자로.
 - V33.797-pb (11/9 · 버전 그대로 · 에이전트) 매매법 실적 점검 — 원장 포지션 단위(180일 · FIFO · 앞/뒤 절반=홀드아웃):
   美 core PF 0.62 끌어내린 것: RULE:SCALP SC_VWAP 76건 PF 0.53(뒤 0.35 · 관문 시험 중) · AI-SCALP 22건 0.41(시험) · ★AI:SNAP SN_RSI 14건 PF 0.22(앞 0.03/뒤 0.41)★ · AI-Q:TREND 12건 0.38(시험차선 대상 — V33.797 설계 유지).
   같은 SN_RSI 의 규칙 경로 RULE:SNAP 20건 PF 4.05(뒤 10.5) · AI:TREND 115건 1.11 · RULE:TREND TR_PULLBACK 76건 1.02(뒤 1.23) · TR_RS_LEADER 9건 2.5.

@@ -380,6 +380,53 @@ NEW_PB = {"kr": {"FROG": 60, "RESID_MOM": 60, "RS_NEWHI": 60, "NR7_TREND": 60, "
 # [V33.666] ★둘 다 퇴출★ — 실전 회차(run 40113783147 · OMNI-Q 후보 거름 · 고변동 한정)의 매매법별 성적: 미 MA5_DIP_LEAD 판정 전 −0.13%(n 491) · 판정 −1.12%(n 204) /
 #   한 VOL_SURGE_HOLD 판정 전 −2.04%(n 76) · 판정 −0.12%(n 19). lab(전 종목 · 6개월 수익 순위 상위 5)과 실전 후보(OMNI-Q 상위)가 달라 우위가 사라졌다.
 NEW_PB_GRP = {"kr": {}, "us": {}}
+# [V33.798] ★신규 7종(시장별)★ — 사용자 11/9 "미·한 각 5종 이상 새 매매법 · 표본 밖 검증 · PF ≥ 1.1 만 켜고 나머지는 그림자".
+#   trainer/research/newpb_eval.py(10년 일봉 · 하루 늦은 진입 · 비용 뺌 · 앞 70% 에서 청산 고르기 · 뒤 30% 판정):
+#   채택 = 판정 PF ≥ 1.1 · 판정 거래 ≥ 100 · 앞 구간 PF ≥ 1.0 · ★판정 시장 초과 > 0★(판정 구간이 상승장이라 PF 만으론 시장을 따라간 것과 구별 못 함).
+#   고른 청산은 전부 손절 10% · 익절 없음 · 최대 30일. 정식은 2순위(1순위가 뜬 종목엔 안 씀 · 기존 매매법을 밀어내지 않음).
+#   미 정식: GAPGO_VOL · HI52_VOLBRK · VCP_BRK · INSIDE_BRK / 그림자: RSI2_UPTR(초과 −0.01) · FLUSH_RS(n78) · MA200_RECLAIM(PF1.03)
+#   한 정식: HI52_VOLBRK · RSI2_UPTR · VCP_BRK · INSIDE_BRK / 그림자: GAPGO_VOL(초과 −0.17) · FLUSH_RS(PF1.04) · MA200_RECLAIM(PF0.99)
+#   ※ V33.650 때 52주 고가 거래량 돌파·NR7 추세는 한국 시스템 검증 t 를 낮춰 뺐다 — 이번 판은 2순위 · 다른 청산(30일)이고, 학습기 회차의 pbStat(판정 전·판정)로 다시 본다.
+NEW_PB_V798 = {"us": ("GAPGO_VOL", "HI52_VOLBRK", "VCP_BRK", "INSIDE_BRK"), "kr": ("HI52_VOLBRK", "RSI2_UPTR", "VCP_BRK", "INSIDE_BRK")}
+NEW_PB_SHADOW = {"us": ("RSI2_UPTR", "FLUSH_RS", "MA200_RECLAIM"), "kr": ("GAPGO_VOL", "FLUSH_RS", "MA200_RECLAIM")}
+NEW_EXIT_V798 = {"stop": 10, "atr": 4, "be": 0, "tpR": None, "hold": 30}
+for _m, _ns in NEW_PB_V798.items():
+    for _n in _ns:
+        NEW_PB[_m][_n] = 30
+
+
+def shadow_eval(P, market, names, cut=0.70):
+    """[V33.798] 그림자 매매법 — 실전 목록엔 안 보내고 같은 규칙(하루 늦은 종가 · 손절 10% · 최대 30일 · 비용 뺌)으로 앞/뒤 성적만 잰다(화면 '그림자' 행)."""
+    S = _new_signals(P, list(names))
+    c, h, l = P["close"].values, P["high"].values, P["low"].values
+    T, N = c.shape
+    cost, ex = COST_RT[market], NEW_EXIT_V798
+    out = {}
+    for nm, sg in S.items():
+        s = sg.shift(1, fill_value=False).values
+        rows = []
+        for j in range(N):
+            busy = -1
+            for t0 in np.nonzero(s[:, j])[0]:
+                if t0 < 250 or t0 <= busy or t0 + ex["hold"] >= T or not np.isfinite(c[t0, j]):
+                    continue
+                e, xp, k = c[t0, j], None, t0
+                for k in range(t0 + 1, t0 + ex["hold"] + 1):
+                    if np.isfinite(l[k, j]) and l[k, j] <= e * (1 - ex["stop"] / 100):
+                        xp = e * (1 - ex["stop"] / 100)
+                        break
+                xp = c[k, j] if xp is None else xp
+                if np.isfinite(xp):
+                    rows.append((t0, (xp / e - 1) * 100 - cost))
+                    busy = k
+        a = np.array(rows) if rows else np.zeros((0, 2))
+        def _st(r):
+            g, b = r[r > 0].sum(), -r[r < 0].sum()
+            return {"n": int(len(r)), "pf": (round(float(g / b), 2) if b > 0 else None), "win": (round(float((r > 0).mean() * 100), 1) if len(r) else None),
+                    "mean": (round(float(r.mean()), 2) if len(r) else None)}
+        ct = int(T * cut)
+        out[nm] = {"pre": _st(a[a[:, 0] < ct, 1]), "ho": _st(a[a[:, 0] >= ct, 1]), "now": int(sg.values[-1].sum()), "shadow": True}
+    return out
 
 
 def _new_signals(P, names):
@@ -429,7 +476,30 @@ def _new_signals(P, names):
         out["LEAD60_HOLD"] = first(A(X(c.pct_change(60, fill_method=None)) >= 0.95, c > I["ma20"]))
     if "LEAD120_HOLD" in names:   # [V33.694] 주도주 보유(긴) — 120일 수익 상위 5% · 50일선 위 → 최대 60일(미 상승 +5.5·+7.9 · 보합 +8.0·+9.1 · 폭등 +9.6·+17.9)
         out["LEAD120_HOLD"] = first(A(X(c.pct_change(120, fill_method=None)) >= 0.95, c > I["ma50"]))
+    # ── [V33.798 신규 7종 후보] — 연구 스크립트 trainer/research/newpb_eval.py 로 시장별 걸어 검증(앞 70% 청산 고르기 · 뒤 30% 판정 · 비용 뺀 PF) ──
+    if "GAPGO_VOL" in names:   # 갭 앤 고(일봉 · 실적 갭 대용) — +4% 이상 갭 · 거래량 3배 · 양봉 · 종가가 그날 범위 위쪽 절반
+        out["GAPGO_VOL"] = A(I["o"] / c.shift(1) - 1 >= 0.04, I["vr"] >= 3, c > I["o"], I["cpos"] >= 0.5)
+    if "HI52_VOLBRK" in names:   # 52주 고가 거래량 돌파 — 종가가 직전 252일 최고 종가 돌파 · 거래량 1.5배 · 양봉 · 50일선 위
+        out["HI52_VOLBRK"] = first(A(c > c.shift(1).rolling(252, min_periods=240).max(), I["vr"] >= 1.5, I["ret1"] > 0, c > I["ma50"]))
+    if "RSI2_UPTR" in names:   # 상승 추세 RSI(2) 과매도 — RSI2 < 10 · 정배열(종가 > 200일선 · 50 > 200)
+        out["RSI2_UPTR"] = A(I["rsi2"] < 10, c > I["ma200"], I["ma50"] > I["ma200"])
+    if "VCP_BRK" in names:   # 변동성 수축 돌파(VCP) — 10일 변동성 ÷ 60일 변동성 < 0.6 이던 종목이 20일 고가 돌파 · 200일선 위
+        vs = r1.rolling(10).std() / r1.rolling(60).std()
+        out["VCP_BRK"] = A(vs.shift(1) < 0.6, c > I["hi20_prev"], c > I["ma200"])
+    if "FLUSH_RS" in names:   # 시장 투매일 주도주 — 전 종목 평균 5일 수익 ≤ −6% 인 날 · 6개월 수익 상위 20% · 오늘 양봉
+        m5 = c.pct_change(5, fill_method=None).mean(axis=1)
+        out["FLUSH_RS"] = A(pd.DataFrame(np.repeat((m5 <= -0.06).values[:, None], c.shape[1], 1), index=c.index, columns=c.columns),
+                            X(c.pct_change(126, fill_method=None)) >= 0.8, I["ret1"] > 0)
+    if "INSIDE_BRK" in names:   # 인사이드 데이 돌파 — 어제 봉이 그제 봉 안(고가↓·저가↑) · 오늘 종가가 어제 고가 돌파 · 정배열
+        ins = (h.shift(1) < h.shift(2)) & (l.shift(1) > l.shift(2))
+        out["INSIDE_BRK"] = A(ins, c > h.shift(1), I["ma20"] > I["ma50"], I["ma50"] > I["ma200"])
+    if "MA200_RECLAIM" in names:   # 200일선 거래량 회복 — 어제 200일선 아래 → 오늘 위 · 거래량 2배 · 50일선 상승
+        out["MA200_RECLAIM"] = A(c > I["ma200"], c.shift(1) < I["ma200"].shift(1), I["vr"] >= 2, I["ma50"] > I["ma50"].shift(10))
     return {k: v.fillna(False).astype(bool) for k, v in out.items()}
+
+
+# [V33.798] 신규 후보 이름(연구 스크립트가 시험하는 목록)
+NEW_CAND = ("GAPGO_VOL", "HI52_VOLBRK", "RSI2_UPTR", "VCP_BRK", "FLUSH_RS", "INSIDE_BRK", "MA200_RECLAIM")
 
 
 def _mod_filters(P):
@@ -1943,7 +2013,8 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                     continue
                 mod_now[nm] = _ns[nm].values[-1]
                 sig[nm] = _ns[nm].shift(1, fill_value=False)
-                dpb[nm] = dict(DAILY_PB["DUAL_MOM"], hold=hd_, family="Lit", label=("%s(단타 · %d일 보유) — 2순위" if hd_ <= 5 else "%s(문헌 전략 · %d일 보유) — 2순위") % (nm, hd_), prof="new", flt=None,
+                _xv = NEW_EXIT_V798 if nm in NEW_PB_V798.get(market, ()) else {}   # [V33.798] 신규 정식 — 검증한 청산(손절 10% · 30일)
+                dpb[nm] = dict(DAILY_PB["DUAL_MOM"], **dict(_xv, hold=hd_), family="Lit", label=("%s(단타 · %d일 보유) — 2순위" if hd_ <= 5 else "%s(문헌 전략 · %d일 보유) — 2순위") % (nm, hd_), prof="new", flt=None,
                                onlyGrp=_ng.get(nm))   # [V33.665] 화면: 그룹 한정
         if RIDE_ON:   # [V33.694] ★추세 타기(+R) 변형★ — 같은 신호 · 청산만 '따라붙는 손절 · 길게'. 고르는 AI 가 칸(국면·종목 상태)마다 원래 청산과 겨룬다.
             for nm in list(dpb):
@@ -2200,8 +2271,14 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
                         sleeve = RSL.run(P, market, _sys.modules[__name__], log=log)
                     except Exception as e:  # noqa: BLE001
                         log("   ⚠️ [국면전략] %s 실패 %s" % (market, e))
+                try:   # [V33.798] 그림자 매매법 성적(실전 목록엔 없음 · 화면 '그림자' 행)
+                    shadow_pb = shadow_eval(P, market, NEW_PB_SHADOW.get(market, ()))
+                    log("   · [그림자매매법] %s %s" % (market, {k: (v["ho"]["n"], v["ho"]["pf"]) for k, v in shadow_pb.items()}))
+                except Exception as e:  # noqa: BLE001
+                    shadow_pb = None
+                    log("   ⚠️ [그림자매매법] %s 실패 %s" % (market, e))
                 body = {"mkt": market, "day": str(P["close"].index[-1]), "regime": reg_now, "regime3": r3_now, "sleeve": sleeve, "sector": (sector or {}).get(market), "panic": panic_now, "panicBook": pbook,
-                        "daily": {"val": dst, "table": export(dtab, list(DAILY_PB)), "pb": dpb, "cross": cross, "gate": gate_live, "tier2": tier2,
+                        "daily": {"val": dst, "table": export(dtab, list(DAILY_PB)), "pb": dpb, "cross": cross, "gate": gate_live, "tier2": tier2, "shadow": shadow_pb,
                                   "grp": ({syms_all[j]: int(g_) for j, g_ in enumerate(P.get("_grp_now", P.get("_grp"))[-1]) if g_ >= 0} if P.get("_grp") is not None else None),   # [V33.664] 종목 → 변동성 그룹(오늘)
                                   "ptune": ptune_rep, "epDef": {k: v[1] for k, v in PP.ENTRY.items()}, "epLad": dict({k: v[2] for k, v in PP.ENTRY.items()}, _mods=PP.MODS),
                                   "rs6": {syms_all[j]: round(float(x), 3) for j, x in enumerate(PP.rs6(P).values[-1]) if x == x}, "meta": meta_rep, "metaFeats": list(META_FEATS),

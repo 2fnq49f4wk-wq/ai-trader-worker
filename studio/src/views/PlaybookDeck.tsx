@@ -22,6 +22,9 @@ export const PB_NAMES: Record<string, string> = {
   SECTOR_LAG: "주도주 일시 부진", DIP_IN_LEADER5: "주도주 급락 매수", GAP_UP_HOLD3: "갭 상승 3일 유지",
   VOL_SURGE_HOLD: "거래량 급등 유지",   // [V33.659] 단타(5일 보유)
   MA5_DIP_LEAD: "주도주 5일선 눌림",   // [V33.665] 단타(2일 · 고변동 그룹만)
+  // [V33.798] 신규 7종(정식 2순위 또는 그림자 — 그림자는 실전 안 씀 · 성적만 쌓음)
+  GAPGO_VOL: "갭 앤 고(거래량 3배)", HI52_VOLBRK: "52주 신고가 거래량 돌파", RSI2_UPTR: "상승추세 RSI2 과매도", VCP_BRK: "변동성 수축 돌파(VCP)",
+  FLUSH_RS: "시장 투매일 주도주", INSIDE_BRK: "인사이드 데이 돌파", MA200_RECLAIM: "200일선 거래량 회복",
 };
 export const pbName = (k: string) => { const i = k.indexOf("+"); if (i < 0) return PB_NAMES[k] || k;
   const b = k.slice(0, i), f = k.slice(i + 1); return (PB_NAMES[b] || b) + " 수정판(" + ({ T: "추세", TL: "추세+주도주", V: "거래량" } as Record<string, string>)[f] + ")"; };
@@ -76,14 +79,18 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
     const keys = Object.keys(pbDef).length ? Object.keys(pbDef) : ps ? Object.keys(ps) : Object.keys(t).filter((k) => t[k] && t[k].diag);
     const out = keys.map((k) => {
       const x = t[k] || {}, s_ = ps && ps[k], b = s_ ? s_.ho || [] : (x.test && x.test.base) || [], p0 = s_ ? s_.pre || [] : x.diag ? [x.diag.n, x.diag.mean, x.diag.win] : [];
-      return { id: k, name: pbName(k), fam: (pbDef[k] && pbDef[k].family) || "", tier: s_ ? s_.tier : /\+|^(FROG|RESID_MOM|RS_NEWHI|NR7_TREND|DARVAS|GAP_FILL_D|VOL_DRYUP_PB|SECTOR_LAG|DIP_IN_LEADER5|GAP_UP_HOLD3|VOL_SURGE_HOLD|MA5_DIP_LEAD)$/.test(k) ? 2 : 1, preN: p0[0], preM: p0[1], preW: p0[2],
+      return { id: k, name: pbName(k), fam: (pbDef[k] && pbDef[k].family) || "", tier: s_ ? s_.tier : /\+|^(FROG|RESID_MOM|RS_NEWHI|NR7_TREND|DARVAS|GAP_FILL_D|VOL_DRYUP_PB|SECTOR_LAG|DIP_IN_LEADER5|GAP_UP_HOLD3|VOL_SURGE_HOLD|MA5_DIP_LEAD|GAPGO_VOL|HI52_VOLBRK|RSI2_UPTR|VCP_BRK|FLUSH_RS|INSIDE_BRK|MA200_RECLAIM)$/.test(k) ? 2 : 1, preN: p0[0], preM: p0[1], preW: p0[2],
                hoN: b[0], hoM: b[1], hoW: b[2], pick: by[k] || 0, flt: (pbDef[k] && pbDef[k].flt) || x.flt || "", tuned: x.test && x.test.tuned };
     });
+    /* [V33.798] 그림자 매매법 — 실전 목록엔 없고 학습기가 같은 규칙으로 판정 전·판정 성적만 잰다(tier 3 · '그림자' 표지) */
+    const sh = R?.daily?.shadow || {};
+    for (const k of Object.keys(sh)) { if (keys.includes(k)) continue; const z = sh[k] || {}, a = z.pre || {}, h = z.ho || {};
+      out.push({ id: k, name: pbName(k), fam: "Shadow", tier: 3, preN: a.n, preM: a.mean, preW: a.win, hoN: h.n, hoM: h.mean, hoW: h.win, pick: 0, flt: "", tuned: false, pf: h.pf, now: z.now } as any); }
     out.sort((a: any, b: any) => { const x = a[sk], y = b[sk];
       if (sk === "id") return sd * String(a.name).localeCompare(String(b.name)) * -1;
       return sd < 0 ? (fin(y) ? y : -1e9) - (fin(x) ? x : -1e9) : (fin(x) ? x : 1e9) - (fin(y) ? y : 1e9); });
     return out;
-  }, [V, pbDef, sk, sd]);
+  }, [V, pbDef, sk, sd, R]);
   if (!R) return <p style={{ color: DIM, fontSize: 13, padding: "16px 0" }}>학습기가 아직 매매법 표를 올리지 않았습니다.</p>;
   /* [V33.660] 통과 = 학습기 판정(R.pass.daily — 최근 구간 검사 포함). 종전엔 화면이 다시 계산하며 최근 검사를 빼 '통과' 로 잘못 보였다. */
   const RC = V.recent || null;
@@ -95,7 +102,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
   const day = String(R.day || "").replace(/(\d{4})(\d{2})(\d{2})/, "$1-$2-$3");
   const flow = [
     ["후보 선별 · OMNI-Q", V.candQ ? "상위 " + Math.round((1 - V.candQ) * 100) + "%" : "거름 없음", (V.cand || "—") + " · 하루·동시 상한이 차면 OMNI-Q 순위 높은 후보부터 산다(시뮬·실전 같은 순서)"],
-    ["신호 · 일봉 매매법", rows.length + "종", (() => { const n2 = rows.filter((r: any) => r.tier === 2).length; return n2 ? "1순위 " + (rows.length - n2) + " · 보조 " + n2 + " — 보조는 1순위가 안 뜬 종목에만" : "오늘 조건이 맞은 매매법만 남긴다"; })()],
+    ["신호 · 일봉 매매법", rows.length + "종", (() => { const n2 = rows.filter((r: any) => r.tier === 2).length, n3 = rows.filter((r: any) => r.tier === 3).length; return n2 ? "1순위 " + (rows.length - n2 - n3) + " · 보조 " + n2 + (n3 ? " · 그림자 " + n3 + "(실전 안 씀)" : "") + " — 보조는 1순위가 안 뜬 종목에만" : "오늘 조건이 맞은 매매법만 남긴다"; })()],
     ["종목 그룹 · 미지수", (() => { const pt = R.daily?.ptune; if (!pt) return "기본 미지수"; const nA = Object.values(pbDef).reduce((a: number, x: any) => a + Object.keys((x && x.ep) || {}).length + Object.keys((x && x.grp) || {}).filter((g) => !(x.ep && x.ep[g])).length, 0); return nA ? "그룹 조율 " + nA + "칸" : "기본 미지수"; })(),
       "변동성 3그룹마다 조율 · 시스템을 안 낮춘 것만 실전(‘미지수 · 조율’ 탭)"],
     ["구조 거르개", R.panic ? "공황 차단 켜짐" : "공황 차단 꺼짐", R.panic ? "1순위 추세·모멘텀·돌파 쉼(보조는 계속)" : "시장 60일 하락·고변동이면 1순위 추세 매매법 쉼"],
@@ -310,7 +317,7 @@ export function PlaybookDeck({ d, extra }: { d: any; extra?: { label: string; no
               <tbody>{rows.map((r) => (
                 <tr key={r.id} style={{ borderTop: "1px solid " + ROWLINE }}>
                   <td style={{ padding: "9px 14px", color: INK, minWidth: 170, maxWidth: 300 }}>
-                    <span style={{ whiteSpace: "nowrap" }}>{r.name}</span>{r.tier === 2 && <span style={{ marginLeft: 8, fontSize: 10.5, color: HL, border: "1px solid #5A4A1A", borderRadius: 4, padding: "0 5px", whiteSpace: "nowrap" }}>보조</span>}{fin(pbDef[r.id] && pbDef[r.id].hold) && pbDef[r.id].hold <= 5 && <span style={{ marginLeft: 6, fontSize: 10.5, color: POS, border: "1px solid #1D4A5A", borderRadius: 4, padding: "0 5px", whiteSpace: "nowrap" }}>단타 {pbDef[r.id].hold}일</span>}{pbDef[r.id] && pbDef[r.id].onlyGrp != null && <span style={{ marginLeft: 6, fontSize: 10.5, color: "#FF9A4A", border: "1px solid #5A3A1A", borderRadius: 4, padding: "0 5px", whiteSpace: "nowrap" }}>{["저변동", "중간", "고변동"][pbDef[r.id].onlyGrp]}만</span>}
+                    <span style={{ whiteSpace: "nowrap" }}>{r.name}</span>{r.tier === 3 && <span title={"그림자 — 실전 매수 안 함 · 표본 외 PF " + (fin(r.pf) ? r.pf.toFixed(2) : "—") + " · 오늘 신호 " + (r.now ?? 0) + "종목"} style={{ marginLeft: 8, fontSize: 10.5, color: MUTE, border: "1px dashed " + MUTE, borderRadius: 4, padding: "0 5px", whiteSpace: "nowrap" }}>그림자</span>}{r.tier === 2 && <span style={{ marginLeft: 8, fontSize: 10.5, color: HL, border: "1px solid #5A4A1A", borderRadius: 4, padding: "0 5px", whiteSpace: "nowrap" }}>보조</span>}{fin(pbDef[r.id] && pbDef[r.id].hold) && pbDef[r.id].hold <= 5 && <span style={{ marginLeft: 6, fontSize: 10.5, color: POS, border: "1px solid #1D4A5A", borderRadius: 4, padding: "0 5px", whiteSpace: "nowrap" }}>단타 {pbDef[r.id].hold}일</span>}{pbDef[r.id] && pbDef[r.id].onlyGrp != null && <span style={{ marginLeft: 6, fontSize: 10.5, color: "#FF9A4A", border: "1px solid #5A3A1A", borderRadius: 4, padding: "0 5px", whiteSpace: "nowrap" }}>{["저변동", "중간", "고변동"][pbDef[r.id].onlyGrp]}만</span>}
                     <span style={{ display: "block", marginTop: 2, fontSize: 11, color: FAINT, fontFamily: MONO, whiteSpace: "nowrap" }}>{r.id}{r.fam ? " · " + r.fam : ""}</span></td>
                   <td style={{ ...td(null), color: MUTE }}>{n0(r.preN)}</td>
                   <td style={td(r.preM)}>{sg(r.preM, 3)}</td>
