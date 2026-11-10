@@ -1,0 +1,134 @@
+/* ═══ [UI v3.3] 패드·데스크톱 정보 밀도 — 차트는 절반 이하 + AI 분석·시세 데이터가 옆/아래에 같이 보임 · 목록·상세 전체 ~12% 축소 ═══
+   사용자 11/10 "패드는 그래프만 보인다(옛 HTS 처럼 섞어 줘)" · "목록·상세 비율 전반적으로 줄여 줘".
+   detail-v3b.css 뒤에 덧입힌다. 전부 #page-detail 안 · 761px 이상만(폰은 그대로). 글자 하한: 본문 13px · 보조 12px. 색은 건드리지 않는다.
+   ≥901px: #detailContent 를 2열 그리드(왼쪽 60% 차트 → AI 분석 → 뉴스 → 재무 / 오른쪽 40% 시세 데이터 → 투자심리·목표가 패널).
+   761~900px(패드 세로): 한 열 — 차트 → AI 분석 → 시세 데이터 → 정보 카드 2열. 되돌리기 = index.html 의 detail-v3c.css 링크 1줄 제거. */
+@media (min-width:761px){
+  /* ── 차트: 화면의 ~41% ── */
+  html #page-detail .detail-main .detail-chart,html #page-detail .detail-chart{height:clamp(300px,41vh,520px) !important;min-height:300px !important;max-height:520px !important;margin-bottom:10px !important}
+  html #page-detail .detail-main .detail-chart{flex:0 0 auto !important}
+  /* ── 히어로 · 툴바 ── */
+  html #page-detail .detail-head{padding:7px 14px !important;min-height:54px;margin-bottom:8px;border-radius:14px !important}
+  html #page-detail .detail-head.dv3-compact{min-height:46px;padding:4px 14px !important}
+  html #page-detail .detail-sym{font-size:17px !important}
+  html #page-detail .detail-name{font-size:13px}
+  html #page-detail .detail-price{font-size:26px !important}
+  html #page-detail .detail-change{font-size:13.5px !important;padding:2px 8px !important}
+  html #page-detail .detail-ext{font-size:12px}
+  #page-detail .dv3-spark{height:34px}
+  html #page-detail .dv3-act #mineDetailBar .buy,html #page-detail .dv3-act #mineDetailBar .sell,html #page-detail .dv3-act #mineDetailBar .wbtn2{min-height:32px;padding:0 13px;font-size:13.5px}
+  html #page-detail .detail-toolbar{gap:6px 10px;margin-bottom:8px}
+  html #page-detail .detail-tf-btn,html #page-detail .detail-ind-btn,html #page-detail .detail-zoom-btn{min-height:28px !important;padding:0 11px !important;font-size:13px !important}
+  html #page-detail .page-header{margin-bottom:6px}
+  #page-detail .page-header .btn,#page-detail .detail-alertbtn,#page-detail #detailBackBtn{font-size:13px !important}
+  /* ── 제목 · 정보 탭 · AI 분석 ── */
+  #page-detail .detail-sec{font-size:14px !important;margin:10px 0 6px !important}
+  html #page-detail #luxInfo{font-size:14px;line-height:1.5}
+  html #page-detail #luxInfo .lxt button{font-size:14px;min-height:36px}
+  html #page-detail #luxInfo .lxs{margin:0 0 8px !important}
+  html #page-detail #luxInfo .k,html #page-detail #luxInfo .tl .kt{font-size:13px}
+  html #page-detail #luxInfo .s,html #page-detail #luxInfo .cd .s,html #page-detail #luxInfo .nt,html #page-detail #luxInfo .lg,html #page-detail #luxInfo .yl{font-size:12.5px;line-height:1.5}
+  html #page-detail #luxInfo .gp{font-size:14px;margin:12px 2px 7px}
+  html #page-detail #luxInfo .ls .l .k{font-size:14px}
+  html #page-detail #luxInfo .ls .v b,html #page-detail #luxInfo .h2c b,html #page-detail #luxInfo .cd .v{font-size:17px}
+  html #page-detail #luxInfo .ls .r{min-height:48px}
+  html #page-detail #luxInfo .tl b{font-size:22px}
+  html #page-detail #luxInfo table{font-size:13.5px}
+  html #page-detail #luxInfo th{font-size:13px}
+  html #page-detail #luxInfo th,html #page-detail #luxInfo td{padding:8px 11px}
+  html #page-detail #luxInfo .li .t{font-size:14px}html #page-detail #luxInfo .emp{font-size:14px}html #page-detail #luxInfo .mo{font-size:13.5px}
+  html #page-detail .lxa h5{font-size:14px}
+  html #page-detail .lxa p.t{font-size:14.5px;line-height:1.6}
+  html #page-detail .lxa .ph{font-size:18px;line-height:1.45}
+  html #page-detail .lxa .sm{font-size:13.5px;line-height:1.5}
+  html #page-detail .lxa ul,html #page-detail .lxa li{font-size:14px;line-height:1.55}
+  html #page-detail .lxa-sc>div{font-size:14px;line-height:1.55}html #page-detail .lxa-sc b{font-size:13.5px !important}
+  html #page-detail .lxa-rg b{font-size:15px}
+  html #page-detail .lxa-ch{height:196px}
+  html #page-detail .lxa .tag span{font-size:12.5px;padding:3px 9px}
+  /* ── 시세 데이터 · 오른쪽 패널(옛 HTS 처럼 촘촘히) ── */
+  #page-detail .detail-datawrap{padding:8px 11px}
+  #page-detail .detail-data{font-size:13px;gap:0 12px}
+  #page-detail .detail-data .l{font-size:12.5px !important}
+  #page-detail .detail-data .v{font-size:13.5px !important}
+  #page-detail .detail-dcell{padding:3px 0}
+  #page-detail .detail-side{padding:8px 11px}
+  #page-detail .dn-head{font-size:13px !important}#page-detail .dn-t{font-size:13.5px !important;line-height:1.4}
+  #page-detail .crowd-k{font-size:13px !important}#page-detail .crowd-sub{font-size:12.5px !important}#page-detail .crowd-verdict{font-size:13.5px !important}
+  #page-detail .detail-crowd .pos,#page-detail .detail-crowd .neg{font-size:13px !important}
+  #page-detail .tfsum-k{font-size:13px !important}#page-detail .tfsum-v{font-size:13px !important}
+  #page-detail .vt-h{font-size:13px !important}#page-detail .vt-sub{font-size:12.5px !important}#page-detail .vt-big{font-size:15px !important}
+  #page-detail .detail-prof span,#page-detail .detail-prof b,#page-detail .detail-prof div{font-size:max(12px,.93em)}
+  #page-detail .detail-prof .k,#page-detail .detail-prof .s,#page-detail .detail-prof span{font-size:max(12px,.93em) !important}
+  #page-detail .detail-anl .f,#page-detail .detail-anl .d,#page-detail .detail-anl .m,#page-detail .detail-anl b{font-size:12.5px !important}
+  #page-detail .detail-fund,#page-detail .detail-fund :is(span,b,div):not([class]){font-size:max(13px,.94em)}
+  #page-detail .detail-fund .fund-tbl,#page-detail .detail-below .fund-tbl{font-size:13px !important}
+  #page-detail .detail-fund .fund-tbl th,#page-detail .detail-fund .fund-tbl td,#page-detail .detail-below .fund-tbl th,#page-detail .detail-below .fund-tbl td{padding:7px 10px !important}
+  #page-detail .detail-fund .fund-tbl th{font-size:12.5px !important}
+  #page-detail .fp-h{font-size:13.5px !important}#page-detail .fp-nm,#page-detail .fp-v{font-size:13px !important}
+  /* ── 종목 목록(열기 전): 행 높이·여백·상단 띠 축소 → 한 화면에 더 많이 ── */
+  html #page-detail .detail-browse{gap:10px}
+  html #page-detail .detail-browse .db-col{border-radius:12px}
+  html #page-detail .detail-browse .db-head{font-size:14px;padding:8px 12px}
+  html #page-detail .detail-browse .wl-card{padding:7px 12px !important;column-gap:10px;row-gap:0}
+  html #page-detail .detail-browse .wl-name{font-size:14px;line-height:1.25;padding-right:20px}
+  html #page-detail .detail-browse .wl-sym{font-size:12px}
+  html #page-detail .detail-browse .wl-price{font-size:14.5px}
+  html #page-detail .detail-browse .wl-day{font-size:12px;padding:1px 6px;min-width:52px}
+  html #page-detail .detail-browse .wl-ext{font-size:12px;margin-top:1px}html #page-detail .detail-browse .wl-ext .wl-ext-tag{font-size:12px}
+  html #page-detail .detail-browse .wl-spark{height:24px}
+  html #page-detail .detail-browse .wl-fav{font-size:14px}
+  #page-detail .aipick-bar{padding:5px 11px;margin-bottom:6px;border-radius:10px}
+  #page-detail .aipick-title{font-size:13px}
+  #page-detail .db-idx-strip{margin-bottom:8px;border-radius:8px}
+  #page-detail .db-idx{padding:6px 11px 6px}
+  #page-detail .db-idx .n{font-size:12px;letter-spacing:.6px}#page-detail .db-idx .nk{font-size:12px;margin-top:0}
+  #page-detail .db-idx .p{font-size:14px;margin-top:1px}#page-detail .db-idx .row2{margin-top:1px}#page-detail .db-idx .d{font-size:12px}
+  #page-detail .db-idx svg{height:22px}
+  #page-detail .db-sortbar{margin-bottom:6px;gap:5px}
+  #page-detail .db-sortbar .db-sort-btn{padding:4px 12px;font-size:13px}
+  #page-detail .db-sort-label{font-size:12px}
+}
+/* ── 패드 세로(761~900): 한 열 · 차트 → AI 분석 → 시세 데이터 → 정보 카드 2열 ── */
+@media (min-width:761px) and (max-width:900px){
+  html #page-detail .detail-main .detail-chart,html #page-detail .detail-chart{height:clamp(300px,39vh,460px) !important}
+  #page-detail .detail-side{columns:2;column-gap:14px;margin-top:8px}
+  #page-detail .detail-side>*{break-inside:avoid}
+  #page-detail .detail-side .detail-sec{break-after:avoid;margin-top:8px !important}
+  #page-detail .detail-side .detail-sec:first-child{margin-top:0 !important}
+  html #page-detail .detail-price{font-size:24px !important}
+}
+/* ── ≥901px(패드 가로·데스크톱): 2열 — 왼쪽 60% 차트·AI 분석, 오른쪽 40% 시세 데이터·패널 ── */
+@media (min-width:901px){
+  #page-detail #detailContent:not([style*="none"]){display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);grid-template-rows:auto auto auto auto auto auto 1fr;column-gap:14px;align-items:start}
+  #page-detail .detail-main,#page-detail .detail-left,#page-detail .detail-below{display:contents}
+  #page-detail .detail-head{grid-column:1/-1;grid-row:1}
+  #page-detail .detail-toolbar{grid-column:1/-1;grid-row:2}
+  #page-detail .detail-chart{grid-column:1;grid-row:3;min-width:0}
+  #page-detail #luxInfo{grid-column:1;grid-row:4;min-width:0;margin-bottom:12px}
+  #page-detail #detailNews{grid-column:1;grid-row:5;min-width:0}
+  #page-detail #detailFund{grid-column:1;grid-row:6;min-width:0}
+  #page-detail .detail-mfull{grid-column:1;grid-row:7}
+  #page-detail .detail-datawrap{grid-column:2;grid-row:3;min-width:0;margin:0 0 10px !important;align-self:start}
+  #page-detail .detail-side{grid-column:2;grid-row:4 / span 4;min-width:0;width:auto !important;margin:0 !important;align-self:stretch}
+  html #page-detail .detail-main .detail-chart,html #page-detail .detail-chart{height:clamp(340px,44vh,560px) !important;max-height:560px !important;min-height:340px !important}
+  /* 차트가 짧아졌으니 오른쪽 시세 데이터가 차트보다 길면 차트 줄이 늘어나지 않게 */
+  #page-detail .detail-left .detail-datawrap{margin-top:0}
+}
+@media (min-width:901px) and (max-width:1180px){
+  #page-detail #detailContent:not([style*="none"]){grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);column-gap:12px}
+  html #page-detail .detail-main .detail-chart,html #page-detail .detail-chart{height:clamp(300px,45vh,460px) !important;min-height:300px !important}
+}
+/* 2열에서는 차트 칸이 좁아 SVG 가 ~70% 로 축소 렌더된다 — 글자를 키워 실제 크기를 11px 이상으로 */
+@media (min-width:901px) and (max-width:1180px){
+  #page-detail .detail-chart .pc-hilo,#page-detail .detail-chart .pc-legend,#page-detail .detail-chart .pc-legend tspan{font-size:14px !important}
+  #page-detail .detail-chart .pc-axis{font-size:13px !important}
+}
+@media (min-width:1181px){
+  #page-detail .detail-chart .pc-hilo,#page-detail .detail-chart .pc-legend,#page-detail .detail-chart .pc-legend tspan{font-size:14px !important}
+  #page-detail .detail-chart .pc-axis{font-size:12.5px !important}
+}
+@media (min-width:761px) and (max-width:900px){
+  #page-detail .detail-side .detail-data{grid-template-columns:1fr}
+  #page-detail .detail-side .detail-dcell .v{white-space:normal;overflow:visible;text-overflow:clip}
+}
