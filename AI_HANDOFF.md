@@ -12,6 +12,8 @@
 
 ## Current handoff
 
+### V33.799 — 통합: KR 규칙 단타 퇴출(KR_RULE_SCALP_RETIRED) · 미국 AI 주도 스냅 퇴출(AI_ROUTE_RETIRE) · 신규 매매법 7종×2(정식 4·그림자 3, trainer playbook_sim NEW_PB_V798) — 다음 학습 회차 pbStat 음수면 그림자로
+
 - V33.798(에이전트 · _BUILD_VER 안 올림) ★신규 매매법 7종 × 2시장 — 정식 2순위 4종씩 · 나머지 그림자★
   검증 trainer/research/newpb_eval.py(10년 일봉 · 하루 늦은 종가 진입 · 비용 미0.10/한0.30% · 앞 70% 에서 청산 5종 중 PF 로 고름 · 뒤 30% 판정).
   채택 = 판정 PF≥1.1 · n≥100 · 앞 PF≥1.0 · 판정 시장초과>0. 고른 청산 전부 손절 10% · 30일(NEW_EXIT_V798).
