@@ -12,6 +12,8 @@
 
 ## Current handoff
 
+### V33.801 — 지수 위상 안전장치(regimePhase · 하락장 반등일 MELTUP 불가) · 게이트 check-regime-phase-sanity · 다음 확인: pb_regime 나이를 ts 대신 day 로 잴지
+
 ### V33.800 — 정식 국면 가중 투표(regimeCanon · REGIME_CANON_CFG · 사용자 승인 11/10) · 인버스 차선은 10년 대리 손익 음수 경고에도 사용자 지시로 그대로 유지(실전 성적으로 재판단)
 
 - [위상 안전장치] (11/10 · 에이전트 · 판 번호·_BUILD_VER 는 통합자가 붙임 — 소스 표식 "[위상 안전장치]") ★지수 위상 안전장치 — 하락장 반등일 MELTUP 금지★
