@@ -177,3 +177,13 @@ html #page-detail #luxInfo{background:transparent !important;border:0 !important
 #page-detail .dv3-meta{min-width:0;overflow:hidden}
 @media (max-width:760px){#page-detail .dv3-live b{display:none}#page-detail .dv3-live{padding:5px}html #page-detail .detail-head{grid-template-columns:minmax(0,1fr) auto}#page-detail .dv3-spark{flex:1 1 60px;min-width:50px}}
 @media (max-width:760px){html #page-detail .detail-ext{display:none !important}html #page-detail .detail-px{flex-wrap:wrap;gap:4px 8px}}
+/* ── [UI v3.2] 종목 목록(종목을 열기 전 한국/미국 두 열) — 이름이 "삼…" 로 잘리던 것 ── */
+html #page-detail .detail-browse .wl-name{font-size:15.5px;line-height:1.3;white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;text-overflow:clip;padding-right:24px;color:var(--t1)}
+html #page-detail .detail-browse .wl-sym{font-size:12.5px;font-weight:600;color:var(--dv-t2);white-space:nowrap;overflow:visible}
+html #page-detail .detail-browse .wl-price{font-size:16px;font-variant-numeric:tabular-nums}html #page-detail .detail-browse .wl-day{font-size:13px}
+html #page-detail .detail-browse .wl-ext{font-size:12.5px;color:var(--dv-t2)}html #page-detail .detail-browse .wl-ext .wl-ext-tag{font-size:12px}html #page-detail .detail-browse .wl-pnl{font-size:12.5px}
+html #page-detail .detail-browse .db-head{font-size:15px}html #page-detail .detail-browse .wl-fav{font-size:15px}
+@media (max-width:1180px){html #page-detail .detail-browse .wl-card{grid-template-columns:minmax(0,1fr) 64px minmax(92px,auto);column-gap:10px;padding:12px 14px}html #page-detail .detail-browse .wl-spark{width:64px}}
+@media (min-width:761px) and (max-width:900px){html #page-detail .detail-browse .wl-card{grid-template-columns:minmax(0,1fr) minmax(92px,auto)}html #page-detail .detail-browse .wl-spark{display:none}html #page-detail .detail-browse .wl-price,html #page-detail .detail-browse .wl-day{grid-column:2}}
+html #page-detail .detail-browse .wl-sym{color:var(--dv-t2) !important}
+@media (min-width:761px){html #page-detail #luxInfo .lxs{top:calc(var(--dtop,0px) + var(--dv-hh,0px) + 2px) !important}html #page-detail #luxInfo .lxt{background:#111a2e !important}html[data-theme="light"] #page-detail #luxInfo .lxt{background:#EDF1FA !important}}
