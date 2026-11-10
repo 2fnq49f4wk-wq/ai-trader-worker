@@ -120,3 +120,7 @@ html body #easyDash .ch>b::before,html body .fv-panel-head::before{content:"";di
   html body .fv-deck>.fv-bottom>.fv-panel:first-child{grid-column:span 5;margin:0!important}
   html body .fv-deck>.fv-bottom>.fv-panel:last-child{grid-column:span 7;margin:0!important}
 }
+/* [V33.811] 벤토 배치에서 fv-mid 가 contents 가 되며 TOP MOVERS 칸 높이가 0 으로 접히던 것 — 내용 높이로 */
+.fv-deck .fv-panel>.fv-movers-grid,.fv-deck .fv-panel>.fv-heat,.fv-deck .fv-panel>[class*="-body"]{flex:1 1 auto!important;min-height:0}
+.fv-deck .fv-panel{min-height:120px}
+.fv-deck .fv-panel>.fv-movers-grid{max-height:400px;overflow:auto}
