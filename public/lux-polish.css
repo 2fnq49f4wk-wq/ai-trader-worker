@@ -1,0 +1,87 @@
+/* [UI1 polish] 한 장짜리 덧입힘 시트 — 지우면 옛 모습으로 돌아간다(되돌리기 쉬움).
+   목표: 라이트 = 깨끗한 프리미엄 화이트 · 다크 = 부드러운 차콜(순흑 아님) · 같은 포인트색(#3DD6B5) · 낮은 대비 테두리 · 12~16px 반경 · 겹겹의 옅은 그림자.
+   한국식 상승(빨강)/하락(파랑) 색과 프로(HTS) 밀도는 건드리지 않는다. 이 시트는 반드시 마지막 <link> 로 둔다. */
+:root{--lux-ac:#3DD6B5;--lux-r:18px;--lux-r-s:12px;--lux-grad:linear-gradient(135deg,#4f8cff 0%,#6a5cff 100%);--lux-ease:cubic-bezier(.22,.9,.3,1)}
+
+/* ── 다크: 부드러운 차콜 ── */
+html:root:not([data-theme="light"]){
+  --bg:#11141b;--s1:#171b24;--s2:#1e232d;--s3:#262c38;
+  --bd:#2a3040;--bd2:#222836;
+  --t1:#eceff5;--t2:#a8b0c0;--t3:#7a8294;
+  --panel:#171b24;--elev:#1e232d;--border:#2a3040;--text:#eceff5;--dim:#a8b0c0;--faint:#4a5264;
+  --lux-sh:0 1px 0 rgba(255,255,255,.04) inset,0 10px 30px -14px rgba(0,0,0,.6);
+  --lux-glass:rgba(23,27,36,.62);--lux-glass-bd:rgba(255,255,255,.08);
+  --lux-pill:var(--lux-grad);--lux-pill-bd:rgba(255,255,255,.18);--lux-on:#fff;--lux-glow:0 6px 22px -4px rgba(95,110,255,.55);
+}
+html:root:not([data-theme="light"]) body{background:var(--bg)}
+html.lux-cssw:not([data-theme="light"]),html.lux-cssw:not([data-theme="light"]) body{background:#11141b}
+html.lux-cssw:not([data-theme="light"]) .sidebar{background:var(--lux-glass);-webkit-backdrop-filter:blur(18px) saturate(160%);backdrop-filter:blur(18px) saturate(160%);border-right:1px solid var(--lux-glass-bd);box-shadow:10px 0 40px -24px rgba(0,0,0,.7)}
+/* ── 라이트: 깨끗한 프리미엄 화이트 ── */
+html[data-theme="light"]{
+  --bg:#f4f7fe;--s1:#ffffff;--s2:#f1f4fb;--s3:#e5eaf5;
+  --bd:#e0e6f2;--bd2:#e9eef8;
+  --t1:#1b2559;--t2:#4a5578;--t3:#707a9a;
+  --panel:#ffffff;--elev:#f1f4fb;--border:#e0e6f2;--text:#1b2559;--dim:#4a5578;--faint:#707a9a;
+  --lux-sh:0 1px 2px rgba(60,80,150,.05),0 18px 40px -18px rgba(80,100,180,.22);
+  --lux-glass:rgba(255,255,255,.66);--lux-glass-bd:rgba(255,255,255,.9);
+  --lux-pill:var(--lux-grad);--lux-pill-bd:rgba(255,255,255,.5);--lux-on:#fff;--lux-glow:0 8px 22px -6px rgba(90,100,255,.5);
+  background:#f4f7fe;
+}
+html[data-theme="light"] body{background:var(--bg)}
+html[data-theme="light"] .sidebar{background:var(--lux-glass);-webkit-backdrop-filter:blur(18px) saturate(170%);backdrop-filter:blur(18px) saturate(170%);border-right:1px solid var(--lux-glass-bd);box-shadow:12px 0 40px -26px rgba(80,100,180,.28)}
+
+/* ── 카드·패널 공통: 반경 · 옅은 테두리 · 겹겹 그림자 ── */
+.idx-card,.wl-pane,.fv-panel,.pipeline-grid>*,.m-drawer .m-dr-item{border-radius:var(--lux-r)}
+.idx-card,.wl-pane,.fv-panel{border-color:var(--bd2);box-shadow:var(--lux-sh);background-color:var(--s1);transition:box-shadow .25s var(--lux-ease),transform .25s var(--lux-ease)}
+@media (hover:hover){.idx-card:hover,.fv-panel:hover{transform:translateY(-2px)}html[data-theme="light"] .idx-card:hover,html[data-theme="light"] .fv-panel:hover{box-shadow:0 2px 4px rgba(60,80,150,.06),0 24px 48px -18px rgba(80,100,180,.30)}.btn:hover,.llm-btn:hover{transform:translateY(-1px)}}
+.btn,.llm-btn{transition:transform .2s var(--lux-ease),box-shadow .2s,background .2s,color .2s}
+.btn.primary,.btn-primary,.llm-btn.primary{background:var(--lux-grad);color:#fff;border-color:transparent;box-shadow:var(--lux-glow)}
+.idx-card{backdrop-filter:none}
+html[data-theme="light"] .idx-card,html[data-theme="light"] .wl-pane{box-shadow:var(--lux-sh)}
+.btn,.llm-btn{border-radius:999px}
+.m-appbar,.m-tabbar{border-color:var(--bd2)}
+html.lux-ind .m-tabbar,html.lux-ind.lux-dz .m-tabbar{background:var(--lux-glass);-webkit-backdrop-filter:blur(20px) saturate(170%);backdrop-filter:blur(20px) saturate(170%);border-top:1px solid var(--lux-glass-bd);box-shadow:0 -10px 30px -18px rgba(40,60,140,.35)}
+html.lux-ind .m-appbar{background:var(--lux-glass);-webkit-backdrop-filter:blur(20px) saturate(170%);backdrop-filter:blur(20px) saturate(170%)}
+/* 글자 무게 정리 — 숫자는 또렷하게, 라벨은 가볍게 */
+.nav-item-label{font-weight:500;letter-spacing:.2px;text-transform:none}
+.nav-item{text-transform:none}
+.idx-price,.port-total,.topbar-value{letter-spacing:-.3px}
+
+/* ── 쉬운 대시보드(easy-dash) 토큰 — 스스로 박은 --e-* 를 id 로 이긴다 ── */
+html body #easyDash{--e-bg:#11141b;--e-c:rgba(27,32,43,.78);--e-c2:#232a37;--e-bd:rgba(255,255,255,.07);--e-t:#eceff5;--e-m:#a8b0c0;--e-mm:#7a8294;--e-acc:#3DD6B5}
+html[data-theme="light"] body #easyDash{--e-bg:#f4f7fe;--e-c:#ffffff;--e-c2:#f1f4fb;--e-bd:rgba(60,80,150,.08);--e-t:#1b2559;--e-m:#4a5578;--e-mm:#707a9a;--e-acc:#0e9f7e}
+html body #easyDash .c,html body #easyDash .ix{-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+@media (hover:hover){html body #easyDash .c,html body #easyDash .ix{transition:transform .25s var(--lux-ease),box-shadow .25s}html body #easyDash .ix:hover{transform:translateY(-2px)}}
+html body #easyDash .c,html body #easyDash .ix,html body #easyDash .bri{border-radius:var(--lux-r);box-shadow:var(--lux-sh)}
+html body #easyDash .olc{border-radius:14px}
+html body #easyDash .pro,html body #easyDash .seg{border-radius:999px}
+
+/* ── 왼쪽 사이드바 · 폰 하단 탭: 미끄러지는 알약 표시기 (JS 가 html.lux-ind 를 켜면 적용) ── */
+.lux-pill{position:absolute;left:0;top:0;width:0;height:0;border-radius:14px;pointer-events:none;z-index:0;opacity:0;
+  background:var(--lux-pill);box-shadow:var(--lux-glow),inset 0 0 0 1px var(--lux-pill-bd);will-change:transform,width,height}
+.lux-pill.on{opacity:1}
+html:not(.lux-anime) .lux-pill{transition:transform .5s cubic-bezier(.34,1.45,.5,1),width .4s var(--lux-ease),height .4s var(--lux-ease),opacity .2s}
+.sb-nav{position:relative}
+html.lux-ind .sb-nav>.nav-item{position:relative;z-index:1}
+html.lux-ind .sb-nav .nav-item.active,html.lux-ind.lux-cssw:not([data-theme="light"]) .sidebar .sb-nav .nav-item.active,html.lux-ind[data-theme="light"] .sb-nav .nav-item.active{background:transparent;box-shadow:none;border-left-color:transparent;color:var(--lux-on)}
+html.lux-ind .sb-nav .nav-item.active::before{display:none}
+html.lux-ind .sb-nav .nav-item.active .nav-item-label,html.lux-ind.lux-cssw:not([data-theme="light"]) .sidebar .nav-item.active .nav-item-label{color:var(--lux-on);font-weight:700}
+html.lux-ind .sb-nav .nav-item.active .nav-item-icon,html.lux-ind.lux-cssw:not([data-theme="light"]) .sidebar .nav-item.active .nav-item-icon{background:transparent;box-shadow:none;color:var(--lux-on)}
+html.lux-ind .sb-nav .nav-item,html.lux-ind .sb-nav .nav-item-icon,html.lux-ind .sb-nav .nav-item-label{transition:color .25s,font-weight .25s}
+html.lux-ind .sb-nav .nav-item{border-radius:12px}
+/* 폰 하단 탭 */
+html.lux-ind .m-tabbar{position:fixed}
+html.lux-ind .m-tab{position:relative;z-index:1}
+html.lux-ind .m-tab.active .ic,html[data-theme="light"].lux-ind .m-tab.active .ic{background:transparent!important;color:var(--lux-on);filter:none}
+html.lux-ind .m-tab.active .tx{color:var(--lux-on);font-weight:700}
+html.lux-ind .m-tab .tx{transition:opacity .25s,color .25s}
+html.lux-ind .m-tab:not(.active) .tx{opacity:.78}
+html.lux-ind .m-tab .ic{will-change:transform}
+/* 태블릿 가로 스크롤 사이드바(≤900px)에서는 표시기를 쓰지 않고 밑줄 그대로 */
+@media (max-width:900px){.sb-nav>.lux-pill{display:none}html.lux-ind .sb-nav .nav-item.active{border-bottom-color:var(--lux-on)}}
+
+/* ── 페이지 전환 · 카드 등장 · 숫자: 모션을 줄이면 전부 끈다 ── */
+@media (prefers-reduced-motion:reduce){
+  .lux-pill{transition:none!important}
+  .idx-card,.wl-pane,.fv-panel{transition:none}
+}

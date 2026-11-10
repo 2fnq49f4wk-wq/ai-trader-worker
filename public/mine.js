@@ -391,6 +391,10 @@
       "#luxConsent{position:fixed;left:12px;right:12px;bottom:calc(80px + env(safe-area-inset-bottom));z-index:10040;max-width:560px;margin:0 auto;background:#161A21;color:#EEF1F5;border:1px solid #2E3542;border-radius:16px;padding:14px 16px;box-shadow:0 14px 40px rgba(0,0,0,.4);font-size:13.5px;line-height:1.55}#luxConsent p{margin:0 0 10px}#luxConsent a{color:#7CC4FF}#luxConsent .cb{display:flex;gap:8px;justify-content:flex-end}#luxConsent button{min-height:44px;padding:0 16px;border-radius:12px;border:1px solid #3A4250;background:transparent;color:inherit;font:inherit;font-weight:600;cursor:pointer}#luxConsent button.pri{background:#EEF1F5;color:#0D1014;border-color:#EEF1F5}",
       "html[data-theme=light] #luxConsent{background:#FFFFFF;color:#101828;border-color:#DCE1E8;box-shadow:0 14px 40px rgba(16,24,40,.18)}html[data-theme=light] #luxConsent a{color:#1B4FB5}html[data-theme=light] #luxConsent button{border-color:#D0D5DD}html[data-theme=light] #luxConsent button.pri{background:#101828;color:#fff;border-color:#101828}",
       "#luxGate .itb{color:#3DD6B5;font-size:15px;letter-spacing:.04em}#luxGate .itl{list-style:none;padding:0;margin:14px 0 18px;display:flex;flex-direction:column;gap:10px}#luxGate .itl li{display:flex;flex-direction:column;padding:12px 14px;border-radius:12px;background:rgba(61,214,181,.07);border:1px solid rgba(61,214,181,.18)}#luxGate .itl b{font-size:15px}#luxGate .itl span{font-size:12.5px;opacity:.7;margin-top:2px}#luxGate .itr .p3{margin-top:8px}#luxGate .ag.one{margin:4px 0 0}#luxGate .agd{font-size:12px;color:#98A2B3;margin:2px 0 0}#luxGate .agd summary{cursor:pointer}#luxGate .agd .agt{margin-top:6px}#luxGate .agf{border:1px solid #2E3542;border-radius:14px;padding:10px 12px;margin:0;display:flex;flex-direction:column;gap:10px}#luxGate .agf legend{font-size:12.5px;color:#98A2B3;padding:0 6px}#luxGate .ag.all{padding-bottom:8px;border-bottom:1px solid #2E3542}#luxGate .agt{font-size:12px;line-height:1.6;color:#C7CDD6;background:rgba(127,137,155,.12);border-radius:10px;padding:8px 10px}html[data-theme=light] #luxGate .agf,html[data-theme=light] #luxGate .ag.all{border-color:#DCE1E8}html[data-theme=light] #luxGate .agt{color:#344054;background:#F2F4F7}",
+      "#luxGate.itrw{background:radial-gradient(90% 55% at 15% 0%,rgba(61,214,181,.22),transparent 60%),radial-gradient(80% 50% at 95% 25%,rgba(106,92,255,.26),transparent 62%),linear-gradient(180deg,#0b0f17,#0e1320 60%,#0a0d14)}#luxGate .itr h1{font-size:32px;letter-spacing:-.02em;text-transform:none;font-weight:800;animation:gAdUp .8s cubic-bezier(.22,.9,.3,1) both}#luxGate .itr .lead{opacity:.75}",
+      "#luxGate .ads{position:relative;margin:16px 0 18px;min-height:178px;border-radius:20px;padding:16px 16px 30px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.11);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);box-shadow:0 20px 44px -22px rgba(0,0,0,.6);overflow:hidden}#luxGate .ad{display:none;flex-direction:column;gap:4px}#luxGate .ad.on{display:flex}#luxGate .ad .tg{align-self:flex-start;font-size:11px;font-weight:700;letter-spacing:.08em;color:#04110D;background:#3DD6B5;border-radius:999px;padding:3px 10px;margin-bottom:4px}#luxGate .ad b{font-size:18px;letter-spacing:-.01em}#luxGate .ad .sb{font-size:12.5px;opacity:.7}#luxGate .ad .mv{margin-top:10px;display:flex;flex-direction:column;gap:6px;font-size:13px}#luxGate .ad .mv svg{width:100%;height:40px}#luxGate .ad .mv em{font-style:normal;opacity:.85}#luxGate .ad ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}#luxGate .ad li{display:flex;gap:8px;align-items:center;background:rgba(255,255,255,.07);border-radius:10px;padding:7px 10px}#luxGate .ad li i{font-style:normal;font-weight:700;color:#3DD6B5;min-width:28px}#luxGate .ad li u{text-decoration:none;margin-left:auto;font-weight:700;color:#F04452}",
+      "#luxGate .dots{position:absolute;left:0;right:0;bottom:8px;display:flex;justify-content:center;gap:6px}#luxGate .dt{width:22px;height:22px;padding:0;border:0;background:transparent;position:relative}#luxGate .dt::after{content:'';position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px;border-radius:99px;background:rgba(255,255,255,.3);transition:width .3s,margin .3s,background .3s}#luxGate .dt.on::after{width:18px;margin-left:-9px;background:#3DD6B5}@keyframes gAdUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}@media (prefers-reduced-motion:reduce){#luxGate .itr h1{animation:none}}",
+      "html[data-theme=light] #luxGate.itrw{background:radial-gradient(90% 55% at 15% 0%,rgba(61,214,181,.2),transparent 60%),radial-gradient(80% 50% at 95% 25%,rgba(106,92,255,.16),transparent 62%),linear-gradient(180deg,#f4f7fe,#e9effc)}html[data-theme=light] #luxGate .ads{background:rgba(255,255,255,.75);border-color:#fff;box-shadow:0 18px 40px -22px rgba(80,100,180,.35)}html[data-theme=light] #luxGate .ad li{background:#F1F4FB}",
       "#mineRoot .kvl{display:flex;flex-direction:column}#mineRoot .kvl div{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid var(--m-line);font-size:13.5px}#mineRoot .kvl div:first-child{border-top:0}#mineRoot .kvl span{color:var(--m-mute);flex:0 0 auto}#mineRoot .kvl b{font-weight:600;text-align:right}",
       // [V33.732] 비밀번호 보기 · 언어 선택
       ".pwi{position:relative;display:flex}.pwi input{flex:1;min-width:0;padding-right:52px!important}.pwi .eye{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:44px;height:44px;border:0;border-radius:10px;background:transparent;color:#98A2B3;cursor:pointer;display:flex;align-items:center;justify-content:center}.pwi .eye.on{color:#3DD6B5}",
@@ -979,22 +983,39 @@
     css();
     var m = mode || (authNick() || prof.nick ? "login" : "signup"), busy = false;
     var w = document.createElement("div"); w.id = "luxGate"; w.setAttribute("role", "dialog"); w.setAttribute("aria-modal", "true"); w.setAttribute("aria-label", "LUX-INV 로그인");
-    var intro = m === "signup";   // [V33.796] 가입 창 앞 소개 한 장(사용자 11/9 "회원가입 표시 띄우기 전에 저런 거")
+    var intro = m === "signup" && !arguments[2];   // [V33.796] 가입 창 앞 소개 한 장(사용자 11/9 "회원가입 표시 띄우기 전에 저런 거")
+    var adT = 0, adI = 0;
+    var adGo = function (n) {
+      var box = $("gAds"); if (!box) return; var ads = box.querySelectorAll(".ad"), dts = box.querySelectorAll(".dt"); adI = (n + ads.length) % ads.length;
+      for (var k = 0; k < ads.length; k++) { ads[k].classList.toggle("on", k === adI); dts[k].classList.toggle("on", k === adI); }
+      var a = window.anime, cur = ads[adI];
+      if (a && !(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches)) a({ targets: cur.children, opacity: [0, 1], translateY: [10, 0], delay: a.stagger(70), duration: 480, easing: "easeOutCubic" });
+    };
+    var adsRun = function () {
+      clearInterval(adT); adI = 0;
+      if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      adT = setInterval(function () { if (!w.isConnected || !$("gAds")) { clearInterval(adT); return; } adGo(adI + 1); }, 3200);
+    };
     var paint = function () {
+      clearInterval(adT);
       var su = m === "signup";
+      w.classList.toggle("itrw", su && intro);
       if (su && intro) {
         var app = !!(window.__luxInstall && !(window.__luxIsApp && window.__luxIsApp()));
         w.innerHTML = '<div class="in itr"><div class="hd"><b class="itb">LUX-INV</b><button type="button" class="x" id="gClose" aria-label="닫기">✕</button></div>' +
           '<h1>주식이 어려워?<br>AI가 대신 보고 설명해 줌</h1><p class="lead">고등학생이 만든 AI 모의투자 · 진짜 돈 아님 · 무료</p>' +
-          '<ul class="itl"><li><b>종목 누르면 AI가 말로 설명</b><span>지금 흐름 · 넘어야 할 가격 · 시나리오</span></li>' +
-          '<li><b>AI 매매를 실시간으로 공개</b><span>AI가 뭘 왜 샀는지 그대로 보임</span></li>' +
-          '<li><b>시작금 $10,000 · ₩1,000만</b><span>한국·미국 모의계좌 바로 생김</span></li>' +
-          '<li><b>실시간 수익률 순위</b><span>친구랑 바로 비교</span></li></ul>' +
+          '<div class="ads" id="gAds" aria-live="polite">' + [
+            ['AI 설명', '종목 누르면 AI가 말로 설명', '지금 흐름 · 넘어야 할 가격 · 시나리오', '<svg viewBox="0 0 120 40" preserveAspectRatio="none"><path d="M0 32 C15 30 22 18 40 21 S70 6 85 11 S110 3 120 5" fill="none" stroke="#3DD6B5" stroke-width="2.2" stroke-linecap="round"/></svg><em>"지금은 오르는 흐름이에요"</em>'],
+            ['AI 매매 공개', 'AI가 뭘 왜 샀는지 그대로 공개', '실시간 · 숨김 없음 · 시작금 $10,000 · ₩1,000만', '<ol><li><i>매수</i>NVDA <u>+2.1%</u></li><li><i>매도</i>삼성전자 <u>+1.4%</u></li></ol>'],
+            ['순위', '실시간 수익률 순위', '친구랑 바로 비교 · 닉네임만 있으면 끝', '<ol><li><i>1</i>AI봇 <u>+8.2%</u></li><li><i>2</i>나 <u>+3.5%</u></li></ol>']
+          ].map(function (a, i) { return '<div class="ad' + (i ? "" : " on") + '"><span class="tg">' + a[0] + '</span><b>' + a[1] + '</b><span class="sb">' + a[2] + '</span><div class="mv">' + a[3] + '</div></div>'; }).join("") +
+          '<div class="dots" role="tablist" aria-label="소개 넘기기"><button type="button" class="dt on" data-ad="0" aria-label="1번째"></button><button type="button" class="dt" data-ad="1" aria-label="2번째"></button><button type="button" class="dt" data-ad="2" aria-label="3번째"></button></div></div>' +
           '<button type="button" class="p1" id="gStart">10초 만에 시작하기</button>' +
           '<button type="button" class="p3" data-m="login">이미 계정 있음 · 로그인</button>' +
           (app ? '<button type="button" class="p3" id="gApp">⇩ 홈 화면에 앱으로 설치</button>' : '') +
           '<button type="button" class="p3" id="gGuest">나중에 · 대시보드 구경하기</button>' +
           '<p class="fine">이메일·전화번호 안 받음 · 닉네임 + 비밀번호만</p></div>';
+        adsRun();
         return;
       }
       w.innerHTML = '<div class="in"><div class="hd"><div class="lg"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3DD6B5" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 2v20M2 12h20M5 5l14 14M19 5L5 19"></path></svg></div>' +
@@ -1011,10 +1032,11 @@
       var nk = $("gNick"); if (nk) setTimeout(function () { try { (nk.value ? $("gPw") : nk).focus(); } catch (e) {} }, 30);
     };
     var err = function (t) { var e = $("gErr"); if (e) e.textContent = t || ""; };
-    var done = function (go) { w.remove(); if (go && typeof window.showPage === "function") window.showPage(target || "mine"); };
+    var done = function (go) { clearInterval(adT); w.remove(); if (go && typeof window.showPage === "function") window.showPage(target || "mine"); };
     w.addEventListener("click", function (ev) {
       if (ev.target === w) { done(false); return; }
       var b = ev.target.closest("button"); if (!b) return;
+      if (b.dataset.ad) { adGo(+b.dataset.ad); adsRun(); return; }
       if (b.id === "gStart") { intro = false; paint(); return; }
       if (b.id === "gApp") { if (window.__luxInstall) window.__luxInstall(); return; }
       if (b.dataset.m) { m = b.dataset.m; intro = false; paint(); return; }

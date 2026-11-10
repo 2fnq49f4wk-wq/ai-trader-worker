@@ -12,6 +12,11 @@
 
 ## Current handoff
 
+### [UI1] 테마 폴리시 · anime.js 모션 · 첫 방문 소개 배너 · 가입 홍보 슬라이드 (에이전트 · 푸시 안 함 · _BUILD_VER 안 올림)
+- 새 파일: public/lux-polish.css(덧입힘 한 장 · 지우면 복구) · public/lux-motion.js(미끄럼 알약 표시기 사이드바/.m-tabbar · 페이지 전환 · 카드 등장 · 카운트업) · public/vendor/anime.min.js(v3.2.2 로컬).
+- index.html: 머리 판정 스크립트(첫 방문·비로그인·앱 아님·봇 아님·?intro=0 아님, ?intro=hero 강제) + body 첫머리 #luxHero 인라인 배너 + 링크 2줄. mine.js: ask() 3번째 인자(arguments[2])=소개 건너뛰기 · 가입 소개 3장 자동 회전 슬라이드(gStart·gApp·gGuest·data-m 유지).
+- 통합자: 새 파일 ?v= 는 판 올릴 때 같이(현재 33.801 로 적어 둠). 다음: 라이브 확인 · easy-dash 카운트업 실데이터 확인.
+
 ### V33.801 — 지수 위상 안전장치(regimePhase · 하락장 반등일 MELTUP 불가) · 게이트 check-regime-phase-sanity · 다음 확인: pb_regime 나이를 ts 대신 day 로 잴지
 
 ### V33.800 — 정식 국면 가중 투표(regimeCanon · REGIME_CANON_CFG · 사용자 승인 11/10) · 인버스 차선은 10년 대리 손익 음수 경고에도 사용자 지시로 그대로 유지(실전 성적으로 재판단)
