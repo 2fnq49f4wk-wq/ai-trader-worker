@@ -11040,6 +11040,15 @@ const SCALP_BAR_MIN = 1;                       // 단타 기준봉(분). 5 로 �
 const SCALP_SESSION_MIN = 390;                 // 정규장 길이(분) — 미국 6.5시간 기준
 const SCALP_MOM_MIN = 15;                      // 최근 모멘텀 창(분)
 const SCALP_VWAPSLOPE_MIN = 30;                // VWAP 기울기 창(분)
+/* [KR 규칙 단타 퇴출] 한국 평시 규칙 단타(SC_VWAP · SC_PULLBACK · SC_MOMENTUM · SC_VBURST)는 저장 cfg 의 scalpRules.usOnly 와 무관하게 끈다.
+   근거(11/9): 원장 kr:core:RULE:SCALP 40건(6/9~7/1) 승률 35% · PF 0.397 · 평균 −0.49%(비용 후). 손실 원인 = 40분 시간컷(평균 −0.6%)과 1.2~2.2% 손절이
+     정상 흔들림에 털림 + 왕복 비용 ~0.21%(매도세 0.18 + 수수료)가 +1.2% 익절의 1/6 을 먹음. 일봉 추세 필터를 걷어도(n=530) PF 0.60.
+   재현 백테스트(네이버 1분봉 50종목 · 11/2~11/9 · 비용 0.23%): 옛 규칙 3일 학습 PF 1.21(n9) → 3일 홀드아웃 PF 0.00(n5) — 표본 자체가 거의 안 생김.
+     홀드아웃 PF≥1.1 을 넘은 변형(손절 2% · 시간컷 없음 · 일봉 필터 없음)은 수익의 대부분이 11/6 하루(갭하락 −9% 후 장중 반등 · 41건 95%)였고
+     규칙의 핵심인 일봉 추세 필터를 켜면 6일 2건 — 한 주 · 한 국면이라 실전 채택 근거 부족. 폭락 반등·인버스는 PANIC 차선(PF 1.6)이 이미 맡는다.
+   되살리려면: 다른 국면을 포함한 4주+ 분봉 홀드아웃에서 PF≥1.1 을 다시 보이고 retired=false. 패닉 인버스·폭등 레버리지(SC_PANIC_INV/SC_SURGE_LEV)와 AI 단타는 이 퇴출과 무관. */
+const KR_RULE_SCALP_RETIRED = { retired: true, since: "2026-11-09", livePf: 0.397, liveN: 40, holdoutPf: 0, holdoutN: 5,
+  why: "원장 40건 PF 0.40 · 분봉 홀드아웃 PF 0(n5) · 통과 변형은 하루 반등 의존" };
 function _barsFor(minutes) {                   // '분' 을 봉 수로. 최소 1봉은 보장한다.
   return Math.max(1, Math.round(_num(minutes, 0) / SCALP_BAR_MIN));
 }
@@ -27561,7 +27570,7 @@ async function runTradingCycle(env) {
           //   KR 단타가 죽던 원인(얇은 호가·넓은 스프레드)을 진입 조건 자체로 걸러낸다.
           //   → 시장 차단은 '규칙 신호'에만 적용하고, AI 단타는 KR 에서도 판단하게 한다.
           const _srUsOnly = (mcfg.scalpRules && mcfg.scalpRules.usOnly !== undefined) ? mcfg.scalpRules.usOnly : true;
-          const _ruleScalpOk = (!_srUsOnly) || market === "us";
+          const _ruleScalpOk = market === "us" || (!_srUsOnly && !KR_RULE_SCALP_RETIRED.retired);   // [KR 규칙 단타 퇴출] cfg 로 다시 열 수 없음
           const _aiScalpOk = !!((typeof AI_PARAMS !== "undefined") && AI_PARAMS.aiScalp &&
                                 (AI_PARAMS.aiScalp.enabled || AI_PARAMS.aiScalp.vetoWhenTrusted !== false));
           const _scalpMarketOk = _ruleScalpOk || _aiScalpOk;
@@ -31169,7 +31178,7 @@ async function handleRequest(request, env, ctx, _inner) {
         let _pbReg = null;
         let _laneV = null;   // [V33.797] 차선 성적(사이클이 30분에 1행) + 차선 규칙 — 같은 질의에 끼움(추가 쿼리 0)
         try { const _pss = await getStates(env.DB, ["mkt_phase", "pb_regime", "mkt_context", "lane_view"]); const _ps = _pss["mkt_phase"]; _pbReg = _pss["pb_regime"] || null;
-          _laneV = { view: _pss["lane_view"] || null, probe: PROBE_LANE, adapt: LANE_ADAPT, inv: { inst: INV_LANE.inst, budgetFrac: INV_LANE.budgetFrac, stopPct: INV_LANE.stopPct, tpPct: INV_LANE.tpPct, maxHoldDays: INV_LANE.maxHoldDays, maxPerDay: INV_LANE.maxPerDay } };
+          _laneV = { view: _pss["lane_view"] || null, probe: PROBE_LANE, adapt: LANE_ADAPT, krScalp: KR_RULE_SCALP_RETIRED, inv: { inst: INV_LANE.inst, budgetFrac: INV_LANE.budgetFrac, stopPct: INV_LANE.stopPct, tpPct: INV_LANE.tpPct, maxHoldDays: INV_LANE.maxHoldDays, maxPerDay: INV_LANE.maxPerDay } };
           const _mcx = _pss["mkt_context"] || null, _pr0 = _pbReg || {};
           if (_ps) _phase = { us: _ps.us, kr: _ps.kr, erUs: _ps.erUs, erKr: _ps.erKr,
           dayUs: _ps.dayUs, dayKr: _ps.dayKr, r5Us: _ps.r5Us, r5Kr: _ps.r5Kr, ts: _ps.ts,

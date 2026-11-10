@@ -16521,9 +16521,9 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
       { k: 'TR_RS_LEADER',   label: 'RS LEADER (주도주)',   always: true },
       { k: 'TR_VISION_UP',   label: 'VISION (AI차트)' },
       { k: 'SN_RSI2',        label: 'SNAP RSI2 (스냅백)' },
-      { k: 'SC_VWAP',        label: 'SCALP VWAP' },
+      { k: 'SC_VWAP',        label: 'SCALP VWAP (KR 퇴출)' },
       { k: 'SC_MOMENTUM',    label: 'SCALP MOMENTUM' },
-      { k: 'SC_PULLBACK',    label: 'SCALP PULLBACK' },
+      { k: 'SC_PULLBACK',    label: 'SCALP PULLBACK (KR 퇴출)' },
       { k: 'SC_PANIC_INV',   label: 'PANIC INVERSE' },
       { k: 'SC_PANIC_BOUNCE',label: 'PANIC BOUNCE' }
     ].filter(function(t){
@@ -20738,6 +20738,9 @@ setTimeout(function(){
         return col('<b>인버스 '+Math.round(bf*100)+'%</b>', C.amb)+' <span class="sub">'+ins.join(' · ')+' · 하루 '+(iv.maxPerDay||2)+'건 · 손절/익절/최대보유 레버리지별</span>';
       };
       rows.push(['US 배분', route(ph.canonUs,'us')]); rows.push(['KR 배분', route(ph.canonKr,'kr')]);
+      /* [KR 규칙 단타 퇴출] 한국 평시 규칙 단타(VWAP·눌림·모멘텀·거래량폭증)는 퇴출 — 원장 성적과 분봉 홀드아웃 근거 표시 */
+      var ks = LN.krScalp, kst = lv['kr:core:RULE:SCALP'];
+      if(ks && ks.retired) rows.push(['KR 규칙 단타', col('<b>퇴출</b>', C.neg)+' <span class="sub">'+(kst&&kst.n?'원장 '+kst.n+'건 PF '+kst.pf+' · 평균 '+kst.mean+'%':'원장 '+ks.liveN+'건 PF '+ks.livePf)+' · 분봉 홀드아웃 PF '+ks.holdoutPf+'(n'+ks.holdoutN+') · '+ks.since+' 부터 · 패닉 인버스·AI 단타는 별도</span>']);
       var pr = LN.probe || {};
       h += sec('매매 차선 (맞으면서 배운다)', LN.view && LN.view.ts ? '<span class="sub">'+Math.floor((Date.now()-LN.view.ts)/60000)+'분 전</span>' : null)
         + '<div class="sub" style="margin:2px 0 6px;">실적 관문이 막은 매수는 시험 차선으로 ×'+(pr.mult||0.3)+' 크기 · 한 종목 ≤'+Math.round((pr.maxPosFrac||0.05)*100)+'% · 전체 ≤'+Math.round((pr.maxTotalFrac||0.2)*100)+'% · 하루 '+(pr.maxPerDay||4)+'건. '+ad.minN+'건 이상 PF<'+ad.badPf+' 인 차선·신호는 크기를 줄인다(막지 않음).</div>'
