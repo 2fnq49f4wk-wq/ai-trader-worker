@@ -21,7 +21,7 @@
 
 ### V33.806 — 전문가 지수·TOP MOVERS 빠른 첫 표시(R2 pub/f/dash_top.js 28KB · __earlyTop 부분 렌더 · 확인 window.__fvTopAt)
 ### [UI4] 남색·흰·검정 팔레트 · 슬림 · 액체 유리+ · 사이드바 148px 고정 · AI 작동원리 유리 (에이전트 · 푸시 안 함 · _BUILD_VER 안 올림)
-- 사이드바 버그 원인 = detail-v3b.css 의 html:has(#page-detail.active) .sidebar/.sb-* 규칙(종목 상세일 때만 글자 12.5px·색 변경) → 전부 삭제. 이제 어느 화면에서나 148px 동일(실측). 새 시트 public/lux-navy.css(사이드바 압축·유리 하이라이트·남색 알약) · public/lux-nnviz.css(AI 작동원리 유리, 구조 그대로). 둘 다 index.html 에 lux-glass.css 뒤 링크. 되돌리기 = 두 링크 제거.
+- 사이드바 버그 원인 = detail-v3b.css 의 html:has(#page-detail.active) .sidebar/.sb-* 규칙(종목 상세일 때만 글자 12.5px·색 변경) → 전부 삭제. 이제 어느 화면에서나 148px 동일(실측). 새 시트 public/lux-navy.css(사이드바 압축·유리 하이라이트·남색 알약) · AI 작동원리 유리 규칙(구조 그대로)도 lux-navy.css 뒤쪽에 합침. index.html 에 lux-glass.css 뒤 링크 1줄. 되돌리기 = 링크 제거.
 - 팔레트: lux-polish/lux-glass 토큰을 남색으로(보라·청록 제거), mine.js·easy-dash.js 의 청록 #3DD6B5 → 남색 #9DB4E8. 반경 24→18/20→13 등 슬림화. 시세색·히트맵·상태색 유지.
 - 통합자: 새 CSS ?v= 는 판 올릴 때 같이.
 
