@@ -124,3 +124,27 @@ html body #easyDash .ch>b::before,html body .fv-panel-head::before{content:"";di
 .fv-deck .fv-panel>.fv-movers-grid,.fv-deck .fv-panel>.fv-heat,.fv-deck .fv-panel>[class*="-body"]{flex:1 1 auto!important;min-height:0}
 .fv-deck .fv-panel{min-height:120px}
 .fv-deck .fv-panel>.fv-movers-grid{max-height:400px;overflow:auto}
+/* [V33.812] 대시보드 맨 위 상태 줄(사이드바에서 옮긴 엔진·장 상태·도구) · 사이드바는 로고+메뉴만 */
+.lux-topbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin:0 0 10px;padding:7px 12px;border-radius:14px;
+  background:var(--gl-card,rgba(16,24,44,.55));border:1px solid rgba(255,255,255,.08);box-shadow:0 8px 24px -16px rgba(0,10,40,.6);font-size:12px}
+html[data-theme="light"] .lux-topbar{background:rgba(255,255,255,.72);border-color:rgba(20,40,90,.10)}
+.lux-topbar .lt-status{display:flex!important;flex-wrap:wrap;align-items:center;gap:4px 14px;padding:0!important;margin:0!important;border:0!important;background:none!important;flex:1 1 auto}
+.lux-topbar .lt-status>*{margin:0!important;padding:0!important;white-space:nowrap}
+.lux-topbar .lt-status .sb-market{display:flex;gap:12px}
+.lux-topbar .lt-status *{font-size:12px!important;line-height:1.4!important}
+.lux-topbar .lt-actions{display:flex!important;align-items:center;gap:6px;margin:0!important;padding:0!important;flex:0 0 auto;flex-wrap:wrap}
+.lux-topbar .lt-actions .sb-grid{display:flex!important;gap:6px}
+.lux-topbar .lt-actions .sb-auto{display:flex;align-items:center;gap:6px;padding:3px 10px!important;border-radius:999px;font-size:12px}
+.lux-topbar .lt-actions .sb-auto-sub{display:none!important}
+.lux-topbar .lt-actions :is(.sb-btn,.sb-theme-btn){padding:4px 10px!important;font-size:11.5px!important;border-radius:999px!important;width:auto!important;min-height:0!important;white-space:nowrap}
+@media (max-width:760px){.lux-topbar{display:none!important}}
+@media (min-width:761px){
+  html body nav.sidebar.sidebar{height:auto!important;align-self:flex-start!important}
+  html body nav.sidebar.sidebar .sb-nav{margin-bottom:4px!important}
+}
+html.lux-easy body #page-dashboard>#luxTopbar#luxTopbar.lux-topbar{display:flex!important}
+.lux-topbar .lt-status{flex-direction:row!important;justify-content:flex-start!important;text-align:left!important}
+.lux-topbar .lt-status>*,.lux-topbar .lt-status .sb-market,.lux-topbar .lt-status .sb-market-row,.lux-topbar .lt-status .sb-engine,.lux-topbar .lt-status .sb-live,.lux-topbar .lt-status .sb-train,.lux-topbar .lt-status .sb-pnl{display:inline-flex!important;align-items:center;gap:5px;width:auto!important;text-align:left!important;flex:0 0 auto!important}
+.lux-topbar .lt-actions{flex-direction:row!important}
+.lux-topbar .lt-actions>*{flex:0 0 auto!important}
+.lux-topbar .lt-status .sb-market{flex-direction:row!important;flex-wrap:nowrap!important;gap:12px!important}
