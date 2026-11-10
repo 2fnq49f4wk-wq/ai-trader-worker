@@ -12,6 +12,8 @@
 
 ## Current handoff
 
+### V33.804 — 종목 상세 v3.1 배포(detail-v3.css/js · detail-v3b.css 가독성 · 컴팩트 머리 64px · 패드는 차트 아래 AI 분석). 남은 것: 영어 문구 일부 · 차트 눈금 글자(축소 렌더)
+
 ### V33.803 — 리퀴드 글래스 전 화면(public/lux-glass.css · 사이드바 유리 패널 · 알약 늘어남 모션). blur 는 탭바·드로어·모달·검색·토스트·로그인에만(스크롤 fps 때문). 되돌리기 = lux-glass.css 링크 제거
 
 ### [UI3] 리퀴드 글래스 전 화면 (에이전트 · 푸시 안 함 · _BUILD_VER 안 올림) — 되돌리기 = index.html 의 lux-glass.css 링크 1줄 제거
