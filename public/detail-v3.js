@@ -91,15 +91,18 @@
   }
 
   /* ── 스티키 컴팩트 헤더(패드·PC) ── */
-  var compact = false, ticking = false;
+  var compact = false, ticking = false, stk = null, stkTop = null, hh = null;
   function onScroll() {
     if (ticking) return; ticking = true;
     requestAnimationFrame(function () {
-      ticking = false; var hd = document.querySelector("#page-detail .detail-head"), dc = $("detailContent"); if (!hd || !dc || !dc.offsetParent) return;
-      var cs = getComputedStyle(hd); if (cs.position !== "sticky") { if (compact) { compact = false; hd.classList.remove("dv3-compact"); } return; }
-      var scrolled = (parseFloat(cs.top) || 0) - dc.getBoundingClientRect().top;
+      ticking = false; var pg = $("page-detail"); if (!pg || !pg.classList.contains("active")) return;   /* [UI6] 상세 화면이 아닐 땐 아무것도 안 잰다 */
+      var hd = pg.querySelector(".detail-head"), dc = $("detailContent"); if (!hd || !dc || !dc.offsetParent) return;
+      if (stk === null) stk = getComputedStyle(hd).position === "sticky";   /* 위치 방식은 화면 폭이 바뀔 때(resize)만 다시 읽는다 */
+      if (!stk) { if (compact) { compact = false; hd.classList.remove("dv3-compact"); } return; }
+      var scrolled = (stkTop === null ? (stkTop = parseFloat(getComputedStyle(hd).top) || 0) : stkTop) - dc.getBoundingClientRect().top;
+      var was = compact;
       if (!compact && scrolled > 150) { compact = true; hd.classList.add("dv3-compact"); } else if (compact && scrolled < 60) { compact = false; hd.classList.remove("dv3-compact"); }
-      var h = Math.round(hd.getBoundingClientRect().height), pg = $("page-detail"); if (pg && pg.style.getPropertyValue("--dv-hh") !== h + "px") pg.style.setProperty("--dv-hh", h + "px");
+      if (was !== compact || hh === null) { var h = Math.round(hd.getBoundingClientRect().height); hh = h; if (pg.style.getPropertyValue("--dv-hh") !== h + "px") pg.style.setProperty("--dv-hh", h + "px"); if (was !== compact) setTimeout(function () { hh = null; onScroll(); }, 300); }
     });
   }
 
@@ -112,7 +115,7 @@
     if (oh && hd) { var tip = function () { var t = oh.textContent.replace(/\s+/g, " ").trim(); if (hd.title !== t) hd.title = t; }; new MutationObserver(tip).observe(oh, { childList: true, characterData: true, subtree: true }); tip(); }
     if (dc) new MutationObserver(moveBar).observe(dc, { childList: true });
     if (tf) { new MutationObserver(function () { place(true); }).observe(tf, { attributes: true, attributeFilter: ["class"], subtree: true }); if (window.ResizeObserver) new ResizeObserver(function () { place(false); }).observe(tf); }
-    addEventListener("resize", function () { place(false); onScroll(); }); addEventListener("scroll", onScroll, { passive: true, capture: true });
+    addEventListener("resize", function () { stk = stkTop = hh = null; place(false); onScroll(); }); addEventListener("scroll", onScroll, { passive: true, capture: true });
     setInterval(liveLabel, 20000); moveBar(); symChanged(); priceChanged(); place(false); onScroll();
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();

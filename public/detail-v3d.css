@@ -1,0 +1,103 @@
+/* ═══ [UI6] 종목 상세 아래쪽 — 촘촘한 카드 그리드 · 가독성 · 스크롤 가벼움 ═══
+   사용자 11/10 "스크롤하면 렉" · "빈 공간 너무 많고 왼쪽을 많이 스크롤해야 전체 정보가 보인다" · "가독성 매우 많이 올려줘".
+   위쪽(작은 머리 · 차트 · 탭)은 그대로. #page-detail 안에서만. lux-navy.css 뒤에 로드. 되돌리기 = index.html 의 이 파일 링크 1줄 제거.
+   ① 성능: 상세 안 backdrop-filter 전부 제거(스크롤마다 다시 흐림 계산) → 불투명에 가까운 면 · 카드는 contain.
+   ② 배치: ≥901px 왼쪽 = 차트 → AI 분석(2열 카드) / 오른쪽 = 시세 데이터 → 패널 → 뉴스, 재무는 아래 전체폭 3열 · 761~900 = 한 열 + 2열 카드.
+   ③ 가독성: 본문 14px · 보조 13px 하한 · 흐린 글자(opacity .5~.7) 제거 → 보조색도 대비 4.5:1 이상 · 숫자 tabular. */
+
+/* ── 색 토큰 ── */
+html #page-detail{--dd-t1:#F5F8FF;--dd-t2:#C9D3E8;--dd-line:rgba(170,190,230,.17);--dd-card:rgba(15,25,48,.86);--dd-solid:#0c1528;font-variant-numeric:tabular-nums;line-height:1.55}
+html[data-theme="light"] #page-detail{--dd-t1:#0A1020;--dd-t2:#38425A;--dd-line:rgba(20,35,70,.15);--dd-card:rgba(255,255,255,.94);--dd-solid:#f3f6fb}
+
+/* ── ① 성능: 상세 안 backdrop-filter 금지 · 스티키 면은 불투명 ── */
+html #page-detail,html #page-detail *,html #page-detail *::before,html #page-detail *::after{-webkit-backdrop-filter:none !important;backdrop-filter:none !important}
+html body #page-detail .detail-head,html body #page-detail .detail-head.dv3-compact{background:var(--dd-solid) !important}
+html body #page-detail #luxInfo .lxs{background:var(--dd-solid) !important;border-radius:14px}
+html body #page-detail #luxInfo .lxt{background:var(--dd-solid) !important;box-shadow:inset 0 0 0 1px var(--dd-line)}
+html #page-detail #luxInfo .lxs{box-shadow:0 8px 12px -10px rgba(0,0,0,.5)}
+html #page-detail .detail-chart,html #page-detail .detail-datawrap,html #page-detail .detail-side,html #page-detail #detailNews,html #page-detail #luxInfo .lxa .bx{background:var(--dd-card) !important;border-color:var(--dd-line) !important;box-shadow:none !important}
+html #page-detail #luxInfo .lxa .bx,html #page-detail #detailNews,html #page-detail #detailFund>*{contain:layout paint style}
+
+/* ── ③ 가독성(전 화면 크기) ── */
+html #page-detail .detail-sec{font-size:15px !important;font-weight:800;color:var(--dd-t1) !important;margin:14px 0 7px !important;letter-spacing:0;line-height:1.35}
+html #page-detail #luxInfo,html #page-detail #luxInfo :is(p,li,td,div,span,b){color:var(--dd-t1)}
+html #page-detail #luxInfo :is(.s,.k,.nt,.lg,.yl,.pv,.ft,.sm,h5,.lxa-lg,.lxa-qh span,.lxa-qb .p,.lxa-qb .v,.lxa-sc>div,.mo){opacity:1 !important;color:var(--dd-t2)}
+html #page-detail .lxa h5{font-size:14px !important;color:var(--dd-t1) !important;opacity:1 !important;font-weight:800}
+html #page-detail .lxa p.t,html #page-detail .lxa ul,html #page-detail .lxa li{opacity:1 !important;font-size:14.5px !important;line-height:1.6 !important;color:var(--dd-t1)}
+html #page-detail .lxa details.lxa-f>summary .pv{font-size:13.5px !important;opacity:1 !important;color:var(--dd-t2) !important}
+html #page-detail .lxa .ft,html #page-detail .lxa-lg,html #page-detail .lxa-qb .p,html #page-detail .lxa-qb .v,html #page-detail .lxa-qh{font-size:13px !important;opacity:1 !important;color:var(--dd-t2) !important}
+html #page-detail .lxa .tag span{font-size:13px !important;color:var(--dd-t1)}
+html #page-detail .lxa .tag span.up{color:#FF8A8E}html #page-detail .lxa .tag span.dn{color:#8DB8FF}
+html[data-theme="light"] #page-detail .lxa .tag span.up{color:#C0262B}html[data-theme="light"] #page-detail .lxa .tag span.dn{color:#1D55C4}
+html #page-detail .lxa-sc>div{color:var(--dd-t1) !important;font-size:14px !important}
+/* 보조 글자(오른쪽 패널·시세 데이터·재무·뉴스) */
+html #page-detail :is(.detail-data .l,.dn-grp,.dn-head,.crowd-sub,.crowd-k,.tfsum-k,.vt-sub,.vt-h,.fp-nm,.prof-52,.anl-top,.detail-anl .m,.detail-anl .d,.detail-anl .f,.fund-tbl th,.fund-eval,.detail-prof .k,.detail-prof .s,.detail-earn,.detail-pattern){opacity:1 !important;color:var(--dd-t2) !important;font-size:max(13px,.92em) !important}
+html #page-detail :is(.detail-data .v,.dn-t,.fp-v,.fund-tbl td,.crowd-verdict,.tfsum-v,.detail-prof b){color:var(--dd-t1) !important}
+html #page-detail .dn-t{font-size:14px !important;line-height:1.45 !important}
+html #page-detail .detail-data .v,html #page-detail .fund-tbl td,html #page-detail .fund-tbl th{font-variant-numeric:tabular-nums}
+html #page-detail :is(.dn-grp,.crowd-vb,.crowd-vb.buy,.crowd-vb.sell){font-size:13px !important}
+html #page-detail .detail-data .l{font-size:13.5px !important}html #page-detail .detail-data .v{font-size:14px !important;font-weight:700}
+html #page-detail .detail-datawrap .detail-sec,html #page-detail .detail-side .detail-sec{border-bottom:1px solid var(--dd-line);padding-bottom:6px}
+html #page-detail .detail-dcell{border-bottom:1px solid var(--dd-line);padding:4px 0 !important}
+html #page-detail .fund-tbl th,html #page-detail .fund-tbl td{border-bottom:1px solid var(--dd-line) !important}
+/* 상승·하락 색(어두운 바탕에서도 4.5:1 이상) */
+html #page-detail .pos,html #page-detail .up{color:#FF7A7F}html #page-detail .neg,html #page-detail .dn{color:#7FAEFF}
+html[data-theme="light"] #page-detail .pos,html[data-theme="light"] #page-detail .up{color:#C0262B}html[data-theme="light"] #page-detail .neg,html[data-theme="light"] #page-detail .dn{color:#1D55C4}
+
+/* ── ② 카드 배치(패드·PC) ── */
+@media (min-width:761px){
+  html #page-detail #luxInfo .lxa{display:grid !important;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:start}
+  html #page-detail #luxInfo .lxa>*{grid-column:1/-1}
+  html #page-detail #luxInfo .lxa>details.lxa-f:not([open]){grid-column:auto}
+  html #page-detail #luxInfo .lxa .bx{padding:13px 15px !important;border-radius:14px !important}
+  html #page-detail #luxInfo .lxa .ft{margin-top:2px}
+  html #page-detail #luxInfo{margin-bottom:8px !important}
+  html #page-detail .lxa-ch{height:176px !important}
+  html #page-detail #detailFund{display:grid !important;gap:12px;align-items:start;margin-top:4px}
+  html #page-detail #detailFund>.fund-tblwrap,html #page-detail #detailFund>.fund-eval,html #page-detail #detailFund>.fund-peer{margin:0 !important;border:1px solid var(--dd-line) !important;border-radius:14px;padding:12px 14px !important;background:var(--dd-card);min-width:0}
+  html #page-detail #detailFund>.detail-sec,html #page-detail #detailFund>.empty{grid-column:1/-1}
+  html #page-detail #detailNews{padding:10px 14px !important;margin:10px 0 0 !important;border:1px solid var(--dd-line);border-radius:14px}
+  html #page-detail .detail-dcell{padding:3px 0 !important}
+}
+@media (min-width:761px) and (max-width:900px){
+  html #page-detail #detailFund{grid-template-columns:repeat(2,minmax(0,1fr))}
+  html #page-detail #detailFund>.fund-tblwrap{grid-column:1/-1}
+  html #page-detail #detailNews{margin-top:8px !important}
+}
+@media (min-width:901px){
+  html #page-detail #detailContent:not([style*="none"]){grid-template-rows:auto auto auto auto 1fr auto auto}
+  html #page-detail #luxInfo{grid-column:1;grid-row:4 / span 2}
+  html #page-detail .detail-side{grid-column:2;grid-row:4;align-self:start}
+  html #page-detail #detailNews{grid-column:2;grid-row:5;align-self:start;margin-top:0 !important}
+  html #page-detail #detailFund{grid-column:1/-1;grid-row:6;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr)}
+  html #page-detail .detail-mfull{grid-column:1/-1;grid-row:7}
+}
+
+/* ── 폰: 카드 여백만 줄임 ── */
+@media (max-width:760px){
+  html #page-detail #luxInfo .lxa{gap:9px}
+  html #page-detail #luxInfo .lxa .bx{padding:12px 13px !important}
+  html #page-detail .detail-sec{margin:12px 0 6px !important}
+  html #page-detail .lxa-ch{height:170px !important}
+}
+@media (prefers-reduced-motion:reduce){html #page-detail *{animation-duration:.01ms !important}}
+/* 스티키 위 줄(제목 · 목록/알림 버튼)도 불투명 — 스크롤하는 글이 비쳐 겹쳐 보이던 것 */
+html body #page-detail .page-header{background:var(--dd-solid) !important}
+/* 접힌 칸 · 빈 칸 · 빨강 글자 대비 */
+html #page-detail .detail-sec:has(+ #detailPattern:empty){display:none}
+html #page-detail #luxInfo :is([style*="E5484D" i],[style*="229, 72, 77"],[style*="229,72,77"]){color:#FF8F93 !important}
+html #page-detail #luxInfo :is([style*="3B82F6" i],[style*="59, 130, 246"],[style*="59,130,246"]){color:#8DB8FF !important}
+html[data-theme="light"] #page-detail #luxInfo :is([style*="E5484D" i],[style*="229, 72, 77"],[style*="229,72,77"]){color:#C0262B !important}
+html[data-theme="light"] #page-detail #luxInfo :is([style*="3B82F6" i],[style*="59, 130, 246"],[style*="59,130,246"]){color:#1D55C4 !important}
+html #page-detail .wl-ext-age,html #page-detail .wl-ext{color:var(--dd-t2) !important}
+@media (min-width:761px) and (max-width:900px){
+  html #page-detail .detail-side>.detail-prof,html #page-detail .detail-side>.detail-anl{break-inside:auto}
+}
+html #page-detail .lxa-lv .tk.r,html #page-detail .lxa-lv .tk.r *,html #page-detail .lxa-lv .tk.g,html #page-detail .lxa-lv .tk.g *{color:#FF8F93 !important}
+html #page-detail .lxa-lv .tk.s,html #page-detail .lxa-lv .tk.s *{color:#8DB8FF !important}
+html[data-theme="light"] #page-detail .lxa-lv .tk.r,html[data-theme="light"] #page-detail .lxa-lv .tk.r *,html[data-theme="light"] #page-detail .lxa-lv .tk.g,html[data-theme="light"] #page-detail .lxa-lv .tk.g *{color:#C0262B !important}
+html[data-theme="light"] #page-detail .lxa-lv .tk.s,html[data-theme="light"] #page-detail .lxa-lv .tk.s *{color:#1D55C4 !important}
+/* 글자 하한 13px — 남아 있던 12px 이하 */
+html #page-detail :is(.prof-52h,.prof-52h *,.prof-52lh,.prof-52lh *,.anl-act,.anl-act *,.lxa-lv .tk,.lxa-lv .tk *,.fund-grade-score,.fund-verdict,.fp-v,.fp-v *,.fp-v i,.fp-v small){font-size:max(13px,1em) !important;opacity:1 !important}
+html #page-detail .anl-act small,html #page-detail .anl-act .m,html #page-detail .anl-act span{font-size:13px !important}
+html #page-detail :is(.prof-52h,.prof-52lh,.anl-act,.fp-v,.fund-verdict){color:var(--dd-t2)}
