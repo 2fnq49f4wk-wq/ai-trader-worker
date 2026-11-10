@@ -12,6 +12,10 @@
 
 ## Current handoff
 
+### [UI7] 글래시 V30 · 다크 테크 · 그레이니 배경 · 벤토 (에이전트 · 푸시 안 함 · _BUILD_VER 안 올림)
+- 새 시트 public/lux-glass2.css(lux-navy.css 뒤 링크 1줄 · 되돌리기 = 링크 제거). 두꺼운 유리 카드(blur 는 지수 카드·사이드바 등 몇 곳만) · 파랑 #1f6bff→#3b82f6 활성 알약/주요 버튼 · 사이드바 로고 줄+파란 알약. 다크 배경 = 호수 그림 대신 CSS 남색 그라데이션 + html::after feTurbulence 곡물(고정 1개) · 라이트 = 청백 + 파란 물결 + 곡물.
+- 벤토: #easyDash(≥761px 12칸/패드 6칸, 폰은 기존) · 전문가 .fv-deck(≥1101px 12칸) — display:contents + grid-column 만(JS 없음). 아이콘 사각형 스탯 카드는 DOM 변경이 필요해 안 함(타일 머리 파란 점으로 대체).
+- 실측(Playwright 1440/820/393 · 라이트/다크 · 초보/전문 · 5화면): 가로 넘침 0 · 사이드바 글자 잘림 0 · 콘솔 오류 0 · HTML 215KB.
 ### [UI6] 종목 상세 아래쪽 촘촘히 · 가독성 · 스크롤 (에이전트 · 푸시 안 함 · _BUILD_VER 안 올림)
 - 새 public/detail-v3d.css(lux-navy.css 뒤 링크): ≥901px 왼쪽=차트→AI 분석(2열 카드, 열린 칸은 전체폭) / 오른쪽=시세 데이터→패널→뉴스, 재무는 아래 전체폭 3열 · 패드 세로=AI 분석 2열·재무 2열 · 상세 안 backdrop-filter 전부 제거 · 스티키 머리·탭·제목줄 불투명(스크롤 글자 비침 수정) · 흐린 글자(opacity) 제거 · 하한 13px.
 - 스크롤 렉: index.html 의 --dtop fit()(스크롤마다 getBoundingClientRect 강제 레이아웃, 4x 스로틀 프로파일 246ms)을 ≥761px 에서 스크롤 땐 안 돌리고 폰은 120ms 1번 · detail-v3.js onScroll 은 위치방식/top 값 캐시. 데스크톱 fps 는 헤드리스 소프트 렌더라 차이 작음(57→57), 폰 janky 프레임 5~12→1.

@@ -1,0 +1,122 @@
+/* [UI7 glassy V30] lux-navy.css 뒤 마지막 시트 — 참고 이미지 "Glassy Dashboard V30" 의 두꺼운 액체 유리 · 파랑 포인트.
+   지우면(index.html 링크 1줄) UI4 모습으로 복구. 팔레트: 흰·검정·남색 + 파랑 #1f6bff→#3b82f6 (활성·주요 버튼만). 보라 없음. */
+:root{
+  --bl1:#1f6bff;--bl2:#3b82f6;
+  --g2-grad:linear-gradient(160deg,#3b82f6,#1f6bff);
+  --g2-glow:0 8px 20px -6px rgba(31,107,255,.65),0 2px 6px rgba(31,107,255,.3);
+  --g2-rim:inset 0 1px 0 rgba(255,255,255,.7),inset 0 0 0 1px rgba(255,255,255,.22),inset 0 -12px 22px -16px rgba(59,130,246,.35);
+  --gl-pill:var(--g2-grad);--lux-pill:var(--g2-grad);--lux-glow:var(--g2-glow);
+}
+/* ── 라이트 배경: 연한 청백 그라데이션 + 흐릿한 파란 물결(CSS만) ── */
+html[data-theme="light"] body{background:linear-gradient(180deg,#f4f8ff,#e8f0fc 55%,#eef4ff)!important}
+html[data-theme="light"]::before{background:
+  radial-gradient(70vmax 22vmax at 12% 8%,rgba(59,130,246,.22),transparent 70%),
+  radial-gradient(60vmax 18vmax at 96% 30%,rgba(31,107,255,.16),transparent 70%),
+  radial-gradient(80vmax 24vmax at 30% 78%,rgba(96,165,250,.20),transparent 70%),
+  radial-gradient(60vmax 20vmax at 100% 105%,rgba(59,130,246,.18),transparent 70%)!important}
+/* ── 유리 면: 투명도 높은 흰(라이트)/남색(다크) · 밝은 1px 테두리 · 파란 기운 도는 넓은 그림자 · 위쪽 반사 ── */
+html[data-theme="light"]{--gl-sh:0 22px 50px -24px rgba(31,80,200,.35),0 2px 8px rgba(31,80,200,.07)}
+html:not([data-theme="light"]){--gl-sh:0 22px 50px -24px rgba(10,30,90,.7),0 2px 10px rgba(0,0,0,.25)}
+html[data-theme="light"] body :is(.fv-panel,.wl-pane,.idx-card,.market-card,.macro-table-wrap,.nlv-panel,.dash-block,.fv-idx,.fv-breadth,.alt-panel,.pc2,.k-panel,.card,.port-card,.pos-market-card,.wl-card,.wi-card,.omq-card,.macro-next-card,#easyDash .c,#easyDash .ix,#easyDash .bri,#mineRoot .card){
+  background:linear-gradient(160deg,rgba(255,255,255,.88),rgba(255,255,255,.52) 55%,rgba(236,244,255,.5)),rgba(255,255,255,.3)!important;
+  border:1px solid rgba(255,255,255,.95)!important;border-radius:18px!important;
+  box-shadow:inset 0 1px 0 #fff,inset 0 0 0 1px rgba(255,255,255,.45),inset 0 -14px 24px -18px rgba(59,130,246,.22),var(--gl-sh)!important}
+html:not([data-theme="light"]) body :is(.fv-panel,.wl-pane,.idx-card,.market-card,.macro-table-wrap,.nlv-panel,.dash-block,.fv-idx,.fv-breadth,.alt-panel,.pc2,.k-panel,.card,.port-card,.pos-market-card,.wl-card,.wi-card,.omq-card,.macro-next-card,#easyDash .c,#easyDash .ix,#easyDash .bri,#mineRoot .card){
+  background:linear-gradient(160deg,rgba(120,160,255,.14),rgba(255,255,255,.03) 45%,rgba(10,22,50,0) 80%),rgba(14,24,50,.55)!important;
+  border:1px solid rgba(190,210,255,.22)!important;border-radius:18px!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.34),inset 0 0 0 1px rgba(255,255,255,.04),inset 0 -14px 26px -20px rgba(0,0,0,.5),var(--gl-sh)!important}
+/* 크고 정적인 몇 곳만 진짜 blur(스크롤 성능) */
+html body :is(.fv-idx,.idx-card,#easyDash .ix,.fv-breadth){-webkit-backdrop-filter:blur(22px) saturate(170%);backdrop-filter:blur(22px) saturate(170%)}
+/* 호버: 살짝 뜨고 테두리 밝아짐 */
+@media (hover:hover){
+  html body :is(.fv-idx,.idx-card,.market-card,.card,.wl-card,.wi-card,.port-card,#easyDash .c,#easyDash .ix,#mineRoot .card){transition:transform .28s cubic-bezier(.34,1.4,.5,1),box-shadow .28s,border-color .28s}
+  html body :is(.fv-idx,.idx-card,.market-card,.card,.wl-card,.wi-card,.port-card,#easyDash .c,#easyDash .ix,#mineRoot .card):hover{transform:translateY(-2px)}
+  html[data-theme="light"] body :is(.fv-idx,.idx-card,.market-card,.card,#easyDash .c,#easyDash .ix,#mineRoot .card):hover{border-color:#fff!important;box-shadow:inset 0 1px 0 #fff,inset 0 -14px 24px -18px rgba(59,130,246,.3),0 26px 54px -22px rgba(31,80,200,.45)!important}
+  html:not([data-theme="light"]) body :is(.fv-idx,.idx-card,.market-card,.card,#easyDash .c,#easyDash .ix,#mineRoot .card):hover{border-color:rgba(210,225,255,.45)!important}
+}
+/* ── 사이드바(참고 이미지): 유리 기둥 · 로고 줄 · 평평한 아이콘+글자 · 활성 = 파란 알약 + 흰 글자 + 파란 빛 ── */
+@media (min-width:761px){
+  html[data-theme="light"] body nav.sidebar{background:linear-gradient(165deg,rgba(255,255,255,.86),rgba(255,255,255,.46) 50%,rgba(226,238,255,.5)),rgba(255,255,255,.25)!important;border:1px solid rgba(255,255,255,.95)!important;border-radius:22px;-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);box-shadow:inset 0 1px 0 #fff,inset 0 -16px 30px -22px rgba(59,130,246,.3),0 26px 56px -24px rgba(31,80,200,.4)!important}
+  html:not([data-theme="light"]) body nav.sidebar{background:linear-gradient(165deg,rgba(130,170,255,.16),rgba(255,255,255,.03) 40%,rgba(0,0,0,0) 80%),rgba(12,22,48,.5)!important;border:1px solid rgba(190,210,255,.24)!important;border-radius:22px;-webkit-backdrop-filter:blur(30px) saturate(170%);backdrop-filter:blur(30px) saturate(170%)}
+  html body nav.sidebar.sidebar .sb-brand{display:flex!important;align-items:center;gap:6px;padding:6px 8px 8px!important}
+  html body nav.sidebar .sb-brand-logo{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;margin:0!important;border-radius:8px;background:var(--g2-grad);color:#fff;box-shadow:var(--g2-glow)}
+  html body nav.sidebar .sb-brand-logo svg{width:15px!important;height:15px!important;color:#fff;--lux-star-b:#fff;--lux-star-f:#dbe8ff}
+  html body nav.sidebar .sb-brand-name{font-size:14px!important;font-weight:800}
+  html body nav.sidebar .sb-brand-sub{display:none!important}
+  html body nav.sidebar.sidebar .sb-nav{gap:3px!important;margin:4px 0!important}
+  html body nav.sidebar.sidebar .sb-nav .nav-item{padding:8px 9px!important;border-radius:12px!important;background:transparent!important;border:0!important;box-shadow:none!important}
+  html body nav.sidebar.sidebar .nav-item-label{font-size:12.5px!important;font-weight:600}
+  html body nav.sidebar .nav-item-icon svg,html body nav.sidebar .nav-item .nv-ico{stroke-width:1.5}
+  html[data-theme="light"] body nav.sidebar.sidebar .nav-item:not(.active) :is(.nav-item-label,.nav-item-icon){color:#1b2a52!important}
+  html:not([data-theme="light"]) body nav.sidebar.sidebar .nav-item:not(.active) :is(.nav-item-label,.nav-item-icon){color:rgba(235,242,255,.86)!important}
+  html body nav.sidebar.sidebar .sb-nav .nav-item:not(.active):hover{background:rgba(59,130,246,.12)!important}
+}
+html body .lux-pill{background:var(--g2-grad)!important;box-shadow:var(--g2-glow),var(--g2-rim)!important;border-radius:13px}
+html body :is(.sb-run-btn,.cmdk-fab),html[data-theme="light"] body :is(.sb-run-btn,.cmdk-fab){background:var(--g2-grad)!important;color:#fff!important;box-shadow:var(--g2-glow)!important}
+html[data-theme="light"] body :is(.nnv-tab.active,.trade-filter-btn.active,.trades-toggle-btn.active,.llm-btn.active,.btn.active,.wi-f.active,.trade-filter-btn.on,.nnv-tab.on),
+html[data-theme="light"] body #easyDash :is(.seg button.on,.seg button.act,.seg button.active,.chips button.on,.chips button.act),
+html[data-theme="light"] body #mineRoot :is(.go,.p1),html[data-theme="light"] body #luxGate :is(.p1,.sw button.on){background:var(--g2-grad)!important;color:#fff!important;box-shadow:var(--g2-glow)}
+/* 모달·검색·모바일 탭바: 더 두꺼운 유리 */
+html[data-theme="light"] body :is(.cmdk-box,.modal-content,.modal-logs,.modal-macro,#mineSheet .sh,#luxGate .in,.m-tabbar,.m-drawer){background:linear-gradient(165deg,rgba(255,255,255,.9),rgba(240,247,255,.7))!important;border:1px solid rgba(255,255,255,.95)}
+html body :is(.cmdk-box,.modal-content,.modal-logs,.modal-macro,#luxGate .in){border-radius:20px}
+
+/* ══ [UI7b] 어두운 테크 분위기 · 그레이니 그라데이션 배경 · 벤토 그리드 ══ */
+:root{--tx-bd:rgba(255,255,255,.09);--tx-glow:0 0 18px -4px rgba(59,130,246,.45)}
+/* 배경: 큰 부드러운 남색·파랑 그라데이션(호수 그림 대체) */
+html:not([data-theme="light"])::before{background:
+  radial-gradient(60vmax 46vmax at 14% 6%,rgba(16,42,92,.95),transparent 66%),
+  radial-gradient(54vmax 44vmax at 92% 24%,rgba(18,52,120,.70),transparent 66%),
+  radial-gradient(70vmax 50vmax at 40% 104%,rgba(11,21,48,.95),transparent 68%),
+  linear-gradient(180deg,#0b1020,#07090f)!important;opacity:1!important}
+/* 곡물(노이즈): 고정 의사요소 하나 · 애니메이션 없음 */
+html::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.1;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");background-size:220px}
+html[data-theme="light"]::after{opacity:.16;mix-blend-mode:soft-light;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .1 0 0 0 0 .2 0 0 0 0 .5 0 0 0 .9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>")}
+html[data-theme="light"] body{background:linear-gradient(180deg,#f5f9ff,#e9f1fd 60%,#f1f6ff)!important}
+/* 다크 면: 거의 검정에 가까운 남색 · 1px 얇은 테두리 · 파랑 하나 */
+html:not([data-theme="light"]) body :is(.fv-panel,.wl-pane,.idx-card,.market-card,.macro-table-wrap,.nlv-panel,.dash-block,.fv-idx,.fv-breadth,.alt-panel,.pc2,.k-panel,.card,.port-card,.pos-market-card,.wl-card,.wi-card,.omq-card,.macro-next-card,#easyDash .c,#easyDash .ix,#easyDash .bri,#mineRoot .card){
+  background:linear-gradient(160deg,rgba(96,140,255,.09),rgba(255,255,255,.015) 40%,transparent 80%),rgba(9,14,30,.62)!important;border-color:var(--tx-bd)!important}
+html:not([data-theme="light"]) body nav.sidebar{background:linear-gradient(165deg,rgba(96,140,255,.12),rgba(255,255,255,.02) 40%,transparent 80%),rgba(8,13,28,.58)!important;border-color:var(--tx-bd)!important}
+html:not([data-theme="light"]) #easyDash{--e-acc:#60a5fa;--e-dn:#3b82f6}
+html body :is(.fv-idx-last,.fv-idx-chg,.fv-table td,#easyDash .v,#easyDash td,#easyDash .wv){font-variant-numeric:tabular-nums}
+/* 타일 머리: 작은 파란 점 라벨 + 얇은 구분선 */
+html body :is(.fv-panel-head,#easyDash .ch){border-bottom:1px solid rgba(128,150,200,.16)!important}
+html body #easyDash .ch{padding-bottom:8px;margin-bottom:10px}
+html body #easyDash .ch>b::before,html body .fv-panel-head::before{content:"";display:inline-block;width:6px;height:6px;border-radius:2px;background:var(--g2-grad);box-shadow:var(--tx-glow);margin-right:7px;vertical-align:1px}
+/* ── 벤토: 초보자 화면(#easyDash) — 12칸 · 폰은 기존 배치 유지 ── */
+@media (min-width:761px){
+  html body #easyDash{grid-template-columns:repeat(12,minmax(0,1fr));gap:12px;align-items:stretch;grid-auto-flow:row dense}
+  html.lux-easy body #easyDash{display:grid}
+  html body #easyDash>:is(.ixs,.br,.g){display:contents}
+  html body #easyDash :is(.g,.ixs,.br)>*,html body #easyDash>.c{margin:0!important}
+  html body #easyDash>.hd{grid-column:1/-1}
+  html body #easyDash>.ixs>.ix{grid-column:span 2}
+  html body #easyDash>.ixs>.ix:first-child{grid-column:span 4}
+  html body #easyDash>.br>.bri{grid-column:span 6}
+  html body #easyDash>.g32>:first-child{grid-column:span 8}
+  html body #easyDash>.g32>:nth-child(2){grid-column:span 4}
+  html body #easyDash>.c.fz{grid-column:1/-1}
+  html body #easyDash>.c:not(.fz):not(.cta){grid-column:span 7}
+  html body #easyDash>.g2>:first-child{grid-column:span 5}
+  html body #easyDash>.g2>:last-child{grid-column:1/-1}
+  html body #easyDash>.c.cta{grid-column:1/-1}
+  html body #easyDash .ix{min-width:0;padding:10px 12px}
+}
+@media (min-width:761px) and (max-width:1100px){
+  html body #easyDash{grid-template-columns:repeat(6,minmax(0,1fr))}
+  html body #easyDash>.ixs>.ix{grid-column:span 3}
+  html body #easyDash>.ixs>.ix:first-child{grid-column:span 6}
+  html body #easyDash>.br>.bri{grid-column:span 3}
+  html body #easyDash>.g32>:first-child,html body #easyDash>.g32>:nth-child(2),html body #easyDash>.c:not(.fz):not(.cta),html body #easyDash>.g2>:first-child{grid-column:1/-1;grid-row:auto}
+}
+/* ── 벤토: 전문가 화면(.fv-deck) ── */
+@media (min-width:1101px){
+  html body .fv-deck{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px;align-items:stretch}
+  html body .fv-deck>*{grid-column:1/-1;margin:0!important;min-width:0}
+  html body .fv-deck>:is(.fv-mid,.fv-cal-row,.fv-bottom){display:contents}
+  html body .fv-deck>.fv-mid>.fv-panel:first-child{grid-column:span 5}
+  html body .fv-deck>.fv-mid>.fv-panel:last-child{grid-column:span 7}
+  html body .fv-deck>.fv-cal-row>.fv-panel{grid-column:span 4;margin:0!important}
+  html body .fv-deck>.fv-bottom>.fv-panel:first-child{grid-column:span 5;margin:0!important}
+  html body .fv-deck>.fv-bottom>.fv-panel:last-child{grid-column:span 7;margin:0!important}
+}
