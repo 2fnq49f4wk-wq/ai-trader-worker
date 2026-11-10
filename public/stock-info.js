@@ -93,7 +93,8 @@
   var loading = '<div class="emp">불러오는 중…</div>';
 
   /* [V33.751] ★디자인 시안대로★(캔버스 'LUX 종목 정보 탭 모바일 리디자인') — 큰 카드 대신: 52주 히어로 · 작은 타일 · 줄 목록(이름·설명 | 값) · 묶음 제목 · 4년 미니 막대 */
-  function tiles(a) { return '<div class="tl">' + a.map(function (t) { return '<div><span class="k">' + t[0] + '</span><b class="' + (t[3] || "") + '">' + t[1] + '</b>' + (t[2] ? '<span class="s">' + t[2] + "</span>" : "") + "</div>"; }).join("") + "</div>"; }
+  var ICO = ["◎", "↗", "◔", "▣", "◇", "✦"];
+  function tiles(a) { return '<div class="tl">' + a.map(function (t, i) { t = t.slice(); t[0] = '<i class="ic" aria-hidden="true">' + ICO[i % ICO.length] + "</i>" + '<span class="kt">' + t[0] + "</span>"; return '<div><span class="k">' + t[0] + '</span><b class="' + (t[3] || "") + '">' + t[1] + '</b>' + (t[2] ? '<span class="s">' + t[2] + "</span>" : "") + "</div>"; }).join("") + "</div>"; }
   function list(a) { return '<div class="ls">' + a.map(function (r) { return '<div class="r"><div class="l"><span class="k">' + r[0] + "</span>" + (r[1] ? '<span class="s">' + r[1] + "</span>" : "") + '</div><div class="v">' + (r[3] || "") + '<b class="' + (r[4] || "") + '">' + r[2] + "</b></div></div>"; }).join("") + "</div>"; }
   function grp(t) { return '<div class="gp">' + t + "</div>"; }
   function minib(vals, hot) { var mx = Math.max.apply(null, vals.map(function (v) { return Math.abs(v || 0); })) || 1; return '<span class="mb" aria-hidden="true">' + vals.map(function (v, i) { return '<i class="' + (i === vals.length - 1 ? (hot || "on") : "") + '" style="height:' + Math.max(8, Math.abs(v || 0) / mx * 100).toFixed(0) + '%"></i>'; }).join("") + "</span>"; }
@@ -130,6 +131,10 @@
     if (pr.length) {
       var sh = valMore ? pr : pr.slice(0, 3);
       h += '<section class="pc"><div class="hr"><b>같은 업종 ' + (f.peer.n || "") + "개와 비교</b><span class=\"k\">" + esc(f.peer.sector || "") + "</span></div>" + sh.map(function (r) {
+        if (r.v != null && r.med != null && isFinite(r.v) && isFinite(r.med) && r.med !== 0) {
+          var mx = Math.max(Math.abs(r.v), Math.abs(r.med)) * 1.3 || 1, d = (r.v / r.med - 1) * 100, good = (r.dir || 1) > 0 ? r.v > r.med : r.v < r.med;
+          return '<div class="pr cmp"><div class="hr"><span>' + esc(r.ko) + "</span><span><b>" + r.v.toFixed(1) + (r.unit || "") + '</b> <span class="k">· 업종 중앙 ' + r.med.toFixed(1) + (r.unit || "") + '</span> <span class="dl ' + (good ? "gd" : "bd") + '">' + pct(d, 0) + '</span></span></div><div class="cb" aria-hidden="true"><i class="vb" style="width:' + Math.max(2, Math.abs(r.v) / mx * 100).toFixed(1) + '%"></i><i class="md" style="left:' + (Math.abs(r.med) / mx * 100).toFixed(1) + '%"></i></div></div>';
+        }
         return '<div class="pr"><div class="hr"><span>' + esc(r.ko) + "</span><span><b>" + (r.v != null ? r.v.toFixed(1) + (r.unit || "") : "—") + '</b> <span class="k">· 중앙 ' + (r.med != null ? r.med.toFixed(1) + (r.unit || "") : "—") + "</span></span></div>" + pbar(r.pct || 0) + "</div>"; }).join("") +
         (pr.length > 3 ? '<button type="button" class="mo" data-vmore="1">' + (valMore ? "접기" : pr.length + "개 지표 모두 보기 ›") + "</button>" : "") + "</section>";
     }
@@ -143,7 +148,8 @@
     var o = yrs(f), revs = o.map(function (y) { return Y(f, y, "TotalRevenue"); });
     var gpm = div(gp, r0) != null ? div(gp, r0) * 100 : null, opm = div(oi, r0) != null ? div(oi, r0) * 100 : null, npm = div(ni, r0) != null ? div(ni, r0) * 100 : null;
     var roe = a.roe != null ? a.roe : (div(ni, eq) != null ? div(ni, eq) * 100 : null), roa = div(ni, ta) != null ? div(ni, ta) * 100 : null;
-    var h = grp("성장") + list([["매출 성장률", "전년 대비 · 3년 연평균 " + pct(a.revCagr3), pct(g), minib(revs, g != null && g < 0 ? "dnb" : "upb"), cls(g)]]);
+    var fsr = f.eval && f.eval.fScore != null && window.luxAnalysis && window.luxAnalysis._ring ? '<div class="ringrow">' + window.luxAnalysis._ring(f.eval.fScore / (f.eval.fAvail || 9) * 100, "재무 건전성 " + f.eval.fScore + " / " + (f.eval.fAvail || 9), "Piotroski F-Score · 높을수록 건전") + "</div>" : "";
+    var h = fsr + grp("성장") + list([["매출 성장률", "전년 대비 · 3년 연평균 " + pct(a.revCagr3), pct(g), minib(revs, g != null && g < 0 ? "dnb" : "upb"), cls(g)]]);
     h += grp("수익성") + list([["매출총이익률", "총이익 ÷ 매출", pl(gpm), pbar(gpm)], ["영업이익률", "영업이익 ÷ 매출", pl(opm), pbar(opm)], ["순이익률", "순이익 ÷ 매출", pl(npm), pbar(npm)], ["ROE", "순이익 ÷ 자기자본", pl(roe)], ["ROA", "순이익 ÷ 총자산", pl(roa)]]);
     h += grp("현금 · 안정성") + tiles([["잉여현금흐름", money(fcf, kr), "FCF 마진 " + pl(div(fcf, r0) != null ? div(fcf, r0) * 100 : null)], ["부채 / 자본", div(debt, eq) != null ? (div(debt, eq) * 100).toFixed(0) + "%" : "—", "유동비율 " + (div(ca, cl) != null ? (div(ca, cl) * 100).toFixed(0) + "%" : "—")]]);
     return h + '<p class="nt">' + (f.eval && f.eval.fScore != null ? "재무 건전성 Piotroski F " + f.eval.fScore + "/" + (f.eval.fAvail || 9) + " · " : "") + "막대 = 매출 " + o.length + "년(" + esc((o[0] || "").slice(0, 4)) + "~" + esc((o[o.length - 1] || "").slice(0, 4)) + ")</p>";
@@ -210,12 +216,31 @@
     var f = C[sym] && C[sym].fund;
     return window.luxAnalysis.view(sym, { fund: f && !f.err ? f : null, quote: q(), redraw: function () { if (tab === "ai") draw(); } });
   }
-  var valMore = false;
+  var valMore = false, lastKey = null, lastPill = null, doneKey = {};
+  /* [UI v3] 탭 알약 이동 · 패널 페이드/슬라이드 · 숫자 카운트업 — prefers-reduced-motion 이면 움직임 없이 바로 */
+  function fx(el) {
+    var rm = false; try { rm = matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
+    var nav = el.querySelector(".lxt"), on = nav && nav.querySelector("button.on"), key = sym + "|" + tab, tabChanged = key !== lastKey, pn = el.querySelector(".lxp");
+    if (nav && on) {
+      var pl = document.createElement("span"); pl.className = "lxpill"; nav.insertBefore(pl, nav.firstChild);
+      var L = on.offsetLeft, W = on.offsetWidth; pl.style.width = W + "px"; pl.style.transform = "translateX(" + L + "px)";
+      if (nav.scrollWidth > nav.clientWidth) nav.scrollLeft = Math.max(0, L - (nav.clientWidth - W) / 2);
+      if (lastPill && tabChanged && !rm && pl.animate) pl.animate([{ transform: "translateX(" + lastPill.l + "px)", width: lastPill.w + "px" }, { transform: "translateX(" + L + "px)", width: W + "px" }], { duration: 340, easing: "cubic-bezier(.3,.9,.3,1)" });
+      lastPill = { l: L, w: W };
+    }
+    lastKey = key;
+    if (tabChanged && !rm && pn && pn.animate) pn.animate([{ opacity: 0, transform: "translateY(12px)" }, { opacity: 1, transform: "none" }], { duration: 360, easing: "cubic-bezier(.2,.8,.2,1)" });
+    if (pn && !doneKey[key] && !pn.querySelector(".emp") && !/불러오는 중|받는 중/.test(pn.textContent.slice(0, 40))) {
+      doneKey[key] = 1;
+      if (!rm && window.dv3Motion) { window.dv3Motion.countAll(pn.querySelectorAll(".ls .v b,.tl b,.cd .v,.h2c b")); window.dv3Motion.grow(pn.querySelectorAll(".pb i,.cb .vb,.lxa-rg .fg")); }
+    }
+  }
   function draw() {
     var el = $("luxInfo"); if (!el || !sym) return; css();
     var body = tab === "ai" ? vAi() : tab === "ov" ? vOv() : tab === "val" ? vVal() : tab === "kpi" ? vKpi() : tab === "fs" ? vFs() : tab === "er" ? vEr() : tab === "ir" ? vIr() : vIns();
     var x = q(), hd = x && x.price > 0 ? '<div class="lxh"><span><b>' + esc(x.name || sym) + "</b> " + esc(isKr(sym) ? sym.split(".")[0] : sym) + '</span><span><b>' + money(x.price, isKr(sym)).replace(/\.00$/, "") + '</b> <span class="' + cls(x.dayPct) + '">' + pct(x.dayPct, 2) + "</span></span></div>" : "";
-    el.innerHTML = '<div class="lxs">' + hd + '<nav class="lxt" role="tablist" aria-label="종목 정보">' + TABS.map(function (t) { return '<button type="button" role="tab" aria-selected="' + (t[0] === tab) + '" data-lxt="' + t[0] + '" class="' + (t[0] === tab ? "on" : "") + '">' + t[1] + "</button>"; }).join("") + "</nav></div>" + body;
+    el.innerHTML = '<div class="lxs">' + hd + '<nav class="lxt" role="tablist" aria-label="종목 정보">' + TABS.map(function (t) { return '<button type="button" role="tab" aria-selected="' + (t[0] === tab) + '" data-lxt="' + t[0] + '" class="' + (t[0] === tab ? "on" : "") + '">' + t[1] + "</button>"; }).join("") + "</nav></div><div class=\"lxp\">" + body + "</div>";
+    try { fx(el); } catch (e) {}
     if (tab === "fs") el.querySelectorAll(".tw").forEach(function (t) { if (t.scrollWidth > t.clientWidth) t.scrollLeft = t.scrollWidth; });   // [V33.750] 재무 표는 최신 연도부터 보이게(왼쪽으로 밀면 이전 해)
   }
   function open(s) {

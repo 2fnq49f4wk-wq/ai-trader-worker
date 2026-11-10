@@ -26,6 +26,15 @@
 - index.html: 머리 판정 스크립트(첫 방문·비로그인·앱 아님·봇 아님·?intro=0 아님, ?intro=hero 강제) + body 첫머리 #luxHero 인라인 배너 + 링크 2줄. mine.js: ask() 3번째 인자(arguments[2])=소개 건너뛰기 · 가입 소개 3장 자동 회전 슬라이드(gStart·gApp·gGuest·data-m 유지).
 - 통합자: 새 파일 ?v= 는 판 올릴 때 같이(현재 33.801 로 적어 둠). 다음: 라이브 확인 · easy-dash 카운트업 실데이터 확인.
 
+- [종목 상세 UI v3] (11/10 · 에이전트 · 판 번호·_BUILD_VER 는 통합자가 붙임 — 소스 표식 "[UI v3]") ★종목 상세 글래스 핀테크 리디자인★
+  새 파일 `public/detail-v3.css`(전부 `#page-detail` 안으로 변수·선택자를 가둠 · index.html 에서 workspace-layout.css 뒤에 링크) · `public/detail-v3.js`(index.html 에서 stock-info.js 뒤에 defer).
+  히어로: 라이브 점(장 상태) · 큰 가격 카운트업 · 그려지는 스파크라인(/api/chart 1y 1d — AI 분석 탭과 같은 주소라 캐시 공유) · 시세 칩 · 주문 버튼(mine.js 의 #mineDetailBar 를 #dv3Act 로 옮김 · id 그대로).
+  패드/PC: 히어로 sticky(top=--dtop) + 스크롤 150px 넘으면 컴팩트(.dv3-compact) · 정보 탭 바는 그 아래 sticky. 폰: 히어로는 sticky 아님(탭 바 안 .lxh 가 압축 머리 역할) · --dtop 로직·html.lux-mfull 그대로.
+  기간 탭(#detailTf)·정보 탭(.lxt)에 미끄러지는 알약(.dv3-tfpill · .lxpill) · 패널 페이드/슬라이드(.lxp) · 숫자 카운트업/막대 성장(window.dv3Motion — window.anime 있으면 v3·v4 API 로, 없으면 rAF/WAAPI · prefers-reduced-motion 이면 움직임 없음).
+  AI 분석(stock-analysis.js): 판정 카드에 핵심 가격대 수평 막대(lvBar) · 시나리오 상승/하락 나란히 · 체크포인트 타임라인(ul.lxa-tl) · 차트에 그라데이션 면 · 애널리스트 매수 의견 링(ring; window.luxAnalysis._ring).
+  정보 탭(stock-info.js): KPI/개요 타일에 아이콘 · KPI 맨 위 F-Score 링 · 밸류에이션 업종 중앙값 비교 막대(.pr.cmp). 검사: node --check 3종 · tools/check-build-ver.mjs · Playwright(폰 393x852·패드 820x1180 · 다크/라이트 · NVDA/005930.KS) 가로 넘침·콘솔 오류 0.
+  ★주의★ detail-v3.js 의 MutationObserver 는 pill 에 class 를 다시 쓰면 무한 루프 — place() 안에서 이미 있는 class 는 add 하지 않는다. 다음 확인: 영문 모드(i18n) 에서 새 한글 문구(시간외·장중 · LIVE · 상승/하락 시나리오 아이콘 등) 영어 표 추가.
+
 ### V33.801 — 지수 위상 안전장치(regimePhase · 하락장 반등일 MELTUP 불가) · 게이트 check-regime-phase-sanity · 다음 확인: pb_regime 나이를 ts 대신 day 로 잴지
 
 ### V33.800 — 정식 국면 가중 투표(regimeCanon · REGIME_CANON_CFG · 사용자 승인 11/10) · 인버스 차선은 10년 대리 손익 음수 경고에도 사용자 지시로 그대로 유지(실전 성적으로 재판단)

@@ -334,9 +334,11 @@
     var band = function (z, col, lab) { if (!z) return ""; var y1 = Y(z.z), y2 = Y(z.a); return '<rect x="0" y="' + y1.toFixed(1) + '" width="' + W + '" height="' + Math.max(3, y2 - y1).toFixed(1) + '" fill="' + col + '" opacity=".16"/><text x="' + (W - 6) + '" y="' + (y1 - 4).toFixed(1) + '" text-anchor="end" font-size="11" fill="' + col + '">' + esc(lab) + "</text>"; };
     var hl = function (p, col, lab, dash) { var y = Y(p); return '<line x1="0" x2="' + W + '" y1="' + y.toFixed(1) + '" y2="' + y.toFixed(1) + '" stroke="' + col + '" stroke-width="1.2" stroke-dasharray="' + dash + '"/><text x="6" y="' + (y - 4).toFixed(1) + '" font-size="11" fill="' + col + '">' + esc(lab) + "</text>"; };
     var up = b[n - 1].c >= b[0].c;
+    var area = function (fn, col) { var d = "M" + X(0).toFixed(1) + " " + (Hh - P); for (var i = 0; i < n; i++) { var v = fn(off + i); if (v != null) d += "L" + X(i).toFixed(1) + " " + Y(v).toFixed(1); } d += "L" + X(n - 1).toFixed(1) + " " + (Hh - P) + "Z"; return '<defs><linearGradient id="lxaG" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="' + col + '" stop-opacity=".28"/><stop offset="1" stop-color="' + col + '" stop-opacity="0"/></linearGradient></defs><path d="' + d + '" fill="url(#lxaG)" stroke="none"/>'; };
     return '<svg class="lxa-ch" viewBox="0 0 ' + W + " " + Hh + '" preserveAspectRatio="none" role="img" aria-label="최근 9개월 가격 · 50일선 · ' + t.longN + '일선 · 매물대">' +
       (t.tgt ? hl(mid(t.tgt), "#E5484D", "목표 " + money(mid(t.tgt), kr), "2 4") : "") + (tm ? hl(tm, "#A78BFA", "애널리스트 평균 " + money(tm, kr), "6 3") : "") + band(t.res, "#E5484D", "관문 " + rng(t.res ? t.res.a : 0, t.res ? t.res.z : 0, kr)) + band(t.sup, "#3B82F6", "지지 " + rng(t.sup ? t.sup.a : 0, t.sup ? t.sup.z : 0, kr)) +
       line(function (i) { return sma(cl, t.longN, i + 1); }, "#9aa3b2", 1.2, "4 3") + line(function (i) { return sma(cl, 50, i + 1); }, "#F5A524", 1.3) +
+      area(function (i) { return cl[i]; }, up ? "#E5484D" : "#3B82F6") +
       line(function (i) { return cl[i]; }, up ? "#E5484D" : "#3B82F6", 1.8) +
       '<circle cx="' + X(n - 1).toFixed(1) + '" cy="' + Y(b[n - 1].c).toFixed(1) + '" r="3.2" fill="currentColor"/></svg>' +
       '<div class="lxa-lg"><span><i style="background:' + (up ? "#E5484D" : "#3B82F6") + '"></i>가격</span><span><i style="background:#F5A524"></i>50일선</span><span><i style="background:#9aa3b2"></i>' + t.longN + '일선</span><span><i style="background:#E5484D;opacity:.4"></i>위 관문</span><span><i style="background:#3B82F6;opacity:.4"></i>아래 지지</span>' + (t.tgt ? '<span><i style="background:#E5484D"></i>다음 목표</span>' : "") + (tm ? '<span><i style="background:#A78BFA"></i>애널리스트 평균</span>' : "") + "</div>";
@@ -356,6 +358,17 @@
         return '<div><span class="v">' + lab + '</span><span class="bw">' + (r.e != null && !kr ? '<i class="e" style="height:' + h(r.e) + 'px"></i>' : "") + (r.a != null ? '<i class="a' + (r.e != null && r.a < r.e ? " miss" : "") + '" style="height:' + h(r.a) + 'px"></i>' : r.e != null && (kr || r.f) ? '<i class="e f" style="height:' + h(r.e) + 'px"></i>' : "") + '</span><span class="p">' + esc(r.p) + (r.f ? " (전망)" : "") + "</span></div>";
       }).join("") + "</div></div>";
   }
+  /* [UI v3] 핵심 가격대 수평 막대 — 아래 지지 · 현재가 · 위 관문 · 목표를 한 줄에 */
+  function lvBar(t, kr) {
+    var pts = [t.sup, t.res, t.tgt].filter(Boolean); if (!pts.length) return "";
+    var lo = t.px, hi = t.px; pts.forEach(function (z) { lo = Math.min(lo, z.a); hi = Math.max(hi, z.z); }); var sp = (hi - lo) || 1; lo -= sp * 0.08; hi += sp * 0.08; sp = hi - lo;
+    var X = function (p) { return Math.max(0, Math.min(100, (p - lo) / sp * 100)); };
+    var seg = function (z, c) { return z ? '<i class="z ' + c + '" style="left:' + X(z.a).toFixed(1) + "%;width:" + Math.max(1.5, X(z.z) - X(z.a)).toFixed(1) + '%"></i>' : ""; };
+    var tk = function (p, c, lab, v) { return '<span class="tk ' + c + '" style="left:' + X(p).toFixed(1) + '%"><b>' + esc(lab) + "</b><em>" + esc(v) + "</em></span>"; };
+    return '<div class="lxa-lv" role="img" aria-label="핵심 가격대"><div class="trk">' + seg(t.sup, "s") + seg(t.res, "r") + seg(t.tgt, "g") + '<i class="px" style="left:' + X(t.px).toFixed(1) + '%"></i></div><div class="tks">' +
+      (t.sup ? tk(mid(t.sup), "s", "지지", money(mid(t.sup), kr)) : "") + tk(t.px, "p", "현재", money(t.px, kr)) + (t.res ? tk(mid(t.res), "r", "관문", money(mid(t.res), kr)) : "") + (t.tgt ? tk(mid(t.tgt), "g", "목표", money(mid(t.tgt), kr)) : "") + "</div></div>";
+  }
+  function ring(p, lab, sub) { p = Math.max(0, Math.min(100, p)); var R = 26, C = 2 * Math.PI * R; return '<div class="lxa-rg"><svg viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="lxaRg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4F8CFF"/><stop offset="1" stop-color="#7C5CFF"/></linearGradient></defs><circle cx="32" cy="32" r="' + R + '" class="bg"/><circle cx="32" cy="32" r="' + R + '" class="fg" stroke="url(#lxaRg)" stroke-dasharray="' + (C * p / 100).toFixed(1) + " " + C.toFixed(1) + '" transform="rotate(-90 32 32)"/></svg><div><b>' + esc(lab) + "</b><span>" + esc(sub) + "</span></div></div>"; }
   function css() {
     if (document.getElementById("lxaCss")) return; var s = document.createElement("style"); s.id = "lxaCss";
     s.textContent = ".lxa{display:flex;flex-direction:column;gap:10px}.lxa .bx{background:var(--s1,#141922);border:1px solid rgba(127,137,155,.18);border-radius:16px;padding:16px}html[data-theme=light] .lxa .bx{background:#fff}" +
@@ -397,15 +410,15 @@
     var bar = dt >= 5 ? '<div class="lxa-db" role="img" aria-label="투자의견 분포"><i class="b" style="flex:' + ((dist.strongBuy || 0) + (dist.buy || 0)) + '"></i><i class="h" style="flex:' + (dist.hold || 0) + '"></i><i class="s" style="flex:' + ((dist.sell || 0) + (dist.strongSell || 0)) + '"></i></div>' : "";
     /* [V33.789] ★간결하게★(사용자 11/8 "종목상세 간결하게 · 지금 느낌은 유지") — 요약·시나리오·차트는 그대로 펼치고, 근거 묶음은 한 줄 미리보기 + 펼치기 */
     var fold = function (title, teaser, inner, open) { return '<details class="bx lxa-f"' + (open ? " open" : "") + '><summary><h5>' + esc(title) + '</h5><span class="pv">' + esc(String(teaser || "").slice(0, 90)) + '</span></summary><div class="fb">' + inner + "</div></details>"; };
-    var ul = function (a) { return "<ul>" + a.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") + "</ul>"; };
+    var ul = function (a, c) { return "<ul" + (c ? ' class="' + c + '"' : "") + ">" + a.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") + "</ul>"; };
     return '<div class="lxa">' +
-      '<div class="bx"><div class="tag">' + tg + '</div><p class="sm">' + esc(summaryText(t, f, ev, kr)) + '</p><p class="ph"><em>' + esc(phaseText(t)) + "</em></p>" +
-        '<p class="t">' + esc(ctrlText(t)) + " " + esc(lv.join(" ")) + "</p>" +
+      '<div class="bx vd"><div class="tag">' + tg + '</div><p class="sm">' + esc(summaryText(t, f, ev, kr)) + '</p><p class="ph"><em>' + esc(phaseText(t)) + "</em></p>" +
+        lvBar(t, kr) + '<p class="t">' + esc(ctrlText(t)) + " " + esc(lv.join(" ")) + "</p>" +
         '<p class="t">' + esc(linkText(t, f)) + "</p></div>" +
-      '<div class="bx"><h5>시나리오</h5><div class="lxa-sc"><div class="u"><b>상승 시나리오</b><span>' + esc(sc.up.text) + '</span></div><div class="d"><b>하락 시나리오</b><span>' + esc(sc.dn.text) + "</span></div></div>" + (sc.rr ? '<p class="t rr">' + esc(sc.rr.text) + "</p>" : "") + "</div>" +
+      '<div class="bx"><h5>시나리오</h5><div class="lxa-sc"><div class="u"><b><i aria-hidden="true">↗</i>상승 시나리오</b><span>' + esc(sc.up.text) + '</span></div><div class="d"><b><i aria-hidden="true">↘</i>하락 시나리오</b><span>' + esc(sc.dn.text) + "</span></div></div>" + (sc.rr ? '<p class="t rr">' + esc(sc.rr.text) + "</p>" : "") + "</div>" +
       '<div class="bx">' + chartSvg(bars, t, kr, c.an && c.an.ok ? c.an.tgtMean : null) + "</div>" +
-      (cps.length ? fold("체크포인트", cps[0], ul(cps), true) : "") +
-      (an || rs ? fold("애널리스트 · 시장 대비", an ? an.lines[0] : rs.text, bar + ul((an ? an.lines : []).concat(an ? [an.link] : [], rs ? [rs.text] : []))) : "") +
+      (cps.length ? fold("체크포인트", cps[0], ul(cps, "lxa-tl"), true) : "") +
+      (an || rs ? fold("애널리스트 · 시장 대비", an ? an.lines[0] : rs.text, (dt >= 5 ? ring(((dist.strongBuy || 0) + (dist.buy || 0)) / dt * 100, "매수 의견 " + Math.round(((dist.strongBuy || 0) + (dist.buy || 0)) / dt * 100) + "%", "애널리스트 " + dt + "명") : "") + bar + ul((an ? an.lines : []).concat(an ? [an.link] : [], rs ? [rs.text] : []))) : "") +
       fold("차트 근거", shortText(t), '<ul><li>' + esc(shortText(t)) + "</li><li>" + esc(t.longN + "일선 " + money(t.mL, kr) + " (20일 기울기 " + pct(t.slope, 2) + ") · 50일선 " + money(t.m50, kr) + " · 하루 평균 변동폭(ATR) " + money(t.atr, kr)) + "</li><li>" + esc(volText(t)) + "</li>" +
         (t.res ? "<li>" + esc("위 관문: " + rng(t.res.a, t.res.z, kr) + (t.res.k === "vp" ? " — 최근 120일 동안 거래가 가장 많이 쌓인 가격대(사 둔 사람이 많아 본전 매물이 나오는 자리)" : t.res.k === "ma" ? " — 위쪽에 두꺼운 매물대·스윙 고점이 가까이 없어 " + t.res.nm + "을 첫 회복 관문으로 본다" : " — 최근 120일의 직전 스윙 고점")) + "</li>" : "") +
         (t.sup ? "<li>" + esc("아래 지지: " + rng(t.sup.a, t.sup.z, kr) + (t.sup.k === "vp" ? " — 거래가 많이 쌓인 아래쪽 가격대" : " — 직전 스윙 저점")) + "</li>" : "") + "</ul>") +
@@ -413,5 +426,5 @@
       (f.val.length ? fold("밸류에이션 · 수익성", f.val[0], ul(f.val)) : "") +
       '<p class="ft">규칙으로 쓴 해설이며 예측이 아닙니다 · 가격대는 최근 1년 일봉에서 계산 · 실적·컨센서스: ' + esc((c.qe && c.qe.src) || "—") + " · 목표가: " + esc((c.an && c.an.src) || "—") + " · 업종 비교: 같은 업종 재무 중앙값(표본 5 이상) · 투자 권유 아님</p></div>";
   }
-  window.luxAnalysis = { view: view, _tech: techRead, _fund: fundRead };
+  window.luxAnalysis = { _ring: ring, view: view, _tech: techRead, _fund: fundRead };
 })();
