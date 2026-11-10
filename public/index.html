@@ -22,7 +22,7 @@
 </script>
 <script>/* [UI1] 첫 방문 배너 판정 */
 (function(){try{var q=location.search,f=/[?&]intro=hero(&|$)/.test(q);if(!f&&(/[?&]intro=0(&|$)/.test(q)||localStorage.getItem("lux-hero-seen")||localStorage.getItem("lux-auth")||/bot|crawl|spider|slurp|lighthouse|pagespeed|preview|headless|facebookexternalhit|kakaotalk-scrap/i.test(navigator.userAgent)||(window.matchMedia&&matchMedia("(display-mode: standalone)").matches)||navigator.standalone))return;
-localStorage.setItem("lux-hero-seen","1");var h=document.documentElement;h.classList.add("lux-hero","lux-nointro");var l=document.createElement("link");l.rel="stylesheet";l.href="/lux-hero.css?v=33.817";document.head.appendChild(l);var c=document.createElement("script");c.src="/lux-hero.js?v=33.817";c.defer=true;document.head.appendChild(c);}catch(e){}})();</script>
+localStorage.setItem("lux-hero-seen","1");var h=document.documentElement;h.classList.add("lux-hero","lux-nointro");var l=document.createElement("link");l.rel="stylesheet";l.href="/lux-hero.css?v=33.818";document.head.appendChild(l);var c=document.createElement("script");c.src="/lux-hero.js?v=33.818";c.defer=true;document.head.appendChild(c);}catch(e){}})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <script>/* [V33.740] ★첫 그림부터 축소 보기★(사용자 11/2 "로딩할 때 처음에 옛날 화면이 보인다") — 휴대폰은 늘 대시보드로 시작하므로, 첫 그림 전에 PC 폭 뷰포트로 바꿔 둔다
    (종전엔 스크립트가 다 돈 뒤 showPage 에서 바꿔 휴대폰 배치가 한 번 보였다). 폭은 지난번 잰 높이(localStorage lux-dz-vh)로 같은 식. */
@@ -345,20 +345,20 @@ window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{
 window.__luxAct=Date.now();['pointerdown','keydown','touchstart','wheel'].forEach(function(e){addEventListener(e,function(){window.__luxAct=Date.now();},{passive:true,capture:true});});
 window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600000;};
 </script>
-<meta name="lux-build" content="V33.817">
-<script src="/i18n.js?v=33.817" defer></script>
-<script src="/outlook.js?v=33.817" defer></script>
-<script src="/advisor.js?v=33.817" defer></script>
-<script src="/luxmini.js?v=33.817" defer></script>
-<script src="/luxmini-view.js?v=33.817" defer></script>
-<script src="/ovn-live.js?v=33.817" defer></script>
-<script src="/mine.js?v=33.817" defer></script>
-<script src="/easy-dash.js?v=33.817" defer></script>
-<script src="/lux-motion.js?v=33.817" defer></script><script src="/lux-topbar.js?v=33.817" defer></script>
-<script src="/stock-analysis.js?v=33.817" defer></script>
-<script src="/stock-info.js?v=33.817" defer></script>
-<script src="/detail-v3.js?v=33.817" defer></script>
-<script src="/neural-observatory.js?v=33.817" defer></script>
+<meta name="lux-build" content="V33.818">
+<script src="/i18n.js?v=33.818" defer></script>
+<script src="/outlook.js?v=33.818" defer></script>
+<script src="/advisor.js?v=33.818" defer></script>
+<script src="/luxmini.js?v=33.818" defer></script>
+<script src="/luxmini-view.js?v=33.818" defer></script>
+<script src="/ovn-live.js?v=33.818" defer></script>
+<script src="/mine.js?v=33.818" defer></script>
+<script src="/easy-dash.js?v=33.818" defer></script>
+<script src="/lux-motion.js?v=33.818" defer></script><script src="/lux-topbar.js?v=33.818" defer></script>
+<script src="/stock-analysis.js?v=33.818" defer></script>
+<script src="/stock-info.js?v=33.818" defer></script>
+<script src="/detail-v3.js?v=33.818" defer></script>
+<script src="/neural-observatory.js?v=33.818" defer></script>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
      · viewport  : viewport-fit=cover — 노치·홈바 영역까지 쓰고, 안쪽 여백은 CSS 의 safe-area 가 잡는다
@@ -4224,7 +4224,7 @@ window.luxDz=function(id){try{var de=document.documentElement,m=document.querySe
 }catch(e){}};
 /* [V33.738] ★축소 보기 중 뜨는 창은 원래 크기로★(사용자 11/2 "폰에서 로그인 화면이 너무 작게") — 로그인 창 · 주문창 · 검색 · 시장 지도 등 모달이
    열리는 동안은 휴대폰 화면(device-width)으로 잠시 돌리고, 닫히면 대시보드 축소 보기로 되돌린다. */
-/* [V33.817] 폭 전환 순간 가림 — 아래 메뉴로 화면을 바꿀 때 보기 폭(PC 축소 ↔ 폰)이 바뀌며 한쪽으로 찌그러졌다 돌아오던 것을 안 보이게 */
+/* [V33.818] 폭 전환 순간 가림 — 아래 메뉴로 화면을 바꿀 때 보기 폭(PC 축소 ↔ 폰)이 바뀌며 한쪽으로 찌그러졌다 돌아오던 것을 안 보이게 */
 window.__luxDzSw=function(){try{var de=document.documentElement;de.classList.add('lux-dzsw');clearTimeout(window.__luxDzSwT);window.__luxDzSwT=setTimeout(function(){requestAnimationFrame(function(){de.classList.remove('lux-dzsw');});},160);}catch(e){}};
 window.__luxDzOverlay=function(){try{return !!document.querySelector('#luxGate,#mineSheet,.modal.show,.cmdk-overlay.show');}catch(e){return false;}};
 (function(){var t=0;function chk(){t=0;try{var pg=document.querySelector('.page.active');if(window.luxDz)window.luxDz(pg?pg.id.replace('page-',''):'');}catch(e){}}
@@ -5353,6 +5353,7 @@ window.LUX_NV = {
           <div class="db-sortbar" id="detailBrowseSort">
             <span class="db-sort-label">정렬</span>
             <button type="button" class="db-sort-btn active" data-sort="mcap">시가총액</button>
+            <button type="button" class="db-sort-btn" data-sort="recent">관심</button>
             <button type="button" class="db-sort-btn" data-sort="vol">거래량</button>
             <button type="button" class="db-sort-btn" data-sort="up">상승률</button>
             <button type="button" class="db-sort-btn" data-sort="down">하락률</button>
@@ -9348,19 +9349,19 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
   #page-detail .detail-main .detail-chart{height:46vh !important;min-height:300px !important}
 }
 </style>
-<link rel="stylesheet" href="/brain-console.css?v=33.817">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.817">
-<link rel="stylesheet" href="/detail-v3.css?v=33.817">
-<link rel="stylesheet" href="/detail-v3b.css?v=33.817">
-<link rel="stylesheet" href="/detail-v3c.css?v=33.817"><link rel="stylesheet" href="/detail-v3d.css?v=33.817">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.817">
-<link rel="stylesheet" href="/model-evidence.css?v=33.817">
+<link rel="stylesheet" href="/brain-console.css?v=33.818">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.818">
+<link rel="stylesheet" href="/detail-v3.css?v=33.818">
+<link rel="stylesheet" href="/detail-v3b.css?v=33.818">
+<link rel="stylesheet" href="/detail-v3c.css?v=33.818"><link rel="stylesheet" href="/detail-v3d.css?v=33.818">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.818">
+<link rel="stylesheet" href="/model-evidence.css?v=33.818">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.817">
-<link rel="stylesheet" href="/lux-polish.css?v=33.817">
-<link rel="stylesheet" href="/lux-glass.css?v=33.817">
-<link rel="stylesheet" href="/lux-navy.css?v=33.817">
-<link rel="stylesheet" href="/lux-glass2.css?v=33.817">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.818">
+<link rel="stylesheet" href="/lux-polish.css?v=33.818">
+<link rel="stylesheet" href="/lux-glass.css?v=33.818">
+<link rel="stylesheet" href="/lux-navy.css?v=33.818">
+<link rel="stylesheet" href="/lux-glass2.css?v=33.818">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -13806,6 +13807,10 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
 
   // [V96] 조회 전 — 한국주식(좌)·미국주식(우) 전체 워치리스트 (정렬: 시총/거래량/상승/하락)
   var detailBrowseSort = 'mcap';
+  var luxRecent = { K: 'lux-recent-v1',
+    _r: function(){ try { var o = JSON.parse(localStorage.getItem(this.K) || '{}'); return (o && typeof o === 'object') ? o : {}; } catch (e) { return {}; } },
+    get: function(m){ var l = this._r()[m]; return Array.isArray(l) ? l.slice(0, 10) : []; },
+    add: function(m, sy){ var o = this._r(), l = (Array.isArray(o[m]) ? o[m] : []).filter(function(x){ return x !== sy; }); l.unshift(sy); o[m] = l.slice(0, 10); try { localStorage.setItem(this.K, JSON.stringify(o)); } catch (e) {} } };
   var dbShowKR = 60, dbShowUS = 60;   // [V12.67] 상세 목록 점진표시 상한(더 보기로 +60) — 초기 렌더 렉 방지
   // [V12.28] 주요 지수 스트립 — 나스닥·다우·S&P500·러셀2000·코스피·코스닥 (클릭 → 지수 차트 상세)
   var IDX_ORDER = ['^IXIC','^DJI','^GSPC','^RUT','^KS11','^KQ11'];
@@ -13871,7 +13876,13 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
     }
     function fill(market, id) {
       var box = $(id); if (!box) return;
-      var items = sortItems(arr.filter(function(q){ return q.market === market && !q.isEtf; }));
+      var items;
+      if (detailBrowseSort === 'recent') {   /* [V33.818] 관심 = 이 기기에서 최근 연 종목 10개(최근 순) — 서버로 안 보낸다 */
+        var rl = luxRecent.get(market), qm = {};
+        arr.forEach(function(q){ if (q.market === market) qm[q.symbol] = q; });
+        items = rl.map(function(sy){ return qm[sy]; }).filter(Boolean);
+        if (!items.length) { var eh = '<div class="empty">최근 본 종목이 없어요 · 종목을 누르면 여기에 10개까지 쌓여요</div>'; if (box.__dbHtml !== eh) { box.__dbHtml = eh; box.innerHTML = eh; } return; }
+      } else items = sortItems(arr.filter(function(q){ return q.market === market && !q.isEtf; }));
       if (!items.length) {
         if (box.__dbHtml !== '__empty') { box.__dbHtml = '__empty'; box.innerHTML = '<div class="empty">대기 중...</div>'; }
         return;
@@ -13913,6 +13924,7 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
     market = market || ((symbol.indexOf('.KS') >= 0 || symbol.indexOf('.KQ') >= 0) ? 'kr' : 'us');
     detailState.symbol = symbol;
     detailState.market = market;
+    try { if (symbol.charAt(0) !== '^') luxRecent.add(market, symbol); } catch (e) {}
     try { if (window.luxMine && window.luxMine.detail) window.luxMine.detail(symbol); } catch (e) {}   // [V33.725] 종목 상세에 모의 매매 막대(MY)
     try { if (window.luxInfo && window.luxInfo.open) window.luxInfo.open(symbol); } catch (e) {}   // [V33.731] 밸류에이션·KPI·재무제표·실적·IR·내부자 탭
     detailState.__tfAutoSwapped = 0;   // [V12.10] 신규상장 일봉 부족 시 분봉 자동전환 플래그 초기화
@@ -14336,7 +14348,6 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
     else if (market === 'us' && q.mstate !== 'REGULAR' && q.mstate !== 'PRE' && q.ovn > 0 && typeof q.ovnTs === 'number' && Date.now() - q.ovnTs < 20 * 60000) { var _p=(typeof q.ovnPct==='number')?q.ovnPct:0; extLine='<div class="wl-ext"><span class="wl-ext-tag day">'+extSessLabel(market,'day')+'</span> '+fmtPx(q.ovn, market)+' <span class="'+((_p>=0)?'pos':'neg')+'">'+((_p>=0)?'+':'')+fmtNum(_p,2)+'%</span></div>'; }
     else if ((q.mstate==='POST'||q.mstate==='POSTPOST'||q.mstate==='CLOSED') && q.post > 0) { var _p=(typeof q.postPct==='number')?q.postPct:(mainPx>0?(q.post-mainPx)/mainPx*100:0); extLine='<div class="wl-ext"><span class="wl-ext-tag post">'+extSessLabel(market,'post')+'</span> '+fmtPx(q.post, market)+' <span class="'+((_p>=0)?'pos':'neg')+'">'+((_p>=0)?'+':'')+fmtNum(_p,2)+'%</span>'+_ageTag+'</div>'; }
     return '<div class="wl-card'+(held?' held':'')+'" data-symbol="'+escapeHtml(q.symbol)+'" data-market="'+market+'">'+
-      '<span class="wl-fav '+(isFav?'active':'')+'" data-symbol="'+escapeHtml(q.symbol)+'" data-market="'+market+'">'+(isFav?'\u2605':'\u2606')+'</span>'+
       // [V10.5] 종목명을 위, 티커를 아래로 — 이름 없으면 티커가 이름 자리 차지
       (name
         ? '<div class="wl-name">'+escapeHtml(name)+heldBadge+etfBadge+'</div><div class="wl-sym">'+escapeHtml(q.symbol)+'</div>'
@@ -15948,8 +15959,7 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
         // [V33.112] ★Roboflow API 키 하드코딩 삭제★ — 이 파일은 모든 방문자에게 그대로
         //   내려가므로 키가 공개돼 있었다. 게다가 visionAI.enabled 를 true 로 되살려
         //   서버가 영구 차단한 설정을 저장 시 다시 켜고 있었다. Vision 제거와 함께 삭제한다.
-        usFavorites = (state.cfg && state.cfg.usFavorites) || [];
-        krFavorites = (state.cfg && state.cfg.krFavorites) || [];
+        usFavorites = []; krFavorites = [];   // [V33.818] 즐겨찾기 폐지 — 서버 공용 cfg 에 있어 모두가 공유·폴링마다 덮어썼다. 관심(최근 본 10개)은 이 기기에만
         try { renderIndices(indices); } catch(e){ console.error('[render:indices]', e); }
         // [V10] lastQuotes를 먼저 채워서 renderPositions의 손익계산/heldMap이 정확하도록
         lastQuotes = {};
@@ -22262,8 +22272,8 @@ setTimeout(function(){
   window.addEventListener('load', function(){ setTimeout(function(){ try{ boot(); }catch(e){} }, 0); });
 })();
 </script>
-<script src="/model-evidence.js?v=33.817"></script>
-<script src="/workspace-ui.js?v=33.817"></script>
+<script src="/model-evidence.js?v=33.818"></script>
+<script src="/workspace-ui.js?v=33.818"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {

@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.817";
+const _BUILD_VER = "V33.818";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -35363,6 +35363,8 @@ async function handleRequest(request, env, ctx, _inner) {
       }, { headers: cors });
     }
     if (path === "/api/favorites" && request.method === "POST") {
+      // [V33.818] 즐겨찾기 폐지 — 공용 cfg 한 곳에 저장돼 모든 방문자가 같은 목록을 고쳤다. 더는 쓰지 않는다(관심 목록은 각 기기 localStorage).
+      if (true) return Response.json({ ok: false, gone: true }, { status: 410, headers: cors });
       const body = await request.json();
       const current = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       if (body.usFavorites !== undefined) current.usFavorites = body.usFavorites;

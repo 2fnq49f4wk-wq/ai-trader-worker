@@ -37,3 +37,9 @@ html[data-theme="light"] #luxHero .lh-bub,html[data-theme="light"] #luxHero .lh-
 #luxHero .lh-line{stroke-dasharray:220;animation:lhDash 2s .6s ease-out both}
 @media (prefers-reduced-motion:reduce){html.lux-hero #luxHero,html.lux-hero #luxHero *,html.lux-hero #luxHero::before,html.lux-hero #luxHero::after{animation:none!important}}
 @media (max-height:640px){#luxHero .lh-mock{display:none}}
+/* [V33.818] 첫 화면 렉·버튼 안 눌림 — ① 흐린 큰 원 두 개(blur 70px)가 계속 움직이던 것을 멈추고 배경 그라데이션만 ② 칩·카드 유리 흐림(backdrop) 제거(뒤가 불투명이라 보이는 차이 없음) ③ 버튼은 늦게 나타나지 않고 바로 ④ 배너 뒤 사이트 화면은 그리지 않는다(뒤에서 칠하던 일이 탭을 막았다) */
+html.lux-hero #luxHero::before,html.lux-hero #luxHero::after{animation:none!important;display:none!important}
+#luxHero .lh-chip,#luxHero .lh-card{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+#luxHero .lh-cta{animation:none!important;opacity:1!important;transform:none!important}
+#luxHero button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+html.lux-hero .shell,html.lux-hero .m-tabbar,html.lux-hero .m-appbar{visibility:hidden!important}

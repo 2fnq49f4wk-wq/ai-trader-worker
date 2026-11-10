@@ -12,6 +12,8 @@
 
 ## Current handoff
 
+- **V33.818** 즐겨찾기 폐지 → 종목 상세 정렬 "관심"(이 기기에서 최근 연 종목 10개 · localStorage `lux-recent-v1` · 서버로 안 보냄). 원인: 즐겨찾기가 공용 `cfg.usFavorites/krFavorites` 한 곳에 저장돼 모든 방문자가 공유했고, 상태 폴링마다 서버 값으로 덮어써 취소가 안 됐다 → 화면은 cfg 를 안 읽고 `POST /api/favorites` 는 410. 첫 화면(소개 배너) 렉: 흐린 큰 원 애니메이션·칩/카드 backdrop·칩 무한 흔들기 끔 · 버튼 지연 등장 없앰 · 배너 뒤 사이트는 visibility:hidden. 전체 다크 색감을 소개 배너 그라데이션(청록·남보라·파랑 빛 · #0b0f17→#0a0d14) + 강조 청록→파랑으로(lux-glass2.css 끝).
+
 - **V33.817** 폰 아래 메뉴 전환 찌그러짐 가림 · 폰 상단 LUX-INV 복구 · 링크 미리보기 메타 앞으로. 전문가 모드 폰은 대시보드만 보기 폭 1000~1180(luxDz) ↔ 다른 화면 device-width 로 바뀌어 한쪽으로 찌그러졌다 돌아왔다 → `__luxDzSw()` 가 폭 바꾸는 순간 `.content` 를 160ms 가렸다 보여 줌(폭 전환 자체는 PC 배치 때문에 유지). `#mTopSlim` 이 `.m-ab-mid` 대신 `.m-ab-sub` 만 숨김 → 로고 옆 LUX-INV 보임. og/twitter 메타를 `<head>` 맨 앞으로 + og:image:secure_url/type/alt · charset 도 맨 앞.
 
 ### [UI7] 글래시 V30 · 다크 테크 · 그레이니 배경 · 벤토 (에이전트 · 푸시 안 함 · _BUILD_VER 안 올림)

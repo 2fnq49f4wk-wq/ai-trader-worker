@@ -114,14 +114,14 @@
   function heroFx() {
     var h = $("#luxHero"); if (!h || !H.classList.contains("lux-hero")) return;
     var a = A(); if (!a || RM) return;
-    a({ targets: $$(".lh-chip", h), translateY: [-3, 3], direction: "alternate", loop: true, delay: a.stagger(300), duration: 1800, easing: "easeInOutSine" });
+    if (false) a({ targets: $$(".lh-chip", h), translateY: [-3, 3], direction: "alternate", loop: true, delay: a.stagger(300), duration: 1800, easing: "easeInOutSine" });
     var n = $(".lh-num", h);
     if (n) { var o = { v: 0 }; a({ targets: o, v: 48785, duration: 1800, delay: 500, round: 1, easing: "easeOutExpo", update: function () { n.textContent = "$" + String(o.v).replace(/\B(?=(\d{3})+(?!\d))/g, ","); } }); }
   }
   window.luxHeroOut = function (done) {
     var h = $("#luxHero"), a = A();
     if (!h) { done && done(); return; }
-    if (a && !RM) a({ targets: h, opacity: 0, scale: 1.03, duration: 420, easing: "easeInQuad", complete: function () { done && done(); } });
+    if (a && !RM) a({ targets: h, opacity: 0, duration: 200, easing: "easeInQuad", complete: function () { done && done(); } });
     else { h.style.transition = "opacity .25s"; h.style.opacity = "0"; setTimeout(function () { done && done(); }, 260); }
   };
 
