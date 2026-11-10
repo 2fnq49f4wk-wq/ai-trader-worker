@@ -12,6 +12,20 @@
 
 ## Current handoff
 
+### V33.800 — 정식 국면 가중 투표(regimeCanon · REGIME_CANON_CFG · 사용자 승인 11/10) · 인버스 차선은 10년 대리 손익 음수 경고에도 사용자 지시로 그대로 유지(실전 성적으로 재판단)
+
+- V33.797 국면 (11/9 · 국면 에이전트 · _BUILD_VER 안 올림) ★정식 국면 정확도 — 'min' → 가중 투표★
+  원인: 11/9 美 지수 위상 MELTUP 인데 pb_regime 이 11/6 CRASH(3일 끈적임+하루 늦음) → 정식 CRASH → 인버스 차선이 폭등장에 인버스 매수.
+  ① regimeCanon(phase, pb, ctx, feat, {market, prev}) — 원천 점수(−2…+2)×가중치 평균: 지수 위상 · 학습기(반감기 1일 · 4일 넘으면 제외) · 거시(ts 하루 넘으면 반감) ·
+     추세(MA50 위치·5일 기울기) · 60일 고점 낙폭 · 20일 실현 변동성 · 직전 사이클 시장폭(__brLast · D1 0). 시장별 가중치·문턱 REGIME_CANON_CFG.
+     안전장치: 오늘 −3% 이하 또는 낙폭 −15%+5일 하락 → CRASH · 오늘 지수 위상 CRASH 면 최소 BEAR · 낙폭 −6% 안 되는 CRASH 는 BEAR · 히스테리시스 0.2(__canonPrev 6h).
+  ② regimeFeat(hists) — analyzeMarketRegime 이 이미 읽은 60봉으로 계산(regimes[m].feat). ai-mode 는 regime_snap:{m}.canon(매매가 쓴 값 · 2h) 우선(같은 getStates 질의).
+  ③ 평가: node tools/eval-regime-canon.mjs <Yahoo 10y 일봉 폴더> [--tune] — 데이터 없으면 자체 시험(11/9 재현)만. 2016~21 맞춤 / 2022~ 검증.
+     검증(2022~): US 지금국면 방향 42.2→55.4% · 뒤집힘/년 128→59 · 폭락일 139→130 · 거짓폭락 37→40% · 놓친 하락구간 0 · 첫 하락 감지 2.4→7.4일(느려짐).
+                  KR 방향 42.7→48.1% · 폭락일 252→179(거짓 111→85일) · 뒤집힘 98→98 · 놓침 0 · 감지 1→1.8일. 앞 20일 방향은 KR 40.6→35.5(약화).
+     ★발견: 어느 원천이든 'CRASH→−2x·BEAR→−1x' 인버스 대리 손익이 10년 모두 음수(Sharpe −0.3~−1.1, 평균회귀) — 인버스 차선 자체의 기대값 재검토 필요(차선 성적 배수로 줄어들기는 함).
+  ⑤ 검사: verify-gates 226종 통과 · check-walk-forward 는 python ETIMEDOUT(동시 에이전트 부하 · 파이썬 무변경) — 한가할 때 단독 재실행.
+  ④ 화면 '정식 국면' — 점수·신뢰·원천별 값과 가중치(%) 표시.
 ### V33.799 — 통합: KR 규칙 단타 퇴출(KR_RULE_SCALP_RETIRED) · 미국 AI 주도 스냅 퇴출(AI_ROUTE_RETIRE) · 신규 매매법 7종×2(정식 4·그림자 3, trainer playbook_sim NEW_PB_V798) — 다음 학습 회차 pbStat 음수면 그림자로
 
 - V33.798(에이전트 · _BUILD_VER 안 올림) ★신규 매매법 7종 × 2시장 — 정식 2순위 4종씩 · 나머지 그림자★

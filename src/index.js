@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.799";
+const _BUILD_VER = "V33.800";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -17440,26 +17440,103 @@ async function applyCashflowToTWR(DB, market, valueBeforeFlow, flow, cfg, pre) {
 }
 
 
-/* [V33.794] ★정식 국면(canonical regime) 하나★ — 국면 원천이 셋이라 화면·관문이 서로 다른 말을 했다
-   (예: 지수 위상 TREND_DOWN · 학습기 매매법 국면 CRASH · 거시 mkt_context caution).
-   셋을 같은 5단(SURGE>BULL>NEUTRAL>BEAR>CRASH)으로 옮겨 ★가장 방어적인 값★ 을 정식 국면으로 삼는다(조이기만 · 완화 없음).
-   매매 경로(regimes[m].canon) · 관문(반등 예외) · 화면(ai-mode phase.canonUs/Kr)이 모두 이 함수 하나를 부른다. 순수 함수 — D1·CPU 추가 없음. */
+/* [V33.797 국면] ★정식 국면 = 가중 투표(신선도 감쇠) + 추세·낙폭·변동성·시장폭 + 히스테리시스★ (종전 V33.794 '가장 방어적인 값' 대체)
+   11/9 사고: 美 지수 위상 MELTUP 인데 학습기 pb_regime 이 11/6 의 CRASH(3일 끈적임 + 하루 늦음)를 그대로 들고 있어 정식 국면이 CRASH →
+   인버스 차선이 폭등장에 인버스를 샀다. 'min' 은 원천 하나만 틀려도(늦어도) 전체가 틀린다.
+   → 원천마다 점수(−2 폭락 … +2 폭등)·가중치를 두고 가중 평균한다. 학습기 국면은 나이(일)에 따라 반감, 거시는 하루 넘으면 반감.
+     지수 이력(60봉)에서 추세(MA50 위치·기울기) · 60일 고점 대비 낙폭 · 실현 변동성(20일) · 직전 사이클 시장폭을 덧붙인다.
+   안전장치: 오늘 지수 평균 −3% 이하, 또는 낙폭 −15% 이하이면서 5일 하락이면 점수와 무관하게 CRASH(진짜 폭락을 놓치지 않는다).
+   히스테리시스: 직전 값(아이솔레이트 기억)에서 벗어나려면 문턱을 더 넘어야 한다(왔다갔다 방지).
+   가중치·문턱은 tools/eval-regime-canon.mjs (10년 일봉 · 2016~2021 맞춤 · 2022~ 검증) 로 정했다. 순수 함수 — D1·fetch 추가 0. */
 const REGIME_CANON_RANK = { CRASH: 0, BEAR: 1, NEUTRAL: 2, BULL: 3, SURGE: 4 };
 const REGIME_CANON_KO = { CRASH: "폭락", BEAR: "하락", NEUTRAL: "보합", BULL: "상승", SURGE: "폭등" };
-function regimeCanon(phase, pbReg, ctxRegime) {
-  const PH = { CRASH: "CRASH", TREND_DOWN: "BEAR", RANGE: "NEUTRAL", TREND_UP: "BULL", MELTUP: "SURGE" };
-  const CX = { risk_off: "BEAR", caution: "NEUTRAL", neutral: null, mild_on: null, risk_on: null };
-  const parts = [];
-  if (phase && PH[phase]) parts.push({ src: "phase", raw: phase, v: PH[phase] });
+const REGIME_CANON_CFG = {   // 시장별 가중치·문턱(평가 도구 --tune 2016~2021 맞춤 → 2022~ 검증)
+  w: { us: { phase: 0.6, pb: 0.3, ctx: 0.3, trend: 1.4, dd: 0.3, vol: 0, breadth: 0.6 },
+       kr: { phase: 1.4, pb: 0.3, ctx: 1.4, trend: 1.0, dd: 0, vol: 0, breadth: 1.0 } },
+  pbHalfDays: 1.0,        // 학습기 국면 반감기(일) — 하루 늦으면 무게 절반
+  ctxHalfDays: 0.5,
+  rvBase: { us: 16, kr: 19 },   // 연율 실현 변동성 평시 기준(%)
+  thr: { us: { crash: -0.8, bear: -0.2, bull: 0.2, surge: 1.0 }, kr: { crash: -0.8, bear: -0.55, bull: 0.4, surge: 1.4 } },
+  hyst: 0.2,
+  combine: "score",
+  crashNeedDd: -6,
+  acuteFloor: true
+};
+const __canonPrev = {};   // market → {v, ts} 직전 정식 국면(히스테리시스 · 아이솔레이트 기억)
+const __brLast = {};      // market → 직전 사이클 시장폭(breadth:{market} 와 같은 값)
+/* 지수 종가 배열들(각 ≤60봉) → 국면 특징(지수 평균). analyzeMarketRegime 과 평가 도구가 같이 쓴다. */
+function _snapCanon(sn) { return sn && sn.canon && sn.canon.canon && _num(sn.ts, 0) > Date.now() - 2 * 3600000 ? sn.canon : null; }
+function regimeFeat(hists) {
+  const acc = { r5: [], r20: [], vs50: [], s50: [], dd60: [], rv20: [] };
+  const mean = function (a) { return a.length ? a.reduce(function (x, y) { return x + y; }, 0) / a.length : null; };
+  const sd = function (a) { const m = mean(a); return Math.sqrt(a.reduce(function (s, x) { return s + (x - m) * (x - m); }, 0) / Math.max(1, a.length - 1)); };
+  for (const h0 of (hists || [])) {
+    const h = (h0 || []).map(function (x) { return (x && typeof x === "object") ? (x.c != null ? x.c : x.close) : x; }).filter(function (x) { return x > 0; }).slice(-60);
+    const n = h.length; if (n < 21) continue;
+    const c = h[n - 1];
+    acc.r5.push((c / h[n - 6] - 1) * 100); acc.r20.push((c / h[n - 21] - 1) * 100);
+    if (n >= 55) { const ma = function (e) { return mean(h.slice(e - 50, e)); }; const m0 = ma(n), m5 = ma(n - 5);
+      acc.vs50.push((c / m0 - 1) * 100); acc.s50.push((m0 / m5 - 1) * 100); }
+    acc.dd60.push((c / Math.max.apply(null, h) - 1) * 100);
+    const rets = []; for (let i = n - 20; i < n; i++) rets.push(Math.log(h[i] / h[i - 1]));
+    acc.rv20.push(sd(rets) * Math.sqrt(252) * 100);
+  }
+  const o = {}; for (const k in acc) { const v = mean(acc[k]); o[k] = v != null ? +v.toFixed(3) : null; }
+  return o;
+}
+function regimeCanon(phase, pbReg, ctxRegime, feat, opt) {
+  const C = (opt && opt.cfg) || REGIME_CANON_CFG, mk = (opt && opt.market) === "kr" ? "kr" : "us", now = (opt && opt.now) || Date.now(), W = C.w[mk] || C.w;
+  const PH = { CRASH: -2, TREND_DOWN: -1, RANGE: 0, TREND_UP: 1, MELTUP: 2 };
+  const PB = { CRASH: -2, BEAR: -1, NEUTRAL: 0, BULL: 1, SURGE: 2 };
+  const CX = { risk_off: -1.5, caution: -0.6, neutral: 0, mild_on: 0.4, risk_on: 0.8 };
+  const cl = function (x, a, b) { return Math.max(a, Math.min(b, x)); };
+  const comps = [];
+  const add = function (src, raw, v, w) { if (v != null && isFinite(v) && w > 0.01) comps.push({ src: src, raw: raw, v: +v.toFixed(2), w: +w.toFixed(2) }); };
+  if (phase && PH[phase] != null) add("phase", phase, PH[phase], W.phase);
   const pr = pbReg && typeof pbReg === "object" ? pbReg : null;
   const pv = pr ? String(pr.regime || "").toUpperCase() : String(pbReg || "").toUpperCase();
-  const pFresh = !pr || !(_num(pr.ts, 0) > 0) || (Date.now() - _num(pr.ts, 0)) < 4 * 86400000;   // 학습기 국면이 4일 넘게 멈췄으면 쓰지 않는다
-  if (pFresh && REGIME_CANON_RANK[pv] != null) parts.push({ src: "pb", raw: pv, v: pv });
-  if (ctxRegime && CX[ctxRegime]) parts.push({ src: "ctx", raw: ctxRegime, v: CX[ctxRegime] });
-  if (!parts.length) return { canon: "NEUTRAL", ko: REGIME_CANON_KO.NEUTRAL, src: "none", parts: [] };
-  let best = parts[0];
-  for (const x of parts) if (REGIME_CANON_RANK[x.v] < REGIME_CANON_RANK[best.v]) best = x;
-  return { canon: best.v, ko: REGIME_CANON_KO[best.v], src: best.src, parts: parts.map(function (x) { return x.src + ":" + x.raw; }) };
+  if (PB[pv] != null) { const age = pr && _num(pr.ts, 0) > 0 ? Math.max(0, now - _num(pr.ts, 0)) / 86400000 : 1;
+    if (age < 4) add("pb", pv, PB[pv], W.pb * Math.pow(0.5, age / C.pbHalfDays)); }   // 4일 넘게 멈춘 학습기 국면은 쓰지 않는다(종전 규칙 유지)
+  const cr = ctxRegime && typeof ctxRegime === "object" ? ctxRegime : { regime: ctxRegime };
+  if (CX[cr.regime] != null) { const age = _num(cr.ts, 0) > 0 ? Math.max(0, now - _num(cr.ts, 0)) / 86400000 : 0;
+    add("ctx", cr.regime, CX[cr.regime], W.ctx * (age > 1 ? Math.pow(0.5, (age - 1) / C.ctxHalfDays) : 1)); }
+  const f = feat || {};
+  if (f.vs50 != null && f.s50 != null) add("trend", "MA50 " + (f.vs50 > 0 ? "+" : "") + f.vs50.toFixed(1) + "%", 1.5 * (0.5 * cl(f.vs50 / 4, -1, 1) + 0.5 * cl(f.s50 / 1.2, -1, 1)), W.trend);
+  if (f.dd60 != null) add("dd", "고점 " + f.dd60.toFixed(1) + "%", f.dd60 > -2 ? 0.5 : cl((f.dd60 + 2) / 6, -2, 0) * ((f.r5 != null && f.r5 > 2) ? 0.5 : 1), W.dd);
+  if (f.rv20 != null) add("vol", "변동성 " + f.rv20.toFixed(0) + "%", -cl((f.rv20 / C.rvBase[mk] - 1.2) / 0.6, -0.5, 1.5), W.vol);
+  const br = f.breadth;
+  if (br && typeof br.upRatio === "number" && br.total >= 30 && (!br.ts || now - br.ts < 3 * 3600000)) add("breadth", "상승비 " + Math.round(br.upRatio * 100) + "%", cl((br.upRatio - 0.5) / 0.15, -1.5, 1.5), W.breadth);
+  if (!comps.length) return { canon: "NEUTRAL", ko: REGIME_CANON_KO.NEUTRAL, src: "none", parts: [], comps: [], score: 0, conf: 0 };
+  let sw = 0, s = 0; for (const x of comps) { sw += x.w; s += x.w * x.v; }
+  const score = s / sw, T = C.thr[mk], prev = (opt && opt.prev) || null, H = C.hyst;
+  const t = { crash: T.crash, bear: T.bear, bull: T.bull, surge: T.surge };   // 직전 값에서 벗어나는 쪽 문턱을 H 만큼 멀리
+  if (prev === "CRASH") t.crash += H; else if (prev === "BEAR") { t.bear += H; t.crash -= H; }
+  else if (prev === "BULL") { t.bull -= H; t.surge += H; } else if (prev === "SURGE") t.surge -= H;
+  else if (prev === "NEUTRAL") { t.bear -= H / 2; t.bull += H / 2; }
+  const sLvl = score <= t.crash ? "CRASH" : score <= t.bear ? "BEAR" : score >= t.surge ? "SURGE" : score >= t.bull ? "BULL" : "NEUTRAL";
+  let canon = sLvl, why = null;
+  if (C.combine === "guard") {
+    /* 지킴 결합 — 종전 '가장 방어적인 원천'(지수 위상·신선한 학습기·거시)을 바닥으로 두되, 점수가 폭락이 아니면 원천 하나의 폭락은 하락으로,
+       점수가 상승 이상이면 원천 하나의 하락은 보합으로 한 칸 풀어 준다. 점수 쪽이 더 방어적이면 점수를 따른다. */
+    const lv = function (x) { return x.v <= -2 ? 0 : x.v <= -1 ? 1 : x.v >= 2 ? 4 : x.v >= 1 ? 3 : 2; };
+    let mn = 4, mnSrc = null;
+    for (const x of comps) { if (x.src !== "phase" && x.src !== "pb" && x.src !== "ctx") continue;
+      if (x.src === "pb" && x.w < W.pb * 0.5) continue;   // 반감기 넘게 늦은 학습기 국면은 바닥에서 뺀다(점수에만 남음)
+      if (lv(x) < mn) { mn = lv(x); mnSrc = x.src; } }
+    let R = mnSrc ? mn : 2; const L = REGIME_CANON_RANK[sLvl];
+    if (R === 0 && L >= 1) R = L >= 3 ? 2 : 1; else if (R === 1 && L >= 3) R = 2;
+    R = Math.min(R, L);
+    canon = ["CRASH", "BEAR", "NEUTRAL", "BULL", "SURGE"][R];
+  }
+  if (C.acuteFloor && phase === "CRASH" && REGIME_CANON_RANK[canon] > 1) { canon = "BEAR"; why = "phase"; }   // 오늘 지수가 무너지는 중이면 최소 하락(전환 탐지 지연 방지)
+  if (canon === "CRASH" && C.crashNeedDd != null && f.dd60 != null && f.dd60 > C.crashNeedDd) canon = "BEAR";   // 낙폭 없는 '폭락' = 하루 흔들림 → 하락으로(거짓 폭락 억제)
+  if ((f.day != null && f.day <= -3) || (f.dd60 != null && f.dd60 <= -15 && f.r5 != null && f.r5 < 0)) { canon = "CRASH"; why = "override"; }
+  const dir = REGIME_CANON_RANK[canon] - 2, push = function (x) { return (dir <= 0 ? -1 : 1) * x.v * x.w; };
+  let best = comps[0]; for (const x of comps) if (push(x) > push(best)) best = x;
+  const agree = comps.filter(function (x) { return Math.sign(x.v) === Math.sign(score); }).length / comps.length;
+  const conf = +Math.min(1, 0.6 * Math.min(1, Math.abs(score) / 1.2) + 0.4 * agree).toFixed(2);
+  return { canon: canon, ko: REGIME_CANON_KO[canon], src: why || best.src, parts: comps.map(function (x) { return x.src + ":" + x.raw; }),
+           comps: comps, score: +score.toFixed(2), conf: conf };
 }
 async function analyzeMarketRegime(DB, market) {
   const indices = market === "us" ? US_INDICES : KR_INDICES;
@@ -17549,9 +17626,11 @@ async function analyzeMarketRegime(DB, market) {
   else if (_today >= 0.8 || (_r5 >= 2 && _today >= 0) || (_erv >= 0.22 && _r20 >= 1.5 && aboveMa >= belowMa)) phase = "TREND_UP";
   else if (_today <= -0.8 || (_r5 <= -2 && _today <= 0) || (_erv >= 0.22 && _r20 <= -1.5)) phase = "TREND_DOWN";
   else phase = "RANGE";
+  let feat = null;   // [V33.797 국면] 정식 국면 특징(추세·낙폭·변동성) — 이미 읽은 지수 이력으로(추가 D1 0)
+  try { feat = Object.assign(regimeFeat(indices.map(function (sym) { return _idxCache[sym] && _idxCache[sym].history; })), { day: +avgDayPct.toFixed(2) }); } catch (e) { feat = null; }
   return { regime: regime, avgDayPct: avgDayPct, worstDayPct: worstDayPct, aboveMa: aboveMa, belowMa: belowMa,
     idxReturn20: avgIdxReturn, idxReturn5: (r5 != null) ? +r5.toFixed(2) : null,
-    phase: phase, er: (er != null) ? +er.toFixed(3) : null };
+    phase: phase, er: (er != null) ? +er.toFixed(3) : null, feat: feat };
 }
 
 // ============================================================
@@ -25686,9 +25765,14 @@ async function runTradingCycle(env) {
     if (marketsToTrade.length > 0) {
       try { mktCtx = await updateMarketContext(DB, cfg); } catch (e) {}
     }
-    // [V33.794] 정식 국면 — 지수 위상 · 학습기 매매법 국면 · 거시 중 가장 방어적인 값(regimeCanon). 이후 관문·크기 기록이 이 값을 읽는다.
+    // [V33.794→V33.797 국면] 정식 국면 — 지수 위상 · 학습기 매매법 국면(신선도 감쇠) · 거시 · 추세·낙폭·변동성 · 직전 시장폭의 가중 투표 + 히스테리시스(regimeCanon).
+    //   이후 관문(반등 예외)·인버스 차선·크기 기록이 이 값을 읽는다. 직전 값은 아이솔레이트 기억(6시간 넘으면 버림).
     try { const _pbR = __pv("pb_regime", null) || {};
-      for (const _m of ["us", "kr"]) if (regimes[_m]) regimes[_m].canon = regimeCanon(regimes[_m].phase, _pbR[_m] || null, mktCtx && mktCtx.regime); } catch (e) {}
+      for (const _m of ["us", "kr"]) if (regimes[_m]) {
+        const _pv = __canonPrev[_m] && (Date.now() - __canonPrev[_m].ts) < 6 * 3600000 ? __canonPrev[_m].v : null;
+        regimes[_m].canon = regimeCanon(regimes[_m].phase, _pbR[_m] || null, mktCtx || null,
+          Object.assign({}, regimes[_m].feat || {}, { breadth: __brLast[_m] || null }), { market: _m, prev: _pv });
+        __canonPrev[_m] = { v: regimes[_m].canon.canon, ts: Date.now() }; } } catch (e) {}
     // [섹터 뉴스] Yahoo Finance RSS 무료 감성 분석 — 6그룹 × 1 subreq, 6h 캐시. LLM 불필요.
     let sectorSentiment = null;
     // [V9.6] 뉴스 예측기 "내일 오를 종목" 사이징 부스트맵(제한적·경계) — 사이클당 1회 로드
@@ -26218,6 +26302,7 @@ async function runTradingCycle(env) {
       }
       // [시장 폭] 다음 사이클 게이트용으로 저장 (상승종목 비율)
       if (brTotal >= 30) {
+        __brLast[market] = { upRatio: brUp / brTotal, up: brUp, total: brTotal, ts: nowTs };   // [V33.797 국면] 정식 국면 시장폭(아이솔레이트 · D1 0)
         try { await setState(DB, "breadth:" + market, { upRatio: brUp / brTotal, up: brUp, total: brTotal, ts: nowTs }); } catch (e) {}
       }
 
@@ -31184,13 +31269,15 @@ async function handleRequest(request, env, ctx, _inner) {
         // [V33.694] 매매법 AI 국면(학습기 · 장기·중기·단기)도 같은 질의로 — 오른쪽 칸이 '오늘 지수 흐름' 과 '매매법 AI 국면' 을 따로 보인다(10/28 사용자: 폭등 vs 폭락 충돌)
         let _pbReg = null;
         let _laneV = null;   // [V33.797] 차선 성적(사이클이 30분에 1행) + 차선 규칙 — 같은 질의에 끼움(추가 쿼리 0)
-        try { const _pss = await getStates(env.DB, ["mkt_phase", "pb_regime", "mkt_context", "lane_view"]); const _ps = _pss["mkt_phase"]; _pbReg = _pss["pb_regime"] || null;
+        try { const _pss = await getStates(env.DB, ["mkt_phase", "pb_regime", "mkt_context", "lane_view", "regime_snap:us", "regime_snap:kr"]); const _ps = _pss["mkt_phase"]; _pbReg = _pss["pb_regime"] || null;
           _laneV = { view: _pss["lane_view"] || null, probe: PROBE_LANE, adapt: LANE_ADAPT, krScalp: KR_RULE_SCALP_RETIRED, retired: AI_ROUTE_RETIRE, inv: { inst: INV_LANE.inst, budgetFrac: INV_LANE.budgetFrac, stopPct: INV_LANE.stopPct, tpPct: INV_LANE.tpPct, maxHoldDays: INV_LANE.maxHoldDays, maxPerDay: INV_LANE.maxPerDay } };
           const _mcx = _pss["mkt_context"] || null, _pr0 = _pbReg || {};
           if (_ps) _phase = { us: _ps.us, kr: _ps.kr, erUs: _ps.erUs, erKr: _ps.erKr,
           dayUs: _ps.dayUs, dayKr: _ps.dayKr, r5Us: _ps.r5Us, r5Kr: _ps.r5Kr, ts: _ps.ts,
           // [V33.794] 정식 국면 — 매매 경로와 ★같은 함수★(regimeCanon) · 같은 질의에 mkt_context 만 끼움(추가 쿼리 0)
-          canonUs: regimeCanon(_ps.us, _pr0.us || null, _mcx && _mcx.regime), canonKr: regimeCanon(_ps.kr, _pr0.kr || null, _mcx && _mcx.regime) }; } catch (e) {}
+          // [V33.797 국면] 매매 사이클이 실제로 쓴 값(regime_snap · 2시간 안)을 우선 — 없으면 같은 함수로 다시 잰다(특징·히스테리시스 없이)
+          canonUs: _snapCanon(_pss["regime_snap:us"]) || regimeCanon(_ps.us, _pr0.us || null, _mcx || null, null, { market: "us" }),
+          canonKr: _snapCanon(_pss["regime_snap:kr"]) || regimeCanon(_ps.kr, _pr0.kr || null, _mcx || null, null, { market: "kr" }) }; } catch (e) {}
         // [V33.45] 미국 반도체 → 한국 기술주 선행지표(전이 감시).
         let _xmkt = null;
         try { const _xl = await getState(env.DB, "xmkt_lead", null); if (_xl) _xmkt = { semi1d: _xl.semi1d, semi5d: _xl.semi5d, n: _xl.n, ts: _xl.ts }; } catch (e) {}
