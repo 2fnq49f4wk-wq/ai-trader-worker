@@ -1,39 +1,39 @@
 /* [UI1 polish] 한 장짜리 덧입힘 시트 — 지우면 옛 모습으로 돌아간다(되돌리기 쉬움).
    목표: 라이트 = 깨끗한 프리미엄 화이트 · 다크 = 부드러운 차콜(순흑 아님) · 같은 포인트색(#3DD6B5) · 낮은 대비 테두리 · 12~16px 반경 · 겹겹의 옅은 그림자.
    한국식 상승(빨강)/하락(파랑) 색과 프로(HTS) 밀도는 건드리지 않는다. 이 시트는 반드시 마지막 <link> 로 둔다. */
-:root{--lux-ac:#3DD6B5;--lux-r:18px;--lux-r-s:12px;--lux-grad:linear-gradient(135deg,#4f8cff 0%,#6a5cff 100%);--lux-ease:cubic-bezier(.22,.9,.3,1)}
+:root{--lux-ac:#9DB4E8;--lux-r:13px;--lux-r-s:9px;--lux-grad:linear-gradient(135deg,#27396a 0%,#1a2748 100%);--lux-ease:cubic-bezier(.22,.9,.3,1)}
 
 /* ── 다크: 부드러운 차콜 ── */
 html:root:not([data-theme="light"]){
-  --bg:#11141b;--s1:#171b24;--s2:#1e232d;--s3:#262c38;
-  --bd:#2a3040;--bd2:#222836;
-  --t1:#eceff5;--t2:#a8b0c0;--t3:#7a8294;
-  --panel:#171b24;--elev:#1e232d;--border:#2a3040;--text:#eceff5;--dim:#a8b0c0;--faint:#4a5264;
+  --bg:#0c1324;--s1:#111a30;--s2:#162039;--s3:#1c2845;
+  --bd:#26334f;--bd2:#1e2a44;
+  --t1:#eef1f8;--t2:#aab4cc;--t3:#7d89a6;
+  --panel:#111a30;--elev:#162039;--border:#26334f;--text:#eef1f8;--dim:#aab4cc;--faint:#4a5670;
   --lux-sh:0 1px 0 rgba(255,255,255,.04) inset,0 10px 30px -14px rgba(0,0,0,.6);
-  --lux-glass:rgba(23,27,36,.62);--lux-glass-bd:rgba(255,255,255,.08);
-  --lux-pill:var(--lux-grad);--lux-pill-bd:rgba(255,255,255,.18);--lux-on:#fff;--lux-glow:0 6px 22px -4px rgba(95,110,255,.55);
+  --lux-glass:rgba(17,26,48,.62);--lux-glass-bd:rgba(255,255,255,.08);
+  --lux-pill:var(--lux-grad);--lux-pill-bd:rgba(255,255,255,.18);--lux-on:#fff;--lux-glow:0 6px 22px -4px rgba(30,42,74,.6);
 }
 html:root:not([data-theme="light"]) body{background:var(--bg)}
-html.lux-cssw:not([data-theme="light"]),html.lux-cssw:not([data-theme="light"]) body{background:#11141b}
+html.lux-cssw:not([data-theme="light"]),html.lux-cssw:not([data-theme="light"]) body{background:#0c1324}
 html.lux-cssw:not([data-theme="light"]) .sidebar{background:var(--lux-glass);-webkit-backdrop-filter:blur(18px) saturate(160%);backdrop-filter:blur(18px) saturate(160%);border-right:1px solid var(--lux-glass-bd);box-shadow:10px 0 40px -24px rgba(0,0,0,.7)}
 /* ── 라이트: 깨끗한 프리미엄 화이트 ── */
 html[data-theme="light"]{
-  --bg:#f4f7fe;--s1:#ffffff;--s2:#f1f4fb;--s3:#e5eaf5;
-  --bd:#e0e6f2;--bd2:#e9eef8;
-  --t1:#1b2559;--t2:#4a5578;--t3:#707a9a;
-  --panel:#ffffff;--elev:#f1f4fb;--border:#e0e6f2;--text:#1b2559;--dim:#4a5578;--faint:#707a9a;
-  --lux-sh:0 1px 2px rgba(60,80,150,.05),0 18px 40px -18px rgba(80,100,180,.22);
+  --bg:#f6f8fc;--s1:#ffffff;--s2:#f2f5fa;--s3:#e6ebf3;
+  --bd:#dfe5ef;--bd2:#e8ecf4;
+  --t1:#0f1a33;--t2:#3a4663;--t3:#667089;
+  --panel:#ffffff;--elev:#f2f5fa;--border:#dfe5ef;--text:#0f1a33;--dim:#3a4663;--faint:#667089;
+  --lux-sh:0 1px 2px rgba(20,32,64,.05),0 18px 40px -18px rgba(20,32,64,.2);
   --lux-glass:rgba(255,255,255,.66);--lux-glass-bd:rgba(255,255,255,.9);
-  --lux-pill:var(--lux-grad);--lux-pill-bd:rgba(255,255,255,.5);--lux-on:#fff;--lux-glow:0 8px 22px -6px rgba(90,100,255,.5);
-  background:#f4f7fe;
+  --lux-pill:var(--lux-grad);--lux-pill-bd:rgba(255,255,255,.5);--lux-on:#fff;--lux-glow:0 8px 22px -6px rgba(30,42,74,.5);
+  background:#f6f8fc;
 }
 html[data-theme="light"] body{background:var(--bg)}
-html[data-theme="light"] .sidebar{background:var(--lux-glass);-webkit-backdrop-filter:blur(18px) saturate(170%);backdrop-filter:blur(18px) saturate(170%);border-right:1px solid var(--lux-glass-bd);box-shadow:12px 0 40px -26px rgba(80,100,180,.28)}
+html[data-theme="light"] .sidebar{background:var(--lux-glass);-webkit-backdrop-filter:blur(18px) saturate(170%);backdrop-filter:blur(18px) saturate(170%);border-right:1px solid var(--lux-glass-bd);box-shadow:12px 0 40px -26px rgba(20,32,64,.22)}
 
 /* ── 카드·패널 공통: 반경 · 옅은 테두리 · 겹겹 그림자 ── */
 .idx-card,.wl-pane,.fv-panel,.pipeline-grid>*,.m-drawer .m-dr-item{border-radius:var(--lux-r)}
 .idx-card,.wl-pane,.fv-panel{border-color:var(--bd2);box-shadow:var(--lux-sh);background-color:var(--s1);transition:box-shadow .25s var(--lux-ease),transform .25s var(--lux-ease)}
-@media (hover:hover){.idx-card:hover,.fv-panel:hover{transform:translateY(-2px)}html[data-theme="light"] .idx-card:hover,html[data-theme="light"] .fv-panel:hover{box-shadow:0 2px 4px rgba(60,80,150,.06),0 24px 48px -18px rgba(80,100,180,.30)}.btn:hover,.llm-btn:hover{transform:translateY(-1px)}}
+@media (hover:hover){.idx-card:hover,.fv-panel:hover{transform:translateY(-2px)}html[data-theme="light"] .idx-card:hover,html[data-theme="light"] .fv-panel:hover{box-shadow:0 2px 4px rgba(60,80,150,.06),0 24px 48px -18px rgba(20,32,64,.24)}.btn:hover,.llm-btn:hover{transform:translateY(-1px)}}
 .btn,.llm-btn{transition:transform .2s var(--lux-ease),box-shadow .2s,background .2s,color .2s}
 .btn.primary,.btn-primary,.llm-btn.primary{background:var(--lux-grad);color:#fff;border-color:transparent;box-shadow:var(--lux-glow)}
 .idx-card{backdrop-filter:none}
@@ -68,7 +68,7 @@ html.lux-ind .sb-nav .nav-item.active::before{display:none}
 html.lux-ind .sb-nav .nav-item.active .nav-item-label,html.lux-ind.lux-cssw:not([data-theme="light"]) .sidebar .nav-item.active .nav-item-label{color:var(--lux-on);font-weight:700}
 html.lux-ind .sb-nav .nav-item.active .nav-item-icon,html.lux-ind.lux-cssw:not([data-theme="light"]) .sidebar .nav-item.active .nav-item-icon{background:transparent;box-shadow:none;color:var(--lux-on)}
 html.lux-ind .sb-nav .nav-item,html.lux-ind .sb-nav .nav-item-icon,html.lux-ind .sb-nav .nav-item-label{transition:color .25s,font-weight .25s}
-html.lux-ind .sb-nav .nav-item{border-radius:12px}
+html.lux-ind .sb-nav .nav-item{border-radius:10px}
 /* 폰 하단 탭 */
 html.lux-ind .m-tabbar{position:fixed}
 html.lux-ind .m-tab{position:relative;z-index:1}

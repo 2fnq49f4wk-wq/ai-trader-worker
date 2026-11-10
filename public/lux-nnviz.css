@@ -1,0 +1,69 @@
+/* [UI4 nnviz] AI 작동원리(#page-nnviz) 리퀴드 글래스 + 흰·검정·남색. 구조·내용은 그대로(스타일만) — 지우면 옛 모습.
+   brain-console.css / neural-observatory.css 의 --ops-* 토큰을 남색으로 바꾸고, 패널에 유리 질감(반투명 · 위쪽 하이라이트 · 안쪽 그림자)을 입힌다.
+   큰 스크롤 면이라 backdrop-filter 는 쓰지 않는다(스크롤 fps). 상태 색(초록·호박·빨강)과 3D 캔버스 안 색은 그대로. */
+html body:has(#page-nnviz.active){
+  --ops-void:#080e1d;--ops-bg0:#0a1122;--ops-bg1:rgba(20,32,60,.55);--ops-bg2:rgba(30,46,84,.5);--ops-bg3:rgba(40,60,104,.5);
+  --ops-line:rgba(160,185,240,.2);--ops-line2:rgba(160,185,240,.11);--ops-line-soft:rgba(160,185,240,.14);
+  --ops-ink:#eef2fb;--ops-ink2:#b3bfd9;--ops-ink3:#8593b2;
+  --ops-cyan:#a9bde8;--ops-cyan-soft:#9db4e8;--ops-cyan-dim:rgba(150,178,240,.2);--ops-purple:#a9bde8;
+  --ops-panel:rgba(18,30,58,.62);--ops-panel-hi:rgba(160,185,240,.08);
+  --nn-spec:inset 0 1px 0 rgba(255,255,255,.3),inset 0 0 0 1px rgba(255,255,255,.04),inset 0 -14px 24px -18px rgba(0,0,0,.45);
+  --nn-sh:0 18px 40px -22px rgba(2,6,20,.7);
+}
+html[data-theme="light"] body:has(#page-nnviz.active){
+  --ops-void:#f4f7fc;--ops-bg0:#f4f7fc;--ops-bg1:rgba(255,255,255,.7);--ops-bg2:rgba(30,42,74,.05);--ops-bg3:rgba(30,42,74,.09);
+  --ops-line:rgba(30,42,74,.18);--ops-line2:rgba(30,42,74,.1);--ops-line-soft:rgba(30,42,74,.13);
+  --ops-ink:#0f1a33;--ops-ink2:#3a4663;--ops-ink3:#667089;
+  --ops-cyan:#1e2a4a;--ops-cyan-soft:#2b3d6e;--ops-cyan-dim:rgba(30,42,74,.12);--ops-purple:#2b3d6e;
+  --ops-panel:rgba(255,255,255,.78);--ops-panel-hi:rgba(30,42,74,.05);
+  --nn-spec:inset 0 1px 0 #fff,inset 0 0 0 1px rgba(255,255,255,.55),inset 0 -12px 22px -16px rgba(30,42,74,.14);
+  --nn-sh:0 16px 36px -22px rgba(20,32,64,.3);
+}
+/* 바탕: 투명(공용 오로라가 비친다) */
+html:is(:root,[data-theme]) body #page-nnviz .nnviz-content{background:transparent!important}
+
+/* 유리 패널 */
+html:is(:root,[data-theme]) body #page-nnviz :is(.nlv-core,.nlv-funnel-wrap,.nlv-panel,.nlv-picks,.nlv-cmlist,.ops-brief,.nerve-room){
+  background:linear-gradient(155deg,rgba(255,255,255,.10),rgba(255,255,255,.02) 55%,rgba(255,255,255,.05)),var(--ops-panel)!important;
+  border:1px solid var(--ops-line)!important;border-radius:16px!important;box-shadow:var(--nn-spec),var(--nn-sh)!important;overflow:hidden}
+html[data-theme="light"] body #page-nnviz :is(.nlv-core,.nlv-funnel-wrap,.nlv-panel,.nlv-picks,.nlv-cmlist,.ops-brief,.nerve-room){
+  background:linear-gradient(155deg,rgba(255,255,255,.95),rgba(255,255,255,.7)),#fff!important}
+/* 큰 요약 카드(검정/흰 반전이던 자리) = 짙은 남색 유리 */
+html:is(:root,[data-theme]) body #page-nnviz .ops-brief-main{background:linear-gradient(160deg,#2b3d6e,#16213f)!important;color:#fff!important;border-radius:0!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.3)!important}
+html:is(:root,[data-theme]) body #page-nnviz .ops-brief-main :is(strong,p,.ops-label){color:#fff!important}
+html:is(:root,[data-theme]) body #page-nnviz :is(.ops-metrics>div,.nlv-top,.nlv-stat,.nlv-cm){background:transparent!important}
+html:is(:root,[data-theme]) body #page-nnviz :is(.nlv-toplist,.nlv-kpi,.nlv-cmlist){background:var(--ops-panel)!important}
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cm:hover{background:var(--ops-panel-hi)!important}
+html:is(:root,[data-theme]) body #page-nnviz .nlv-line:is(.buy,.warn){background:var(--ops-panel-hi)}
+
+/* 버튼·탭·칩: 알약 유리, 눌림/활성 = 남색 */
+html:is(:root,[data-theme]) body #page-nnviz :is(.nnv-btn,.nlv-btn,.nnv-tab,.nerve-room button,.nerve-room select,.nnv-health-source){
+  border-radius:999px!important;border:1px solid var(--ops-line)!important;background:var(--ops-panel-hi)!important;color:var(--ops-ink)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}
+html:is(:root,[data-theme]) body #page-nnviz :is(.nnv-btn,.nlv-btn):hover,
+html:is(:root,[data-theme]) body #page-nnviz .nerve-room button:hover,
+html:is(:root,[data-theme]) body #page-nnviz .nerve-room button[aria-pressed=true],
+html:is(:root,[data-theme]) body #page-nnviz .nnv-tab.active{
+  background:linear-gradient(160deg,#2b3d6e,#1a2646)!important;color:#fff!important;border-color:rgba(255,255,255,.22)!important;box-shadow:0 5px 16px -7px rgba(4,10,30,.6),inset 0 1px 0 rgba(255,255,255,.35)!important}
+html[data-theme="light"] body #page-nnviz .nerve-room button:hover{color:#fff!important}
+html:is(:root,[data-theme]) body #page-nnviz .nnv-health-source.ok{color:var(--ops-green)!important}
+html:is(:root,[data-theme]) body #page-nnviz .nnv-health-source.error{color:var(--ops-red)!important}
+
+/* 신경 방(nerve-room) 안쪽 */
+#page-nnviz .nerve-room{color:var(--ops-ink)}
+#page-nnviz :is(.nerve-heading,.nerve-controls,.nerve-layers,.nerve-inspector,.nerve-note,.nerve-role){border-color:var(--ops-line2)!important}
+#page-nnviz .nerve-heading h3{color:var(--ops-ink)}
+#page-nnviz :is(.nerve-kicker,.nerve-status,.nerve-controls label,.nerve-inspector output,.nerve-note,.nerve-corner){color:var(--ops-ink3)}
+#page-nnviz .nerve-role{color:var(--ops-ink2)}
+#page-nnviz .nerve-room select{background-color:var(--ops-panel-hi)!important;color:var(--ops-ink)!important}
+#page-nnviz .nerve-room select option{background:#0f1a33;color:#eef2fb}
+#page-nnviz .nerve-viewport{background:radial-gradient(ellipse at 50% 45%,#16264a,#080d1c 78%);box-shadow:inset 0 1px 0 rgba(255,255,255,.12),inset 0 0 40px rgba(0,0,0,.35)}
+#page-nnviz .omni-core-vp{background:radial-gradient(120% 70% at 50% 115%,rgba(70,110,200,.38),rgba(30,50,110,.14) 45%,transparent 70%),radial-gradient(90% 80% at 50% 42%,#13224a,#0b1430 55%,#060a18 100%)}
+#page-nnviz .omni-core-vp .nerve-corner{color:#a9bde8}
+#page-nnviz .nerve-room :focus-visible,html body #page-nnviz :is(button,a):focus-visible{outline-color:var(--ops-ink)}
+/* workspace-layout.css 의 보라빛 회색·분홍 점·검정 탭바를 남색으로(#page-nnviz.page 특이도) */
+html:is(:root,[data-theme]) body #page-nnviz.page .mission-nav{border-radius:999px!important;padding:4px!important;background:var(--ops-panel-hi)!important;border:1px solid var(--ops-line)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.2)!important}
+html:is(:root,[data-theme]) body #page-nnviz.page .mission-nav button{border-radius:999px!important;color:var(--ops-ink2)!important}
+html:is(:root,[data-theme]) body #page-nnviz.page .mission-nav button[aria-pressed="true"]{background:linear-gradient(160deg,#2b3d6e,#1a2646)!important;color:#fff!important;box-shadow:0 5px 16px -7px rgba(4,10,30,.6),inset 0 1px 0 rgba(255,255,255,.35)!important}
+html:is(:root,[data-theme]) body #page-nnviz.page .nnv-title .dot{background:var(--ops-cyan)!important}
+html:is(:root,[data-theme]) body #page-nnviz.page .nnv-headcopy,html:is(:root,[data-theme]) body #page-nnviz.page .nnv-health-title b,html:is(:root,[data-theme]) body #page-nnviz.page .nnv-health-time{color:var(--ops-ink3)!important}
+html:is(:root,[data-theme]) body #page-nnviz.page .nnv-head-actions .nnv-btn{border-radius:999px!important;border-color:var(--ops-line)!important;color:var(--ops-ink)!important}

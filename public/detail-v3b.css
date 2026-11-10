@@ -121,24 +121,10 @@ html #page-detail .lxa-ch text{font-size:12px}
 html #page-detail #luxInfo .up,html #page-detail .lxa .up{color:var(--pos)}html #page-detail #luxInfo .dn,html #page-detail .lxa .dn{color:var(--neg)}
 html[data-theme="light"] #page-detail #luxInfo .dl.gd{color:#0B6E5C}html[data-theme="light"] #page-detail #luxInfo .dl.bd{color:#8A5A00}
 #page-detail #luxInfo .dl{font-size:12.5px}
-/* ── 왼쪽 사이드바 상태 글자(종목 상세를 볼 때) ── */
-html:has(#page-detail.active) .sb-brand-name{font-size:14px}
-html:has(#page-detail.active) .sb-brand-sub{font-size:12px !important}
-html:has(#page-detail.active) :is(.sb-train-txt,.sb-pnl,.sb-pnl span,.sb-market-row,.sb-market-row b,.sb-auto-tx,.sb-mode-cap,.sb-btn,.sb-theme-btn,.nav-item-label){font-size:12.5px !important}
-html:has(#page-detail.active) .sb-auto-sub{font-size:12px !important}
-html:has(#page-detail.active) :is(.sb-mode-cap,.sb-auto-sub){opacity:1 !important}
 @media (min-width:761px) and (max-width:1180px){#page-detail .dv3-live b{display:none}#page-detail .dv3-live{padding:5px}}
 /* ── 색 대비 보정: 상승/하락 글자색 · 사이드바 보조 글자 · 작은 라벨 ── */
 #page-detail :is(.pos,.up){color:var(--pos) !important}#page-detail :is(.neg,.dn){color:var(--neg) !important}
 #page-detail .detail-change.pos{color:var(--pos) !important}#page-detail .detail-change.neg{color:var(--neg) !important}
-html:has(#page-detail.active) .sidebar{--t3:#B4BFD6;--t2:#D5DDEE;--pos:#FF7A7F;--neg:#6EA8FF}
-html[data-theme="light"]:has(#page-detail.active) .sidebar{--t3:#3C485F;--t2:#27324A;--pos:#BF242A;--neg:#1B55C6}
-html:has(#page-detail.active) .sidebar :is(.sb-brand-sub,.sb-mode-cap,.sb-auto-sub,.sb-train-txt,.sb-pnl,.sb-market-row){color:var(--t3) !important}
-html:has(#page-detail.active) .sidebar :is(.sb-pnl .pos,.sb-pnl span.pos){color:var(--pos) !important}html:has(#page-detail.active) .sidebar :is(.sb-pnl .neg,.sb-pnl span.neg){color:var(--neg) !important}
-html:has(#page-detail.active) .sidebar .market-status-closed{color:#FF8A8E !important}html[data-theme="light"]:has(#page-detail.active) .sidebar .market-status-closed{color:#B3201F !important}
-html:has(#page-detail.active) .sidebar .market-status-open{color:#35D9B0 !important}html[data-theme="light"]:has(#page-detail.active) .sidebar .market-status-open{color:#0B6E5C !important}
-html:has(#page-detail.active) .sidebar :is(.sb-auto-tx,.sb-brand-name){color:var(--t2) !important}
-html:has(#page-detail.active) .sidebar span[style*="font-size"]{font-size:12.5px !important}
 #page-detail .wl-ext-tag{font-size:12px !important;line-height:18px !important;padding:0 6px !important}
 #page-detail .detail-prof .k,#page-detail .detail-prof .s,#page-detail .detail-prof span{font-size:max(12.5px,1em) !important}
 #page-detail #luxInfo :is(.i,.lm,.st,.g,.ft)[class]{opacity:1}
@@ -147,9 +133,6 @@ html:has(#page-detail.active) .sidebar span[style*="font-size"]{font-size:12.5px
 html[data-theme="light"] #page-detail :is(.pos,.up,.detail-change.pos){color:#BF242A !important}html[data-theme="light"] #page-detail :is(.neg,.dn,.detail-change.neg){color:#1B55C6 !important}
 html #page-detail .lxa-sc .u b{color:#FF7A7F !important}html #page-detail .lxa-sc .d b{color:#6EA8FF !important}
 html[data-theme="light"] #page-detail .lxa-sc .u b{color:#BF242A !important}html[data-theme="light"] #page-detail .lxa-sc .d b{color:#1B55C6 !important}
-html:has(#page-detail.active) .sidebar :is(.pos){color:#FF7A7F !important}html:has(#page-detail.active) .sidebar :is(.neg){color:#6EA8FF !important}
-html[data-theme="light"]:has(#page-detail.active) .sidebar .pos{color:#BF242A !important}html[data-theme="light"]:has(#page-detail.active) .sidebar .neg{color:#1B55C6 !important}
-html:has(#page-detail.active) :is(.sb-engine,.sb-market,.sb-live,.live-indicator,.sb-live *,.sb-engine *){font-size:12.5px !important}
 #page-detail .detail-anl .sb{background:#A8222A !important;color:#fff !important}#page-detail .detail-anl .b{background:#C2323A !important;color:#fff !important}#page-detail .detail-anl .h{background:#4A5568 !important;color:#fff !important}#page-detail .detail-anl .s{background:#2461C8 !important;color:#fff !important}
 #page-detail .fund-fbit{color:var(--t1) !important}#page-detail .fund-fbit.ok{border-color:rgba(48,204,90,.7)}#page-detail .fund-fbit.no{border-color:rgba(246,53,56,.75)}
 #page-detail .detail-fund :is(.k,.s,.sub){font-size:12.5px !important;opacity:1 !important}
