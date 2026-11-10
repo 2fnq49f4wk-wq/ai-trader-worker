@@ -12,6 +12,8 @@
 
 ## Current handoff
 
+### V33.803 — 리퀴드 글래스 전 화면(public/lux-glass.css · 사이드바 유리 패널 · 알약 늘어남 모션). blur 는 탭바·드로어·모달·검색·토스트·로그인에만(스크롤 fps 때문). 되돌리기 = lux-glass.css 링크 제거
+
 ### [UI3] 리퀴드 글래스 전 화면 (에이전트 · 푸시 안 함 · _BUILD_VER 안 올림) — 되돌리기 = index.html 의 lux-glass.css 링크 1줄 제거
 - 새 파일 public/lux-glass.css(lux-polish.css 뒤 마지막 시트 · 오로라 html::before 고정 그라데이션 · 떠 있는 사이드바(≥768px)/아래 탭/드로어 · 쉬운·전문가 대시보드 · MY · 모달·검색·토스트·로그인창). lux-motion.js: 알약 '늘어났다 자리잡기'(scaleX/Y 스트레치+스프링).
 - 성능 실측(헤드리스): 스크롤 큰 카드·사이드바에 backdrop-filter 를 쓰면 데스크톱 60→22fps → 사이드바·쉬운 카드는 blur 없음, blur 는 아래 탭·드로어·모달·검색·토스트·로그인창만. 통합자: lux-glass.css ?v= 는 판 올릴 때 같이(현재 33.802).
