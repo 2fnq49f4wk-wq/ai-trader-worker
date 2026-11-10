@@ -12,6 +12,11 @@
 
 ## Current handoff
 
+### [UI3] 리퀴드 글래스 전 화면 (에이전트 · 푸시 안 함 · _BUILD_VER 안 올림) — 되돌리기 = index.html 의 lux-glass.css 링크 1줄 제거
+- 새 파일 public/lux-glass.css(lux-polish.css 뒤 마지막 시트 · 오로라 html::before 고정 그라데이션 · 떠 있는 사이드바(≥768px)/아래 탭/드로어 · 쉬운·전문가 대시보드 · MY · 모달·검색·토스트·로그인창). lux-motion.js: 알약 '늘어났다 자리잡기'(scaleX/Y 스트레치+스프링).
+- 성능 실측(헤드리스): 스크롤 큰 카드·사이드바에 backdrop-filter 를 쓰면 데스크톱 60→22fps → 사이드바·쉬운 카드는 blur 없음, blur 는 아래 탭·드로어·모달·검색·토스트·로그인창만. 통합자: lux-glass.css ?v= 는 판 올릴 때 같이(현재 33.802).
+- 라이트 모드는 index.html 의 !important 카드 규칙(:is(...) )을 이기려고 `html[data-theme=light] body :is(...)` + !important 로 덮었다. #page-detail 은 건드리지 않음(공용 토큰 --gl-* 만 공유).
+
 ### V33.802 — 새 디자인 배포(lux-polish.css · lux-motion.js + vendor/anime.min.js · 첫 방문 배너 #luxHero · 가입 전 3장 홍보). 되돌리기 = lux-polish.css 링크 제거
 
 ### [UI1] 테마 폴리시 · anime.js 모션 · 첫 방문 소개 배너 · 가입 홍보 슬라이드 (에이전트 · 푸시 안 함 · _BUILD_VER 안 올림)

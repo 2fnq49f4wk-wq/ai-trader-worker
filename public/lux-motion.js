@@ -24,10 +24,14 @@
         void pill.offsetWidth; pill.style.transition = ""; pill.classList.add("on");
       } else {
         a.remove(pill);
-        a({ targets: pill, translateX: x, translateY: y, width: w, height: h, duration: 720, easing: "spring(1, 90, 12, 0)" });
+        /* [UI3] 액체 늘어났다 자리잡기: 움직이는 방향으로 길게 늘어났다가(stretch) 스프링으로 되돌아온다(settle) */
+        var m = pill._m || { x: x, y: y }, dx = Math.abs(x - m.x), dy = Math.abs(y - m.y), st = 1 + Math.min(0.38, Math.max(dx, dy) / 520);
+        var ax = dx >= dy ? "scaleX" : "scaleY", o = { targets: pill, translateX: x, translateY: y, width: w, height: h, duration: 760, easing: "spring(1, 90, 12, 0)" };
+        o[ax] = [{ value: st, duration: 170, easing: "easeOutQuad" }, { value: 1, duration: 620, easing: "spring(1, 120, 9, 0)" }];
+        a(o);
       }
       if (animate && !RM && a && act !== cur) pop(act);
-      cur = act; first = false;
+      pill._m = { x: x, y: y }; cur = act; first = false;
     }
     function pop(act) {
       var a = A(); if (!a) return;
