@@ -27867,7 +27867,8 @@ async function runTradingCycle(env) {
               // and self-healing have already run. Do not introduce a second weaker evaluator.
               const _snapCandidate = _aiSetups.find(function(sr){return sr.strategy === "snap";});
               const _trendCandidate = _aiSetups.find(function(sr){return sr.strategy === "trend";});
-              const _snapEntry = (AI_ROUTE_RETIRE[market] || []).indexOf("snap") >= 0 ? null : (_snapCandidate && _snapCandidate.signal);   // [V33.797-pb] 미국 AI 스냅 퇴출
+              const _snapEntry0 = (AI_ROUTE_RETIRE[market] || []).indexOf("snap") >= 0 ? null : _snapCandidate;   // [V33.797-pb] 미국 AI 스냅 퇴출
+              const _snapEntry = _snapCandidate && _snapCandidate.signal && _snapEntry0 ? _snapCandidate.signal : null;
               // [V33.596] 시장별 허용 셋업(setupByMarket) — 있으면 그 규칙 셋업이 뜬 경우만 추세 경로 후보
               const _setOk = (_ap.setupByMarket && Array.isArray(_ap.setupByMarket[market])) ? _ap.setupByMarket[market] : null;
               const _trendEl = _setOk ? !!(_trendCandidate && _trendCandidate.signal && _setOk.indexOf(_trendCandidate.signal.name) >= 0)
