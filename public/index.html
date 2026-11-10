@@ -1,6 +1,14 @@
 <!DOCTYPE html>
 <html lang="ko" class="lux-booting lux-cssw">
 <head>
+<meta charset="UTF-8">
+<title>LUX-INV</title>
+<meta name="description" content="주식이 어려워? AI가 대신 보고 설명해 줌. AI가 함께 분석하는 모의투자 · 가입은 닉네임+비밀번호 · 실시간 수익률 순위 · 무료">
+<meta property="og:type" content="website"><meta property="og:site_name" content="LUX-INV"><meta property="og:url" content="https://lux-inv.com/">
+<meta property="og:title" content="LUX-INV — AI가 대신 보고 설명해 주는 모의투자">
+<meta property="og:description" content="AI가 분석을 돕는 모의투자 · 한국·미국 주식 · 닉네임+비밀번호면 끝 · 실시간 수익률 순위">
+<meta property="og:image" content="https://lux-inv.com/og-card3.png"><meta property="og:image:secure_url" content="https://lux-inv.com/og-card3.png"><meta property="og:image:type" content="image/png"><meta property="og:image:alt" content="LUX-INV · AI가 분석을 돕는 모의투자"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="https://lux-inv.com/og-card3.png">
 <script>
 /* [V33.727] ★workers.dev → lux-inv.com 자동 이동★(사용자 11/2) — 화면만 옮긴다(/api/* 는 학습기가 workers.dev 로 계속 쓴다).
    기기 코드(lux-uid)·선택(lux-gate)은 주소 뒤 #(서버로 안 감)로 넘겨 새 주소에서 같은 계좌가 열리게 하고 바로 지운다. 로그인 상태는 넘기지 않는다(새 주소에서 닉네임·비밀번호로 한 번 로그인). */
@@ -12,10 +20,9 @@
   history.replaceState(null,'',location.pathname+location.search);}
 }catch(e){}})();
 </script>
-<meta charset="UTF-8">
 <script>/* [UI1] 첫 방문 배너 판정 */
 (function(){try{var q=location.search,f=/[?&]intro=hero(&|$)/.test(q);if(!f&&(/[?&]intro=0(&|$)/.test(q)||localStorage.getItem("lux-hero-seen")||localStorage.getItem("lux-auth")||/bot|crawl|spider|slurp|lighthouse|pagespeed|preview|headless|facebookexternalhit|kakaotalk-scrap/i.test(navigator.userAgent)||(window.matchMedia&&matchMedia("(display-mode: standalone)").matches)||navigator.standalone))return;
-localStorage.setItem("lux-hero-seen","1");var h=document.documentElement;h.classList.add("lux-hero","lux-nointro");var l=document.createElement("link");l.rel="stylesheet";l.href="/lux-hero.css?v=33.816";document.head.appendChild(l);var c=document.createElement("script");c.src="/lux-hero.js?v=33.816";c.defer=true;document.head.appendChild(c);}catch(e){}})();</script>
+localStorage.setItem("lux-hero-seen","1");var h=document.documentElement;h.classList.add("lux-hero","lux-nointro");var l=document.createElement("link");l.rel="stylesheet";l.href="/lux-hero.css?v=33.817";document.head.appendChild(l);var c=document.createElement("script");c.src="/lux-hero.js?v=33.817";c.defer=true;document.head.appendChild(c);}catch(e){}})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <script>/* [V33.740] ★첫 그림부터 축소 보기★(사용자 11/2 "로딩할 때 처음에 옛날 화면이 보인다") — 휴대폰은 늘 대시보드로 시작하므로, 첫 그림 전에 PC 폭 뷰포트로 바꿔 둔다
    (종전엔 스크립트가 다 돈 뒤 showPage 에서 바꿔 휴대폰 배치가 한 번 보였다). 폭은 지난번 잰 높이(localStorage lux-dz-vh)로 같은 식. */
@@ -23,19 +30,7 @@ localStorage.setItem("lux-hero-seen","1");var h=document.documentElement;h.class
  var vh=+localStorage.getItem('lux-dz-vh')||window.innerHeight||Math.round((screen.height||844)*0.8);try{sessionStorage.setItem('lux-dz-vh',String(vh));}catch(e){}
  var W=Math.max(1000,Math.min(1180,Math.round(1700*sw/Math.max(300,vh-106))));var de=document.documentElement,m=document.querySelector('meta[name="viewport"]');
  de.classList.add('lux-dz');de.setAttribute('data-dzw',String(W));de.style.setProperty('--dzi',(W/sw).toFixed(4));if(m)m.setAttribute('content','width='+W+', viewport-fit=cover');}catch(e){}})();</script>
-<!-- ══ [V33.367] ★접속 직후 흰 화면을 없앤다★ ═══════════════════════════════════
-     증상: 인트로(별 로고)가 뜨기 ★전에★ 흰 화면이 먼저 보인다.
-     원인: 브라우저는 <head> 의 ★렌더링 차단 자원★ 을 다 받기 전에는 아무것도 못 칠한다.
-       그런데 배경색을 정하는 첫 <style> 이 59줄이고, 그 앞에 차단 자원이 둘 있었다 —
-         12줄  <script src="/neural-observatory.js">   (동기 스크립트: 파싱을 멈춘다)
-         58줄  <link ... fonts.googleapis.com>          (외부 오리진 스타일시트: DNS+TLS+수신)
-       그동안 브라우저는 ★기본 흰색★ 을 칠한다. 카카오톡 인앱처럼 느린 곳에서 특히 길다.
-     고침 셋:
-       ⑴ 이 임계 CSS 를 ★가장 앞★ 에 둔다 — 첫 페인트가 인트로 색이 된다.
-       ⑵ 폰트 스타일시트를 비차단으로 바꾼다(media=print → onload 로 되돌림).
-       ⑶ neural-observatory.js 에 defer — 이 파일의 NeuralObservatory 는 boot() 이후에만 쓴다.
-     ※ .lux-booting 은 인트로가 사라질 때 벗긴다. 그래서 라이트 테마의 오버스크롤 영역이
-       어두워지는 부작용이 없다(인트로 동안에만 적용된다). -->
+
 <script>try{if(localStorage.getItem("lux-dmode")!=="pro")document.documentElement.classList.add("lux-easy")}catch(e){document.documentElement.classList.add("lux-easy")}</script><style>html.lux-easy #page-dashboard>*:not(#easyDash):not(#easyDashSnap){display:none!important}html.lux-easy #page-dashboard>#easyDashSnap.ez-snap{display:block!important;pointer-events:none}#page-dashboard:has(>#easyDashSnap.ez-snap){display:block}#easyDashSnap.ez-snap::before{content:"";position:fixed;left:0;right:0;top:0;height:2px;z-index:9999;background:linear-gradient(90deg,transparent,#3b82f6,transparent);background-size:50% 100%;animation:ezSnapBar 1s linear infinite}@keyframes ezSnapBar{from{background-position:-50% 0}to{background-position:150% 0}}@media (max-width:440px){.m-appbar:has(.m-ezsw) .m-ab-pnl{display:none}}html.lux-easy #page-detail{--pos:#E5484D;--neg:#3B82F6}.anl-act .d{white-space:nowrap;flex:0 0 auto}.detail-sec:has(+ .detail-pattern:empty),.detail-sec:has(+ .detail-pattern[style*="none"]){display:none}</style>
 <style>html.lux-booting{background:#000}html.lux-booting body{background:#000}html.lux-nointro #lux-intro-overlay{display:none!important}
 /* [V33.621] ★디자인 파일이 오기 전엔 본문을 감춘다★ — 사용자 10/15 "로딩이 안 되면 옛날 디자인 화면이 뜬다". 디자인 시트 5개(리퀴드 메탈 등)는 본문 맨 뒤에 있어
@@ -350,27 +345,20 @@ window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{
 window.__luxAct=Date.now();['pointerdown','keydown','touchstart','wheel'].forEach(function(e){addEventListener(e,function(){window.__luxAct=Date.now();},{passive:true,capture:true});});
 window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600000;};
 </script>
-<meta name="lux-build" content="V33.816">
-<script src="/i18n.js?v=33.816" defer></script>
-<script src="/outlook.js?v=33.816" defer></script>
-<script src="/advisor.js?v=33.816" defer></script>
-<script src="/luxmini.js?v=33.816" defer></script>
-<script src="/luxmini-view.js?v=33.816" defer></script>
-<script src="/ovn-live.js?v=33.816" defer></script>
-<script src="/mine.js?v=33.816" defer></script>
-<script src="/easy-dash.js?v=33.816" defer></script>
-<script src="/lux-motion.js?v=33.816" defer></script><script src="/lux-topbar.js?v=33.816" defer></script>
-<script src="/stock-analysis.js?v=33.816" defer></script>
-<script src="/stock-info.js?v=33.816" defer></script>
-<script src="/detail-v3.js?v=33.816" defer></script>
-<script src="/neural-observatory.js?v=33.816" defer></script>
-<title>LUX-INV</title>
-<meta name="description" content="주식이 어려워? AI가 대신 보고 설명해 줌. AI가 함께 분석하는 모의투자 · 가입은 닉네임+비밀번호 · 실시간 수익률 순위 · 무료">
-<meta property="og:type" content="website"><meta property="og:site_name" content="LUX-INV"><meta property="og:url" content="https://lux-inv.com/">
-<meta property="og:title" content="LUX-INV — AI가 대신 보고 설명해 주는 모의투자">
-<meta property="og:description" content="AI가 분석을 돕는 모의투자 · 한국·미국 주식 · 닉네임+비밀번호면 끝 · 실시간 수익률 순위">
-<meta property="og:image" content="https://lux-inv.com/og-card3.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
-<meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="https://lux-inv.com/og-card3.png">
+<meta name="lux-build" content="V33.817">
+<script src="/i18n.js?v=33.817" defer></script>
+<script src="/outlook.js?v=33.817" defer></script>
+<script src="/advisor.js?v=33.817" defer></script>
+<script src="/luxmini.js?v=33.817" defer></script>
+<script src="/luxmini-view.js?v=33.817" defer></script>
+<script src="/ovn-live.js?v=33.817" defer></script>
+<script src="/mine.js?v=33.817" defer></script>
+<script src="/easy-dash.js?v=33.817" defer></script>
+<script src="/lux-motion.js?v=33.817" defer></script><script src="/lux-topbar.js?v=33.817" defer></script>
+<script src="/stock-analysis.js?v=33.817" defer></script>
+<script src="/stock-info.js?v=33.817" defer></script>
+<script src="/detail-v3.js?v=33.817" defer></script>
+<script src="/neural-observatory.js?v=33.817" defer></script>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
      · viewport  : viewport-fit=cover — 노치·홈바 영역까지 쓰고, 안쪽 여백은 CSS 의 safe-area 가 잡는다
@@ -380,13 +368,7 @@ window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600
 <meta name="application-name" content="LUX">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<!-- [V33.157] black-translucent → default.
-     black-translucent 는 두 가지를 동시에 강제한다: ① 본문이 상태바 ★밑으로★ 들어간다
-     ② 상태바 글자가 ★항상 흰색★ 이다. ②는 라이트 테마에서 시각·배터리·와이파이가
-     밝은 배경 위 흰 글자가 되어 아예 안 보인다 — CSS 로는 못 고친다.
-     default 로 두면 iOS 가 상태바 자리를 직접 비워 주고 theme-color 로 칠하며 글자색도
-     대비에 맞춰 고른다. 그래도 겹치는 플랫폼이 있을 수 있으니 CSS 의 safe-area 여백은
-     그대로 둔다(겹치지 않는 기기에서는 env() 가 0 이라 빈 공간이 생기지 않는다). -->
+
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="LUX">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -4237,11 +4219,13 @@ window.luxDz=function(id){try{var de=document.documentElement,m=document.querySe
   var vh=0;if(!de.classList.contains('lux-dz')){vh=window.innerHeight||0;try{if(vh){sessionStorage.setItem('lux-dz-vh',String(vh));localStorage.setItem('lux-dz-vh',String(vh));}}catch(e){}}
   if(!vh){try{vh=+sessionStorage.getItem('lux-dz-vh')||0;}catch(e){}}if(!vh)vh=Math.round((screen.height||844)*0.8);
   var W=Math.max(1000,Math.min(1180,Math.round(1700*sw/Math.max(300,vh-106))));
-  de.style.setProperty('--dzi',(W/sw).toFixed(4));if(!de.classList.contains('lux-dz')||de.getAttribute('data-dzw')!==String(W)){de.classList.add('lux-dz');de.setAttribute('data-dzw',String(W));m.setAttribute('content','width='+W+', viewport-fit=cover');}}
- else if(de.classList.contains('lux-dz')){de.classList.remove('lux-dz');de.removeAttribute('data-dzw');m.setAttribute('content','width=device-width, initial-scale=1.0, viewport-fit=cover');}
+  de.style.setProperty('--dzi',(W/sw).toFixed(4));if(!de.classList.contains('lux-dz')||de.getAttribute('data-dzw')!==String(W)){de.classList.add('lux-dz');de.setAttribute('data-dzw',String(W));window.__luxDzSw();m.setAttribute('content','width='+W+', viewport-fit=cover');}}
+ else if(de.classList.contains('lux-dz')){de.classList.remove('lux-dz');de.removeAttribute('data-dzw');window.__luxDzSw();m.setAttribute('content','width=device-width, initial-scale=1.0, viewport-fit=cover');}
 }catch(e){}};
 /* [V33.738] ★축소 보기 중 뜨는 창은 원래 크기로★(사용자 11/2 "폰에서 로그인 화면이 너무 작게") — 로그인 창 · 주문창 · 검색 · 시장 지도 등 모달이
    열리는 동안은 휴대폰 화면(device-width)으로 잠시 돌리고, 닫히면 대시보드 축소 보기로 되돌린다. */
+/* [V33.817] 폭 전환 순간 가림 — 아래 메뉴로 화면을 바꿀 때 보기 폭(PC 축소 ↔ 폰)이 바뀌며 한쪽으로 찌그러졌다 돌아오던 것을 안 보이게 */
+window.__luxDzSw=function(){try{var de=document.documentElement;de.classList.add('lux-dzsw');clearTimeout(window.__luxDzSwT);window.__luxDzSwT=setTimeout(function(){requestAnimationFrame(function(){de.classList.remove('lux-dzsw');});},160);}catch(e){}};
 window.__luxDzOverlay=function(){try{return !!document.querySelector('#luxGate,#mineSheet,.modal.show,.cmdk-overlay.show');}catch(e){return false;}};
 (function(){var t=0;function chk(){t=0;try{var pg=document.querySelector('.page.active');if(window.luxDz)window.luxDz(pg?pg.id.replace('page-',''):'');}catch(e){}}
  function go(){if(!t)t=setTimeout(chk,30);}
@@ -4250,6 +4234,7 @@ window.__luxDzOverlay=function(){try{return !!document.querySelector('#luxGate,#
  if(document.body)start();else document.addEventListener('DOMContentLoaded',start);})();
 </script>
 <style id="luxDz">
+html.lux-dzsw .content{opacity:0!important;transition:none!important}.content{transition:opacity .16s ease-out}
 html.lux-dz .shell{flex-direction:column;height:100dvh;overflow:hidden;max-width:100vw;}
 html.lux-dz .sidebar{width:100%;flex:0 0 auto;max-height:none;
     border-right:none;border-bottom:1px solid var(--bd);
@@ -4545,7 +4530,7 @@ html[data-theme="light"] .detail-browse .wl-name{color:#101828 !important}
    (자리 높이는 contain-intrinsic-size 로 미리 잡아 스크롤이 튀지 않게 · 한 번 그린 뒤엔 실제 높이를 기억 — auto). */
 #page-dashboard .fv3-grid, #page-dashboard .cmbd-grid { content-visibility: auto; contain-intrinsic-size: auto 1100px; }
 </style>
-<style id="mTopSlim">/* [V33.798] 폰 상단 = 로고 + 초보자/전문가 전환만 · 나머지(검색·메뉴·손익·상태)는 아래 탭/메뉴 */.m-appbar .m-ab-mid,.m-appbar .m-ab-pnl,.m-appbar #mAbSearch,.m-appbar #mAbMenu{display:none!important}.m-appbar{justify-content:space-between}.m-appbar .m-ezsw{margin-left:auto!important}</style>
+<style id="mTopSlim">/* [V33.798] 폰 상단 = 로고 + 초보자/전문가 전환만 · 나머지(검색·메뉴·손익·상태)는 아래 탭/메뉴 */.m-appbar .m-ab-sub,.m-appbar .m-ab-pnl,.m-appbar #mAbSearch,.m-appbar #mAbMenu{display:none!important}.m-appbar{justify-content:space-between}.m-appbar .m-ezsw{margin-left:auto!important}</style>
 </head>
 <body>
 
@@ -9363,19 +9348,19 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
   #page-detail .detail-main .detail-chart{height:46vh !important;min-height:300px !important}
 }
 </style>
-<link rel="stylesheet" href="/brain-console.css?v=33.816">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.816">
-<link rel="stylesheet" href="/detail-v3.css?v=33.816">
-<link rel="stylesheet" href="/detail-v3b.css?v=33.816">
-<link rel="stylesheet" href="/detail-v3c.css?v=33.816"><link rel="stylesheet" href="/detail-v3d.css?v=33.816">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.816">
-<link rel="stylesheet" href="/model-evidence.css?v=33.816">
+<link rel="stylesheet" href="/brain-console.css?v=33.817">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.817">
+<link rel="stylesheet" href="/detail-v3.css?v=33.817">
+<link rel="stylesheet" href="/detail-v3b.css?v=33.817">
+<link rel="stylesheet" href="/detail-v3c.css?v=33.817"><link rel="stylesheet" href="/detail-v3d.css?v=33.817">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.817">
+<link rel="stylesheet" href="/model-evidence.css?v=33.817">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.816">
-<link rel="stylesheet" href="/lux-polish.css?v=33.816">
-<link rel="stylesheet" href="/lux-glass.css?v=33.816">
-<link rel="stylesheet" href="/lux-navy.css?v=33.816">
-<link rel="stylesheet" href="/lux-glass2.css?v=33.816">
+<link rel="stylesheet" href="/liquid-metal.css?v=33.817">
+<link rel="stylesheet" href="/lux-polish.css?v=33.817">
+<link rel="stylesheet" href="/lux-glass.css?v=33.817">
+<link rel="stylesheet" href="/lux-navy.css?v=33.817">
+<link rel="stylesheet" href="/lux-glass2.css?v=33.817">
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -22277,8 +22262,8 @@ setTimeout(function(){
   window.addEventListener('load', function(){ setTimeout(function(){ try{ boot(); }catch(e){} }, 0); });
 })();
 </script>
-<script src="/model-evidence.js?v=33.816"></script>
-<script src="/workspace-ui.js?v=33.816"></script>
+<script src="/model-evidence.js?v=33.817"></script>
+<script src="/workspace-ui.js?v=33.817"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {

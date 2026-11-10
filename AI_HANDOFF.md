@@ -12,6 +12,8 @@
 
 ## Current handoff
 
+- **V33.817** 폰 아래 메뉴 전환 찌그러짐 가림 · 폰 상단 LUX-INV 복구 · 링크 미리보기 메타 앞으로. 전문가 모드 폰은 대시보드만 보기 폭 1000~1180(luxDz) ↔ 다른 화면 device-width 로 바뀌어 한쪽으로 찌그러졌다 돌아왔다 → `__luxDzSw()` 가 폭 바꾸는 순간 `.content` 를 160ms 가렸다 보여 줌(폭 전환 자체는 PC 배치 때문에 유지). `#mTopSlim` 이 `.m-ab-mid` 대신 `.m-ab-sub` 만 숨김 → 로고 옆 LUX-INV 보임. og/twitter 메타를 `<head>` 맨 앞으로 + og:image:secure_url/type/alt · charset 도 맨 앞.
+
 ### [UI7] 글래시 V30 · 다크 테크 · 그레이니 배경 · 벤토 (에이전트 · 푸시 안 함 · _BUILD_VER 안 올림)
 - 새 시트 public/lux-glass2.css(lux-navy.css 뒤 링크 1줄 · 되돌리기 = 링크 제거). 두꺼운 유리 카드(blur 는 지수 카드·사이드바 등 몇 곳만) · 파랑 #1f6bff→#3b82f6 활성 알약/주요 버튼 · 사이드바 로고 줄+파란 알약. 다크 배경 = 호수 그림 대신 CSS 남색 그라데이션 + html::after feTurbulence 곡물(고정 1개) · 라이트 = 청백 + 파란 물결 + 곡물.
 - 벤토: #easyDash(≥761px 12칸/패드 6칸, 폰은 기존) · 전문가 .fv-deck(≥1101px 12칸) — display:contents + grid-column 만(JS 없음). 아이콘 사각형 스탯 카드는 DOM 변경이 필요해 안 함(타일 머리 파란 점으로 대체).
