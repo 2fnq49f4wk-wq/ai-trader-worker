@@ -183,3 +183,12 @@ html:is(:root,[data-theme]) body #page-nnviz.page .nnv-head-actions .nnv-btn{bor
   html body nav.sidebar .sb-brand-sub,html body nav.sidebar .sb-live,html body nav.sidebar .sb-train{display:none!important}
   html body nav.sidebar.sidebar .sb-nav .nav-item{padding:5px 8px!important}
 }
+
+/* [V33.809] 어두운 테마 배경 = 호숫가 달밤(public/bg/lake-*.jpg · 코드로 렌더) — 그 위에 유리 카드 */
+html:not([data-theme="light"])::before{background:
+  linear-gradient(180deg,rgba(6,12,30,.18),rgba(6,12,30,.42) 60%,rgba(4,8,20,.62)),
+  url(/bg/lake-wide.jpg) center 35%/cover no-repeat !important;opacity:1!important}
+@media (max-aspect-ratio:3/4){html:not([data-theme="light"])::before{background:
+  linear-gradient(180deg,rgba(6,12,30,.15),rgba(6,12,30,.45) 60%,rgba(4,8,20,.65)),
+  url(/bg/lake-tall.jpg) center 30%/cover no-repeat !important}}
+html:not([data-theme="light"]) body,html:not([data-theme="light"]) .shell,html:not([data-theme="light"]) .main,html:not([data-theme="light"]) main{background:transparent!important}
