@@ -49,14 +49,17 @@
   function mountPills() {
     var nav = $(".sb-nav"), tb = $(".m-tabbar"), ok = false;
     if (nav) { ok = true; if (!$(".lux-pill", nav)) Pill(nav, ".nav-item", function (a) { return { x: a.offsetLeft, y: a.offsetTop, w: a.offsetWidth, h: a.offsetHeight }; }, [0, 0]); }
-    if (tb) { ok = true; if (!$(".lux-pill", tb)) Pill(tb, ".m-tab", function (act) { var ic = $(".ic", act) || act; return { x: act.offsetLeft + ic.offsetLeft, y: act.offsetTop + ic.offsetTop, w: ic.offsetWidth, h: ic.offsetHeight }; }, [4, 2]); }
+    /* [V33.813] 폰 아래 탭은 떠다니는 알약을 쓰지 않는다 — 아이폰 사파리에서 위치를 잘못 재(줌·safe-area) 엉뚱한 곳에 가고 파란 불이 안 켜졌다. 활성 탭 아이콘 자체를 CSS 로 칠한다. */
+    if (tb) ok = true;
+    if (false && tb) { if (!$(".lux-pill", tb)) Pill(tb, ".m-tab", function (act) { var ic = $(".ic", act) || act; return { x: act.offsetLeft + ic.offsetLeft, y: act.offsetTop + ic.offsetTop, w: ic.offsetWidth, h: ic.offsetHeight }; }, [4, 2]); }
     return ok;
   }
 
   /* 페이지 전환 */
   function pageFx() {
     var seen = null;
-    new MutationObserver(function (ms) {
+    if (innerWidth <= 760) return;   /* [V33.813] 폰은 화면 전환 애니메이션을 끈다(아이폰 전환 렉) */
+    var mo = new MutationObserver(function (ms) {
       for (var i = 0; i < ms.length; i++) {
         var p = ms[i].target;
         if (!p.classList || !p.classList.contains("page") || !p.classList.contains("active") || p === seen) continue;
@@ -66,7 +69,8 @@
         if (a) a({ targets: p, opacity: [0, 1], translateY: [12, 0], duration: 380, easing: "easeOutCubic", complete: function () { p.style.transform = ""; p.style.opacity = ""; } });
         else if (p.animate) p.animate([{ opacity: 0, transform: "translateY(12px)" }, { opacity: 1, transform: "none" }], { duration: 320, easing: "cubic-bezier(.22,.9,.3,1)" });
       }
-    }).observe(D.body, { subtree: true, attributes: true, attributeFilter: ["class"] });
+    });
+    $$(".page").forEach(function (pg) { mo.observe(pg, { attributes: true, attributeFilter: ["class"] }); });   /* 페이지 요소만 본다 */
   }
 
   /* 카드 등장(한 번) · 숫자 카운트업(한 번) */
