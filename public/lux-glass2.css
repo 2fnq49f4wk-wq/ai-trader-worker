@@ -190,3 +190,5 @@ html body .m-tabbar .m-tab.active .ic svg{color:#04110D!important;stroke:#04110D
 html:not([data-theme="light"]) body .m-tabbar .m-tab.active .tx{color:#7fe3cc!important}
 html:not([data-theme="light"]) body .sb-nav .nav-item.active .nav-item-label{color:#04110D!important}
 html:not([data-theme="light"]) body .sb-nav .nav-item.active .nav-item-icon,html:not([data-theme="light"]) body .sb-nav .nav-item.active .nav-item-icon svg{color:#04110D!important;stroke:#04110D!important}
+/* [V33.819] 종목 상세 목록: 화면 밖 카드는 배치·그리기를 건너뛴다(대시보드 → 종목 상세 전환 렉) */
+#detailBrowseKR .wl-card,#detailBrowseUS .wl-card{content-visibility:auto;contain-intrinsic-size:auto 72px}

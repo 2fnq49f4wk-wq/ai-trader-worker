@@ -1,0 +1,13 @@
+깃허브에 코드 올리면 사이트가 알아서 바뀌게 만드는 법 (깃허브 + 클라우드플레어 연결) 순서 그대로 적음
+
+1. 클라우드플레어 가입 → Workers & Pages 들어가면 무료 플랜으로 서버 하나 생김. 서버 따로 안 삼
+2. 내 프로필 → API 토큰 → 토큰 만들기 → "Edit Cloudflare Workers" 템플릿 고르면 끝. 계정 ID 도 같이 복사해둠
+3. 깃허브 저장소 → Settings → Secrets and variables → Actions 에 CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID 두 개 넣음. 코드에 토큰 직접 쓰면 절대 안 됨 (공개 저장소면 바로 털림)
+4. 저장소 맨 위에 wrangler.toml 하나. 이름, 시작 파일(src/index.js), 도메인 정도만 적으면 됨
+5. .github/workflows/deploy.yml 만들어서 "main 에 올라오면 → 검사 → wrangler deploy" 이렇게 적어둠
+6. 이제 push 하면 1~4분 뒤 사이트가 바뀜. 검사 하나라도 실패하면 배포 안 돼서 망가진 버전이 안 올라감
+
+나는 이거 전부 클로드 코드한테 "깃허브에 올리면 클라우드플레어로 자동 배포되게 해줘" 한 마디로 시킴. 토큰 넣는 것만 내가 직접 함
+
+이렇게 굴러가는 사이트 (가입 없이 구경 가능)
+https://lux-inv.com/?r=t12
