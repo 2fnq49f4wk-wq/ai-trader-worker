@@ -1003,7 +1003,7 @@
       if (su && intro) {
         var app = !!(window.__luxInstall && !(window.__luxIsApp && window.__luxIsApp()));
         w.innerHTML = '<div class="in itr"><div class="hd"><b class="itb">LUX-INV</b><button type="button" class="x" id="gClose" aria-label="닫기">✕</button></div>' +
-          '<h1>주식이 어려워?<br>AI가 대신 보고 설명해 줌</h1><p class="lead">고등학생이 만든 AI 모의투자 · 진짜 돈 아님 · 무료</p>' +
+          '<h1>주식이 어려워?<br>AI가 대신 보고 설명해 줌</h1><p class="lead">AI가 분석을 돕는 모의투자 · 실제 돈 없이 연습 · 무료</p>' +
           '<div class="ads" id="gAds" aria-live="polite">' + [
             ['AI 설명', '종목 누르면 AI가 말로 설명', '지금 흐름 · 넘어야 할 가격 · 시나리오', '<svg viewBox="0 0 120 40" preserveAspectRatio="none"><path d="M0 32 C15 30 22 18 40 21 S70 6 85 11 S110 3 120 5" fill="none" stroke="#9DB4E8" stroke-width="2.2" stroke-linecap="round"/></svg><em>"지금은 오르는 흐름이에요"</em>'],
             ['AI 매매 공개', 'AI가 뭘 왜 샀는지 그대로 공개', '실시간 · 숨김 없음 · 시작금 $10,000 · ₩1,000만', '<ol><li><i>매수</i>NVDA <u>+2.1%</u></li><li><i>매도</i>삼성전자 <u>+1.4%</u></li></ol>'],
