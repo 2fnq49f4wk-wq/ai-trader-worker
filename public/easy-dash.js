@@ -115,6 +115,12 @@
 
   // ── 모드 ──
   function setMode(m, user) {
+    /* [V33.825] 폰에서 직접 바꿀 때: 가림막+로딩 표시를 먼저 한 프레임 그린 뒤 바꾼다(초보자↔전문가 전환 때 이전 화면에 멈춰 있다 찌그러지던 것) */
+    if (user && !setMode.__go && window.__luxDzSw && Math.min(screen.width || 390, screen.height || 9999) <= 600) {
+      window.__luxDzSw();
+      requestAnimationFrame(function () { setTimeout(function () { setMode.__go = 1; try { setMode(m, user); } finally { setMode.__go = 0; } }, 0); });
+      return;
+    }
     var easy = m === "easy";
     H.classList.toggle("lux-easy", easy);
     try { localStorage.setItem(KEY, easy ? "easy" : "pro"); } catch (e) {}
@@ -123,7 +129,8 @@
     if (user) {
       var pg = D.querySelector(".page.active"); if (!pg || pg.id !== "page-dashboard") { try { if (typeof window.showPage === "function") window.showPage("dashboard"); } catch (e) {} }
       try { window.scrollTo(0, 0); } catch (e) {}
-      if (!easy) { try { if (typeof window.refreshAll === "function") window.refreshAll(); } catch (e) {} setTimeout(function () { try { window.dispatchEvent(new Event("resize")); } catch (e) {} }, 60); }   // 숨어 있던 차트·지도 크기 다시 재기
+      /* [V33.825] 전체 새로고침·크기 다시 재기는 화면이 바뀌어 그려진 뒤로(초보자 → 전문가 전환 렉) */
+      if (!easy) setTimeout(function () { try { if (typeof window.refreshAll === "function") window.refreshAll(); } catch (e) {} setTimeout(function () { try { window.dispatchEvent(new Event("resize")); } catch (e) {} }, 120); }, 550);   // 숨어 있던 차트·지도 크기 다시 재기
     }
     if (easy) { mount(); load(); }
   }

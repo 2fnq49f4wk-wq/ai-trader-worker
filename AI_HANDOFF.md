@@ -12,6 +12,8 @@
 
 ## Current handoff
 
+- **V33.825** 폰 전문가 대시보드 드나들 때 옛 배치·찌그러짐·깜빡임: ① showPage 가 보기 폭이 바뀔 이동(__luxDzWill)이면 가림막+로딩 표시(#luxDzSpin · 7vw)를 먼저 한 프레임 그린 뒤 rAF+setTimeout 으로 실제 전환 — 종전엔 누르자마자 배치가 시작돼 이전 화면에 1초+ 멈췄다 찌그러진 화면이 비쳤다. ② 가림막은 0.16초 고정 → resize 확인 후 80ms + 2프레임(최대 0.5초) · .content visibility:hidden. ③ V33.824 의 지도 늦게 붙이기(lux-dzlazy)는 지도 자리가 빈 채 보여 깜빡임 원인 → 제거. ④ 초보자↔전문가(setMode user)도 같은 가림막 후 전환 · refreshAll/resize 는 550ms 뒤로.
+
 - **V33.824** 폰 종목 상세 → 전문가 대시보드 렉(CPU4배 실측 최장 1.3~1.5s → 0.3~0.6s): ① 아래 탭 표시가 전환 중 getBoundingClientRect 로 재며 강제 배치 2~3회(각 160~190ms) → 탭 크기·아이콘 자리는 조용할 때 한 번 재어 CSS 변수(--tp-l/tw/x/y/w/h), 누르면 --tp-i 만 바꿔 CSS transform 전환(0.65s · cubic-bezier(.45,.05,.25,1) · 느리고 부드럽게, 튀는 스프링 제거). ② 지도 ResizeObserver 가 숨김(0×0) → 복귀를 크기 변화로 보고 SVG 2천여 개를 새로 만들던 것 → 0 크기 무시. ③ 축소 보기에서 화면상 4px 미만 지도 글씨는 안 만듦(_thr). ④ 들어오는 첫 그리기는 지도 content-visibility:hidden(lux-dzlazy) 후 다음 프레임. 시험: 숨긴 페이지 content-visibility:hidden 방식은 더 느려 되돌림.
 
 - **V33.823** 폰 아래 탭 표시 렉: anime.js 는 메인 스레드에서 매 프레임 갱신 → 화면 전환(배치) 동안 멈췄다 튐. 탭 click 캡처에서 ★즉시★ 출발 + Web Animations(transform 만 · 합성기)로 이동 · 곡선은 anime spring 과 같은 감쇠 스프링+늘어남 키프레임 · 200/760ms 뒤 다시 재서 자리 맞춤(축소 보기 배율 변화). Threads: 11/10 22:57 부터 "API access blocked"(OAuthException 200) — 마지막 성공 11/9 17:12 UTC(그날 3시간에 9번 게시 · 8·9번은 같은 초 중복) → 메타 자동 제재 가능성 · 앱 대시보드 확인 필요(코드로 못 풂).
