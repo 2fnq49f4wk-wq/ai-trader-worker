@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.831";
+const _BUILD_VER = "V33.832";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -9522,6 +9522,8 @@ async function fetchBatchQuotes(symbols, opts) {
       }
       if (opts.DB && nqxCalls > 0) {
         try { await setState(opts.DB, "nasdaq_ext", { sess: _ses, got: nqxGot, quoted: Object.keys(ext).length, calls: nqxCalls, err: nqxErr, ts: _nowX }); } catch (e) {}
+        /* [V33.832] 진단 — 묶음(첫 종목)별 받은 수·요청·오류·빠진 종목 일부를 남긴다(/api/data-health 의 nqx). 시간외 값이 절반만 들어오는 원인 확인용 */
+        try { const _dk = symbols[0] || "?"; const _miss = _xm.filter(function (x) { return !ext[x]; }); const _dm = (await getState(opts.DB, "nqx_dbg", null, true)) || {}; _dm[_dk] = { sess: _ses, n: symbols.length, xm: _xm.length, chunks: _xc.length, quoted: Object.keys(ext).length, got: nqxGot, calls: nqxCalls, err: nqxErr, budget: fetchBudgetLeft(), miss: _miss.slice(0, 12), ts: _nowX }; await setState(opts.DB, "nqx_dbg", _dm); } catch (e) {}
       }
     }
   }
@@ -36919,7 +36921,8 @@ async function handleRequest(request, env, ctx, _inner) {
     if (path === "/api/data-health") {   // [V33.628] 데이터 감시 상태(시세·환율·경제지표 나이 · 마지막 자가 복구)
       const h = await getState(env.DB, "data_health", null);
       const d1m = await getState(env.DB, "d1_meter", null);   // [V33.638] D1 읽은 행 오늘 · 상한 · 차단기
-      return Response.json(Object.assign({}, h || { ts: null, items: {}, bad: [] }, { d1: d1m ? { day: d1m.day, rows: d1m.rows, w: d1m.w || null, cap: D1_DAY_CAP, saver: !!d1m.saver, prev: d1m.prev || null, heavy: d1m.heavy } : null }), { headers: cors });
+      let nqx = null; try { nqx = await getState(env.DB, "nqx_dbg", null); } catch (e) {}   // [V33.832] 시간외 묶음 진단
+      return Response.json(Object.assign({}, h || { ts: null, items: {}, bad: [] }, { nqx: nqx, d1: d1m ? { day: d1m.day, rows: d1m.rows, w: d1m.w || null, cap: D1_DAY_CAP, saver: !!d1m.saver, prev: d1m.prev || null, heavy: d1m.heavy } : null }), { headers: cors });
     }
     if (path === "/api/macro" && request.method === "GET") {
       const data = await getState(env.DB, "macro_data", null);
