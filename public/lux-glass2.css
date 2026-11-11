@@ -290,7 +290,7 @@ html body #page-detail .detail-dcell{min-width:0}
 }
 /* [V33.822] 사이드바는 화면 아래까지 꽉 — 빈 곳 없이: 메뉴 칸이 남는 높이를 받아 버튼 사이를 고르게 벌린다(버튼 높이는 최대 64px) */
 @media (min-width:761px){
-  html:not(.lux-dz) body nav.sidebar.sidebar{height:calc(100vh - 16px)!important;max-height:none!important}
+  html:not(.lux-dz) body nav.sidebar.sidebar{height:calc(100vh - 16px)!important;height:calc(100dvh - 16px)!important;max-height:none!important}
   html:not(.lux-dz) body nav.sidebar.sidebar .sb-nav{flex:1 1 auto!important;display:flex!important;flex-direction:column!important;justify-content:space-evenly!important;min-height:0}
   html:not(.lux-dz) body nav.sidebar.sidebar .sb-nav .nav-item{flex:1 1 0!important;min-height:40px!important;max-height:60px!important;height:auto!important;margin:0!important;display:flex!important;align-items:center}
   html:not(.lux-dz) body nav.sidebar.sidebar .sb-nav .nav-item[style*="none"]{display:none!important}
@@ -327,3 +327,5 @@ html.lux-dzsw #luxDzSpin{display:grid;position:fixed;left:3.5vw;right:3.5vw;top:
 #luxDzSpin i{height:11vh}#luxDzSpin b{grid-column:1/-1;height:15vh}#luxDzSpin b.h{height:24vh;animation-delay:.15s}#luxDzSpin i:nth-child(2){animation-delay:.08s}#luxDzSpin i:nth-child(3){animation-delay:.16s}
 html[data-theme="light"] #luxDzSpin i,html[data-theme="light"] #luxDzSpin b{background:rgba(20,30,60,.06);border-color:rgba(20,30,60,.06)}
 @keyframes luxSk{from{opacity:.45}to{opacity:1}}
+/* [V33.834] 패드·PC: 화면들을 같은 칸(grid 1/1)에 겹치고, 전문가 대시보드는 숨길 때 display:none 대신 visibility:hidden — 배치를 지우지 않아 돌아올 때 다시 배치하지 않는다(실측 느린 기기 1.1초 멈춤의 대부분). 폰(보기 폭이 바뀜)은 제외 */
+@media (min-width:761px){html:not(.lux-dz) body main.content{display:grid!important;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}html:not(.lux-dz) body main.content>.page{grid-area:1/1;min-height:0;min-width:0}html:not(.lux-dz) body #page-dashboard.page:not(.active){display:flex!important;content-visibility:hidden;pointer-events:none}}

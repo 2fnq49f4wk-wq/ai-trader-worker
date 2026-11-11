@@ -93,7 +93,7 @@
         var p = ms[i].target;
         if (!p.classList || !p.classList.contains("page") || !p.classList.contains("active") || p === seen) continue;
         seen = p;
-        if (RM || p.id === "page-detail" || Date.now() - lastIn > 1500) continue;
+        if (RM || p.id === "page-detail" || p.id === "page-dashboard" || Date.now() - lastIn > 1500) continue;   /* [V33.834] 대시보드는 들어올 때 투명→보임 효과를 빼다 — 그리는 동안 효과가 멈춰 빈 화면처럼 보였다 */
         var a = A();
         if (a) a({ targets: p, opacity: [0, 1], translateY: [12, 0], duration: 380, easing: "easeOutCubic", complete: function () { p.style.transform = ""; p.style.opacity = ""; } });
         else if (p.animate) p.animate([{ opacity: 0, transform: "translateY(12px)" }, { opacity: 1, transform: "none" }], { duration: 320, easing: "cubic-bezier(.22,.9,.3,1)" });
