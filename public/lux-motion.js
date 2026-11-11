@@ -60,30 +60,46 @@
   function tabPill(tb) {
     if ($(".lux-tpill", tb)) return;
     var p = D.createElement("i"); p.className = "lux-tpill"; p.setAttribute("aria-hidden", "true"); tb.insertBefore(p, tb.firstChild);
-    function place(anim) {
-      var a = $(".m-tab.active", tb); if (!a || !a.offsetWidth) { p.style.opacity = "0"; return; }
-      var ic = $(".ic", a) || a, tr = tb.getBoundingClientRect(), r = ic.getBoundingClientRect();
+    /* [V33.823] 렉 수정 — anime.js 는 메인 스레드에서 매 프레임 값을 바꿔서, 탭을 누른 순간 화면 전환(배치 계산)이 메인 스레드를 잡으면 알약이 멈췄다가 튀었다.
+       이제 ① 누르는 즉시(click 캡처 · 화면 전환보다 먼저) 출발하고 ② 브라우저 합성기에서 도는 Web Animations(transform 만)로 움직인다 — 화면을 그리는 동안에도 끊기지 않는다.
+       움직임 곡선은 사이드바 알약(anime.js spring)과 같은 감쇠 스프링 + 늘어났다 돌아오기를 키프레임으로 뽑아 쓴다. */
+    function geo(t) {
+      var ic = $(".ic", t) || t, tr = tb.getBoundingClientRect(), r = ic.getBoundingClientRect();
       var s = tb.offsetWidth ? tr.width / tb.offsetWidth : 1; if (!(s > 0)) s = 1;
-      var x = (r.left - tr.left) / s - tb.clientLeft, y = (r.top - tr.top) / s - tb.clientTop;
-      var w = r.width / s, h = r.height / s, an = A(); p.style.opacity = "1";
-      /* [V33.821] anime.js 로 사이드바 알약과 같은 '늘어났다 스프링으로 자리잡기' — anime 가 아직 없거나 첫 배치면 바로 놓는다 */
-      if (anim && !RM && an && p._m) {
-        an.remove(p);
-        var dx = Math.abs(x - p._m.x), st = 1 + Math.min(0.45, dx / 300);
-        an({ targets: p, translateX: x, translateY: y, width: w, height: h, duration: 720, easing: "spring(1, 90, 12, 0)" });
-        an({ targets: p, scaleX: [{ value: st, duration: 160, easing: "easeOutQuad" }, { value: 1, duration: 600, easing: "spring(1, 120, 9, 0)" }] });
-        var ic2 = $(".ic", a); if (ic2) an({ targets: ic2, scale: [0.8, 1], duration: 600, easing: "spring(1, 80, 9, 0)" });
-      } else {
-        if (an) an.remove(p);
-        p.style.width = w + "px"; p.style.height = h + "px"; p.style.transform = "translateX(" + x + "px) translateY(" + y + "px)";
-      }
-      p._m = { x: x, y: y };
+      return { x: (r.left - tr.left) / s - tb.clientLeft, y: (r.top - tr.top) / s - tb.clientTop, w: r.width / s, h: r.height / s };
     }
-    var q = 0; function sched(anim) { if (q) cancelAnimationFrame(q); q = requestAnimationFrame(function () { q = 0; place(anim); }); }
+    function tf(x, y, sx) { return "translate3d(" + x.toFixed(2) + "px," + y.toFixed(2) + "px,0) scaleX(" + sx.toFixed(3) + ")"; }
+    function spring(t) { return 1 - Math.exp(-7.5 * t) * Math.cos(11 * t); }      /* 감쇠 스프링(살짝 넘었다 자리잡기) */
+    function stretch(t) { return Math.exp(-6 * t) * Math.sin(Math.PI * Math.min(1, t * 2.2)); }
+    var cur = null, anim = null;
+    function go(t, animate) {
+      if (!t || !t.offsetWidth) { p.style.opacity = "0"; return; }
+      var g = geo(t); p.style.opacity = "1"; p.style.width = g.w + "px"; p.style.height = g.h + "px";
+      var from = p._m;
+      if (anim) { try { anim.cancel(); } catch (e) {} anim = null; }
+      p.style.transform = tf(g.x, g.y, 1);
+      if (animate && !RM && from && p.animate && (Math.abs(from.x - g.x) > 1 || Math.abs(from.y - g.y) > 1)) {
+        var fr = [], n = 24, st = Math.min(0.45, Math.abs(g.x - from.x) / 300);
+        for (var i = 0; i <= n; i++) { var k = i / n, e = i === n ? 1 : spring(k * 1.2); fr.push({ transform: tf(from.x + (g.x - from.x) * e, from.y + (g.y - from.y) * e, 1 + st * stretch(k)) }); }
+        anim = p.animate(fr, { duration: 640, easing: "linear" });
+        anim.onfinish = function () { anim = null; setTimeout(function () { go(cur, false); }, 0); };   /* 끝나면 다시 재서 자리 맞춤(대시보드 축소 보기로 폭이 바뀐 경우) */
+        var ic = $(".ic", t); if (ic && ic.animate) ic.animate([{ transform: "scale(.8)" }, { transform: "scale(1.06)", offset: .45 }, { transform: "scale(1)" }], { duration: 420, easing: "ease-out" });
+      }
+      p._m = { x: g.x, y: g.y }; cur = t;
+    }
+    tb.addEventListener("click", function (e) {
+      var t = e.target.closest && e.target.closest(".m-tab"); if (!t || t.getAttribute("data-more") || t.getAttribute("data-search")) return;
+      go(t, true);
+      /* 화면이 바뀌며(대시보드 축소 보기 켜고 끄기) 탭바 배율이 달라진다 — 자리 잡은 뒤 두 번 다시 잰다 */
+      clearTimeout(tb._r1); clearTimeout(tb._r2);
+      tb._r1 = setTimeout(function () { if (!anim) go(cur, false); }, 200); tb._r2 = setTimeout(function () { if (anim) { try { anim.finish(); } catch (e) {} } go(cur, false); }, 760);
+    }, true);
+    var q = 0; function sched(animate) { if (q) cancelAnimationFrame(q); q = requestAnimationFrame(function () { q = 0; var a = $(".m-tab.active", tb); if (a === cur && animate) return; go(a, animate); }); }
     new MutationObserver(function (ms) { for (var i = 0; i < ms.length; i++) if (ms[i].target !== p) { sched(true); return; } })
       .observe(tb, { subtree: true, attributes: true, attributeFilter: ["class"] });
-    addEventListener("resize", function () { sched(false); }, { passive: true });
-    H.classList.add("lux-tpill-on"); place(false);
+    addEventListener("resize", function () { var a = $(".m-tab.active", tb); if (anim) { try { anim.finish(); } catch (e) {} } go(a, false); }, { passive: true });
+    if (window.ResizeObserver) new ResizeObserver(function () { if (!anim) go(cur || $(".m-tab.active", tb), false); }).observe(tb);
+    H.classList.add("lux-tpill-on"); go($(".m-tab.active", tb), false);
   }
 
   /* 페이지 전환 */
