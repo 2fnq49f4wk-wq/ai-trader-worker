@@ -110,7 +110,7 @@ html body #easyDash .ch>b::before,html body .fv-panel-head::before{content:"";di
   html body #easyDash>.g32>:first-child,html body #easyDash>.g32>:nth-child(2),html body #easyDash>.c:not(.fz):not(.cta),html body #easyDash>.g2>:first-child{grid-column:1/-1;grid-row:auto}
 }
 /* ── 벤토: 전문가 화면(.fv-deck) ── */
-@media (min-width:1101px){
+@media (min-width:1381px){   /* [V33.822] 1101 → 1381: 패드 가로(내용 폭 ~1000)에서 5:7 로 쪼개 TOP MOVERS 등락이 잘리고 지도가 눌렸다 — 그 아래는 원래 배치 */
   html body .fv-deck{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px;align-items:stretch}
   html body .fv-deck>*{grid-column:1/-1;margin:0!important;min-width:0}
   html body .fv-deck>:is(.fv-mid,.fv-cal-row,.fv-bottom){display:contents}
@@ -271,4 +271,45 @@ html[data-density] .fv-table td.pos,html[data-density] .fv-table td .pos,html[da
 /* [V33.821] 대시보드 아래쪽 묶음은 화면에 들어올 때만 배치·그리기(메뉴 전환 때 6천 개 요소 배치 줄임) */
 #page-dashboard>:is(.dash-grid,.fv3-grid,.cmbd-grid){content-visibility:auto;contain-intrinsic-size:auto 600px}
 /* [V33.821] 종목 상세 잘린 글자 — 팩터 이름·증권사 요약·시세 데이터 긴 값은 줄바꿈해 다 보이게 */
-html body #page-detail :is(.fp-nm,.pv,.detail-dcell .v,.detail-dcell .k){white-space:normal!important;overflow:visible!important;text-overflow:clip!important;word-break:keep-all;overflow-wrap:anywhere}
+html body #page-detail :is(.fp-nm,.pv){white-space:normal!important;overflow:visible!important;text-overflow:clip!important;word-break:keep-all;overflow-wrap:anywhere}
+/* [V33.822] 시세 데이터 칸: 이름·값은 한 줄 고정(줄바꿈으로 4~5줄 되던 것) · 긴 값은 두 칸 합침(.dv-w — detail-v3.js widen) */
+html body #page-detail .detail-dcell .l,html body #page-detail .detail-dcell .v{white-space:nowrap!important;overflow:visible!important;text-overflow:clip!important}
+html body #page-detail .detail-dcell.dv-w{grid-column:1/-1!important}
+html body #page-detail .detail-dcell{min-width:0}
+/* [V33.822] 패드 가로·작은 PC(901~1366): 종목 상세 글자를 한 단계 줄여 줄 넘김을 막는다 */
+@media (min-width:901px) and (max-width:1366px){
+  html body #page-detail .detail-data,html body #page-detail .detail-side{font-size:13px!important}
+  html body #page-detail .detail-dcell .l{font-size:12.5px!important}
+  html body #page-detail .detail-dcell .v{font-size:13px!important}
+  html body #page-detail .detail-side :is(.anl-act,.anl-acts-h,.prof-52h,.detail-sec){font-size:13px!important}
+  html body #page-detail #luxInfo{font-size:14px}
+}
+/* [V33.822] 사이드바는 화면 아래까지 꽉 — 빈 곳 없이: 메뉴 칸이 남는 높이를 받아 버튼 사이를 고르게 벌린다(버튼 높이는 최대 64px) */
+@media (min-width:761px){
+  html:not(.lux-dz) body nav.sidebar.sidebar{height:calc(100vh - 16px)!important;max-height:none!important}
+  html:not(.lux-dz) body nav.sidebar.sidebar .sb-nav{flex:1 1 auto!important;display:flex!important;flex-direction:column!important;justify-content:space-evenly!important;min-height:0}
+  html:not(.lux-dz) body nav.sidebar.sidebar .sb-nav .nav-item{flex:1 1 0!important;min-height:40px!important;max-height:60px!important;height:auto!important;margin:0!important;display:flex!important;align-items:center}
+  html:not(.lux-dz) body nav.sidebar.sidebar .sb-nav .nav-item[style*="none"]{display:none!important}
+  html:not(.lux-dz) body nav.sidebar.sidebar .sb-nav .sb-mode-w{flex:none!important;margin:6px 0!important}
+  html:not(.lux-dz) body nav.sidebar.sidebar .sb-nav{gap:4px}
+  html:not(.lux-dz) body nav.sidebar.sidebar .lux-sbtools{margin-top:0!important}
+}
+html body #page-detail :is(.detail-data,.detail-prof) {grid-auto-flow:row dense}
+@media (min-width:761px) and (min-height:1000px){
+  html:not(.lux-dz) body nav.sidebar.sidebar .sb-nav .nav-item{max-height:74px!important}
+  html:not(.lux-dz) body nav.sidebar.sidebar .nav-item-icon svg{width:20px!important;height:20px!important}
+}
+/* [V33.822] 사이드바 시장 시계 — 메뉴와 도구 사이 남는 높이를 받는다(높이가 모자라면 숨김) */
+.lux-sbstat{display:none}
+@media (min-width:761px){html:not(.lux-dz) .lux-sbstat{display:flex;flex-direction:column;justify-content:flex-end;gap:5px;flex:0 0 auto;min-height:0;overflow:hidden;margin:6px 10px 8px;padding:12px;border-radius:14px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);font-size:12px;color:#aab4c4}
+  html:not(.lux-dz) .lux-sbstat .lss-h{font-size:11px;font-weight:700;letter-spacing:.08em;color:#7d8899;padding-bottom:4px}
+  html:not(.lux-dz) .lux-sbstat .lss-r{display:flex;justify-content:space-between;align-items:baseline;gap:6px;white-space:nowrap}
+  html:not(.lux-dz) .lux-sbstat .lss-r b{font-size:16px;color:#eef2f7;font-variant-numeric:tabular-nums}
+  html:not(.lux-dz) .lux-sbstat .lss-s{font-style:normal;font-size:11.5px;color:#7fe3cc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px}
+  html:not(.lux-dz) .lux-sbstat .lss-live{display:flex;align-items:center;gap:6px;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  html:not(.lux-dz) .lux-sbstat .lss-dot{width:7px;height:7px;border-radius:50%;background:#6b7280;flex:none}
+  html:not(.lux-dz) .lux-sbstat.on .lss-dot{background:#3DD6B5;box-shadow:0 0 8px #3DD6B5}
+  html[data-theme="light"]:not(.lux-dz) .lux-sbstat{background:rgba(0,0,0,.03);border-color:rgba(0,0,0,.08);color:#5b6575}
+  html[data-theme="light"]:not(.lux-dz) .lux-sbstat .lss-r b{color:#1b2559}
+}
+@media (min-width:761px) and (max-height:760px){html:not(.lux-dz) .lux-sbstat{display:none}}

@@ -32,6 +32,20 @@
     th.addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;if((b.getAttribute('data-t')==='light')!==light()){var t=document.getElementById('btnTheme');if(t)t.click();}paint();});
     if(nav&&nav.parentNode===sb) sb.insertBefore(tools, nav.nextSibling); else sb.appendChild(tools);
     paint();
+    /* [V33.822] 사이드바 시장 시계 — 사이드바를 화면 아래까지 채우면서 빈 칸 대신 쓸모 있는 것: 미국·한국 장 상태 · 지금 시각(서울/뉴욕) · 엔진 LIVE.
+       값은 맨 위 줄의 같은 요소 글자를 5초마다 옮겨 적기만 한다(서버 일 0). */
+    var stat=el('div','lux-sbstat','<div class="lss-h">시장 시계</div><div class="lss-r"><span>🇺🇸 뉴욕</span><b data-t="ny">—</b></div><i class="lss-s" data-s="us">—</i><div class="lss-r"><span>🇰🇷 서울</span><b data-t="kr">—</b></div><i class="lss-s" data-s="kr">—</i><div class="lss-live"><i class="lss-dot"></i><span data-s="live">연결 중</span></div>');
+    sb.insertBefore(stat, tools);
+    function tx(id){var e=document.getElementById(id);return e?(e.textContent||'').replace(/\s+/g,' ').trim():'';}
+    function hm(tz){try{return new Date().toLocaleTimeString('ko-KR',{timeZone:tz,hour:'2-digit',minute:'2-digit',hour12:false});}catch(e){return '';}}
+    function tick(){
+      if(document.hidden||!stat.offsetParent) return;
+      var q=function(s){return stat.querySelector(s);};
+      q('[data-t="ny"]').textContent=hm('America/New_York'); q('[data-t="kr"]').textContent=hm('Asia/Seoul');
+      q('[data-s="us"]').textContent=tx('usMarketStatus')||'—'; q('[data-s="kr"]').textContent=tx('krMarketStatus')||'—';
+      var lv=tx('liveText'); q('[data-s="live"]').textContent=lv||'연결 중'; stat.classList.toggle('on',/LIVE|연결됨|실시간/i.test(lv));
+    }
+    tick(); setInterval(tick,5000);
   }
   /* [V33.820] 문서 중간(디자인 시트 바로 뒤)에서 동기로 불린다 — 화면이 드러나기(lux-cssw 해제) 전에 옮겨 두어 카드가 밀리거나 줄어드는 일이 없게 */
   if(document.getElementById('page-dashboard')&&document.querySelector('nav.sidebar .sb-nav')) mount();

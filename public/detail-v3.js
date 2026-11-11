@@ -107,7 +107,25 @@
     });
   }
 
+  /* [V33.822] 시세 데이터·시세 통계의 긴 값(DMA 기울기 · 스토캐스틱 · 애프터마켓 가격+등락 …)은 두 칸을 합쳐 한 줄로 — 줄바꿈하면 4~5줄로 늘어나 표가 길어지고
+     차트 아래가 비었고, 자르면 글자가 잘렸다. */
+  function widen(root) {
+    if (!root) return;
+    var cs = root.querySelectorAll(".detail-dcell");
+    for (var i = 0; i < cs.length; i++) {
+      var c = cs[i], l = c.querySelector(".l"), v = c.querySelector(".v");
+      var n = (l ? l.textContent.trim().length : 0) + (v ? v.textContent.trim().length * 1.1 : 0);
+      var w = n > 19; if (c.classList.contains("dv-w") !== w) c.classList.toggle("dv-w", w);
+    }
+  }
+  function watchWide() {
+    ["detailData", "detailProfile"].forEach(function (id) {
+      var el = $(id); if (!el) return; widen(el);
+      new MutationObserver(function () { widen(el); }).observe(el, { childList: true, subtree: true, characterData: true });
+    });
+  }
   function init() {
+    try { watchWide(); } catch (e) {}
     var sy = $("detailSym"), pr = $("detailPrice"), dc = $("detailContent"), tf = $("detailTf");
     if (!sy || !pr) return;
     new MutationObserver(function () { symChanged(); priceChanged(); }).observe(sy, { childList: true, characterData: true, subtree: true });
