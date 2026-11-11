@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.830";
+const _BUILD_VER = "V33.831";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8511,7 +8511,7 @@ async function fetchNasdaqExt(chunk, sess) {
   const r = await fetch("https://api.nasdaq.com/api/quote/watchlist?" + q, { headers: {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
     "Accept": "application/json", "Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/" },
-    signal: AbortSignal.timeout(5000) });
+    signal: AbortSignal.timeout(9000) });   // [V33.831] 5 → 9초(나스닥이 몰릴 때 1~8초)
   if (!r.ok) throw new Error("HTTP " + r.status);
   return parseNasdaqExt(await r.json(), chunk, sess, Date.now());
 }
@@ -9480,17 +9480,25 @@ async function fetchBatchQuotes(symbols, opts) {
       const ext = {};
       if (_xc.length && fetchBudgetLeft() > 12) {
         nqxCalls++;
+        /* [V33.831] ★동시 6요청 → 3요청 · 실패한 묶음은 한 번 더★ — 실측(11/11 06:10 ET): 나스닥은 동시에 몰리면 응답이 1~8초로 늘어
+           5초 제한에 걸린다(동시 14요청 중 8개 실패 · 동시 3요청은 0 실패). 그래서 프리 체결이 있는데도 558종 중 ~290종만 값이 들어왔다.
+           요청 수는 그대로(실패분 재시도만 더함) — 비용이 늘지 않는다. 제한 시간은 fetchNasdaqExt 에서 5 → 9초. */
         let first = {}, firstOk = false;
         try { first = await fetchNasdaqExt(_xc[0], _ses); firstOk = true; } catch (e) { nqxErr = _v7ErrTag(e); }
         Object.assign(ext, first);
         if (firstOk && _xc.length > 1) {
-          const _rest = _xc.slice(1), PAR = 6;
+          const _rest = _xc.slice(1), PAR = 3, _failed = [];
           for (let i = 0; i < _rest.length; i += PAR) {
             if (fetchBudgetLeft() <= 12) break;
             const _grp = _rest.slice(i, i + PAR).slice(0, Math.max(1, fetchBudgetLeft() - 12));
             nqxCalls += _grp.length;
-            const _rs = await Promise.all(_grp.map(async function (c) { try { return await fetchNasdaqExt(c, _ses); } catch (e) { nqxErr = _v7ErrTag(e); return {}; } }));
+            const _rs = await Promise.all(_grp.map(async function (c) { try { return await fetchNasdaqExt(c, _ses); } catch (e) { nqxErr = _v7ErrTag(e); _failed.push(c); return {}; } }));
             for (const m of _rs) Object.assign(ext, m);
+          }
+          for (const c of _failed) {   // 실패한 묶음은 하나씩 한 번 더
+            if (fetchBudgetLeft() <= 12) break;
+            nqxCalls++;
+            try { Object.assign(ext, await fetchNasdaqExt(c, _ses)); } catch (e) { nqxErr = _v7ErrTag(e); }
           }
         }
       }
