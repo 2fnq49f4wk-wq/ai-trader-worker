@@ -101,7 +101,8 @@
       if (!stk) { if (compact) { compact = false; hd.classList.remove("dv3-compact"); } return; }
       var scrolled = (stkTop === null ? (stkTop = parseFloat(getComputedStyle(hd).top) || 0) : stkTop) - dc.getBoundingClientRect().top;
       var was = compact;
-      if (!compact && scrolled > 150) { compact = true; hd.classList.add("dv3-compact"); } else if (compact && scrolled < 60) { compact = false; hd.classList.remove("dv3-compact"); }
+      /* [V33.820] 머리 줄이기를 끈다 — 55↔46px 로 바뀌며 맨 위로 올라올 때 화면이 '퉁' 튕겼다(머리가 이미 작아 줄일 이유도 없다) */
+      if (false && !compact && scrolled > 150) { compact = true; hd.classList.add("dv3-compact"); } else if (compact && scrolled < 60) { compact = false; hd.classList.remove("dv3-compact"); }
       if (was !== compact || hh === null) { var h = Math.round(hd.getBoundingClientRect().height); hh = h; if (pg.style.getPropertyValue("--dv-hh") !== h + "px") pg.style.setProperty("--dv-hh", h + "px"); if (was !== compact) setTimeout(function () { hh = null; onScroll(); }, 300); }
     });
   }

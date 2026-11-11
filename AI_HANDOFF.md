@@ -12,6 +12,8 @@
 
 ## Current handoff
 
+- **V33.820** 패드·PC 사이드바 다시(오리지널 별 로고 + LUX-INV + powered by Blauenacht · 폭 178 · 화면 높이 꽉 · 아래 도구 칸 `.lux-sbtools` = MAP · 한국어/EN · Light/Dark). lux-topbar.js 는 이제 디자인 시트 뒤에서 ★동기★ 실행(화면 드러나기 전에 상단 줄을 옮겨 카드 밀림 없음) · AUTO-TUNE 줄은 카드 묶음 아래로 · 상단 줄 한 줄 고정 · 지수 줄/시장폭 줄 자리 미리 잡기(로딩 중 카드 크기 변함 CLS 0.6 → 0.07). 폰 아래 탭 미끄럼 표시 `.lux-tpill`(화면 좌표 ÷ 탭바 배율 · CSS 전환). 종목 상세: 시세 데이터 등락 숫자 색 복구 · 숫자 뒤 빨강/초록 사각형 제거(상세 머리 등락 · TOP MOVERS 칸 워시) · 머리 줄이기(dv3-compact) 끔 = 맨 위로 올 때 튕김 제거 · 패드 가로/PC 2열에서 왼쪽은 정보탭→뉴스→재무 위로 붙여 쌓기(빈 공간 1100px → 0). 개발일지 12 제목·쉬운 말·링크 없음으로 다시.
+
 - **V33.819** 전문가 대시보드 → 종목 상세 전환 렉(폰 CPU 4배 느리게 실측 298ms → 122ms): ① showPage(detail) 의 목록/머리 렌더를 다음 그리기 뒤로(rAF+setTimeout) ② 상세 목록 첫 표시 60 → 30개(더 보기 +30) ③ 상세 목록 카드 content-visibility:auto. Threads 개발일지 12(깃허브↔클라우드플레어 연결법) 글·이미지 `promo/threads/devlog-12.*` — 사용자가 직접 올림(11번도 직접 올림).
 
 - **V33.818** 즐겨찾기 폐지 → 종목 상세 정렬 "관심"(이 기기에서 최근 연 종목 10개 · localStorage `lux-recent-v1` · 서버로 안 보냄). 원인: 즐겨찾기가 공용 `cfg.usFavorites/krFavorites` 한 곳에 저장돼 모든 방문자가 공유했고, 상태 폴링마다 서버 값으로 덮어써 취소가 안 됐다 → 화면은 cfg 를 안 읽고 `POST /api/favorites` 는 410. 첫 화면(소개 배너) 렉: 흐린 큰 원 애니메이션·칩/카드 backdrop·칩 무한 흔들기 끔 · 버튼 지연 등장 없앰 · 배너 뒤 사이트는 visibility:hidden. 전체 다크 색감을 소개 배너 그라데이션(청록·남보라·파랑 빛 · #0b0f17→#0a0d14) + 강조 청록→파랑으로(lux-glass2.css 끝).

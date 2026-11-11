@@ -50,9 +50,31 @@
     var nav = $(".sb-nav"), tb = $(".m-tabbar"), ok = false;
     if (nav) { ok = true; if (!$(".lux-pill", nav)) Pill(nav, ".nav-item", function (a) { return { x: a.offsetLeft, y: a.offsetTop, w: a.offsetWidth, h: a.offsetHeight }; }, [0, 0]); }
     /* [V33.813] 폰 아래 탭은 떠다니는 알약을 쓰지 않는다 — 아이폰 사파리에서 위치를 잘못 재(줌·safe-area) 엉뚱한 곳에 가고 파란 불이 안 켜졌다. 활성 탭 아이콘 자체를 CSS 로 칠한다. */
-    if (tb) ok = true;
+    if (tb) { ok = true; tabPill(tb); }
     if (false && tb) { if (!$(".lux-pill", tb)) Pill(tb, ".m-tab", function (act) { var ic = $(".ic", act) || act; return { x: act.offsetLeft + ic.offsetLeft, y: act.offsetTop + ic.offsetTop, w: ic.offsetWidth, h: ic.offsetHeight }; }, [4, 2]); }
     return ok;
+  }
+
+  /* [V33.820] 폰 아래 탭 미끄럼 표시(사용자 11/11 "패드 사이드바 버튼처럼 스무스하게") — 예전 알약은 offsetLeft 로 재서 아이폰(축소 보기·safe-area)에서
+     엉뚱한 곳에 갔다. 이번엔 화면 좌표(getBoundingClientRect)를 탭바 기준으로 빼고 탭바 배율로 나눠 놓는다 · 움직임은 CSS transform 전환만(anime 불필요). */
+  function tabPill(tb) {
+    if ($(".lux-tpill", tb)) return;
+    var p = D.createElement("i"); p.className = "lux-tpill"; p.setAttribute("aria-hidden", "true"); tb.insertBefore(p, tb.firstChild);
+    function place(anim) {
+      var a = $(".m-tab.active", tb); if (!a || !a.offsetWidth) { p.style.opacity = "0"; return; }
+      var ic = $(".ic", a) || a, tr = tb.getBoundingClientRect(), r = ic.getBoundingClientRect();
+      var s = tb.offsetWidth ? tr.width / tb.offsetWidth : 1; if (!(s > 0)) s = 1;
+      var x = (r.left - tr.left) / s - tb.clientLeft, y = (r.top - tr.top) / s - tb.clientTop;
+      p.style.transition = (anim && !RM) ? "" : "none";
+      p.style.width = r.width / s + "px"; p.style.height = r.height / s + "px";
+      p.style.transform = "translate3d(" + x + "px," + y + "px,0)"; p.style.opacity = "1";
+      if (!anim) { void p.offsetWidth; p.style.transition = ""; }
+    }
+    var q = 0; function sched(anim) { if (q) cancelAnimationFrame(q); q = requestAnimationFrame(function () { q = 0; place(anim); }); }
+    new MutationObserver(function (ms) { for (var i = 0; i < ms.length; i++) if (ms[i].target !== p) { sched(true); return; } })
+      .observe(tb, { subtree: true, attributes: true, attributeFilter: ["class"] });
+    addEventListener("resize", function () { sched(false); }, { passive: true });
+    H.classList.add("lux-tpill-on"); place(false);
   }
 
   /* 페이지 전환 */
