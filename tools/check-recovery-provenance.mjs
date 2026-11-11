@@ -40,8 +40,8 @@ vm.runInContext(cut('function quoteSessionFields(q) {','function applyDisplayOve
 assert.equal(writes.quoteSessionFields({pre:105,extTs:123}).extTs,123);
 assert.equal(writes.quoteSessionFields({pre:105}).extTs,0);
 assert.equal(writes.quoteSessionFields({mstate:'REGULAR'}).pre,null);
-assert.match(cut('const prevQ = prevQuoteMap[sym]','quoteStmts.push('),/quoteSessionFields\(bq\)/);
-assert.match(cut('const _qts = Date.now();','if (dailyRsi == null)'),/quoteSessionFields\(_quoteSource\)/);
+assert.match(cut('const prevQ = prevQuoteMap[sym]','quoteStmts.push('),/quoteSessionFields(Keep)?\(bq\b/);
+assert.match(cut('const _qts = Date.now();','if (dailyRsi == null)'),/quoteSessionFields(Keep)?\(_quoteSource\b/);
 assert.match(cut('const targets = Array.from(new Set(missing','if (stmts2.length)'),/quoteSessionFields\(q\)/);
 // A-1: execute the common final guard with mocked committed ledger counts.
 let count=0;

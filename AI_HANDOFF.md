@@ -12,6 +12,8 @@
 
 ## Current handoff
 
+- **V33.828** 미국 시간외(프리·애프터) 값이 상위 종목에서 비던 것: 매분 매매 사이클의 quote 기록(시세 루프 26xxx · 평가 루프 27xxx)이 받은 bq 에 시간외가 없으면 quoteSessionFields 로 pre/post=null 을 덮어써, 가격 샤드(나스닥 배치)가 채운 값을 1분마다 지웠다. 실측 11/11 05:17 ET: 557종 중 192종만 프리값 · 상위 11종(NVDA~WMT) 0 · 나스닥 원본엔 NVDA 176.20. → quoteSessionFieldsKeep(q, prev, market): 이번 값이 비면 같은 세션 딱지의 직전 값을 잇는다(extKeepMaskFor 마스크 · 지난 세션 값은 안 이음). __cycPrevQ = prevQuoteMap.
+
 - **V33.827** 폰 전문가 대시보드 드나들 때 가림막을 빈 배경+로딩 원 → 화면 모양 뼈대(#luxDzSpin 안 카드 6칸 · vw/vh 크기라 보기 폭 390↔1180 전환 앞뒤 같은 자리 · opacity 깜빡임은 합성기). 사용자 "중간에 이상한 화면 · 끊김" = 빈 가림막. 패드(iPad Pro 11 가로)는 중간 화면 없음(연속 캡처 확인). 스타일은 lux-glass2.css 끝.
 
 - **V33.826** 폰 종목 상세 머리에 시간외(프리·애프터·데이마켓) 가격·등락률 다시 표시 — detail-v3b.css:162 가 폰(≤760)에서 .detail-ext 를 display:none 하고 있었다. lux-glass2 끝에서 .detail-px 를 2열 grid(가격·등락 / 시간외 줄 전체폭 오른쪽 정렬)로 — flex 100% 로 두면 가격 칸이 넓어져 종목명이 "N" 으로 잘렸다.

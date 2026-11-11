@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.827";
+const _BUILD_VER = "V33.828";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -9103,6 +9103,22 @@ function quoteSessionFields(q) {
     postPct: typeof q.postPct === "number" ? q.postPct : null,
     extTs: typeof q.extTs === "number" && q.extTs > 0 ? q.extTs : 0 };
 }
+/* [V33.828] ★매분 매매 사이클이 시간외 값을 지우던 것★ — 사이클이 받은 시세(bq)에 프리·애프터 값이 없으면 quoteSessionFields 가 null 을 내고
+   그대로 quote 행을 덮어써, 가격 샤드(나스닥 배치)가 채워 둔 지금 세션의 시간외 값이 1분마다 사라졌다.
+   실측(2026-11-11 05:17 ET 프리): 미국 557종 중 192종만 프리값 · 사이클이 매분 받는 상위 11종(NVDA·AAPL·MSFT·TSLA …)은 0 —
+   나스닥 원본엔 NVDA 176.20(+4.33%)이 있었다. 이번 값이 비었으면 ★지금 세션에 살아 있는★ 직전 값(같은 세션 딱지)을 잇는다. */
+function quoteSessionFieldsKeep(q, prev, market) {
+  const sf = quoteSessionFields(q);
+  if (!prev || (market !== "us" && market !== "kr")) return sf;
+  const st = sf.mstate || (market === "us" ? usMarketStateNow() : krMarketStateNow());
+  const mask = extKeepMaskFor(market, st), ps = prev.mstate;
+  let kept = false;
+  if (sf.pre == null && mask.pre && ps === "PRE" && _num(prev.pre, 0) > 0) { sf.pre = prev.pre; sf.prePct = (typeof prev.prePct === "number") ? prev.prePct : null; kept = true; }
+  if (sf.post == null && mask.post && (ps === "POST" || ps === "POSTPOST" || ps === "CLOSED") && _num(prev.post, 0) > 0) { sf.post = prev.post; sf.postPct = (typeof prev.postPct === "number") ? prev.postPct : null; kept = true; }
+  if (kept) { if (!(sf.extTs > 0)) sf.extTs = _num(prev.extTs, 0); if (!sf.mstate) sf.mstate = ps; }
+  return sf;
+}
+let __cycPrevQ = null;   // [V33.828] 이번 사이클 시장의 직전 저장 시세(시간외 이어받기용)
 function applyDisplayOverMarket(q) {
   if (!q) return q;
   const st = q.mstate;
@@ -25487,7 +25503,7 @@ function _ioDB(DB) {
 function _avgVol20Of(vs) { if (!Array.isArray(vs) || vs.length < 21) return null; let t = 0; for (let i = vs.length - 21; i < vs.length - 1; i++) t += (+vs[i] || 0); return t / 20; }
 let __cycQuote = null;   // [V33.645] 매매 사이클 시장 루프가 채우는 '이번 사이클 시세' 조회기(없으면 D1)
 async function runTradingCycle(env) {
-  __cycQuote = null;   // [V33.645] 지난 사이클·다른 시장의 조회기를 쓰지 않는다
+  __cycQuote = null; __cycPrevQ = null;   // [V33.645] 지난 사이클·다른 시장의 조회기를 쓰지 않는다
   __ioMeter = { d1n: 0, d1ms: 0, fn: 0, fms: 0, q: {} };
   /* [V33.570] ★이 사이클의 계량기를 붙잡아 둔다★ — __ioMeter 는 전역이라, 같은 아이솔레이트에서 다음 크론이 겹쳐 시작하면(사이클 60s+ ·
      크론 1분) 새 계량기로 바뀐다. 그러면 EVAL-COST 가 ★겹친 호출(락에 막혀 D1 6회로 끝난)의 수치★ 를 찍었다 —
@@ -26282,6 +26298,7 @@ async function runTradingCycle(env) {
         }
       } catch (e) { /* 일괄 로드 실패 시 빈 맵으로 진행 — 일봉값은 평가루프가 채움 */ }
       /* [V33.645] 이 사이클이 이미 받은 시세(이번 배치 → 직전 저장본) — 페어 짝 가격을 종목마다 D1 에서 다시 읽던 것(사이클당 85~113회)을 대신한다 */
+      __cycPrevQ = prevQuoteMap;
       __cycQuote = function (sym) {
         const b = batchQuotes[sym];
         if (b && b.price > 0) return { price: b.price, ts: Date.now() };
@@ -26309,7 +26326,7 @@ async function runTradingCycle(env) {
         const prevQ = prevQuoteMap[sym] || null;
         /* [V33.643] CPU — 값이 그대로이고 90초 안에 쓴 행이면 JSON 을 만들지도, D1 로 보내지도 않는다(어차피 업서트 WHERE 가 거른다) */
         if (prevQ && nowTs - _num(prevQ.ts, 0) < QUOTE_SAME_MS && prevQ.price === bq.price && prevQ.dayPct === bq.dayPct && prevQ.prevClose === bq.prevClose) {
-          const _sf = quoteSessionFields(bq);
+          const _sf = quoteSessionFieldsKeep(bq, prevQ, market);
           if (_sf.mstate === prevQ.mstate && (_sf.pre ?? null) === (prevQ.pre ?? null) && (_sf.post ?? null) === (prevQ.post ?? null) && (_sf.extTs || 0) === _num(prevQ.extTs, 0)) continue;
         }
         const merged = {
@@ -26324,7 +26341,7 @@ async function runTradingCycle(env) {
           spark: prevQ ? (prevQ.spark || null) : null,  // [V80] 스파크라인 보존
           ret1y: prevQ ? prevQ.ret1y : null, ret5y: prevQ ? prevQ.ret5y : null,
           vol: (bq.vol > 0) ? bq.vol : (prevQ ? prevQ.vol : null), avgVol20: prevQ ? prevQ.avgVol20 : null,   // [V33.645] 실시간 누적 거래량 우선
-          ...quoteSessionFields(bq),
+          ...quoteSessionFieldsKeep(bq, prevQ, market),
           ts: nowTs
         };
         quoteStmts.push(
@@ -27314,7 +27331,7 @@ async function runTradingCycle(env) {
               .bind("quote:" + symbol, JSON.stringify({
                 market: market, price: _quoteSource.price ?? price,
                 prevClose: _quoteSource.prevClose ?? prevClose, dayPct: _quoteSource.dayPct ?? dayPct,
-                ...quoteSessionFields(_quoteSource),
+                ...quoteSessionFieldsKeep(_quoteSource, __cycPrevQ && __cycPrevQ[symbol], market),
                 rsi: dailyRsi, ma: dailyMa, atr: dailyAtr,
                 dailyAtr: dailyAtr, dailyMa: dailyMa, dailyMaShort: dailyMaShort,
                 ma50: closes.length >= 50 ? getMA(closes, 50) : (_quoteSource.ma50 ?? null),   // [V33.773] 50일선(평가 루프가 매 사이클 통째로 덮어쓴다 — 여기서도 계산)
@@ -59240,7 +59257,7 @@ export default {
 
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
-export { PB_API_SQL, trainWeekKey, TRAIN_STAGES, TRAIN_WEEKLY, omniqFresh, ALT_CADENCE, surgeScalpOn, _regimeScalp, evaluateScalpEntry, runTailRiskHedge, externalTrainAges, externalTrainRow, EXT_TRAIN_KEYS, OMNIQ_ROUTE, omniqRoutePick, omniqHoldOf, omniqRouteToday, _entryTag, negExpDefersToPerfGate, evaluateBuyBlocks, setStatesBatch, _ioTag, _setYAuthDB, yahooFetch, _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
+export { quoteSessionFieldsKeep, PB_API_SQL, trainWeekKey, TRAIN_STAGES, TRAIN_WEEKLY, omniqFresh, ALT_CADENCE, surgeScalpOn, _regimeScalp, evaluateScalpEntry, runTailRiskHedge, externalTrainAges, externalTrainRow, EXT_TRAIN_KEYS, OMNIQ_ROUTE, omniqRoutePick, omniqHoldOf, omniqRouteToday, _entryTag, negExpDefersToPerfGate, evaluateBuyBlocks, setStatesBatch, _ioTag, _setYAuthDB, yahooFetch, _fhKey, _fhRec, _fhMerge, MBPRE, mbPrefetchStart, _nyfedParse, _treasuryParse, omniqView, _omqGateView, omniqViewAll, _fredValue, FRED_MACRO, _bokBaseParse, _bokCpiParse, _naverBondParse, omniqProvOf, OMNIQ_PROV, _usageLimits, USAGE_CPU_ALLOW, _dailyBulkLazy, OMNIQ, omniqSpeakOf, omniqBlocks, omniqPicksAppend, antiChaseRet5, antiChaseWhy, _cronProf, _isWorkGet, _usageCpu, USAGE_ACTUAL_MAX_AGE_MS, buildStatePayload, stateR2Refresh, STATE_R2_KEY, applyKrOverMarket, _pgPooled, perfGateCheck, _omFwdPick, _pgTag, PERF_GATE, stockStatsFromDaily, parseNqSummary, parseNvIntegration, stockProfileExt, nqAnalystRating, parseNqAnalyst, updateAnalystConsensus, parseNasdaqExt, mergeNasdaqExt, _nqTradeMs, _omShadowDecisions, OMNI_SHADOW_DEC_MIN, isExtCloseTail, _stateNumTrim, _patchStateQuotes, microCacheGet, microCachePut, _microTtl, MICRO_CACHE_TTL, _oeParse, _oeMerge, _oePrevWeekday, omniEarnCollect, OMNIEARN, parseNasdaqWatch, nasdaqSym, sigStatsByMarket, negExpBlocked, aiCoreReady, parseSparkQuotes, SPARK_CHUNK, _onHtmlGoneSet, _onParseJson, _onParseHtml, _onMerge, _onMin, _onTone, _onDaily, _onIndexLoad, omniNewsCollect, OMNINEWS, _ofParseJson, _ofParseHtml, _ofMerge, _ofDay, _ofNum, _ofIndexLoad, omniFlowCollect, OMNIFLOW, _omCvSlim, _omNnRepSlim, omniNnScore, omniBlendRaw, omniNnValidate, _omHzOf, omniShadowResolve, updateEquityPeak, applyCashflowToTWR, crowdVote, _obIndexLoad, _obPrevFor, _obSliceTail, _omGridIndex, _omIntraOk, OMNI_SHADOW, RETIRED, _retired, _retiredWhy, RETIRED_STAGES, _omniMeta, omniVizData, omniBuildPanel, omniPanelFill, OMNI_PANEL_FEATS, OMNI_PANEL_MIN, OMNI_MODEL, OMNI_MODEL_FEATS, omniDesign, omniScoreTree, omniScoreRaw, omniValidate, omniHeadsOk, OMNI_CONSTS, OMNI_VER, OMNI_FEATS, OMNI_SETUPS, OMNI_HORIZONS, omniFeatures, _omUsOff, _omLocal, OMNIBARS, _obEmpty, _obBarsFromYahoo, _obBarsFromNaver, _obNormDaily, _obResample, _obMerge, _obSpacingOk, _obKey, _obDayKey, omniBarsCollect };
 export { macroFromCalendar, macroSchedOf, _blsParse, MACRO_SCHED, getStates, _STATE_LITE, getADX, _getADXCore, getHolidaySet, _indexFreshOpen, isMarketTradingDay, KR_LUNAR_HOLIDAYS, _inWin, _winParts, MARKET_HOURS_US_23H, MARKET_HOURS_23H_FROM };
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
