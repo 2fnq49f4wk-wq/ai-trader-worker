@@ -60,46 +60,28 @@
   function tabPill(tb) {
     if ($(".lux-tpill", tb)) return;
     var p = D.createElement("i"); p.className = "lux-tpill"; p.setAttribute("aria-hidden", "true"); tb.insertBefore(p, tb.firstChild);
-    /* [V33.823] 렉 수정 — anime.js 는 메인 스레드에서 매 프레임 값을 바꿔서, 탭을 누른 순간 화면 전환(배치 계산)이 메인 스레드를 잡으면 알약이 멈췄다가 튀었다.
-       이제 ① 누르는 즉시(click 캡처 · 화면 전환보다 먼저) 출발하고 ② 브라우저 합성기에서 도는 Web Animations(transform 만)로 움직인다 — 화면을 그리는 동안에도 끊기지 않는다.
-       움직임 곡선은 사이드바 알약(anime.js spring)과 같은 감쇠 스프링 + 늘어났다 돌아오기를 키프레임으로 뽑아 쓴다. */
-    function geo(t) {
-      var ic = $(".ic", t) || t, tr = tb.getBoundingClientRect(), r = ic.getBoundingClientRect();
-      var s = tb.offsetWidth ? tr.width / tb.offsetWidth : 1; if (!(s > 0)) s = 1;
-      return { x: (r.left - tr.left) / s - tb.clientLeft, y: (r.top - tr.top) / s - tb.clientTop, w: r.width / s, h: r.height / s };
+    /* [V33.824] 화면을 바꾸는 동안 위치를 재지 않는다 — V33.823 은 누를 때·200ms·760ms 마다 getBoundingClientRect 로 다시 재서
+       화면 전환 중 문서 전체 배치를 2~3번 더 시켰다(폰 실측 한 번 160~190ms). 이제 탭 크기·아이콘 자리는 화면이 조용할 때 한 번 재어 CSS 변수로 두고,
+       누르면 몇 번째 탭인지(--tp-i)만 바꾼다 → 이동은 CSS transform 전환(합성기)이라 화면을 그리는 동안에도 부드럽다. 느리고 부드러운 곡선(0.65s). */
+    function tabs() { return $$(".m-tab", tb).filter(function (t) { return t.style.display !== "none"; }); }
+    function measure() {
+      var ts = tabs(), t0 = ts[0]; if (!t0 || !t0.offsetWidth) return;
+      var ic = $(".ic", t0) || t0, st = tb.style;
+      st.setProperty("--tp-l", t0.offsetLeft + "px"); st.setProperty("--tp-tw", (ts[1] ? ts[1].offsetLeft - t0.offsetLeft : t0.offsetWidth) + "px");
+      st.setProperty("--tp-x", (ic === t0 ? 0 : ic.offsetLeft) + "px"); st.setProperty("--tp-y", (ic === t0 ? 0 : ic.offsetTop) + "px");
+      st.setProperty("--tp-w", ic.offsetWidth + "px"); st.setProperty("--tp-h", ic.offsetHeight + "px");
+      H.classList.add("lux-tpill-on");
     }
-    function tf(x, y, sx) { return "translate3d(" + x.toFixed(2) + "px," + y.toFixed(2) + "px,0) scaleX(" + sx.toFixed(3) + ")"; }
-    function spring(t) { return 1 - Math.exp(-7.5 * t) * Math.cos(11 * t); }      /* 감쇠 스프링(살짝 넘었다 자리잡기) */
-    function stretch(t) { return Math.exp(-6 * t) * Math.sin(Math.PI * Math.min(1, t * 2.2)); }
-    var cur = null, anim = null;
-    function go(t, animate) {
-      if (!t || !t.offsetWidth) { p.style.opacity = "0"; return; }
-      var g = geo(t); p.style.opacity = "1"; p.style.width = g.w + "px"; p.style.height = g.h + "px";
-      var from = p._m;
-      if (anim) { try { anim.cancel(); } catch (e) {} anim = null; }
-      p.style.transform = tf(g.x, g.y, 1);
-      if (animate && !RM && from && p.animate && (Math.abs(from.x - g.x) > 1 || Math.abs(from.y - g.y) > 1)) {
-        var fr = [], n = 24, st = Math.min(0.45, Math.abs(g.x - from.x) / 300);
-        for (var i = 0; i <= n; i++) { var k = i / n, e = i === n ? 1 : spring(k * 1.2); fr.push({ transform: tf(from.x + (g.x - from.x) * e, from.y + (g.y - from.y) * e, 1 + st * stretch(k)) }); }
-        anim = p.animate(fr, { duration: 640, easing: "linear" });
-        anim.onfinish = function () { anim = null; setTimeout(function () { go(cur, false); }, 0); };   /* 끝나면 다시 재서 자리 맞춤(대시보드 축소 보기로 폭이 바뀐 경우) */
-        var ic = $(".ic", t); if (ic && ic.animate) ic.animate([{ transform: "scale(.8)" }, { transform: "scale(1.06)", offset: .45 }, { transform: "scale(1)" }], { duration: 420, easing: "ease-out" });
-      }
-      p._m = { x: g.x, y: g.y }; cur = t;
-    }
+    function setI(t) { var i = tabs().indexOf(t); if (i < 0) return; tb.style.setProperty("--tp-i", i); p.classList.add("on"); }
     tb.addEventListener("click", function (e) {
       var t = e.target.closest && e.target.closest(".m-tab"); if (!t || t.getAttribute("data-more") || t.getAttribute("data-search")) return;
-      go(t, true);
-      /* 화면이 바뀌며(대시보드 축소 보기 켜고 끄기) 탭바 배율이 달라진다 — 자리 잡은 뒤 두 번 다시 잰다 */
-      clearTimeout(tb._r1); clearTimeout(tb._r2);
-      tb._r1 = setTimeout(function () { if (!anim) go(cur, false); }, 200); tb._r2 = setTimeout(function () { if (anim) { try { anim.finish(); } catch (e) {} } go(cur, false); }, 760);
+      setI(t);
     }, true);
-    var q = 0; function sched(animate) { if (q) cancelAnimationFrame(q); q = requestAnimationFrame(function () { q = 0; var a = $(".m-tab.active", tb); if (a === cur && animate) return; go(a, animate); }); }
-    new MutationObserver(function (ms) { for (var i = 0; i < ms.length; i++) if (ms[i].target !== p) { sched(true); return; } })
+    new MutationObserver(function (ms) { for (var i = 0; i < ms.length; i++) if (ms[i].target !== p) { var a = $(".m-tab.active", tb); if (a) setI(a); return; } })
       .observe(tb, { subtree: true, attributes: true, attributeFilter: ["class"] });
-    addEventListener("resize", function () { var a = $(".m-tab.active", tb); if (anim) { try { anim.finish(); } catch (e) {} } go(a, false); }, { passive: true });
-    if (window.ResizeObserver) new ResizeObserver(function () { if (!anim) go(cur || $(".m-tab.active", tb), false); }).observe(tb);
-    H.classList.add("lux-tpill-on"); go($(".m-tab.active", tb), false);
+    var rt = 0; addEventListener("resize", function () { clearTimeout(rt); rt = setTimeout(function () { requestAnimationFrame(measure); }, 400); }, { passive: true });
+    p.style.transition = "none"; measure(); var a0 = $(".m-tab.active", tb); if (a0) setI(a0);
+    requestAnimationFrame(function () { requestAnimationFrame(function () { p.style.transition = ""; }); });
   }
 
   /* 페이지 전환 */

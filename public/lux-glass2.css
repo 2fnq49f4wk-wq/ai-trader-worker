@@ -234,10 +234,14 @@ html:not([data-theme="light"]) body .sb-nav .nav-item.active .nav-item-icon,html
 .fv-deck .fv-index-row{min-height:97px}
 .fv-deck .fv-breadth-row:empty{display:block;min-height:38px}
 /* [V33.820] 폰 아래 탭 미끄럼 표시 */
-.m-tabbar .lux-tpill{position:absolute;left:0;top:0;display:block;border-radius:12px;background:linear-gradient(135deg,#3DD6B5,#4f8cff);box-shadow:0 8px 20px -8px rgba(61,214,181,.6);pointer-events:none;z-index:0;opacity:0;
-  transition:opacity .2s;transform-origin:center;will-change:transform}
-html.lux-tpill-on body .m-tabbar .m-tab{position:relative;z-index:1}
-html.lux-tpill-on body .m-tabbar .m-tab.active .ic{background:transparent!important;box-shadow:none!important}
+/* [V33.824] 폰 아래 탭 표시 — 몇 번째 탭인지(--tp-i)만 바꾸고 CSS 로 미끄러진다(위치 재기 없음 · 합성기) · 느리고 부드럽게 0.65s */
+.m-tabbar .lux-tpill{position:absolute;display:block;left:calc(var(--tp-l,0px) + var(--tp-x,0px));top:var(--tp-y,0px);width:var(--tp-w,0px);height:var(--tp-h,0px);border-radius:12px;background:linear-gradient(135deg,#3DD6B5,#4f8cff);box-shadow:0 8px 20px -8px rgba(61,214,181,.6);pointer-events:none;z-index:0;opacity:0;
+  transform:translate3d(calc(var(--tp-i,0) * var(--tp-tw,0px)),0,0);transition:transform .65s cubic-bezier(.45,.05,.25,1),opacity .25s;will-change:transform}
+.m-tabbar .lux-tpill.on{opacity:1}
+.m-tabbar .m-tab{position:relative}
+html.lux-tpill-on body .m-tabbar .m-tab{z-index:1}
+html.lux-tpill-on body .m-tabbar .m-tab.active .ic{background:transparent!important;box-shadow:none!important;transition:color .4s}
+@media (prefers-reduced-motion:reduce){.m-tabbar .lux-tpill{transition:none}}
 /* [V33.820] 숫자 색 — ① 종목 상세 '시세 데이터' 등락 숫자가 흰색으로 덮여 있던 것을 다시 색으로(상세는 한국식: 오름 빨강 · 내림 파랑)
    ② 숫자 뒤 빨강/초록 사각형(표 칸 워시 · 상세 머리 등락 알약 배경)을 지우고 글자에만 색 */
 html body #page-detail .detail-dcell .v.pos,html body #page-detail .fp-pct.good{color:#FF7A7F!important;-webkit-text-fill-color:#FF7A7F!important}
