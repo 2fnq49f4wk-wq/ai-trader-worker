@@ -317,3 +317,5 @@ html body #page-detail :is(.detail-data,.detail-prof) {grid-auto-flow:row dense}
   html[data-theme="light"]:not(.lux-dz) .lux-sbstat .lss-r b{color:#1b2559}
 }
 @media (min-width:761px) and (max-height:760px){html:not(.lux-dz) .lux-sbstat{display:none}}
+/* [V33.826] 폰 종목 상세에서도 시간외(프리·애프터·데이마켓) 가격·등락률을 보인다 — detail-v3b 가 폰에서 숨기고 있었다. 가격 아래 한 줄로 */
+@media (max-width:760px){html body #page-detail .detail-head .detail-px{display:grid!important;grid-template-columns:auto auto;align-items:baseline;justify-content:end;column-gap:8px;row-gap:2px}html body #page-detail .detail-head .detail-ext{display:flex!important;grid-column:1/-1;justify-self:end;justify-content:flex-end;align-items:center;gap:4px;font-size:12px!important;margin:0!important;white-space:nowrap}html body #page-detail .detail-head .detail-ext .wl-ext-tag{display:inline-block!important;font-size:10px!important;padding:1px 5px!important}}
