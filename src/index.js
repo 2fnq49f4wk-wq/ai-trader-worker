@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.832";
+const _BUILD_VER = "V33.833";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -9474,7 +9474,9 @@ async function fetchBatchQuotes(symbols, opts) {
   {
     const _ses = usMarketStateNow();
     if ((_ses === "PRE" || _ses === "POST") && opts.nqExt !== false) {
-      const _xm = symbols.filter(function (s) { return !(s.endsWith(".KS") || s.endsWith(".KQ")) && s.indexOf("=") < 0 && s.indexOf("^") < 0 && !(out[s] && (out[s].pre > 0 || out[s].post > 0)); });
+      /* [V33.833] ★진짜 원인★ — 종전엔 앞 단계(야후)가 pre 든 post 든 아무 시간외 값을 주면 나스닥을 건너뛰었다. 프리마켓에 야후가 준 것은 ★어제 애프터★ 값이라
+         뒤에서 세션 마스크로 지워지고, 오늘 프리값은 아무도 받지 않았다(진단 nqx: 558종 중 나스닥으로 넘어간 게 2~3종). 지금 세션의 값이 있을 때만 건너뛴다. */
+      const _xm = symbols.filter(function (s) { return !(s.endsWith(".KS") || s.endsWith(".KQ")) && s.indexOf("=") < 0 && s.indexOf("^") < 0 && !(out[s] && (_ses === "PRE" ? out[s].pre > 0 : out[s].post > 0)); });
       const _xc = [];
       for (let i = 0; i < _xm.length; i += NQ_CHUNK) _xc.push(_xm.slice(i, i + NQ_CHUNK));
       const ext = {};
