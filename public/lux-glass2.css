@@ -319,3 +319,11 @@ html body #page-detail :is(.detail-data,.detail-prof) {grid-auto-flow:row dense}
 @media (min-width:761px) and (max-height:760px){html:not(.lux-dz) .lux-sbstat{display:none}}
 /* [V33.826] 폰 종목 상세에서도 시간외(프리·애프터·데이마켓) 가격·등락률을 보인다 — detail-v3b 가 폰에서 숨기고 있었다. 가격 아래 한 줄로 */
 @media (max-width:760px){html body #page-detail .detail-head .detail-px{display:grid!important;grid-template-columns:auto auto;align-items:baseline;justify-content:end;column-gap:8px;row-gap:2px}html body #page-detail .detail-head .detail-ext{display:flex!important;grid-column:1/-1;justify-self:end;justify-content:flex-end;align-items:center;gap:4px;font-size:12px!important;margin:0!important;white-space:nowrap}html body #page-detail .detail-head .detail-ext .wl-ext-tag{display:inline-block!important;font-size:10px!important;padding:1px 5px!important}}
+/* [V33.827] 폰 전문가 대시보드 드나들 때 가림막 = 빈 배경+원 대신 화면 모양 뼈대(카드 자리)가 은은하게 깜빡 — '끊긴 이상한 화면' 이 아니라 불러오는 중으로 보이게.
+   크기는 vw/vh 라 보기 폭이 바뀌어도(390 ↔ 1180) 같은 크기 · 깜빡임은 opacity 애니메이션(합성기)이라 화면 계산 중에도 멈추지 않는다 */
+#luxDzSpin{display:none}
+html.lux-dzsw #luxDzSpin{display:grid;position:fixed;left:3.5vw;right:3.5vw;top:9vh;bottom:13vh;grid-template-columns:repeat(3,1fr);align-content:start;gap:2.4vw;z-index:2147483000;pointer-events:none;overflow:hidden}
+#luxDzSpin i,#luxDzSpin b{display:block;border-radius:3.2vw;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.06);animation:luxSk .9s ease-in-out infinite alternate}
+#luxDzSpin i{height:11vh}#luxDzSpin b{grid-column:1/-1;height:15vh}#luxDzSpin b.h{height:24vh;animation-delay:.15s}#luxDzSpin i:nth-child(2){animation-delay:.08s}#luxDzSpin i:nth-child(3){animation-delay:.16s}
+html[data-theme="light"] #luxDzSpin i,html[data-theme="light"] #luxDzSpin b{background:rgba(20,30,60,.06);border-color:rgba(20,30,60,.06)}
+@keyframes luxSk{from{opacity:.45}to{opacity:1}}

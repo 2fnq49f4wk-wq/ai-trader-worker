@@ -12,6 +12,8 @@
 
 ## Current handoff
 
+- **V33.827** 폰 전문가 대시보드 드나들 때 가림막을 빈 배경+로딩 원 → 화면 모양 뼈대(#luxDzSpin 안 카드 6칸 · vw/vh 크기라 보기 폭 390↔1180 전환 앞뒤 같은 자리 · opacity 깜빡임은 합성기). 사용자 "중간에 이상한 화면 · 끊김" = 빈 가림막. 패드(iPad Pro 11 가로)는 중간 화면 없음(연속 캡처 확인). 스타일은 lux-glass2.css 끝.
+
 - **V33.826** 폰 종목 상세 머리에 시간외(프리·애프터·데이마켓) 가격·등락률 다시 표시 — detail-v3b.css:162 가 폰(≤760)에서 .detail-ext 를 display:none 하고 있었다. lux-glass2 끝에서 .detail-px 를 2열 grid(가격·등락 / 시간외 줄 전체폭 오른쪽 정렬)로 — flex 100% 로 두면 가격 칸이 넓어져 종목명이 "N" 으로 잘렸다.
 
 - **V33.825** 폰 전문가 대시보드 드나들 때 옛 배치·찌그러짐·깜빡임: ① showPage 가 보기 폭이 바뀔 이동(__luxDzWill)이면 가림막+로딩 표시(#luxDzSpin · 7vw)를 먼저 한 프레임 그린 뒤 rAF+setTimeout 으로 실제 전환 — 종전엔 누르자마자 배치가 시작돼 이전 화면에 1초+ 멈췄다 찌그러진 화면이 비쳤다. ② 가림막은 0.16초 고정 → resize 확인 후 80ms + 2프레임(최대 0.5초) · .content visibility:hidden. ③ V33.824 의 지도 늦게 붙이기(lux-dzlazy)는 지도 자리가 빈 채 보여 깜빡임 원인 → 제거. ④ 초보자↔전문가(setMode user)도 같은 가림막 후 전환 · refreshAll/resize 는 550ms 뒤로.
