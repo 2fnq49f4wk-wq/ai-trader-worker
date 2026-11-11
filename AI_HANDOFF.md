@@ -12,6 +12,8 @@
 
 ## Current handoff
 
+- **V33.829** 시간외 값 지우기 ★경쟁★: 사이클은 시작 때 읽은 prevQ 로 행을 통째로 덮는데, 그 사이 가격 샤드(나스닥 배치)가 새 프리값을 쓰면 모른 채 지웠다(V33.828 의 JS 이어받기로는 못 막음 · 실측 06:00 ET RTX·WFC·TMUS 등 원본엔 프리 체결 있는데 558 중 282만). → 두 사이클 기록을 QUOTE_UPSERT_KEEP_EXT 로: 이번 행에 시간외가 없고 mstate 같으면 DB 에 있는 pre/post/extTs 를 json_set 으로 유지(쓰는 순간 · 추가 읽기/쓰기 0 · sqlite 3.45 로 동작 확인). 시세 자체는 이미 전 종목 매분(실측 quote ts 전부 1분 안) — 회전은 일봉 지표·폴백만. 폰 축소 보기 가림막: resize 뒤 80ms 대기 제거 · 상한 0.5→0.42s · 페이드 0.2→0.12s.
+
 - **V33.828** 미국 시간외(프리·애프터) 값이 상위 종목에서 비던 것: 매분 매매 사이클의 quote 기록(시세 루프 26xxx · 평가 루프 27xxx)이 받은 bq 에 시간외가 없으면 quoteSessionFields 로 pre/post=null 을 덮어써, 가격 샤드(나스닥 배치)가 채운 값을 1분마다 지웠다. 실측 11/11 05:17 ET: 557종 중 192종만 프리값 · 상위 11종(NVDA~WMT) 0 · 나스닥 원본엔 NVDA 176.20. → quoteSessionFieldsKeep(q, prev, market): 이번 값이 비면 같은 세션 딱지의 직전 값을 잇는다(extKeepMaskFor 마스크 · 지난 세션 값은 안 이음). __cycPrevQ = prevQuoteMap.
 
 - **V33.827** 폰 전문가 대시보드 드나들 때 가림막을 빈 배경+로딩 원 → 화면 모양 뼈대(#luxDzSpin 안 카드 6칸 · vw/vh 크기라 보기 폭 390↔1180 전환 앞뒤 같은 자리 · opacity 깜빡임은 합성기). 사용자 "중간에 이상한 화면 · 끊김" = 빈 가림막. 패드(iPad Pro 11 가로)는 중간 화면 없음(연속 캡처 확인). 스타일은 lux-glass2.css 끝.

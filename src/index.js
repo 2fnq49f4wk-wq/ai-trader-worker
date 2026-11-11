@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.828";
+const _BUILD_VER = "V33.829";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -15118,6 +15118,16 @@ const QUOTE_SAME_MS = 90000;
 const QUOTE_CHANGED_WHERE = " WHERE NOT json_valid(state.v) OR state.updated_ts < excluded.updated_ts - " + QUOTE_SAME_MS +
   " OR " + ["price", "dayPct", "prevClose", "mstate", "pre", "post", "ovn", "extTs", "rsi", "ma", "atr", "vol", "avgVol20"].map(function (f) {
     return "json_extract(state.v, '$." + f + "') IS NOT json_extract(excluded.v, '$." + f + "')"; }).join(" OR ");
+/* [V33.829] ★시간외 값 지우기 경쟁 — 쓰는 순간 DB 에서 막는다★ 매매 사이클은 시작할 때 읽은 직전 시세(prevQ)로 행을 통째로 덮어쓴다.
+   그 사이(같은 분)에 시간외 수집(가격 샤드 · 나스닥 배치)이 새 프리·애프터 값을 써 넣으면, 사이클은 그 값을 모른 채 빈칸으로 덮어 지운다.
+   실측 11/11 06:00 ET: 나스닥 원본엔 RTX·WFC·TMUS 등 20종 모두 오늘 프리 체결이 있었는데 사이트는 558종 중 282종만 값이 있었다.
+   이번 행에 시간외 값이 없고 세션 딱지가 같으면 ★DB 에 이미 있는★ 값을 그대로 둔다(json_set) — 읽고 쓰는 사이 경쟁이 없다. 추가 읽기·쓰기 0. */
+const QUOTE_UPSERT_KEEP_EXT = "INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=CASE WHEN json_valid(state.v)" +
+  " AND json_extract(excluded.v, '$.pre') IS NULL AND json_extract(excluded.v, '$.post') IS NULL" +
+  " AND json_extract(state.v, '$.mstate') IS json_extract(excluded.v, '$.mstate')" +
+  " AND (COALESCE(json_extract(state.v, '$.pre'), 0) > 0 OR COALESCE(json_extract(state.v, '$.post'), 0) > 0)" +
+  " THEN json_set(excluded.v, '$.pre', json_extract(state.v, '$.pre'), '$.prePct', json_extract(state.v, '$.prePct'), '$.post', json_extract(state.v, '$.post'), '$.postPct', json_extract(state.v, '$.postPct'), '$.extTs', json_extract(state.v, '$.extTs'))" +
+  " ELSE excluded.v END, updated_ts=excluded.updated_ts" + QUOTE_CHANGED_WHERE;
 const D1_DAY_CAP = 600000000;
 const D1_HEAVY_PER_CALL = 200000;
 let __d1Rows = 0;
@@ -26345,7 +26355,7 @@ async function runTradingCycle(env) {
           ts: nowTs
         };
         quoteStmts.push(
-          DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts" + QUOTE_CHANGED_WHERE)
+          DB.prepare(QUOTE_UPSERT_KEEP_EXT)
             .bind("quote:" + sym, JSON.stringify(merged), nowTs)
         );
       }
@@ -27327,7 +27337,7 @@ async function runTradingCycle(env) {
           // Codex V33.347: evaluation price may be extended; retain the original regular anchor for display.
           const _quoteSource = batchQuotes[symbol] || {};
           evalQuoteStmts.push(
-            DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts" + QUOTE_CHANGED_WHERE)
+            DB.prepare(QUOTE_UPSERT_KEEP_EXT)
               .bind("quote:" + symbol, JSON.stringify({
                 market: market, price: _quoteSource.price ?? price,
                 prevClose: _quoteSource.prevClose ?? prevClose, dayPct: _quoteSource.dayPct ?? dayPct,
