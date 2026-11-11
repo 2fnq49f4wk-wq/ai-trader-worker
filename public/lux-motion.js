@@ -65,10 +65,19 @@
       var ic = $(".ic", a) || a, tr = tb.getBoundingClientRect(), r = ic.getBoundingClientRect();
       var s = tb.offsetWidth ? tr.width / tb.offsetWidth : 1; if (!(s > 0)) s = 1;
       var x = (r.left - tr.left) / s - tb.clientLeft, y = (r.top - tr.top) / s - tb.clientTop;
-      p.style.transition = (anim && !RM) ? "" : "none";
-      p.style.width = r.width / s + "px"; p.style.height = r.height / s + "px";
-      p.style.transform = "translate3d(" + x + "px," + y + "px,0)"; p.style.opacity = "1";
-      if (!anim) { void p.offsetWidth; p.style.transition = ""; }
+      var w = r.width / s, h = r.height / s, an = A(); p.style.opacity = "1";
+      /* [V33.821] anime.js 로 사이드바 알약과 같은 '늘어났다 스프링으로 자리잡기' — anime 가 아직 없거나 첫 배치면 바로 놓는다 */
+      if (anim && !RM && an && p._m) {
+        an.remove(p);
+        var dx = Math.abs(x - p._m.x), st = 1 + Math.min(0.45, dx / 300);
+        an({ targets: p, translateX: x, translateY: y, width: w, height: h, duration: 720, easing: "spring(1, 90, 12, 0)" });
+        an({ targets: p, scaleX: [{ value: st, duration: 160, easing: "easeOutQuad" }, { value: 1, duration: 600, easing: "spring(1, 120, 9, 0)" }] });
+        var ic2 = $(".ic", a); if (ic2) an({ targets: ic2, scale: [0.8, 1], duration: 600, easing: "spring(1, 80, 9, 0)" });
+      } else {
+        if (an) an.remove(p);
+        p.style.width = w + "px"; p.style.height = h + "px"; p.style.transform = "translateX(" + x + "px) translateY(" + y + "px)";
+      }
+      p._m = { x: x, y: y };
     }
     var q = 0; function sched(anim) { if (q) cancelAnimationFrame(q); q = requestAnimationFrame(function () { q = 0; place(anim); }); }
     new MutationObserver(function (ms) { for (var i = 0; i < ms.length; i++) if (ms[i].target !== p) { sched(true); return; } })
