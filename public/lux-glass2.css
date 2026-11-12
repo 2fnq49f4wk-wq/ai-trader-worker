@@ -329,3 +329,33 @@ html[data-theme="light"] #luxDzSpin i,html[data-theme="light"] #luxDzSpin b{back
 @keyframes luxSk{from{opacity:.45}to{opacity:1}}
 /* [V33.834] 패드·PC: 화면들을 같은 칸(grid 1/1)에 겹치고, 전문가 대시보드는 숨길 때 display:none 대신 visibility:hidden — 배치를 지우지 않아 돌아올 때 다시 배치하지 않는다(실측 느린 기기 1.1초 멈춤의 대부분). 폰(보기 폭이 바뀜)은 제외 */
 @media (min-width:761px){html:not(.lux-dz) body main.content{display:grid!important;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}html:not(.lux-dz) body main.content>.page{grid-area:1/1;min-height:0;min-width:0}html:not(.lux-dz) body #page-dashboard.page:not(.active){display:flex!important;content-visibility:hidden;pointer-events:none}}
+/* [V33.836] 사이드바 접기(아이콘만) — lux-topbar.js 끝. 패드·PC(761px~)만 · 폰 축소 보기(lux-dz)는 해당 없음 */
+.lux-sbcol{display:none}
+@media (min-width:761px){
+  html:not(.lux-dz) body nav.sidebar.sidebar .lux-sbcol{display:flex;position:absolute;top:14px;right:10px;z-index:3;width:26px;height:26px;padding:0;align-items:center;justify-content:center;border-radius:50%;cursor:pointer;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);color:inherit;transition:background .2s,transform .3s cubic-bezier(.4,0,.2,1)}
+  html:not(.lux-dz) body nav.sidebar.sidebar .lux-sbcol:hover{background:rgba(59,130,246,.22)}
+  html:not(.lux-dz) body nav.sidebar.sidebar .lux-sbcol svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  html[data-theme="light"]:not(.lux-dz) body nav.sidebar.sidebar .lux-sbcol{background:rgba(16,24,40,.05);border-color:rgba(16,24,40,.12)}
+  html:not(.lux-dz) body nav.sidebar.sidebar .sb-brand{padding-right:40px!important}
+  html.lux-sbanim:not(.lux-dz) body nav.sidebar.sidebar{transition:width .3s cubic-bezier(.4,0,.2,1),min-width .3s cubic-bezier(.4,0,.2,1),max-width .3s cubic-bezier(.4,0,.2,1),flex-basis .3s cubic-bezier(.4,0,.2,1)!important}
+  html.lux-sbanim:not(.lux-dz) body .shell{overflow:hidden}
+  html.lux-sbanim:not(.lux-dz) body nav.sidebar.sidebar .nav-item-label{white-space:nowrap!important}
+  /* 접힌 모양 */
+  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar{width:68px!important;min-width:68px!important;max-width:68px!important;flex:0 0 68px!important;overflow:hidden!important}
+  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lux-sbcol{top:56px;right:auto;left:20px;transform:rotate(180deg)}
+  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .sb-brand{display:flex!important;justify-content:center;padding:16px 0 46px!important}
+  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar :is(.sb-brand-name,.sb-brand-sub,.nav-item-label,.lux-sbstat,.sb-mode-w,.lst-map span){display:none!important}
+  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .sb-nav .nav-item{justify-content:center!important;padding:8px 0!important;margin:0 8px!important}
+  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .sb-nav .nav-item-icon{margin:0!important}
+  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lux-sbtools{padding-left:6px!important;padding-right:6px!important}
+  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lux-sbtools .lst-map{justify-content:center!important;padding-left:0!important;padding-right:0!important}
+  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lux-sbtools .lst-seg{grid-template-columns:1fr!important;row-gap:2px}
+  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lux-sbtools .lst-seg button{font-size:0!important;padding:6px 0!important;width:100%;line-height:1}
+  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lux-sbtools .lst-seg button::after{font-size:11px;letter-spacing:.02em}
+  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lst-seg button[data-l="ko"]::after{content:"KO"}
+  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lst-seg button[data-l="en"]::after{content:"EN"}
+  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lst-seg button[data-t="light"]::after{content:"☀"}
+  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lst-seg button[data-t="dark"]::after{content:"☾"}
+  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .sb-nav .nav-item{max-height:52px!important}
+}
+@media (prefers-reduced-motion:reduce){html.lux-sbanim body nav.sidebar.sidebar{transition:none!important}}
