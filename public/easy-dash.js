@@ -56,7 +56,7 @@
     s.textContent =
       "#easyDash{display:none;--e-bg:#0B0D11;--e-c:#13161B;--e-c2:#1A1E24;--e-bd:rgba(255,255,255,.07);--e-t:#F2F4F7;--e-m:#A0A8B6;--e-mm:#6B7383;--e-up:#F04452;--e-dn:#3182F6;--e-acc:#9DB4E8;color:var(--e-t);max-width:1240px;min-width:0;width:100%;box-sizing:border-box;grid-column:1/-1;margin:0 auto;padding:4px 2px 40px;font-variant-numeric:tabular-nums}" +
       "html[data-theme=light] #easyDash{--e-bg:#F4F6F9;--e-c:#FFFFFF;--e-c2:#F3F5F8;--e-bd:rgba(16,24,40,.09);--e-t:#101828;--e-m:#475467;--e-mm:#7A8496;--e-acc:#0E9F7E}" +
-      "html.lux-easy #easyDash{display:block}html.lux-easy #page-dashboard>*:not(#easyDash){display:none!important}" +
+      "html.lux-easy #easyDash{display:block}@media (max-width:760px){html.lux-easy #page-dashboard>*:not(#easyDash){display:none!important}}" +
       "#easyDash .hd{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin:2px 2px 14px}#easyDash .hd h1{margin:0;font-size:24px;font-weight:800;letter-spacing:-.5px}#easyDash .hd p{margin:5px 0 0;color:var(--e-m);font-size:13px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}" +
       "#easyDash .st{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--e-m);background:var(--e-c2);border-radius:999px;padding:3px 10px}#easyDash .st i{width:6px;height:6px;border-radius:50%;background:var(--e-mm)}#easyDash .st.on i{background:var(--e-acc);box-shadow:0 0 0 3px rgba(157,180,232,.18)}#easyDash .st.ext i{background:#E2B93B}" +
       "#easyDash .pro{flex:none;background:none;border:1px solid var(--e-bd);color:var(--e-m);border-radius:10px;padding:8px 12px;font-size:12.5px;cursor:pointer}#easyDash .pro:hover{color:var(--e-t)}" +
@@ -114,6 +114,7 @@
   }
 
   // ── 모드 ──
+  /* [V33.837] 패드·PC: 초보자로 갈 때 전문가 카드들을 display:none 대신 content-visibility:hidden(높이 0)으로 숨긴다(index.html 머리 스타일) — 다시 전문가로 올 때 6천여 요소 배치를 처음부터 하지 않고 기억해 둔 배치를 쓴다(사용자 11/13 "전문가↔초보자 전환 렉 심각"). 폰은 그대로 display:none. */
   function setMode(m, user) {
     /* [V33.825] 폰에서 직접 바꿀 때: 가림막+로딩 표시를 먼저 한 프레임 그린 뒤 바꾼다(초보자↔전문가 전환 때 이전 화면에 멈춰 있다 찌그러지던 것) */
     if (user && !setMode.__go && window.__luxDzSw && Math.min(screen.width || 390, screen.height || 9999) <= 600) {
@@ -130,7 +131,8 @@
       var pg = D.querySelector(".page.active"); if (!pg || pg.id !== "page-dashboard") { try { if (typeof window.showPage === "function") window.showPage("dashboard"); } catch (e) {} }
       try { window.scrollTo(0, 0); } catch (e) {}
       /* [V33.825] 전체 새로고침·크기 다시 재기는 화면이 바뀌어 그려진 뒤로(초보자 → 전문가 전환 렉) */
-      if (!easy) setTimeout(function () { try { if (typeof window.refreshAll === "function") window.refreshAll(); } catch (e) {} setTimeout(function () { try { window.dispatchEvent(new Event("resize")); } catch (e) {} }, 120); }, 550);   // 숨어 있던 차트·지도 크기 다시 재기
+      /* [V33.837] 전문가로 돌아올 때 서버 전체 새로고침(/api/state·거래내역 = Worker 요청·CPU)은 마지막 수신이 30초 넘었을 때만 — 그 안이면 이미 받은 데이터로 충분(사용자 11/13 "화면 전환·UI 조작으로 요금 요소 추가 발생 금지") */
+      if (!easy) setTimeout(function () { try { if (typeof window.refreshAll === "function" && Date.now() - (window.__lastDataReceived || 0) > 30000) window.refreshAll(); } catch (e) {} if (innerWidth <= 760) setTimeout(function () { try { window.dispatchEvent(new Event("resize")); } catch (e) {} }, 120); }, 550);   /* 패드·PC 는 배치를 기억해 두므로 크기 다시 재기(resize → 지도·차트 전부 재그림) 불필요 */   // 숨어 있던 차트·지도 크기 다시 재기
     }
     if (easy) { mount(); load(); }
   }
@@ -159,7 +161,9 @@
   // ── 데이터 ──
   function load(force) {
     if (busy) return; var now = Date.now();
-    if (!force && ST && now - stAt < 30000) { draw(); return; }
+    /* [V33.837] 본 화면이 30초 안에 받은 /api/state 가 있으면 그걸 쓴다 — 초보자 전환마다 같은 데이터를 또 요청하지 않게(Worker 요청·CPU 0) */
+    if (!force && window.__lastState && window.__lastState.watchlist && now - (window.__lastDataReceived || 0) < 30000 && ST !== window.__lastState) { ST = window.__lastState; stAt = window.__lastDataReceived; }
+    if (!force && ST && now - stAt < 30000) { var _el = D.getElementById("easyDash"); if (!(_el && _el.__drawnAt === stAt && _el.__drawnPb === PB && _el.firstChild)) draw(); pbGet(); return; }   /* [V33.837] 같은 데이터로 이미 그려 둔 초보자 화면은 다시 안 그린다(전환 렉) */
     busy = true;
     fetch("/api/state").then(function (r) { return r.json(); }).then(function (j) { busy = false; if (j && j.watchlist) { ST = j; stAt = Date.now(); window.__lastState = j; if (!window.__lastQuotesArr) window.__lastQuotesArr = j.watchlist; } draw(); }).catch(function () { busy = false; draw(); });
     pbGet();
@@ -344,6 +348,7 @@
     var el = mount(); if (!el) return;
     if (ST) ST._m = null;
     var keep = window.scrollY;
+    el.__drawnAt = stAt; el.__drawnPb = PB;
     var L = '<div class="ld">불러오는 중…</div>';
     el.innerHTML =
       '<div class="hd"><div><h1>오늘의 시장</h1><p>' + today() + (ST ? sessTxt("us") + sessTxt("kr") : "") + '</p></div><button type="button" class="pro" data-pro="1">전문가 화면 →</button></div>' +

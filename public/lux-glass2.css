@@ -337,25 +337,28 @@ html[data-theme="light"] #luxDzSpin i,html[data-theme="light"] #luxDzSpin b{back
   html:not(.lux-dz) body nav.sidebar.sidebar .lux-sbcol svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
   html[data-theme="light"]:not(.lux-dz) body nav.sidebar.sidebar .lux-sbcol{background:rgba(16,24,40,.05);border-color:rgba(16,24,40,.12)}
   html:not(.lux-dz) body nav.sidebar.sidebar .sb-brand{padding-right:40px!important}
-  html.lux-sbanim:not(.lux-dz) body nav.sidebar.sidebar{transition:width .3s cubic-bezier(.4,0,.2,1),min-width .3s cubic-bezier(.4,0,.2,1),max-width .3s cubic-bezier(.4,0,.2,1),flex-basis .3s cubic-bezier(.4,0,.2,1)!important}
-  html.lux-sbanim:not(.lux-dz) body .shell{overflow:hidden}
-  html.lux-sbanim:not(.lux-dz) body nav.sidebar.sidebar .nav-item-label{white-space:nowrap!important}
   /* 접힌 모양 */
-  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar{width:68px!important;min-width:68px!important;max-width:68px!important;flex:0 0 68px!important;overflow:hidden!important}
-  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lux-sbcol{top:56px;right:auto;left:20px;transform:rotate(180deg)}
-  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .sb-brand{display:flex!important;justify-content:center;padding:16px 0 46px!important}
-  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar :is(.sb-brand-name,.sb-brand-sub,.nav-item-label,.lux-sbstat,.sb-mode-w,.lst-map span){display:none!important}
-  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .sb-nav .nav-item{justify-content:center!important;padding:8px 0!important;margin:0 8px!important}
-  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .sb-nav .nav-item-icon{margin:0!important}
-  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lux-sbtools{padding-left:6px!important;padding-right:6px!important}
-  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lux-sbtools .lst-map{justify-content:center!important;padding-left:0!important;padding-right:0!important}
-  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lux-sbtools .lst-seg{grid-template-columns:1fr!important;row-gap:2px}
-  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lux-sbtools .lst-seg button{font-size:0!important;padding:6px 0!important;width:100%;line-height:1}
-  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lux-sbtools .lst-seg button::after{font-size:11px;letter-spacing:.02em}
-  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lst-seg button[data-l="ko"]::after{content:"KO"}
-  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lst-seg button[data-l="en"]::after{content:"EN"}
-  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lst-seg button[data-t="light"]::after{content:"☀"}
-  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .lst-seg button[data-t="dark"]::after{content:"☾"}
-  html.lux-sbmini:not(.lux-dz) body nav.sidebar.sidebar .sb-nav .nav-item{max-height:52px!important}
+  html:not(.lux-dz) body nav.sidebar.sidebar.lux-mini{width:68px!important;min-width:68px!important;max-width:68px!important;flex:0 0 68px!important;overflow:hidden!important}
+  html:not(.lux-dz) body nav.sidebar.sidebar.lux-mini .lux-sbcol{top:56px;right:auto;left:20px;transform:rotate(180deg)}
+  html:not(.lux-dz) body nav.sidebar.sidebar.lux-mini .sb-brand{display:flex!important;justify-content:center;padding:16px 0 46px!important}
+  html:not(.lux-dz) body nav.sidebar.sidebar.lux-mini :is(.sb-brand-name,.sb-brand-sub,.nav-item-label,.lux-sbstat,.sb-mode-w,.lst-map span){display:none!important}
+  html:not(.lux-dz) body nav.sidebar.sidebar.lux-mini .sb-nav .nav-item{justify-content:center!important;padding:8px 0!important;margin:0 8px!important}
+  html:not(.lux-dz) body nav.sidebar.sidebar.lux-mini .sb-nav .nav-item-icon{margin:0!important}
+  html:not(.lux-dz) body nav.sidebar.sidebar.lux-mini .lux-sbtools{padding-left:6px!important;padding-right:6px!important}
+  html:not(.lux-dz) body nav.sidebar.sidebar.lux-mini .lux-sbtools .lst-map{justify-content:center!important;padding-left:0!important;padding-right:0!important}
+  html:not(.lux-dz) body nav.sidebar.sidebar.lux-mini .lux-sbtools .lst-seg{grid-template-columns:1fr!important;row-gap:2px}
+  html:not(.lux-dz) body nav.sidebar.sidebar.lux-mini .lux-sbtools .lst-seg button{font-size:0!important;padding:6px 0!important;width:100%;line-height:1}
+  html:not(.lux-dz) body nav.sidebar.sidebar.lux-mini .lux-sbtools .lst-seg button::after{font-size:11px;letter-spacing:.02em}
+  html:not(.lux-dz) body nav.sidebar.sidebar.lux-mini .lst-seg button[data-l="ko"]::after{content:"KO"}
+  html:not(.lux-dz) body nav.sidebar.sidebar.lux-mini .lst-seg button[data-l="en"]::after{content:"EN"}
+  html:not(.lux-dz) body nav.sidebar.sidebar.lux-mini .lst-seg button[data-t="light"]::after{content:"☀"}
+  html:not(.lux-dz) body nav.sidebar.sidebar.lux-mini .lst-seg button[data-t="dark"]::after{content:"☾"}
+  html:not(.lux-dz) body nav.sidebar.sidebar.lux-mini .sb-nav .nav-item{max-height:52px!important}
 }
-@media (prefers-reduced-motion:reduce){html.lux-sbanim body nav.sidebar.sidebar{transition:none!important}}
+/* [V33.837] 사이드바 접기 렉(사용자 11/13 아이패드 "매우 심각한 렉") — 원인: html 클래스 토글(문서 1만2천 요소 스타일 재계산 ×3) + 폭 0.3초 전환(매 프레임 배치·흐림 필터 다시 그리기) + 끝난 뒤 resize 이벤트(지도·차트 전부 다시 그림).
+   → 클래스는 사이드바(nav.lux-mini)에만 · 폭은 한 번에 바꾸고 사이드바 속 글자만 투명→보임(합성기) · resize 이벤트 안 보냄. */
+/* [V33.837] 대시보드 큰 빈칸 — 패드·PC 에서 S&P 500 지도가 330px 고정이라 옆 TOP MOVERS 높이만큼 아래가 비었다 → 지도가 칸 높이를 채운다(폰 축소 보기 V33.740 과 같은 방식 · ResizeObserver 가 다시 그림) */
+@media (min-width:761px){
+  html:not(.lux-dz) body .fv-mid>.fv-panel:nth-child(2){display:flex!important;flex-direction:column!important;align-self:stretch!important;height:auto!important;max-height:none!important}
+  html:not(.lux-dz) body .fv-mid>.fv-panel:nth-child(2) #fvHeatmap{flex:1 1 auto!important;height:auto!important;min-height:330px}
+}

@@ -51,25 +51,23 @@
   if(document.getElementById('page-dashboard')&&document.querySelector('nav.sidebar .sb-nav')) mount();
   else if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',mount); else mount();
 })();
-/* [V33.836] 사용자 11/12 "패드·컴퓨터에서 왼쪽 사이드바 접고 펼치기 · 아이콘만" — 맨 위 둥근 버튼으로 접는다(html.lux-sbmini · 이 기기에 기억 lux-sbmini).
-   렉 방지: 사이드바 폭만 0.3초 미끄러지고, 오른쪽 본문은 처음에 최종 폭으로 한 번만 배치한다(매 프레임 대시보드 6천 요소를 다시 배치하지 않게). */
+/* [V33.836] 사용자 11/12 "패드·컴퓨터에서 왼쪽 사이드바 접고 펼치기 · 아이콘만" — 맨 위 둥근 버튼(nav.lux-mini · 이 기기에 기억 lux-sbmini).
+   [V33.837] 렉 제거: 클래스는 사이드바에만(문서 전체 스타일 재계산 없음) · 폭은 한 번에 · 사이드바 속만 0.2초 투명→보임 · resize 이벤트 안 보냄. */
 (function(){
-  var H=document.documentElement;
-  try{ if(localStorage.getItem('lux-sbmini')==='1') H.classList.add('lux-sbmini'); }catch(e){}
   function mount(){
     var sb=document.querySelector('nav.sidebar'); if(!sb||sb.querySelector('.lux-sbcol')) return;
+    try{ if(localStorage.getItem('lux-sbmini')==='1'){ sb.classList.add('lux-mini'); var sn0=sb.querySelector('.sb-nav'); if(sn0) sn0.classList.add('lux-mini-n'); } }catch(e){}
     var b=document.createElement('button'); b.type='button'; b.className='lux-sbcol';
     b.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>';
-    function lab(){ var m=H.classList.contains('lux-sbmini'); b.setAttribute('aria-label',m?'사이드바 펼치기':'사이드바 접기'); b.title=m?'펼치기':'접기'; }
+    function lab(){ var m=sb.classList.contains('lux-mini'); b.setAttribute('aria-label',m?'사이드바 펼치기':'사이드바 접기'); b.title=m?'펼치기':'접기'; }
     lab(); sb.insertBefore(b, sb.firstChild);
     sb.querySelectorAll('.sb-nav .nav-item').forEach(function(it){ var l=it.querySelector('.nav-item-label'); if(l&&!it.title) it.title=l.textContent.trim(); });
     b.addEventListener('click',function(){
-      var c=document.querySelector('main.content'), mini=!H.classList.contains('lux-sbmini');
-      var cur=sb.getBoundingClientRect().width, to=mini?68:(innerWidth>=1180?178:150);
-      if(c){ var w=c.getBoundingClientRect().width+(cur-to); c.style.flex='0 0 '+w+'px'; c.style.width=w+'px'; c.style.maxWidth='none'; }
-      H.classList.add('lux-sbanim'); H.classList.toggle('lux-sbmini',mini); lab();
+      var mini=!sb.classList.contains('lux-mini');
+      sb.classList.toggle('lux-mini',mini); lab();
+      var sn=sb.querySelector('.sb-nav'); if(sn) sn.classList.toggle('lux-mini-n',mini);   /* 선택 알약(lux-motion navPill)이 새 자리를 다시 재도록 — 그 관찰자는 .sb-nav 안의 class 변화만 본다 */
       try{ localStorage.setItem('lux-sbmini',mini?'1':'0'); }catch(e){}
-      clearTimeout(b._t); b._t=setTimeout(function(){ H.classList.remove('lux-sbanim'); if(c){ c.style.flex=''; c.style.width=''; c.style.maxWidth=''; } try{ dispatchEvent(new Event('resize')); }catch(e){} },340);
+      for(var k=sb.children,i=0;i<k.length;i++){ var c=k[i]; if(c!==b&&c.animate) c.animate([{opacity:0},{opacity:1}],{duration:200,easing:'ease-out'}); }
     });
   }
   if(document.querySelector('nav.sidebar .sb-nav')) mount(); else document.addEventListener('DOMContentLoaded',mount);
