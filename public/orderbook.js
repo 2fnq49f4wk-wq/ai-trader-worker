@@ -10,7 +10,7 @@
   function css() {
     if (el("luxObCss")) return;
     var st = D.createElement("style"); st.id = "luxObCss";
-    st.textContent = "#detailOB{margin:0 0 14px}#detailOB .obh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:0 0 8px}#detailOB .obh b{font-size:14px}#detailOB .obh span{font-size:11.5px;color:var(--t3,#8a94a6);white-space:nowrap}" +
+    st.textContent = "#detailOB{margin:0 0 14px;position:relative}#detailOB .obh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:0 0 8px}#detailOB .obh b{font-size:14px}#detailOB .obh span{font-size:11.5px;color:var(--t3,#8a94a6);white-space:nowrap}" +
       "#detailOB .obg{display:grid;grid-template-columns:1fr auto 1fr;font:12.5px/1.5 var(--mono,ui-monospace,monospace);border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,.08)}" +
       "#detailOB .obr{display:contents}#detailOB .obr>i{font-style:normal;padding:2px 8px;position:relative;white-space:nowrap}#detailOB .obr .q{text-align:right}#detailOB .obr .p{text-align:center;font-weight:700;padding:2px 10px}" +
       "#detailOB .obr.a .p{color:#6EA8FF}#detailOB .obr.b .p{color:#FF7A7F}#detailOB .obr .q b{position:absolute;top:2px;bottom:2px;opacity:.22;border-radius:3px}#detailOB .obr.a .q b{right:0;background:#3B82F6}#detailOB .obr.b .q b{left:0;background:#E5484D}#detailOB .obr.b .q{text-align:left}" +
@@ -21,21 +21,21 @@
       "html[data-theme=light] #detailOB .obg{border-color:rgba(16,24,40,.12)}#detailOB.obbig{margin:0}#detailOB.obbig .obg{font-size:14px}#detailOB.obbig .obt{max-height:none}";
     D.head.appendChild(st);
   }
+  /* [V33.840] 자리 = 패드 가로·PC 는 차트 바로 오른쪽 열(.detail-side) 맨 위 · 폰·좁은 화면은 차트 바로 아래 — 사용자 11/13 "호가창을 주식 그래프 바로 옆에".
+     V33.838 은 screen.width(아이패드 사파리는 세로 폭 834 를 준다)로 판정해 패드 가로에서도 맨 아래로 갔다 → 보이는 폭(innerWidth)과 오른쪽 열이 실제로 보이는지로 정한다. */
   function host() {
-    var h = el("detailOB"); if (h) return h;
-    var side = D.querySelector("#page-detail .detail-side"); if (!side) return null;
-    h = D.createElement("div"); h.id = "detailOB"; h.className = "detail-vcard";
-    var info = el("luxInfo");
-    if (Math.min(innerWidth, screen.width || 9999) <= 900) { var a = info && info.parentNode !== side ? info : side; a.parentNode.insertBefore(h, a.nextSibling === side ? side : a.nextSibling); }   // 폰·패드 세로: 오른쪽 열이 숨는다 → AI 분석 바로 밑(없으면 오른쪽 열 자리)
-    else side.insertBefore(h, side.firstChild);
+    var h = el("detailOB"), side = D.querySelector("#page-detail .detail-side"), ch = el("detailChart"), dw = D.querySelector("#page-detail .detail-datawrap");
+    if (!h) { h = D.createElement("div"); h.id = "detailOB"; h.className = "detail-vcard"; }
+    if (ch && ch.parentNode && h.previousSibling !== ch) ch.parentNode.insertBefore(h, ch.nextSibling);
+    /* 패드 가로·PC(2열 격자): 차트 오른쪽 칸(원래 '시세 데이터' 자리)을 호가가 쓰고, 시세 데이터는 오른쪽 열 맨 위로 */
+    if (innerWidth > 900 && side && dw && dw.parentNode !== side) side.insertBefore(dw, side.firstChild);
     return h;
   }
   function draw(j) {
     var h = host(); if (!h) return; css();
-    if (!h.offsetParent && h.parentNode && h.parentNode.classList.contains("detail-side")) { h.remove(); h = host(); if (!h) return; }   // 오른쪽 열이 숨은 배치(폰)면 보이는 자리로 옮긴다
     var kr = isKr(sym);
     if (!j || j.ok === false) { h.innerHTML = '<div class="obh"><b>호가 · 체결</b><span>받지 못함</span></div>'; return; }
-    var sg = j.sig || null, ask = j.ask || [], bid = j.bid || [], hd = '<div class="obh"><b>호가 · 체결</b><span>' + (kr ? "10단계 · 네이버" : "최우선 호가 · 나스닥") + " · 5초</span></div>";
+    var sg = j.sig || null, ask = j.ask || [], bid = j.bid || [], hd = '<div class="obh"><b>호가 · 체결</b><span>' + (kr ? "10단계 · 네이버" : "최우선 호가 · 나스닥") + " · 5초</span></div>" + (j.last > 0 ? '<div class="obs" style="margin:0 0 8px">실시간 체결가 <b>' + fmtP(j.last, kr) + "</b>" + (j.lastPct != null ? ' <b class="' + (j.lastPct >= 0 ? "up" : "dn") + '">' + (j.lastPct >= 0 ? "+" : "") + j.lastPct.toFixed(2) + "%</b>" : "") + "</div>" : "");
     if (!ask.length && !bid.length && !(j.trades && j.trades.length)) { h.innerHTML = hd + '<div class="obn">지금은 호가가 비어 있습니다(장 시작 전·마감 후). ' + (kr ? "정규장 09:00~15:30 에 10단계 잔량이 들어옵니다." : "프리·정규·애프터 시간에 최우선 호가와 체결이 들어옵니다.") + "</div>"; return; }
     var mx = 1; ask.concat(bid).forEach(function (x) { if (x[1] > mx) mx = x[1]; });
     var g = '<div class="obg">';
@@ -61,7 +61,11 @@
       j.trades.slice(0, 20).forEach(function (x, i) { var nx = j.trades[i + 1], c = nx ? (x[1] > nx[1] ? "up" : x[1] < nx[1] ? "dn" : "") : ""; t += '<div><span>' + String(x[0]).replace(/^0/, "") + '</span><span class="' + c + '">' + fmtP(x[1], kr) + "</span><span>" + fmtQ(x[2]) + "</span></div>"; });
       t += "</div>";
     }
+    var keep = h.__us ? h.scrollTop : -1;
     h.innerHTML = hd + (ask.length || bid.length ? g : "") + s + '<div class="obn">' + note + "</div>" + t;
+    /* 칸 안에서 스크롤되는 배치(차트 옆)면 매도↔매수 경계를 가운데로 — 사용자가 직접 굴린 뒤엔 그 위치 유지 */
+    if (h.scrollHeight > h.clientHeight + 4) { if (keep >= 0) h.scrollTop = keep; else { var b0 = h.querySelector(".obr.b .p"); if (b0) h.scrollTop = Math.max(0, b0.offsetTop - h.clientHeight / 2); } }
+    if (!h.__usw) { h.__usw = 1; h.addEventListener("wheel", function () { h.__us = 1; }, { passive: true }); h.addEventListener("touchmove", function () { h.__us = 1; }, { passive: true }); }
   }
   function visible() { var p = el("page-detail"); return p && p.classList.contains("active") && !D.hidden; }
   function pull() {
@@ -71,7 +75,7 @@
   }
   function open(s) {
     if (!s || s.charAt(0) === "^") { var h0 = el("detailOB"); if (h0) h0.innerHTML = ""; sym = null; return; }
-    sym = s; last = null;
+    sym = s; last = null; var h1 = el("detailOB"); if (h1) h1.__us = 0;
     var h = host(); if (h) { css(); h.innerHTML = '<div class="obh"><b>호가 · 체결</b><span>불러오는 중…</span></div>'; }
     pull(); setTimeout(pull, 600);   // 화면 전환이 한 박자 늦게 끝나면(대시보드 → 상세) 첫 요청이 건너뛰어진다
     if (!timer) timer = setInterval(pull, 5000);

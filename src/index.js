@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.839";
+const _BUILD_VER = "V33.840";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8516,14 +8516,20 @@ async function fetchOrderBook(symbol) {
   if (kr) {
     const code = symbol.split(".")[0];
     try { __fetchBudget.used++; } catch (e) {}
-    const r = await fetch("https://m.stock.naver.com/api/stock/" + code + "/askingPrice", { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" }, signal: AbortSignal.timeout(5000) });
+    try { __fetchBudget.used++; } catch (e) {}
+    /* [V33.840] 같은 5초 묶음에 실시간 체결가(네이버 polling — 그 API 가 스스로 7초 주기를 권한다)도 함께 — 보고 있는 종목은 시세 사본(30초~1분)보다 빠르게 */
+    const [r, rp] = await Promise.all([
+      fetch("https://m.stock.naver.com/api/stock/" + code + "/askingPrice", { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" }, signal: AbortSignal.timeout(5000) }),
+      fetch("https://polling.finance.naver.com/api/realtime/domestic/stock/" + code, { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" }, signal: AbortSignal.timeout(5000) }).then(function (x) { return x.ok ? x.json() : null; }).catch(function () { return null; })
+    ]);
     if (!r.ok) throw new Error("HTTP " + r.status);
     const j = await r.json();
+    const pd0 = (rp && Array.isArray(rp.datas) && rp.datas[0]) || {};
     const lv = function (a) { return (Array.isArray(a) ? a : []).map(function (x) { return [_obNum(_obPick(x, /price/i)), _obNum(_obPick(x, /count|quant|volume|amount|remain/i))]; }).filter(function (x) { return x[0] > 0; }); };
     const ask = lv(j.sellInfo || j.sellInfos).sort(function (a, b) { return a[0] - b[0]; }).slice(0, 10);
     const bid = lv(j.buyInfos || j.buyInfo).sort(function (a, b) { return b[0] - a[0]; }).slice(0, 10);
     const sum = function (a) { return a.reduce(function (t, x) { return t + x[1]; }, 0); };
-    return { s: symbol, mkt: "kr", ts: now, src: "naver", ask: ask, bid: bid, totAsk: _obNum(j.totalSell) || sum(ask), totBid: _obNum(j.totalBuy) || sum(bid), prevClose: _obNum(j.lastClosePrice), trades: [] };
+    return { s: symbol, mkt: "kr", ts: now, src: "naver", ask: ask, bid: bid, totAsk: _obNum(j.totalSell) || sum(ask), totBid: _obNum(j.totalBuy) || sum(bid), prevClose: _obNum(j.lastClosePrice), last: _obNum(pd0.closePrice), lastPct: pd0.fluctuationsRatio != null ? _obNum(pd0.fluctuationsRatio) * (/FALL|하락/.test(JSON.stringify(pd0.compareToPreviousPrice || "")) ? -1 : 1) : null, lastAt: pd0.localTradedAt || null, vol: _obNum(pd0.accumulatedTradingVolume), trades: [] };
   }
   const H = { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15", "Accept": "application/json", "Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/" };
   const ns = encodeURIComponent(nasdaqSym(symbol));

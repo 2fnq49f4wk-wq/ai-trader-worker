@@ -367,3 +367,15 @@ html[data-theme="light"] #luxDzSpin i,html[data-theme="light"] #luxDzSpin b{back
 /* [V33.838] 사이드바 아이콘이 가끔 안 보이던 것(사용자 11/13) — 선택된 메뉴의 아이콘·글자는 진한 색(#04110D)이고 그 밑 밝은 바탕은 움직이는 알약(.lux-pill)이 깔아 준다.
    알약이 아직 자리를 못 잡았거나(로딩·전환 중) 꺼지면 진한 아이콘이 어두운 사이드바 위에 남아 안 보였다 → 알약이 없을 땐 선택 메뉴가 스스로 같은 바탕을 깐다. */
 html body nav.sidebar .sb-nav:not(:has(> .lux-pill.on)) .nav-item.active{background:linear-gradient(135deg,#3DD6B5,#4f8cff)!important;border-radius:12px!important}
+/* [V33.840] 종목 상세 재무분석 — 왼쪽 반폭에 갇혀 업종 비교 표가 273px 로 눌리고 오른쪽이 텅 비던 것(사용자 11/13 "너무 이상하게") → 오른쪽 열이 끝난 뒤 전체 폭: 위 = 재무표 | 재무평가 · 아래 = 업종 비교 전체 폭 */
+@media (min-width:901px){
+  html body #page-detail #detailFund{grid-column:1 / -1!important;grid-row:8!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:14px!important;align-items:start}
+  html body #page-detail #detailFund>.fund-peer{grid-column:1/-1}
+  html body #page-detail .detail-mfull{grid-column:1 / -1!important;grid-row:9!important}
+}
+/* [V33.840] 호가창 = 차트 바로 옆(2열 격자 오른쪽 칸 · 차트 높이에 맞춰 안에서 스크롤) · 시세 데이터는 오른쪽 열 맨 위로(orderbook.js) · 폰·좁은 패드 = 차트 바로 아래 */
+#page-detail #detailOB{order:2}
+@media (min-width:901px){
+  html body #page-detail #detailOB{grid-column:2;grid-row:3;align-self:stretch;contain:size;overflow:auto;margin:0;padding:10px 12px}
+  html body #page-detail .detail-side>.detail-datawrap{margin:0 0 12px!important}
+}

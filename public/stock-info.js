@@ -8,7 +8,7 @@
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
   var esc = function (s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); };
-  var TABS = [["ai", "AI 분석"], ["ob", "호가"], ["ov", "개요"], ["val", "밸류에이션"], ["kpi", "KPI"], ["fs", "재무제표"], ["er", "실적 · 전망"], ["ir", "IR 자료"], ["ins", "내부자 거래"]];
+  var TABS = [["ai", "AI 분석"], ["ov", "개요"], ["val", "밸류에이션"], ["kpi", "KPI"], ["fs", "재무제표"], ["er", "실적 · 전망"], ["ir", "IR 자료"], ["ins", "내부자 거래"]];
   var sym = null, tab = "ai", fsTab = "is", C = {};   // C[sym] = { fund, prof, ir }
   var INS = null, insTs = 0, EARN = null, earnTs = 0;
   var isKr = function (s) { return /\.(KS|KQ)$/.test(s || ""); };
