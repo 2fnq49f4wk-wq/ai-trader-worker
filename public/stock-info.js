@@ -8,7 +8,7 @@
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
   var esc = function (s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); };
-  var TABS = [["ai", "AI 분석"], ["ov", "개요"], ["val", "밸류에이션"], ["kpi", "KPI"], ["fs", "재무제표"], ["er", "실적 · 전망"], ["ir", "IR 자료"], ["ins", "내부자 거래"]];
+  var TABS = [["ai", "AI 분석"], ["ob", "호가"], ["ov", "개요"], ["val", "밸류에이션"], ["kpi", "KPI"], ["fs", "재무제표"], ["er", "실적 · 전망"], ["ir", "IR 자료"], ["ins", "내부자 거래"]];
   var sym = null, tab = "ai", fsTab = "is", C = {};   // C[sym] = { fund, prof, ir }
   var INS = null, insTs = 0, EARN = null, earnTs = 0;
   var isKr = function (s) { return /\.(KS|KQ)$/.test(s || ""); };
@@ -237,10 +237,11 @@
   }
   function draw() {
     var el = $("luxInfo"); if (!el || !sym) return; css();
-    var body = tab === "ai" ? vAi() : tab === "ov" ? vOv() : tab === "val" ? vVal() : tab === "kpi" ? vKpi() : tab === "fs" ? vFs() : tab === "er" ? vEr() : tab === "ir" ? vIr() : vIns();
+    var body = tab === "ob" ? '<div id="lxObSlot"></div>' : tab === "ai" ? vAi() : tab === "ov" ? vOv() : tab === "val" ? vVal() : tab === "kpi" ? vKpi() : tab === "fs" ? vFs() : tab === "er" ? vEr() : tab === "ir" ? vIr() : vIns();
     var x = q(), hd = x && x.price > 0 ? '<div class="lxh"><span><b>' + esc(x.name || sym) + "</b> " + esc(isKr(sym) ? sym.split(".")[0] : sym) + '</span><span><b>' + money(x.price, isKr(sym)).replace(/\.00$/, "") + '</b> <span class="' + cls(x.dayPct) + '">' + pct(x.dayPct, 2) + "</span></span></div>" : "";
     el.innerHTML = '<div class="lxs">' + hd + '<nav class="lxt" role="tablist" aria-label="종목 정보">' + TABS.map(function (t) { return '<button type="button" role="tab" aria-selected="' + (t[0] === tab) + '" data-lxt="' + t[0] + '" class="' + (t[0] === tab ? "on" : "") + '">' + t[1] + "</button>"; }).join("") + "</nav></div><div class=\"lxp\">" + body + "</div>";
     try { fx(el); } catch (e) {}
+    if (tab === "ob") try { if (window.luxOB && window.luxOB.mount) window.luxOB.mount($("lxObSlot")); } catch (e) {}   // [V33.839] 종목 상세 탭 '호가' — 호가·체결 창을 탭 안에 크게(사용자 11/13)
     if (tab === "fs") el.querySelectorAll(".tw").forEach(function (t) { if (t.scrollWidth > t.clientWidth) t.scrollLeft = t.scrollWidth; });   // [V33.750] 재무 표는 최신 연도부터 보이게(왼쪽으로 밀면 이전 해)
   }
   function open(s) {

@@ -18,7 +18,7 @@
       "#detailOB .obs{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;margin:8px 0 0;color:var(--t2,#c9d1dc)}#detailOB .obs b{font-weight:700}#detailOB .obn{font-size:11.5px;color:var(--t3,#8a94a6);margin-top:6px;line-height:1.45}" +
       "#detailOB .obt{margin-top:10px;font:12px/1.55 var(--mono,ui-monospace,monospace);max-height:220px;overflow:auto}#detailOB .obt div{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}#detailOB .obt div span:nth-child(2),#detailOB .obt div span:nth-child(3){text-align:right}" +
       "#detailOB .obt .h{color:var(--t3,#8a94a6);font-size:11px}#detailOB .up{color:#FF7A7F}#detailOB .dn{color:#6EA8FF}" +
-      "html[data-theme=light] #detailOB .obg{border-color:rgba(16,24,40,.12)}";
+      "html[data-theme=light] #detailOB .obg{border-color:rgba(16,24,40,.12)}#detailOB.obbig{margin:0}#detailOB.obbig .obg{font-size:14px}#detailOB.obbig .obt{max-height:none}";
     D.head.appendChild(st);
   }
   function host() {
@@ -77,5 +77,13 @@
     if (!timer) timer = setInterval(pull, 5000);
   }
   D.addEventListener("visibilitychange", function () { if (!D.hidden) pull(); });
-  window.luxOB = { open: open };
+  /* [V33.839] 종목 정보 탭 '호가' 안에 창을 옮겨 크게 보여 준다(탭을 바꾸면 그 자리가 지워지고, 다음 그리기에서 원래 자리에 다시 생긴다) */
+  function mount(slot) {
+    if (!slot || !sym) return; css();
+    var h = el("detailOB"); if (!h) { h = D.createElement("div"); h.id = "detailOB"; h.className = "detail-vcard"; }
+    slot.appendChild(h); h.classList.add("obbig");
+    if (last && last.s === sym) draw(last); else h.innerHTML = '<div class="obh"><b>호가 · 체결</b><span>불러오는 중…</span></div>';
+    pull();
+  }
+  window.luxOB = { open: open, mount: mount };
 })();
