@@ -35,7 +35,7 @@
     var h = host(); if (!h) return; css();
     var kr = isKr(sym);
     if (!j || j.ok === false) { h.innerHTML = '<div class="obh"><b>호가 · 체결</b><span>받지 못함</span></div>'; return; }
-    var sg = j.sig || null, ask = j.ask || [], bid = j.bid || [], hd = '<div class="obh"><b>호가 · 체결</b><span>' + (kr ? "10단계 · 네이버" : "최우선 호가 · 나스닥") + " · 5초</span></div>" + (j.last > 0 ? '<div class="obs" style="margin:0 0 8px">실시간 체결가 <b>' + fmtP(j.last, kr) + "</b>" + (j.lastPct != null ? ' <b class="' + (j.lastPct >= 0 ? "up" : "dn") + '">' + (j.lastPct >= 0 ? "+" : "") + j.lastPct.toFixed(2) + "%</b>" : "") + "</div>" : "");
+    var sg = j.sig || null, ask = j.ask || [], bid = j.bid || [], hd = '<div class="obh"><b>호가 · 체결</b><span>' + (kr ? Math.max(ask.length, bid.length) + "단계 · 네이버" : "최우선 호가 · 나스닥") + " · 5초</span></div>" + (j.last > 0 ? '<div class="obs" style="margin:0 0 8px">실시간 체결가 <b>' + fmtP(j.last, kr) + "</b>" + (j.lastPct != null ? ' <b class="' + (j.lastPct >= 0 ? "up" : "dn") + '">' + (j.lastPct >= 0 ? "+" : "") + j.lastPct.toFixed(2) + "%</b>" : "") + "</div>" : "");
     if (!ask.length && !bid.length && !(j.trades && j.trades.length)) { h.innerHTML = hd + '<div class="obn">지금은 호가가 비어 있습니다(장 시작 전·마감 후). ' + (kr ? "정규장 09:00~15:30 에 10단계 잔량이 들어옵니다." : "프리·정규·애프터 시간에 최우선 호가와 체결이 들어옵니다.") + "</div>"; return; }
     var mx = 1; ask.concat(bid).forEach(function (x) { if (x[1] > mx) mx = x[1]; });
     var g = '<div class="obg">';
