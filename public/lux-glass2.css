@@ -362,3 +362,8 @@ html[data-theme="light"] #luxDzSpin i,html[data-theme="light"] #luxDzSpin b{back
   html:not(.lux-dz) body .fv-mid>.fv-panel:nth-child(2){display:flex!important;flex-direction:column!important;align-self:stretch!important;height:auto!important;max-height:none!important}
   html:not(.lux-dz) body .fv-mid>.fv-panel:nth-child(2) #fvHeatmap{flex:1 1 auto!important;height:auto!important;min-height:330px}
 }
+/* [V33.838] 패드·작은 PC: 첫 화면 아래 대시보드 묶음은 화면에 들어올 때만 배치 — 사이드바 접기·펼치기로 폭이 바뀔 때 다시 배치할 요소 수를 줄인다 */
+@media (min-width:761px) and (max-width:1380px){html:not(.lux-dz) body .fv-deck>:is(.fv-cal-row,.fv-bottom,.fv-intel-wrap,#fvAiAskPanel){content-visibility:auto;contain-intrinsic-size:auto 500px}}
+/* [V33.838] 사이드바 아이콘이 가끔 안 보이던 것(사용자 11/13) — 선택된 메뉴의 아이콘·글자는 진한 색(#04110D)이고 그 밑 밝은 바탕은 움직이는 알약(.lux-pill)이 깔아 준다.
+   알약이 아직 자리를 못 잡았거나(로딩·전환 중) 꺼지면 진한 아이콘이 어두운 사이드바 위에 남아 안 보였다 → 알약이 없을 땐 선택 메뉴가 스스로 같은 바탕을 깐다. */
+html body nav.sidebar .sb-nav:not(:has(> .lux-pill.on)) .nav-item.active{background:linear-gradient(135deg,#3DD6B5,#4f8cff)!important;border-radius:12px!important}

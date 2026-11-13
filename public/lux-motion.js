@@ -39,7 +39,7 @@
       if (ic) a({ targets: ic, scale: [0.72, 1], duration: 650, easing: "spring(1, 80, 9, 0)" });
       if (tx) a({ targets: tx, opacity: [0.3, 1], duration: 380, easing: "easeOutQuad" });
     }
-    var q = 0; function sched(anim) { if (q) return; q = requestAnimationFrame(function () { q = 0; place(anim); }); }
+    var q = 0; function sched(anim) { if (q) return; q = requestAnimationFrame(function () { setTimeout(function () { q = 0; place(anim); }, 0); }); }   /* [V33.838] 위치는 그 프레임 배치가 끝난 뒤 잰다 — rAF 안에서 재면 사이드바 접기 직후 문서 전체 배치를 앞당겨 강제했다(0.46초 · 4배 감속) */
     new MutationObserver(function (ms) { for (var i = 0; i < ms.length; i++) if (ms[i].attributeName === "class" && ms[i].target !== pill) { sched(true); return; } })
       .observe(host, { subtree: true, attributes: true, attributeFilter: ["class"] });
     addEventListener("resize", function () { first = true; sched(false); }, { passive: true });

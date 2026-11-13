@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.837";
+const _BUILD_VER = "V33.838";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8504,6 +8504,67 @@ function parseNasdaqExt(j, chunk, sess, nowMs) {
     out[sym] = { last: last, base: base, pct: (chg / base) * 100, ts: ts, sess: sess };
   }
   return out;
+}
+/* [V33.838] ★호가·체결(무료 원천)★ — 사용자 11/13 "실시간 체결·호가창 데이터를 무료로 받아 연결 · AI 가 물량을 보고 매매 판단".
+   실측 원천(11/13): 한국 = 네이버 m.stock.naver.com/api/stock/{code}/askingPrice(매도·매수 10단계 잔량 · 총잔량 · 장중만 채워짐)
+                    미국 = 나스닥 api.nasdaq.com quote/{sym}/info(최우선 매수·매도 호가·수량 — NLS 실시간) + realtime-trades(최근 체결 시각·가격·수량)
+   미국 10단계 호가(TotalView)는 무료 원천이 없다 — 미국은 최우선 호가 + 체결만. 호가는 요청 때만 받고(종목 상세 · 매수 직전) swrJson 5초로 묶는다. */
+function _obNum(v) { if (v == null) return 0; const n = parseFloat(String(v).replace(/[^0-9.\-]/g, "")); return isFinite(n) ? n : 0; }
+function _obPick(o, re) { for (const k in o) if (re.test(k)) return o[k]; return null; }
+async function fetchOrderBook(symbol) {
+  const kr = /\.(KS|KQ)$/.test(symbol), now = Date.now();
+  if (kr) {
+    const code = symbol.split(".")[0];
+    try { __fetchBudget.used++; } catch (e) {}
+    const r = await fetch("https://m.stock.naver.com/api/stock/" + code + "/askingPrice", { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" }, signal: AbortSignal.timeout(5000) });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    const lv = function (a) { return (Array.isArray(a) ? a : []).map(function (x) { return [_obNum(_obPick(x, /price/i)), _obNum(_obPick(x, /count|quant|volume|amount|remain/i))]; }).filter(function (x) { return x[0] > 0; }); };
+    const ask = lv(j.sellInfo || j.sellInfos).sort(function (a, b) { return a[0] - b[0]; }).slice(0, 10);
+    const bid = lv(j.buyInfos || j.buyInfo).sort(function (a, b) { return b[0] - a[0]; }).slice(0, 10);
+    const sum = function (a) { return a.reduce(function (t, x) { return t + x[1]; }, 0); };
+    return { s: symbol, mkt: "kr", ts: now, src: "naver", ask: ask, bid: bid, totAsk: _obNum(j.totalSell) || sum(ask), totBid: _obNum(j.totalBuy) || sum(bid), prevClose: _obNum(j.lastClosePrice), trades: [] };
+  }
+  const H = { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15", "Accept": "application/json", "Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/" };
+  const ns = encodeURIComponent(nasdaqSym(symbol));
+  try { __fetchBudget.used += 2; } catch (e) {}
+  const [ri, rt] = await Promise.all([
+    fetch("https://api.nasdaq.com/api/quote/" + ns + "/info?assetclass=stocks", { headers: H, signal: AbortSignal.timeout(6000) }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }),
+    fetch("https://api.nasdaq.com/api/quote/" + ns + "/realtime-trades?&limit=25&fromTime=00:00", { headers: H, signal: AbortSignal.timeout(6000) }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })
+  ]);
+  const pd = (ri && ri.data && ri.data.primaryData) || {};
+  const rows = (rt && rt.data && Array.isArray(rt.data.rows)) ? rt.data.rows : [];
+  const trades = rows.slice(0, 25).map(function (x) { return [String(_obPick(x, /time/i) || ""), _obNum(_obPick(x, /price/i)), _obNum(_obPick(x, /volume|size|share/i))]; }).filter(function (x) { return x[1] > 0; });
+  const bp = _obNum(pd.bidPrice), ap = _obNum(pd.askPrice);
+  return { s: symbol, mkt: "us", ts: now, src: "nasdaq", ask: ap > 0 ? [[ap, _obNum(pd.askSize)]] : [], bid: bp > 0 ? [[bp, _obNum(pd.bidSize)]] : [], totAsk: _obNum(pd.askSize), totBid: _obNum(pd.bidSize), last: _obNum(pd.lastSalePrice), trades: trades };
+}
+/* 호가 → AI 가 읽는 숫자. imb = 매수 잔량 / (매수+매도) · near = 가까운 3단계 매도÷매수 잔량(매도벽 > 1) · spread = 호가 간격(%) */
+function orderBookSignal(ob) {
+  if (!ob || !(ob.ask && ob.bid) || !ob.ask.length || !ob.bid.length) return null;
+  const t = (ob.totAsk || 0) + (ob.totBid || 0);
+  const a3 = ob.ask.slice(0, 3).reduce(function (s, x) { return s + x[1]; }, 0), b3 = ob.bid.slice(0, 3).reduce(function (s, x) { return s + x[1]; }, 0);
+  const mid = (ob.ask[0][0] + ob.bid[0][0]) / 2;
+  let wall = null, wq = 0;
+  for (const x of ob.ask) if (x[1] > wq) { wq = x[1]; wall = x[0]; }
+  return { imb: t > 0 ? +(ob.totBid / t).toFixed(3) : null, near: b3 > 0 ? +(a3 / b3).toFixed(2) : null, spread: mid > 0 ? +((ob.ask[0][0] - ob.bid[0][0]) / mid * 100).toFixed(3) : null, wall: wall, wallQ: wq, depth: ob.ask.length };
+}
+/* 매수 직전 호가 확인(엔진) — 지금은 ★관측만★(OB_GATE_LIVE=false): 매수 신호에 호가 숫자를 붙여 원장·화면에 남기고, 막지는 않는다.
+   검증 없이 막으면 오히려 수익을 깎을 수 있다 — 2주 이상 쌓아 '매도벽(near ≥ 3)·매수 우위(imb ≤ 0.25)에서 산 것' 의 성과를 본 뒤 켠다. */
+const OB_GATE_LIVE = false;
+async function obBuyCheck(DB, market, symbol, price, signal) {
+  if (market !== "kr" && market !== "us") return { ok: true };
+  try { if (typeof fetchBudgetLeft === "function" && fetchBudgetLeft() <= 15) return { ok: true }; } catch (e) {}
+  let ob = null; try { ob = await fetchOrderBook(symbol); } catch (e) { return { ok: true }; }
+  const sg = orderBookSignal(ob); if (!sg) return { ok: true };
+  try { if (signal && typeof signal === "object") signal.ob = sg; } catch (e) {}
+  const heavy = market === "kr" && sg.depth >= 5 && ((sg.near != null && sg.near >= 3) || (sg.imb != null && sg.imb <= 0.25));
+  try {
+    const cur = (await getState(DB, "ob_obs", null, true)) || { rows: [] };
+    cur.rows.unshift([Date.now(), market, symbol, price, sg.imb, sg.near, sg.spread, heavy ? 1 : 0]);
+    cur.rows = cur.rows.slice(0, 400);
+    await setState(DB, "ob_obs", cur);
+  } catch (e) {}
+  return { ok: !(OB_GATE_LIVE && heavy), heavy: heavy, sg: sg };
 }
 async function fetchNasdaqExt(chunk, sess) {
   try { __fetchBudget.used++; } catch (e) {}
@@ -21767,6 +21828,8 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   // [V9.1] 동일 종목+전략 기존 포지션이 있으면 "덮어쓰기"가 아니라 평단·수량 합산.
   //   (호출부 가드가 깨져도 유령손실/수량증발이 생기지 않도록 방어)
   //   전체 getPositions 대신 해당 1건만 조회해 D1 부하 최소화.
+  /* [V33.838] 호가 확인(모든 관문을 지난 실제 매수 직전 · 매분 막히는 후보로 원천을 부르지 않게) — 매도벽·매수 잔량을 신호에 붙인다(관측 · OB_GATE_LIVE 가 켜지면 무거운 매도벽에서 매수를 미룬다) */
+  try { const _ob = await obBuyCheck(DB, market, symbol, price, signal); if (!_ob.ok) { await logEvery(DB, "INFO", "ob:" + market, symbol, "BUY 호가 관문 보류 [매도벽 " + (_ob.sg && _ob.sg.near) + "배 · 매수잔량 " + (_ob.sg && _ob.sg.imb) + "]"); return cash; } } catch (e) {}
   let posToSave;
   try {
     let prior = null;
@@ -21851,6 +21914,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
           //   버린다(_sampleLabel null) — 실거래 청산부(executeSell)가 이 값을 못 넘겨 실거래
           //   표본이 0건이던 원인. 진입 시점 지수종가를 남겨 청산 때 초과수익 계산에 쓴다.
           entryIdxClose: __mlEntryIdxClose,
+          ob: (signal && signal.ob) ? signal.ob : null,   // [V33.838] 매수 순간 호가(imb·near·spread) — 매도벽 관문 검증용
           szWhy: _szWhyStr(signal && signal._szm)   // [V33.794] 겹친 크기 배수(무엇이 얼마나 깎았나) — 두뇌·명부 '왜' 문구
         }
       };
@@ -35299,18 +35363,25 @@ async function handleRequest(request, env, ctx, _inner) {
       globalThis.__logsWarnCache = { ts: Date.now(), str: __str };
       return new Response(__str, { headers: Object.assign({ "content-type": "application/json" }, cors) });
     }
+    if (path === "/api/orderbook") {
+      /* [V33.838] 호가·체결 — 종목 상세가 보는 동안만 부른다. swrJson 5초(같은 종목을 여러 명이 봐도 원천 요청은 5초에 한 번) */
+      const sym = String(url.searchParams.get("symbol") || "").toUpperCase();
+      if (!/^[A-Z0-9.\-^]{1,15}$/.test(sym) || sym.charAt(0) === "^") return Response.json({ ok: false, why: "symbol" }, { status: 400, headers: cors });
+      return await swrJson("ob:" + sym, 5000, 20000, async function () {
+        try { const ob = await fetchOrderBook(sym); return Object.assign({ ok: true, sig: orderBookSignal(ob) }, ob); } catch (e) { return { ok: false, s: sym, why: String(e && e.message || e).slice(0, 60) }; }
+      });
+    }
     if (path === "/api/logs") {
       const limit = parseInt(url.searchParams.get("limit") || "200", 10);
       // [V32.1] 로그창 폴링(7s)이 매번 D1 SELECT를 치면 D1이 바쁠 때 로그가 느리게 떴다.
       //   3초 아이솔레이트 캐시로 연속 폴링을 흡수(로그는 초단위 신선도면 충분). limit별 캐시.
-      const __lc = globalThis.__logsCache;
-      if (__lc && __lc.limit === limit && (Date.now() - __lc.ts) < 3000) {
-        return new Response(__lc.str, { headers: Object.assign({ "content-type": "application/json" }, cors) });
-      }
-      const res = await env.DB.prepare("SELECT * FROM logs ORDER BY id DESC LIMIT ?").bind(limit).all();
-      const __str = JSON.stringify(res.results || []);
-      globalThis.__logsCache = { limit: limit, ts: Date.now(), str: __str };
-      return new Response(__str, { headers: Object.assign({ "content-type": "application/json" }, cors) });
+      /* [V33.838] ★사람 수만큼 D1 을 읽던 것★ — 대시보드 실시간 피드가 탭마다 20초에 한 번 /api/logs 를 부르고, 캐시는 아이솔레이트 3초뿐이라
+         거의 매번 D1 40행 읽기였다(100명이면 하루 ~1,700만 행 — 지금 D1 읽기 전체와 맞먹는다). swrJson(colo 공유 · 15초)으로 — 같은 지역은 15초에 한 번만 읽는다. */
+      const __lim = [25, 40, 200].indexOf(limit) >= 0 ? limit : Math.max(1, Math.min(200, limit || 200));
+      return await swrJson("logs:" + __lim, 15000, 120000, async function () {
+        const res = await env.DB.prepare("SELECT * FROM logs ORDER BY id DESC LIMIT ?").bind(__lim).all();
+        return res.results || [];
+      });
     }
     if (path === "/api/daily-stats") {
       const days = Math.max(1, Math.min(30, parseInt(url.searchParams.get("days") || "7", 10)));
