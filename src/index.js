@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.845";
+const _BUILD_VER = "V33.846";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -26619,7 +26619,7 @@ async function runTradingCycle(env) {
           //   dailyMap에 신선한 값이 들어와 있어 여기(missingDaily)로 오지 않는다.
           //   → 아이솔레이트 메모리에 10분 캐시. 갱신 종목은 캐시를 우회하므로 신선도 손실 없음.
           let allDaily = null;
-          if (globalThis.__allDailyCache && Date.now() - globalThis.__allDailyCache.ts < 600000) {
+          if (globalThis.__allDailyCache && Date.now() - globalThis.__allDailyCache.ts < 3600000) {   // [V33.846] 10분 → 60분(일봉은 하루 한 번 바뀌고 갱신 종목은 캐시를 우회 · CPU 실측 82% — dailyBulk 파싱이 trading 단계의 큰 몫)
             allDaily = globalThis.__allDailyCache.map;
           } else {
             const drows = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
@@ -35002,7 +35002,7 @@ async function handleRequest(request, env, ctx, _inner) {
         } catch (e) { /* 경로 문법을 못 쓰는 DB 면 아래 옛 방식으로 */ }
         if (!_hmSqlOk) {
           let _hmDaily;
-          if (globalThis.__allDailyCache && Date.now() - globalThis.__allDailyCache.ts < 600000) {
+          if (globalThis.__allDailyCache && Date.now() - globalThis.__allDailyCache.ts < 3600000) {   // [V33.846] 10분 → 60분(일봉은 하루 한 번 바뀌고 갱신 종목은 캐시를 우회 · CPU 실측 82% — dailyBulk 파싱이 trading 단계의 큰 몫)
             _hmDaily = globalThis.__allDailyCache.map;
           } else {
             const rows0 = await env.DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
@@ -36437,7 +36437,7 @@ async function handleRequest(request, env, ctx, _inner) {
           //   왕복해 요청이 CPU 한도(1102)에 걸려 JSON이 아닌 에러로 끝났다. 일봉 전체를 단일 쿼리로
           //   한 번에 로드(10분 아이솔레이트 캐시 공유)해 왕복을 800→1로 줄인다.
           let __allDaily = null;
-          if (globalThis.__allDailyCache && Date.now() - globalThis.__allDailyCache.ts < 600000) {
+          if (globalThis.__allDailyCache && Date.now() - globalThis.__allDailyCache.ts < 3600000) {   // [V33.846] 10분 → 60분(일봉은 하루 한 번 바뀌고 갱신 종목은 캐시를 우회 · CPU 실측 82% — dailyBulk 파싱이 trading 단계의 큰 몫)
             __allDaily = globalThis.__allDailyCache.map;
           } else {
             __allDaily = {};

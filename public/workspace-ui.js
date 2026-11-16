@@ -8,7 +8,10 @@
       button.setAttribute('aria-pressed', String(button.getAttribute(attribute) === selected));
     });
   }
+  /* [V33.846] ★작동 화면 + 모델 구조 한 페이지★(사용자 11/16) — '02 모델 구조' 를 01 아래로 합쳤다. 옛 'models' 요청은 01 로 가서 모델 구조 칸으로 스크롤한다.
+     모델 구조(Brain Studio · 460KB)는 그 칸이 화면에 가까워질 때만 불러온다(처음 열기 렉·데이터 0). */
   window.luxBrainView = function (view) {
+    if (view === 'models') { window.luxBrainView('operations'); requestAnimationFrame(function () { var b = document.getElementById('brain-studio'); if (b) { studio(function () {}); b.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }); return; }
     if (view === 'playbook') view = 'operations';   // [V33.612] 00 탭은 01 작동 화면에 합쳤다(옛 기억값)
     if (!brain || ['operations', 'models', 'research'].indexOf(view) < 0) return;
     var keepY = window.scrollY || document.documentElement.scrollTop || 0;
@@ -50,6 +53,12 @@
     var io = new IntersectionObserver(function (es) {
       es.forEach(function (e) { if (e.isIntersecting && brain.getAttribute('data-brain-view') === 'operations') pbObs(); });
     });
+    io.observe(el);
+  })();
+  (function () {   // [V33.846] 01 화면 아래 모델 구조 칸 — 가까워지면(600px 전) 불러온다
+    var el = document.getElementById('brain-studio');
+    if (!el || !brain || typeof IntersectionObserver === 'undefined') return;
+    var io = new IntersectionObserver(function (es) { es.forEach(function (e) { if (e.isIntersecting && brain.getAttribute('data-brain-view') === 'operations') { studio(function () {}); io.disconnect(); } }); }, { rootMargin: '600px 0px' });
     io.observe(el);
   })();
   var studioState = 0, studioWait = [], studioTry = 0;   // 0 아직 · 1 불러오는 중 · 2 붙음 · 3 실패
