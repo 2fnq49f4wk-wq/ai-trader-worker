@@ -30,6 +30,13 @@
     '#pbObs .k-lab{font-family:var(--k-mono);font-size:10.5px;letter-spacing:1.8px;color:var(--k-sub);text-transform:uppercase}',
     '#pbObs .k-tag{font-family:var(--k-mono);font-size:10.5px;padding:2px 8px;border-radius:999px;border:1px solid var(--k-line);color:var(--k-sub);white-space:nowrap}',
     '#pbObs .k-tag.good{color:var(--k-good);border-color:currentColor}#pbObs .k-tag.warn{color:var(--k-warn);border-color:currentColor}#pbObs .k-tag.bad{color:var(--k-bad);border-color:currentColor}#pbObs .k-tag.acc{color:var(--k-acc);border-color:currentColor}',
+    '#pbObs .k-orbit{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,1.5fr) minmax(0,1fr);align-items:center;gap:6px 10px;padding:16px 16px 12px;position:relative;overflow:hidden;background:radial-gradient(120% 90% at 50% 40%,rgba(57,208,255,.07),transparent 60%),var(--k-panel)}',
+    '#pbObs .ko-side{display:flex;flex-direction:column;gap:10px;min-width:0}#pbObs .ko-k{border:1px solid var(--k-line);border-radius:14px;padding:12px 14px;background:rgba(255,255,255,.02);backdrop-filter:blur(6px)}#pbObs .ko-k.on{border-color:rgba(61,220,151,.45);box-shadow:0 0 0 1px rgba(61,220,151,.15) inset}',
+    '#pbObs .ko-k dd{margin:6px 0 2px;font-family:var(--k-mono);font-size:26px;font-weight:600}#pbObs .ko-k small{color:var(--k-sub);font-size:11.5px}',
+    '#pbObs .ko-c{position:relative;height:300px;min-width:0}#pbObs .ko-slot,#pbObs .ko-cv{position:absolute;inset:0;width:100%;height:100%;display:block}',
+    '#pbObs .ko-core{position:absolute;left:50%;bottom:6px;transform:translateX(-50%);text-align:center;width:min(92%,340px);pointer-events:none}#pbObs .ko-core strong{display:block;font-size:16px;margin-top:4px;letter-spacing:-.2px;text-shadow:0 2px 12px rgba(0,0,0,.6)}',
+    '#pbObs .ko-why{grid-column:1/-1;margin:4px 0 0;color:var(--k-sub);font-size:12.5px;line-height:1.55;text-align:center}',
+    '@media (max-width:700px){#pbObs .k-orbit{grid-template-columns:1fr 1fr}#pbObs .ko-c{grid-column:1/-1;grid-row:1;height:240px}#pbObs .ko-side{flex-direction:column}}',
     '#pbObs .k-brief{display:grid;grid-template-columns:minmax(0,1.6fr) repeat(4,minmax(0,1fr))}',
     '#pbObs .k-brief>div{padding:14px;border-left:1px solid var(--k-line);min-width:0}#pbObs .k-brief>div:first-child{border-left:0}',
     '#pbObs .k-brief strong{display:block;font-size:20px;margin:6px 0 4px;letter-spacing:-.3px}',
@@ -178,11 +185,52 @@
       : aPass ? '판정 구간에서 수익(평균 > 0 · t ≥ 2)이지만 무작위로 골랐을 때보다는 낫지 않아, 사용자 승인(10/25)에 따라 절대 성적 기준으로 절반 크기만 삽니다. 주력(×1.0)은 무작위보다 나음을 독립 구간 두 번 통과해야 합니다.'
       : tPass ? '종전 기준(뜬 신호 전부 · 무작위보다 나음 · t ≥ 2)은 통과해 절반 크기로 삽니다(사용자 선택 (나) 10/26). 주력(×1.0)은 새 기준 — 실전 상한 · 같은 달 무작위 대비 달 묶음 t ≥ 2 · 10/27 이후 전진 구간 60일 통과 — 이 필요합니다.'
       : '최근 학습의 판정 구간을 통과하지 못해 후보마다 무엇을 골랐을지 계산만 하고 사지 않습니다(독립 통과 ' + (r.indep || 0) + '/2).';
-    return '<section class="k-panel k-brief"><div><span class="k-lab">PLAYBOOK · DECISION STATE</span><strong>' + esc(head) + '</strong><p>' + esc(why) + '</p></div>' +
-      '<div><span class="k-lab">CANDIDATES</span><dd>' + ((lv && lv.n) || 0) + '</dd><small>OMNI-Q 상위 ' + candPct(j, mk) + '% 평가</small></div>' +
-      '<div><span class="k-lab">FIRED</span><dd>' + fired + '</dd><small>지금 매매법 신호 뜸</small></div>' +
-      '<div><span class="k-lab">CHOSEN</span><dd>' + chosen + (act ? '<small class="pos"> · 매수 ' + act + '</small>' : '') + '</dd><small>고른 매매법 있음</small></div>' +
-      '<div><span class="k-lab">SCAN AGE</span><dd>' + esc(lv ? ago(lv.ts).replace(' 전', '') : '—') + '</dd><small>국면 ' + esc((lv && lv.regime) || (r && r.regime) || '—') + (r && r.panic ? ' · 공황 — 1순위 추세·모멘텀 쉼(보조는 계속) · 폭락 뒤 3거래일·60일 하락+고변동 — 폭락 직후 반등일엔 추세 매매법이 반대로 움직임(한국 10년 평균 −0.91% · 평시 +0.10%)' : '') + '</small></div></section>';
+    /* [V33.843] ★오빗 배치★(사용자 11/16 인스타 'Orbit' 대시보드처럼) — 가운데 입자 구체(AI 코어 · 신호가 뜰수록 밝고 빠르게 돈다) · 둘레에 숫자 카드 4개 · 아래 판정 설명 */
+    var sa = esc(lv ? ago(lv.ts).replace(' 전', '') : '—'), rg = esc((lv && lv.regime) || (r && r.regime) || '—');
+    orbitLv = { n: (lv && lv.n) || 0, f: fired, c: chosen, a: act };
+    var card = function (lab, val, sub, cls) { return '<div class="ko-k' + (cls ? ' ' + cls : '') + '"><span class="k-lab">' + lab + '</span><dd>' + val + '</dd><small>' + sub + '</small></div>'; };
+    return '<section class="k-panel k-orbit">' +
+      '<div class="ko-side">' + card('CANDIDATES · 후보', (lv && lv.n) || 0, 'OMNI-Q 상위 ' + candPct(j, mk) + '% 평가') + card('FIRED · 뜬 신호', fired, '지금 매매법 신호 뜸', fired ? 'on' : '') + '</div>' +
+      '<div class="ko-c"><div class="ko-slot"></div><div class="ko-core"><span class="k-lab">PLAYBOOK · DECISION STATE</span><strong>' + esc(head) + '</strong></div></div>' +
+      '<div class="ko-side">' + card('CHOSEN · 고름', chosen + (act ? '<small class="pos"> · 매수 ' + act + '</small>' : ''), '고른 매매법 있음', chosen ? 'on' : '') + card('SCAN AGE · 마지막 판정', sa, '국면 ' + rg + (r && r.panic ? ' · 공황' : '')) + '</div>' +
+      '<p class="ko-why">' + esc(why) + '</p></section>';
+  }
+  /* 입자 구체 — 한 번 만든 캔버스를 다시 그릴 때마다 자리에 옮겨 끼운다(4.5초마다 패널을 새로 그려도 움직임이 끊기지 않게) · 보일 때만 그린다(30fps) */
+  var orbitLv = null, orbitCv = null, orbitRaf = 0, orbitPts = null, orbitT0 = 0, orbitLast = 0;
+  function orbitMount() {
+    var slot = root && root.querySelector('.ko-slot'); if (!slot) return;
+    if (!orbitCv) { orbitCv = document.createElement('canvas'); orbitCv.className = 'ko-cv'; orbitCv.setAttribute('aria-hidden', 'true'); }
+    slot.appendChild(orbitCv);
+    if (!orbitPts) { orbitPts = []; var N = 900, ga = Math.PI * (3 - Math.sqrt(5)); for (var k = 0; k < N; k++) { var y = 1 - (k / (N - 1)) * 2, rr = Math.sqrt(1 - y * y), th = ga * k; orbitPts.push([Math.cos(th) * rr, y, Math.sin(th) * rr, Math.random()]); } }
+    if (!orbitRaf) orbitRaf = requestAnimationFrame(orbitDraw);
+  }
+  function orbitDraw(t) {
+    orbitRaf = 0;
+    var cv = orbitCv; if (!cv || !cv.isConnected || cv.offsetParent === null || document.hidden) { orbitRaf = 0; setTimeout(function () { if (orbitCv && orbitCv.isConnected && !orbitRaf) orbitRaf = requestAnimationFrame(orbitDraw); }, 1500); return; }
+    orbitRaf = requestAnimationFrame(orbitDraw);
+    if (t - orbitLast < 33) return; orbitLast = t;
+    var dpr = Math.min(2, window.devicePixelRatio || 1), w = cv.clientWidth, h = cv.clientHeight; if (!w || !h) return;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+    var g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+    var lv = orbitLv || { n: 0, f: 0, c: 0 }, act = Math.min(1, (lv.f * 0.15) + (lv.c * 0.3));
+    var light = document.documentElement.getAttribute('data-theme') === 'light';
+    var R = Math.min(w, h) * 0.34, cx = w / 2, cy = h / 2, sp = 0.00018 + act * 0.0004, a = t * sp, ca = Math.cos(a), sa2 = Math.sin(a), tilt = 0.38, ct = Math.cos(tilt), st2 = Math.sin(tilt);
+    var halo = g.createRadialGradient(cx, cy, R * 0.2, cx, cy, R * 1.6); halo.addColorStop(0, light ? 'rgba(10,111,179,.10)' : 'rgba(57,208,255,' + (0.10 + act * 0.12) + ')'); halo.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = halo; g.fillRect(0, 0, w, h);
+    for (var k = 0; k < orbitPts.length; k++) {
+      var p = orbitPts[k], x = p[0] * ca - p[2] * sa2, z = p[0] * sa2 + p[2] * ca, y = p[1] * ct - z * st2; z = p[1] * st2 + z * ct;
+      var depth = (z + 1) / 2, tw = 0.6 + 0.4 * Math.sin(t * 0.002 + p[3] * 6.28);
+      g.globalAlpha = (0.12 + depth * 0.75) * tw; g.fillStyle = depth > 0.55 ? (light ? '#0a6fb3' : '#7fe3ff') : (light ? '#3d8bd0' : '#3b82f6');
+      var s = 0.6 + depth * 1.5; g.fillRect(cx + x * R - s / 2, cy + y * R - s / 2, s, s);
+    }
+    g.globalAlpha = 1;
+    /* 궤도 고리 2개 + 위성(뜬 신호 수 · 고른 매매법은 초록) */
+    for (var o = 0; o < 2; o++) {
+      var rx = R * (1.35 + o * 0.28), ry = rx * 0.32, rot = -0.35 + o * 0.6;
+      g.save(); g.translate(cx, cy); g.rotate(rot); g.strokeStyle = light ? 'rgba(20,40,80,.18)' : 'rgba(150,200,255,.18)'; g.lineWidth = 1; g.beginPath(); g.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2); g.stroke();
+      var nSat = o === 0 ? Math.min(12, lv.f || 0) : Math.min(8, lv.c || 0);
+      for (var q = 0; q < Math.max(nSat, o === 0 ? 3 : 1); q++) { var an = t * (0.0004 + o * 0.00025) + q * Math.PI * 2 / Math.max(nSat, o === 0 ? 3 : 1); var on = q < nSat; g.fillStyle = on ? (o ? '#3ddc97' : '#f5c451') : (light ? 'rgba(20,40,80,.25)' : 'rgba(180,210,255,.28)'); g.beginPath(); g.arc(Math.cos(an) * rx, Math.sin(an) * ry, on ? 3.2 : 2, 0, Math.PI * 2); g.fill(); }
+      g.restore();
+    }
   }
 
   function strip(j, mk) {
@@ -251,6 +299,7 @@
       ['us', 'kr'].map(function (m) { return '<button type="button" data-pbmk="' + m + '" aria-pressed="' + (m === mkSel) + '">' + (m === 'us' ? 'US' : 'KR') + '</button>'; }).join('') + '</div></div>' +
       brief(j, mkSel) + strip(j, mkSel) + funnel(j, mkSel) + live(j);   // [V33.612] 작동 구조·검증·사전은 02 모델 구조(Brain Studio '매매법 AI')
     root.querySelectorAll('.k-strip').forEach(function (s, i) { if (keepX[i]) s.scrollLeft = keepX[i]; });
+    try { orbitMount(); } catch (e) {}
   }
   /* [V33.614] 매매법 AI 가 한 시장이라도 주력이면 01 작동 화면에서 AI_PRIMARY(위원회) 화면을 걷어낸다(#page-nnviz.pb-primary · CSS) */
   function primaryMode(j) {

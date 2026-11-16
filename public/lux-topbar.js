@@ -62,12 +62,31 @@
     function lab(){ var m=sb.classList.contains('lux-mini'); b.setAttribute('aria-label',m?'사이드바 펼치기':'사이드바 접기'); b.title=m?'펼치기':'접기'; }
     lab(); sb.insertBefore(b, sb.firstChild);
     sb.querySelectorAll('.sb-nav .nav-item').forEach(function(it){ var l=it.querySelector('.nav-item-label'); if(l&&!it.title) it.title=l.textContent.trim(); });
+    /* [V33.844] ★연속 모션 + 렉 없음★(사용자 11/16) — 본문은 최종 폭으로 ★한 번만★ 배치하고, 움직임은 합성기 전용으로:
+       사이드바 = clip-path 로 오른쪽 가장자리를 밀고 당김(넓은 상태로 그린 채 잘라 보임) · 본문 = transform 으로 같은 곡선·같은 시간 미끄러짐.
+       접을 때는 넓은 모습 그대로 잘라 들어간 뒤 끝에서 아이콘 배치로 바꾸고, 펼 때는 처음부터 넓은 배치로 잘린 채 드러난다. */
+    var busy=0;
     b.addEventListener('click',function(){
-      var mini=!sb.classList.contains('lux-mini');
-      sb.classList.toggle('lux-mini',mini); lab();
-      var sn=sb.querySelector('.sb-nav'); if(sn) sn.classList.toggle('lux-mini-n',mini);   /* 선택 알약(lux-motion navPill)이 새 자리를 다시 재도록 — 그 관찰자는 .sb-nav 안의 class 변화만 본다 */
+      if(busy) return; busy=1;
+      var mini=!sb.classList.contains('lux-mini'), main=document.querySelector('main.content');
+      var W=sb.getBoundingClientRect().width, sn=sb.querySelector('.sb-nav');
+      var wide=innerWidth>=1180?178:150, d=wide-68, DUR=440, EZ='cubic-bezier(.32,.72,0,1)';
+      var RM=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
       try{ localStorage.setItem('lux-sbmini',mini?'1':'0'); }catch(e){}
-      for(var k=sb.children,i=0;i<k.length;i++){ var c=k[i]; if(c!==b&&c.animate) c.animate([{opacity:0},{opacity:1}],{duration:200,easing:'ease-out'}); }
+      if(RM||!sb.animate||Math.abs(W-(mini?wide:68))>4){ sb.classList.toggle('lux-mini',mini); if(sn) sn.classList.toggle('lux-mini-n',mini); lab(); busy=0; return; }
+      sb.classList.add('lux-sbmv');
+      if(mini){ sb.style.marginRight=(-d)+'px'; }   // 넓은 모습 그대로 두되 자리는 68 만 차지 → 본문은 지금 최종 폭으로 한 번 배치
+      else { sb.classList.remove('lux-mini'); if(sn) sn.classList.remove('lux-mini-n'); }
+      lab();
+      var cpA=mini?'inset(0px 0px 0px 0px round 22px)':'inset(0px '+d+'px 0px 0px round 22px)', cpB=mini?'inset(0px '+d+'px 0px 0px round 22px)':'inset(0px 0px 0px 0px round 22px)';
+      var a1=sb.animate([{clipPath:cpA},{clipPath:cpB}],{duration:DUR,easing:EZ,fill:'both'});
+      var a2=main&&main.animate?main.animate([{transform:'translate3d('+(mini?d:-d)+'px,0,0)'},{transform:'none'}],{duration:DUR,easing:EZ}):null;
+      if(mini) sb.querySelectorAll('.nav-item-label,.sb-brand-name,.sb-brand-sub,.lux-sbstat,.sb-mode-w').forEach(function(x){ if(x.animate) x.animate([{opacity:1},{opacity:0}],{duration:DUR*0.6,easing:'ease-out',fill:'forwards'}); });
+      else sb.querySelectorAll('.nav-item-label,.sb-brand-name,.sb-brand-sub,.lux-sbstat,.sb-mode-w').forEach(function(x){ if(x.animate) x.animate([{opacity:0},{opacity:1}],{duration:DUR,easing:'ease-in',delay:0}); });
+      a1.onfinish=function(){
+        if(mini){ sb.classList.add('lux-mini'); if(sn) sn.classList.add('lux-mini-n'); sb.style.marginRight=''; sb.querySelectorAll('.nav-item-label,.sb-brand-name,.sb-brand-sub,.lux-sbstat,.sb-mode-w').forEach(function(x){ if(x.getAnimations) x.getAnimations().forEach(function(an){an.cancel();}); }); }
+        a1.cancel(); sb.classList.remove('lux-sbmv'); busy=0;
+      };
     });
   }
   if(document.querySelector('nav.sidebar .sb-nav')) mount(); else document.addEventListener('DOMContentLoaded',mount);

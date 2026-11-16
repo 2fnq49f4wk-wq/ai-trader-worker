@@ -396,3 +396,12 @@ html[data-theme="light"] body #page-detail :is(.fund-note,.fp-miss,#luxInfo .ft,
 html body #page-detail #luxInfo .lxa p.t{font-size:15px;line-height:1.65}
 /* 오른쪽 열은 화면 높이만큼 붙어 따라오고(안에서 스크롤) — 왼쪽·오른쪽 길이가 달라 한쪽 아래가 통째로 비던 것 */
 @media (min-width:901px){html body #page-detail .detail-side{position:sticky!important;top:112px;align-self:start!important;max-height:calc(100dvh - 130px);overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}}
+/* [V33.844] 사이드바 접기 중(.lux-sbmv): 본문 위에 그려지게 · 글자 줄바꿈 고정 */
+html body nav.sidebar.sidebar.lux-sbmv{position:relative;z-index:30;will-change:clip-path}
+html body nav.sidebar.sidebar.lux-sbmv .nav-item-label,html body nav.sidebar.sidebar.lux-sbmv .sb-brand-name{white-space:nowrap!important}
+/* [V33.844] 리퀴드 글라스 투명도 올림(사용자 11/16 — 참고 'Glass Sidebar V2' 정도): 사이드바·아래 탭·종목 상세 카드의 짙은 바탕(.72~.86)을 반투명(.38~.5)으로 · 흐림·채도·빛 테두리로 유리 느낌 유지 */
+html:not([data-theme="light"]) body nav.sidebar,html:not([data-theme="light"]) body .m-tabbar{background:linear-gradient(180deg,rgba(255,255,255,.10),rgba(255,255,255,.03) 45%,rgba(255,255,255,.015)),rgba(14,19,32,.38)!important;border:1px solid rgba(255,255,255,.14)!important;-webkit-backdrop-filter:blur(22px) saturate(170%)!important;backdrop-filter:blur(22px) saturate(170%)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 20px 50px -24px rgba(0,0,0,.7)!important}
+html:not([data-theme="light"]) body :is(.fv-panel,.idx-card,.fv-idx,.fv-breadth,#easyDash .c,#easyDash .ix,#easyDash .bri,.lux-topbar,#mineRoot .card,#mineRoot .hold,.pos-market-card,.port-card,.wl-card){background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.025) 50%,rgba(255,255,255,.015))!important;border:1px solid rgba(255,255,255,.12)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 18px 40px -22px rgba(0,0,0,.6)!important}
+html:not([data-theme="light"]) #page-detail{--dd-card:rgba(18,28,52,.5)}
+html[data-theme="light"] body nav.sidebar,html[data-theme="light"] body .m-tabbar{background:linear-gradient(165deg,rgba(255,255,255,.62),rgba(255,255,255,.32))!important;-webkit-backdrop-filter:blur(22px) saturate(170%)!important;backdrop-filter:blur(22px) saturate(170%)!important}
+html[data-theme="light"] #page-detail{--dd-card:rgba(255,255,255,.72)}
