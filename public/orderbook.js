@@ -71,7 +71,7 @@
   function pull() {
     if (!sym || !visible()) return;
     var s0 = sym;
-    fetch("/api/orderbook?symbol=" + encodeURIComponent(s0)).then(function (r) { return r.json(); }).then(function (j) { if (s0 !== sym) return; last = j; draw(j); }).catch(function () {});
+    fetch("/api/orderbook?symbol=" + encodeURIComponent(s0)).then(function (r) { return r.json(); }).then(function (j) { if (s0 !== sym) return; last = j; draw(j); try { if (j && j.last > 0) window.dispatchEvent(new CustomEvent('lux:obprice', { detail: { sym: s0, price: j.last, vol: j.vol || 0, at: j.lastAt || null } })); } catch (e) {} }).catch(function () {});
   }
   function open(s) {
     if (!s || s.charAt(0) === "^") { var h0 = el("detailOB"); if (h0) h0.innerHTML = ""; sym = null; return; }

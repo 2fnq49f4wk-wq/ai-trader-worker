@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.847";
+const _BUILD_VER = "V33.848";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -14909,6 +14909,18 @@ function omniHeadsOk(heads) {
 function _dailyCacheOk(c) {
   return !!(c && Array.isArray(c.closes) && Array.isArray(c.days) && c.days.length === c.closes.length);
 }
+/* [V33.848] ★일봉 짧은 사본(dtail:SYM · 최근 400봉)★ — 매분 매매 사이클이 전 종목 일봉 원문(종목당 최대 2,400봉 · 하루 파싱 ~8GB)을
+   통째로 읽어 CPU 의 절반을 썼다(에이전트 실측 11/16 · 매분 새 아이솔레이트라 메모리 캐시가 거의 안 맞음). 사이클 지표(200일선·52주·RSI·볼린저·
+   1년 수익·수급 70봉)는 400봉이면 충분하다 — 5년 수익(ret5y)은 받을 때 계산해 저장돼 있다. 원본(daily:)은 그대로 두고 차트·학습·소급 생성은 원본을 쓴다.
+   원본을 쓸 때마다 사본도 같이 쓴다(일봉 갱신 하루 수천 행 · 쓰기 한도 영향 미미). */
+const DTAIL_BARS = 400;
+function _dTail(d) {
+  if (!d || !Array.isArray(d.closes)) return d;
+  const n = d.closes.length; if (n <= DTAIL_BARS) return d;
+  const o = {};
+  for (const k in d) { const v = d[k]; o[k] = (Array.isArray(v) && v.length === n) ? v.slice(n - DTAIL_BARS) : v; }
+  return o;
+}
 async function getDailyCached(DB, symbol, cacheMinutes) {
   const cached = await getState(DB, "daily:" + symbol, null);
   if (cached && cached.ts && (Date.now() - cached.ts) < cacheMinutes * 60 * 1000 && _dailyCacheOk(cached)) {
@@ -14926,6 +14938,7 @@ async function getDailyCached(DB, symbol, cacheMinutes) {
     ts: Date.now()
   };
   await setState(DB, "daily:" + symbol, toCache);
+  try { await setState(DB, "dtail:" + symbol, _dTail(toCache)); } catch (e) {}   // [V33.848]
   return toCache;
 }
 
@@ -23264,6 +23277,65 @@ async function stateR2Refresh(env, maxAgeMs) {
    data.lux-inv.com)에 1분마다 쓴다. 화면은 그 주소(CDN 캐시 30초)를 먼저 읽어 ★워커 요청·CPU·D1 이 방문자 수와 무관★ 해진다.
    비용: 크론 1분에 R2 쓰기 1번 + 시세 범위 읽기 1번(사람 수와 무관). 개인 데이터(MY)는 여기 없다 — /api/me 그대로. */
 const STATE_PUB_KEY = "pub/state.js";   // [V33.760] .json 은 Cloudflare 가 기본 캐시하지 않는다(실측 cf-cache-status: DYNAMIC) — 기본 캐시 확장자 .js(내용은 JSON 그대로)
+/* [V33.848] ★실시간 시세 사본(pub/f/live.js)★ — 사용자 11/17 "한국 5초 · 미국 10초 · DB 는 건들지 말고".
+   크론(1분) 한 번 안에서 기다렸다 받기를 반복한다(기다리는 시간은 CPU 요금 없음). 받은 시세는 DB 에 쓰지 않고 공개 사본(R2→CDN)에만 쓴다 —
+   DB 기록·AI 매매 판단은 종전대로 1분. 화면이 열려 있을 때(최근 15분 요청)만 · 장 중(정규·시간외)인 시장만.
+   한국 = 네이버 실시간 1요청(446종목) · 미국 = 야후 v7 50종목 묶음(첫 묶음이 0건이면 그 분은 미국 생략 — v8 종목별 폴백 안 탐). */
+const LIVE_KR_MS = 5000;
+const LIVE_US_MS = 10000;
+const LIVE_KEY = "pub/f/live.js";
+async function liveQuoteLoop(env, untilTs) {
+  const PUB = env && env.PUB; if (!PUB) return;
+  let lr = 0; try { lr = _num(await getState(env.DB, "state_last_req", 0), 0); } catch (e) {}
+  if (Date.now() - lr > 15 * 60000) return;
+  const n0 = new Date(), krOn = marketSessionNow("kr", n0) !== "CLOSED", usSes = marketSessionNow("us", n0), usOn = usSes !== "CLOSED";
+  if (!krOn && !usOn) return;
+  const live = globalThis.__liveQ || (globalThis.__liveQ = {});
+  const krMap = {}; for (const s of DEFAULT_KR) krMap[String(s).split(".")[0]] = s;
+  const krCodes = Object.keys(krMap), usSyms = DEFAULT_US.filter(function (s) { return s.indexOf("^") < 0 && s.indexOf("=") < 0; });
+  let nextKr = 0, nextUs = 0, usDead = false, auth = null, writes = 0;
+  const nvHdr = { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" }, signal: AbortSignal.timeout(4000) };
+  while (Date.now() < untilTs - 1500) {
+    const t = Date.now(); let changed = false;
+    if (krOn && t >= nextKr) {
+      nextKr = t + LIVE_KR_MS;
+      try {
+        try { __fetchBudget.used++; } catch (e) {}
+        const r = await fetch("https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:" + krCodes.join(","), nvHdr);
+        const j = r.ok ? await r.json() : null, ds = (j && j.result && j.result.areas && j.result.areas[0] && j.result.areas[0].datas) || [];
+        for (const d of ds) { const sym = krMap[d.cd], nv = Number(d.nv), sv = Number(d.sv); if (!sym || !(nv > 0)) continue; live[sym] = [nv, sv > 0 ? +((nv / sv - 1) * 100).toFixed(3) : 0, null, null, t, Number(d.aq) || 0]; changed = true; }
+      } catch (e) {}
+    }
+    if (usOn && !usDead && t >= nextUs) {
+      nextUs = t + LIVE_US_MS;
+      if (fetchBudgetLeft() > 250) try {   // 매매 사이클 몫(요청 예산)을 남긴다
+        if (!auth) auth = await getYahooAuth(env.DB);
+        const hdr = auth && auth.cookie ? { "Cookie": auth.cookie } : null, sl = [];
+        for (let i = 0; i < usSyms.length; i += 50) sl.push(usSyms.slice(i, i + 50));
+        const one = async function (slice) {
+          let u = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" + slice.map(encodeURIComponent).join(",");
+          if (auth && auth.crumb) u += "&crumb=" + encodeURIComponent(auth.crumb);
+          const j = await yahooFetch(u, hdr), rows = (j && j.quoteResponse && j.quoteResponse.result) || [];
+          let n = 0;
+          for (const q of rows) {
+            const px = q.regularMarketPrice; if (!(px > 0) || !q.symbol) continue;
+            const ms = String(q.marketState || ""), ex = /PRE/.test(ms) ? q.preMarketPrice : /POST|CLOSED/.test(ms) ? q.postMarketPrice : null, exP = /PRE/.test(ms) ? q.preMarketChangePercent : /POST|CLOSED/.test(ms) ? q.postMarketChangePercent : null;
+            live[q.symbol] = [px, typeof q.regularMarketChangePercent === "number" ? +q.regularMarketChangePercent.toFixed(3) : null, ex > 0 ? ex : null, typeof exP === "number" ? +exP.toFixed(3) : null, t, q.regularMarketVolume || 0]; n++;
+          }
+          return n;
+        };
+        const first = await one(sl[0]);
+        if (!first) usDead = true;
+        else { for (let i = 1; i < sl.length; i += 4) { const ns = await Promise.all(sl.slice(i, i + 4).map(one)); } changed = true; }
+      } catch (e) { usDead = true; }
+    }
+    if (changed) { try { await PUB.put(LIVE_KEY, '{"_pubAt":' + Date.now() + ',"q":' + JSON.stringify(live) + "}", { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "public, max-age=4, s-maxage=4" } }); writes++; } catch (e) {} }
+    const wait = Math.min(krOn ? nextKr : Infinity, (usOn && !usDead) ? nextUs : Infinity) - Date.now();
+    if (!isFinite(wait)) break;
+    if (wait > 0) await new Promise(function (res) { setTimeout(res, Math.min(wait, Math.max(0, untilTs - 1500 - Date.now()))); });
+  }
+  return writes;
+}
 async function statePubWrite(env) {
   const PUB = env && env.PUB; if (!PUB) return null;
   let body = null, at = 0;
@@ -23530,6 +23602,7 @@ async function refreshDailyShard(env, market, shard) {
               ts: Date.now()
             };
             await setState(DB, "daily:" + symbol, daily);
+            try { await setState(DB, "dtail:" + symbol, _dTail(daily)); } catch (e) {}   // [V33.848]
           }
         } catch (e) {}
       }
@@ -26573,6 +26646,7 @@ async function runTradingCycle(env) {
                 days: fb.data.days || null, ts: Date.now()   // [V33.217] 위와 같은 이유
               };
               __dailyWrites.push(["daily:" + symbol, toCache]);   // [V33.573] 루프 뒤 묶음 쓰기
+              __dailyWrites.push(["dtail:" + symbol, _dTail(toCache)]);   // [V33.848] 짧은 사본도 같이
               return { symbol: symbol, daily: toCache };
             }
             dailyFetchFail++;
@@ -26618,16 +26692,36 @@ async function runTradingCycle(env) {
           //   일봉은 하루 단위로만 바뀌고, 이번 사이클에 갱신된 종목(dailyTargetArr)은 이미
           //   dailyMap에 신선한 값이 들어와 있어 여기(missingDaily)로 오지 않는다.
           //   → 아이솔레이트 메모리에 10분 캐시. 갱신 종목은 캐시를 우회하므로 신선도 손실 없음.
-          let allDaily = null;
-          if (globalThis.__allDailyCache && Date.now() - globalThis.__allDailyCache.ts < 3600000) {   // [V33.846] 10분 → 60분(일봉은 하루 한 번 바뀌고 갱신 종목은 캐시를 우회 · CPU 실측 82% — dailyBulk 파싱이 trading 단계의 큰 몫)
-            allDaily = globalThis.__allDailyCache.map;
-          } else {
-            const drows = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
-            allDaily = _dailyBulkLazy(drows.results);   // [V33.536] 읽히는 종목만 파싱
-            globalThis.__allDailyCache = { ts: Date.now(), map: allDaily };
+          /* [V33.848] 짧은 사본(dtail:)을 먼저 — 없는 종목만 원본(daily:) 전체를 읽고, 그때 그 종목들의 짧은 사본을 만들어 둔다(첫 며칠만 · 한 번에 300종목까지) */
+          let tailDaily = null;
+          if (globalThis.__dailyTailCache && Date.now() - globalThis.__dailyTailCache.ts < 3600000) tailDaily = globalThis.__dailyTailCache.map;
+          else {
+            const trows = await DB.prepare("SELECT k, v FROM state WHERE k >= 'dtail:' AND k < 'dtail;'").all();
+            tailDaily = _dailyBulkLazy(trows.results);
+            globalThis.__dailyTailCache = { ts: Date.now(), map: tailDaily };
           }
+          const _needFull = [];
           for (const sym of missingDaily) {
-            if (dailyMap[sym] === undefined) dailyMap[sym] = allDaily[sym] || null;
+            if (dailyMap[sym] !== undefined) continue;
+            const t = tailDaily[sym];
+            if (t) dailyMap[sym] = t; else _needFull.push(sym);
+          }
+          if (_needFull.length) {
+            let allDaily = null;
+            if (globalThis.__allDailyCache && Date.now() - globalThis.__allDailyCache.ts < 3600000) {   // [V33.846] 10분 → 60분
+              allDaily = globalThis.__allDailyCache.map;
+            } else {
+              const drows = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
+              allDaily = _dailyBulkLazy(drows.results);   // [V33.536] 읽히는 종목만 파싱
+              globalThis.__allDailyCache = { ts: Date.now(), map: allDaily };
+            }
+            const _seed = [];
+            for (const sym of _needFull) {
+              const d = allDaily[sym] || null;
+              dailyMap[sym] = d;
+              if (d && _seed.length < 300) _seed.push(["dtail:" + sym, _dTail(d)]);
+            }
+            if (_seed.length) { try { await setStatesBatch(DB, _seed, 25); globalThis.__dailyTailCache = null; } catch (e) {} }
           }
         } catch (e) {
           // 폴백: 개별 배치 조회
@@ -41611,7 +41705,8 @@ async function flowDailyCacheLoad(DB, nowTs) {
      __allDailyCache 로 들고 있는데, 여기서 ★같은 쿼리를 또★ 날려 원문이 두 벌(+D1 응답 버퍼) 올라갔다(사용량 파싱 dailyBulk 10/12 606MB).
      공유 원문이 신선하면 그것을 읽고 D1 은 부르지 않는다 — 결과(마지막 70봉)는 종전과 같다. */
   const _sh = globalThis.__allDailyCache;
-  const _shRaw = (_sh && _sh.map && (now - _num(_sh.ts, 0)) < 600000) ? _sh.map.__rawMap : null;
+  const _tc = globalThis.__dailyTailCache;   // [V33.848] 짧은 사본(400봉)도 마지막 70봉엔 충분 — 원본을 또 읽지 않는다
+  const _shRaw = (_sh && _sh.map && (now - _num(_sh.ts, 0)) < 600000) ? _sh.map.__rawMap : (_tc && _tc.map && (now - _num(_tc.ts, 0)) < 3600000 && _tc.map.__rawMap && _tc.map.__rawMap.size >= 900) ? _tc.map.__rawMap : null;   // 사본이 거의 다 채워졌을 때만(옮겨 가는 동안은 종전대로)
   let _dr = null;
   if (_shRaw && typeof _shRaw.forEach === "function") {
     const _rs = [];
@@ -58125,6 +58220,7 @@ export default {
     //   가격/원자재 갱신이 산발적으로 실패했음(특히 정규장 1분 갱신).
     //   → 단일 promise 안에서 "순차" 실행해 각 사이클이 자기 예산을 온전히 쓰게 한다.
     const __cronStart = Date.now();
+    try { ctx.waitUntil(liveQuoteLoop(env, __cronStart + 55000).catch(function () {})); } catch (e) {}   // [V33.848] 한국 5초 · 미국 10초 화면용 시세(DB 쓰기 없음)
     __sleepAccumMs = 0;  // [실시간] invocation 시작마다 sleep 누적 초기화
     cycMemoReset();      // [V33.170] 사이클 상수 캐시 초기화 — warm isolate 의 옛 값을 물려받지 않는다
     let __usageCalib = USAGE_LIMITS_DEFAULT.cpuCalibration;
