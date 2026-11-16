@@ -12,6 +12,7 @@
 
 ## Current handoff
 
+- **V33.847** ★MY 한 페이지★(사용자 11/16): 탭 홈·순위·내 정보 3개 — 관심·계좌는 홈 안(#mjWatch · #mjAcct · 옛 data-tab watch/acct 는 홈으로 와서 그 칸으로 스크롤). 총자산 카드에 자산 원 그래프(보유 종목 + 현금 비중 · SVG) + 수익률 곡선(prof.pf[mk].eqh 하루 1번 기록 · 최근 120일 · 하루 첫 기록만 서버 저장 persist — 1행 묶음 저장 규칙) · PC 2열(왼 = 총자산·계좌 상세 · 오른 = 시장·AI 추천·관심·AI 포트폴리오). 계좌 상세의 중복 총자산 카드는 숨김.
 - **V33.846** ★AI 작동원리 01 작동 화면 + 02 모델 구조 한 페이지★(사용자 11/16): 탭 2개(01 작동 · 모델 구조 / 02 후보 · 로그) · 매매법 판정(#pbObs) 아래 '모델 구조' 머리 + Brain Studio(#brain-studio — 600px 앞에서 IntersectionObserver 로 늦게 불러옴) · luxBrainView('models') 는 01 로 가서 모델 칸으로 스크롤 · workspace-layout.css 224·186. 리퀴드 글라스 투명(#pbObs 패널·Brain Studio --bs-bg 반투명 + blur16). CPU 실측(에이전트 11/16): 11월 추정 24.5M/30M(82% · 실측 아님 cpuCalibration 0.01 추정) — trading 51%(dailyBulk 파싱 하루 ~8GB · 매분 새 아이솔레이트라 메모리 캐시 거의 안 맞음) · extSweep 16% · D1 쓰기 44% · 읽기 2% · 요청 0.4%. 일봉 캐시 10→60분(3곳 · 효과 작을 수 있음 — 다음: 종목별 짧은 꼬리 키로 파싱량 줄이기). Threads 개발일지 15 이미지 2장 캐러셀 게시.
 - **V33.845** MY 홈 리뉴얼(사용자 11/16 참고: 한 화면 프리미엄 대시보드): 총자산 카드 히어로(청록·보라 빛) + KPI 4칸(주문 가능·주식 평가·평가손익·보유) · ≥1100px 벤토 2열(왼 = 총자산·AI 추천 · 오른 = 시장 국면·AI 포트폴리오, #mineRoot.mwide 1240px) · 폰은 세로 그대로(KPI 2×2). mine.js home() .mhome · 스타일 #mineV845.
 - **V33.844** 사이드바 접기/펼치기 ★연속 모션★: 본문은 최종 폭으로 한 번만 배치 · 사이드바는 clip-path 로 가장자리 밀고 당김 · 본문은 같은 곡선 transform(합성기) · 접을 땐 넓은 배치 그대로 margin-right 음수로 자리만 줄였다가 끝에 아이콘 배치(lux-topbar.js · .lux-sbmv). ★리퀴드 글라스 투명도↑★(인스타 Glass Sidebar V2 참고): 사이드바·아래 탭 .78→.38 + blur22 saturate170 · 카드 흰 7%→1.5% 그라데이션 · 종목 상세 카드 .86→.5. Threads 개발일지 15 영상·글 초안(promo/threads/devlog-15.*) 사용자 확인 대기.

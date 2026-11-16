@@ -525,21 +525,49 @@
     "@media (max-width:520px){#mineRoot .mkpi{grid-template-columns:repeat(2,minmax(0,1fr))}}" +
     "html[data-theme=light] #mineRoot .mkpi>div{background:rgba(16,24,40,.04);border-color:rgba(16,24,40,.08)}" +
     "#mineRoot section[aria-label=\"모의계좌\"]{background:radial-gradient(120% 120% at 0% 0%,rgba(61,214,181,.16),transparent 55%),radial-gradient(90% 110% at 100% 0%,rgba(106,92,255,.18),transparent 60%),linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02))!important}" +
+    "#mineRoot .mviz{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:14px;margin:14px 0 2px}#mineRoot .mdon{display:grid;grid-template-columns:120px minmax(0,1fr);gap:10px;align-items:center;position:relative}#mineRoot .mdon>svg{width:120px;height:120px}#mineRoot .mdc{position:absolute;left:0;top:0;width:120px;height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}#mineRoot .mdc span{font-size:11px;color:var(--m-mute)}#mineRoot .mdc b{font-size:20px}" +
+    "#mineRoot .mdon ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px;min-width:0}#mineRoot .mdon li{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:6px;align-items:center;font-size:12px}#mineRoot .mdon li i{width:9px;height:9px;border-radius:3px}#mineRoot .mdon li span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#C7CDD6}#mineRoot .mdon li b{font-variant-numeric:tabular-nums}" +
+    "#mineRoot .mcur{border-radius:16px;padding:10px 12px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);min-width:0}#mineRoot .mcur svg{display:block;width:100%;height:110px}#mineRoot .mcur-h,#mineRoot .mcur-f{display:flex;justify-content:space-between;font-size:12px;color:var(--m-mute)}#mineRoot .mcur-h b{font-size:15px}#mineRoot .mcur-f{font-size:11px;margin-top:2px}" +
+    "@media (max-width:640px){#mineRoot .mviz{grid-template-columns:1fr}}" +
+    "#mineRoot #mjAcct>div:first-child,#mineRoot #mjAcct>section.card:first-of-type{display:none!important}#mineRoot .mcol{display:flex;flex-direction:column;gap:14px;min-width:0}#mineRoot .mhome>.mcol.b{margin-top:14px}@media (min-width:1100px){#mineRoot .mhome>.mcol.b{margin-top:0}}#mineRoot .mj{scroll-margin-top:70px}" +
     "@media (min-width:1100px){#mineRoot.mwide{max-width:1240px}#mineRoot.mwide>.tabs{max-width:760px;margin-left:auto;margin-right:auto}" +
-    "#mineRoot .mhome{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);gap:14px;align-items:start}" +
-    "#mineRoot .mhome>section[aria-label=\"모의계좌\"]{grid-column:1;grid-row:1}#mineRoot .mhome>.g2{grid-column:2;grid-row:1;display:grid;grid-template-columns:1fr;gap:12px;align-self:start}" +
-    "#mineRoot .mhome>section[aria-label=\"AI 순위\"]{grid-column:1;grid-row:2}#mineRoot .mhome>*:not(section[aria-label=\"모의계좌\"]):not(.g2):not(section[aria-label=\"AI 순위\"]){grid-column:2}" +
-    "#mineRoot .mhome>section{margin:0!important}#mineRoot.mwide section[aria-label=\"모의계좌\"] .h1{font-size:48px}}";
+    "#mineRoot .mhome{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);gap:14px;align-items:start}#mineRoot .mhome>.mcol+.mcol{margin-top:0}" +
+    "#mineRoot .mhome section{margin:0!important}#mineRoot.mwide section[aria-label=\"모의계좌\"] .h1{font-size:48px}}";
     document.head.appendChild(st); })();
+  /* [V33.847] ★MY 한 페이지★(사용자 11/16 — 홈·관심·계좌 합치기 · 자산은 원 그래프 · 수익률 곡선) — 화면이 계산(서버 0).
+     원 그래프 = 현금 + 보유 종목 평가액 비중 · 곡선 = 하루 한 번 남기는 총자산 기록(prof.pf[mk].eqh · 최근 120일 · 저장은 하루 1번 · 기존 1행 저장에 묶임). */
+  function eqSnap(mk, v) {
+    var a = prof.pf[mk]; if (!a || !v) return; var d = new Date().toISOString().slice(0, 10), h = a.eqh || (a.eqh = []);
+    var last = h[h.length - 1];
+    if (!last || last[0] !== d) { h.push([d, Math.round(v.eq * 100) / 100]); if (h.length > 120) h.splice(0, h.length - 120); persist(); }
+    else if (Math.abs(last[1] - v.eq) / Math.max(1, v.eq) > 0.002) { last[1] = Math.round(v.eq * 100) / 100; saveLocal(); }   // 같은 날은 이 기기에만(서버 저장은 다음 변경 때 같이)
+  }
+  function mViz(mk, v) {
+    eqSnap(mk, v);
+    var a = prof.pf[mk], ks = Object.keys(a.pos), parts = ks.map(function (s, i) { var p = a.pos[s]; return { n: nm(s), v: p.q * (priceOf(s) || p.avg), c: ACOL[i % ACOL.length] }; }).sort(function (x, y) { return y.v - x.v; });
+    parts.push({ n: "현금", v: Math.max(0, v.cash), c: "rgba(255,255,255,.22)" });
+    var tot = parts.reduce(function (t, x) { return t + x.v; }, 0) || 1, R = 54, C = 2 * Math.PI * R, off = 0;
+    var ring = parts.map(function (x) { var len = x.v / tot * C; var seg = '<circle r="' + R + '" cx="70" cy="70" fill="none" stroke="' + x.c + '" stroke-width="16" stroke-dasharray="' + Math.max(0, len - 1.5).toFixed(2) + ' ' + (C - Math.max(0, len - 1.5)).toFixed(2) + '" stroke-dashoffset="' + (-off).toFixed(2) + '" transform="rotate(-90 70 70)"/>'; off += len; return seg; }).join("");
+    var leg = parts.slice(0, 6).map(function (x) { return '<li><i style="background:' + x.c + '"></i><span>' + esc(x.n) + '</span><b>' + (x.v / tot * 100).toFixed(1) + '%</b></li>'; }).join("");
+    var h = a.eqh || [], pts = [[a.t0 > 1e12 ? a.t0 : Date.now() - 864e5, a.start]].concat(h.map(function (x) { return [Date.parse(x[0]), x[1]]; }));
+    if (!h.length || h[h.length - 1][0] !== new Date().toISOString().slice(0, 10)) pts.push([Date.now(), v.eq]); else pts[pts.length - 1] = [Date.now(), v.eq];
+    var W = 320, Hh = 110, x0 = pts[0][0], x1 = pts[pts.length - 1][0] || x0 + 1, ys = pts.map(function (p) { return p[1]; }), mn = Math.min.apply(null, ys.concat([a.start])), mx = Math.max.apply(null, ys.concat([a.start])), rg = mx - mn || 1;
+    var X = function (t) { return ((t - x0) / Math.max(1, x1 - x0) * (W - 8) + 4).toFixed(1); }, Y = function (y) { return (Hh - 8 - (y - mn) / rg * (Hh - 16)).toFixed(1); };
+    var line = pts.map(function (p) { return X(p[0]) + "," + Y(p[1]); }).join(" "), up = v.eq >= a.start, col = up ? "var(--m-up)" : "var(--m-dn)";
+    var curve = '<svg viewBox="0 0 ' + W + ' ' + Hh + '" preserveAspectRatio="none" aria-hidden="true"><line x1="0" x2="' + W + '" y1="' + Y(a.start) + '" y2="' + Y(a.start) + '" stroke="rgba(255,255,255,.18)" stroke-dasharray="3 4"/><polygon points="' + X(pts[0][0]) + ',' + Hh + ' ' + line + ' ' + X(pts[pts.length - 1][0]) + ',' + Hh + '" fill="' + col + '" opacity=".12"/><polyline points="' + line + '" fill="none" stroke="' + col + '" stroke-width="2.2" stroke-linejoin="round"/><circle cx="' + X(pts[pts.length - 1][0]) + '" cy="' + Y(v.eq) + '" r="3.5" fill="' + col + '"/></svg>';
+    return '<div class="mviz"><div class="mdon"><svg viewBox="0 0 140 140" aria-label="자산 비중">' + '<circle r="' + R + '" cx="70" cy="70" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="16"/>' + ring + '</svg><div class="mdc"><span>주식</span><b>' + (v.mv / Math.max(1, v.eq) * 100).toFixed(0) + '%</b></div><ul>' + leg + '</ul></div>' +
+      '<div class="mcur"><div class="mcur-h"><span>수익률 곡선</span><b class="' + cls(v.ret) + '">' + pctS(v.ret) + '</b></div>' + curve + '<div class="mcur-f"><span>시작 ' + fmt(mk, a.start) + '</span><span>' + (h.length < 2 ? "하루 한 번 기록해 곡선이 쌓입니다" : h.length + "일 기록") + '</span></div></div></div>';
+  }
   function home() {
     var mk = has(acMk) ? acMk : (has("us") ? "us" : has("kr") ? "kr" : acMk), v = val(mk), h = "", hr = new Date().getHours();
     h += '<div class="hi"><span>' + (hr < 12 ? "좋은 아침이에요" : hr < 18 ? "좋은 오후예요" : "좋은 저녁이에요") + (prof.nick ? ", <b>" + esc(prof.nick) + "</b>님" : "") + '</span><span class="mu">' + RISK[prof.risk] + " · " + HOR[prof.horizon] + "</span></div>";
-    h += '<div class="mhome">';
+    h += '<div class="mhome"><div class="mcol a">';
     h += '<section class="card" aria-label="모의계좌"><div class="ct"><span>모의계좌 총자산</span><span class="seg">' + ["us", "kr"].map(function (m) { return '<button type="button" data-acmk="' + m + '" class="' + (m === mk ? "on" : "") + '">' + MK[m] + "</button>"; }).join("") + "</span></div>" +
       (v ? '<div class="h1">' + fmt(mk, v.eq) + '</div><div class="' + cls(v.ret) + '">' + fmt(mk, v.eq - prof.pf[mk].start, true) + " (" + pctS(v.ret) + ") · 시작 후 " + v.days + "일</div>" + (v.n ? '<div class="today">오늘 <b class="' + cls(v.day) + '">' + fmt(mk, v.day, true) + " (" + pctS(v.dayPct) + ")</b> · 보유 " + v.n + "종목</div>" : "")
          : '<div class="h2" style="margin:6px 0 2px">가상 ' + fmt(mk, START[mk]) + '으로 AI 후보를 따라 사 보세요</div><div class="note">실제 돈은 쓰지 않습니다 · 내 성적이 이 기기에만 쌓입니다</div>') +
       (v ? '<div class="mkpi"><div><span>주문 가능</span><b>' + fmt(mk, v.cash) + '</b></div><div><span>주식 평가</span><b>' + fmt(mk, v.mv) + '</b></div><div><span>평가손익</span><b class="' + cls(v.upl) + '">' + fmt(mk, v.upl, true) + '</b></div><div><span>보유</span><b>' + (v.n || 0) + '종목</b></div></div>' : '') +
-      '<div class="btns">' + (v ? '<button type="button" class="b pri" data-tab="acct">내 계좌 보기</button>' : '<button type="button" class="b pri" data-open-acct="' + mk + '">' + MK[mk] + " 계좌 만들기</button>") + '<button type="button" class="b" data-tab="watch">종목 찾기</button></div></section>';
+      (v ? mViz(mk, v) : '<div class="btns"><button type="button" class="b pri" data-open-acct="' + mk + '">' + MK[mk] + " 계좌 만들기</button></div>") + '</section>';
+    h += '<div class="mj" id="mjAcct">' + (has(mk) ? acctTab() : "") + '</div></div><div class="mcol b">';
     h += '<div class="g2">' + prof.mkts.map(function (m) { var r = PB && PB.markets && PB.markets[m] && PB.markets[m].regime;
       return '<div class="wx"><span class="mu" style="font-size:12px">' + MK[m] + ' 시장</span><b style="color:' + (REGC[r] || "inherit") + '">' + (REG[r] || "불러오는 중") + '</b><span style="font-size:12.5px;line-height:1.45;color:#C7CDD6">' + esc(r && GUIDE[r] ? GUIDE[r][prof.risk] : "") + "</span></div>"; }).join("") + "</div>";
     var rmk = prof.mkts.indexOf(acMk) >= 0 ? acMk : prof.mkts[0], rk = ranked(rmk), rg = PB && PB.markets && PB.markets[rmk] && PB.markets[rmk].regime;
@@ -550,8 +578,9 @@
         return rowQ(r.s, rankSub(r), aiTag(r.s), '<button type="button" class="tag2 wbtn' + (on ? " on" : "") + '" data-addwatch="' + esc(r.s) + '" aria-label="관찰에 ' + (on ? "담김" : "추가") + '">' + (on ? "관찰중" : "관찰") + "</button>" + buyBtn(r.s), i + 1, r.tier);
       }).join("") : '<div class="empty">AI 판정을 불러오는 중이거나 아직 오늘 판정이 없습니다.</div>') +
       '<div class="note" style="margin-top:6px">' + MK[rmk] + " " + (REG[rg] || "") + " · 순위 = 매수 신호 → 검증 대기 → AI 점수 순 · 관찰 = 관심종목에 담기 · <b class=\"aiK\">AI 보유 중</b> = AI 계좌가 지금 들고 있음 · <b class=\"aiK2\">AI 매수함</b> = 최근 30일 안에 실제로 삼 · 모의투자</div></section>";
+    h += '<div class="mj" id="mjWatch">' + watch() + '</div>';
     h += aiPortfolio(rmk);
-    h += '</div>';
+    h += '</div></div>';
     return h;
   }
   /* [V33.746] ★보유 종목은 관심에 늘 보인다★(사용자 11/4) — 관심에 안 담았어도 들고 있으면 맨 위에 · 다 팔면 사라진다(직접 담은 종목은 그대로 남음) */
@@ -738,7 +767,8 @@
     if (!root || !pg || !pg.classList.contains("active")) return;
     css();
     if (!prof.done) tab = "me";
-    var T = { home: "홈", watch: "관심", acct: "계좌", rank: "순위", me: "내 정보" };
+    if (tab === "watch" || tab === "acct") { var _go = tab === "watch" ? "mjWatch" : "mjAcct"; tab = "home"; setTimeout(function () { var e = document.getElementById(_go); if (e) e.scrollIntoView({ behavior: "smooth", block: "start" }); }, 60); }   // [V33.847] 관심·계좌는 홈 한 페이지 안으로
+    var T = { home: "홈", rank: "순위", me: "내 정보" };
     var keep = ($("mineSearch") || {}).value || "";
     var html = '<nav class="tabs" aria-label="MY 메뉴">' + Object.keys(T).map(function (k) { return '<button type="button" data-tab="' + k + '" class="' + (k === tab ? "on" : "") + '" aria-current="' + (k === tab ? "page" : "false") + '">' + T[k] + "</button>"; }).join("") + "</nav>" +
       (isAuth() || isDirty() ? '<div class="syncbar">' + syncHtml() + "</div>" : "") +
