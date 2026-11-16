@@ -519,12 +519,26 @@
   function pill(sig) { return !sig ? "" : sig.watch ? '<span class="pill w">관찰</span>' : sig.sl ? '<span class="pill s">국면 전략</span>' : '<span class="pill">AI 후보</span>'; }
   function buyBtn(sym) { return '<button type="button" class="buy" data-buy="' + esc(sym) + '">매수</button>'; }
 
+  /* [V33.845] MY 홈 리뉴얼(사용자 11/16 참고: 한 화면에 예약·매출·분석·AI 인사이트를 모은 프리미엄 대시보드) — 패드 가로·PC 는 벤토 2열(왼쪽 총자산 히어로 + AI 추천 · 오른쪽 시장 국면 + AI 포트폴리오) · 총자산 카드에 KPI 4칸 · 폰은 세로 그대로 */
+  (function () { if (document.getElementById("mineV845")) return; var st = document.createElement("style"); st.id = "mineV845"; st.textContent =
+    "#mineRoot .mkpi{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:14px 0 4px}#mineRoot .mkpi>div{border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);min-width:0}#mineRoot .mkpi span{display:block;font-size:11.5px;color:var(--m-mute);margin-bottom:3px}#mineRoot .mkpi b{font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;font-variant-numeric:tabular-nums}" +
+    "@media (max-width:520px){#mineRoot .mkpi{grid-template-columns:repeat(2,minmax(0,1fr))}}" +
+    "html[data-theme=light] #mineRoot .mkpi>div{background:rgba(16,24,40,.04);border-color:rgba(16,24,40,.08)}" +
+    "#mineRoot section[aria-label=\"모의계좌\"]{background:radial-gradient(120% 120% at 0% 0%,rgba(61,214,181,.16),transparent 55%),radial-gradient(90% 110% at 100% 0%,rgba(106,92,255,.18),transparent 60%),linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02))!important}" +
+    "@media (min-width:1100px){#mineRoot.mwide{max-width:1240px}#mineRoot.mwide>.tabs{max-width:760px;margin-left:auto;margin-right:auto}" +
+    "#mineRoot .mhome{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);gap:14px;align-items:start}" +
+    "#mineRoot .mhome>section[aria-label=\"모의계좌\"]{grid-column:1;grid-row:1}#mineRoot .mhome>.g2{grid-column:2;grid-row:1;display:grid;grid-template-columns:1fr;gap:12px;align-self:start}" +
+    "#mineRoot .mhome>section[aria-label=\"AI 순위\"]{grid-column:1;grid-row:2}#mineRoot .mhome>*:not(section[aria-label=\"모의계좌\"]):not(.g2):not(section[aria-label=\"AI 순위\"]){grid-column:2}" +
+    "#mineRoot .mhome>section{margin:0!important}#mineRoot.mwide section[aria-label=\"모의계좌\"] .h1{font-size:48px}}";
+    document.head.appendChild(st); })();
   function home() {
     var mk = has(acMk) ? acMk : (has("us") ? "us" : has("kr") ? "kr" : acMk), v = val(mk), h = "", hr = new Date().getHours();
     h += '<div class="hi"><span>' + (hr < 12 ? "좋은 아침이에요" : hr < 18 ? "좋은 오후예요" : "좋은 저녁이에요") + (prof.nick ? ", <b>" + esc(prof.nick) + "</b>님" : "") + '</span><span class="mu">' + RISK[prof.risk] + " · " + HOR[prof.horizon] + "</span></div>";
+    h += '<div class="mhome">';
     h += '<section class="card" aria-label="모의계좌"><div class="ct"><span>모의계좌 총자산</span><span class="seg">' + ["us", "kr"].map(function (m) { return '<button type="button" data-acmk="' + m + '" class="' + (m === mk ? "on" : "") + '">' + MK[m] + "</button>"; }).join("") + "</span></div>" +
       (v ? '<div class="h1">' + fmt(mk, v.eq) + '</div><div class="' + cls(v.ret) + '">' + fmt(mk, v.eq - prof.pf[mk].start, true) + " (" + pctS(v.ret) + ") · 시작 후 " + v.days + "일</div>" + (v.n ? '<div class="today">오늘 <b class="' + cls(v.day) + '">' + fmt(mk, v.day, true) + " (" + pctS(v.dayPct) + ")</b> · 보유 " + v.n + "종목</div>" : "")
          : '<div class="h2" style="margin:6px 0 2px">가상 ' + fmt(mk, START[mk]) + '으로 AI 후보를 따라 사 보세요</div><div class="note">실제 돈은 쓰지 않습니다 · 내 성적이 이 기기에만 쌓입니다</div>') +
+      (v ? '<div class="mkpi"><div><span>주문 가능</span><b>' + fmt(mk, v.cash) + '</b></div><div><span>주식 평가</span><b>' + fmt(mk, v.mv) + '</b></div><div><span>평가손익</span><b class="' + cls(v.upl) + '">' + fmt(mk, v.upl, true) + '</b></div><div><span>보유</span><b>' + (v.n || 0) + '종목</b></div></div>' : '') +
       '<div class="btns">' + (v ? '<button type="button" class="b pri" data-tab="acct">내 계좌 보기</button>' : '<button type="button" class="b pri" data-open-acct="' + mk + '">' + MK[mk] + " 계좌 만들기</button>") + '<button type="button" class="b" data-tab="watch">종목 찾기</button></div></section>';
     h += '<div class="g2">' + prof.mkts.map(function (m) { var r = PB && PB.markets && PB.markets[m] && PB.markets[m].regime;
       return '<div class="wx"><span class="mu" style="font-size:12px">' + MK[m] + ' 시장</span><b style="color:' + (REGC[r] || "inherit") + '">' + (REG[r] || "불러오는 중") + '</b><span style="font-size:12.5px;line-height:1.45;color:#C7CDD6">' + esc(r && GUIDE[r] ? GUIDE[r][prof.risk] : "") + "</span></div>"; }).join("") + "</div>";
@@ -537,6 +551,7 @@
       }).join("") : '<div class="empty">AI 판정을 불러오는 중이거나 아직 오늘 판정이 없습니다.</div>') +
       '<div class="note" style="margin-top:6px">' + MK[rmk] + " " + (REG[rg] || "") + " · 순위 = 매수 신호 → 검증 대기 → AI 점수 순 · 관찰 = 관심종목에 담기 · <b class=\"aiK\">AI 보유 중</b> = AI 계좌가 지금 들고 있음 · <b class=\"aiK2\">AI 매수함</b> = 최근 30일 안에 실제로 삼 · 모의투자</div></section>";
     h += aiPortfolio(rmk);
+    h += '</div>';
     return h;
   }
   /* [V33.746] ★보유 종목은 관심에 늘 보인다★(사용자 11/4) — 관심에 안 담았어도 들고 있으면 맨 위에 · 다 팔면 사라진다(직접 담은 종목은 그대로 남음) */
@@ -730,7 +745,7 @@
       (tab === "home" ? home() : tab === "watch" ? watch() : tab === "acct" ? acctTab() : tab === "rank" ? rankTab() : me()) +
       '<p class="note" style="text-align:center;margin-top:10px">모의투자 · 가상 자금 · 투자 권유가 아닙니다' + (pbTs ? " · AI 판정 " + new Date(pbTs).toLocaleTimeString() : "") + "</p>";
     if (root.__h === html) return;   // [V33.741] 1분 갱신 등에서 바뀐 게 없으면 다시 그리지 않음(스크롤·포커스 유지 · 레이아웃 0회)
-    root.__h = html; root.innerHTML = html;
+    root.__h = html; root.innerHTML = html; root.classList.toggle('mwide', tab === 'home');
     var s = $("mineSearch"); if (s) { s.value = keep; s.oninput = function () { found(s.value); }; if (keep) found(keep); }
   }
   function found(t) {
