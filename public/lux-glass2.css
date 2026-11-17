@@ -577,3 +577,4 @@ html[data-theme="light"] body #page-positions:is(:not([data-pz]),[data-pz="all"]
 }
 /* 전체 보기에서 보유 목록을 펼친 카드는 한 줄 전체를 쓴다(나란히 두 칸이면 표가 비좁다) */
 @media (min-width:1100px){body #page-positions:is(:not([data-pz]),[data-pz="all"]) .pz-grid>.port-card:has(.pz-list){grid-column:1/-1}}
+body #page-positions:is(:not([data-pz]),[data-pz="all"]) .port-card .pz-leg li{grid-template-columns:10px minmax(0,1fr) 44px}body #page-positions:is(:not([data-pz]),[data-pz="all"]) .port-card .pz-leg em{display:none}
