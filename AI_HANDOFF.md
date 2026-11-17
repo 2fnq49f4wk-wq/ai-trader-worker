@@ -12,6 +12,9 @@
 
 ## Current handoff
 
+### V33.853 (2026-11-17) 스레드 링크 카드 공유 주소 /p/<이름>
+- src/index.js '/p/' 경로(robots.txt 앞) · public/promo/share.json · robots 에 facebookexternalhit/meta-externalagent Allow /p/·/promo/ · tools/threads/post.py kind LINK. 자세한 쓰는 법은 아래 'Threads 게시 워크플로'.
+
 ### V33.852 (2026-11-17) 초 단위 시세 루프 = Durable Object(LiveQuotes) · 리퀴드 글라스 이어서
 - 원인(V33.850 실측): cron 호출 안 waitUntil 루프가 같은 isolate 의 매매 사이클 CPU 에 막혀 live.js 가 10~40초 간격.
 - 이제 src/index.js `export class LiveQuotes`(wrangler.toml [[durable_objects.bindings]] LIVEQ · migration v1-liveq new_sqlite_classes).
@@ -263,6 +266,9 @@
 - 홍보 영상은 항상 패드 화면(820x1180) 기준으로 캡처한다(사용자 지시 2026-11-09).
 - 글은 항상 살짝 어그로성 첫 줄(유인 멘트)을 넣는다. 2일에 1개 비용(AI·사이트) 관련 글을 자동 게시(예약 작업 · 사용자 지시 2026-11-09). 사실만 쓴다.
 - 글 끝 문구는 글 종류별(사용자 11/9 승인): ① 개발·AI 팁·비용 → "이걸로 만든 사이트 직접 눌러봐 (가입 없이 구경 가능)" + https://lux-inv.com/?r=tNN (설정 공개 페이지 lux-inv.com/dev 도 가끔) ② AI 성적·실패담 → "AI 지금 뭐 사는지 실시간으로 보임" + https://lux-inv.com/?r=tNN ③ 광고 → "고딩이 만든 AI 모의주식 사이트 회원가입해서 수익률 경쟁해봐요" + https://lux-inv.com/?r=tNN. NN=글 번호. 유입은 /api/ref-stats(14일 · 방문 v · 가입 s). 이미지·영상 첨부 글은 게시 전 사용자 확인.
+- ★(V33.853 · 사용자 11/17) 다음 글부터 '링크 카드' 방식★: 스레드는 사진에 링크를 못 건다 → kind LINK(글 + link_attachment). media_url = https://lux-inv.com/p/<이름>.
+  공유 주소 = public/promo/share.json 한 줄 {title, desc, img(가로 1200x630 권장), w, h, to:"/?r=tNN"} → 워커가 og 태그 + 바로 이동. 새 그림을 쓰면 게시 전 사용자 확인, 그림 없으면 img "/og-card3.png".
+  글 끝 주소 줄은 그대로 두되 카드가 같은 곳(?r=tNN)으로 간다. 게시 전 `curl -A facebookexternalhit/1.1 https://lux-inv.com/p/<이름>` 로 og:image 확인.
 - text_file 비우고 돌리면 토큰 확인만, 채우면 글 게시. 글 원문은 `promo/threads/devlog-0N.txt`, 미디어는 `public/promo/`.
 
 - (11/9) Threads 개발일지 홍보용 공개 파일 public/promo/(devlog1-server.jpg · devlog2-arch.jpg · devlog3-promo.mp4 · 광고 영상 v5 26.6초) — Threads API 는 공개 URL 미디어만 받는다. 코드 변경 없음(버전 그대로).

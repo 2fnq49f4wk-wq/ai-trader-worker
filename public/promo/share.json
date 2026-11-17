@@ -1,0 +1,5 @@
+{
+  "_note": "[V33.853] 스레드 링크 카드용 공유 주소 lux-inv.com/p/<이름> — 카드 그림(img, 가로 1200x630 권장)·제목·설명·이동할 곳(to). 새 글은 여기 한 줄 + public/promo/ 에 그림.",
+  "lux": { "title": "LUX-INV — AI가 대신 보고 설명해 주는 모의투자", "desc": "AI가 분석을 돕는 모의투자 · 한국·미국 주식 · 가입 없이 구경 가능", "img": "/og-card3.png", "w": 1200, "h": 630, "to": "/?r=tcard" },
+  "devlog15": { "title": "AI로 사이트 대시보드 디자인하는 법", "desc": "LUX-INV 개발일지 15 · 가입 없이 구경 가능", "img": "/promo/devlog15-a.png", "w": 1080, "h": 1350, "to": "/?r=t15" }
+}

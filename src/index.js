@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.852";
+const _BUILD_VER = "V33.853";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -30994,8 +30994,31 @@ async function handleRequest(request, env, ctx, _inner) {
   if (_mc) return _mc;
   /* [V33.375] 크롤러에게 명시적으로 말한다. X-Robots-Tag 헤더와 ★둘 다★ 둔다 —
      robots.txt 는 크롤이 시작되기 전에 읽히고, 헤더는 직접 링크로 들어온 것까지 덮는다. */
+  /* [V33.853] ★스레드 링크 카드 공유 주소★(사용자 11/17 "이미지 누르면 우리 사이트로") — 스레드는 사진에 링크를 못 건다. 글 게시물의 링크 카드(og:image)를
+     그 글 그림으로 띄우면 카드를 누를 때 사이트로 온다. /p/<이름> = public/promo/share.json 한 줄 → og 태그 + 바로 이동(?r= 유입 표시).
+     og:url 은 이 주소 자신(메인 주소로 두면 크롤러가 메인 카드를 가져간다). 정적 응답 · CDN 1시간 · D1 0. */
+  if (path.startsWith("/p/") && request.method === "GET") {
+    const slug = path.slice(3).replace(/\/+$/, "").toLowerCase();
+    let map = globalThis.__shareMap;
+    if (!map || Date.now() - (globalThis.__shareAt || 0) > 300000) {
+      try { const r = await env.ASSETS.fetch(new Request(new URL("/promo/share.json", url))); map = r.ok ? await r.json() : {}; } catch (e) { map = {}; }
+      globalThis.__shareMap = map; globalThis.__shareAt = Date.now();
+    }
+    const it = /^[a-z0-9_-]{1,40}$/.test(slug) && slug[0] !== "_" ? map[slug] : null;
+    const h = function (x) { return String(x == null ? "" : x).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); };
+    if (!it) return Response.redirect(url.origin + "/", 302);
+    const to = /^\/[^/]/.test(String(it.to || "")) || it.to === "/" ? it.to : "/", img = /^https?:/.test(it.img) ? it.img : url.origin + it.img, self = url.origin + "/p/" + slug;
+    const body = '<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + h(it.title) + '</title>' +
+      '<meta name="description" content="' + h(it.desc) + '"><meta property="og:type" content="website"><meta property="og:site_name" content="LUX-INV"><meta property="og:url" content="' + h(self) + '">' +
+      '<meta property="og:title" content="' + h(it.title) + '"><meta property="og:description" content="' + h(it.desc) + '"><meta property="og:image" content="' + h(img) + '"><meta property="og:image:secure_url" content="' + h(img) + '">' +
+      (it.w ? '<meta property="og:image:width" content="' + (+it.w) + '"><meta property="og:image:height" content="' + (+it.h) + '">' : '') +
+      '<meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="' + h(img) + '"><link rel="canonical" href="' + h(self) + '">' +
+      '<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0d11;color:#cfd6e4;font:15px system-ui,sans-serif}a{color:#7fe3ff}</style></head>' +
+      '<body><p><a href="' + h(to) + '">LUX-INV 로 이동 중…</a></p><script>location.replace(' + JSON.stringify(to) + ')</script></body></html>';
+    return new Response(body, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=3600" } });
+  }
   if (path === "/robots.txt") {
-    return new Response("User-agent: *\nDisallow: /\n",
+    return new Response("User-agent: facebookexternalhit\nAllow: /p/\nAllow: /promo/\nAllow: /og-card3.png\nDisallow: /\n\nUser-agent: meta-externalagent\nAllow: /p/\nAllow: /promo/\nDisallow: /\n\nUser-agent: *\nDisallow: /\n",
       { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=86400" } });
   }
   /* [V33.193] ★권한 방어 — 한도 바로 뒤, 라우팅 앞.★ 상태를 바꾸는 요청은 이 워커 자신의

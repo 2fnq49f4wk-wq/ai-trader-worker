@@ -1,5 +1,5 @@
 """Threads 게시(GitHub Actions 전용) — 토큰은 secrets.THREADS_ACCESS_TOKEN(Bearer 헤더 · 로그에 안 찍힘).
-사용: python3 tools/threads/post.py <TEXT_FILE> <IMAGE|VIDEO|TEXT|CAROUSEL> <MEDIA_URL|-> <TOPIC_TAG|->   · check 만: python3 tools/threads/post.py --check"""
+사용: python3 tools/threads/post.py <TEXT_FILE> <IMAGE|VIDEO|TEXT|CAROUSEL|LINK> <MEDIA_URL|공유주소|-> <TOPIC_TAG|->   · check 만: python3 tools/threads/post.py --check"""
 import json, os, sys, time, urllib.parse, urllib.request, urllib.error
 
 API = "https://graph.threads.net/v1.0/"
@@ -30,7 +30,12 @@ text = open(text_file, encoding="utf-8").read().strip()
 p = {"text": text, "media_type": kind}
 if topic and topic != "-":
     p["topic_tag"] = topic
-if kind == "IMAGE":
+if kind == "LINK":   # [V33.853] 글 + 링크 카드(카드 그림 = 공유 주소 lux-inv.com/p/<이름> 의 og:image · 누르면 사이트로)
+    if not media.startswith("https://lux-inv.com/p/"):
+        print("LINK 는 media 에 https://lux-inv.com/p/<이름> 주소"); sys.exit(1)
+    p["media_type"] = "TEXT"
+    p["link_attachment"] = media
+elif kind == "IMAGE":
     p["image_url"] = media
 elif kind == "VIDEO":
     p["video_url"] = media

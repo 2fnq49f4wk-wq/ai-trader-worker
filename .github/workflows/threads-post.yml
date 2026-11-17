@@ -8,7 +8,7 @@ on:
         required: false
         default: ''
       kind:
-        description: 'IMAGE / VIDEO / TEXT / CAROUSEL(이미지 여러 장 · 주소를 쉼표로)'
+        description: 'IMAGE / VIDEO / TEXT / CAROUSEL(이미지 여러 장 · 주소를 쉼표로) / LINK(글 + 링크 카드 · media_url = https://lux-inv.com/p/이름)'
         required: false
         default: 'TEXT'
       media_url:
