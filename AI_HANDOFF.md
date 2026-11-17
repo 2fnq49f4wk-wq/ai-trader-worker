@@ -12,6 +12,16 @@
 
 ## Current handoff
 
+### V33.852 (2026-11-17) 초 단위 시세 루프 = Durable Object(LiveQuotes) · 리퀴드 글라스 이어서
+- 원인(V33.850 실측): cron 호출 안 waitUntil 루프가 같은 isolate 의 매매 사이클 CPU 에 막혀 live.js 가 10~40초 간격.
+- 이제 src/index.js `export class LiveQuotes`(wrangler.toml [[durable_objects.bindings]] LIVEQ · migration v1-liveq new_sqlite_classes).
+  cron → liveQuoteKick(방문 15분 안 · 장 열림일 때만) → DO fetch '/kick' = 2.5분 임대 연장 + 알람 없으면 켬.
+  DO alarm: liveQuoteTick 한 번(한국 열림 5초 박자 · 미국은 두 번에 한 번=10초 · 미국만이면 10초) → 다음 알람. 임대 끝/두 장 닫힘이면 멈춤.
+  미국 첫 조각 0행이면 5분 쉬고 인증 다시. 바인딩 없으면 옛 루프(liveQuoteLoop) 그대로.
+  확인: GET /api/liveq → {until,n,writes,syms,usDeadUntil,alarm}.
+- 주의: `wrangler deploy --dry-run` 은 [build] tools/build-split.mjs 를 돌려 public/index.html 을 쪼갠다 → 로컬에서 돌렸으면 `git checkout -- public/index.html && rm -rf public/_b`.
+- 글라스: 종목상세 불투명 카드(detail-vcard/crowd/anl/fund · lxs/lxt · fp-qmj · tf · lxa-rg)·뉴스 섹터·포지션 버튼을 유리 한 벌로. 고정 가격 머리줄(detail-head)은 뒤 글자가 비쳐 .95 불투명 유지.
+
 ### V33.851 (2026-11-17) AI 작동원리 단순화 · 노드는 AI 코어에서 · 유리 카드 · 종목상세 오른쪽 칸 따로 스크롤
 - V33.850 의 두 칸 배치 철회 → 매매법 AI(위) · OMNI 성능(아래) 한 줄.
 - 두뇌 스튜디오 기본 = OMNI 성능 지표만(studio/src/views/OmniPerf.tsx · /api/omni-status · 시장별 5일/20일 머리 승률·하한·t·구간·모의 초과, '관문 자세히' 펼침). '전체 모델 구조 열기' 버튼으로 예전 App(전체) — main.tsx Root.

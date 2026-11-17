@@ -79,3 +79,12 @@ binding = "AI"
 # 끝이 /anthropic/v1/messages 형식이어야 코드와 맞음 (compat/chat/completions 아님)
 [vars]
 LLM_BASE_URL = "https://gateway.ai.cloudflare.com/v1/f146c5daff47728653b1e30b52c961af/trader1/anthropic/v1/messages"
+
+# [V33.852] 화면용 초 단위 시세(한국 5초 · 미국 10초) — 매매 사이클과 다른 isolate 에서 알람 박자로 돈다(src/index.js LiveQuotes)
+[[durable_objects.bindings]]
+name = "LIVEQ"
+class_name = "LiveQuotes"
+
+[[migrations]]
+tag = "v1-liveq"
+new_sqlite_classes = ["LiveQuotes"]

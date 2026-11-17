@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.851";
+const _BUILD_VER = "V33.852";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -23284,57 +23284,88 @@ const STATE_PUB_KEY = "pub/state.js";   // [V33.760] .json 은 Cloudflare 가 �
 const LIVE_KR_MS = 5000;
 const LIVE_US_MS = 10000;
 const LIVE_KEY = "pub/f/live.js";
+/* [V33.852] ★시세 루프 분리★(사용자 11/17 "시세 갱신 분리 작업 진행해") — V33.848 은 같은 cron 호출 안(ctx.waitUntil)에서 5초마다 받았는데,
+   같은 isolate 의 매매 사이클이 CPU 를 쥐는 동안 타이머가 밀려 실측 10~40초 간격이었다(가격 시각과 쓴 시각이 21초 벌어짐 · 11/17 09:33).
+   → Durable Object(LiveQuotes · 별도 isolate)의 알람이 5초 박자로 한 번씩 받는다. cron 은 1분마다 '2.5분 더 돌아라' 신호(요청 1건)만 보낸다.
+   방문자가 15분 없거나 두 시장이 다 닫히면 신호가 끊겨 알람이 2.5분 안에 멈춘다. D1 쓰기 0 · R2 쓰기는 예전과 같은 수(바뀐 때만). */
+async function liveQuoteTick(env, live, wantUs, st) {
+  const PUB = env && env.PUB; if (!PUB) return { krOn: false, usOn: false };
+  const n0 = new Date(), krOn = marketSessionNow("kr", n0) !== "CLOSED", usOn = marketSessionNow("us", n0) !== "CLOSED";
+  const t = Date.now(); let changed = false;
+  if (krOn) {
+    try {
+      if (!st.krMap) { st.krMap = {}; for (const s of DEFAULT_KR) st.krMap[String(s).split(".")[0]] = s; st.krCodes = Object.keys(st.krMap); }
+      const r = await fetch("https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:" + st.krCodes.join(","), { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" }, signal: AbortSignal.timeout(4000) });
+      const j = r.ok ? await r.json() : null, ds = (j && j.result && j.result.areas && j.result.areas[0] && j.result.areas[0].datas) || [];
+      for (const d of ds) { const sym = st.krMap[d.cd], nv = Number(d.nv), sv = Number(d.sv); if (!sym || !(nv > 0)) continue; live[sym] = [nv, sv > 0 ? +((nv / sv - 1) * 100).toFixed(3) : 0, null, null, t, Number(d.aq) || 0]; changed = true; }
+    } catch (e) {}
+  }
+  if (usOn && wantUs && !((st.usDeadUntil || 0) > t)) {
+    try {
+      if (!st.auth) st.auth = await getYahooAuth(env.DB);
+      const auth = st.auth, hdr = auth && auth.cookie ? { "Cookie": auth.cookie } : null, sl = [];
+      const usSyms = st.usSyms || (st.usSyms = DEFAULT_US.filter(function (s) { return s.indexOf("^") < 0 && s.indexOf("=") < 0; }));
+      for (let i = 0; i < usSyms.length; i += 50) sl.push(usSyms.slice(i, i + 50));
+      const one = async function (slice) {
+        let u = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" + slice.map(encodeURIComponent).join(",");
+        if (auth && auth.crumb) u += "&crumb=" + encodeURIComponent(auth.crumb);
+        const j = await yahooFetch(u, hdr), rows = (j && j.quoteResponse && j.quoteResponse.result) || [];
+        let n = 0;
+        for (const q of rows) {
+          const px = q.regularMarketPrice; if (!(px > 0) || !q.symbol) continue;
+          const ms = String(q.marketState || ""), ex = /PRE/.test(ms) ? q.preMarketPrice : /POST|CLOSED/.test(ms) ? q.postMarketPrice : null, exP = /PRE/.test(ms) ? q.preMarketChangePercent : /POST|CLOSED/.test(ms) ? q.postMarketChangePercent : null;
+          live[q.symbol] = [px, typeof q.regularMarketChangePercent === "number" ? +q.regularMarketChangePercent.toFixed(3) : null, ex > 0 ? ex : null, typeof exP === "number" ? +exP.toFixed(3) : null, t, q.regularMarketVolume || 0]; n++;
+        }
+        return n;
+      };
+      const first = await one(sl[0]);
+      if (!first) { st.usDeadUntil = t + 5 * 60000; st.auth = null; }   // 막히면 5분 쉬고 인증부터 다시
+      else { for (let i = 1; i < sl.length; i += 4) await Promise.all(sl.slice(i, i + 4).map(one)); changed = true; }
+    } catch (e) { st.usDeadUntil = t + 5 * 60000; st.auth = null; }
+  }
+  if (changed) { try { await PUB.put(LIVE_KEY, '{"_pubAt":' + Date.now() + ',"q":' + JSON.stringify(live) + "}", { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "public, max-age=4, s-maxage=4" } }); st.writes = (st.writes || 0) + 1; } catch (e) {} }
+  return { krOn, usOn };
+}
+const LIVEQ_LEASE_MS = 150000;
+export class LiveQuotes {
+  constructor(state, env) { this.state = state; this.env = env; this.live = {}; this.st = {}; this.n = 0; this.until = 0; }
+  async fetch(req) {   // cron 의 '계속 돌아라' 신호 · /stat 은 상태
+    const u = new URL(req.url);
+    if (u.pathname === "/stat") return new Response(JSON.stringify({ until: this.until, n: this.n, writes: this.st.writes || 0, syms: Object.keys(this.live).length, usDeadUntil: this.st.usDeadUntil || 0, alarm: await this.state.storage.getAlarm() }), { headers: { "Content-Type": "application/json" } });
+    this.until = Date.now() + LIVEQ_LEASE_MS; await this.state.storage.put("until", this.until);
+    const a = await this.state.storage.getAlarm();
+    if (!a || a < Date.now() - 15000) await this.state.storage.setAlarm(Date.now() + 50);
+    return new Response("ok");
+  }
+  async alarm() {
+    if (!this.until) this.until = (await this.state.storage.get("until")) || 0;   // 쫓겨났다 깨면 저장된 기한부터
+    if (Date.now() > this.until) return;   // 신호가 끊겼다 → 멈춤(다음 신호가 다시 켠다)
+    const t0 = Date.now(); this.n++;
+    const krOpen = marketSessionNow("kr", new Date()) !== "CLOSED";
+    let r = null; try { r = await liveQuoteTick(this.env, this.live, !krOpen || this.n % 2 === 1, this.st); } catch (e) {}
+    if (r && !r.krOn && !r.usOn) return;
+    const gap = r && r.krOn ? LIVE_KR_MS : LIVE_US_MS;   // 한국장 열림 = 5초(미국은 두 번에 한 번 = 10초) · 미국만 = 10초
+    await this.state.storage.setAlarm(Math.max(Date.now() + 1000, t0 + gap));
+  }
+}
+/* 옛 경로(Durable Object 바인딩이 없을 때만) — 같은 cron 호출 안에서 돈다 */
 async function liveQuoteLoop(env, untilTs) {
-  const PUB = env && env.PUB; if (!PUB) return;
+  const live = globalThis.__liveQ || (globalThis.__liveQ = {}), st = globalThis.__liveSt || (globalThis.__liveSt = {});
+  let k = 0;
+  while (Date.now() < untilTs - 1500) {
+    const t0 = Date.now(), r = await liveQuoteTick(env, live, (k++ % 2 === 0) && fetchBudgetLeft() > 250, st);
+    if (!r.krOn && !r.usOn) break;
+    const w = t0 + (r.krOn ? LIVE_KR_MS : LIVE_US_MS) - Date.now();
+    if (w > 0) await new Promise(function (res) { setTimeout(res, Math.min(w, Math.max(0, untilTs - 1500 - Date.now()))); });
+  }
+  return st.writes || 0;
+}
+async function liveQuoteKick(env, ctx, cronStart) {
   let lr = 0; try { lr = _num(await getState(env.DB, "state_last_req", 0), 0); } catch (e) {}
   if (Date.now() - lr > 15 * 60000) return;
-  const n0 = new Date(), krOn = marketSessionNow("kr", n0) !== "CLOSED", usSes = marketSessionNow("us", n0), usOn = usSes !== "CLOSED";
-  if (!krOn && !usOn) return;
-  const live = globalThis.__liveQ || (globalThis.__liveQ = {});
-  const krMap = {}; for (const s of DEFAULT_KR) krMap[String(s).split(".")[0]] = s;
-  const krCodes = Object.keys(krMap), usSyms = DEFAULT_US.filter(function (s) { return s.indexOf("^") < 0 && s.indexOf("=") < 0; });
-  let nextKr = 0, nextUs = 0, usDead = false, auth = null, writes = 0;
-  const nvHdr = { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" }, signal: AbortSignal.timeout(4000) };
-  while (Date.now() < untilTs - 1500) {
-    const t = Date.now(); let changed = false;
-    if (krOn && t >= nextKr) {
-      nextKr = t + LIVE_KR_MS;
-      try {
-        try { __fetchBudget.used++; } catch (e) {}
-        const r = await fetch("https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:" + krCodes.join(","), nvHdr);
-        const j = r.ok ? await r.json() : null, ds = (j && j.result && j.result.areas && j.result.areas[0] && j.result.areas[0].datas) || [];
-        for (const d of ds) { const sym = krMap[d.cd], nv = Number(d.nv), sv = Number(d.sv); if (!sym || !(nv > 0)) continue; live[sym] = [nv, sv > 0 ? +((nv / sv - 1) * 100).toFixed(3) : 0, null, null, t, Number(d.aq) || 0]; changed = true; }
-      } catch (e) {}
-    }
-    if (usOn && !usDead && t >= nextUs) {
-      nextUs = t + LIVE_US_MS;
-      if (fetchBudgetLeft() > 250) try {   // 매매 사이클 몫(요청 예산)을 남긴다
-        if (!auth) auth = await getYahooAuth(env.DB);
-        const hdr = auth && auth.cookie ? { "Cookie": auth.cookie } : null, sl = [];
-        for (let i = 0; i < usSyms.length; i += 50) sl.push(usSyms.slice(i, i + 50));
-        const one = async function (slice) {
-          let u = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" + slice.map(encodeURIComponent).join(",");
-          if (auth && auth.crumb) u += "&crumb=" + encodeURIComponent(auth.crumb);
-          const j = await yahooFetch(u, hdr), rows = (j && j.quoteResponse && j.quoteResponse.result) || [];
-          let n = 0;
-          for (const q of rows) {
-            const px = q.regularMarketPrice; if (!(px > 0) || !q.symbol) continue;
-            const ms = String(q.marketState || ""), ex = /PRE/.test(ms) ? q.preMarketPrice : /POST|CLOSED/.test(ms) ? q.postMarketPrice : null, exP = /PRE/.test(ms) ? q.preMarketChangePercent : /POST|CLOSED/.test(ms) ? q.postMarketChangePercent : null;
-            live[q.symbol] = [px, typeof q.regularMarketChangePercent === "number" ? +q.regularMarketChangePercent.toFixed(3) : null, ex > 0 ? ex : null, typeof exP === "number" ? +exP.toFixed(3) : null, t, q.regularMarketVolume || 0]; n++;
-          }
-          return n;
-        };
-        const first = await one(sl[0]);
-        if (!first) usDead = true;
-        else { for (let i = 1; i < sl.length; i += 4) { const ns = await Promise.all(sl.slice(i, i + 4).map(one)); } changed = true; }
-      } catch (e) { usDead = true; }
-    }
-    if (changed) { try { await PUB.put(LIVE_KEY, '{"_pubAt":' + Date.now() + ',"q":' + JSON.stringify(live) + "}", { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "public, max-age=4, s-maxage=4" } }); writes++; } catch (e) {} }
-    const wait = Math.min(krOn ? nextKr : Infinity, (usOn && !usDead) ? nextUs : Infinity) - Date.now();
-    if (!isFinite(wait)) break;
-    if (wait > 0) await new Promise(function (res) { setTimeout(res, Math.min(wait, Math.max(0, untilTs - 1500 - Date.now()))); });
-  }
-  return writes;
+  const n0 = new Date(); if (marketSessionNow("kr", n0) === "CLOSED" && marketSessionNow("us", n0) === "CLOSED") return;
+  if (env.LIVEQ) { try { __fetchBudget.used++; } catch (e) {} return env.LIVEQ.get(env.LIVEQ.idFromName("live")).fetch("https://liveq/kick"); }
+  return liveQuoteLoop(env, cronStart + 55000);
 }
 async function statePubWrite(env) {
   const PUB = env && env.PUB; if (!PUB) return null;
@@ -32241,6 +32272,10 @@ async function handleRequest(request, env, ctx, _inner) {
       return Response.json(_ov, { headers: cors });
     }
 
+    if (path === "/api/liveq") {   // [V33.852] 초 단위 시세 루프(Durable Object) 상태 — 확인용 · 읽기만
+      if (!env.LIVEQ) return Response.json({ ok: false, why: "no binding" }, { headers: cors });
+      try { const r = await env.LIVEQ.get(env.LIVEQ.idFromName("live")).fetch("https://liveq/stat"); return new Response(await r.text(), { headers: Object.assign({ "Content-Type": "application/json", "Cache-Control": "no-store" }, cors) }); } catch (e) { return Response.json({ ok: false, err: String(e && e.message || e) }, { headers: cors }); }
+    }
     if (path === "/api/omni-structure") {   // [V33.437] OMNI 구조 전부(가중치 · 나무 분기) — 화면 전용
       /* [V33.442] 줄인 결과는 R2 에 있는데, 판 확인에 D1 모델 요약을 먼저 읽느라 7초가 걸렸다(운영 실측).
          구조 탭 응답과 같은 사본 방식: 사본이 6시간 안이면 D1 없이 바로 주고, 1분이 지났으면 뒤에서 판을 확인해 갈아 끼운다. */
@@ -58220,7 +58255,7 @@ export default {
     //   가격/원자재 갱신이 산발적으로 실패했음(특히 정규장 1분 갱신).
     //   → 단일 promise 안에서 "순차" 실행해 각 사이클이 자기 예산을 온전히 쓰게 한다.
     const __cronStart = Date.now();
-    try { ctx.waitUntil(liveQuoteLoop(env, __cronStart + 55000).catch(function () {})); } catch (e) {}   // [V33.848] 한국 5초 · 미국 10초 화면용 시세(DB 쓰기 없음)
+    try { ctx.waitUntil(liveQuoteKick(env, ctx, __cronStart).catch(function () {})); } catch (e) {}   // [V33.848] 한국 5초 · 미국 10초 화면용 시세(DB 쓰기 없음)
     __sleepAccumMs = 0;  // [실시간] invocation 시작마다 sleep 누적 초기화
     cycMemoReset();      // [V33.170] 사이클 상수 캐시 초기화 — warm isolate 의 옛 값을 물려받지 않는다
     let __usageCalib = USAGE_LIMITS_DEFAULT.cpuCalibration;

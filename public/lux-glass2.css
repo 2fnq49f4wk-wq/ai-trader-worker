@@ -450,3 +450,15 @@ html:not([data-theme="light"]) body #page-nnviz #brain-studio .bs-perf{backgroun
 html[data-theme="light"] body #pbObs :is(.k-panel,.ko-k,.k-card),html[data-theme="light"] body #brain-studio .bs-perf{background:linear-gradient(155deg,rgba(255,255,255,.78),rgba(255,255,255,.5))!important;border:1px solid rgba(255,255,255,.9)!important;box-shadow:inset 0 1px 0 #fff,0 10px 28px -16px rgba(20,40,80,.35)!important}
 html:not([data-theme="light"]) body #page-nnviz #brain-studio .bs-tile{background:linear-gradient(155deg,rgba(255,255,255,.07),rgba(255,255,255,.015))!important;border-color:rgba(255,255,255,.13)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.14)}
 html[data-theme="light"] body #brain-studio .bs-tile{background:rgba(255,255,255,.6)!important}
+/* [V33.852] 리퀴드 글라스 이어서(사용자 11/17) — 종목상세·뉴스·포지션에 남아 있던 불투명 남색 카드(rgb 12,21,40 · 22,32,57 · 27,37,62)를
+   같은 유리 한 벌로. 빛 번짐(backdrop-filter)은 맨 위 고정 머리줄에만 — 스크롤 때마다 다시 흐리는 칸 수를 늘리지 않는다. */
+html:not([data-theme="light"]) body #page-detail :is(.detail-vcard,.detail-crowd,.detail-anl,.detail-fund,.lxs,.lxt,.fp-qmj),
+html:not([data-theme="light"]) body #page-macro :is(.news-sector),
+html:not([data-theme="light"]) body #page-positions :is(.pz-btn,.pz-more){
+  background:linear-gradient(158deg,rgba(255,255,255,.085),rgba(255,255,255,.022) 55%,rgba(255,255,255,.04))!important;
+  border:1px solid rgba(255,255,255,.13)!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.16),inset 0 -1px 0 rgba(255,255,255,.035),0 10px 28px -16px rgba(0,0,0,.6)!important}
+html:not([data-theme="light"]) body #page-detail :is(.detail-tf,.lxa-rg),html:not([data-theme="light"]) body #page-macro .market-tabs{background:rgba(255,255,255,.06)!important;border:1px solid rgba(255,255,255,.12)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.12)!important}
+html:not([data-theme="light"]) body #page-detail .detail-head{background:linear-gradient(180deg,rgba(20,28,48,.97),rgba(16,23,40,.95))!important;border:1px solid rgba(255,255,255,.12)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 10px 24px -14px rgba(0,0,0,.6)!important}
+html:not([data-theme="light"]) body #page-detail .page-header{background:linear-gradient(180deg,rgba(14,20,36,.78),rgba(14,20,36,.62))!important;-webkit-backdrop-filter:blur(16px) saturate(160%);backdrop-filter:blur(16px) saturate(160%);border-bottom:1px solid rgba(255,255,255,.08)}
+html[data-theme="light"] body #page-detail :is(.detail-vcard,.detail-crowd,.detail-anl,.detail-fund,.lxs,.lxt,.fp-qmj){background:linear-gradient(158deg,rgba(255,255,255,.82),rgba(255,255,255,.55))!important;border:1px solid rgba(255,255,255,.95)!important;box-shadow:inset 0 1px 0 #fff,0 10px 26px -16px rgba(20,40,80,.3)!important}
