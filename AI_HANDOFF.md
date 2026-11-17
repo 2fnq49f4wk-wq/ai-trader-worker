@@ -286,6 +286,7 @@
 - 글 끝 문구는 글 종류별(사용자 11/9 승인): ① 개발·AI 팁·비용 → "이걸로 만든 사이트 직접 눌러봐 (가입 없이 구경 가능)" + https://lux-inv.com/?r=tNN (설정 공개 페이지 lux-inv.com/dev 도 가끔) ② AI 성적·실패담 → "AI 지금 뭐 사는지 실시간으로 보임" + https://lux-inv.com/?r=tNN ③ 광고 → "고딩이 만든 AI 모의주식 사이트 회원가입해서 수익률 경쟁해봐요" + https://lux-inv.com/?r=tNN. NN=글 번호. 유입은 /api/ref-stats(14일 · 방문 v · 가입 s). 이미지·영상 첨부 글은 게시 전 사용자 확인.
 - ★(V33.853 · 사용자 11/17) 다음 글부터 '링크 카드' 방식★: 스레드는 사진에 링크를 못 건다 → kind LINK(글 + link_attachment). media_url = https://lux-inv.com/p/<이름>.
   공유 주소 = public/promo/share.json 한 줄 {title, desc, img(가로 1200x630 권장), w, h, to:"/?r=tNN"} → 워커가 og 태그 + 바로 이동. 새 그림을 쓰면 게시 전 사용자 확인, 그림 없으면 img "/og-card3.png".
+  ★글은 500자 이하★(Threads API 'Param text must be at most 500 characters' — 11/17 devlog-16 첫 시도 실패). 게시 전 python3 로 len 확인.
   글 끝 주소 줄은 그대로 두되 카드가 같은 곳(?r=tNN)으로 간다. 게시 전 `curl -A facebookexternalhit/1.1 https://lux-inv.com/p/<이름>` 로 og:image 확인.
 - text_file 비우고 돌리면 토큰 확인만, 채우면 글 게시. 글 원문은 `promo/threads/devlog-0N.txt`, 미디어는 `public/promo/`.
 
