@@ -482,3 +482,96 @@ body #page-positions .pz-cf{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:1
 body #page-positions .pz-empty{height:150px;display:grid;place-items:center;text-align:center;font-size:12.5px;color:var(--m2-m,#A0A8B6)}
 @media (max-width:900px){body #page-positions .pz-viz{grid-template-columns:1fr}}
 html[data-theme="light"] body #page-positions :is(.pz-don,.pz-cur){background:rgba(255,255,255,.7);border-color:rgba(16,24,40,.08)}
+/* [V33.856] LUX-POSITION '전체' = 한 장 — 5개 계좌 합산(원 그래프 왼쪽 · 전 종목 목록 오른쪽) + 미국·한국 카드 나란히(작게) · 보유 목록은 접어 둔다 */
+body #page-positions .pz-all{display:none}
+body #page-positions:is(:not([data-pz]),[data-pz="all"]) .pz-all{display:block;margin:10px 14px 12px;padding:14px 16px;border-radius:18px;background:linear-gradient(158deg,rgba(255,255,255,.085),rgba(255,255,255,.02) 60%);border:1px solid rgba(255,255,255,.13);box-shadow:inset 0 1px 0 rgba(255,255,255,.16),0 12px 30px -18px rgba(0,0,0,.6)}
+body #page-positions .pza-top{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:flex-end;justify-content:space-between;margin-bottom:12px}
+body #page-positions .pza-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px}
+body #page-positions .pza-h span{width:100%;font-size:12px;color:var(--m2-m,#A0A8B6)}body #page-positions .pza-h b{font-size:28px;font-weight:700;font-family:'IBM Plex Mono',monospace;letter-spacing:-.5px}
+body #page-positions .pza-h em{font-style:normal;font-family:'IBM Plex Mono',monospace;font-size:14px}body #page-positions .pza-h small{font-size:11px;color:var(--m2-mm,#7B8494)}
+body #page-positions .pza-chips{display:flex;flex-wrap:wrap;gap:6px}
+body #page-positions .pza-chip{display:flex;flex-direction:column;gap:1px;padding:7px 11px;border-radius:12px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);cursor:pointer;min-width:104px}
+body #page-positions .pza-chip:hover{border-color:rgba(127,166,255,.5)}
+body #page-positions .pza-chip span{font-size:11px;color:var(--m2-m,#A0A8B6);display:flex;align-items:center;gap:5px}body #page-positions .pza-chip i{width:8px;height:8px;border-radius:2px}
+body #page-positions .pza-chip b{font-family:'IBM Plex Mono',monospace;font-size:13.5px}body #page-positions .pza-chip em{font-style:normal;font-family:'IBM Plex Mono',monospace;font-size:11.5px}
+body #page-positions .pza-body{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.3fr);gap:12px}
+body #page-positions .pza-don{display:flex;align-items:center;gap:16px;padding:10px 12px;border-radius:14px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);min-width:0}
+body #page-positions .pza-dw{position:relative;width:150px;height:150px;flex:0 0 150px}body #page-positions .pza-dw svg{width:100%;height:100%;display:block}
+body #page-positions .pza-dc{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.15}
+body #page-positions .pza-dc span,body #page-positions .pza-dc small{font-size:11px;color:var(--m2-m,#A0A8B6)}body #page-positions .pza-dc b{font-size:24px;font-family:'IBM Plex Mono',monospace}
+body #page-positions .pza-leg{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;flex:1;min-width:0;font-size:12.5px}
+body #page-positions .pza-leg li{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:8px;align-items:center}body #page-positions .pza-leg i{width:10px;height:10px;border-radius:3px}
+body #page-positions .pza-leg b{font-family:'IBM Plex Mono',monospace;font-weight:600}
+body #page-positions .pza-list{border-radius:14px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);padding:8px 10px;min-width:0}
+body #page-positions .pza-lh{display:flex;justify-content:space-between;font-size:11px;color:var(--m2-mm,#7B8494);padding:0 4px 6px;border-bottom:1px solid rgba(255,255,255,.07)}
+body #page-positions .pza-list ul{list-style:none;margin:0;padding:0;max-height:196px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}
+body #page-positions .pza-list li{display:grid;grid-template-columns:34px minmax(0,1fr) 48px 88px 64px;gap:8px;align-items:center;padding:5px 4px;font-size:12.5px;border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer}
+body #page-positions .pza-list li:hover{background:rgba(255,255,255,.04)}
+body #page-positions .pza-tag{font-size:10.5px;font-weight:700}body #page-positions .pza-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+body #page-positions :is(.pza-w,.pza-v,.pza-r){text-align:right;font-family:'IBM Plex Mono',monospace;font-size:12px}body #page-positions .pza-w{color:var(--m2-m,#A0A8B6)}
+body #page-positions .pza-none{display:block!important;text-align:center;color:var(--m2-m,#A0A8B6);padding:20px}
+body #page-positions .pza-all-legacy{display:none}
+body #page-positions :is(.pza-h em,.pza-chip em,.pza-r).pos{color:var(--m2-up,#F04452)}body #page-positions :is(.pza-h em,.pza-chip em,.pza-r).neg{color:var(--m2-dn,#3182F6)}
+/* 전체 보기: 미국·한국 카드 나란히 · 작게 · 채권·원자재 상세는 '대체' 탭(합산·칩·목록에 이미 있음) */
+@media (min-width:1100px){body #page-positions:is(:not([data-pz]),[data-pz="all"]) .pz-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:12px!important}}
+body #page-positions:is(:not([data-pz]),[data-pz="all"]) .pz-alt{display:none!important}
+body #page-positions:is(:not([data-pz]),[data-pz="all"]) .port-card .port-total{font-size:24px!important}
+body #page-positions:is(:not([data-pz]),[data-pz="all"]) .port-card .pz-viz{grid-template-columns:1fr;gap:8px;margin:8px 0}
+body #page-positions:is(:not([data-pz]),[data-pz="all"]) .port-card .pz-dw{width:104px;height:104px;flex-basis:104px}
+body #page-positions:is(:not([data-pz]),[data-pz="all"]) .port-card .pz-cur svg,body #page-positions:is(:not([data-pz]),[data-pz="all"]) .port-card .pz-empty{height:96px}
+body #page-positions:is(:not([data-pz]),[data-pz="all"]) .port-card :is(.pz-don,.pz-cur){padding:10px 12px}
+body #page-positions:is(:not([data-pz]),[data-pz="all"]) .port-card .pz-leg{gap:3px;font-size:12px}
+body #page-positions:is(:not([data-pz]),[data-pz="all"]) .port-card :is(.port-strats,.pz-more){display:none!important}
+@media (max-width:900px){body #page-positions .pza-body{grid-template-columns:1fr}body #page-positions .pza-list li{grid-template-columns:30px minmax(0,1fr) 42px 74px 58px;gap:6px}}
+html[data-theme="light"] body #page-positions:is(:not([data-pz]),[data-pz="all"]) .pz-all{background:rgba(255,255,255,.75);border-color:rgba(16,24,40,.08)}
+@media (min-width:1360px){body #page-positions:is(:not([data-pz]),[data-pz="all"]) .port-card .pz-viz{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}}
+/* [V33.856] MY 홈 = 한 화면(사용자 11/17 "비율 줄여서 스크롤 없이") — 넓은 화면(≥1100)에서 글자·여백을 줄이고 두 칸이 각자 화면 높이 안에서 스크롤한다(페이지는 안 움직임) */
+@media (min-width:1100px){
+  body #mineRoot.mwide{padding-top:4px!important}
+  body #mineRoot.mwide .tabs{margin-bottom:6px!important;padding:3px!important}
+  body #mineRoot.mwide .tabs button{min-height:34px!important;padding:6px 10px!important;font-size:13.5px!important}
+  body #mineRoot.mwide .hi{margin:0 4px 6px!important;font-size:13px!important}
+  body #mineRoot.mwide .mhome{height:calc(100dvh - 150px);gap:12px!important;align-items:stretch!important}
+  body #mineRoot.mwide .mhome>.mcol{min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;gap:10px!important;padding-right:2px}
+  body #mineRoot.mwide .card{padding:12px 14px!important;margin:0!important;border-radius:16px!important}
+  body #mineRoot.mwide section[aria-label="모의계좌"] .h1{font-size:34px!important;line-height:1.15!important;margin:2px 0!important}
+  body #mineRoot.mwide .mkpi{gap:6px!important;margin-top:8px!important}
+  body #mineRoot.mwide .mkpi>div{padding:7px 10px!important}
+  body #mineRoot.mwide .mkpi span{font-size:11px!important}body #mineRoot.mwide .mkpi b{font-size:14px!important}
+  body #mineRoot.mwide .mviz{gap:8px!important;margin-top:8px!important}
+  body #mineRoot.mwide .mdon svg{width:96px!important;height:96px!important}
+  body #mineRoot.mwide .mcur svg{height:80px!important}
+  body #mineRoot.mwide .mcur{padding:8px 10px!important}
+  body #mineRoot.mwide .g2{gap:8px!important}body #mineRoot.mwide .wx{padding:9px 12px!important;gap:2px!important}
+  body #mineRoot.mwide .wx b{font-size:15px!important}
+  body #mineRoot.mwide .search{min-height:40px!important;padding:0 12px!important}body #mineRoot.mwide .search input{font-size:14px!important}
+  body #mineRoot.mwide .chips{margin:6px 0!important}body #mineRoot.mwide .chips button{padding:4px 11px!important;font-size:12.5px!important}
+  body #mineRoot.mwide .row{padding:7px 0!important;gap:10px!important;min-height:0!important}
+  body #mineRoot.mwide .row .nm{font-size:14px!important}body #mineRoot.mwide .row .p{font-size:14px!important}
+  body #mineRoot.mwide .row :is(button,.buy,.sell,.tag2){min-height:30px!important;padding:4px 11px!important;font-size:12.5px!important}
+  body #mineRoot.mwide .row .rk,body #mineRoot.mwide .row .av{width:28px!important;height:28px!important;font-size:12px!important}
+  body #mineRoot.mwide .h2{font-size:15px!important}
+  body #mineRoot.mwide .empty{padding:14px!important}
+}
+@media (min-width:1100px){body #mineRoot.mwide .empty{min-height:0!important;padding:12px!important}body #mineRoot.mwide .mdc{transform:scale(.8)}}
+@media (min-width:1100px){body #mineRoot.mwide{padding-bottom:8px!important}body #mineRoot.mwide>.note{margin:4px 0 0!important}}
+/* [V33.856] 전문가 대시보드 = 위아래로 촘촘히(사용자 11/17 "아이패드·컴퓨터에서 더 많은 정보") — 지수 카드·시장폭·표 줄·패널 머리·간격을 줄인다(폰은 그대로) */
+@media (min-width:1000px){
+  html body #page-dashboard .fv-deck{gap:8px!important;row-gap:8px!important}
+  html body #page-dashboard .fv-index-row{gap:8px!important}
+  html body #page-dashboard .fv-idx{padding:6px 10px 4px!important}
+  html body #page-dashboard .fv-idx-chart{height:30px!important;margin-top:2px!important}
+  html body #page-dashboard .fv-breadth{padding-top:3px!important;padding-bottom:3px!important;min-height:0!important}
+  html body #page-dashboard .fv-panel-head{min-height:0!important;padding-top:7px!important;padding-bottom:7px!important}
+  html body #page-dashboard .fv-table :is(td,th){padding-top:2px!important;padding-bottom:2px!important}
+  html body #page-dashboard .fv-movers-grid{max-height:470px;overflow-y:auto!important;overflow-x:hidden!important;overscroll-behavior:contain;scrollbar-width:none}
+  html body #page-dashboard .fv-movers-grid::-webkit-scrollbar{display:none}
+  html body #page-dashboard .fv-panel>.fv-table{max-height:250px;overflow:auto;display:block}
+  html body #page-dashboard .fv-movers-grid .fv-table :is(td,th){font-size:12px!important}
+  html body #page-dashboard .fv3-scroll{max-height:250px!important}
+  html body #page-dashboard .fv-intel-wrap{gap:8px!important}
+  html body #page-dashboard .fv-intel-wrap .fv-panel{max-height:250px}
+  html body #page-dashboard .fv-headlines{max-height:230px;overflow:auto}
+  html body #page-dashboard :is(.dash-grid,.fv3-grid,.cmbd-grid){gap:8px!important;padding-top:4px!important;padding-bottom:4px!important}
+  html body #page-dashboard .pipeline-bar.folded .pipeline-head{min-height:0!important;padding-top:6px!important;padding-bottom:6px!important}
+}

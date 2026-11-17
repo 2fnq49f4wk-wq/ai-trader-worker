@@ -33,10 +33,10 @@
     '#pbObs .k-orbit{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,1.5fr) minmax(0,1fr);align-items:center;gap:6px 10px;padding:16px 16px 12px;position:relative;overflow:hidden;background:radial-gradient(120% 90% at 50% 40%,rgba(57,208,255,.07),transparent 60%),var(--k-panel)}',
     '#pbObs .ko-side{display:flex;flex-direction:column;gap:10px;min-width:0}#pbObs .ko-k{border:1px solid var(--k-line);border-radius:14px;padding:12px 14px;background:rgba(255,255,255,.02);backdrop-filter:blur(6px)}#pbObs .ko-k.on{border-color:rgba(61,220,151,.45);box-shadow:0 0 0 1px rgba(61,220,151,.15) inset}',
     '#pbObs .ko-k dd{margin:6px 0 2px;font-family:var(--k-mono);font-size:26px;font-weight:600}#pbObs .ko-k small{color:var(--k-sub);font-size:11.5px}',
-    '#pbObs .ko-c{position:relative;height:300px;min-width:0}#pbObs .ko-slot{position:absolute;inset:0;contain:strict}',
+    '#pbObs .ko-c{position:relative;height:340px;min-width:0}#pbObs .ko-slot{position:absolute;inset:0;contain:strict}',
     '#pbObs .ko-omni{position:absolute;inset:0;display:grid;place-items:center;opacity:0;transition:opacity .6s}#pbObs .ko-omni.ready{opacity:1}',
     '#pbObs .ko-spin{position:relative;display:grid;place-items:center;max-width:100%;max-height:100%;cursor:crosshair;animation:koSpin 140s linear infinite;will-change:transform;border-radius:50%}#pbObs .ko-omni.sel .ko-spin{animation-play-state:paused}#pbObs .ko-mark{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;border:2px solid #ffcfb6;box-shadow:0 0 0 4px rgba(255,207,182,.25),0 0 14px #ffcfb6;pointer-events:none}',
-    '#pbObs .ko-cv{display:block;max-width:100%;max-height:100%;border-radius:50%;-webkit-mask:radial-gradient(circle,#000 62%,transparent 71%);mask:radial-gradient(circle,#000 62%,transparent 71%)}',
+    '#pbObs .ko-cv{display:block;max-width:100%;max-height:100%;border-radius:50%}#pbObs .ko-ring{display:none!important}',
     '#pbObs .ko-ring{position:absolute;left:50%;top:50%;border:1px solid rgba(150,200,255,.2);border-radius:50%;pointer-events:none}#pbObs .ko-ring.r1{width:min(100%,440px);aspect-ratio:3.1;transform:translate(-50%,-50%) rotate(-20deg)}#pbObs .ko-ring.r2{width:min(112%,500px);aspect-ratio:3.1;transform:translate(-50%,-50%) rotate(14deg)}',
     '#pbObs .ko-ring i{position:absolute;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:rgba(180,210,255,.35)}#pbObs .ko-ring i.on.f{background:#f5c451;box-shadow:0 0 8px #f5c451}#pbObs .ko-ring i.on.c{background:#3ddc97;box-shadow:0 0 8px #3ddc97}',
     '#pbObs{container-type:inline-size}@container (max-width:640px){#pbObs .k-orbit{grid-template-columns:1fr 1fr}#pbObs .ko-c{grid-column:1/-1;grid-row:1;height:250px}#pbObs .ko-k{padding:10px 12px}#pbObs .ko-k dd{font-size:22px}}',
@@ -244,21 +244,71 @@
       el.innerHTML = h;
     });
   }
-  function orbitDraw() {   // 한 장을 나눠 긋는다 — 새로 고르면 앞의 긋기는 버린다(tok)
-    var NO = window.NeuralObservatory, g = orbitG, sc = orbitSc, v = orbitV, S = orbitS, tok = ++orbitTok; if (!g || !sc) return;
+  /* [V33.856] ★OMNI 코어 다시 그리기 — 푸른 홀로그램 구체★(사용자 11/17 "장난감 같다 · 선과 점 · 푸른 색감 · 지금처럼 복잡하게 · 노드 보기 유지").
+     NeuralObservatory 의 분홍 그림 대신 같은 구조(omniCore 의 점·선·묶음)를 여기서 직접 투영해 긋는다:
+       ① 짙은 남색 빛무리 + 위도·경도 격자(홀로그램 구면) ② 가중치 선 3.7만 줄 = 세기 7단 · 앞쪽일수록 밝게 · 푸른→하늘색(가산 합성)
+       ③ 뉴런 점 = 묶음별 크기·색(입력 하늘 · 몸통 파랑 · 머리 흰 빛 고리 · 나무 청록) ④ 바깥 눈금 고리(HUD).
+     한 번 긋고(쉬는 틈에 나눠서) CSS 가 돌린다 — 메인 스레드는 고를 때만 다시 긋는다. */
+  function orbitProject(sc, S) {
+    var n = sc.n, P = sc.P, yaw = .4, pitch = .32, cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+    var mx = 1; for (var i = 0; i < n; i++) { var r0 = sc.ring[i]; if (r0 >= 0) { mx = Math.max(mx, sc.rings[r0].R); continue; } mx = Math.max(mx, Math.hypot(P[i * 3], P[i * 3 + 1], P[i * 3 + 2])); }
+    var scale = S * 0.43 / mx, ox = S / 2, oy = S / 2;
+    sc.SX = new Float32Array(n); sc.SY = new Float32Array(n); sc.SZ = new Float32Array(n); sc._mx = mx; sc._sc = scale;
+    var rot = function (x, y, z, o) { var xr = x * cy + z * sy, zr = -x * sy + z * cy, yr = y * cp - zr * sp, dp = y * sp + zr * cp, k = 900 / (900 + dp * 400 / mx); o[0] = xr * k * scale + ox; o[1] = yr * k * scale + oy; o[2] = dp / mx; return o; };
+    var o = [0, 0, 0];
+    for (var j = 0; j < n; j++) { var x, y, z, r = sc.ring[j]; if (r >= 0) { var R = sc.rings[r], a = sc.ang[j], c = Math.cos(a) * R.R, s = Math.sin(a) * R.R; x = R.e1[0] * c + R.e2[0] * s; y = R.e1[1] * c + R.e2[1] * s; z = R.e1[2] * c + R.e2[2] * s; } else { x = P[j * 3]; y = P[j * 3 + 1]; z = P[j * 3 + 2]; }
+      rot(x, y, z, o); sc.SX[j] = o[0]; sc.SY[j] = o[1]; sc.SZ[j] = o[2]; }
+    sc._rot = rot;
+  }
+  function orbitDraw() {
+    var g = orbitG, sc = orbitSc, S = orbitS, tok = ++orbitTok; if (!g || !sc) return;
+    if (!sc.SX || sc._S !== S) { orbitProject(sc, S); sc._S = S; }
+    if (!sc._role) { sc._role = new Uint8Array(sc.n); sc.groups.forEach(function (gr) { var lb = String(gr.label), k = lb === '입력' ? 1 : lb.indexOf('몸통') === 0 ? 2 : lb === '머리' ? 3 : lb === '나무' ? 4 : 5; gr.ids.forEach(function (id) { sc._role[id] = k; }); }); }
+    var sel = orbitSel, cx = S / 2, rot = sc._rot, mx = sc._mx, SX = sc.SX, SY = sc.SY, SZ = sc.SZ, la = sc.la, lb = sc.lb, ls = sc.ls, m = la.length;
     g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, g.canvas.width, g.canvas.height); g.restore();
-    v.selected = orbitSel;
-    var r = NO.drawCore(g, sc, v, S, S, 0), pend = r && r.rest;
+    // ① 빛무리 + 홀로그램 격자
+    var halo = g.createRadialGradient(cx, cx, S * .05, cx, cx, S * .5); halo.addColorStop(0, 'rgba(40,110,255,.22)'); halo.addColorStop(.55, 'rgba(14,40,110,.18)'); halo.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = halo; g.fillRect(0, 0, S, S);
+    g.lineWidth = .6; var o = [0, 0, 0], Rg = mx * 1.02;
+    var poly = function (pts) { g.beginPath(); for (var q = 0; q < pts.length; q++) { rot(pts[q][0], pts[q][1], pts[q][2], o); q ? g.lineTo(o[0], o[1]) : g.moveTo(o[0], o[1]); } g.stroke(); };
+    g.strokeStyle = 'rgba(90,160,255,.13)';
+    for (var la_ = -75; la_ <= 75; la_ += 15) { var ph = la_ * Math.PI / 180, pts = []; for (var t = 0; t <= 72; t++) { var th = t / 72 * Math.PI * 2; pts.push([Math.cos(ph) * Math.cos(th) * Rg, Math.sin(ph) * Rg, Math.cos(ph) * Math.sin(th) * Rg]); } poly(pts); }
+    for (var lo = 0; lo < 180; lo += 15) { var l2 = lo * Math.PI / 180, pm = []; for (var u = 0; u <= 72; u++) { var a2 = u / 72 * Math.PI * 2; pm.push([Math.cos(a2) * Math.cos(l2) * Rg, Math.sin(a2) * Rg, Math.cos(a2) * Math.sin(l2) * Rg]); } poly(pm); }
+    // ④ 바깥 눈금 고리(HUD) — 회전과 함께 돈다
+    g.strokeStyle = 'rgba(120,190,255,.35)'; g.lineWidth = 1; g.beginPath(); g.arc(cx, cx, S * .475, 0, Math.PI * 2); g.stroke();
+    g.strokeStyle = 'rgba(120,190,255,.18)'; g.setLineDash([2, 5]); g.beginPath(); g.arc(cx, cx, S * .455, 0, Math.PI * 2); g.stroke(); g.setLineDash([]);
+    g.beginPath(); for (var tk = 0; tk < 120; tk++) { var aa = tk / 120 * Math.PI * 2, l1 = tk % 10 === 0 ? S * .445 : S * .462; g.moveTo(cx + Math.cos(aa) * l1, cx + Math.sin(aa) * l1); g.lineTo(cx + Math.cos(aa) * S * .475, cx + Math.sin(aa) * S * .475); } g.strokeStyle = 'rgba(120,190,255,.28)'; g.stroke();
+    g.lineWidth = 2.2; g.strokeStyle = 'rgba(140,210,255,.55)'; [[.15, .55], [1.9, 2.35], [3.6, 4.4], [5.2, 5.5]].forEach(function (ar) { g.beginPath(); g.arc(cx, cx, S * .487, ar[0], ar[1]); g.stroke(); });
+    // ② 가중치 선 — 세기 7단(앞쪽 밝게) · 고른 뉴런이 있으면 나머지는 어둡게
+    var L = 7, buckets = []; for (var b = 0; b < L; b++) buckets.push([]);
+    var hi = [], dim = sel >= 0 ? .35 : 1, KW = [1.25, 1.4, 1.6, .9, .9, .5], kk;   // 종류별 무게: 0 입력→몸통 · 1 몸통→몸통 · 2 머리 · 3 나무 분기(1.4만 줄 — 고리 사이를 가로질러 판처럼 보여 강한 것만 옅게) · 4 장식
+    for (var e = 0; e < m; e++) { var A = la[e], B = lb[e]; if (sel >= 0 && (A === sel || B === sel)) { hi.push(e); continue; }
+      var dep = 1 - ((SZ[A] + SZ[B]) * .5 + 1) * .5, kk = sc.lk[e], v = Math.pow(Math.max(0, Math.min(1, ls[e] * KW[kk])), .8) * (.3 + .7 * dep) * dim; if (kk === 3) { if (ls[e] < .5) continue; v *= .2; } var lv = Math.min(L - 1, Math.floor(v * L)); buckets[lv].push(e); }
+    var ex = 1, cols = [.012, .02, .032, .05, .08, .13, .22].map(function (a, q) { var c = ['40,90,210', '45,105,225', '55,125,240', '70,145,250', '90,170,255', '125,200,255', '175,228,255'][q]; return 'rgba(' + c + ',' + (a * ex * (q > 3 ? 1.8 : 1)).toFixed(4) + ')'; });
+    g.globalCompositeOperation = 'lighter'; g.lineWidth = .6;
+    var lvl = 0, idx = 0;
     var step = function () {
       if (tok !== orbitTok) return;
-      if (pend == null || pend < 0 || !NO.drawRest) { orbitBusy = false; orbitDone = true; return; }
-      pend = NO.drawRest(g, sc, v, S, S, pend, 3000);
-      (window.requestIdleCallback || function (f) { return setTimeout(f, 30); })(step, { timeout: 400 });
+      var t0 = performance.now();
+      while (lvl < L && performance.now() - t0 < 12) {
+        var arr = buckets[lvl], end = Math.min(arr.length, idx + 4000); g.strokeStyle = cols[lvl]; g.beginPath();
+        for (; idx < end; idx++) { var ee = arr[idx]; g.moveTo(SX[la[ee]], SY[la[ee]]); g.lineTo(SX[lb[ee]], SY[lb[ee]]); }
+        g.stroke(); if (idx >= arr.length) { lvl++; idx = 0; }
+      }
+      if (lvl < L) { (window.requestIdleCallback || function (f) { return setTimeout(f, 16); })(step, { timeout: 200 }); return; }
+      if (hi.length) { g.strokeStyle = 'rgba(220,240,255,.75)'; g.lineWidth = 1.1; g.beginPath(); hi.forEach(function (ee) { g.moveTo(SX[la[ee]], SY[la[ee]]); g.lineTo(SX[lb[ee]], SY[lb[ee]]); }); g.stroke(); }
+      g.globalCompositeOperation = 'source-over';
+      // ③ 뉴런 점 — 뒤에서 앞으로
+      var role = sc._role, ord = []; for (var i = 0; i < sc.n; i++) if (role[i]) ord.push(i); ord.sort(function (p, q) { return SZ[q] - SZ[p]; });
+      ord.forEach(function (i) { var k = role[i], f = (1 - (SZ[i] + 1) * .5), al = (.35 + .65 * f) * (sel >= 0 && i !== sel ? .55 : 1), r = k === 3 ? 3.4 : k === 2 ? 1.5 : k === 4 ? 1.1 : 1.3;
+        g.fillStyle = k === 3 ? 'rgba(235,248,255,' + al + ')' : k === 1 ? 'rgba(125,215,255,' + al + ')' : k === 2 ? 'rgba(80,150,255,' + al + ')' : k === 4 ? 'rgba(90,230,215,' + (al * .8) + ')' : 'rgba(160,190,255,' + al + ')';
+        g.beginPath(); g.arc(SX[i], SY[i], r, 0, Math.PI * 2); g.fill();
+        if (k === 3) { g.strokeStyle = 'rgba(140,210,255,' + (al * .7) + ')'; g.lineWidth = 1; g.beginPath(); g.arc(SX[i], SY[i], 7, 0, Math.PI * 2); g.stroke(); } });
+      orbitBusy = false; orbitDone = true;
     };
     orbitWrap.classList.add('ready'); step();
   }
   function orbitBuild() {
-    var NO = window.NeuralObservatory; if (!NO || !NO.omniCore || !NO.drawCore) { setTimeout(function () { if (orbitWrap && orbitWrap.isConnected) orbitMount(); }, 1500); return; }
+    var NO = window.NeuralObservatory; if (!NO || !NO.omniCore) { setTimeout(function () { if (orbitWrap && orbitWrap.isConnected) orbitMount(); }, 1500); return; }
     orbitBusy = true;
     fetch('/api/omni-structure').then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }).then(function (st) {
       var cv = orbitWrap.querySelector('canvas'), box = orbitWrap.getBoundingClientRect();

@@ -12,6 +12,13 @@
 
 ## Current handoff
 
+### V33.856 (2026-11-17) 포지션 '전체' 한 장 · OMNI 푸른 홀로그램 · MY 한 화면 · 대시보드 촘촘
+- LUX-POSITION 전체: #pzAll(index.html pzAllRender · window.__pzBook ← renderSummary/renderCommodities/renderAltPanel · 환율 window.__usdkrw ← 대시보드 FX USDKRW, 없으면 1400 대략) = 5계좌 원화 합산 · 원 그래프(종류별) 왼쪽 · 전 종목 목록 오른쪽 · 계좌 칩(누르면 그 탭). 미국·한국 카드 나란히(≥1100) · 보유 목록 기본 접힘(luxPzOpen2) · 채권·원자재 상세는 '대체' 탭.
+- OMNI 코어(playbook-observatory.js orbitProject/orbitDraw): drawCore 대신 직접 투영 · 남색 빛무리 + 위도·경도 격자 + 가중치 선 7단(가산) + 뉴런 점 + HUD 고리. 나무 분기(lk 3 · 1.4만 줄)가 고리 사이를 가로질러 판처럼 보여 강한 것(ls≥.5)만 옅게. 노드 고르기·카드 그대로.
+- MY(≥1100): .mhome 높이 = 화면 − 150px · 두 칸 각자 스크롤 · 글자·여백 축소 → 1440×900 · 1180×820 페이지 스크롤 0(실측).
+- 전문가 대시보드(≥1000): 지수 카드·시장폭·표 줄·패널 머리·간격 축소 · 상승/하락 목록 470px 안 스크롤 → 1440×900 첫 화면에 실적·원자재·환율 줄까지.
+- 주의: 버전 올릴 때 index.html 전체 's/33.xxx/…/g' 는 주석 속 [V33.xxx] 표식까지 바꾼다 → 'v=33.' 와 lux-build 만 바꿀 것.
+
 ### V33.855 (2026-11-17) eqh 복원이 안 돌던 것 — '현지 16시 뒤' 조건이 복원까지 막았다(ET 새벽 2시 실측 30분 동안 none). 복원은 장 닫힘이면 언제든 · 오늘 줄만 16시 뒤.
 
 ### V33.854 (2026-11-17) LUX-POSITION 한눈에 — 원 그래프 + 총자산 곡선

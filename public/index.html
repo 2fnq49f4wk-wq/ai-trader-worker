@@ -22,7 +22,7 @@
 </script>
 <script>/* [UI1] 첫 방문 배너 판정 */
 (function(){try{var q=location.search,f=/[?&]intro=hero(&|$)/.test(q);if(!f&&(/[?&]intro=0(&|$)/.test(q)||localStorage.getItem("lux-hero-seen")||localStorage.getItem("lux-auth")||/bot|crawl|spider|slurp|lighthouse|pagespeed|preview|headless|facebookexternalhit|kakaotalk-scrap/i.test(navigator.userAgent)||(window.matchMedia&&matchMedia("(display-mode: standalone)").matches)||navigator.standalone))return;
-localStorage.setItem("lux-hero-seen","1");var h=document.documentElement;h.classList.add("lux-hero","lux-nointro");var l=document.createElement("link");l.rel="stylesheet";l.href="/lux-hero.css?v=33.855";document.head.appendChild(l);var c=document.createElement("script");c.src="/lux-hero.js?v=33.855";c.defer=true;document.head.appendChild(c);}catch(e){}})();</script>
+localStorage.setItem("lux-hero-seen","1");var h=document.documentElement;h.classList.add("lux-hero","lux-nointro");var l=document.createElement("link");l.rel="stylesheet";l.href="/lux-hero.css?v=33.856";document.head.appendChild(l);var c=document.createElement("script");c.src="/lux-hero.js?v=33.856";c.defer=true;document.head.appendChild(c);}catch(e){}})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <script>/* [V33.740] ★첫 그림부터 축소 보기★(사용자 11/2 "로딩할 때 처음에 옛날 화면이 보인다") — 휴대폰은 늘 대시보드로 시작하므로, 첫 그림 전에 PC 폭 뷰포트로 바꿔 둔다
    (종전엔 스크립트가 다 돈 뒤 showPage 에서 바꿔 휴대폰 배치가 한 번 보였다). 폭은 지난번 잰 높이(localStorage lux-dz-vh)로 같은 식. */
@@ -345,20 +345,20 @@ window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{
 window.__luxAct=Date.now();['pointerdown','keydown','touchstart','wheel'].forEach(function(e){addEventListener(e,function(){window.__luxAct=Date.now();},{passive:true,capture:true});});
 window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600000;};
 </script>
-<meta name="lux-build" content="V33.855">
-<script src="/i18n.js?v=33.855" defer></script>
-<script src="/outlook.js?v=33.855" defer></script>
-<script src="/advisor.js?v=33.855" defer></script>
-<script src="/luxmini.js?v=33.855" defer></script>
-<script src="/luxmini-view.js?v=33.855" defer></script>
-<script src="/ovn-live.js?v=33.855" defer></script>
-<script src="/mine.js?v=33.855" defer></script>
-<script src="/easy-dash.js?v=33.855" defer></script>
-<script src="/lux-motion.js?v=33.855" defer></script>
-<script src="/stock-analysis.js?v=33.855" defer></script>
-<script src="/stock-info.js?v=33.855" defer></script>
-<script src="/detail-v3.js?v=33.855" defer></script><script src="/orderbook.js?v=33.855" defer></script>
-<script src="/neural-observatory.js?v=33.855" defer></script>
+<meta name="lux-build" content="V33.856">
+<script src="/i18n.js?v=33.856" defer></script>
+<script src="/outlook.js?v=33.856" defer></script>
+<script src="/advisor.js?v=33.856" defer></script>
+<script src="/luxmini.js?v=33.856" defer></script>
+<script src="/luxmini-view.js?v=33.856" defer></script>
+<script src="/ovn-live.js?v=33.856" defer></script>
+<script src="/mine.js?v=33.856" defer></script>
+<script src="/easy-dash.js?v=33.856" defer></script>
+<script src="/lux-motion.js?v=33.856" defer></script>
+<script src="/stock-analysis.js?v=33.856" defer></script>
+<script src="/stock-info.js?v=33.856" defer></script>
+<script src="/detail-v3.js?v=33.856" defer></script><script src="/orderbook.js?v=33.856" defer></script>
+<script src="/neural-observatory.js?v=33.856" defer></script>
 
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="application-name" content="LUX">
@@ -5112,6 +5112,7 @@ window.LUX_NV = {
         </div>
       </div>
 
+      <section class="pz-all" id="pzAll" aria-label="전체 자산 한눈에"></section>
       <!-- [V62] US/KR 포트폴리오 카드 리디자인 — 플래그 헤더 + 빅넘버 + 투자/현금 배분 바 -->
       <div class="dash-grid pz-grid">
         <div class="port-card" id="portCardUS">
@@ -9327,19 +9328,19 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
   #page-detail .detail-main .detail-chart{height:46vh !important;min-height:300px !important}
 }
 </style>
-<link rel="stylesheet" href="/brain-console.css?v=33.855">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.855">
-<link rel="stylesheet" href="/detail-v3.css?v=33.855">
-<link rel="stylesheet" href="/detail-v3b.css?v=33.855">
-<link rel="stylesheet" href="/detail-v3c.css?v=33.855"><link rel="stylesheet" href="/detail-v3d.css?v=33.855">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.855">
-<link rel="stylesheet" href="/model-evidence.css?v=33.855">
+<link rel="stylesheet" href="/brain-console.css?v=33.856">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.856">
+<link rel="stylesheet" href="/detail-v3.css?v=33.856">
+<link rel="stylesheet" href="/detail-v3b.css?v=33.856">
+<link rel="stylesheet" href="/detail-v3c.css?v=33.856"><link rel="stylesheet" href="/detail-v3d.css?v=33.856">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.856">
+<link rel="stylesheet" href="/model-evidence.css?v=33.856">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.855">
-<link rel="stylesheet" href="/lux-polish.css?v=33.855">
-<link rel="stylesheet" href="/lux-glass.css?v=33.855">
-<link rel="stylesheet" href="/lux-navy.css?v=33.855">
-<link rel="stylesheet" href="/lux-glass2.css?v=33.855"><script src="/lux-topbar.js?v=33.855"></script>
+<link rel="stylesheet" href="/liquid-metal.css?v=33.856">
+<link rel="stylesheet" href="/lux-polish.css?v=33.856">
+<link rel="stylesheet" href="/lux-glass.css?v=33.856">
+<link rel="stylesheet" href="/lux-navy.css?v=33.856">
+<link rel="stylesheet" href="/lux-glass2.css?v=33.856"><script src="/lux-topbar.js?v=33.856"></script>
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -11359,6 +11360,36 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
              byStrategy: byStrategy, heatPct: heatPct, hold: hold, initialCash: initialCash };
   }
 
+  /* [V33.856] ★LUX-POSITION '전체' = 한 장★(사용자 11/17 "미국·한국 분리하지 말고 전체에서 전부 · 원 그래프 왼쪽 · 목록 오른쪽") —
+     미국·한국 주식 · 미국·한국 채권 · 원자재 다섯 계좌를 원화로 합쳐(환율 = 대시보드 FX 의 USDKRW, 없으면 1,400 대략) 원 그래프 하나 + 전 종목 목록 하나.
+     각 계좌 숫자는 위 칩으로. 화면 계산만(서버 0) · 렌더는 한 장면에 한 번으로 모은다. */
+  var PZB = window.__pzBook || (window.__pzBook = {}), PZB_META = { us: ['미국 주식', '美', 'usd', '#7FA6FF'], kr: ['한국 주식', '韓', 'krw', '#FF8C7A'], bdus: ['미국 채권', '美債', 'usd', '#5FC8E8'], bdkr: ['한국 채권', '韓債', 'krw', '#B9A6FF'], cm: ['원자재', '原', 'usd', '#E2C766'] };
+  function pzBookSet(k, v) { PZB[k] = v; if (window.__pzAllQ) window.__pzAllQ(); }
+  var _pzAllRaf = 0; window.__pzAllQ = function () { if (!_pzAllRaf) _pzAllRaf = requestAnimationFrame(function () { _pzAllRaf = 0; try { pzAllRender(); } catch (e) { console.error('[pzAll]', e); } }); };
+  function pzAllRender() {
+    var el = $('pzAll'); if (!el) return;
+    var fx = window.__usdkrw > 0 ? window.__usdkrw : 1400, fxOk = window.__usdkrw > 0, K = function (k, v) { return PZB_META[k][2] === 'usd' ? v * fx : v; };
+    var keys = ['us', 'kr', 'bdus', 'bdkr', 'cm'].filter(function (k) { return PZB[k] && PZB[k].total > 0; }); if (!keys.length) return;
+    var tot = 0, base = 0, cash = 0, rows = [], cls = [];
+    keys.forEach(function (k) { var b = PZB[k]; tot += K(k, b.total); base += K(k, b.base || b.total); cash += K(k, Math.max(0, b.cash || 0)); cls.push({ k: k, v: K(k, b.mv || 0) });
+      (b.hold || []).forEach(function (h) { if (h.v > 0) rows.push({ k: k, n: h.n || h.s, s: h.s, v: h.v, kv: K(k, h.v), r: h.r }); }); });
+    cls.push({ k: 'cash', v: cash });
+    var R = 54, C = 2 * Math.PI * R, off = 0, T = Math.max(1, tot);
+    var col = function (k) { return k === 'cash' ? 'rgba(255,255,255,.16)' : PZB_META[k][3]; }, lab = function (k) { return k === 'cash' ? '현금' : PZB_META[k][0]; };
+    var ring = cls.filter(function (x) { return x.v > 0; }).map(function (x) { var len = x.v / T * C, d = Math.max(0, len - 1.5); var g = '<circle r="' + R + '" cx="70" cy="70" fill="none" stroke="' + col(x.k) + '" stroke-width="15" stroke-dasharray="' + d.toFixed(2) + ' ' + (C - d).toFixed(2) + '" stroke-dashoffset="' + (-off).toFixed(2) + '" transform="rotate(-90 70 70)"/>'; off += len; return g; }).join('');
+    var ret = base > 0 ? (tot / base - 1) * 100 : 0, sg = function (x) { return (x >= 0 ? '+' : '') + x.toFixed(2) + '%'; };
+    var won = function (v) { return v >= 1e8 ? '₩' + fmtNum(v / 1e8, 2) + '억' : v >= 1e4 ? '₩' + fmtNum(v / 1e4, 0) + '만' : '₩' + fmtNum(v, 0); };
+    var nat = function (k, v) { return PZB_META[k][2] === 'usd' ? '$' + fmtNum(v, v >= 1000 ? 0 : 2) : won(v); };
+    var leg = cls.map(function (x) { return '<li><i style="background:' + col(x.k) + '"></i><span>' + lab(x.k) + '</span><b>' + (x.v / T * 100).toFixed(1) + '%</b></li>'; }).join('');
+    var chips = keys.map(function (k) { var b = PZB[k]; return '<div class="pza-chip" role="button" tabindex="0" data-go="' + (k === 'us' || k === 'kr' ? k : 'alt') + '"><span><i style="background:' + PZB_META[k][3] + '"></i>' + PZB_META[k][0] + '</span><b>' + nat(k, b.total) + '</b><em class="' + (b.ret >= 0 ? 'pos' : 'neg') + '">' + sg(b.ret || 0) + '</em></div>'; }).join('');
+    rows.sort(function (a, b) { return b.kv - a.kv; });
+    var list = rows.length ? rows.map(function (r) { return '<li data-sym="' + escapeHtml(r.s) + '" data-mk="' + (r.k === 'kr' || r.k === 'bdkr' ? 'kr' : 'us') + '"><span class="pza-tag" style="color:' + PZB_META[r.k][3] + '">' + PZB_META[r.k][1] + '</span><span class="pza-n">' + escapeHtml(r.n) + '</span><span class="pza-w">' + (r.kv / T * 100).toFixed(1) + '%</span><span class="pza-v">' + nat(r.k, r.v) + '</span><span class="pza-r ' + (r.r == null ? '' : r.r >= 0 ? 'pos' : 'neg') + '">' + (r.r == null ? '—' : sg(r.r)) + '</span></li>'; }).join('') : '<li class="pza-none">보유 종목이 없습니다</li>';
+    var html = '<div class="pza-top"><div class="pza-h"><span>전체 자산 · ' + keys.length + '개 계좌 합산</span><b>' + won(tot) + '</b><em class="' + (ret >= 0 ? 'pos' : 'neg') + '">' + sg(ret) + '</em><small>≈ $' + fmtNum(tot / fx, 0) + ' · 환율 ' + fmtNum(fx, 0) + (fxOk ? '' : '(대략)') + '</small></div><div class="pza-chips">' + chips + '</div></div>' +
+      '<div class="pza-body"><div class="pza-don"><div class="pza-dw"><svg viewBox="0 0 140 140" aria-label="자산 종류별 비중"><circle r="' + R + '" cx="70" cy="70" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="15"/>' + ring + '</svg><div class="pza-dc"><span>투자 중</span><b>' + ((T - cash) / T * 100).toFixed(0) + '%</b><small>' + rows.length + '종목</small></div></div><ul class="pza-leg">' + leg + '</ul></div>' +
+      '<div class="pza-list"><div class="pza-lh"><span>전 종목 · 비중순</span><span>비중 · 평가액 · 수익률</span></div><ul>' + list + '</ul></div></div>';
+    if (el.__h !== html) { el.__h = html; el.innerHTML = html; }
+    if (!el.__w) { el.__w = 1; el.addEventListener('click', function (e) { var li = e.target.closest('li[data-sym]'); if (li && window.openStockDetail) window.openStockDetail(li.getAttribute('data-sym'), li.getAttribute('data-mk')); var ch = e.target.closest('[data-go]'); if (ch) { var tb = document.querySelector('#pzTabs [data-pz="' + ch.getAttribute('data-go') + '"]'); if (tb) tb.click(); } }); }
+  }
   /* [V33.855] ★LUX-POSITION 한눈에★(사용자 11/17 "MY 처럼 그래프로 포트폴리오·수익률") — 원 그래프 = 현금 + 종목별 평가액 비중 ·
      곡선 = 서버의 날짜별 총자산(state.eqh · 거래 기록으로 복원 + 마감 뒤 하루 한 줄) + 지금 값. 화면 계산만(추가 요청 0) · 값이 같으면 다시 안 그린다. */
   var PZ_COL = ['#7FA6FF', '#E2C766', '#FF8C7A', '#B9A6FF', '#5FC8E8', '#9BD67A', '#F0A0C8', '#9DB4E8'];
@@ -11420,6 +11451,7 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
     changeEl.textContent = sign + fmtNum(s.changePct, 2) + '%';
     changeEl.className = 'port-pnl summary-value ' + (s.changePct > 0 ? 'pos' : (s.changePct < 0 ? 'neg' : ''));
     try { pzViz(market, s); } catch (e) { console.error('[pzViz]', e); }
+    try { pzBookSet(market, { total: s.total, base: s.initialCash, cash: s.cash, mv: s.marketVal, ret: s.changePct, hold: (s.hold || []).map(function (h) { var q = lastQuotes[h.s] || {}; var n = h.s; try { n = displayName(Object.assign({ symbol: h.s }, q), market) || h.s; } catch (e) {} return { s: h.s, n: n, v: h.v, r: h.c > 0 ? (h.v / h.c - 1) * 100 : null }; }) }); } catch (e) {}
     // [V62] 투자/현금 배분 바
     var ab = $('allocBar'+up);
     if (ab) {
@@ -11599,7 +11631,7 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
     // [카드분리] 미국/한국을 각각 별도 카드로 렌더 (aggUS/aggKR는 위에서 계산됨)
     /* [V33.593] ★포지션 재설계(사용자 시안)★ — 미국·한국 카드마다 '보유 종목 N · 평가손익 ▾' 버튼이 그 시장 목록을 연다.
        PC·패드는 열 맞춘 줄, 폰은 카드(CSS 가 같은 마크업을 바꾼다). 열림 상태는 시장별로 기억한다. */
-    var PZO = window.__pzOpen || (window.__pzOpen = (function(){ try { return JSON.parse(localStorage.getItem('luxPzOpen') || '{"us":true,"kr":true}'); } catch(e) { return { us: true, kr: true }; } })());
+    var PZO = window.__pzOpen || (window.__pzOpen = (function(){ try { return JSON.parse(localStorage.getItem('luxPzOpen2') || '{"us":false,"kr":false}'); } catch(e) { return { us: false, kr: false }; } })());
     function buildHold(list, market) {
       var mk = market.toLowerCase(), sym = market === 'US' ? '$' : '₩';
       var fmtMoney = market === 'KR' ? fmtCompact : function(n){ return fmtNum(n, 2); };
@@ -11644,7 +11676,7 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
         var b = e.target.closest ? e.target.closest('.pz-btn') : null;
         if (b) {
           var m = b.getAttribute('data-pzm'); PZO[m] = !(PZO[m] !== false);
-          try { localStorage.setItem('luxPzOpen', JSON.stringify(PZO)); } catch(e2) {}
+          try { localStorage.setItem('luxPzOpen2', JSON.stringify(PZO)); } catch(e2) {}
           renderPositions(window.__pzArgs[0], window.__pzArgs[1]); return;
         }
         var t = e.target.closest ? e.target.closest('#pzTabs [data-pz]') : null;
@@ -11828,6 +11860,7 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
     positions.forEach(function(p){ var q=cmQuotes[p.symbol]; invested += p.qty * (q&&q.price||p.avg); });
     var total = cash + invested;
     var chgPct = initial > 0 ? (total - initial) / initial * 100 : 0;
+    try { pzBookSet('cm', { total: total, base: initial, cash: cash, mv: invested, ret: chgPct, hold: positions.map(function (p) { var q = cmQuotes[p.symbol], cur = q && q.price || p.avg; return { s: p.symbol, n: (q && q.name) || p.symbol, v: p.qty * cur, r: p.avg > 0 ? (cur / p.avg - 1) * 100 : null }; }) }); } catch (e) {}
     var chgCls = chgPct > 0 ? 'pos' : chgPct < 0 ? 'neg' : '';
     var bar = $('cmSummaryBar');
     if (bar) bar.innerHTML =
@@ -12015,6 +12048,7 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
     positions.forEach(function(p){ var q = qmap[p.symbol]; var cur = q && typeof q.price === 'number' ? q.price : p.avg; invested += p.qty * cur; });
     var total = cash + invested;
     var chgPct = initial > 0 ? (total - initial) / initial * 100 : 0;
+    try { pzBookSet(panelId === 'bdkrPanel' ? 'bdkr' : 'bdus', { total: total, base: initial, cash: cash, mv: invested, ret: chgPct, hold: positions.map(function (p) { var q = qmap[p.symbol], cur = q && typeof q.price === 'number' ? q.price : p.avg; return { s: p.symbol, n: (q && q.name) || p.name || p.symbol, v: p.qty * cur, r: p.avg > 0 ? (cur / p.avg - 1) * 100 : null }; }) }); } catch (e) {}
     var chgCls = chgPct > 0 ? 'pos' : chgPct < 0 ? 'neg' : '';
     // 포지션 행
     var posRows;
@@ -12091,6 +12125,7 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
         /* [V33.745] ★환율이 대시보드에 한 번도 안 나왔다★ — /api/fx 는 rates 를 맨 위에 주는데 여기는 fxd.data.rates 를 읽었다(늘 비어 채권만 보였다).
            달러 기준 주요 6쌍(달러 인덱스·원·엔·유로·파운드·위안) · 자릿수는 값 크기에 맞춰(EUR/USD 4자리 · VND 0자리) */
         var _fxr = fxd && (fxd.rates || (fxd.data && fxd.data.rates));
+        try { if (_fxr && _fxr.USDKRW && _fxr.USDKRW.price > 0) { window.__usdkrw = _fxr.USDKRW.price; if (window.__pzAllQ) window.__pzAllQ(); } } catch (e) {}   // [V33.856] 포지션 '전체' 합산용
         if (_fxr) {
           rows += secRow('💱 FOREX · 달러 기준');
           ['DXY', 'USDKRW', 'USDJPY', 'EURUSD', 'GBPUSD', 'USDCNY'].forEach(function(k){
@@ -22383,8 +22418,8 @@ setTimeout(function(){
   window.addEventListener('load', function(){ setTimeout(function(){ try{ boot(); }catch(e){} }, 0); });
 })();
 </script>
-<script src="/model-evidence.js?v=33.855"></script>
-<script src="/workspace-ui.js?v=33.855"></script>
+<script src="/model-evidence.js?v=33.856"></script>
+<script src="/workspace-ui.js?v=33.856"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {
