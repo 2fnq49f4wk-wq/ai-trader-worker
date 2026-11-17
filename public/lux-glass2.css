@@ -575,3 +575,5 @@ html[data-theme="light"] body #page-positions:is(:not([data-pz]),[data-pz="all"]
   html body #page-dashboard :is(.dash-grid,.fv3-grid,.cmbd-grid){gap:8px!important;padding-top:4px!important;padding-bottom:4px!important}
   html body #page-dashboard .pipeline-bar.folded .pipeline-head{min-height:0!important;padding-top:6px!important;padding-bottom:6px!important}
 }
+/* 전체 보기에서 보유 목록을 펼친 카드는 한 줄 전체를 쓴다(나란히 두 칸이면 표가 비좁다) */
+@media (min-width:1100px){body #page-positions:is(:not([data-pz]),[data-pz="all"]) .pz-grid>.port-card:has(.pz-list){grid-column:1/-1}}

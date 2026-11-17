@@ -12,6 +12,8 @@
 
 ## Current handoff
 
+### V33.857 (2026-11-17) 포지션 전체 보기에서 보유 목록을 펼친 카드는 한 줄 전체(:has(.pz-list)) — 나란히 두 칸이면 표가 비좁았다(라이브 실측).
+
 ### V33.856 (2026-11-17) 포지션 '전체' 한 장 · OMNI 푸른 홀로그램 · MY 한 화면 · 대시보드 촘촘
 - LUX-POSITION 전체: #pzAll(index.html pzAllRender · window.__pzBook ← renderSummary/renderCommodities/renderAltPanel · 환율 window.__usdkrw ← 대시보드 FX USDKRW, 없으면 1400 대략) = 5계좌 원화 합산 · 원 그래프(종류별) 왼쪽 · 전 종목 목록 오른쪽 · 계좌 칩(누르면 그 탭). 미국·한국 카드 나란히(≥1100) · 보유 목록 기본 접힘(luxPzOpen2) · 채권·원자재 상세는 '대체' 탭.
 - OMNI 코어(playbook-observatory.js orbitProject/orbitDraw): drawCore 대신 직접 투영 · 남색 빛무리 + 위도·경도 격자 + 가중치 선 7단(가산) + 뉴런 점 + HUD 고리. 나무 분기(lk 3 · 1.4만 줄)가 고리 사이를 가로질러 판처럼 보여 강한 것(ls≥.5)만 옅게. 노드 고르기·카드 그대로.
