@@ -67,7 +67,7 @@ export type OmniView = {
 
 export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: boolean; spin: boolean; motion: boolean; onPick?: (id: number, sc: any) => void; onSlow?: (why: string) => void }): OmniView {
   const wrap = document.createElement("div");
-  wrap.style.cssText = "position:absolute;inset:0;overflow:hidden";
+  wrap.style.cssText = "position:absolute;inset:0;overflow:hidden;contain:strict";   // [V33.850] 이름표·점을 매 장면 옮겨도 페이지 전체(요소 1.4만 개)를 다시 훑지 않게 — PrePaint 399→48ms/3초 실측
   const cv = document.createElement("canvas");
   cv.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
   const deco = document.createElement("canvas");   // static glass shells + core lens (redrawn only on resize/zoom)
@@ -237,7 +237,7 @@ export function createOmniGL(host: HTMLElement, sc: any, opts: { interactive: bo
   }
   function frame(now: number) {
     raf = 0; if (scrolling) { owed = true; return; } if (dead || !visible || document.hidden) return; owed = false;
-    if (!opts.interactive && last && now - last < 31 && (v.spin || v.motion) && !ptr.size) { kick(); return; }   // inline view: 30 fps is plenty (battery)
+    if (!opts.interactive && last && now - last < 40 && (v.spin || v.motion) && !ptr.size) { kick(); return; }   // inline view: 25 fps is plenty (battery · V33.850)
     const iv = last ? now - last : 0;
     if (iv > 0 && iv < 1000 && (v.spin || v.motion) && !ptr.size) { ema = ema ? ema * .85 + iv * .15 : iv;
       if (++seen > 12 && ema > (opts.interactive ? 90 : 75)) { v.spin = false; v.motion = false; if (opts.onSlow) opts.onSlow("slow"); } }

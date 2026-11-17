@@ -33,7 +33,13 @@
     '#pbObs .k-orbit{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,1.5fr) minmax(0,1fr);align-items:center;gap:6px 10px;padding:16px 16px 12px;position:relative;overflow:hidden;background:radial-gradient(120% 90% at 50% 40%,rgba(57,208,255,.07),transparent 60%),var(--k-panel)}',
     '#pbObs .ko-side{display:flex;flex-direction:column;gap:10px;min-width:0}#pbObs .ko-k{border:1px solid var(--k-line);border-radius:14px;padding:12px 14px;background:rgba(255,255,255,.02);backdrop-filter:blur(6px)}#pbObs .ko-k.on{border-color:rgba(61,220,151,.45);box-shadow:0 0 0 1px rgba(61,220,151,.15) inset}',
     '#pbObs .ko-k dd{margin:6px 0 2px;font-family:var(--k-mono);font-size:26px;font-weight:600}#pbObs .ko-k small{color:var(--k-sub);font-size:11.5px}',
-    '#pbObs .ko-c{position:relative;height:300px;min-width:0}#pbObs .ko-slot,#pbObs .ko-cv{position:absolute;inset:0;width:100%;height:100%;display:block}',
+    '#pbObs .ko-c{position:relative;height:300px;min-width:0}#pbObs .ko-slot{position:absolute;inset:0;contain:strict}',
+    '#pbObs .ko-omni{position:absolute;inset:0;display:grid;place-items:center;opacity:0;transition:opacity .6s}#pbObs .ko-omni.ready{opacity:1}',
+    '#pbObs .ko-cv{display:block;max-width:100%;max-height:100%;border-radius:50%;animation:koSpin 140s linear infinite;will-change:transform;-webkit-mask:radial-gradient(circle,#000 62%,transparent 71%);mask:radial-gradient(circle,#000 62%,transparent 71%)}',
+    '#pbObs .ko-ring{position:absolute;left:50%;top:50%;border:1px solid rgba(150,200,255,.2);border-radius:50%;pointer-events:none}#pbObs .ko-ring.r1{width:min(100%,440px);aspect-ratio:3.1;transform:translate(-50%,-50%) rotate(-20deg)}#pbObs .ko-ring.r2{width:min(112%,500px);aspect-ratio:3.1;transform:translate(-50%,-50%) rotate(14deg)}',
+    '#pbObs .ko-ring i{position:absolute;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:rgba(180,210,255,.35)}#pbObs .ko-ring i.on.f{background:#f5c451;box-shadow:0 0 8px #f5c451}#pbObs .ko-ring i.on.c{background:#3ddc97;box-shadow:0 0 8px #3ddc97}',
+    '#pbObs{container-type:inline-size}@container (max-width:640px){#pbObs .k-orbit{grid-template-columns:1fr 1fr}#pbObs .ko-c{grid-column:1/-1;grid-row:1;height:250px}#pbObs .ko-k{padding:10px 12px}#pbObs .ko-k dd{font-size:22px}}',
+    '#pbObs .k-orbit.off .ko-cv{animation-play-state:paused}@keyframes koSpin{to{transform:rotate(1turn)}}@media (prefers-reduced-motion:reduce){#pbObs .ko-cv{animation:none}}',
     '#pbObs .ko-core{position:absolute;left:50%;bottom:6px;transform:translateX(-50%);text-align:center;width:min(92%,340px);pointer-events:none}#pbObs .ko-core strong{display:block;font-size:16px;margin-top:4px;letter-spacing:-.2px;text-shadow:0 2px 12px rgba(0,0,0,.6)}',
     '#pbObs .ko-why{grid-column:1/-1;margin:4px 0 0;color:var(--k-sub);font-size:12.5px;line-height:1.55;text-align:center}',
     '@media (max-width:700px){#pbObs .k-orbit{grid-template-columns:1fr 1fr}#pbObs .ko-c{grid-column:1/-1;grid-row:1;height:240px}#pbObs .ko-side{flex-direction:column}}',
@@ -90,6 +96,9 @@
     '#pbObs .k-live{display:inline-flex;align-items:center;gap:6px}#pbObs .k-live:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--k-good);box-shadow:0 0 6px rgba(61,220,151,.7);animation:kpulse 1.6s infinite}',
     '@keyframes kpulse{0%,100%{opacity:1}50%{opacity:.45}}',
     '@media (max-width:1100px){#pbObs .k-scan{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}#pbObs .k-scan>div:last-child{grid-column:1/-1;border-left:0;border-top:1px solid var(--k-line)}}',
+    '@container (max-width:860px){#pbObs .k-scan{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}#pbObs .k-scan>div:last-child{grid-column:1/-1;border-left:0;border-top:1px solid var(--k-line)}}',
+    '@container (max-width:560px){#pbObs .k-scan{grid-template-columns:minmax(0,1fr)}#pbObs .k-scan>div+div{border-left:0;border-top:1px solid var(--k-line)}#pbObs .k-ind{grid-template-columns:repeat(2,minmax(0,1fr))}#pbObs .k-detail,#pbObs .k-grid2{grid-template-columns:minmax(0,1fr)}#pbObs .k-detail>div+div{border-left:0;border-top:1px solid var(--k-line)}}',
+    '#pbObs>*{flex-shrink:0}',
     '@media (max-width:700px){#pbObs .k-scan{grid-template-columns:minmax(0,1fr)}#pbObs .k-scan>div+div{border-left:0;border-top:1px solid var(--k-line)}#pbObs .k-ind{grid-template-columns:repeat(2,minmax(0,1fr))}}',
     '@media (max-width:900px){#pbObs .k-brief{grid-template-columns:repeat(2,minmax(0,1fr))}#pbObs .k-brief>div:first-child{grid-column:1/-1}#pbObs .k-brief>div:nth-child(2){border-left:0}',
     '#pbObs .k-brief>div{border-top:1px solid var(--k-line)}#pbObs .k-brief>div:first-child{border-top:0}#pbObs .k-flow{grid-template-columns:repeat(2,minmax(0,1fr))}#pbObs .k-flow>div:nth-child(odd){border-left:0}#pbObs .k-flow>div{border-top:1px solid var(--k-line)}',
@@ -158,9 +167,9 @@
     return '−' + (it.stop || '—') + '% 손절 · ' + (it.tpR ? it.tpR + 'R 익절 · ' : '익절 없음 · ') + (it.hold || '—') + '거래일';
   }
 
-  var root = null, timer = null, busy = false, data = null, mkSel = null, symSel = null, rot = null, pauseUntil = 0;
+  var root = null, timer = null, busy = false, data = null, mkSel = null, symSel = null, rot = null, pauseUntil = 0, rootVis = true, rootIO = null;
   function advance() {   // [V33.620] 스포트라이트 자동 순회(옛 'AI 스캔 순회' 처럼) — 누르면 30초 멈춤
-    if (!root || !data || root.offsetParent === null || document.hidden || pauseUntil > Date.now()) return;
+    if (!root || !data || !rootVis || root.offsetParent === null || document.hidden || pauseUntil > Date.now()) return;   // [V33.850] 화면 밖(아래 OMNI 를 볼 때)이면 패널을 다시 그리지 않는다
     var lv = (data.live || {})[mkSel], items = (lv && lv.items) || [];
     if (items.length < 2) return;
     var k = items.map(function (x) { return x.s; }).indexOf(symSel);
@@ -195,42 +204,51 @@
       '<div class="ko-side">' + card('CHOSEN · 고름', chosen + (act ? '<small class="pos"> · 매수 ' + act + '</small>' : ''), '고른 매매법 있음', chosen ? 'on' : '') + card('SCAN AGE · 마지막 판정', sa, '국면 ' + rg + (r && r.panic ? ' · 공황' : '')) + '</div>' +
       '<p class="ko-why">' + esc(why) + '</p></section>';
   }
-  /* 입자 구체 — 한 번 만든 캔버스를 다시 그릴 때마다 자리에 옮겨 끼운다(4.5초마다 패널을 새로 그려도 움직임이 끊기지 않게) · 보일 때만 그린다(30fps) */
-  var orbitLv = null, orbitCv = null, orbitRaf = 0, orbitPts = null, orbitT0 = 0, orbitLast = 0;
+  /* [V33.850] ★AI 코어 = OMNI 코어★(사용자 11/17 "ai코어에서 돌아가는거 omni코어 보는걸로 대체 · 렉 없이") — 예전 입자 구체는 900점을 30fps 로
+     메인 스레드에서 계속 그렸다. 이제 OMNI 구조(/api/omni-structure · CDN 5분 · 두뇌 스튜디오와 같은 응답)를 한 번만 받아
+     뉴런·가중치를 한 장에 나눠 긋고(장면당 OM_CHUNK 줄 · 쉬는 틈에), 회전은 CSS 가 그 한 장을 돌린다(합성기 · 메인 스레드 0).
+     4.5초마다 패널을 새로 그려도 같은 캔버스를 옮겨 끼운다 — 다시 그리지 않는다. 구조를 못 받으면 대표 연결만(omniCore 가 대신). */
+  var orbitLv = null, orbitWrap = null, orbitBusy = false, orbitDone = false, orbitIO = null;
   function orbitMount() {
     var slot = root && root.querySelector('.ko-slot'); if (!slot) return;
-    if (!orbitCv) { orbitCv = document.createElement('canvas'); orbitCv.className = 'ko-cv'; orbitCv.setAttribute('aria-hidden', 'true'); }
-    slot.appendChild(orbitCv);
-    if (!orbitPts) { orbitPts = []; var N = 900, ga = Math.PI * (3 - Math.sqrt(5)); for (var k = 0; k < N; k++) { var y = 1 - (k / (N - 1)) * 2, rr = Math.sqrt(1 - y * y), th = ga * k; orbitPts.push([Math.cos(th) * rr, y, Math.sin(th) * rr, Math.random()]); } }
-    if (!orbitRaf) orbitRaf = requestAnimationFrame(orbitDraw);
+    if (!orbitWrap) {
+      orbitWrap = document.createElement('div'); orbitWrap.className = 'ko-omni'; orbitWrap.setAttribute('aria-hidden', 'true');
+      orbitWrap.innerHTML = '<canvas class="ko-cv"></canvas><span class="ko-ring r1"></span><span class="ko-ring r2"></span>';
+    }
+    if (orbitWrap.parentNode !== slot) slot.appendChild(orbitWrap);
+    orbitSat();
+    if (!orbitDone && !orbitBusy) orbitBuild();
+    var sec = slot.closest('.k-orbit');   // 화면 밖이면 회전도 멈춘다(합성기 일도 0)
+    if (sec && window.IntersectionObserver) { if (!orbitIO) orbitIO = new IntersectionObserver(function (es) { es.forEach(function (e) { e.target.classList.toggle('off', !e.isIntersecting); }); }); orbitIO.disconnect(); orbitIO.observe(sec); }
   }
-  function orbitDraw(t) {
-    orbitRaf = 0;
-    var cv = orbitCv; if (!cv || !cv.isConnected || cv.offsetParent === null || document.hidden) { orbitRaf = 0; setTimeout(function () { if (orbitCv && orbitCv.isConnected && !orbitRaf) orbitRaf = requestAnimationFrame(orbitDraw); }, 1500); return; }
-    orbitRaf = requestAnimationFrame(orbitDraw);
-    if (t - orbitLast < 33) return; orbitLast = t;
-    var dpr = Math.min(2, window.devicePixelRatio || 1), w = cv.clientWidth, h = cv.clientHeight; if (!w || !h) return;
-    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
-    var g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
-    var lv = orbitLv || { n: 0, f: 0, c: 0 }, act = Math.min(1, (lv.f * 0.15) + (lv.c * 0.3));
-    var light = document.documentElement.getAttribute('data-theme') === 'light';
-    var R = Math.min(w, h) * 0.34, cx = w / 2, cy = h / 2, sp = 0.00018 + act * 0.0004, a = t * sp, ca = Math.cos(a), sa2 = Math.sin(a), tilt = 0.38, ct = Math.cos(tilt), st2 = Math.sin(tilt);
-    var halo = g.createRadialGradient(cx, cy, R * 0.2, cx, cy, R * 1.6); halo.addColorStop(0, light ? 'rgba(10,111,179,.10)' : 'rgba(57,208,255,' + (0.10 + act * 0.12) + ')'); halo.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = halo; g.fillRect(0, 0, w, h);
-    for (var k = 0; k < orbitPts.length; k++) {
-      var p = orbitPts[k], x = p[0] * ca - p[2] * sa2, z = p[0] * sa2 + p[2] * ca, y = p[1] * ct - z * st2; z = p[1] * st2 + z * ct;
-      var depth = (z + 1) / 2, tw = 0.6 + 0.4 * Math.sin(t * 0.002 + p[3] * 6.28);
-      g.globalAlpha = (0.12 + depth * 0.75) * tw; g.fillStyle = depth > 0.55 ? (light ? '#0a6fb3' : '#7fe3ff') : (light ? '#3d8bd0' : '#3b82f6');
-      var s = 0.6 + depth * 1.5; g.fillRect(cx + x * R - s / 2, cy + y * R - s / 2, s, s);
-    }
-    g.globalAlpha = 1;
-    /* 궤도 고리 2개 + 위성(뜬 신호 수 · 고른 매매법은 초록) */
-    for (var o = 0; o < 2; o++) {
-      var rx = R * (1.35 + o * 0.28), ry = rx * 0.32, rot = -0.35 + o * 0.6;
-      g.save(); g.translate(cx, cy); g.rotate(rot); g.strokeStyle = light ? 'rgba(20,40,80,.18)' : 'rgba(150,200,255,.18)'; g.lineWidth = 1; g.beginPath(); g.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2); g.stroke();
-      var nSat = o === 0 ? Math.min(12, lv.f || 0) : Math.min(8, lv.c || 0);
-      for (var q = 0; q < Math.max(nSat, o === 0 ? 3 : 1); q++) { var an = t * (0.0004 + o * 0.00025) + q * Math.PI * 2 / Math.max(nSat, o === 0 ? 3 : 1); var on = q < nSat; g.fillStyle = on ? (o ? '#3ddc97' : '#f5c451') : (light ? 'rgba(20,40,80,.25)' : 'rgba(180,210,255,.28)'); g.beginPath(); g.arc(Math.cos(an) * rx, Math.sin(an) * ry, on ? 3.2 : 2, 0, Math.PI * 2); g.fill(); }
-      g.restore();
-    }
+  function orbitSat() {   // 위성: 뜬 신호(금) · 고른 매매법(초록) — 점 몇 개만 바꾼다(그리기 없음)
+    if (!orbitWrap) return; var lv = orbitLv || {}, f = Math.min(12, lv.f || 0), c = Math.min(8, lv.c || 0);
+    var key = f + ':' + c; if (orbitWrap.__sat === key) return; orbitWrap.__sat = key;
+    [['r1', f, Math.max(f, 3), 'f'], ['r2', c, Math.max(c, 1), 'c']].forEach(function (o) {
+      var el = orbitWrap.querySelector('.' + o[0]), h = '';
+      for (var q = 0; q < o[2]; q++) { var an = q * Math.PI * 2 / o[2] + (o[3] === 'c' ? 0.6 : 0.2); h += '<i class="' + (q < o[1] ? 'on ' + o[3] : '') + '" style="left:' + (50 + 50 * Math.cos(an)).toFixed(1) + '%;top:' + (50 + 50 * Math.sin(an)).toFixed(1) + '%"></i>'; }
+      el.innerHTML = h;
+    });
+  }
+  function orbitBuild() {
+    var NO = window.NeuralObservatory; if (!NO || !NO.omniCore || !NO.drawCore) { setTimeout(function () { if (orbitWrap && orbitWrap.isConnected) orbitMount(); }, 1500); return; }
+    orbitBusy = true;
+    fetch('/api/omni-structure').then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }).then(function (st) {
+      var cv = orbitWrap.querySelector('canvas'), box = orbitWrap.getBoundingClientRect();
+      var S = Math.max(220, Math.round(Math.min(box.width || 300, box.height || 300))), dpr = Math.min(2, window.devicePixelRatio || 1);
+      cv.width = Math.round(S * dpr); cv.height = Math.round(S * dpr); cv.style.width = cv.style.height = S + 'px';
+      var g = cv.getContext('2d'), sc;
+      try { sc = NO.omniCore({}, st && st.ok ? st : null); } catch (e) { orbitBusy = false; return; }
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      var v = { yaw: .4, pitch: .32, zoom: 1.08, panX: 0, panY: 0, selected: -1, motion: false, spin: false, glow: false, small: null, lite: false, lod: false, fit: S, fxOut: true, budget: 3000 };
+      var r = NO.drawCore(g, sc, v, S, S, 0), pend = r && r.rest;
+      var step = function () {   // 남은 선은 쉬는 틈에 조금씩(한 번에 3천 줄)
+        if (pend == null || pend < 0 || !NO.drawRest) { orbitBusy = false; orbitDone = true; orbitWrap.classList.add('ready'); return; }
+        pend = NO.drawRest(g, sc, v, S, S, pend, 3000);
+        (window.requestIdleCallback || function (f) { return setTimeout(f, 30); })(step, { timeout: 400 });
+      };
+      orbitWrap.classList.add('ready'); step();
+    });
   }
 
   function strip(j, mk) {
@@ -338,6 +356,7 @@
       load();
       if (!timer) timer = setInterval(function () { if (root && root.offsetParent !== null && !document.hidden) load(); }, 30000);
       if (!rot) rot = setInterval(advance, 4500);
+      if (!rootIO && window.IntersectionObserver) { rootIO = new IntersectionObserver(function (es) { rootVis = es[es.length - 1].isIntersecting; }); rootIO.observe(root); }
       return true;
     },
     refresh: load

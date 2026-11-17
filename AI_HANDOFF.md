@@ -12,6 +12,15 @@
 
 ## Current handoff
 
+### V33.850 (2026-11-17) AI 작동원리 — AI 코어 = OMNI 코어 · OMNI 렉 근본 원인 · 한 화면 두 칸
+- 렉 실측(아이패드 가로·CPU 4배 느리게·소프트웨어 WebGL): 페이지 요소 1.4만 개인데 OMNI 가 매 장면 이름표·점 ~120개를 옮겨 PrePaint 가 페이지 전체를 훑었다(3초에 399ms).
+  → studio/src/gl/omniGL.ts 그림 칸 `contain:strict` · 안쪽 그림 25fps(31→40ms). 재빌드 → public/brain-studio.js. check-brain-studio ④ 갱신.
+- #pbObs 'AI 코어' 입자 구체(900점 30fps 메인 스레드) → OMNI 구조(/api/omni-structure · CDN 5분)를 한 번만 그려(drawCore+drawRest 쉬는 틈) CSS 로 회전 · 화면 밖이면 멈춤. 위성 = 뜬 신호/고른 매매법 점(DOM).
+- 매매법 패널 4.5초 순회 다시 그리기는 패널이 화면 안일 때만(IntersectionObserver rootVis).
+- 넓은 화면(≥1360px) 작동 화면 = 왼쪽 매매법 AI · 오른쪽 모델 구조, 각 칸 화면 높이 안 스크롤(lux-glass2.css 끝). #pbObs container query 로 좁은 칸 배치.
+- 스튜디오 선택 칩(bg-ink text-bg) 글자 투명 → 진한 색 고정(lux-glass2.css).
+- 남은 일: 라이브에서 V33.848 dtail CPU 효과 · pub/f/live.js 초 단위 기록 확인.
+
 - **V33.849** 사이드바: 나갔다 들어오면(뒤로 가기 캐시·탭 복귀) 선택 알약이 옛 자리에 남아 선택 메뉴가 검은 글자로 어긋나던 것 → pageshow·visibilitychange·사이드바 크기 관찰로 다시 잼(lux-motion Pill) · 접힌 사이드바 선택 칸이 아이콘 폭(22px)으로 줄던 것 align-self:stretch. MY: 종목 검색·관심을 AI 추천 위로 · 위 탭(홈·순위·내 정보) 유리 알약(520px 가운데). 리퀴드 글라스 더 투명(카드 흰 1~7% 그라데이션 · 위 테두리 빛 · 흐림은 사이드바·탭만). LUX-POSITION MY 처럼(카드 화면 폭 꽉 · 총액 44px 히어로 · 유리 알약 탭 · KPI 칸).
 - **V33.848** ① ★일봉 짧은 사본 dtail:SYM(최근 400봉)★: 매분 매매 사이클이 원본 daily: 전체(종목당 최대 2,400봉 · 하루 파싱 ~8GB · CPU 의 절반)를 읽던 것을 사본 범위 읽기로 — 사본 없는 종목만 원본을 읽고 그때 사본을 만든다(한 번에 300 · 첫 며칠). 원본을 쓰는 3곳(getDailyCached · 일봉 샤드 · 사이클 묶음 쓰기)에서 사본도 같이 씀 · flowDailyCacheLoad 는 사본이 900종목 이상일 때만 사본 원문 사용(마지막 70봉). 원본은 차트·학습·소급 생성용으로 그대로. ② ★화면용 실시간 시세 한국 5초 · 미국 10초★: 크론 안 liveQuoteLoop(55초 동안 기다렸다 받기 · ctx.waitUntil) → R2 pub/f/live.js(DB 쓰기 0 · 화면 열림 15분 · 장 중만 · 미국 첫 묶음 0건이면 그 분 생략 · 요청 예산 250 남김) · 대시보드가 5초마다 CDN 사본을 받아 TOP MOVERS·지수·지도만 고침. ③ ★종목 상세 차트 마지막 막대 실시간★: orderbook.js 5초 체결가 → lux:obprice 이벤트 → 마지막 막대 종가·고저 · 분봉 새 막대(가격 바뀔 때만) · 일·주·월봉은 오늘 막대 있을 때만 · 한국 누적 거래량 차이. 배포 뒤 CPU(usage stp trading)·R2 쓰기·live.js 나이 실측 필요.
 - **V33.847** ★MY 한 페이지★(사용자 11/16): 탭 홈·순위·내 정보 3개 — 관심·계좌는 홈 안(#mjWatch · #mjAcct · 옛 data-tab watch/acct 는 홈으로 와서 그 칸으로 스크롤). 총자산 카드에 자산 원 그래프(보유 종목 + 현금 비중 · SVG) + 수익률 곡선(prof.pf[mk].eqh 하루 1번 기록 · 최근 120일 · 하루 첫 기록만 서버 저장 persist — 1행 묶음 저장 규칙) · PC 2열(왼 = 총자산·계좌 상세 · 오른 = 시장·AI 추천·관심·AI 포트폴리오). 계좌 상세의 중복 총자산 카드는 숨김.

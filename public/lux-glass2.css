@@ -439,3 +439,14 @@ html body #page-positions .pz-tabs{max-width:620px;margin-left:auto;margin-right
 html body #page-positions :is(.pz-tabs,.lxp-sw) button{border-radius:999px!important;background:transparent!important;color:#c9d1dc!important;border:0!important}
 html body #page-positions :is(.pz-tabs,.lxp-sw) button:is(.on,.active,[aria-pressed="true"],[aria-selected="true"]){background:linear-gradient(135deg,#3DD6B5,#4f8cff)!important;color:#04110D!important;box-shadow:0 6px 18px -8px rgba(61,214,181,.6)!important}
 html body #page-positions .pz-btn{border-radius:14px!important}
+/* [V33.850] 두뇌 스튜디오 — 선택된 칩(bg-ink text-bg)의 글자색이 투명 유리 배경(--bs-bg .03)을 따라가 '빈 흰 칸'으로 보였다 → 글자는 진한 색 고정 */
+html:not([data-theme="light"]) body #page-nnviz #brain-studio .text-bg{color:#0b0a0d!important}
+/* [V33.850] AI 작동원리 = 한 화면(사용자 11/17 "한 페이지에 내용 볼 수 있게") — 넓은 화면(본문 1000px 이상)에서
+   왼쪽 칸 = 매매법 AI 실시간 판정(OMNI 코어·스캔·판정) · 오른쪽 칸 = 모델 구조(두뇌 스튜디오). 두 칸은 각자 화면 높이 안에서 스크롤한다. */
+@media (min-width:1360px){
+  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nnviz-content{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,1.12fr);grid-template-rows:auto auto auto minmax(0,1fr);column-gap:14px;align-items:start}
+  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nnviz-content>:is(.nnv-head,.mission-nav){grid-column:1/-1}
+  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] #pbObs{grid-column:1;grid-row:3/span 2;max-height:calc(100dvh - 200px);overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;padding-right:4px}
+  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nnv-unihead{grid-column:2;grid-row:3;margin-top:0!important}
+  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] #brain-studio{grid-column:2;grid-row:4;max-height:calc(100dvh - 270px);overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}
+}
