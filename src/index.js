@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.853";
+const _BUILD_VER = "V33.854";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -23116,7 +23116,7 @@ async function buildStatePayload(env) {
         "mkt_context", "sector_news_sentiment",
         // [V33.172] 외부(Modal) 학습이 ★커밋을 통과해 실제로 들어왔는지★ — 상단 상태칩용.
         EXTIMP_KEY, "modal_retrain_auto", "mind_model", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust",
-        "billing_actual", "d1_meter", "omniq:us", "omniq:kr"   // [V33.644] · [V33.648] 학습칩(OMNI-Q 머리만 — _STATE_LITE) 설정창 청구 경고(실측) — 같은 묶음 질의에 2행만 더(추가 D1 왕복 0)
+        "billing_actual", "d1_meter", "omniq:us", "omniq:kr", "eqh:us", "eqh:kr"   // [V33.644] · [V33.648] 학습칩(OMNI-Q 머리만 — _STATE_LITE) 설정창 청구 경고(실측) — 같은 묶음 질의에 2행만 더(추가 D1 왕복 0)
       ]);
       const sectorGroupStats = __S["sector_group_stats"] || {};
       const sectorGroups = { stats: sectorGroupStats, weights: (cfg.sectorGroups && cfg.sectorGroups.weights) || {} };
@@ -23214,6 +23214,7 @@ async function buildStatePayload(env) {
         deposits: deposits,
         outflows: outflows,
         twr: twr,
+        eqh: { us: __S["eqh:us"] || null, kr: __S["eqh:kr"] || null },   // [V33.854] AI 계좌 날짜별 총자산(포지션 화면 수익률 곡선)
         sectorGroups: sectorGroups,
         signalTypes: signalTypes,
         budgetSplitApplied: __S["budget_split_applied"] || null,  // [V63] 레짐 적응형 예산 적용 현황
@@ -23366,6 +23367,62 @@ async function liveQuoteKick(env, ctx, cronStart) {
   const n0 = new Date(); if (marketSessionNow("kr", n0) === "CLOSED" && marketSessionNow("us", n0) === "CLOSED") return;
   if (env.LIVEQ) { try { __fetchBudget.used++; } catch (e) {} return env.LIVEQ.get(env.LIVEQ.idFromName("live")).fetch("https://liveq/kick"); }
   return liveQuoteLoop(env, cronStart + 55000);
+}
+/* [V33.854] ★AI 계좌 총자산 하루 기록★(사용자 11/17 "LUX-POSITION 도 MY 처럼 그래프로 포트폴리오·수익률 한눈에") — 종전엔 날짜별 총자산이 어디에도 없었다.
+   state "eqh:<us|kr>" = [[YYYY-MM-DD, 총자산]] (최근 400일). 처음 한 번은 거래 기록(trades) + 저장된 일봉(dtail 의 days·closes)으로
+   6월부터 날마다 다시 계산해 채우고(입출금 0 · 체결 때와 같은 수수료·세금·슬리피지), 그 뒤로는 장 마감 뒤 하루 한 번 한 줄(computePortfolioValue).
+   D1: 하루 시장당 읽기 몇 번 + 쓰기 1번. 화면은 상태 묶음(/api/state · R2 사본)에 같이 실려 추가 요청 0. */
+const EQH_KEEP = 400;
+async function eqhBackfill(env, mk, cfg) {
+  const tr = ((await env.DB.prepare("SELECT ts, symbol, side, qty, price FROM trades WHERE market = ? ORDER BY ts ASC, rowid ASC").bind(mk).all()) || {}).results || [];
+  if (!tr.length) return [];
+  const initial = _initialCashFor(cfg, mk), feeRate = mk === "kr" ? (cfg.feeKR || 0) : (cfg.feeUS || 0);
+  const syms = Array.from(new Set(tr.map(function (t) { return t.symbol; }))), bars = {};
+  for (let i = 0; i < syms.length; i += 90) {
+    const S = await getStates(env.DB, syms.slice(i, i + 90).map(function (x) { return "dtail:" + x; }));
+    for (const k in S) { const d = S[k]; if (d && Array.isArray(d.days) && Array.isArray(d.closes) && d.days.length === d.closes.length) bars[k.slice(6)] = d; }
+  }
+  const dayOf = function (ts) { return Math.floor(_num(ts, 0) / 864e5); };
+  const d0 = dayOf(tr[0].ts), dEnd = Math.floor(Date.now() / 864e5) - 1, tdays = new Set();
+  for (const s in bars) for (const dd of bars[s].days) if (dd >= d0 && dd <= dEnd) tdays.add(dd);
+  const days = Array.from(tdays).sort(function (a, b) { return a - b; });
+  const qty = {}, last = {}, ptr = {}, out = [];
+  let cash = (typeof initial === "number" ? initial : 0), j = 0;
+  for (const D of days) {
+    for (; j < tr.length && dayOf(tr[j].ts) <= D; j++) {
+      const t = tr[j], q = _num(t.qty, 0), px = _num(t.price, 0), g = q * px, slip = _slipRate(mk, _num(t.ts, 0));
+      if (t.side === "BUY") { cash -= g * (1 + feeRate + slip); qty[t.symbol] = (qty[t.symbol] || 0) + q; }
+      else if (t.side === "SELL") { cash += g * (1 - feeRate - _krSellTaxRate(cfg, t.symbol, mk, _num(t.ts, 0)) - slip); qty[t.symbol] = (qty[t.symbol] || 0) - q; }
+      if (px > 0) last[t.symbol] = px;
+    }
+    let mv = 0;
+    for (const s in qty) {
+      const q = qty[s]; if (!(Math.abs(q) > 1e-9)) continue;
+      const b = bars[s];
+      if (b) { let k = ptr[s] || 0; while (k < b.days.length && b.days[k] <= D) { if (b.closes[k] > 0) last[s] = b.closes[k]; k++; } ptr[s] = k; }
+      mv += q * (last[s] || 0);
+    }
+    out.push([new Date(D * 864e5).toISOString().slice(0, 10), Math.round((cash + mv) * 100) / 100]);
+  }
+  return out.slice(-EQH_KEEP);
+}
+async function eqhDaily(env) {
+  const g = globalThis.__eqhDone || (globalThis.__eqhDone = {});
+  for (const mk of ["us", "kr"]) {
+    try {
+      const today = localDateStr(mk); if (!today || g[mk] === today) continue;
+      if (marketSessionNow(mk, new Date()) !== "CLOSED") continue;   // 장 마감 뒤에만(종가로)
+      const p = mk === "us" ? getUSEt(new Date()) : getKST(new Date()); if (!(p.totalMin >= 16 * 60)) continue;
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      let h = await getState(env.DB, "eqh:" + mk, null, true);   // 엄격히 — 못 읽으면 예외(덮어써서 기록을 지우지 않는다)
+      if (!Array.isArray(h)) { h = await eqhBackfill(env, mk, cfg); }
+      if (h.length && h[h.length - 1][0] === today) { g[mk] = today; if (!(await getState(env.DB, "eqh:" + mk, null, true))) await setState(env.DB, "eqh:" + mk, h); continue; }
+      const open = await isMarketTradingDay(env.DB, mk, env);
+      if (open !== false) h.push([today, Math.round((await computePortfolioValue(env.DB, mk, cfg)) * 100) / 100]);
+      if (h.length > EQH_KEEP) h = h.slice(-EQH_KEEP);
+      await setState(env.DB, "eqh:" + mk, h); g[mk] = today;
+    } catch (e) { console.error("eqh " + mk + ":", e && e.message); }
+  }
 }
 async function statePubWrite(env) {
   const PUB = env && env.PUB; if (!PUB) return null;
@@ -58278,7 +58335,8 @@ export default {
     //   가격/원자재 갱신이 산발적으로 실패했음(특히 정규장 1분 갱신).
     //   → 단일 promise 안에서 "순차" 실행해 각 사이클이 자기 예산을 온전히 쓰게 한다.
     const __cronStart = Date.now();
-    try { ctx.waitUntil(liveQuoteKick(env, ctx, __cronStart).catch(function () {})); } catch (e) {}   // [V33.848] 한국 5초 · 미국 10초 화면용 시세(DB 쓰기 없음)
+    try { ctx.waitUntil(liveQuoteKick(env, ctx, __cronStart).catch(function () {})); } catch (e) {}
+    try { if (new Date().getUTCMinutes() % 10 === 4) ctx.waitUntil(eqhDaily(env).catch(function () {})); } catch (e) {}   // [V33.854] AI 계좌 총자산 하루 기록(마감 뒤 한 번)   // [V33.848] 한국 5초 · 미국 10초 화면용 시세(DB 쓰기 없음)
     __sleepAccumMs = 0;  // [실시간] invocation 시작마다 sleep 누적 초기화
     cycMemoReset();      // [V33.170] 사이클 상수 캐시 초기화 — warm isolate 의 옛 값을 물려받지 않는다
     let __usageCalib = USAGE_LIMITS_DEFAULT.cpuCalibration;
