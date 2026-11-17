@@ -530,7 +530,8 @@
     "#mineRoot .mcur{border-radius:16px;padding:10px 12px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);min-width:0}#mineRoot .mcur svg{display:block;width:100%;height:110px}#mineRoot .mcur-h,#mineRoot .mcur-f{display:flex;justify-content:space-between;font-size:12px;color:var(--m-mute)}#mineRoot .mcur-h b{font-size:15px}#mineRoot .mcur-f{font-size:11px;margin-top:2px}" +
     "@media (max-width:640px){#mineRoot .mviz{grid-template-columns:1fr}}" +
     "#mineRoot #mjAcct>div:first-child,#mineRoot #mjAcct>section.card:first-of-type{display:none!important}#mineRoot .mcol{display:flex;flex-direction:column;gap:14px;min-width:0}#mineRoot .mhome>.mcol.b{margin-top:14px}@media (min-width:1100px){#mineRoot .mhome>.mcol.b{margin-top:0}}#mineRoot .mj{scroll-margin-top:70px}" +
-    "@media (min-width:1100px){#mineRoot.mwide{max-width:1240px}#mineRoot.mwide>.tabs{max-width:760px;margin-left:auto;margin-right:auto}" +
+    "#mineRoot .tabs{grid-template-columns:repeat(3,minmax(0,1fr))!important;max-width:520px;margin-left:auto!important;margin-right:auto!important;padding:4px!important;gap:4px!important;border-radius:999px!important;background:linear-gradient(180deg,rgba(255,255,255,.10),rgba(255,255,255,.03))!important;border:1px solid rgba(255,255,255,.16)!important;-webkit-backdrop-filter:blur(20px) saturate(180%);backdrop-filter:blur(20px) saturate(180%);box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 10px 30px -14px rgba(0,0,0,.6)!important}#mineRoot .tabs button{min-height:38px!important;border-radius:999px!important;font-size:14px!important}#mineRoot .tabs button.on{background:linear-gradient(135deg,#3DD6B5,#4f8cff)!important;color:#04110D!important;box-shadow:0 6px 18px -8px rgba(61,214,181,.6)}" +
+    "@media (min-width:1100px){#mineRoot.mwide{max-width:1240px}" +
     "#mineRoot .mhome{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);gap:14px;align-items:start}#mineRoot .mhome>.mcol+.mcol{margin-top:0}" +
     "#mineRoot .mhome section{margin:0!important}#mineRoot.mwide section[aria-label=\"모의계좌\"] .h1{font-size:48px}}";
     document.head.appendChild(st); })();
@@ -571,6 +572,7 @@
     h += '<div class="g2">' + prof.mkts.map(function (m) { var r = PB && PB.markets && PB.markets[m] && PB.markets[m].regime;
       return '<div class="wx"><span class="mu" style="font-size:12px">' + MK[m] + ' 시장</span><b style="color:' + (REGC[r] || "inherit") + '">' + (REG[r] || "불러오는 중") + '</b><span style="font-size:12.5px;line-height:1.45;color:#C7CDD6">' + esc(r && GUIDE[r] ? GUIDE[r][prof.risk] : "") + "</span></div>"; }).join("") + "</div>";
     var rmk = prof.mkts.indexOf(acMk) >= 0 ? acMk : prof.mkts[0], rk = ranked(rmk), rg = PB && PB.markets && PB.markets[rmk] && PB.markets[rmk].regime;
+    h += '<div class="mj" id="mjWatch">' + watch() + '</div>';   // [V33.849] 종목 검색·관심을 AI 추천 위로(사용자 11/17)
     h += '<section class="card" aria-label="AI 순위"><div class="ct"><span class="h2" style="color:inherit">AI 매수 추천 순위</span>' +
       (prof.mkts.length > 1 ? '<span class="seg">' + prof.mkts.map(function (m) { return '<button type="button" data-acmk="' + m + '" class="' + (m === rmk ? "on" : "") + '">' + MK[m] + "</button>"; }).join("") + "</span>" : '<span>' + MK[rmk] + "</span>") + "</div>" +
       (rk.length ? rk.map(function (r, i) {
@@ -578,7 +580,6 @@
         return rowQ(r.s, rankSub(r), aiTag(r.s), '<button type="button" class="tag2 wbtn' + (on ? " on" : "") + '" data-addwatch="' + esc(r.s) + '" aria-label="관찰에 ' + (on ? "담김" : "추가") + '">' + (on ? "관찰중" : "관찰") + "</button>" + buyBtn(r.s), i + 1, r.tier);
       }).join("") : '<div class="empty">AI 판정을 불러오는 중이거나 아직 오늘 판정이 없습니다.</div>') +
       '<div class="note" style="margin-top:6px">' + MK[rmk] + " " + (REG[rg] || "") + " · 순위 = 매수 신호 → 검증 대기 → AI 점수 순 · 관찰 = 관심종목에 담기 · <b class=\"aiK\">AI 보유 중</b> = AI 계좌가 지금 들고 있음 · <b class=\"aiK2\">AI 매수함</b> = 최근 30일 안에 실제로 삼 · 모의투자</div></section>";
-    h += '<div class="mj" id="mjWatch">' + watch() + '</div>';
     h += aiPortfolio(rmk);
     h += '</div></div>';
     return h;

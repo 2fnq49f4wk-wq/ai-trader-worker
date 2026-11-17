@@ -43,6 +43,11 @@
     new MutationObserver(function (ms) { for (var i = 0; i < ms.length; i++) if (ms[i].attributeName === "class" && ms[i].target !== pill) { sched(true); return; } })
       .observe(host, { subtree: true, attributes: true, attributeFilter: ["class"] });
     addEventListener("resize", function () { first = true; sched(false); }, { passive: true });
+    /* [V33.849] 사이트를 나갔다 들어오면(뒤로 가기 캐시 · 탭 복귀) 알약이 옛 자리에 남아 선택 메뉴가 검은 글자로 어긋나 보였다 — 다시 잰다.
+       사이드바 폭이 바뀔 때(접기·펼치기·다른 탭에서 바꾼 설정)도 크기 관찰로 다시 잰다. */
+    addEventListener("pageshow", function () { first = true; sched(false); });
+    D.addEventListener("visibilitychange", function () { if (!D.hidden) { first = true; sched(false); } });
+    if (typeof ResizeObserver === "function") { var rw = 0; new ResizeObserver(function (es) { var w = Math.round(es[0].contentRect.width); if (rw && Math.abs(w - rw) > 2) { first = true; sched(false); } rw = w; }).observe(host); }
     if (D.fonts && D.fonts.ready) D.fonts.ready.then(function () { first = true; sched(false); });
     H.classList.add("lux-ind"); place(false);
   }
