@@ -35,12 +35,20 @@
     '#pbObs .ko-k dd{margin:6px 0 2px;font-family:var(--k-mono);font-size:26px;font-weight:600}#pbObs .ko-k small{color:var(--k-sub);font-size:11.5px}',
     '#pbObs .ko-c{position:relative;height:300px;min-width:0}#pbObs .ko-slot{position:absolute;inset:0;contain:strict}',
     '#pbObs .ko-omni{position:absolute;inset:0;display:grid;place-items:center;opacity:0;transition:opacity .6s}#pbObs .ko-omni.ready{opacity:1}',
-    '#pbObs .ko-cv{display:block;max-width:100%;max-height:100%;border-radius:50%;animation:koSpin 140s linear infinite;will-change:transform;-webkit-mask:radial-gradient(circle,#000 62%,transparent 71%);mask:radial-gradient(circle,#000 62%,transparent 71%)}',
+    '#pbObs .ko-spin{position:relative;display:grid;place-items:center;max-width:100%;max-height:100%;cursor:crosshair;animation:koSpin 140s linear infinite;will-change:transform;border-radius:50%}#pbObs .ko-omni.sel .ko-spin{animation-play-state:paused}#pbObs .ko-mark{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;border:2px solid #ffcfb6;box-shadow:0 0 0 4px rgba(255,207,182,.25),0 0 14px #ffcfb6;pointer-events:none}',
+    '#pbObs .ko-cv{display:block;max-width:100%;max-height:100%;border-radius:50%;-webkit-mask:radial-gradient(circle,#000 62%,transparent 71%);mask:radial-gradient(circle,#000 62%,transparent 71%)}',
     '#pbObs .ko-ring{position:absolute;left:50%;top:50%;border:1px solid rgba(150,200,255,.2);border-radius:50%;pointer-events:none}#pbObs .ko-ring.r1{width:min(100%,440px);aspect-ratio:3.1;transform:translate(-50%,-50%) rotate(-20deg)}#pbObs .ko-ring.r2{width:min(112%,500px);aspect-ratio:3.1;transform:translate(-50%,-50%) rotate(14deg)}',
     '#pbObs .ko-ring i{position:absolute;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:rgba(180,210,255,.35)}#pbObs .ko-ring i.on.f{background:#f5c451;box-shadow:0 0 8px #f5c451}#pbObs .ko-ring i.on.c{background:#3ddc97;box-shadow:0 0 8px #3ddc97}',
     '#pbObs{container-type:inline-size}@container (max-width:640px){#pbObs .k-orbit{grid-template-columns:1fr 1fr}#pbObs .ko-c{grid-column:1/-1;grid-row:1;height:250px}#pbObs .ko-k{padding:10px 12px}#pbObs .ko-k dd{font-size:22px}}',
-    '#pbObs .k-orbit.off .ko-cv{animation-play-state:paused}@keyframes koSpin{to{transform:rotate(1turn)}}@media (prefers-reduced-motion:reduce){#pbObs .ko-cv{animation:none}}',
+    '#pbObs .k-orbit.off .ko-spin{animation-play-state:paused}@keyframes koSpin{to{transform:rotate(1turn)}}@media (prefers-reduced-motion:reduce){#pbObs .ko-spin{animation:none}}',
     '#pbObs .ko-core{position:absolute;left:50%;bottom:6px;transform:translateX(-50%);text-align:center;width:min(92%,340px);pointer-events:none}#pbObs .ko-core strong{display:block;font-size:16px;margin-top:4px;letter-spacing:-.2px;text-shadow:0 2px 12px rgba(0,0,0,.6)}',
+    '#pbObs .ko-dslot{grid-column:1/-1;min-width:0}#pbObs .ko-dos{margin-top:10px;border:1px solid var(--k-line);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;background:linear-gradient(160deg,rgba(255,255,255,.07),rgba(255,255,255,.015));box-shadow:inset 0 1px 0 rgba(255,255,255,.12)}',
+    '#pbObs .kd-top{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;justify-content:space-between}#pbObs .kd-sum{font-family:var(--k-mono);font-size:11px;color:var(--k-sub)}',
+    '#pbObs .kd-grp{display:flex;flex-wrap:wrap;gap:6px}#pbObs .kd-grp button{font:inherit;font-size:12px;color:var(--k-sub);background:rgba(255,255,255,.04);border:1px solid var(--k-line);border-radius:999px;padding:5px 11px;cursor:pointer}#pbObs .kd-grp button b{font-family:var(--k-mono);font-weight:600;margin-left:4px;color:var(--k-ink)}#pbObs .kd-grp button[aria-pressed=true]{color:var(--k-ink);border-color:rgba(255,207,182,.55);background:rgba(255,207,182,.12)}',
+    '#pbObs .kd-sel{font:inherit;font-size:12.5px;color:var(--k-ink);background:rgba(255,255,255,.05);border:1px solid var(--k-line);border-radius:10px;padding:7px 10px;max-width:100%}#pbObs .kd-sel option{background:#10131a;color:#eef}',
+    '#pbObs .kd-card{border:1px solid rgba(255,207,182,.3);border-radius:14px;padding:12px 14px;background:rgba(255,207,182,.05)}#pbObs .kd-name{display:flex;align-items:center;gap:8px}#pbObs .kd-name i{width:9px;height:9px;border-radius:50%;background:#ffcfb6;box-shadow:0 0 8px #ffcfb6}#pbObs .kd-name b{font-family:var(--k-mono);font-size:15px;flex:1;min-width:0;overflow-wrap:anywhere}#pbObs .kd-name button{font:inherit;font-size:16px;line-height:1;color:var(--k-sub);background:none;border:0;cursor:pointer;padding:2px 6px}',
+    '#pbObs .kd-kv{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:10px 0 0}#pbObs .kd-kv div{min-width:0}#pbObs .kd-kv dt{font-family:var(--k-mono);font-size:10px;letter-spacing:1.2px;color:var(--k-sub)}#pbObs .kd-kv dd{margin:3px 0 0;font-family:var(--k-mono);font-size:14px;overflow-wrap:anywhere}#pbObs .kd-desc,#pbObs .kd-role{margin:10px 0 0;font-size:12.5px;line-height:1.6;color:var(--k-sub)}#pbObs .kd-role{color:var(--k-ink)}#pbObs .kd-empty{font-size:12.5px;color:var(--k-sub);line-height:1.6}',
+    '@container (max-width:560px){#pbObs .kd-kv{grid-template-columns:repeat(2,minmax(0,1fr))}}',
     '#pbObs .ko-why{grid-column:1/-1;margin:4px 0 0;color:var(--k-sub);font-size:12.5px;line-height:1.55;text-align:center}',
     '@media (max-width:700px){#pbObs .k-orbit{grid-template-columns:1fr 1fr}#pbObs .ko-c{grid-column:1/-1;grid-row:1;height:240px}#pbObs .ko-side{flex-direction:column}}',
     '#pbObs .k-brief{display:grid;grid-template-columns:minmax(0,1.6fr) repeat(4,minmax(0,1fr))}',
@@ -202,20 +210,26 @@
       '<div class="ko-side">' + card('CANDIDATES · 후보', (lv && lv.n) || 0, 'OMNI-Q 상위 ' + candPct(j, mk) + '% 평가') + card('FIRED · 뜬 신호', fired, '지금 매매법 신호 뜸', fired ? 'on' : '') + '</div>' +
       '<div class="ko-c"><div class="ko-slot"></div><div class="ko-core"><span class="k-lab">PLAYBOOK · DECISION STATE</span><strong>' + esc(head) + '</strong></div></div>' +
       '<div class="ko-side">' + card('CHOSEN · 고름', chosen + (act ? '<small class="pos"> · 매수 ' + act + '</small>' : ''), '고른 매매법 있음', chosen ? 'on' : '') + card('SCAN AGE · 마지막 판정', sa, '국면 ' + rg + (r && r.panic ? ' · 공황' : '')) + '</div>' +
-      '<p class="ko-why">' + esc(why) + '</p></section>';
+      '<p class="ko-why">' + esc(why) + '</p><div class="ko-dslot"></div></section>';
   }
   /* [V33.850] ★AI 코어 = OMNI 코어★(사용자 11/17 "ai코어에서 돌아가는거 omni코어 보는걸로 대체 · 렉 없이") — 예전 입자 구체는 900점을 30fps 로
      메인 스레드에서 계속 그렸다. 이제 OMNI 구조(/api/omni-structure · CDN 5분 · 두뇌 스튜디오와 같은 응답)를 한 번만 받아
-     뉴런·가중치를 한 장에 나눠 긋고(장면당 OM_CHUNK 줄 · 쉬는 틈에), 회전은 CSS 가 그 한 장을 돌린다(합성기 · 메인 스레드 0).
-     4.5초마다 패널을 새로 그려도 같은 캔버스를 옮겨 끼운다 — 다시 그리지 않는다. 구조를 못 받으면 대표 연결만(omniCore 가 대신). */
+     뉴런·가중치를 한 장에 나눠 긋고(장면당 3천 줄 · 쉬는 틈에), 회전은 CSS 가 그 한 장을 돌린다(합성기 · 메인 스레드 0).
+     4.5초마다 패널을 새로 그려도 같은 캔버스를 옮겨 끼운다 — 다시 그리지 않는다.
+     [V33.851] ★노드·역할은 여기서★(사용자 11/17) — 구체의 점을 누르거나 묶음·목록에서 고르면 그 뉴런의 선만 밝게 다시 긋고(누를 때 한 번),
+     아래 노드 카드에 이름·묶음·세기·닿은 선·역할을 보인다. 클릭 좌표는 CSS 회전각을 되돌려 원래 그림 좌표로 바꿔 가장 가까운 점을 고른다. */
   var orbitLv = null, orbitWrap = null, orbitBusy = false, orbitDone = false, orbitIO = null;
+  var orbitSc = null, orbitV = null, orbitG = null, orbitS = 0, orbitDos = null, orbitSel = -1, orbitTok = 0, orbitGrp = 0;
   function orbitMount() {
     var slot = root && root.querySelector('.ko-slot'); if (!slot) return;
     if (!orbitWrap) {
-      orbitWrap = document.createElement('div'); orbitWrap.className = 'ko-omni'; orbitWrap.setAttribute('aria-hidden', 'true');
-      orbitWrap.innerHTML = '<canvas class="ko-cv"></canvas><span class="ko-ring r1"></span><span class="ko-ring r2"></span>';
+      orbitWrap = document.createElement('div'); orbitWrap.className = 'ko-omni';
+      orbitWrap.innerHTML = '<div class="ko-spin" role="button" tabindex="-1" aria-label="OMNI 코어 — 점을 눌러 뉴런 역할 보기"><canvas class="ko-cv"></canvas><i class="ko-mark" hidden></i></div><span class="ko-ring r1"></span><span class="ko-ring r2"></span>';
+      orbitWrap.querySelector('.ko-spin').addEventListener('click', orbitPick);
     }
     if (orbitWrap.parentNode !== slot) slot.appendChild(orbitWrap);
+    var ds = root.querySelector('.ko-dslot');
+    if (ds) { if (!orbitDos) { orbitDos = document.createElement('div'); orbitDos.className = 'ko-dos'; orbitDos.addEventListener('click', orbitDosClick); orbitDos.addEventListener('change', function (e) { if (e.target.matches('select')) orbitSelect(+e.target.value); }); orbitDosFill(); } if (orbitDos.parentNode !== ds) ds.appendChild(orbitDos); }
     orbitSat();
     if (!orbitDone && !orbitBusy) orbitBuild();
     var sec = slot.closest('.k-orbit');   // 화면 밖이면 회전도 멈춘다(합성기 일도 0)
@@ -230,6 +244,19 @@
       el.innerHTML = h;
     });
   }
+  function orbitDraw() {   // 한 장을 나눠 긋는다 — 새로 고르면 앞의 긋기는 버린다(tok)
+    var NO = window.NeuralObservatory, g = orbitG, sc = orbitSc, v = orbitV, S = orbitS, tok = ++orbitTok; if (!g || !sc) return;
+    g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, g.canvas.width, g.canvas.height); g.restore();
+    v.selected = orbitSel;
+    var r = NO.drawCore(g, sc, v, S, S, 0), pend = r && r.rest;
+    var step = function () {
+      if (tok !== orbitTok) return;
+      if (pend == null || pend < 0 || !NO.drawRest) { orbitBusy = false; orbitDone = true; return; }
+      pend = NO.drawRest(g, sc, v, S, S, pend, 3000);
+      (window.requestIdleCallback || function (f) { return setTimeout(f, 30); })(step, { timeout: 400 });
+    };
+    orbitWrap.classList.add('ready'); step();
+  }
   function orbitBuild() {
     var NO = window.NeuralObservatory; if (!NO || !NO.omniCore || !NO.drawCore) { setTimeout(function () { if (orbitWrap && orbitWrap.isConnected) orbitMount(); }, 1500); return; }
     orbitBusy = true;
@@ -237,18 +264,54 @@
       var cv = orbitWrap.querySelector('canvas'), box = orbitWrap.getBoundingClientRect();
       var S = Math.max(220, Math.round(Math.min(box.width || 300, box.height || 300))), dpr = Math.min(2, window.devicePixelRatio || 1);
       cv.width = Math.round(S * dpr); cv.height = Math.round(S * dpr); cv.style.width = cv.style.height = S + 'px';
-      var g = cv.getContext('2d'), sc;
-      try { sc = NO.omniCore({}, st && st.ok ? st : null); } catch (e) { orbitBusy = false; return; }
-      g.setTransform(dpr, 0, 0, dpr, 0, 0);
-      var v = { yaw: .4, pitch: .32, zoom: 1.08, panX: 0, panY: 0, selected: -1, motion: false, spin: false, glow: false, small: null, lite: false, lod: false, fit: S, fxOut: true, budget: 3000 };
-      var r = NO.drawCore(g, sc, v, S, S, 0), pend = r && r.rest;
-      var step = function () {   // 남은 선은 쉬는 틈에 조금씩(한 번에 3천 줄)
-        if (pend == null || pend < 0 || !NO.drawRest) { orbitBusy = false; orbitDone = true; orbitWrap.classList.add('ready'); return; }
-        pend = NO.drawRest(g, sc, v, S, S, pend, 3000);
-        (window.requestIdleCallback || function (f) { return setTimeout(f, 30); })(step, { timeout: 400 });
-      };
-      orbitWrap.classList.add('ready'); step();
+      try { orbitSc = NO.omniCore({}, st && st.ok ? st : null); } catch (e) { orbitBusy = false; return; }
+      orbitG = cv.getContext('2d'); orbitG.setTransform(dpr, 0, 0, dpr, 0, 0); orbitS = S;
+      orbitV = { yaw: .4, pitch: .32, zoom: 1.08, panX: 0, panY: 0, selected: -1, motion: false, spin: false, glow: false, small: null, lite: false, lod: false, fit: S, fxOut: true, budget: 3000 };
+      orbitDraw(); orbitDosFill();
     });
+  }
+  function orbitPick(e) {   // 화면 좌표 → CSS 회전 되돌림 → 그림 좌표 → 가장 가까운 점
+    var sc = orbitSc; if (!sc || !sc.SX) return;
+    var sp = e.currentTarget, rc = sp.getBoundingClientRect(), cv = sp.querySelector('canvas'), k = (cv.clientWidth || orbitS) / orbitS;
+    var m = getComputedStyle(sp).transform, a = 1, b = 0; if (m && m !== 'none') { var p = m.match(/matrix\(([^)]+)\)/); if (p) { var q = p[1].split(','); a = +q[0]; b = +q[1]; } }
+    var th = Math.atan2(b, a), dx = e.clientX - (rc.left + rc.width / 2), dy = e.clientY - (rc.top + rc.height / 2);
+    var x = orbitS / 2 + (dx * Math.cos(th) + dy * Math.sin(th)) / k, y = orbitS / 2 + (-dx * Math.sin(th) + dy * Math.cos(th)) / k;
+    var best = -1, bd = Math.pow(14 / k, 2);
+    if (!sc.__pick) { sc.__pick = new Uint8Array(sc.n); sc.groups.forEach(function (g) { g.ids.forEach(function (id) { sc.__pick[id] = 1; }); }); }   // 장식 점(고리·눈금)은 고르지 않는다 — 묶음에 든 뉴런만
+    for (var i = 0; i < sc.n; i++) { if (!sc.__pick[i]) continue; var ddx = sc.SX[i] - x, ddy = sc.SY[i] - y, d2 = ddx * ddx + ddy * ddy - (sc.SZ[i] < 0 ? 4 : 0); if (d2 < bd) { bd = d2; best = i; } }
+    orbitSelect(best);
+  }
+  function orbitKind(id) { var sc = orbitSc, gk = sc.groups.find(function (x) { return x.ids.indexOf(id) >= 0; }), lb = gk ? String(gk.label) : ''; return [lb, lb === '입력' ? 0 : lb.indexOf('몸통') === 0 ? 1 : lb === '머리' ? 3 : lb === '나무' ? 4 : -1]; }
+  function orbitSelect(id) {
+    if (!orbitSc) return; orbitSel = id >= 0 ? id : -1;
+    var mk = orbitWrap.querySelector('.ko-mark');
+    if (orbitSel >= 0 && orbitSc.SX) { mk.hidden = false; mk.style.left = (orbitSc.SX[orbitSel] / orbitS * 100).toFixed(2) + '%'; mk.style.top = (orbitSc.SY[orbitSel] / orbitS * 100).toFixed(2) + '%'; var gi = orbitSc.groups.findIndex(function (x) { return x.ids.indexOf(orbitSel) >= 0; }); if (gi >= 0) orbitGrp = gi; }
+    else mk.hidden = true;
+    orbitWrap.classList.toggle('sel', orbitSel >= 0);
+    orbitDraw(); orbitDosFill();
+  }
+  function orbitDosClick(e) {
+    var b = e.target.closest('[data-kg]'); if (b) { orbitGrp = +b.getAttribute('data-kg'); var g = orbitSc && orbitSc.groups[orbitGrp]; orbitSelect(g && g.ids.length ? g.ids[0] : -1); return; }
+    if (e.target.closest('[data-kclr]')) orbitSelect(-1);
+  }
+  function orbitDosFill() {
+    var el = orbitDos, sc = orbitSc; if (!el) return;
+    if (!sc) { el.innerHTML = '<div class="kd-empty">OMNI 구조 불러오는 중…</div>'; return; }
+    var NO = window.NeuralObservatory, f = function (x) { return Number(x || 0).toLocaleString('ko-KR'); }, I = sc.info || {};
+    var h = '<div class="kd-top"><span class="k-lab">NODE DOSSIER · 노드 역할</span><span class="kd-sum">' + (I.full ? '신경망 ' + esc((I.sizes || []).join('→')) + ' · 가중치 ' + f(I.params) + ' · 나무 ' + f(I.trees) + '그루 · 분기 ' + f(I.splits) : '대표 연결만') + '</span></div>';
+    h += '<div class="kd-grp">' + sc.groups.map(function (g, q) { return '<button type="button" data-kg="' + q + '" aria-pressed="' + (q === orbitGrp) + '">' + esc(g.label) + ' <b>' + f(g.ids.length) + '</b></button>'; }).join('') + '</div>';
+    var g = sc.groups[orbitGrp] || sc.groups[0];
+    h += '<select class="kd-sel" aria-label="노드 고르기"><option value="-1">' + esc(g ? g.label : '') + ' — 노드 고르기</option>' + (g ? g.ids.slice(0, 600).map(function (id) { return '<option value="' + id + '"' + (id === orbitSel ? ' selected' : '') + '>' + esc(String(sc.name[id] || '').split(' — ')[0]) + '</option>'; }).join('') : '') + '</select>';
+    if (orbitSel >= 0) {
+      var id = orbitSel, k = orbitKind(id), vv = sc.val[id], cnt = 0, base = String(sc.name[id] || ''), role = '';
+      for (var j = 0; j < sc.la.length; j++) if (sc.la[j] === id || sc.lb[j] === id) cnt++;
+      try { role = NO.NODE_ROLE.omniRole(k[1], base); } catch (e) {}
+      h += '<div class="kd-card"><div class="kd-name"><i></i><b>' + esc(base.split(' — ')[0]) + '</b><button type="button" data-kclr aria-label="선택 지우기">×</button></div>' +
+        '<dl class="kd-kv"><div><dt>묶음</dt><dd>' + esc(k[0] || '—') + '</dd></div><div><dt>세기</dt><dd>' + (vv === vv ? (vv * 100).toFixed(0) + '%' : '—') + '</dd></div><div><dt>닿은 선</dt><dd>' + f(cnt) + '</dd></div><div><dt>번호</dt><dd>#' + id + '</dd></div></dl>' +
+        (base.indexOf(' — ') > 0 ? '<p class="kd-desc">' + esc(base.split(' — ').slice(1).join(' — ')) + '</p>' : '') +
+        (role ? '<p class="kd-role">' + esc(role) + '</p>' : '') + '</div>';
+    } else h += '<div class="kd-empty">구체의 점을 누르거나 위 묶음·목록에서 고르면 그 뉴런의 연결만 밝게 남고 역할이 여기 나옵니다.</div>';
+    el.innerHTML = h;
   }
 
   function strip(j, mk) {

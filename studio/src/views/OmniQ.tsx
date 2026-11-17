@@ -24,7 +24,7 @@ const pp = (x: any) => (typeof x === "number" && isFinite(x) ? (x >= 0 ? "+" : "
 const sim = (s: any, k: string) => { const e = s.early || {};
   const rg = Array.isArray(s.byReg) ? " · 국면 " + s.byReg.map((b: any) => (b.reg === s.regNow ? "▸" : "") + b.ko + " " + pp(b.mean)).join(" ") : "";
   return { k, v: "맞춤 초과 " + pp(s.mx), hint: n0(s.n) + "건 · 앞 " + n0(e.mN) + "달 t " + f1(e.mT, 1) + " (≥ " + (s.needT ?? 2) + ") · 최근 20% " + pp(s.lateMx) + " · 비용 뺀 " + pp(s.net) + rg, tone: (s.ok ? "ok" : "bad") as Tone }; };
-function Gate({ g, label }: { g: any; label: string }) {
+export function Gate({ g, label }: { g: any; label: string }) {
   if (!g) return <p className="py-2 text-[12px] text-ink-3">{label} — 없음</p>;
   const g1 = g.g1 || {}, g2 = g.g2 || {}, g3 = g.g3 || {}, fit = g.fit || {};
   return (

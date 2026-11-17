@@ -12,6 +12,13 @@
 
 ## Current handoff
 
+### V33.851 (2026-11-17) AI 작동원리 단순화 · 노드는 AI 코어에서 · 유리 카드 · 종목상세 오른쪽 칸 따로 스크롤
+- V33.850 의 두 칸 배치 철회 → 매매법 AI(위) · OMNI 성능(아래) 한 줄.
+- 두뇌 스튜디오 기본 = OMNI 성능 지표만(studio/src/views/OmniPerf.tsx · /api/omni-status · 시장별 5일/20일 머리 승률·하한·t·구간·모의 초과, '관문 자세히' 펼침). '전체 모델 구조 열기' 버튼으로 예전 App(전체) — main.tsx Root.
+- #pbObs AI 코어(OMNI 구체) 클릭 → CSS 회전각 되돌려 가장 가까운 '묶음 뉴런' 선택 → 그 선만 밝게 다시 긋기 · 아래 NODE DOSSIER(묶음 칩·목록·이름/묶음/세기/닿은 선/역할 NODE_ROLE.omniRole). 선택 중엔 회전 멈춤.
+- 유리 카드: lux-glass2.css 끝(#pbObs .k-panel/.ko-k/.k-card · .bs-perf/.bs-tile). 회전 그림 칸에는 backdrop-filter 를 두지 않는다.
+- 종목상세: .detail-side(오른쪽, sticky·안쪽 스크롤) 높이를 '화면 안에 남은 높이' 로 맞춤(index.html IIFE · 스크롤/리사이즈/ResizeObserver 때 rAF 한 번). 실측: 전엔 칸 아래 447px 가 화면 밖이라 끝이 안 보였다.
+
 ### V33.850 (2026-11-17) AI 작동원리 — AI 코어 = OMNI 코어 · OMNI 렉 근본 원인 · 한 화면 두 칸
 - 렉 실측(아이패드 가로·CPU 4배 느리게·소프트웨어 WebGL): 페이지 요소 1.4만 개인데 OMNI 가 매 장면 이름표·점 ~120개를 옮겨 PrePaint 가 페이지 전체를 훑었다(3초에 399ms).
   → studio/src/gl/omniGL.ts 그림 칸 `contain:strict` · 안쪽 그림 25fps(31→40ms). 재빌드 → public/brain-studio.js. check-brain-studio ④ 갱신.
