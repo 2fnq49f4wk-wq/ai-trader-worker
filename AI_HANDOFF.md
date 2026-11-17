@@ -12,6 +12,8 @@
 
 ## Current handoff
 
+### V33.855 (2026-11-17) eqh 복원이 안 돌던 것 — '현지 16시 뒤' 조건이 복원까지 막았다(ET 새벽 2시 실측 30분 동안 none). 복원은 장 닫힘이면 언제든 · 오늘 줄만 16시 뒤.
+
 ### V33.854 (2026-11-17) LUX-POSITION 한눈에 — 원 그래프 + 총자산 곡선
 - 화면: index.html pzViz(calcSummary 의 hold[] · window.__eqh) → 카드 큰 숫자 아래 .pz-viz(원 그래프 = 종목별 평가액·현금 비중, 종목 수익률 · 곡선 = 날짜별 총자산 + 지금 값, 점선 = 시작 자본, 최대 낙폭). 배분 바는 숨김. CSS lux-glass2.css 끝.
 - 서버: state "eqh:us|kr" = [[YYYY-MM-DD, 총자산]] 400일. 처음 한 번 eqhBackfill(trades + dtail days·closes 재생 · 입출금 0 · 수수료·세금·슬리피지 같은 함수) → 이후 eqhDaily(장 CLOSED·현지 16시 뒤 · 10분마다 검사 · 시장당 하루 1쓰기 · 휴장이면 줄 안 늘림). /api/state(buildStatePayload) 에 eqh 로 실림.

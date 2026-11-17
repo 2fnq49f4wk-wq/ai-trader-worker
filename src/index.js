@@ -3065,7 +3065,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.854";
+const _BUILD_VER = "V33.855";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -23407,16 +23407,19 @@ async function eqhBackfill(env, mk, cfg) {
   return out.slice(-EQH_KEEP);
 }
 async function eqhDaily(env) {
-  const g = globalThis.__eqhDone || (globalThis.__eqhDone = {});
+  const g = globalThis.__eqhDone || (globalThis.__eqhDone = {}), has = globalThis.__eqhHas || (globalThis.__eqhHas = {});
   for (const mk of ["us", "kr"]) {
     try {
       const today = localDateStr(mk); if (!today || g[mk] === today) continue;
-      if (marketSessionNow(mk, new Date()) !== "CLOSED") continue;   // 장 마감 뒤에만(종가로)
-      const p = mk === "us" ? getUSEt(new Date()) : getKST(new Date()); if (!(p.totalMin >= 16 * 60)) continue;
+      if (marketSessionNow(mk, new Date()) !== "CLOSED") continue;   // 장이 닫혀 있을 때만
+      const p = mk === "us" ? getUSEt(new Date()) : getKST(new Date()), after = p.totalMin >= 16 * 60;   // 오늘 줄은 현지 16시 뒤(종가)에만
+      if (has[mk] && !after) continue;   // 기록이 이미 있으면 16시 전엔 읽지도 않는다
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       let h = await getState(env.DB, "eqh:" + mk, null, true);   // 엄격히 — 못 읽으면 예외(덮어써서 기록을 지우지 않는다)
-      if (!Array.isArray(h)) { h = await eqhBackfill(env, mk, cfg); }
-      if (h.length && h[h.length - 1][0] === today) { g[mk] = today; if (!(await getState(env.DB, "eqh:" + mk, null, true))) await setState(env.DB, "eqh:" + mk, h); continue; }
+      if (!Array.isArray(h)) { h = await eqhBackfill(env, mk, cfg); await setState(env.DB, "eqh:" + mk, h); }   // 처음 한 번 — 닫혀 있으면 언제든
+      has[mk] = true;
+      if (!after) continue;
+      if (h.length && h[h.length - 1][0] === today) { g[mk] = today; continue; }
       const open = await isMarketTradingDay(env.DB, mk, env);
       if (open !== false) h.push([today, Math.round((await computePortfolioValue(env.DB, mk, cfg)) * 100) / 100]);
       if (h.length > EQH_KEEP) h = h.slice(-EQH_KEEP);
