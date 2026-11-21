@@ -51,9 +51,14 @@
     if (D.fonts && D.fonts.ready) D.fonts.ready.then(function () { first = true; sched(false); });
     H.classList.add("lux-ind"); place(false);
   }
+  var sbWait = 0;
   function mountPills() {
     var nav = $(".sb-nav"), tb = $(".m-tabbar"), ok = false;
-    if (nav) { ok = true; if (!$(".lux-pill", nav)) Pill(nav, ".nav-item", function (a) { return { x: a.offsetLeft, y: a.offsetTop, w: a.offsetWidth, h: a.offsetHeight }; }, [0, 0]); }
+    /* [V33.860] 폰(사이드바 display:none)에서도 사이드바 알약을 달아 두면 화면을 바꿀 때마다(.nav-item 클래스 변경) 위치를 재며 문서 전체 배치를 한 번 더 시켰다
+       (폰 전문가 축소 보기 로딩 실측 place 140ms). 사이드바가 안 보이는 동안은 달지 않고, 화면이 넓어져(가로 회전 등) 사이드바가 보이면 그때 단다. */
+    var sbPill = function () { if (!$(".lux-pill", nav)) Pill(nav, ".nav-item", function (a) { return { x: a.offsetLeft, y: a.offsetTop, w: a.offsetWidth, h: a.offsetHeight }; }, [0, 0]); };
+    var sbHidden = function () { var sb = nav.closest("nav.sidebar") || nav; return getComputedStyle(sb).display === "none"; };
+    if (nav) { ok = true; if (!sbHidden()) sbPill(); else if (!sbWait) { sbWait = 1; var chk = function () { if (sbHidden()) return; removeEventListener("resize", chk); sbPill(); }; addEventListener("resize", chk, { passive: true }); } }
     /* [V33.813] 폰 아래 탭은 떠다니는 알약을 쓰지 않는다 — 아이폰 사파리에서 위치를 잘못 재(줌·safe-area) 엉뚱한 곳에 가고 파란 불이 안 켜졌다. 활성 탭 아이콘 자체를 CSS 로 칠한다. */
     if (tb) { ok = true; tabPill(tb); }
     if (false && tb) { if (!$(".lux-pill", tb)) Pill(tb, ".m-tab", function (act) { var ic = $(".ic", act) || act; return { x: act.offsetLeft + ic.offsetLeft, y: act.offsetTop + ic.offsetTop, w: ic.offsetWidth, h: ic.offsetHeight }; }, [4, 2]); }
@@ -78,8 +83,12 @@
       H.classList.add("lux-tpill-on");
     }
     function setI(t) { var i = tabs().indexOf(t); if (i < 0) return; tb.style.setProperty("--tp-i", i); p.classList.add("on"); }
+    /* [V33.860] 로그인 전에 MY·AI 원리를 누르면 화면은 그대로고 가입 창만 뜨는데(index.html luxGuard), 표시는 먼저 그 탭으로 가 있어
+       파란 표시(MY)와 실제 화면(종목)이 어긋난 채 남았다 → luxGuard 와 같은 조건(대시보드·종목 말고는 lux-auth 필요)이면 표시를 옮기지 않는다. */
+    function blocked(t) { var id = t.getAttribute("data-page"); if (!id || id === "dashboard" || id === "detail") return false; try { return !localStorage.getItem("lux-auth"); } catch (e) { return false; } }
     tb.addEventListener("click", function (e) {
       var t = e.target.closest && e.target.closest(".m-tab"); if (!t || t.getAttribute("data-more") || t.getAttribute("data-search")) return;
+      if (blocked(t)) return;
       setI(t);
     }, true);
     new MutationObserver(function (ms) { for (var i = 0; i < ms.length; i++) if (ms[i].target !== p) { var a = $(".m-tab.active", tb); if (a) setI(a); return; } })

@@ -182,11 +182,24 @@
     if (items.length < 2) return;
     var k = items.map(function (x) { return x.s; }).indexOf(symSel);
     symSel = items[(k + 1) % items.length].s;
-    render();
+    /* [V33.860] 폰 렉(사용자 11/21 "AI 작동원리 렉 심함") — 4.5초마다 root.innerHTML 전체(패널 4개 · 카드 수십 장 · 유리 흐림 칸)를 새로 만들어
+       폰 CPU4× 실측 한 번 150~250ms 멈췄다. 순회는 고른 종목만 바뀌므로 카드 표시(.sel)·순번 글자·진행 막대·아래 판정 칸만 바꾼다. */
+    if (!stepStrip(items, k + 1)) render();
     var c = root.querySelector('.k-card.sel'), s = root.querySelector('.k-strip');
     if (c && s) s.scrollTo({ left: Math.max(0, c.offsetLeft - s.offsetLeft - 20), behavior: 'smooth' });
   }
 
+  function stepStrip(items, pos) {
+    var strip = root.querySelector('.k-strip'), scan = root.querySelector('.k-scan'), it = items.filter(function (x) { return x.s === symSel; })[0];
+    if (!strip || !scan || !it) return false;
+    var cards = strip.querySelectorAll('.k-card'); if (cards.length !== items.length) return false;
+    for (var i = 0; i < cards.length; i++) { var on = cards[i].getAttribute('data-pbsym') === symSel; if (cards[i].classList.contains('sel') !== on) cards[i].classList.toggle('sel', on); }
+    var lv = strip.parentNode.querySelector('.k-live'); if (lv) lv.textContent = '순회 중 ' + (((pos - 1) % items.length) + 1) + '/' + items.length;
+    var pg = strip.parentNode.querySelector('.k-prog'); if (pg) { pg.classList.remove('off'); var bar = pg.firstElementChild; if (bar) pg.replaceChild(bar.cloneNode(false), bar); }   // 막대 애니메이션 처음부터
+    var t = document.createElement('div'); t.innerHTML = scanHtml(it); if (!t.firstElementChild) return false;
+    scan.parentNode.replaceChild(t.firstElementChild, scan);
+    return true;
+  }
   function brief(j, mk) {
     var lv = (j.live || {})[mk], r = (j.markets || {})[mk];
     var items = (lv && lv.items) || [];
@@ -265,6 +278,19 @@
     if (!sc.SX || sc._S !== S) { orbitProject(sc, S); sc._S = S; }
     if (!sc._role) { sc._role = new Uint8Array(sc.n); sc.groups.forEach(function (gr) { var lb = String(gr.label), k = lb === '입력' ? 1 : lb.indexOf('몸통') === 0 ? 2 : lb === '머리' ? 3 : lb === '나무' ? 4 : 5; gr.ids.forEach(function (id) { sc._role[id] = k; }); }); }
     var sel = orbitSel, cx = S / 2, rot = sc._rot, mx = sc._mx, SX = sc.SX, SY = sc.SY, SZ = sc.SZ, la = sc.la, lb = sc.lb, ls = sc.ls, m = la.length;
+    /* [V33.860] ★점 누르기 렉★(사용자 11/21 폰 "AI 작동원리 렉") — 누를 때마다 가중치 선 3.7만 줄을 처음부터 다시 그어(가산 합성) 폰 CPU4× 실측
+       다음 화면까지 1.4~2.6초 멈췄다. 처음 다 그린 그림(고른 것 없음)을 한 장 보관해 두고, 고르면 그 그림을 옅게 깐 뒤 고른 뉴런의 선·점만 밝게 긋는다(수백 줄). */
+    if (sc._base && sc._baseS === S && sc._base.width === g.canvas.width) {
+      g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, g.canvas.width, g.canvas.height); g.globalAlpha = sel >= 0 ? .42 : 1; g.drawImage(sc._base, 0, 0); g.restore();
+      if (sel >= 0) {
+        g.globalCompositeOperation = 'lighter'; g.strokeStyle = 'rgba(220,240,255,.75)'; g.lineWidth = 1.1; g.beginPath();
+        for (var he = 0; he < m; he++) { if (la[he] === sel || lb[he] === sel) { g.moveTo(SX[la[he]], SY[la[he]]); g.lineTo(SX[lb[he]], SY[lb[he]]); } }
+        g.stroke(); g.globalCompositeOperation = 'source-over';
+        var rk = sc._role[sel], fz = (1 - (SZ[sel] + 1) * .5), al0 = .35 + .65 * fz, r0 = rk === 3 ? 3.4 : rk === 2 ? 1.5 : rk === 4 ? 1.1 : 1.3;
+        g.fillStyle = 'rgba(235,248,255,' + al0 + ')'; g.beginPath(); g.arc(SX[sel], SY[sel], r0 + 1, 0, Math.PI * 2); g.fill();
+      }
+      orbitBusy = false; orbitDone = true; return;
+    }
     g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, g.canvas.width, g.canvas.height); g.restore();
     // ① 빛무리 + 홀로그램 격자
     var halo = g.createRadialGradient(cx, cx, S * .05, cx, cx, S * .5); halo.addColorStop(0, 'rgba(40,110,255,.22)'); halo.addColorStop(.55, 'rgba(14,40,110,.18)'); halo.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = halo; g.fillRect(0, 0, S, S);
@@ -290,7 +316,7 @@
       if (tok !== orbitTok) return;
       var t0 = performance.now();
       while (lvl < L && performance.now() - t0 < 12) {
-        var arr = buckets[lvl], end = Math.min(arr.length, idx + 4000); g.strokeStyle = cols[lvl]; g.beginPath();
+        var arr = buckets[lvl], end = Math.min(arr.length, idx + 800); g.strokeStyle = cols[lvl]; g.beginPath();   // [V33.860] 4000 → 800: 한 묶음이 12ms 예산을 크게 넘어(폰 CPU4× 50~100ms) 긴 작업이 됐다
         for (; idx < end; idx++) { var ee = arr[idx]; g.moveTo(SX[la[ee]], SY[la[ee]]); g.lineTo(SX[lb[ee]], SY[lb[ee]]); }
         g.stroke(); if (idx >= arr.length) { lvl++; idx = 0; }
       }
@@ -303,6 +329,7 @@
         g.fillStyle = k === 3 ? 'rgba(235,248,255,' + al + ')' : k === 1 ? 'rgba(125,215,255,' + al + ')' : k === 2 ? 'rgba(80,150,255,' + al + ')' : k === 4 ? 'rgba(90,230,215,' + (al * .8) + ')' : 'rgba(160,190,255,' + al + ')';
         g.beginPath(); g.arc(SX[i], SY[i], r, 0, Math.PI * 2); g.fill();
         if (k === 3) { g.strokeStyle = 'rgba(140,210,255,' + (al * .7) + ')'; g.lineWidth = 1; g.beginPath(); g.arc(SX[i], SY[i], 7, 0, Math.PI * 2); g.stroke(); } });
+      if (sel < 0 && !sc._base) { try { var bc = document.createElement('canvas'); bc.width = g.canvas.width; bc.height = g.canvas.height; bc.getContext('2d').drawImage(g.canvas, 0, 0); sc._base = bc; sc._baseS = S; } catch (e) {} }
       orbitBusy = false; orbitDone = true;
     };
     orbitWrap.classList.add('ready'); step();
@@ -382,6 +409,10 @@
         '<div class="f">' + (it.fired || []).slice(0, 4).map(function (f) { return '<span class="k-chip' + (f === it.pb ? ' on' : '') + '">' + esc(nm(f)) + '</span>'; }).join('') + '</div></button>';
     }).join('') + '</div>';
     var it = items.filter(function (x) { return x.s === symSel; })[0];
+    return h + scanHtml(it) + '</section>';
+  }
+  function scanHtml(it) {   // [V33.860] 아래 판정 칸만 따로 — 4.5초 순회 때 패널 전체(카드 수십 장·OMNI 칸)를 다시 만들지 않고 이 칸만 바꾼다
+    var h = '';
     if (it) {
       var steps = [
         [true, '후보', 'OMNI-Q 5일 상위 ' + Math.max(1, Math.round((1 - it.q) * 100)) + '% (점수 ' + it.q + ')'],
@@ -395,7 +426,7 @@
         '<div class="k-row" style="margin-top:6px"><span>매도 규칙</span><span>' + esc(exitTxt(it)) + '</span></div><div class="k-row"><span>상태</span><span>' + esc(it.act || it.why || '—') + '</span></div></div>' +
         '<div><span class="k-lab">왜 이 매매법인가 — 뜬 매매법 비교</span>' + altTable(it) + '</div></div>';
     }
-    return h + '</section>';
+    return h;
   }
 
   function funnel(j, mk) {
@@ -422,6 +453,7 @@
   }
   function render() {
     if (!root || !data) return;
+    lastDraw = Date.now();
     var j = data;
     if (!mkSel) { var lu = (j.live || {}).us, lk = (j.live || {}).kr; mkSel = (lk && (!lu || lk.ts > lu.ts)) ? 'kr' : 'us'; }
     var keepX = {}; root.querySelectorAll('.k-strip').forEach(function (s, i) { keepX[i] = s.scrollLeft; });
@@ -442,7 +474,7 @@
   }
   /* [V33.691] ★빨리 보이게★ — ① 지난번 자료(localStorage)로 바로 그리고 ② 진행 중인 같은 요청(window.__pbFetchP · 10초 안)이 있으면 그것을 나눠 쓴다
      (종전: 01 화면 위 요약칸과 이 패널이 /api/playbook 을 동시에 두 번 받았다). 30초 주기 갱신은 새 요청. */
-  var LSK = 'pbObs:last';
+  var LSK = 'pbObs:last', lastTxt = '', lastDraw = 0;
   function load() {
     if (busy || !root) return;
     busy = true;
@@ -450,7 +482,9 @@
     var fresh = window.__pbFetchP && (Date.now() - (window.__pbFetchAt || 0)) < 10000;
     var pr = fresh ? window.__pbFetchP : fetch('/api/playbook', { cache: 'no-store' }).then(function (r) { return r.json(); });
     if (!fresh) { window.__pbFetchP = pr; window.__pbFetchAt = Date.now(); }
-    pr.then(function (j) { data = j || {}; window.__pbState = data; primaryMode(data); render(); try { var t = JSON.stringify(j); if (t.length < 300000) localStorage.setItem(LSK, t); } catch (e) {} })
+    pr.then(function (j) { var t = ''; try { t = JSON.stringify(j); } catch (e) {}
+        if (t && t === lastTxt && data && Date.now() - lastDraw < 120000) return;   // [V33.860] 30초 갱신에 내용이 같으면 다시 그리지 않는다(폰 렉 · 패널 전체 innerHTML) — '몇 분 전' 글자는 2분마다 맞춘다
+        lastTxt = t; data = j || {}; window.__pbState = data; primaryMode(data); render(); try { if (t.length < 300000) localStorage.setItem(LSK, t); } catch (e) {} })
       .catch(function () { if (root && !data) root.innerHTML = '<section class="k-panel"><div class="k-empty">매매법 AI 상태를 불러오지 못했습니다. 잠시 뒤 다시 시도합니다.</div></section>'; })
       .then(function () { busy = false; });
   }
