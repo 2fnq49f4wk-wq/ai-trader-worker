@@ -3067,7 +3067,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.859";
+const _BUILD_VER = "V33.860";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -52695,7 +52695,28 @@ async function runTailRiskHedge(DB, market, mcfg, equity, vixValue, cash, opts) 
 const INV_LANE = { enabled: true,
   inst: { us: { CRASH: ["SQQQ", "SPXU", "SOXS"], BEAR: ["SH"] }, kr: { CRASH: ["252670.KS", "114800.KS"], BEAR: ["114800.KS"] } },
   budgetFrac: { CRASH: 0.12, BEAR: 0.06 }, sliceFrac: 0.5, maxOpen: 2, maxPerDay: 2, gapMs: 45 * 60000,
-  stopPct: { 1: 4, 2: 6, 3: 7 }, tpPct: { 1: 5, 2: 8, 3: 10 }, maxHoldDays: { 1: 10, 2: 5, 3: 4 } };
+  stopPct: { 1: 4, 2: 6, 3: 7 }, tpPct: { 1: 5, 2: 8, 3: 10 }, maxHoldDays: { 1: 10, 2: 5, 3: 4 },
+  /* [V33.860] ★개장 직후 진입 금지 + 오늘 정규장 시세만★ — 원장 실측: #4583(11/10 09:00:40 KST) 252670.KS 를 128 에 샀는데
+     128 = 11/9 종가, 그날 실제 범위 111~119(시가 115) → 4분 뒤 115 에 'stop −10.2%' −58.5만원(손절선 −6% 를 넘긴 가짜 손실).
+     #4641(11/13 09:00:48) 114800.KS 1256 = 전일 종가 · 그날 09:00~09:15 봉 고가 1232. 미국도 #4592·#4650 SH 가 09:30 ET 전일 종가로 체결.
+     원인: quote.ts 는 '우리가 쓴 시각'(장전 08~09시 갱신도 ts=지금)이라 30분 신선도 검사를 통과한다 — 오늘 정규장 체결가라는 보증이 아니다.
+     → 진입만: 정규장 시작 5분 뒤부터 · 쓰는 시세의 ts 가 오늘 정규장 시작 이후. 청산·손절은 그대로(늦추지 않는다). */
+  openDelayMin: 5,
+  /* [V33.860] ★국면 청산 머무름(히스테리시스)★ — 원장 실측: #4620→#4621 4분 만에 'regime' · #4641→#4643 1.6분 · 'regime' 5건 평균 −1.3% ·
+     'delever' 도 #4623→#4624 1.7분 · #4711→#4712 2분(국면 깜빡임). cron 이 1분 박자라 '2사이클' 은 2분뿐이라 못 막는다 →
+     자격 없는 국면이 ★끊김 없이 30분★ 이어질 때만 'regime'·'delever' 청산. 처음 본 시각은 포지션 meta.invRegOff(바뀔 때만 1쓰기).
+     손절·익절·최대 보유는 그대로 즉시. */
+  regimeDwellMs: 30 * 60000 };
+// [V33.860] 국면 청산을 아직 미룰지(순수 함수 — 검사가 그대로 돌린다). offSince = 자격 없는 국면을 처음 본 시각(없으면 0)
+function invRegimeDefer(why, offSince, now) {
+  if (why !== "regime" && why !== "delever") return false;
+  return !(offSince > 0 && now - offSince >= INV_LANE.regimeDwellMs);
+}
+// [V33.860] 진입해도 되는 시세인지(순수 함수). openTs = 오늘 정규장 시작(ms · 정규장 밖이면 null) · qTs = 시세 ts
+function invEntryQuoteOk(openTs, qTs, now) {
+  if (!(openTs > 0) || now - openTs < INV_LANE.openDelayMin * 60000) return false;
+  return qTs >= openTs;
+}
 function invLev(sym) { return (sym === "SQQQ" || sym === "SPXU" || sym === "SOXS") ? 3 : (sym === "252670.KS" ? 2 : 1); }
 // 지금 이 국면·보유로 무엇을 할지(순수 함수 — 검사가 그대로 돌린다). pos: { pnlPct, ageDays, lev } · canon: CRASH/BEAR/…
 function invExitWhy(canon, lev, pnlPct, ageDays) {
@@ -52722,7 +52743,7 @@ async function runInverseLane(DB, market, mcfg, equity, cash, o) {
   if (!inRoute && H[market] === false) return cash;   // 정상 국면 · 보유 없음(이 격리에서 확인됨) → D1 0
   if (!(o && o.canTrade)) return cash;
   const _px = async function (sym) {
-    try { const q = await getState(DB, "quote:" + sym, null); if (q && q.price > 0 && now - _num(q.ts, 0) < 30 * 60000) return { p: q.price, fresh: true }; } catch (e) {}
+    try { const q = await getState(DB, "quote:" + sym, null); if (q && q.price > 0 && now - _num(q.ts, 0) < 30 * 60000) return { p: q.price, fresh: true, ts: _num(q.ts, 0) }; } catch (e) {}
     try { const d = await getState(DB, "daily:" + sym, null); const c = d && d.closes; if (Array.isArray(c) && c.length && c[c.length - 1] > 0) return { p: c[c.length - 1], fresh: false, closes: c }; } catch (e) {}
     return null;
   };
@@ -52737,6 +52758,13 @@ async function runInverseLane(DB, market, mcfg, equity, cash, o) {
     if (!q) { invExp += p.avg * p.qty; continue; }
     const pnl = (q.p / p.avg - 1) * 100, age = (now - _num(p.opened_ts, now)) / 86400000;
     const why = invExitWhy(canon, lev, q.fresh ? pnl : null, age);
+    // [V33.860] 국면 청산 머무름 — 처음 본 시각을 meta 에 1번 쓰고, 국면이 다시 맞으면 1번 지운다(사이클마다 쓰지 않는다 · qty 조건이라 판 행을 되살리지 않는다)
+    const _off = _num(p.meta && p.meta.invRegOff, 0), _regW = (why === "regime" || why === "delever");
+    if ((_regW && !_off) || (!_regW && _off && !why)) {
+      p.meta.invRegOff = _regW ? now : 0;
+      try { await DB.prepare("UPDATE positions SET meta = ? WHERE market = ? AND symbol = ? AND strategy = ? AND qty = ?").bind(JSON.stringify(p.meta), market, p.symbol, p.strategy, p.qty).run(); } catch (e) {}
+    }
+    if (invRegimeDefer(why, _regW ? (_off || now) : 0, now)) { invExp += q.p * p.qty; continue; }
     if (why && (q.fresh || why === "regime" || why === "time" || why === "delever")) {
       await log(DB, "INFO", p.symbol, "[INV] 청산 " + why + " · 국면 " + canon + " · " + lev + "x · " + (pnl >= 0 ? "+" : "") + pnl.toFixed(2) + "% · " + age.toFixed(1) + "일");
       const r = await executeSell(DB, market, p.symbol, p, p.qty, q.p, "[INV] " + why + " " + (pnl >= 0 ? "+" : "") + pnl.toFixed(1) + "%", mcfg, cash);
@@ -52746,6 +52774,15 @@ async function runInverseLane(DB, market, mcfg, equity, cash, o) {
   }
   // ── 진입 ──
   if (!inRoute || (o && o.dailyLoss)) return cash;
+  // [V33.860] 오늘 정규장 시작 시각(특례일 창 포함 · marketWindows 한 곳) — 정규장 밖이거나 시작 5분 안이면 신규 진입 없음(청산은 위에서 이미 끝났다)
+  let openTs = null;
+  try {
+    const _d = new Date(now), _t = marketLocalTime(market, _d), _w = marketWindows(market, _d);
+    if (_t && _w) for (const pp of _winParts(_w.regular)) {
+      if ((pp.days || [1, 2, 3, 4, 5]).indexOf(_t.day) >= 0 && _t.totalMin >= pp.a && _t.totalMin < pp.b) { openTs = (now - now % 60000) - (_t.totalMin - pp.a) * 60000; break; }
+    }
+  } catch (e) {}
+  if (!(openTs > 0) || now - openTs < INV_LANE.openDelayMin * 60000) return cash;
   const G = globalThis.__invDay || (globalThis.__invDay = {}), day = new Date().toISOString().slice(0, 10);
   let dc = G[market];
   if (dc && now - _num(dc.lastTry, 0) < 5 * 60000) return cash;   // 진입 판정은 5분에 한 번
@@ -52767,7 +52804,7 @@ async function runInverseLane(DB, market, mcfg, equity, cash, o) {
   for (const sym of INV_LANE.inst[market][canon]) {
     if (heldSyms.has(sym)) continue;
     if (positions[sym + "::hedge"] && positions[sym + "::hedge"].qty > 0) continue;   // 꼬리 헤지 보유와 섞지 않는다
-    const q = await _px(sym); if (!q || !q.fresh) continue;
+    const q = await _px(sym); if (!q || !q.fresh || !invEntryQuoteOk(openTs, q.ts, now)) continue;   // [V33.860] 오늘 정규장 시작 이후 시세만
     let r5 = 0; try { const d = q.closes || ((await getState(DB, "daily:" + sym, null)) || {}).closes; if (Array.isArray(d) && d.length > 6 && d[d.length - 6] > 0) r5 = q.p / d[d.length - 6] - 1; } catch (e) {}
     if (!best || r5 > best.r5) best = { sym: sym, p: q.p, r5: r5 };
   }

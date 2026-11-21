@@ -35,15 +35,23 @@ chk(M.laneAdaptMult({ n: 16, pf: 0.3 }) === 0.35 && M.laneAdaptMult({ n: 16, pf:
 chk(M.PROBE_LANE.mult <= 0.35 && M.PROBE_LANE.maxPosFrac <= 0.05 && M.PROBE_LANE.maxTotalFrac <= 0.2, "시험 차선 상한(×0.3 · 종목 5% · 전체 20%)", "★시험 차선 상한이 풀렸다★");
 console.log("③ 인버스 청산");
 const inv = S.slice(S.indexOf("const INV_LANE = {"), S.indexOf("async function runInverseLane("));
-const I = new Function(inv + "; return { invExitWhy, invLev, INV_LANE };")();
+const I = new Function(inv + "; return { invExitWhy, invLev, INV_LANE, invRegimeDefer, invEntryQuoteOk };")();
 chk(I.invExitWhy("CRASH", 3, -7.5, 1) === "stop" && I.invExitWhy("CRASH", 3, 10.5, 1) === "tp" && I.invExitWhy("CRASH", 3, 1, 4.2) === "time", "손절 · 익절 · 최대 보유", "★인버스 청산 규칙이 틀렸다★");
 chk(I.invExitWhy("NEUTRAL", 1, 1, 1) === "regime" && I.invExitWhy("BEAR", 2, 1, 1) === "delever" && I.invExitWhy("BEAR", 1, 1, 1) === null, "국면 회복 · 레버리지 하향 · 1x 하락장 보유", "★국면 청산이 틀렸다★");
 chk(I.invLev("SQQQ") === 3 && I.invLev("252670.KS") === 2 && I.invLev("114800.KS") === 1 && I.INV_LANE.budgetFrac.CRASH <= 0.15, "레버리지 · 예산 상한 15% 이하", "★인버스 예산·레버리지가 틀렸다★");
+// [V33.860] 국면 청산 머무름 30분 · 개장 5분 뒤 + 오늘 정규장 시세만 진입(원장 #4583 전일 종가 128 매수 → −10.2%)
+const T0 = 1795000000000, MN = 60000;
+chk(I.invRegimeDefer("regime", 0, T0) && I.invRegimeDefer("delever", T0 - 29 * MN, T0) && !I.invRegimeDefer("regime", T0 - 30 * MN, T0)
+  && !I.invRegimeDefer("stop", 0, T0) && !I.invRegimeDefer("tp", 0, T0) && !I.invRegimeDefer("time", 0, T0) && !I.invRegimeDefer(null, 0, T0),
+  "국면 청산은 30분 머문 뒤 · 손절·익절·최대 보유는 즉시", "★인버스 국면 머무름/손절 즉시가 틀렸다★");
+chk(!I.invEntryQuoteOk(T0, T0 + MN, T0 + 4 * MN) && !I.invEntryQuoteOk(T0, T0 - MN, T0 + 6 * MN) && I.invEntryQuoteOk(T0, T0 + 5 * MN, T0 + 6 * MN) && !I.invEntryQuoteOk(null, T0, T0),
+  "진입: 개장 5분 뒤 · 시세 ts 가 오늘 개장 이후 · 정규장 밖 없음", "★인버스 진입 개장 관문이 틀렸다★");
 console.log("④ 배선");
 chk(/await shadowRecord\(DB, market, symbol, price, _pg\.key\)/.test(S) && /probeLaneCheck\(DB, market, symbol, price, signal, _pg, cfg\)/.test(S), "막힌 매수 → 그림자 원장 + 시험 차선", "★시험 차선/그림자 배선이 빠졌다★");
 chk(/signal && signal\.probe \? " · 시험차선"/.test(S) && /probe: \(signal && signal\.probe\) \? 1 : null/.test(S), "원장 꼬리 · 포지션 표지", "★시험 차선 표지가 빠졌다★");
 chk(/crashGate\.dailyLoss = true/.test(S) && /runInverseLane\(DB, market, mcfg, portfolioValue, cash, \{ canon: regime && regime\.canon, canTrade: canTrade, dailyLoss: !!crashGate\.dailyLoss \}\)/.test(S)
-  && /if \(!inRoute \|\| \(o && o\.dailyLoss\)\) return cash;/.test(S), "인버스 차선은 같은 사이클 · 일일 손실 한도면 신규 없음", "★인버스 차선 배선·한도가 빠졌다★");
+  && /if \(!inRoute \|\| \(o && o\.dailyLoss\)\) return cash;/.test(S)
+  && /!invEntryQuoteOk\(openTs, q\.ts, now\)/.test(S) && /if \(invRegimeDefer\(why, /.test(S), "인버스 차선은 같은 사이클 · 일일 손실 한도면 신규 없음", "★인버스 차선 배선·한도가 빠졌다★");
 chk(/if \(p\.meta && p\.meta\.invLane\) continue;/.test(S), "꼬리 헤지가 인버스 차선 보유를 안 판다", "★꼬리 헤지가 인버스 차선을 건드린다★");
 if (fails) { console.error("\n✗ 시험·인버스 차선 검사 실패 " + fails); process.exit(1); }
 console.log("\n✓ 시험·인버스 차선 검사 통과");

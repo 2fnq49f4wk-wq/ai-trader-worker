@@ -1,0 +1,23 @@
+/* [V33.860] 관리자 및 개발자 메뉴 — 리퀴드 글라스 · 묶음 탭 · 넓은 화면은 카드 2열 (lux-admin.js 가 섹션을 다시 담는다) */
+#settingsModal .modal-content.adm{width:min(1120px,94vw)!important;max-width:none!important;max-height:min(88dvh,980px)!important;display:flex!important;flex-direction:column;overflow:hidden!important;padding:18px 20px 14px!important;border-radius:22px!important;background:linear-gradient(160deg,rgba(28,36,58,.86),rgba(12,16,28,.9))!important;border:1px solid rgba(255,255,255,.14)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 30px 80px -20px rgba(0,0,0,.7)!important;-webkit-backdrop-filter:blur(20px) saturate(150%);backdrop-filter:blur(20px) saturate(150%)}
+#settingsModal .adm .settings-epigraph{margin:0 0 4px!important;opacity:.7;font-size:11px}
+#settingsModal .adm>h2{margin:0 0 10px!important;font-size:22px!important;letter-spacing:-.3px!important;display:flex;flex-direction:column;gap:2px}
+#settingsModal .adm>h2 .adm-k{font-size:10.5px;letter-spacing:2px;font-weight:600;color:#7fa6ff}
+#settingsModal .adm-tabs{display:flex;gap:6px;overflow-x:auto;padding:4px;margin:0 0 10px;border-radius:16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);scrollbar-width:none;flex:0 0 auto}
+#settingsModal .adm-tabs::-webkit-scrollbar{display:none}
+#settingsModal .adm-tabs button{flex:1 0 auto;min-width:104px;display:flex;flex-direction:column;align-items:center;gap:1px;padding:8px 12px;border-radius:12px;border:1px solid transparent;background:none;color:#a9b3c6;cursor:pointer;font:inherit}
+#settingsModal .adm-tabs button b{font-size:13.5px;font-weight:600}#settingsModal .adm-tabs button small{font-size:10px;letter-spacing:1px;opacity:.75}
+#settingsModal .adm-tabs button[aria-selected="true"]{color:#fff;background:linear-gradient(160deg,rgba(127,166,255,.28),rgba(61,214,181,.16));border-color:rgba(127,166,255,.45);box-shadow:inset 0 1px 0 rgba(255,255,255,.2)}
+#settingsModal .adm-body{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;padding:2px 4px 6px;scrollbar-width:thin}
+#settingsModal .adm-panel{display:grid;grid-template-columns:1fr;gap:10px}
+#settingsModal .adm-panel[hidden]{display:none}
+@media (min-width:1000px){#settingsModal .adm-panel{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}}
+#settingsModal .adm-card{min-width:0;padding:12px 14px;border-radius:16px;background:linear-gradient(158deg,rgba(255,255,255,.07),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.11);box-shadow:inset 0 1px 0 rgba(255,255,255,.1)}
+#settingsModal .adm-card>.section-title:first-child{margin-top:0!important;font-size:12.5px!important;letter-spacing:1px;color:#cfe0ff!important;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,.08);margin-bottom:8px!important}
+#settingsModal .adm-card :is(input,select,textarea){border-radius:9px!important}
+#settingsModal .adm .modal-actions{flex:0 0 auto;margin-top:10px!important;padding-top:10px;border-top:1px solid rgba(255,255,255,.08)}
+@media (max-width:760px){#settingsModal .modal-content.adm{width:100vw!important;max-height:100dvh!important;height:100dvh;border-radius:0!important;padding:14px 12px 10px!important}#settingsModal .adm-tabs button{min-width:88px;padding:7px 9px}}
+html[data-theme="light"] #settingsModal .modal-content.adm{background:linear-gradient(160deg,rgba(255,255,255,.95),rgba(244,247,252,.94))!important;border-color:rgba(16,24,40,.1)!important}
+html[data-theme="light"] #settingsModal .adm-card{background:rgba(255,255,255,.8);border-color:rgba(16,24,40,.08)}
+html[data-theme="light"] #settingsModal .adm-tabs button{color:#566070}html[data-theme="light"] #settingsModal .adm-tabs button[aria-selected="true"]{color:#0b1220}
+html[data-theme="light"] #settingsModal .adm-card>.section-title:first-child{color:#1d3a7a!important}

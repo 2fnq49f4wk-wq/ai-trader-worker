@@ -22,7 +22,7 @@
 </script>
 <script>/* [UI1] 첫 방문 배너 판정 */
 (function(){try{var q=location.search,f=/[?&]intro=hero(&|$)/.test(q);if(!f&&(/[?&]intro=0(&|$)/.test(q)||localStorage.getItem("lux-hero-seen")||localStorage.getItem("lux-auth")||/bot|crawl|spider|slurp|lighthouse|pagespeed|preview|headless|facebookexternalhit|kakaotalk-scrap/i.test(navigator.userAgent)||(window.matchMedia&&matchMedia("(display-mode: standalone)").matches)||navigator.standalone))return;
-localStorage.setItem("lux-hero-seen","1");var h=document.documentElement;h.classList.add("lux-hero","lux-nointro");var l=document.createElement("link");l.rel="stylesheet";l.href="/lux-hero.css?v=33.859";document.head.appendChild(l);var c=document.createElement("script");c.src="/lux-hero.js?v=33.859";c.defer=true;document.head.appendChild(c);}catch(e){}})();</script>
+localStorage.setItem("lux-hero-seen","1");var h=document.documentElement;h.classList.add("lux-hero","lux-nointro");var l=document.createElement("link");l.rel="stylesheet";l.href="/lux-hero.css?v=33.860";document.head.appendChild(l);var c=document.createElement("script");c.src="/lux-hero.js?v=33.860";c.defer=true;document.head.appendChild(c);}catch(e){}})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <script>/* [V33.740] ★첫 그림부터 축소 보기★(사용자 11/2 "로딩할 때 처음에 옛날 화면이 보인다") — 휴대폰은 늘 대시보드로 시작하므로, 첫 그림 전에 PC 폭 뷰포트로 바꿔 둔다
    (종전엔 스크립트가 다 돈 뒤 showPage 에서 바꿔 휴대폰 배치가 한 번 보였다). 폭은 지난번 잰 높이(localStorage lux-dz-vh)로 같은 식. */
@@ -345,20 +345,20 @@ window.luxGuard=function(id){if(id==='dashboard'||id==='detail')return true;try{
 window.__luxAct=Date.now();['pointerdown','keydown','touchstart','wheel'].forEach(function(e){addEventListener(e,function(){window.__luxAct=Date.now();},{passive:true,capture:true});});
 window.luxIdle=function(){return document.hidden||Date.now()-window.__luxAct>600000;};
 </script>
-<meta name="lux-build" content="V33.859">
-<script src="/i18n.js?v=33.859" defer></script>
-<script src="/outlook.js?v=33.859" defer></script>
-<script src="/advisor.js?v=33.859" defer></script>
-<script src="/luxmini.js?v=33.859" defer></script>
-<script src="/luxmini-view.js?v=33.859" defer></script>
-<script src="/ovn-live.js?v=33.859" defer></script>
-<script src="/mine.js?v=33.859" defer></script>
-<script src="/easy-dash.js?v=33.859" defer></script>
-<script src="/lux-motion.js?v=33.859" defer></script>
-<script src="/stock-analysis.js?v=33.859" defer></script>
-<script src="/stock-info.js?v=33.859" defer></script>
-<script src="/detail-v3.js?v=33.859" defer></script><script src="/orderbook.js?v=33.859" defer></script>
-<script src="/neural-observatory.js?v=33.859" defer></script>
+<meta name="lux-build" content="V33.860">
+<script src="/i18n.js?v=33.860" defer></script>
+<script src="/outlook.js?v=33.860" defer></script>
+<script src="/advisor.js?v=33.860" defer></script>
+<script src="/luxmini.js?v=33.860" defer></script>
+<script src="/luxmini-view.js?v=33.860" defer></script>
+<script src="/ovn-live.js?v=33.860" defer></script>
+<script src="/mine.js?v=33.860" defer></script>
+<script src="/easy-dash.js?v=33.860" defer></script>
+<script src="/lux-motion.js?v=33.860" defer></script>
+<script src="/stock-analysis.js?v=33.860" defer></script>
+<script src="/stock-info.js?v=33.860" defer></script>
+<script src="/detail-v3.js?v=33.860" defer></script><script src="/orderbook.js?v=33.860" defer></script>
+<script src="/neural-observatory.js?v=33.860" defer></script>
 
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="application-name" content="LUX">
@@ -4733,7 +4733,7 @@ window.LUX_NV = {
       <button type="button" class="sb-btn btn logs" id="btnLogs" style="display:none;">LOG</button>
       <div class="sb-grid">
         <button type="button" class="sb-btn btn macro" id="btnHeatmap">MAP</button>
-        <button type="button" class="sb-btn btn" id="btnSettings" style="display:none;">⚙ 설정</button><!-- [V33.732] 설정은 AI 두뇌 'MISSION CONTROL' 옆으로(사용자 11/2) · 요소는 리스너 호환용 -->
+        <button type="button" class="sb-btn btn" id="btnSettings" style="display:none;">⚙ 관리자 및 개발자 메뉴</button><!-- [V33.732] 설정은 AI 두뇌 'MISSION CONTROL' 옆으로(사용자 11/2) · 요소는 리스너 호환용 -->
         <button type="button" class="sb-btn btn" id="btnUpdate" title="서버의 최신 판과 비교해 다르면 캐시를 비우고 새로 받습니다">↻ 새 버전</button>
         <button type="button" class="sb-btn btn" id="btnInstall" title="홈 화면에 앱으로 설치(주소창 없이 앱처럼 열림)">📲 앱 설치</button>
         <button type="button" class="sb-btn btn" id="btnPush" data-moved="mine" style="display:none;" title="매수·매도 체결을 앱이 닫혀 있어도 알림으로 받습니다(웹 푸시)">🔕 체결 알림 받기</button>
@@ -5548,7 +5548,7 @@ window.LUX_NV = {
       <div class="nnv-heading">
         <!-- [Codex V33.314] Monochrome mission console; existing control IDs remain stable. -->
         <div class="nnv-eyebrow" id="nnvEyebrow">LUX / INTELLIGENCE SYSTEMS</div>
-        <div class="nnv-title"><span class="dot"></span><span id="nnvTitleTxt">MISSION CONTROL</span><button type="button" class="nnv-setbtn" onclick="var b=document.getElementById('btnSettings');if(b)b.click();" aria-label="설정 열기">⚙ 설정</button></div>
+        <div class="nnv-title"><span class="dot"></span><span id="nnvTitleTxt">MISSION CONTROL</span><button type="button" class="nnv-setbtn" onclick="var b=document.getElementById('btnSettings');if(b)b.click();" aria-label="관리자 및 개발자 메뉴 열기">⚙ 관리자 및 개발자 메뉴</button></div>
         <div class="nnv-headcopy" id="nnvHeadcopy">OMNI-Q 후보 → 지금 뜬 매매법 → 닮은 과거 성적으로 선택 → 위험 관문까지, 실제 엔진 상태를 한 화면에서 추적합니다.</div>
       </div>
       <div class="nnv-head-actions">
@@ -9328,19 +9328,19 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
   #page-detail .detail-main .detail-chart{height:46vh !important;min-height:300px !important}
 }
 </style>
-<link rel="stylesheet" href="/brain-console.css?v=33.859">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.859">
-<link rel="stylesheet" href="/detail-v3.css?v=33.859">
-<link rel="stylesheet" href="/detail-v3b.css?v=33.859">
-<link rel="stylesheet" href="/detail-v3c.css?v=33.859"><link rel="stylesheet" href="/detail-v3d.css?v=33.859">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.859">
-<link rel="stylesheet" href="/model-evidence.css?v=33.859">
+<link rel="stylesheet" href="/brain-console.css?v=33.860">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.860">
+<link rel="stylesheet" href="/detail-v3.css?v=33.860">
+<link rel="stylesheet" href="/detail-v3b.css?v=33.860">
+<link rel="stylesheet" href="/detail-v3c.css?v=33.860"><link rel="stylesheet" href="/detail-v3d.css?v=33.860">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.860">
+<link rel="stylesheet" href="/model-evidence.css?v=33.860">
 <!-- [V33.526] 리퀴드 메탈 테마(다크 기본 테마 전용 · 라이트는 그대로) — 맨 뒤에 둔다 -->
-<link rel="stylesheet" href="/liquid-metal.css?v=33.859">
-<link rel="stylesheet" href="/lux-polish.css?v=33.859">
-<link rel="stylesheet" href="/lux-glass.css?v=33.859">
-<link rel="stylesheet" href="/lux-navy.css?v=33.859">
-<link rel="stylesheet" href="/lux-glass2.css?v=33.859"><script src="/lux-topbar.js?v=33.859"></script>
+<link rel="stylesheet" href="/liquid-metal.css?v=33.860">
+<link rel="stylesheet" href="/lux-polish.css?v=33.860">
+<link rel="stylesheet" href="/lux-glass.css?v=33.860">
+<link rel="stylesheet" href="/lux-navy.css?v=33.860">
+<link rel="stylesheet" href="/lux-glass2.css?v=33.860"><link rel="stylesheet" href="/lux-admin.css?v=33.860"><script src="/lux-admin.js?v=33.860" defer></script><script src="/lux-topbar.js?v=33.860"></script>
 <script>
 /* [V33.621] 디자인 지킴이 — 브라우저는 앞의 시트를 다 받기(또는 실패하기) 전엔 이 스크립트를 돌리지 않는다. 여기서 시트마다 실제로 읽혔는지 보고,
    못 읽힌 것은 캐시를 우회해 한 번 더 받는다(최대 2번 · 각 4초). 다 오거나 시간이 다 되면 본문을 드러낸다. */
@@ -14820,7 +14820,7 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
     { t: '뉴스', s: 'NEWS', ic: '📰', act: function(){ showPage('news'); } },
     { t: '거래내역', s: 'TRADES', ic: '◷', act: function(){ showPage('trades'); } },
     { t: '가격 알림', s: 'ALERTS', ic: '🔔', act: function(){ openAlerts(); } },
-    { t: '설정', s: 'SETTINGS', ic: '⚙', act: function(){ openSettings(); } }
+    { t: '관리자 및 개발자 메뉴', s: 'ADMIN · DEVELOPER', ic: '⚙', act: function(){ openSettings(); } }
   ];
   function cmdkOpen() {
     var ov = $('cmdkOverlay'); if (!ov) return;
@@ -16489,7 +16489,7 @@ html[data-theme="light"] #page-detail .detail-sec{color:#344054 !important;borde
 
   function openSettings() {
     if (!currentCfg) { toast('설정 로드 중...'); return; }
-    var pw = prompt('SETTINGS 비밀번호를 입력하세요:');
+    var pw = prompt('관리자 비밀번호를 입력하세요:');
     if (pw === null) return;
     if (pw !== '0728') { toast('비밀번호가 틀렸습니다'); return; }
     
@@ -22418,8 +22418,8 @@ setTimeout(function(){
   window.addEventListener('load', function(){ setTimeout(function(){ try{ boot(); }catch(e){} }, 0); });
 })();
 </script>
-<script src="/model-evidence.js?v=33.859"></script>
-<script src="/workspace-ui.js?v=33.859"></script>
+<script src="/model-evidence.js?v=33.860"></script>
+<script src="/workspace-ui.js?v=33.860"></script>
 <script>
 /* [V33.722] 설정창 경고·오류 로그 — 누를 때만 /api/logs?warn=1 */
 window.__luxWarnLogs = function () {
