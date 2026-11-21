@@ -231,6 +231,90 @@ N_BUCKET = 15
 #             ② ★오늘 국면★ 의 맞춤 초과 > 0(그 국면 거래 ≥ REG_MIN_N 일 때 · 적으면 전체 판정에 맡김) — 회차마다 오늘 국면을 다시 본다
 REG_MIN_N = 60
 REG_KO = {"SURGE": "폭등", "BULL": "상승", "NEUTRAL": "보합", "BEAR": "하락", "CRASH": "폭락"}
+# ── [V33.860] ★③ 손절 넣은 모의(측정만 · 판정에 안 씀)★ — 평가(11/21): ③ 는 5/20일을 손절 없이 들고 가정하는데, 실전 OMNI-Q 진입은
+#   워커 checkExit 의 손절(미 −5% · 한 −4% 와 ATR 중 타이트한 쪽) · EOD-GAP(마감 25분 전 손절 여유 < R 의 35% → 종가 전량)에 먼저 잘린다
+#   (라이브 60일 OMNI_Q 청산 50건: STOP 20건 평균 −5.5/−4.7% · EOD-GAP 10건 −3.5% · TREND-EXIT 15건 +2.1~2.8%).
+#   같은 선택·같은 비용으로 일봉 OHLC 를 따라가며 근사한다:
+#     손절가 sl = max(진입 − atrMult×ATR14, 진입×(1 − pct))  (워커 _entryStopPrice · trendRules / trendRulesKR)
+#     매일  시가 ≤ sl → 시가 청산(갭) · 저가 ≤ sl → sl 청산 · 종가 − sl < 0.35×(진입 − sl) → 종가 청산(EOD-GAP) · 아니면 H일 끝 종가
+#   근사에서 빠진 것: +1R 분할익절(tp1) 뒤 MA20 이탈(TREND-EXIT) · 트레일 · 본전락 · 장중 순서 — 손절 쪽만 보수적으로 잰다.
+#   선택은 무손절 모의와 같다(손절로 빈 자리를 다시 채우지 않는다).
+STOP_RULES = {"us": {"pct": 0.05, "atr": 2.0}, "kr": {"pct": 0.04, "atr": 1.7}}
+EOD_GAP_RATIO = 0.35
+_PX = {}   # 시장별 {o,h,l,c,atr} 넓은 배열(날짜×종목) — run() 이 sim_gate 전에 채운다
+
+
+def stop_px(P, C):
+    """build_wide 표 → 손절 모의용 배열. ATR14 = 참 범위의 14일 단순 평균(그날까지)."""
+    import pandas as pd
+    Hh = P["high"].reindex_like(C).values.astype(float)
+    Ll = P["low"].reindex_like(C).values.astype(float)
+    Oo = P["open"].reindex_like(C).values.astype(float)
+    Cc = C.values.astype(float)
+    pc = np.vstack([np.full((1, Cc.shape[1]), np.nan), Cc[:-1]])
+    tr = np.fmax(Hh - Ll, np.fmax(np.abs(Hh - pc), np.abs(Ll - pc)))
+    atr = pd.DataFrame(tr).rolling(14, min_periods=10).mean().values
+    return {"o": Oo, "h": Hh, "l": Ll, "c": Cc, "atr": atr}
+
+
+def stop_returns(px, ds, js, hs, mk):
+    """거래(진입 신호일 d · 종목 j · 보유 h)마다 손절 넣은 수익과 청산 사유(0=끝까지 · 1=손절 · 2=갭 손절 · 3=EOD-GAP)·보유 일수.
+    진입 = d+1 종가 · 경로 = d+2 … d+h+1. 경로 값이 비면 그날은 건너뛴다(끝 종가가 무손절 수익과 같다)."""
+    rl = STOP_RULES.get(mk, STOP_RULES["us"])
+    ds, js, hs = np.asarray(ds, int), np.asarray(js, int), np.asarray(hs, int)
+    D = px["c"].shape[0]
+    e = px["c"][np.minimum(ds + 1, D - 1), js]
+    a = px["atr"][np.minimum(ds + 1, D - 1), js]
+    sl = np.fmax(e * (1 - rl["pct"]), np.where(np.isfinite(a), e - rl["atr"] * a, -np.inf))
+    hm = int(hs.max()) if len(hs) else 0
+    off = np.arange(1, hm + 1)[None, :]
+    tt = np.minimum(ds[:, None] + 1 + off, D - 1)
+    live = off <= hs[:, None]
+    jj = js[:, None]
+    O, L, Cl = px["o"][tt, jj], px["l"][tt, jj], px["c"][tt, jj]
+    s2 = sl[:, None]
+    gap = live & (O <= s2)
+    hit = live & ~gap & (L <= s2)
+    eod = live & ~gap & ~hit & ((Cl - s2) < EOD_GAP_RATIO * (e - sl)[:, None])
+    ev = gap | hit | eod
+    first = np.where(ev.any(axis=1), ev.argmax(axis=1), -1)
+    rows = np.arange(len(ds))
+    fc = first.clip(0)
+    px_out = np.where(gap[rows, fc], O[rows, fc], np.where(hit[rows, fc], sl, Cl[rows, fc]))
+    end = px["c"][np.minimum(ds + 1 + hs, D - 1), js]
+    ret = np.where(first >= 0, px_out / e - 1.0, end / e - 1.0)
+    why = np.where(first < 0, 0, np.where(gap[rows, fc], 2, np.where(hit[rows, fc], 1, 3)))
+    held = np.where(first >= 0, fc + 1, hs)
+    return ret, why, held
+
+
+def _stop_sim(px, rows, dates, mk, cost):
+    """sim_gate 의 거래(rows: d, j, h, 칸 평균, 무손절 수익)로 손절 모의 요약 — 무손절 모의와 같은 자(맞춤 초과 · 달 묶음 t · 뒤 20%)."""
+    if px is None or len(rows) < 30:
+        return None
+    A = np.array(rows, dtype=float)
+    ds, js, hs, ctrl, r0 = A[:, 0].astype(int), A[:, 1].astype(int), A[:, 2].astype(int), A[:, 3], A[:, 4]
+    rs, why, held = stop_returns(px, ds, js, hs, mk)
+    rs = np.where(np.isfinite(rs), rs, r0)
+    x = rs - ctrl
+    mo = np.array([int(str(dates[int(d)])[:6]) for d in ds])
+    months = sorted(set(mo.tolist()))
+    cut = months[int(len(months) * (1 - SIM_LATE))] if len(months) >= 5 else months[-1]
+    early, late = mo < cut, mo >= cut
+    es = _month_stats(x[early], mo[early])
+    late_mx = round(float(x[late].mean()), 5) if late.sum() else None
+    ex = {}
+    for k_, nm in ((0, "hold"), (1, "stop"), (2, "gap"), (3, "eod")):
+        m_ = why == k_
+        ex[nm] = {"n": int(m_.sum()), "mean": round(float(rs[m_].mean()), 5) if m_.any() else None}
+    net = rs - cost
+    out = {"rule": dict(STOP_RULES.get(mk, STOP_RULES["us"]), eod=EOD_GAP_RATIO), "n": int(len(rs)),
+           "mx": _month_stats(x, mo).get("mx"), "net": round(float(net.mean()), 5), "win": round(float((x > 0).mean()), 4),
+           "absWin": round(float((net > 0).mean()), 4), "absWin0": round(float((r0 - cost > 0).mean()), 4),
+           "early": es, "lateMx": late_mx, "held": round(float(held.mean()), 2), "exits": ex,
+           "stopFrac": round(float((why > 0).mean()), 4)}
+    out["okIf"] = bool((es.get("mN") or 0) >= SIM_MIN_MONTHS and (es.get("mx") or 0) > 0 and (es.get("mT") or 0) >= SIM_T and (late_mx or 0) > 0)
+    return out
 
 
 def market_regime(C):
@@ -380,9 +464,10 @@ def _month_stats(xs, mo):
             "mWin": int((a > 0).sum())}
 
 
-def sim_gate(scores, tdays, fwd, bk, dates, mk, h, cost, reg=None):
-    """③ 모의 시뮬레이션 · 맞춤 기준(위 규칙) → 판정 dict. scores: 표본 밖 점수(날짜×종목) · fwd: 다음 날 종가 진입 H일 수익."""
-    busy, opn, rows = {}, [], []
+def sim_gate(scores, tdays, fwd, bk, dates, mk, h, cost, reg=None, px=None):
+    """③ 모의 시뮬레이션 · 맞춤 기준(위 규칙) → 판정 dict. scores: 표본 밖 점수(날짜×종목) · fwd: 다음 날 종가 진입 H일 수익.
+    [V33.860] px(없으면 _PX[mk]) 가 있으면 같은 거래를 손절·EOD-GAP 넣어 다시 잰 결과를 out["stopSim"] 에 싣는다(판정엔 안 씀)."""
+    busy, opn, rows, srows = {}, [], [], []
     for d in sorted(set(int(x) for x in tdays)):
         a, r, b = scores[d], fwd[d], bk[d]
         ok = np.isfinite(a) & np.isfinite(r) & np.isfinite(b)
@@ -405,6 +490,7 @@ def sim_gate(scores, tdays, fwd, bk, dates, mk, h, cost, reg=None):
                 continue
             rows.append((d, float(r[j]) - cost, float(r[j]) - float(sums[kk] / cnt[kk])))
             hd = int(h[d]) if hasattr(h, "__len__") else h   # [V33.690] 날마다 보유 기간이 다를 수 있다(crashH5)
+            srows.append((d, j, hd, float(sums[kk] / cnt[kk]), float(r[j])))   # [V33.860] 손절 모의용(같은 선택)
             busy[j] = d + hd + 1
             opn.append(d + hd + 1)
             n_day += 1
@@ -435,6 +521,12 @@ def sim_gate(scores, tdays, fwd, bk, dates, mk, h, cost, reg=None):
     out["byReg"] = by
     out["regMinN"] = REG_MIN_N
     out["regOk"] = bool(not any(b["n"] >= REG_MIN_N and b["t"] <= -2 for b in by))
+    try:   # [V33.860] 측정만 — 실패해도 ③ 판정은 그대로
+        ss = _stop_sim(px if px is not None else _PX.get(mk), srows, dates, mk, cost)
+        if ss is not None:
+            out["stopSim"] = ss
+    except Exception:  # noqa: BLE001
+        pass
     return regime_now(dict(out, ok=False), str(reg[-1]) if reg is not None and len(reg) else None)
 
 
@@ -1219,6 +1311,11 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
         # [V33.684~686] ③ 모의 시뮬레이션 · 맞춤 기준 — 그리고 맞춤 라벨 후보(사전 등록 채택 규칙은 MATCH_CAND 주석)
         bk = risk_buckets(C)
         regs = market_regime(C)
+        try:
+            _PX[mk] = stop_px(P, C)   # [V33.860] 손절 모의용 OHLC·ATR(이미 올린 일봉 · 새 내려받기 없음)
+        except Exception as e:  # noqa: BLE001
+            _PX.pop(mk, None)
+            log("      ⚠️ [OMNI-Q %s] 손절 모의 배열 실패: %r" % (mk, e))
         g3 = sim_gate(scores, test_all, fwdv, bk, list(C.index), mk, H, COST_RT[mk], reg=regs)
         g3_20 = sim_gate(s20, t20, f20.values, bk, list(C.index), mk, H20, COST_RT[mk], reg=regs)
         labsel, yM20 = {"5": "base", "20": "base"}, None
@@ -1449,6 +1546,13 @@ def run(daily, mkt_by_sym, day_key_of, BASE=None, HDR=None, upload=True, log=pri
             log("        국면별 맞춤 초과 %s · 확실히 지는 국면 없음 %s · 오늘 국면 %s → %s" % (
                 " · ".join("%s n%d %+.3f%%(t %s)" % (b["ko"], b["n"], b["mean"] * 100, b["t"]) for b in gg.get("byReg") or []),
                 "예" if gg.get("regOk") else "아니오", REG_KO.get(gg.get("regNow"), gg.get("regNow")), "통과" if gg.get("nowOk") else "미달"))
+            ss_ = gg.get("stopSim")
+            if ss_:   # [V33.860] 손절 넣은 모의(측정만)
+                ex_ = ss_.get("exits") or {}
+                log("        손절 넣은 모의 — 맞춤 초과 %s(무손절 %s) · 앞 t %s · 뒤 %s · 순수익 %s(무손절 %s) · 절대 승률 %s(무손절 %s) · 손절로 끝 %s · 평균 보유 %s일 · 손절 %s건 %s · 갭 %s건 %s · EOD %s건 %s → 이 자로면 %s" % (
+                    ss_.get("mx"), gg.get("mx"), (ss_.get("early") or {}).get("mT"), ss_.get("lateMx"), ss_.get("net"), gg.get("net"), ss_.get("absWin"), ss_.get("absWin0"),
+                    ss_.get("stopFrac"), ss_.get("held"), (ex_.get("stop") or {}).get("n"), (ex_.get("stop") or {}).get("mean"), (ex_.get("gap") or {}).get("n"),
+                    (ex_.get("gap") or {}).get("mean"), (ex_.get("eod") or {}).get("n"), (ex_.get("eod") or {}).get("mean"), "통과" if ss_.get("okIf") else "미달"))
         top20 = []
         r20 = extra.get("r20") or {}
         if r20:

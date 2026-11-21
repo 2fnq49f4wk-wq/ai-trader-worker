@@ -82,5 +82,22 @@ chk(/const _pg = \(typeof perfGateCheck === "function"\) \? await perfGateCheck\
 chk(/"AI_PRIMARY", "AI_SCALP"\s*\n\];/.test(S), "AI 진입도 SIGNAL_TYPES 에 있다(켈리·가지치기·자가치유가 본다)", "★AI 진입이 신호 성과에서 빠졌다★");
 chk(/perfGateCheck\(DB, "cm", null, "cm-swing"\)/.test(S) && /perfGateCheck\(DB, mk, null, sleeve\.label \+ "-swing"\)/.test(S), "원자재·국채 매수도 관문을 지난다(원장 태그와 같은 열쇠)", "★원자재·국채가 관문을 안 지난다★");
 chk(/if \(path === "\/api\/perf-gate"\)/.test(S), "/api/perf-gate 로 판정을 볼 수 있다", "★판정을 볼 곳이 없다★");
+console.log("⑥ [V33.861] 베이즈 켈리 크기 — 지면 줄이되 멈추지 않는다");
+{
+  const B = new Function("_num", code + "; return { laneBayesPost, laneBayesAttach, laneBayesMult, _pbIdOf, _pgStats, LANE_BAYES };")((x, d) => (typeof x === "number" && isFinite(x) ? x : d));
+  const p0 = B.laneBayesPost([], 1), pBad = B.laneBayesPost(Array(6).fill(-8), -1), pGood = B.laneBayesPost(Array(30).fill(3), 1);
+  chk(p0.kellyMult === 1 && pBad.kellyMult === B.LANE_BAYES.learn && pBad.mu < 0 && pGood.kellyMult === 1,
+    "증거 없음 ×1 · 6건 전패 → 학습 크기 ×" + B.LANE_BAYES.learn + " · 꾸준히 이기면 ×1", "★베이즈 켈리 크기가 틀렸다★ " + JSON.stringify([p0, pBad, pGood]));
+  chk(B.LANE_BAYES.learn > 0 && B.laneBayesPost(Array(40).fill(-20), -10).kellyMult >= B.LANE_BAYES.learn, "아무리 져도 0 이 아니다(계속 배운다)", "★크기가 0 이 된다★");
+  chk(B._pbIdOf("[SROUTE][TREND] PB_DUAL_MOM 매매법AI") === "DUAL_MOM" && B._pbIdOf("[SROUTE][TREND] PB_RG:mega_fall 국면") === "RG:mega_fall" && B._pbIdOf("[AI-Q][TREND] OMNI_Q") === null, "매매법 id 를 원장 사유에서 읽는다", "★매매법 id 파싱이 틀렸다★");
+  const lc = { "us:core": [1, -2, -8, -8], "us:core:SROUTE:TREND": [-8, -8], "us:pb:DUAL_MOM": [-8, -8] }, L = {};
+  for (const k in lc) L[k] = B._pgStats(lc[k]);
+  B.laneBayesAttach(L, lc, { "us:pb:DUAL_MOM": "us:core:SROUTE:TREND" });
+  const m1 = B.laneBayesMult(L, "us", "core", "SROUTE:TREND", "DUAL_MOM"), m2 = B.laneBayesMult(L, "us", "core", "SROUTE:TREND", "NEW_PB");
+  chk(m1.key === "us:pb:DUAL_MOM" && L["us:pb:DUAL_MOM"].post.prior === L["us:core:SROUTE:TREND"].post.mu && m2.key === "us:core:SROUTE:TREND" && m1.mult < 1,
+    "계층: 매매법 사전 = 그 갈래 사후 · 새 매매법은 갈래 성적에서 출발", "★계층 사전이 틀렸다★");
+}
+chk(/laneBayesAttach\(lanes, laneClosed, pbParent\)/.test(S) && /_szNote\(signal, "베이즈켈리", _bk\.mult\); qty = Math\.max\(1,/.test(S) && /const _bk = laneBayesMult\(L, market, lane, _tsK,/.test(S) && /bayes: LANE_BAYES \}/.test(S),
+  "배선: 관문 캐시에서 사후 계산 · 정상 차선 최소 1주 · 시험 차선 · /api/perf-gate", "★베이즈 켈리 배선이 빠졌다★");
 if (fails) { console.error("\n✗ 실적 관문 검사 실패 " + fails); process.exit(1); }
 console.log("\n✓ 실적 관문 검사 통과");

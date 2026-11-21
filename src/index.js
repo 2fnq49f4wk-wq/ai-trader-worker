@@ -3067,7 +3067,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.860";
+const _BUILD_VER = "V33.862";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -8513,7 +8513,7 @@ function parseNasdaqExt(j, chunk, sess, nowMs) {
    미국 10단계 호가(TotalView)는 무료 원천이 없다 — 미국은 최우선 호가 + 체결만. 호가는 요청 때만 받고(종목 상세 · 매수 직전) swrJson 5초로 묶는다. */
 function _obNum(v) { if (v == null) return 0; const n = parseFloat(String(v).replace(/[^0-9.\-]/g, "")); return isFinite(n) ? n : 0; }
 function _obPick(o, re) { for (const k in o) if (re.test(k)) return o[k]; return null; }
-async function fetchOrderBook(symbol) {
+async function fetchOrderBook(symbol, toMs) {   // [V33.862] toMs — 매수 직전은 2.5초(사이클을 오래 붙잡지 않게) · 화면은 기본 5~6초
   const kr = /\.(KS|KQ)$/.test(symbol), now = Date.now();
   if (kr) {
     const code = symbol.split(".")[0];
@@ -8521,8 +8521,8 @@ async function fetchOrderBook(symbol) {
     try { __fetchBudget.used++; } catch (e) {}
     /* [V33.840] 같은 5초 묶음에 실시간 체결가(네이버 polling — 그 API 가 스스로 7초 주기를 권한다)도 함께 — 보고 있는 종목은 시세 사본(30초~1분)보다 빠르게 */
     const [r, rp] = await Promise.all([
-      fetch("https://m.stock.naver.com/api/stock/" + code + "/askingPrice", { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" }, signal: AbortSignal.timeout(5000) }),
-      fetch("https://polling.finance.naver.com/api/realtime/domestic/stock/" + code, { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" }, signal: AbortSignal.timeout(5000) }).then(function (x) { return x.ok ? x.json() : null; }).catch(function () { return null; })
+      fetch("https://m.stock.naver.com/api/stock/" + code + "/askingPrice", { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" }, signal: AbortSignal.timeout(toMs || 5000) }),
+      fetch("https://polling.finance.naver.com/api/realtime/domestic/stock/" + code, { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" }, signal: AbortSignal.timeout(toMs || 5000) }).then(function (x) { return x.ok ? x.json() : null; }).catch(function () { return null; })
     ]);
     if (!r.ok) throw new Error("HTTP " + r.status);
     const j = await r.json();
@@ -8537,8 +8537,8 @@ async function fetchOrderBook(symbol) {
   const ns = encodeURIComponent(nasdaqSym(symbol));
   try { __fetchBudget.used += 2; } catch (e) {}
   const [ri, rt] = await Promise.all([
-    fetch("https://api.nasdaq.com/api/quote/" + ns + "/info?assetclass=stocks", { headers: H, signal: AbortSignal.timeout(6000) }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }),
-    fetch("https://api.nasdaq.com/api/quote/" + ns + "/realtime-trades?&limit=25&fromTime=00:00", { headers: H, signal: AbortSignal.timeout(6000) }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })
+    fetch("https://api.nasdaq.com/api/quote/" + ns + "/info?assetclass=stocks", { headers: H, signal: AbortSignal.timeout(toMs || 6000) }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }),
+    fetch("https://api.nasdaq.com/api/quote/" + ns + "/realtime-trades?&limit=25&fromTime=00:00", { headers: H, signal: AbortSignal.timeout(toMs || 6000) }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })
   ]);
   const pd = (ri && ri.data && ri.data.primaryData) || {};
   const rows = (rt && rt.data && Array.isArray(rt.data.rows)) ? rt.data.rows : [];
@@ -8556,23 +8556,175 @@ function orderBookSignal(ob) {
   for (const x of ob.ask) if (x[1] > wq) { wq = x[1]; wall = x[0]; }
   return { imb: t > 0 ? +(ob.totBid / t).toFixed(3) : null, near: b3 > 0 ? +(a3 / b3).toFixed(2) : null, spread: mid > 0 ? +((ob.ask[0][0] - ob.bid[0][0]) / mid * 100).toFixed(3) : null, wall: wall, wallQ: wq, depth: ob.ask.length };
 }
-/* 매수 직전 호가 확인(엔진) — 지금은 ★관측만★(OB_GATE_LIVE=false): 매수 신호에 호가 숫자를 붙여 원장·화면에 남기고, 막지는 않는다.
-   검증 없이 막으면 오히려 수익을 깎을 수 있다 — 2주 이상 쌓아 '매도벽(near ≥ 3)·매수 우위(imb ≤ 0.25)에서 산 것' 의 성과를 본 뒤 켠다. */
-const OB_GATE_LIVE = false;
-async function obBuyCheck(DB, market, symbol, price, signal) {
-  if (market !== "kr" && market !== "us") return { ok: true };
-  try { if (typeof fetchBudgetLeft === "function" && fetchBudgetLeft() <= 15) return { ok: true }; } catch (e) {}
-  let ob = null; try { ob = await fetchOrderBook(symbol); } catch (e) { return { ok: true }; }
-  const sg = orderBookSignal(ob); if (!sg) return { ok: true };
-  try { if (signal && typeof signal === "object") signal.ob = sg; } catch (e) {}
+/* ═══ [V33.862] ★AI 가 호가창을 쓴다★(사용자 11/21 "AI 가 호가창도 이용하게") — 두 갈래로 나눴다.
+   ① 체결 품질(근거 불필요 · 순수 위험 관리 · ★지금 켬★): 매수 직전에
+      · 호가 간격이 비정상으로 넓으면(> max(3틱, 0.6%)) 이번 사이클은 미룬다(다음 사이클에 다시 본다)
+      · 최우선 매도호가가 우리 가격 + 여유(max(2틱, 0.3%))보다 위면 ★쫓아 사지 않는다★(지정가 상한처럼 — 그 값엔 안 채워진다)
+      · 한국: 가까운 3단계 매도 잔량이 주문 수량보다 작으면 그만큼으로 줄이고(절반 이상일 때), 그보다 작으면 미룬다
+      · 같은 종목을 두 번 미룬 뒤(30분 안)에는 간격·잔량 사유로는 더 미루지 않는다(가격 상한만 남긴다) — 영영 못 사는 일을 막는다
+      실측(11/21 보유 meta.ob): PCG 간격 1.616%(미국 1센트 틱 · 0.6% 의 2.7배 → 이번 규칙이면 미뤘다) ·
+      252670(131원·1원 틱) 0.778% 는 1틱 = 정상(3틱 2.3% 기준 아래). 그래서 틱을 고려한다 — 0.6% 고정선만 쓰면 저가 ETF 를 늘 막는다.
+   ② 알파(근거 필요 · ★그늘에서 시작★): 매수 잔량 비중 imb 로 ★크기만★ ×0.70~×1.15(절대 막지 않는다).
+      11/21 현재 결과가 붙은 표본 = ★0건★(V33.838 이후 매수 38건(미 21·한 17) 의 호가는 ob_obs 에 쌓였지만
+      매도 때 보유 meta 와 함께 지워져 결과와 이어 둔 곳이 없었다 · 보유 중 10건만 meta.ob 가 보인다) → 그늘.
+      매수마다 '켜졌다면 곱했을 배수'(m)를 ob_obs 에 남기고, 6시간마다 원장 매도와 이어 붙여(ob_ev) 시장별로
+      아래 규칙을 넘으면 ★사람 손 없이★ 켜진다(못 넘으면 다시 꺼진다):
+        라벨 = 그 매수 이후 같은 종목 매도들의 수량가중 pnl_pct(보유가 끝난 것만) − 그 시장 평균(시장 국면 효과 제거)
+        imb 세 구간(< 0.4 · 0.4~0.6 · > 0.6) · 시장 표본 ≥ 60 · 각 구간 ≥ 12 · 구간 평균이 ★단조 증가★ ·
+        높음 − 낮음 ≥ 0.5%p · Welch t ≥ 2.0
+      미국 imb 는 나스닥 한 거래소 최우선 호가 수량뿐(TotalView 무료 원천 없음) — 그래서 시장별로 따로 잰다.
+   비용: 실제 매수 직전(모든 관문 통과)에만 · 종목당 45초 기억 · 사이클당 원천 호출 ≤ 8종목(한 종목 = 요청 2개 → ≤ 16) ·
+         요청 시간 2.5초 · 원천이 실패하면 ★중립(×1.0)으로 그냥 산다★(fail-open). D1 = 매수당 ob_obs 1읽기·1쓰기 + 6시간에 2쿼리. */
+const OB_GATE_LIVE = false;   // [V33.838] 매도벽 '막기'는 쓰지 않는다 — [V33.862] 알파는 크기 배수로만(막기 금지) · 켜짐은 OB_EV_RULE 이 정한다
+const OB_EV_RULE = { minN: 60, minB: 12, minSpread: 0.5, minT: 2.0, lo: 0.4, hi: 0.6, ttl: 6 * 3600000 };
+const OB_EXEC = { wideTicks: 3, widePct: 0.6, capTicks: 2, capPct: 0.3, maxDelay: 2, delayWin: 1800000, perCycle: 8, cacheMs: 45000, toMs: 2500 };
+const __obMem = { cache: new Map(), delay: new Map(), cyc: null, n: 0, ev: null, evAt: 0 };
+/* 호가 단위 — 한국은 책의 단계 간격(5단계면 가장 작은 양의 차 = 실제 틱 · ETF 는 표보다 작다)을 먼저, 없으면 2023.1 호가단위표. 미국 1센트($1 미만 0.0001). */
+function _obTick(ob, market, px) {
+  if (market === "us") return px < 1 ? 0.0001 : 0.01;
+  const side = function (a) { const v = (a || []).map(function (x) { return x[0]; }).sort(function (p, q) { return p - q; }); let t = Infinity; for (let i = 1; i < v.length; i++) { const d = v[i] - v[i - 1]; if (d > 1e-9 && d < t) t = d; } return t; };
+  const t = Math.min(side(ob && ob.ask), side(ob && ob.bid));
+  if (isFinite(t) && t > 0) return t;
+  return px < 2000 ? 1 : px < 5000 ? 5 : px < 20000 ? 10 : px < 50000 ? 50 : px < 200000 ? 100 : px < 500000 ? 500 : 1000;
+}
+/* 알파 배수(크기만) — imb ≤ 0.2 → ×0.70 · 0.5 → ×1.00 · ≥ 0.8 → ×1.15(구간 사이 직선) */
+function obImbMult(imb) {
+  if (typeof imb !== "number" || !isFinite(imb)) return 1;
+  const x = Math.max(0, Math.min(1, imb));
+  const m = x <= 0.2 ? 0.70 : x < 0.5 ? 0.70 + (x - 0.2) / 0.3 * 0.30 : x < 0.8 ? 1.0 + (x - 0.5) / 0.3 * 0.15 : 1.15;
+  return +m.toFixed(3);
+}
+/* 판정(순수 함수 · 시험 가능) — act: ok · shrink(잔량만큼 줄임) · delay(이번 사이클 미룸) · nochase(가격 상한 위 → 미룸) · neutral(자료 이상 → 그냥 산다) */
+function obAssess(ob, sg, market, price, qty, nDelay, alphaLive) {
+  const out = { act: "neutral", q: qty, m: 1, am: 1, live: alphaLive ? 1 : 0, why: "" };
+  if (!ob || !sg || !(price > 0) || !(qty > 0) || !ob.ask || !ob.ask.length || !ob.bid || !ob.bid.length) { out.why = "호가 없음 → 중립"; return out; }
+  const ask = ob.ask[0][0], bid = ob.bid[0][0];
+  if (!(ask > 0) || !(bid > 0) || ask < bid || ask / price > 1.10 || ask / price < 0.90) { out.why = "호가·가격 불일치 → 중립"; return out; }
+  const tick = _obTick(ob, market, price), mid = (ask + bid) / 2, tickPct = tick / mid * 100;
+  out.tick = tick; out.spread = sg.spread; out.ask = ask;
+  out.m = obImbMult(sg.imb);
+  let q = qty;
+  if (alphaLive && out.m !== 1) q = Math.max(1, Math.floor(qty * out.m));
+  const cap = price * (1 + Math.max(OB_EXEC.capTicks * tick / price, OB_EXEC.capPct / 100));
+  out.cap = +cap.toFixed(4);
+  if (ask > cap + 1e-9) { out.act = "nochase"; out.why = "매도호가 " + ask + " > 상한 " + out.cap + " → 쫓지 않고 다음 사이클"; out.q = q; return out; }
+  const wideLim = Math.max(OB_EXEC.wideTicks * tickPct, OB_EXEC.widePct);
+  const canDelay = (nDelay || 0) < OB_EXEC.maxDelay;
+  if (sg.spread != null && sg.spread > wideLim && canDelay) { out.act = "delay"; out.why = "호가 간격 " + sg.spread + "% > " + wideLim.toFixed(2) + "% → 다음 사이클"; out.q = q; return out; }
+  if (market === "kr" && ob.ask.length >= 3) {
+    const d3 = ob.ask.slice(0, 3).reduce(function (s, x) { return s + (x[1] > 0 ? x[1] : 0); }, 0);
+    out.d3 = d3;
+    if (d3 > 0 && q > d3) {
+      if (d3 >= 0.5 * q || !canDelay) { out.act = "shrink"; out.why = "가까운 매도잔량 " + d3 + "주 < 주문 " + q + "주 → " + Math.floor(d3) + "주로"; q = Math.max(1, Math.floor(d3)); }
+      else { out.act = "delay"; out.why = "가까운 매도잔량 " + d3 + "주 ≪ 주문 " + q + "주 → 다음 사이클"; out.q = q; return out; }
+    }
+  }
+  if (out.act === "neutral") out.act = "ok";
+  out.q = q; out.am = +(q / qty).toFixed(3);
+  if (!out.why) out.why = alphaLive ? ("매수잔량 " + sg.imb + " → 크기 ×" + out.m) : ("그늘: 켜졌다면 ×" + out.m);
+  return out;
+}
+/* 근거 계산(순수) — rows = ob_obs 행 [ts, mkt, sym, price, imb, …] · sells = [{ts, market, symbol, qty, pnl_pct}] · openSet = "mkt:sym" 보유 중 */
+function obEvidenceCompute(rows, sells, openSet, R) {
+  R = R || OB_EV_RULE;
+  const bySym = {};
+  for (const s of (sells || [])) { const k = s.market + ":" + s.symbol; (bySym[k] || (bySym[k] = [])).push(s); }
+  const rs = (rows || []).filter(function (r) { return Array.isArray(r) && typeof r[4] === "number"; }).slice().sort(function (a, b) { return a[0] - b[0]; });
+  const lab = { us: [], kr: [] };
+  for (let i = 0; i < rs.length; i++) {
+    const r = rs[i], k = r[1] + ":" + r[2];
+    if (!lab[r[1]]) continue;
+    let end = Infinity;
+    for (let j = i + 1; j < rs.length; j++) if (rs[j][1] === r[1] && rs[j][2] === r[2]) { end = rs[j][0]; break; }
+    if (end === Infinity && openSet && openSet.has(k)) continue;   // 아직 보유 중 — 결과 없음
+    let w = 0, s = 0;
+    for (const x of (bySym[k] || [])) if (x.ts > r[0] && x.ts < end && typeof x.pnl_pct === "number" && isFinite(x.pnl_pct)) { const q = x.qty > 0 ? x.qty : 1; w += q; s += q * x.pnl_pct; }
+    if (w > 0) lab[r[1]].push([r[4], s / w]);
+  }
+  const out = {};
+  for (const m of ["us", "kr"]) {
+    const L = lab[m], n = L.length;
+    const mu = n ? L.reduce(function (t, x) { return t + x[1]; }, 0) / n : 0;
+    const B = [[], [], []];
+    for (const x of L) B[x[0] < R.lo ? 0 : x[0] > R.hi ? 2 : 1].push(x[1] - mu);
+    const st = B.map(function (b) { const k = b.length, a = k ? b.reduce(function (t, v) { return t + v; }, 0) / k : null; const v = k > 1 ? b.reduce(function (t, x) { return t + (x - a) * (x - a); }, 0) / (k - 1) : null; return { n: k, mean: a == null ? null : +a.toFixed(3), v: v }; });
+    const lo = st[0], hi = st[2];
+    const t = (lo.n > 1 && hi.n > 1 && (lo.v / lo.n + hi.v / hi.n) > 0) ? (hi.mean - lo.mean) / Math.sqrt(lo.v / lo.n + hi.v / hi.n) : null;
+    const mono = st.every(function (b) { return b.mean != null; }) && st[0].mean < st[1].mean && st[1].mean < st[2].mean;
+    const why = n < R.minN ? "표본 " + n + " < " + R.minN : st.some(function (b) { return b.n < R.minB; }) ? "구간 표본 부족(" + st.map(function (b) { return b.n; }).join("/") + " · 각 " + R.minB + "+)" : !mono ? "구간 평균 단조 아님" : (hi.mean - lo.mean) < R.minSpread ? "높음−낮음 " + (hi.mean - lo.mean).toFixed(2) + "%p < " + R.minSpread : !(t >= R.minT) ? "t " + (t == null ? "—" : t.toFixed(2)) + " < " + R.minT : "통과";
+    out[m] = { n: n, b: st.map(function (b) { return [b.n, b.mean]; }), t: t == null ? null : +t.toFixed(2), live: why === "통과", why: why };
+  }
+  return out;
+}
+/* 근거 읽기 — 메모리 10분 · state ob_ev(6시간마다 다시 계산: ob_obs + 원장 매도 1쿼리 + 보유 1쿼리) · 실패하면 그늘(live false) */
+async function _obEvGet(DB) {
+  const now = Date.now();
+  if (__obMem.ev && now - __obMem.evAt < 600000) return __obMem.ev;
+  let prev = null;
+  try { prev = await getState(DB, "ob_ev", null); } catch (e) { prev = null; }
+  let ev = prev;
+  if (!prev || !(now - _num(prev.ts, 0) < OB_EV_RULE.ttl)) {
+    try {   // 캐시(통째로 다시 만든다 — 이어 붙이지 않는다)
+      const obs = (await getState(DB, "ob_obs", null, true)) || { rows: [] };
+      const rows = Array.isArray(obs.rows) ? obs.rows : [];
+      const t0 = rows.reduce(function (m, r) { return Math.min(m, _num(r && r[0], now)); }, now);
+      const sr = await DB.prepare("SELECT ts, market, symbol, qty, pnl_pct FROM trades WHERE ts > ? AND side = 'SELL' AND market IN ('us','kr') ORDER BY ts DESC LIMIT 5000").bind(t0).all();
+      const pr = await DB.prepare("SELECT market, symbol FROM positions WHERE qty > 0 AND market IN ('us','kr')").all();
+      const open = new Set(((pr && pr.results) || []).map(function (x) { return x.market + ":" + x.symbol; }));
+      const fresh = Object.assign({ ts: now, rule: OB_EV_RULE, rows: rows.length }, obEvidenceCompute(rows, (sr && sr.results) || [], open));
+      await setState(DB, "ob_ev", fresh);
+      ev = fresh;
+    } catch (e) { ev = prev || { ts: now, us: { live: false, why: "계산 실패" }, kr: { live: false, why: "계산 실패" } }; }
+  }
+  __obMem.ev = ev; __obMem.evAt = now;
+  return ev;
+}
+/* 사이클 안 호가 받기 — 종목당 45초 기억 · 사이클(=__fetchBudget 객체)당 ≤ 8종목 · 넘으면 null(중립) */
+async function _obFetchCycle(symbol) {
+  const now = Date.now(), c = __obMem.cache.get(symbol);
+  if (c && now - c.ts < OB_EXEC.cacheMs) return c.ob;
+  let ref = null; try { ref = __fetchBudget; } catch (e) {}
+  if (__obMem.cyc !== ref) { __obMem.cyc = ref; __obMem.n = 0; }
+  if (__obMem.n >= OB_EXEC.perCycle) return null;
+  __obMem.n++;
+  const ob = await fetchOrderBook(symbol, OB_EXEC.toMs);
+  __obMem.cache.set(symbol, { ts: now, ob: ob });
+  if (__obMem.cache.size > 60) { for (const [k, v] of __obMem.cache) if (now - v.ts > OB_EXEC.cacheMs) __obMem.cache.delete(k); }
+  return ob;
+}
+/* 매수 직전 호가 확인(엔진) — 돌려주는 것: { ok(false = 이번 사이클 미룸), qty(새 수량), d(화면용 판정) }. 어떤 실패도 매수를 막지 않는다. */
+async function obBuyCheck(DB, market, symbol, price, signal, qty) {
+  const pass = { ok: true, qty: qty };
+  if (market !== "kr" && market !== "us") return pass;
+  try { if (typeof fetchBudgetLeft === "function" && fetchBudgetLeft() <= 15) return pass; } catch (e) {}
+  let ob = null; try { ob = await _obFetchCycle(symbol); } catch (e) { return pass; }
+  const sg = orderBookSignal(ob); if (!sg) return pass;
+  let ev = null; try { ev = await _obEvGet(DB); } catch (e) { ev = null; }
+  const alphaLive = !!(ev && ev[market] && ev[market].live);
+  const dk = market + ":" + symbol, now = Date.now();
+  let dl = __obMem.delay.get(dk); if (dl && now - dl.first > OB_EXEC.delayWin) { __obMem.delay.delete(dk); dl = null; }
+  let d = null;
+  try { d = obAssess(ob, sg, market, price, qty, dl ? dl.n : 0, alphaLive); } catch (e) { return pass; }
   const heavy = market === "kr" && sg.depth >= 5 && ((sg.near != null && sg.near >= 3) || (sg.imb != null && sg.imb <= 0.25));
+  /* 국면 인버스 차선·폭락날 인버스 단타는 노출을 줄이거나 몇 분짜리 — 미루지 않는다(기록만) */
+  if ((d.act === "delay" || d.act === "nochase") && signal && (signal.isInvLane || (typeof _regimeScalp === "function" && _regimeScalp(signal)))) { d.why = "면제(인버스·국면 단타) · " + d.why; d.act = "exempt"; }
+  const info = Object.assign({}, sg, { m: d.m, am: d.am, live: d.live, act: d.act, why: d.why, q0: qty, q: d.q, at: now });
+  if (d.act === "delay" || d.act === "nochase") {
+    if (dl) dl.n++; else __obMem.delay.set(dk, { n: 1, first: now });
+    if (__obMem.delay.size > 200) { for (const [k, v] of __obMem.delay) if (now - v.first > OB_EXEC.delayWin) __obMem.delay.delete(k); }
+    return { ok: false, qty: qty, d: info, sg: sg };
+  }
+  __obMem.delay.delete(dk);
+  try { if (signal && typeof signal === "object") signal.ob = info; } catch (e) {}
   try {
     const cur = (await getState(DB, "ob_obs", null, true)) || { rows: [] };
-    cur.rows.unshift([Date.now(), market, symbol, price, sg.imb, sg.near, sg.spread, heavy ? 1 : 0]);
+    if (!Array.isArray(cur.rows)) cur.rows = [];
+    /* [V33.838] 앞 8칸 그대로 + [V33.862] 8 그늘배수 m · 9 판정 · 10 알파 켜짐 · 11 원 수량 · 12 새 수량 */
+    cur.rows.unshift([now, market, symbol, price, sg.imb, sg.near, sg.spread, heavy ? 1 : 0, d.m, d.act, d.live, qty, d.q]);
     cur.rows = cur.rows.slice(0, 400);
     await setState(DB, "ob_obs", cur);
   } catch (e) {}
-  return { ok: !(OB_GATE_LIVE && heavy), heavy: heavy, sg: sg };
+  return { ok: true, qty: d.q > 0 ? d.q : qty, d: info, heavy: heavy, sg: sg };
 }
 async function fetchNasdaqExt(chunk, sess) {
   try { __fetchBudget.used++; } catch (e) {}
@@ -14015,7 +14167,20 @@ function _omqSimView(g3) {
            lateMx: r4(g3.lateMx), lateN: _num(g3.lateN, 0), from: _num(g3.from, null), cut: _num(g3.cut, null), to: _num(g3.to, null),
            needMonths: _num(g3.needMonths, 24), needT: _num(g3.needT, 2),
            byReg: Array.isArray(g3.byReg) ? g3.byReg.slice(0, 5).map(function (b) { return { reg: String(b.reg), ko: String(b.ko || b.reg), n: _num(b.n, 0), mean: r4(b.mean), t: r4(b.t) }; }) : null,
-           regNow: g3.regNow || null, regMinN: _num(g3.regMinN, 60), regOk: Array.isArray(g3.byReg) ? omniqRegOk(g3) : false };
+           regNow: g3.regNow || null, regMinN: _num(g3.regMinN, 60), regOk: Array.isArray(g3.byReg) ? omniqRegOk(g3) : false,
+           stopSim: _omqStopSimView(g3.stopSim) };
+}
+/* [V33.860] ③ 손절 넣은 모의(학습기 sim_gate · stopSim) — 같은 선택을 실전 손절(미 −5%/한 −4%·ATR 중 타이트) · EOD-GAP 으로 잘랐을 때. ★측정만★(판정 omniqSimOk 엔 안 쓴다). */
+function _omqStopSimView(s) {
+  if (!s || typeof s !== "object") return null;
+  const r4 = function (x) { return (typeof x === "number" && isFinite(x)) ? +x.toFixed(4) : null; };
+  const e = s.early || {}, x = s.exits || {}, rl = s.rule || {};
+  const ex = function (k) { const o = x[k] || {}; return { n: _num(o.n, 0), mean: r4(o.mean) }; };
+  return { n: _num(s.n, 0), mx: r4(s.mx), net: r4(s.net), win: r4(s.win), absWin: r4(s.absWin), absWin0: r4(s.absWin0),
+           early: { mN: _num(e.mN, 0), mx: r4(e.mx), mT: r4(e.mT), mWin: _num(e.mWin, null) }, lateMx: r4(s.lateMx),
+           held: r4(s.held), stopFrac: r4(s.stopFrac), okIf: s.okIf === true,
+           exits: { hold: ex("hold"), stop: ex("stop"), gap: ex("gap"), eod: ex("eod") },
+           rule: { pct: r4(rl.pct), atr: r4(rl.atr), eod: r4(rl.eod) } };
 }
 function _omqGateView(g) {
   if (!g || typeof g !== "object") return null;
@@ -21436,6 +21601,59 @@ function laneAdaptMult(st) {
   if (!st || !(st.n >= LANE_ADAPT.minN) || st.pf == null) return 1;
   return st.pf < LANE_ADAPT.worstPf ? LANE_ADAPT.worstShrink : (st.pf < LANE_ADAPT.badPf ? LANE_ADAPT.shrink : 1);
 }
+/* ══ [V33.861] ★지는 차선을 멈추지 않고 스스로 고친다 — 베이즈 기대수익 × 분수 켈리 크기★ (사용자 11/21: "지는 시험 차선 멈추지 마 · AI 가 구조적으로 풀게") ══
+   운영 원장(/api/perf-gate 11/21): kr:probe AI-Q 19건 PF 0.093 평균 −3.10% · us:probe 8건 PF 0.30 −2.17% ·
+   us:core:SROUTE:TREND 6건 전패 평균 −8.0% — LANE_ADAPT 는 ①15건 전엔 아무것도 안 하고(SROUTE 6/6 패배가 ×1.0) ②아무리 져도 ×0.35 바닥이었다.
+   이제 같은 표본(관문 FIFO · 포지션 단위 · 최근 40건 · 추가 D1 0)으로 차선마다 ★기대수익의 사후분포★ 를 잰다:
+     정규-역감마 켤레: 사전 평균 μ0(상위 단계의 사후 평균 · 맨 위는 +1%) · 사전 무게 k0건 · 사전 거래당 σ 5%(손절 폭)
+     계층: 시장:차선(μ0=+1%) → 시장:차선:꼬리표(μ0=차선 사후) → 시장:pb:매매법(μ0=그 꼬리표 사후) — 새 매매법은 같은 갈래의 성적에서 출발.
+     크기 = 켈리 μ/σ² 를 '지금 정상 크기를 정당화하는 기준(+1%/σ5%)' 으로 나눈 비율 · [learn 0.1, 1] 로 자른다.
+   → 증거가 없으면(n=0) μ=+1% → ×1(종전 그대로) · 지면 바로 줄고 · 사후 평균 ≤ 0 이면 ★학습 크기 ×0.1(최소 1주)★ 로 계속 들어가 결과를 모은다 ·
+     이기기 시작하면 같은 식으로 저절로 커진다(문턱·7일 대기 없음). 절대 0 이 되지 않는다(막는 것은 실적 관문만). 종전 LANE_ADAPT 는 상한으로 남긴다(min). */
+const LANE_BAYES = { mu0: 1.0, k0: 8, a0: 3, s0: 5, refMu: 1.0, refSd: 5, learn: 0.1 };
+function laneBayesPost(xs, mu0) {
+  const B = LANE_BAYES, n = (xs && xs.length) || 0;
+  const m0 = (typeof mu0 === "number" && isFinite(mu0)) ? mu0 : B.mu0;
+  let s = 0; for (let i = 0; i < n; i++) s += xs[i];
+  const xb = n ? s / n : 0;
+  let ss = 0; for (let i = 0; i < n; i++) ss += (xs[i] - xb) * (xs[i] - xb);
+  const kn = B.k0 + n, mu = (B.k0 * m0 + n * xb) / kn, an = B.a0 + n / 2;
+  const bn = B.s0 * B.s0 * (B.a0 - 1) + 0.5 * ss + B.k0 * n * (xb - m0) * (xb - m0) / (2 * kn);
+  const sig2 = bn / (an - 1);                               // 거래당 분산의 사후 기대값
+  const kel = mu / sig2, ref = B.refMu / (B.refSd * B.refSd);
+  const km = Math.min(1, Math.max(B.learn, kel / ref));
+  const sd = Math.sqrt(bn / (an * kn));                     // 평균의 사후 표준편차 · pPos = P(기대수익 > 0) 근사(로지스틱 Φ)
+  return { n: n, mu: +mu.toFixed(3), sd: +sd.toFixed(3), sig: +Math.sqrt(sig2).toFixed(3),
+           prior: +m0.toFixed(3), pPos: +(1 / (1 + Math.exp(-1.702 * mu / sd))).toFixed(3), kellyMult: +km.toFixed(3) };
+}
+function _pbIdOf(reason) {
+  const m = String(reason || "").match(/^\[SROUTE\]\[[A-Z-]+\]\s+PB_([A-Za-z0-9_:.\-]+)/);
+  return m ? m[1] : null;
+}
+/* lanes(이름 → 수익률 목록)에 사후분포를 붙인다 — 위 단계부터(차선 → 꼬리표 → 매매법). pbParent: 매매법 → 처음 본 '시장:차선:꼬리표' */
+function laneBayesAttach(lanes, laneClosed, pbParent) {
+  const lv = function (k) { const p = k.split(":"); return p[1] === "pb" ? 2 : (p.length === 2 ? 0 : 1); };
+  const ks = Object.keys(laneClosed).sort(function (a, b) { return lv(a) - lv(b); });
+  for (const k of ks) {
+    if (!lanes[k]) continue;
+    const p = k.split(":"), l = lv(k);
+    const par = l === 0 ? null : (l === 1 ? lanes[p[0] + ":" + p[1]] : lanes[(pbParent && pbParent[k]) || ""]);
+    const mu0 = par && par.post ? par.post.mu : LANE_BAYES.mu0;
+    lanes[k].post = laneBayesPost(laneClosed[k].slice(-PERF_GATE.maxN), mu0);
+    // 종전 축소(15건+ PF)를 상한으로 — 두 규칙 중 더 작은 쪽 · 그래도 학습 크기 아래로는 안 간다
+    lanes[k].post.kellyMult = +Math.max(LANE_BAYES.learn, Math.min(lanes[k].post.kellyMult, laneAdaptMult(lanes[k]))).toFixed(3);
+  }
+  return lanes;
+}
+/* 이 진입의 크기 배수 — 가장 구체적인 사후(매매법 → 꼬리표 → 차선)를 쓴다. 표본 없는 단계는 그 위 단계의 사후 = 사전. */
+function laneBayesMult(L, market, lane, tagStrat, pb) {
+  L = L || {};
+  const cands = [pb ? market + ":pb:" + pb : null, market + ":" + lane + ":" + tagStrat, market + ":" + lane];
+  for (const k of cands) {
+    if (k && L[k] && L[k].post) return { mult: L[k].post.kellyMult, key: k, post: L[k].post };
+  }
+  return { mult: 1, key: null, post: null };
+}
 /* [V33.578] 진입 주체 꼬리표 — 원장 사유 · 실적 관문이 ★같은 함수★ 로 정한다(따로 적으면 갈라진다).
    실적 관문 구역 안에 둔다 — 관문 검사(tools/check-perf-gate)가 이 구역만 떼어 돌리므로, 밖에 두면 참조 오류가 catch 에 삼켜져 '막지 않음' 으로 샌다. */
 function _entryTag(signal) {
@@ -21496,10 +21714,10 @@ async function perfGateLoad(DB, force) {
   // 매도의 진입 주체는 같은 시장·종목의 먼저 들어온 매수(FIFO)에서 온다 — 창보다 30일 앞 매수까지 읽는다
   const rows = ((await DB.prepare("SELECT ts, market, symbol, side, qty, pnl_pct, reason FROM trades WHERE ts > ? ORDER BY ts")
     .bind(now - (PERF_GATE.windowDays + 30) * D).all()) || {}).results || [];
-  const book = new Map(), closed = {}, laneClosed = {};
+  const book = new Map(), closed = {}, laneClosed = {}, pbParent = {};
   for (const t of rows) {
     const k = t.market + "|" + t.symbol;
-    if (!/sell/i.test(t.side)) { const tg = _pgTag(t.reason); (book.get(k) || book.set(k, []).get(k)).push({ qty: +t.qty, tag: tg, lane: _laneOf(t.reason) }); continue; }
+    if (!/sell/i.test(t.side)) { const tg = _pgTag(t.reason); (book.get(k) || book.set(k, []).get(k)).push({ qty: +t.qty, tag: tg, lane: _laneOf(t.reason), pb: _pbIdOf(t.reason) }); continue; }
     const q = book.get(k) || []; let need = +t.qty, first = null;
     while (need > 1e-9 && q.length) { const b = q[0]; if (!first) first = b; const u = Math.min(need, b.qty); b.qty -= u; need -= u; if (b.qty <= 1e-9) q.shift(); }
     if (!first || !first.tag || t.pnl_pct == null) continue;
@@ -21513,6 +21731,8 @@ async function perfGateLoad(DB, force) {
     (closed[key] || (closed[key] = [])).push({ ts: t.ts, pct: first.ps / first.pq });
     // [V33.797] 차선별 성적 — 시장:차선 · 시장:차선:꼬리표(같은 표본 · 추가 쿼리 0)
     for (const lk of [t.market + ":" + (first.lane || "core"), t.market + ":" + (first.lane || "core") + ":" + first.tag]) (laneClosed[lk] || (laneClosed[lk] = [])).push(first.ps / first.pq);
+    // [V33.861] 매매법(SROUTE PB_x)마다도 — 같은 표본 · 사전은 처음 본 '시장:차선:꼬리표'
+    if (first.pb) { const pk = t.market + ":pb:" + first.pb; (laneClosed[pk] || (laneClosed[pk] = [])).push(first.ps / first.pq); if (!pbParent[pk]) pbParent[pk] = t.market + ":" + (first.lane || "core") + ":" + first.tag; }
   }
   let changed = false;
   const keys = new Set(Object.keys(closed).concat(Object.keys(st.keys)));
@@ -21538,6 +21758,7 @@ async function perfGateLoad(DB, force) {
   if (changed && _rwPg) { st.at = now; try { await setState(DB, "perf_gate", st); } catch (e) {} }
   const lanes = {};
   for (const lk in laneClosed) lanes[lk] = _pgStats(laneClosed[lk].slice(-PERF_GATE.maxN));
+  try { laneBayesAttach(lanes, laneClosed, pbParent); } catch (e) {}   // [V33.861] lanes[k].post = {n, mu, sd, sig, prior, pPos, kellyMult} — 같은 15분 캐시
   g.__perfGate = { at: now, keys: out, lanes: lanes };
   return g.__perfGate;
 }
@@ -21587,10 +21808,14 @@ async function probeLaneCheck(DB, market, symbol, price, signal, pgRes, cfg) {
     if (maxQty <= 0) return { ok: false, why: "시험 차선 여유 부족" };
     const pg = await perfGateLoad(DB, false), L = (pg && pg.lanes) || {};
     const lane = tag === "INV" ? "inv" : "probe";
-    const aL = laneAdaptMult(L[market + ":" + lane]), aS = laneAdaptMult(L[market + ":" + lane + ":" + (pgRes && pgRes.key ? pgRes.key.slice(pgRes.key.indexOf(":") + 1) : tag)]);
-    const mult = Math.max(0.05, PROBE_LANE.mult * aL * aS);
+    /* [V33.861] 종전 aL×aS(15건 PF 계단 · 바닥 ×0.35 · 두 번 곱함) → 계층 베이즈 사후의 분수 켈리 한 번(LANE_BAYES 주석).
+       kr:probe 19건 평균 −3.10% → 사후 μ<0 → 학습 크기 ×0.1(시험차선 ×0.3 과 곱해 ×0.03 · 아래 최소 1주) — 멈추지 않고 결과를 계속 모은다. */
+    const _tsK = pgRes && pgRes.key ? pgRes.key.slice(pgRes.key.indexOf(":") + 1) : tag;
+    const _bk = laneBayesMult(L, market, lane, _tsK, signal && signal.isStratRoute ? String(signal.name || "").replace(/^PB_/, "") : null);
+    const mult = Math.max(0.02, PROBE_LANE.mult * _bk.mult);
+    if (signal) signal.bayes = _bk.post ? { key: _bk.key, mu: _bk.post.mu, n: _bk.post.n, k: _bk.mult } : null;
     dc.n++;
-    return { ok: true, mult: mult, maxQty: maxQty, why: "시험차선 ×" + mult.toFixed(2) + (aL < 1 ? " (차선 성적 ×" + aL + ")" : "") + (aS < 1 ? " (신호 성적 ×" + aS + ")" : "") +
+    return { ok: true, mult: mult, maxQty: maxQty, why: "시험차선 ×" + mult.toFixed(2) + (_bk.mult < 1 ? " (베이즈 켈리 ×" + _bk.mult + " · " + _bk.key + " μ " + _bk.post.mu + "% n" + _bk.post.n + ")" : "") +
              " · 노출 " + (probeExp / equity * 100).toFixed(1) + "%/" + (PROBE_LANE.maxTotalFrac * 100) + "%" };
   } catch (e) { return { ok: false, why: "시험 차선 판정 실패 " + (e && e.message) }; }
 }
@@ -21738,6 +21963,27 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   if (signal && signal.isPair && PAIR_ROUTE.mult > 0 && PAIR_ROUTE.mult < 1) {   // [V33.594] 페어 잠정 크기 — 같은 자리(상한 뒤)
     _szNote(signal, "페어잠정", PAIR_ROUTE.mult); qty = Math.floor(qty * PAIR_ROUTE.mult); if (qty <= 0) return cash;
   }
+  /* [V33.861] ★정상 차선(OMNI-Q · 매매법 AI)도 베이즈 켈리 크기★ — 관문이 '열림' 이어도(minN 15 전) 진 만큼 바로 줄인다.
+     us:core:SROUTE:TREND 6건 전패 −8.0%(DUAL_MOM 4 · RS_LEADER 1 · GAP_FILL_D 1)가 ×1.0 이던 자리 → 사후 μ<0 → ×0.1.
+     시험 차선 매수는 probeLaneCheck 에서 이미 곱했다(두 번 곱하지 않음) · 최소 1주(0 으로 만들지 않는다 — 계속 배운다). 원장 읽기 0(15분 캐시). */
+  if (signal && (signal.isOmniQ || signal.isStratRoute) && !signal.probe && (market === "us" || market === "kr")) {
+    try {
+      const _pgL = await perfGateLoad(DB, false);
+      const _bk = laneBayesMult(_pgL && _pgL.lanes, market, "core", _entryTag(signal) + ":" + String(strategy || "").toUpperCase(),
+        signal.isStratRoute ? String(signal.name || "").replace(/^PB_/, "") : null);
+      signal.bayes = _bk.post ? { key: _bk.key, mu: _bk.post.mu, n: _bk.post.n, k: _bk.mult } : null;
+      if (_bk.mult < 1) { _szNote(signal, "베이즈켈리", _bk.mult); qty = Math.max(1, Math.floor(qty * _bk.mult)); }
+    } catch (e) {}
+  }
+
+  /* [V33.862] ★호가창 확인★(obBuyCheck 주석) — 모든 진입 관문·크기 배수를 지난 실제 매수 직전, 현금·위험 엔진 ★앞★
+     (호가로 줄이거나 키운 수량이 아래 위험 엔진·예산 상한을 다시 지난다 · 미루면 D1 현금 계산도 안 한다).
+     미룸 = 이번 사이클만 사지 않음(다음 사이클에 신호가 다시 판단) · 실패·원천 없음 = 중립으로 그냥 산다. */
+  try {
+    const _ob = await obBuyCheck(DB, market, symbol, price, signal, qty);
+    if (_ob && !_ob.ok) { await logEvery(DB, "INFO", "ob:" + market + ":" + symbol, symbol, "BUY 호가 보류 [" + ((_ob.d && _ob.d.act) || "?") + "] " + ((_ob.d && _ob.d.why) || ""), 1800000); return cash; }
+    if (_ob && _ob.qty > 0 && _ob.qty !== qty) { _szNote(signal, "호가", _ob.qty / qty); qty = Math.floor(_ob.qty); }
+  } catch (e) {}
 
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
   // [V33.92] 슬리피지(FillModel)를 수수료와 같은 방식의 비용률로 얹는다.
@@ -21849,8 +22095,6 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   // [V9.1] 동일 종목+전략 기존 포지션이 있으면 "덮어쓰기"가 아니라 평단·수량 합산.
   //   (호출부 가드가 깨져도 유령손실/수량증발이 생기지 않도록 방어)
   //   전체 getPositions 대신 해당 1건만 조회해 D1 부하 최소화.
-  /* [V33.838] 호가 확인(모든 관문을 지난 실제 매수 직전 · 매분 막히는 후보로 원천을 부르지 않게) — 매도벽·매수 잔량을 신호에 붙인다(관측 · OB_GATE_LIVE 가 켜지면 무거운 매도벽에서 매수를 미룬다) */
-  try { const _ob = await obBuyCheck(DB, market, symbol, price, signal); if (!_ob.ok) { await logEvery(DB, "INFO", "ob:" + market, symbol, "BUY 호가 관문 보류 [매도벽 " + (_ob.sg && _ob.sg.near) + "배 · 매수잔량 " + (_ob.sg && _ob.sg.imb) + "]"); return cash; } } catch (e) {}
   let posToSave;
   try {
     let prior = null;
@@ -21935,7 +22179,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
           //   버린다(_sampleLabel null) — 실거래 청산부(executeSell)가 이 값을 못 넘겨 실거래
           //   표본이 0건이던 원인. 진입 시점 지수종가를 남겨 청산 때 초과수익 계산에 쓴다.
           entryIdxClose: __mlEntryIdxClose,
-          ob: (signal && signal.ob) ? signal.ob : null,   // [V33.838] 매수 순간 호가(imb·near·spread) — 매도벽 관문 검증용
+          ob: (signal && signal.ob) ? signal.ob : null,   // [V33.838] 매수 순간 호가(imb·near·spread) — [V33.862] + m(알파 배수 그늘/적용) · am(실제 적용 배수) · live · act(ok/shrink/exempt) · why · q0→q
           szWhy: _szWhyStr(signal && signal._szm)   // [V33.794] 겹친 크기 배수(무엇이 얼마나 깎았나) — 두뇌·명부 '왜' 문구
         }
       };
@@ -31635,7 +31879,7 @@ async function handleRequest(request, env, ctx, _inner) {
         let _pbReg = null;
         let _laneV = null;   // [V33.797] 차선 성적(사이클이 30분에 1행) + 차선 규칙 — 같은 질의에 끼움(추가 쿼리 0)
         try { const _pss = await getStates(env.DB, ["mkt_phase", "pb_regime", "mkt_context", "lane_view", "regime_snap:us", "regime_snap:kr"]); const _ps = _pss["mkt_phase"]; _pbReg = _pss["pb_regime"] || null;
-          _laneV = { view: _pss["lane_view"] || null, probe: PROBE_LANE, adapt: LANE_ADAPT, krScalp: KR_RULE_SCALP_RETIRED, retired: AI_ROUTE_RETIRE, inv: { inst: INV_LANE.inst, budgetFrac: INV_LANE.budgetFrac, stopPct: INV_LANE.stopPct, tpPct: INV_LANE.tpPct, maxHoldDays: INV_LANE.maxHoldDays, maxPerDay: INV_LANE.maxPerDay } };
+          _laneV = { view: _pss["lane_view"] || null, probe: PROBE_LANE, adapt: LANE_ADAPT, bayes: LANE_BAYES, krScalp: KR_RULE_SCALP_RETIRED, retired: AI_ROUTE_RETIRE, inv: { inst: INV_LANE.inst, budgetFrac: INV_LANE.budgetFrac, stopPct: INV_LANE.stopPct, tpPct: INV_LANE.tpPct, maxHoldDays: INV_LANE.maxHoldDays, maxPerDay: INV_LANE.maxPerDay } };
           const _mcx = _pss["mkt_context"] || null, _pr0 = _pbReg || {};
           if (_ps) _phase = { us: _ps.us, kr: _ps.kr, erUs: _ps.erUs, erKr: _ps.erKr,
           dayUs: _ps.dayUs, dayKr: _ps.dayKr, r5Us: _ps.r5Us, r5Kr: _ps.r5Kr, ts: _ps.ts,
@@ -32147,7 +32391,7 @@ async function handleRequest(request, env, ctx, _inner) {
     // [V33.459] GET /api/perf-gate — 실적 관문의 현재 판정(시장 × 진입 주체 × 전략 · 최근 45일 원장)
     if (path === "/api/perf-gate") {
       const pg = await perfGateLoad(env.DB, url.searchParams.get("fresh") === "1");
-      return Response.json({ at: pg.at, rule: PERF_GATE, keys: pg.keys, lanes: pg.lanes || {}, retiredAiRoutes: AI_ROUTE_RETIRE, probe: PROBE_LANE, adapt: LANE_ADAPT }, { headers: Object.assign({ "cache-control": "no-store" }, cors) });
+      return Response.json({ at: pg.at, rule: PERF_GATE, keys: pg.keys, lanes: pg.lanes || {}, retiredAiRoutes: AI_ROUTE_RETIRE, probe: PROBE_LANE, adapt: LANE_ADAPT, bayes: LANE_BAYES }, { headers: Object.assign({ "cache-control": "no-store" }, cors) });
     }
     // [V32.54] GET /api/selfcheck — 시스템 자가진단(사이트 오류·파이프라인 지연·모델 상태). SWR 1분.
     if (path === "/api/selfcheck") {
@@ -35588,7 +35832,22 @@ async function handleRequest(request, env, ctx, _inner) {
       const sym = String(url.searchParams.get("symbol") || "").toUpperCase();
       if (!/^[A-Z0-9.\-^]{1,15}$/.test(sym) || sym.charAt(0) === "^") return Response.json({ ok: false, why: "symbol" }, { status: 400, headers: cors });
       return await swrJson("ob:" + sym, 5000, 20000, async function () {
-        try { const ob = await fetchOrderBook(sym); return Object.assign({ ok: true, sig: orderBookSignal(ob) }, ob); } catch (e) { return { ok: false, s: sym, why: String(e && e.message || e).slice(0, 60) }; }
+        try { const ob = await fetchOrderBook(sym); const sg = orderBookSignal(ob);
+          /* [V33.862] ai = 지금 이 호가로 AI 가 1주를 산다면의 판정(m 그늘/적용 배수 · act · why · cap 지정가 상한 · tick) — D1 안 읽음(근거는 /api/orderbook-ai) */
+          let ai = null; try { const mk = /\.(KS|KQ)$/.test(sym) ? "kr" : "us", pxx = ob.last > 0 ? ob.last : (ob.ask && ob.ask[0] && ob.bid && ob.bid[0] ? (ob.ask[0][0] + ob.bid[0][0]) / 2 : 0);
+            const lv = !!(__obMem.ev && __obMem.ev[mk] && __obMem.ev[mk].live), a = obAssess(ob, sg, mk, pxx, 1, 0, lv);
+            ai = { m: a.m, live: a.live, act: a.act, why: a.why, cap: a.cap || null, tick: a.tick || null }; } catch (e) {}
+          return Object.assign({ ok: true, sig: sg, ai: ai }, ob); } catch (e) { return { ok: false, s: sym, why: String(e && e.message || e).slice(0, 60) }; }
+      });
+    }
+    if (path === "/api/orderbook-ai") {
+      /* [V33.862] AI 가 호가창을 어떻게 쓰고 있나 — 시장별 근거(ob_ev: 표본·구간 평균·t·켜짐 여부·사유) + 최근 매수 30건의 호가 판정(ob_obs).
+         swrJson 1분(사람 수와 무관하게 D1 읽기 분당 ≤ 2 · 근거 재계산은 6시간에 한 번) */
+      return await swrJson("obai", 60000, 600000, async function () {
+        const ev = await _obEvGet(env.DB);
+        const obs = (await getState(env.DB, "ob_obs", null)) || { rows: [] };
+        const recent = (Array.isArray(obs.rows) ? obs.rows : []).slice(0, 30).map(function (r) { return { ts: r[0], mkt: r[1], s: r[2], px: r[3], imb: r[4], near: r[5], spread: r[6], heavy: r[7], m: r[8] != null ? r[8] : obImbMult(r[4]), act: r[9] || null, live: r[10] || 0, q0: r[11] != null ? r[11] : null, q: r[12] != null ? r[12] : null }; });
+        return { ok: true, ev: ev, exec: OB_EXEC, rule: OB_EV_RULE, n: Array.isArray(obs.rows) ? obs.rows.length : 0, recent: recent };
       });
     }
     if (path === "/api/logs") {
@@ -52796,7 +53055,7 @@ async function runInverseLane(DB, market, mcfg, equity, cash, o) {
   const openNow = held.length - sold;
   if (dc.n >= INV_LANE.maxPerDay || now - _num(dc.last, 0) < INV_LANE.gapMs || openNow >= INV_LANE.maxOpen) return cash;
   let aL = 1;
-  try { const pg = await perfGateLoad(DB, false); aL = laneAdaptMult(pg && pg.lanes && pg.lanes[market + ":inv"]); } catch (e) {}
+  try { const pg = await perfGateLoad(DB, false); aL = laneBayesMult(pg && pg.lanes, market, "inv", "INV:HEDGE", null).mult; } catch (e) {}   // [V33.861] 인버스도 베이즈 켈리(멈추지 않고 ×0.1 학습 크기까지) — 종전 laneAdaptMult 는 laneBayesMult 안의 상한으로 남아 있다
   const budget = equity * INV_LANE.budgetFrac[canon] * aL, room = budget - invExp;
   if (room <= equity * 0.01) return cash;
   const heldSyms = new Set(held.map(function (p) { return p.symbol; }));

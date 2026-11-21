@@ -12,6 +12,12 @@
 
 ## Current handoff
 
+### V33.861~862 (2026-11-21) 베이즈 켈리 크기(손실 차선 멈추지 않고 자기 교정) · 호가창 체결 보호 + 알파(근거 쌓이면 자동 켬) · OMNI-Q 손절 모의 측정
+- 사용자(11/21): "멈추게 하지 말고 AI가 스스로 구조적으로 해결 · 퀀트처럼 · 호가창도 쓰게". 평가(라이브 30일): 美 OMNI_Q 10건 승률 20% −2.77% · 韓 19건 16% −3.10% · 美 SROUTE 신규 매매법 6건 전패 −8% · 韓 probe PF 0.09. 수익은 현금 91~93% 덕.
+- 베이즈 켈리(LANE_BAYES · laneBayesPost/Attach/Mult · perfGateLoad 같은 질의·15분 캐시 안 · D1 추가 0): 차선→꼬리표→매매법 계층 정규-역감마 사후(사전 무게 8 · σ5% · 차선 사전 +1%). 크기 = (μ/σ²)÷기준 → [0.1,1] · 증거 없으면 ×1 · 음수면 ×0.1 학습 크기(최소 1주) — 멈추지 않는다. probeLaneCheck·executeBuy(OMNI-Q·SROUTE)·인버스(runInverseLane) 적용 · 종전 laneAdaptMult 는 상한. 원장 재생: KR −425,415 → −71,595원 · US −$1,420 → −$302(개선은 전부 크기 축소 — 진입 실력은 그대로). /api/perf-gate lanes[k].post {n,mu,sd,pPos,kellyMult} · /api/ai-mode lanes.bayes. check-perf-gate ⑥.
+- 호가창(obAssess·obBuyCheck(qty)·_obFetchCycle 8종목/사이클·45초 기억·2.5초 제한·실패 시 그냥 산다): 체결 보호 즉시 — 매도호가 > 가격×(1+max(2틱,0.3%)) 이면 nochase · 간격 > max(3틱,0.6%) delay · 韓 근접 3단계 잔량 부족 shrink/delay · 30분 두 번 미룬 뒤엔 가격 상한만 · 인버스·국면단타 면제. 알파(imb → ×0.70~×1.15) = 그늘(결과 붙은 표본 0) · OB_EV_RULE(시장 n≥60 · 구간 ≥12 · 단조 · 차 ≥0.5%p · t≥2) 넘으면 자동 켬/못 미치면 자동 끔(6시간 재계산 · state ob_ev). 호출 위치를 크기 배수 뒤·위험 엔진 앞으로 옮김. /api/orderbook .ai · /api/orderbook-ai(swrJson 1분).
+- OMNI-Q 학습기: sim_gate 에 stopSim(실전 손절 max(ATR×2.0/1.7, 5%/4%) + EOD-GAP 0.35R 일봉 근사) 측정 칸만 추가(판정 불변). 로컬 근사: 무손절 → 손절 mx 美5일 +0.41→−0.01% · 美20일 +3.40→+0.77% · 韓5일 +0.49→+0.32% · 韓20일 +2.15→−0.47%. 20일 머리 실력 대부분이 손절에서 사라짐 → 다음: 손절폭 8%/12%/ATR3/재난만 비교(STOP_RULES) 후 머리별 손절. 값은 다음 금요일 회차부터 /api/omni-status gate.g3.stopSim. 화면 칸은 다음 판(studio OmniQ Gate · OmniPerf).
+
 ### V33.860 (2026-11-21) 관리자 및 개발자 메뉴 · 인버스 차선 개장 직후 낡은 시세 진입 막기 · 국면 청산 30분 머묾
 - 설정창 → '관리자 및 개발자 메뉴'(버튼·명령 팔레트·비밀번호 창 문구). public/lux-admin.js 가 창이 처음 열릴 때 섹션(.section-title)을 6개 탭(상태·AI 지시·계좌·종목·전략·위험 관리·학습·도구)으로 다시 담는다(입력 id·저장 로직 그대로) · lux-admin.css(유리 · 넓으면 카드 2열 · 폰 전체 화면).
 - 인버스(runInverseLane): 시세 ts 는 '저장 시각'이라 30분 신선 검사를 통과해도 전일 종가일 수 있었다(#4583 11/10 09:00 252670.KS 128=전일 종가 · 그날 111~119 → −58.5만원 · #4641 −13.9만원). → 정규장 시작 5분 안 신규 진입 금지 + 진입 시세 ts ≥ 오늘 개장(invEntryQuoteOk). 'regime'·'delever' 청산은 자격 없는 국면이 30분 이어질 때만(invRegimeDefer · meta.invRegOff · 상태 바뀔 때만 1쓰기). 손절·익절·최대보유는 즉시. 원장 재생: 낡은 시세 진입 2건(−72만원) 차단.
