@@ -3067,7 +3067,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.862";
+const _BUILD_VER = "V33.863";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -21889,6 +21889,7 @@ function shadowSummary(st) {
    ("executeBuy와 동일 규칙: min(N×ATR, price×stopLoss%)" — 손절 ★거리★ 의 작은 쪽)은 모두 타이트한 쪽이다.
    그래서 수량은 5% 손절로 잡고 실제 손절은 2×ATR(변동 큰 종목 10~20%)에 걸려 ★계획한 위험의 2~4배★ 를 잃었다.
    "최대 손절폭은 stopPct 로 고정" 줄도 부등호가 거꾸로였다. 문턱을 바꾸지 않는다 — 원래 규칙대로 되돌린다. */
+const OMQ_STOP = { atr: 3.0, floorPct: 15 };   // [V33.863] OMNI-Q 진입 손절(executeBuy 주석)
 function _entryStopPrice(price, stopPct, dailyAtr, atrMult) {
   const pctStop = price * (1 - stopPct / 100);
   if (!(dailyAtr > 0) || !(atrMult > 0)) return pctStop;
@@ -22042,6 +22043,24 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
     qty = maxQty;
   }
 
+  /* [V33.863] ★OMNI-Q 진입 손절 = 진입가 − 3×ATR(재난 하한 −15%) · EOD-GAP 안 씀★ — 학습기 손절 모의(같은 선택 · 11년 일봉 · 퍼지 전진 5구간)에서
+     실전 손절(美 −5%/2×ATR · 韓 −4%/1.7×ATR 중 타이트)이 OMNI-Q 실력을 지웠다: 맞춤 초과 美5일 +0.41→−0.01% · 美20일 +3.40→+0.77% · 韓20일 +2.15→−0.47%
+     (손절로 끝난 비율 44~75%). 규칙 8개 비교 중 'ATR 3배만' 이 네 머리 모두 상위: 美5일 +0.36%(t 2.34) · 美20일 +2.54%(t 2.42) · 韓5일 +0.46%(t 2.78) · 韓20일 +1.39%(t 2.54).
+     라이브 60일도 같은 그림(OMNI_Q STOP 20건 평균 −5.5/−4.7% · EOD-GAP 10건 −3.5% · TREND-EXIT 15건만 +2~3%).
+     손절이 넓어진 만큼 수량을 줄여 1R 금액(종전 손절까지 잃는 돈)은 그대로 — 위험 예산 불변. */
+  let _omqStop = null;
+  if (signal && signal.isOmniQ && dailyAtr > 0 && !(opts && typeof opts.stopPctOverride === "number")) {
+    try {
+      const _r0 = getStrategyRules(cfg, strategy, market), _sp0 = _r0.stopLossPct || cfg.stopLoss, _am0 = _r0.atrStopMult || cfg.atrStopMult;
+      const _old = _entryStopPrice(price, _sp0, dailyAtr, _am0);
+      const _new = Math.max(price - OMQ_STOP.atr * dailyAtr, price * (1 - OMQ_STOP.floorPct / 100));
+      if (_new < _old && price - _old > 0 && price - _new > 0) {
+        const _q2 = Math.max(1, Math.floor(qty * (price - _old) / (price - _new)));
+        if (_q2 < qty) { _szNote(signal, "넓은손절", _q2 / qty); qty = _q2; }
+        _omqStop = _new;
+      }
+    } catch (e) { _omqStop = null; }
+  }
   const gross = price * qty;
   const fee = gross * costRate;              // [V33.92] 수수료 + 슬리피지
   const total = gross + fee;
@@ -22082,6 +22101,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   } else
   // 최대 손절폭은 stopPct로 고정 — [V33.464] 부등호가 거꾸로였다(> 였다: 타이트한 손절을 오히려 % 로 넓혔고, 넓은 손절은 그대로 뒀다)
   if (stopPrice < pctStop) stopPrice = pctStop;
+  if (_omqStop != null) stopPrice = _omqStop;   // [V33.863] OMNI-Q 넓은 손절(위 주석) — % 상한보다 넓다
 
   // [V12.47] 진입 시점 지수종가 스냅샷 — 청산 때 초과수익(alpha) 라벨 계산용(캐시 read만, fetch 0).
   let __mlEntryIdxClose = null;
@@ -22149,7 +22169,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
         meta: {
           strategy: strategy, feePaid: fee, feeRemaining: fee,
           atrAtEntry: dailyAtr, stopPrice: stopPrice, peakPrice: price,
-          stopOv: _hasStopOv ? opts.stopPctOverride : null,   // [V33.464] 명시 손절폭(LLM 지시·헤지) — 청산 쪽 손절폭 상한이 덮어쓰지 않는다
+          stopOv: _hasStopOv ? opts.stopPctOverride : (_omqStop != null ? +((1 - _omqStop / price) * 100).toFixed(2) : null),   // [V33.863] OMNI-Q 넓은 손절도 청산 쪽 상한이 덮지 않게   // [V33.464] 명시 손절폭(LLM 지시·헤지) — 청산 쪽 손절폭 상한이 덮어쓰지 않는다
           signal: signal.name, signalMembers: signal.members || [signal.name],
           // Codex V33.329: retain actual entry setup for outcome audits without changing confluence votes.
           aiSetup: signal.setup || null,
@@ -22776,7 +22796,7 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   {
     const _mtc = minutesToClose(market);
     const _eodDay = Math.floor(Date.now() / 86400000);
-    if (_mtc != null && _mtc > 0 && _mtc <= 25 && stopPrice != null && pos.avg > 0 && meta.eodTrimDay !== _eodDay) {
+    if (_mtc != null && _mtc > 0 && _mtc <= 25 && stopPrice != null && pos.avg > 0 && meta.eodTrimDay !== _eodDay && !(meta.omq && meta.stopOv != null)) {   // [V33.863] OMNI-Q 넓은 손절 보유는 EOD-GAP 안 씀(모의: 끄면 같거나 낫다)
       const _rDist = (pos.avg - stopPrice) / pos.avg;      // 진입 시 손절거리(R)
       const _left = (price - stopPrice) / pos.avg;         // 지금 손절까지 남은 여유
       if (_rDist > 0.0001) {

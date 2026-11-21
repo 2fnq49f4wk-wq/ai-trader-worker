@@ -37,6 +37,8 @@ export function Gate({ g, label }: { g: any; label: string }) {
         { k: "적합 진단", v: fit.kind || "—", hint: (fit.inMu != null ? "안 " + (fit.inMu * 100).toFixed(1) + "% · 밖 " + (fit.outMu * 100).toFixed(1) + "%" : "") + (g.label === "matched" ? " · 학습 라벨 맞춤(같은 위험 묶음 대비)" : "") + (g.variant ? " · 점수 변형 " + ({ blend: "5·20일 혼합", neutral: "위험 묶음 중립", blendN: "혼합+중립", crash5: "폭락 날 5일 점수", crashH5: "폭락 날 5일 점수·5일 보유" } as any)[g.variant] : ""), tone: fit.kind === "정상 범위" ? "ok" : "warn" },
         ...(g3.kind === "sim" && g.g3live ? [{ k: "실시간 장부(회수 감시)", v: n0(g.g3live.days) + "일 · " + pp(g.g3live.mx), hint: g.g3live.revoke ? "평균 초과 < 0 → 회수" : (g.g3live.needDays ?? 10) + "일부터 평균 초과 < 0 이면 회수", tone: (g.g3live.revoke ? "bad" : "ok") as Tone }] : []),
         ...(g.g3sim ? [sim(g.g3sim, "③ 모의(측정 · 판정 전)")] : []),
+        ...((g3.stopSim || (g.g3sim && g.g3sim.stopSim)) ? [(() => { const st = g3.stopSim || g.g3sim.stopSim, e = st.early || {};   /* [V33.863] 실전 손절·EOD-GAP 넣은 모의(측정 · 판정 불변) */
+          return { k: "③ 실전 손절 넣은 모의(측정)", v: "맞춤 초과 " + pp(st.mx), hint: "앞 달 t " + f1(e.mT, 1) + " · 뒤 20% " + pp(st.lateMx) + " · 절대 승률 " + (st.absWin != null ? (st.absWin * 100).toFixed(0) + "%" : "—") + "(무손절 " + (st.absWin0 != null ? (st.absWin0 * 100).toFixed(0) + "%" : "—") + ") · 손절로 끝 " + (st.stopFrac != null ? (st.stopFrac * 100).toFixed(0) + "%" : "—") + " · 평균 " + f1(st.held, 1) + "일", tone: (st.okIf ? "ok" : "warn") as Tone }; })()] : []),
       ]} />
     </div>);
 }

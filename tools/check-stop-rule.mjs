@@ -40,7 +40,8 @@ const eb = S.slice(S.indexOf("async function executeBuy("), S.indexOf("// [중�
 chk(/if \(dailyAtr && strategy !== "scalp" && !_hasStopOv\) \{\s*stopPrice = _entryStopPrice\(price, stopPct, dailyAtr, atrMult\);/.test(eb) && !/Math\.min\(atrStop, pctStop\)/.test(S),
   "executeBuy: 타이트한 쪽(_entryStopPrice) · 명시 손절폭이면 % 그대로 · 넓은 쪽(Math.min) 없음", "★executeBuy 가 넓은 손절을 고른다★");
 chk(/if \(stopPrice < pctStop\) stopPrice = pctStop;/.test(eb) && !/if \(stopPrice > pctStop\) stopPrice = pctStop;/.test(eb), "최대 손절폭 = stopPct(부등호 바로)", "★최대 손절폭 부등호가 거꾸로다★");
-chk(/stopOv: _hasStopOv \? opts\.stopPctOverride : null/.test(eb), "명시 손절폭을 포지션에 남긴다(청산 상한이 존중)", "★명시 손절폭 표시가 없다★");
+chk(/const OMQ_STOP = \{ atr: 3(\.0)?, floorPct: 15 \}/.test(S) && /if \(_omqStop != null\) stopPrice = _omqStop;/.test(eb) && /!\(meta\.omq && meta\.stopOv != null\)/.test(S), "[V33.863] OMNI-Q 진입 손절 = 진입 − 3×ATR(하한 −15%) · EOD-GAP 제외", "★OMNI-Q 넓은 손절 배선이 사라졌다(학습기 손절 모의 근거 · AI_HANDOFF V33.863)★");
+chk(/stopOv: _hasStopOv \? opts\.stopPctOverride : (null|\(_omqStop != null \?)/.test(eb), "명시 손절폭을 포지션에 남긴다(청산 상한이 존중 · V33.863 OMNI-Q 넓은 손절 포함)", "★명시 손절폭 표시가 없다★");
 chk(/const stopPrice = _capStopPrice\(\(typeof meta\.stopPrice === "number"\) \? meta\.stopPrice : null, pos\.avg, \(r\.stopLossPct \|\| cfg\.stopLoss \|\| 5\), strategyName, meta\);/.test(S),
   "evaluateSell: 하드 손절에 손절가 상한(_capStopPrice)", "★열린 포지션의 넓은 손절가가 그대로 쓰인다★");
 if (fails) { console.error("\n✗ 손절 규칙 검사 실패 " + fails); process.exit(1); }

@@ -20,7 +20,7 @@ export type KpiT = { k: string; v: string; hint?: string; tone?: Tone };
 export function Kpis({ items }: { items: KpiT[] }) {
   return (
     <dl className="grid grid-cols-2 gap-px border-y border-line bg-line sm:grid-cols-4">
-      {items.slice(0, 4).map((it, i) => (
+      {items.slice(0, 8).map((it, i) => (   /* [V33.863] 관문 칸이 5~7개(실시간 장부 · 모의 측정 · 손절 모의)로 늘어 4개 넘는 칸이 잘렸다 */
         <div key={i} className="bg-bg px-3 py-3 first:pl-0 sm:[&:nth-child(4n+1)]:pl-0 [&:nth-child(2n+1)]:pl-0 sm:[&:nth-child(2n+1)]:pl-3">
           <dt className="text-[11px] text-ink-3">{it.k}</dt>
           <dd className="bs-num mt-1 text-[19px] leading-none" style={it.tone ? { color: toneColor[it.tone] } : undefined}>{it.v}</dd>

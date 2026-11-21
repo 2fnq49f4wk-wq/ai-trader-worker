@@ -31,7 +31,7 @@ export function OmniPerf({ onFull }: { onFull: () => void }) {
         const r = q[m], v = (r && r.view) || {}, g = v.gate || {}, g20 = v.gate20 || {}, s = best(v);
         const head = (gg: any, name: string, st: string) => {
           const g1 = gg.g1 || {}, g2 = gg.g2 || {}, g3 = gg.g3 || {}, sim = g3.kind === "sim" ? g3 : gg.g3sim;
-          return { k: name + " · " + ((ST[st] || ["—"])[0]), v: pct(g1.mu), hint: "상위 10% 승률 · 하한 " + pct(g1.lb) + " · t " + f1(g1.t, 1) + " · 구간 " + (g2.pos ?? "—") + "/" + ((g2.folds || []).length || "—") + (sim ? " · 모의 초과 " + pp(sim.mx) : ""), tone: ((ST[st] || ["", "idle"])[1]) as Tone };
+          return { k: name + " · " + ((ST[st] || ["—"])[0]), v: pct(g1.mu), hint: "상위 10% 승률 · 하한 " + pct(g1.lb) + " · t " + f1(g1.t, 1) + " · 구간 " + (g2.pos ?? "—") + "/" + ((g2.folds || []).length || "—") + (sim ? " · 모의 초과 " + pp(sim.mx) : "") + (sim && sim.stopSim ? " · 실전 손절 넣으면 " + pp(sim.stopSim.mx) : "")   /* [V33.863] 손절 모의(측정 · 판정 불변) */, tone: ((ST[st] || ["", "idle"])[1]) as Tone };
         };
         return (
           <section key={m} className="bs-perf rounded-[14px] border border-line bg-bg-2 p-4">

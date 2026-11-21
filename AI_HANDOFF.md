@@ -12,6 +12,15 @@
 
 ## Current handoff
 
+### V33.863 (2026-11-21) OMNI-Q 실전 손절 = 진입가 − 3×ATR(재난 하한 −15%) · EOD-GAP 끔 · 수량 1R 유지 · 손절 모의 화면 표시
+- 근거(로컬 학습기 손절 모의 · 같은 선택 · 11년 일봉 · 퍼지 전진 5구간 · scratchpad/stopsim/run2.py 규칙 9개 비교): 맞춤 초과(t)
+  · 현재(美 5%/2ATR · 韓 4%/1.7ATR · EOD): 美5 −0.01%(0.53) · 美20 +0.77%(0.61) · 韓5 +0.32%(2.06) · 韓20 −0.47%(−0.57)
+  · ATR3만: 美5 +0.36%(2.34) · 美20 +2.54%(2.42) · 韓5 +0.46%(2.78) · 韓20 +1.39%(2.54) — 네 머리 모두 상위 · 재난 −15%만도 비슷 · EOD 끄면 같거나 조금 나음.
+- 워커 executeBuy: signal.isOmniQ 면 손절 = max(진입 − 3×ATR, 진입×0.85) · 종전 손절거리 대비 수량 축소(_szNote '넓은손절' · 1R 금액 불변) · meta.stopOv 에 실어 _capStopPrice 가 안 좁힘 · meta.omq+stopOv 보유는 EOD-GAP 제외. OMQ_STOP 상수.
+- 학습기 STOP_RULES 도 같은 자(pct .15 · atr 3 · EOD 끔)로 — stopSim 이 실전 규칙을 잰다(금요일 회차부터).
+- 화면: studio OmniQ Gate '③ 실전 손절 넣은 모의(측정)' 칸 · OmniPerf 힌트 '실전 손절 넣으면' · Kpis 4칸 제한 → 8칸(관문 칸이 잘렸다). brain-studio.js 재빌드.
+- 미반영: 폰 화면 에이전트(사용 한도로 중단)의 작업 중 변경 public/lux-glass2.css · lux-motion.js · playbook-observatory.js — 검증 전이라 이 판에 안 넣음.
+
 ### V33.861~862 (2026-11-21) 베이즈 켈리 크기(손실 차선 멈추지 않고 자기 교정) · 호가창 체결 보호 + 알파(근거 쌓이면 자동 켬) · OMNI-Q 손절 모의 측정
 - 사용자(11/21): "멈추게 하지 말고 AI가 스스로 구조적으로 해결 · 퀀트처럼 · 호가창도 쓰게". 평가(라이브 30일): 美 OMNI_Q 10건 승률 20% −2.77% · 韓 19건 16% −3.10% · 美 SROUTE 신규 매매법 6건 전패 −8% · 韓 probe PF 0.09. 수익은 현금 91~93% 덕.
 - 베이즈 켈리(LANE_BAYES · laneBayesPost/Attach/Mult · perfGateLoad 같은 질의·15분 캐시 안 · D1 추가 0): 차선→꼬리표→매매법 계층 정규-역감마 사후(사전 무게 8 · σ5% · 차선 사전 +1%). 크기 = (μ/σ²)÷기준 → [0.1,1] · 증거 없으면 ×1 · 음수면 ×0.1 학습 크기(최소 1주) — 멈추지 않는다. probeLaneCheck·executeBuy(OMNI-Q·SROUTE)·인버스(runInverseLane) 적용 · 종전 laneAdaptMult 는 상한. 원장 재생: KR −425,415 → −71,595원 · US −$1,420 → −$302(개선은 전부 크기 축소 — 진입 실력은 그대로). /api/perf-gate lanes[k].post {n,mu,sd,pPos,kellyMult} · /api/ai-mode lanes.bayes. check-perf-gate ⑥.
