@@ -105,7 +105,7 @@
 // 미국: S&P500 502개 + ETF 15개 = 517개
 // 한국: 시총 296개 + ETF 15개 = 311개 (영문코드 1개 제외됨)
 const DEFAULT_US = [
-  "NVDA","GOOGL","GOOG","AAPL","MSFT","SPCX",
+  "NVDA","GOOGL","GOOG","AAPL","MSFT","SPCX","ANT",   // [V33.859] ANT = Anthropic(2026-11-19 나스닥 상장 · 나스닥·야후 시세 확인)
   "AMZN","AVGO","META","TSLA","WMT",
   "BRK-B","LLY","JPM","MU","AMD",
   "XOM","V","JNJ","INTC","ORCL",
@@ -417,6 +417,7 @@ const FOREIGN_TRACKING_KR_ETF = new Set([
 // 종목 한글/영문 이름 맵 (UI 표시용)
 const NAME_MAP = {
   "NVDA":"NVIDIA",
+  "ANT":"Anthropic",
   "SPCX":"SpaceX",   // ⚠️ 미해결 F-3(docs/OPEN-DEFECTS.md): 이 티커가 실제 거래 가능한지 미검증.
                      //   SpaceX 는 비상장이고 SPCX 는 과거 SPAC 티커였다. 죽은 티커면 매 사이클
                      //   시세 fetch 예산을 태우면서 MCAP_RANK 9위로 우량주 보너스 상위를 차지한다.
@@ -1435,6 +1436,7 @@ const MCAP_RANK = {
   "ZS":190,"TEAM":210,"SOFI":260,"RIVN":300,"OKTA":310,"MDB":320,"DKNG":330,
   "META":8,
   "SPCX":9,
+  "ANT":9.5,   // [V33.859] 정수 칸이 다 차 있어(1~60 결번 0) 9위 묶음과 월마트(10) 사이 — 동점 상한(29) 안 늘림 · 시총 약 1.2조 달러(나스닥 11/19 종가 기준 1.27조 · 11/20 1.16조)
   "TSLA":9,
   "WMT":10,
   "BRK-B":11,
@@ -2505,7 +2507,7 @@ const LEGACY_STRATEGIES = ["swing", "momentum", "meanrev", "day"];  // 통계/�
 const SECTOR_MAP = {
   "NVDA":"US_SEMI","AVGO":"US_SEMI","AMD":"US_SEMI","INTC":"US_SEMI","SNDK":"US_SEMI",
   "TSM":"US_SEMI","MRVL":"US_SEMI","ASML":"US_SEMI","ARM":"US_SEMI","SKHY":"US_SEMI",
-  "AAPL":"US_TECH","GOOGL":"US_TECH","META":"US_TECH","AMZN":"US_TECH","ORCL":"US_TECH",
+  "AAPL":"US_TECH","ANT":"US_TECH","GOOGL":"US_TECH","META":"US_TECH","AMZN":"US_TECH","ORCL":"US_TECH",
   "TSLA":"US_AUTO","RKLB":"US_AERO","BA":"US_AERO",
   "GS":"US_FIN","BRK-B":"US_FIN",
   "PLTR":"US_DATA","KO":"US_CONSUMER","VOO":"US_INDEX",
@@ -2534,7 +2536,7 @@ const INVERSE_ETF = new Set([
 const SECTOR_GROUPS = ["TECH", "FINANCE", "HEALTH", "CONSUMER", "INDUSTRIAL", "RESOURCES", "OTHER"];
 const SECTOR_GROUP_MAP = {
   // US TECH (전자기술·기술서비스·커뮤니케이션)
-  "NVDA":"TECH","GOOGL":"TECH","GOOG":"TECH","AAPL":"TECH","MSFT":"TECH","AVGO":"TECH","META":"TECH","MU":"TECH","AMD":"TECH","INTC":"TECH","ORCL":"TECH","CSCO":"TECH","LRCX":"TECH","AMAT":"TECH","PLTR":"TECH","TXN":"TECH","KLAC":"TECH","QCOM":"TECH","ADBE":"TECH","CRM":"TECH","NOW":"TECH","IBM":"TECH","ANET":"TECH","SNPS":"TECH","CDNS":"TECH","NFLX":"TECH",
+  "NVDA":"TECH","GOOGL":"TECH","GOOG":"TECH","AAPL":"TECH","MSFT":"TECH","ANT":"TECH","AVGO":"TECH","META":"TECH","MU":"TECH","AMD":"TECH","INTC":"TECH","ORCL":"TECH","CSCO":"TECH","LRCX":"TECH","AMAT":"TECH","PLTR":"TECH","TXN":"TECH","KLAC":"TECH","QCOM":"TECH","ADBE":"TECH","CRM":"TECH","NOW":"TECH","IBM":"TECH","ANET":"TECH","SNPS":"TECH","CDNS":"TECH","NFLX":"TECH",
   // US FINANCE
   "BRK-B":"FINANCE","JPM":"FINANCE","V":"FINANCE","MA":"FINANCE","BAC":"FINANCE","MS":"FINANCE","GS":"FINANCE","WFC":"FINANCE","AXP":"FINANCE","C":"FINANCE","SCHW":"FINANCE","BLK":"FINANCE","SPGI":"FINANCE",
   // US HEALTH (의료기술·보건서비스)
@@ -3065,7 +3067,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.858";
+const _BUILD_VER = "V33.859";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
