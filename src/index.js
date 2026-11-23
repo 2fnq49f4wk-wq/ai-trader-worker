@@ -3067,7 +3067,7 @@ async function applySignalTypeWeights(DB, cfg) {
 const ENTRY_ROUTES_ONLY = true;
 const SIZE_STOP_FLOOR_PCT = 5;   // [V33.703] 수량 계산용 손절폭 하한(%) — 원장 실측 STOP 청산 손실 중앙값 −4.95%
 const ENTRY_ROUTES = new Set(["AI-Q", "SROUTE", "INV"]);   // [V33.797] INV = 국면 인버스 차선(사용자 11/9 · runInverseLane)
-const _BUILD_VER = "V33.864";
+const _BUILD_VER = "V33.865";
 
 /* ══ [V33.422] ★퇴역 명부 — 위원회에서 내보낸 모델의 유일한 출처★ (사용자 지시) ══════════
    사용자: "기존 필요없는 모델은 제거해".
@@ -32410,8 +32410,11 @@ async function handleRequest(request, env, ctx, _inner) {
     }
     // [V33.459] GET /api/perf-gate — 실적 관문의 현재 판정(시장 × 진입 주체 × 전략 · 최근 45일 원장)
     if (path === "/api/perf-gate") {
-      const pg = await perfGateLoad(env.DB, url.searchParams.get("fresh") === "1");
-      return Response.json({ at: pg.at, rule: PERF_GATE, keys: pg.keys, lanes: pg.lanes || {}, retiredAiRoutes: AI_ROUTE_RETIRE, probe: PROBE_LANE, adapt: LANE_ADAPT, bayes: LANE_BAYES }, { headers: Object.assign({ "cache-control": "no-store" }, cors) });
+      /* [V33.865] 화면(AI 작동원리 'AI 자기 교정' 칸)이 부르므로 공용 사본 1분(swrJson) — 사람 수와 무관하게 계산 분당 ≤ 1. fresh=1 은 그대로 직접. */
+      const _pgOut = function (pg) { return { at: pg.at, rule: PERF_GATE, keys: pg.keys, lanes: pg.lanes || {}, retiredAiRoutes: AI_ROUTE_RETIRE, probe: PROBE_LANE, adapt: LANE_ADAPT, bayes: LANE_BAYES }; };
+      if (url.searchParams.get("fresh") !== "1") return await swrJson("perfgate", 60000, 900000, async function () { return _pgOut(await perfGateLoad(env.DB, false)); });
+      const pg = await perfGateLoad(env.DB, true);
+      return Response.json(_pgOut(pg), { headers: Object.assign({ "cache-control": "no-store" }, cors) });
     }
     // [V32.54] GET /api/selfcheck — 시스템 자가진단(사이트 오류·파이프라인 지연·모델 상태). SWR 1분.
     if (path === "/api/selfcheck") {

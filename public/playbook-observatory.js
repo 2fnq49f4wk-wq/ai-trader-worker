@@ -439,6 +439,42 @@
       rows.map(function (r) { return '<div class="k-fs"><span>' + r[0] + '</span><i style="width:' + Math.max(2, Math.round(r[1] / mx * 100)) + '%"></i><span>' + r[1] + '</span></div>'; }).join('') + '</div></section>';
   }
 
+  /* [V33.865] ★AI 자기 교정 칸★(사용자 11/21 "멈추지 말고 AI 가 스스로 구조적으로 해결 · 호가창도") — 실전 결과로 갱신하는 차선·매매법별 기대수익(베이즈 사후)과
+     지금 매수 크기(분수 켈리 · 음수면 ×0.1 학습 크기) · 호가창 판단(체결 보호 · 알파 근거 n/60). 자료 = /api/perf-gate · /api/orderbook-ai (둘 다 공용 사본 1분) · 5분마다 · 화면에 보일 때만. */
+  var fx = { pg: null, ob: null, at: 0, busy: false };
+  function fxLoad() {
+    if (fx.busy || (Date.now() - fx.at < 300000 && fx.pg)) return;
+    fx.busy = true; fx.at = Date.now();
+    Promise.all([fetch('/api/perf-gate').then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }),
+                 fetch('/api/orderbook-ai').then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })])
+      .then(function (a) { fx.pg = a[0]; fx.ob = a[1]; fx.busy = false; var el = root && root.querySelector('.k-selffix'); if (el && data) { var t = document.createElement('div'); t.innerHTML = selfFix(mkSel); if (t.firstElementChild) el.parentNode.replaceChild(t.firstElementChild, el); } })
+      .catch(function () { fx.busy = false; });
+  }
+  var FX_LANE = { core: '정식', probe: '시험', inv: '인버스', pb: '매매법' }, FX_TAG = { 'AI-Q': 'OMNI-Q', AI: 'AI', RULE: '규칙', INV: '인버스', PANIC: '공황', SURGE: '급등', 'AI-SCALP': 'AI 단타', SROUTE: '매매법' }, FX_ST = { TREND: '추세', SCALP: '단타', SNAP: '스냅', HEDGE: '헤지', 'CM-SWING': '스윙' };
+  function fxName(k) {
+    var p = k.split(':'), lane = FX_LANE[p[1]] || p[1];
+    if (p[1] === 'pb') return '매매법 · ' + nm(p.slice(2).join(':'));
+    return lane + (p[2] ? ' · ' + (FX_TAG[p[2]] || p[2]) : '') + (p[3] ? ' ' + (FX_ST[p[3]] || p[3]) : '');
+  }
+  // 베이즈 크기가 실제로 걸리는 곳: 시험·인버스·매매법 차선 + 정식 OMNI-Q·매매법 라우트(executeBuy) — 그 밖은 참고 수치
+  function fxApplied(k) { var p = k.split(':'); return p[1] !== 'core' || p[2] === 'AI-Q' || p[2] === 'SROUTE'; }
+  function selfFix(mk) {
+    try { if (rootVis) fxLoad(); } catch (e) {}
+    var h = '<section class="k-panel k-selffix"><div class="k-h"><b>AI 자기 교정</b><small>실전 결과로 기대수익을 갱신해 크기를 스스로 조절 · 멈추지 않고 학습 크기(×0.1)로 계속</small></div>';
+    var L = (fx.pg && fx.pg.lanes) || {}, ks = Object.keys(L).filter(function (k) { return k.indexOf(mk + ':') === 0 && L[k].post && L[k].post.n > 0; });
+    ks.sort(function (a, b) { return (L[b].post.n - L[a].post.n) || (a < b ? -1 : 1); });
+    if (!fx.pg) h += '<div class="k-empty" style="padding:4px 0">불러오는 중…</div>';
+    else if (!ks.length) h += '<div class="k-empty" style="padding:4px 0">이 시장은 아직 실전 표본이 없습니다.</div>';
+    else h += '<table><thead><tr><th>차선 · 매매법</th><th class="num">표본</th><th class="num">기대 수익/건</th><th class="num">이길 확률</th><th class="num">지금 크기</th></tr></thead><tbody>' +
+      ks.slice(0, 8).map(function (k) { var q = L[k].post, km = q.kellyMult;
+        return '<tr><td>' + esc(fxName(k)) + '</td><td class="num">' + q.n + '</td><td class="num ' + cls(q.mu) + '">' + (q.mu >= 0 ? '+' : '') + Number(q.mu).toFixed(2) + '% <small style="opacity:.6">±' + Number(q.sd).toFixed(2) + '</small></td><td class="num">' + Math.round((q.pPos || 0) * 100) + '%</td><td class="num">' + (fxApplied(k) ? '<b class="' + (km >= .9 ? 'pos' : km <= .1001 ? 'neg' : '') + '">×' + Number(km).toFixed(2) + '</b>' : '<span style="opacity:.55" title="이 차선은 베이즈 크기를 적용하지 않습니다(참고 수치)">참고 ×' + Number(km).toFixed(2) + '</span>') + '</td></tr>'; }).join('') + '</tbody></table>';
+    var ev = fx.ob && fx.ob.ev && fx.ob.ev[mk], rc = ((fx.ob && fx.ob.recent) || []).filter(function (r) { return r.mkt === mk; });
+    var cnt = {}; rc.forEach(function (r) { cnt[r.act || 'ok'] = (cnt[r.act || 'ok'] || 0) + 1; });
+    var minN = (fx.ob && fx.ob.ev && fx.ob.ev.rule && fx.ob.ev.rule.minN) || 60;
+    h += '<div class="k-row" style="margin-top:8px"><span>호가창</span><span>체결 보호 켜짐(호가 간격·쫓아 사기·잔량) · 최근 ' + rc.length + '건' + (rc.length ? ' — ' + Object.keys(cnt).map(function (k) { return ({ ok: '그대로', shrink: '수량 줄임', exempt: '면제', neutral: '자료 이상' })[k] + ' ' + cnt[k]; }).join(' · ') : '') + '</span></div>' +
+      '<div class="k-row"><span>호가 알파</span><span>' + (ev ? (ev.live ? '<b class="pos">켜짐</b> · 잔량 쏠림으로 크기 ×0.70~×1.15' : '기록만(그늘) · 결과 붙은 표본 ' + (ev.n || 0) + '/' + minN + ' — 통계로 맞으면 자동으로 켜짐') : '—') + '</span></div>';
+    return h + '</section>';
+  }
   function live(j) {
     var open = j.open || [], rec = j.recent || [], ex = j.exits || [];
     var h = '<section class="k-panel"><div class="k-h"><b>실전 기록</b><small>보유 ' + open.length + ' · 최근 매수 ' + rec.length + ' · 청산 ' + ex.length + '</small></div><div class="k-body k-scroll">';
@@ -460,7 +496,7 @@
     root.innerHTML =
       '<div style="display:flex;align-items:center;gap:8px"><span class="k-lab">매매법 AI · 실시간 판정 — 모델 설명·검증은 02 모델 구조</span><div class="k-mkt">' +
       ['us', 'kr'].map(function (m) { return '<button type="button" data-pbmk="' + m + '" aria-pressed="' + (m === mkSel) + '">' + (m === 'us' ? 'US' : 'KR') + '</button>'; }).join('') + '</div></div>' +
-      brief(j, mkSel) + strip(j, mkSel) + funnel(j, mkSel) + live(j);   // [V33.612] 작동 구조·검증·사전은 02 모델 구조(Brain Studio '매매법 AI')
+      brief(j, mkSel) + strip(j, mkSel) + funnel(j, mkSel) + selfFix(mkSel) + live(j);   // [V33.612] 작동 구조·검증·사전은 02 모델 구조(Brain Studio '매매법 AI')
     root.querySelectorAll('.k-strip').forEach(function (s, i) { if (keepX[i]) s.scrollLeft = keepX[i]; });
     try { orbitMount(); } catch (e) {}
   }
