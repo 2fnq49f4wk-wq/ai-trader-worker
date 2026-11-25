@@ -1,0 +1,105 @@
+/* [UI-DETAIL] 일반 컴포넌트 디테일 덧입힘 — 타이포·상태(hover/active/focus)·표·입력칸·빈 상태·모달 진입.
+   이 파일 한 장만 지우면 원래대로 돌아간다. 원칙:
+   - 색 의미(한국식 상승=빨강/하락=파랑)·히트맵 색·카드 면(유리/배경)은 건드리지 않는다.
+   - 움직임은 transform·opacity 만, 짧게. backdrop-filter·filter·box-shadow 애니메이션 없음. 큰 * 선택자·:has() 없음.
+   - 색은 기존 변수(--t1·--t3·--bd2·--lux-ac)에서 color-mix 로 뽑아 다크·라이트가 함께 따라온다. */
+:root{--ld-ease:cubic-bezier(.22,.9,.3,1);--ld-ring:var(--lux-ac,#9DB4E8)}
+
+/* ── 글자: 렌더링 · 선택색 ── */
+html{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+::selection{background:color-mix(in srgb,var(--ld-ring) 38%,transparent);color:inherit}
+/* 한국어는 낱말 중간에서 끊지 않는다(설명 글만 — 표·숫자 칸은 그대로) */
+.empty,.note,.sub,.krh-note,.fv-panel-sub,.lead,.econ-name,.insider-name{word-break:keep-all;overflow-wrap:break-word}
+
+/* ── 숫자: 자리폭 고정 · 표 머리 자간 ── */
+td,th,.pill,.fv-idx-chg,.fv-idx-price,.intel-sector-val,.fp-pct,.fp-v,.fp-d,.tfsum-v,.pc-axis,.pc-axis2,.krh-v,.krh-tick,.detail-tf-btn,.wl-held-badge,.tk,.pv,.earn-watch{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+.fv-table th,.table th{letter-spacing:.04em;font-weight:600}
+.fv-panel-head{letter-spacing:-.012em}
+.fv-panel-sub{letter-spacing:0;line-height:1.5}
+.detail-sec{letter-spacing:-.015em;line-height:1.3}
+
+/* ── 입력칸: 글꼴 상속 · 안정된 높이 · 포커스 링 · 자리표시 ── */
+input,select,textarea{font-family:inherit}
+input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea{border-radius:9px;caret-color:var(--ld-ring);transition:border-color .16s,background-color .16s}
+input:not([type=checkbox]):not([type=radio]):not([type=range]):hover,select:hover,textarea:hover{border-color:color-mix(in srgb,var(--t1) 24%,var(--bd2,#26334f))}
+input:not([type=checkbox]):not([type=radio]):not([type=range]):focus,select:focus,textarea:focus{outline:2px solid color-mix(in srgb,var(--ld-ring) 70%,transparent);outline-offset:0;border-color:var(--ld-ring)}
+input::placeholder,textarea::placeholder{color:var(--t3);opacity:.72;letter-spacing:0}
+input[type=checkbox],input[type=radio]{accent-color:var(--ld-ring)}
+input[type=range]{accent-color:var(--ld-ring)}
+select{cursor:pointer}
+
+/* ── 키보드 포커스: 어디서나 같은 링(마우스 클릭엔 안 보임) ── */
+a:focus-visible,button:focus-visible,[role=button]:focus-visible,[role=tab]:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--ld-ring);outline-offset:2px}
+a:focus:not(:focus-visible),button:focus:not(:focus-visible){outline:none}
+
+/* ── 버튼·알약·탭: 호버 면 · 눌림 · 부드러운 전환 ── */
+.btn,.llm-btn,.detail-tf-btn,.detail-ind-btn,.sb-btn,.nav-item,.pill{-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
+.detail-tf-btn,.detail-ind-btn{transition:color .18s,background-color .18s,transform .16s var(--ld-ease)}
+.btn:disabled,.llm-btn:disabled,button:disabled{cursor:not-allowed;opacity:.5}
+@media (hover:hover){
+  .detail-tf-btn:not(.active):hover,.detail-ind-btn:not(.on):not(.active):hover{background-color:color-mix(in srgb,var(--t1) 8%,transparent);color:var(--t1)}
+  .btn:not(:disabled):hover{transform:translateY(-1px)}
+}
+.btn:not(:disabled):active,.llm-btn:not(:disabled):active,.detail-tf-btn:active,.detail-ind-btn:active,.sb-btn:active{transform:translateY(0) scale(.975);transition-duration:.08s}
+.detail-zoom-btn{transition:background-color .16s,transform .16s var(--ld-ease)}
+.detail-zoom-btn:active{transform:scale(.92)}
+
+/* ── 표·목록 행: 옅은 구분선 · 호버 면 ── */
+.fv-table td,.table td{border-bottom:1px solid color-mix(in srgb,var(--t1) 6%,transparent)}
+.fv-table tbody tr:last-child td,.table tbody tr:last-child td{border-bottom-color:transparent}
+.fv-table th,.table th{border-bottom:1px solid color-mix(in srgb,var(--t1) 11%,transparent)}
+@media (hover:hover){
+  .fv-table tbody tr:hover td,.table tbody tr:hover td{background-color:color-mix(in srgb,var(--t1) 5%,transparent)}
+  .fv-hl:hover,.intel-sector-item:hover,.krh-row:hover,.crowd-row:hover,.tfsum-row:hover,.fp-row:hover{background-color:color-mix(in srgb,var(--t1) 4.5%,transparent)}
+}
+.fv-hl,.intel-sector-item,.krh-row,.crowd-row,.tfsum-row,.fp-row{border-radius:8px;transition:background-color .16s}
+
+/* ── 배지·알약: 읽을 수 있는 최소 크기 · 둥근 모서리 ── */
+.wl-held-badge{font-size:8.5px;padding:1px 4px;border-radius:5px;letter-spacing:.01em;line-height:1.35}
+.fv-idx-chg{letter-spacing:-.01em}
+.pill{letter-spacing:-.005em}
+
+/* ── 빈 상태·토스트 ── */
+.empty{font-family:inherit;line-height:1.65;letter-spacing:-.005em;color:var(--t3)}
+.toast{border-radius:12px;letter-spacing:0;line-height:1.4}
+.toast.show{animation:ldToast .22s var(--ld-ease)}
+@keyframes ldToast{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
+
+/* ── 모달: 열릴 때 짧게 떠오름 · 닫기 버튼 ── */
+@keyframes ldPop{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
+.modal.show .modal-content,.modal.show .modal-box,.modal.show .modal-macro,.modal.show .modal-logs{animation:ldPop .24s var(--ld-ease) both}
+.modal-content,.modal-box,.modal-macro,.modal-logs{border-radius:16px}
+.modal-content h2,.modal-macro h2,.modal-logs h2{letter-spacing:.02em}
+.close-x{transition:color .16s,transform .16s var(--ld-ease)}
+.close-x:hover{transform:scale(1.1)}
+.close-x:active{transform:scale(.92)}
+
+/* ── 스크롤바: 얇고 조용하게(트랙 투명) — 가로 스크롤 표에서 눈에 덜 띈다 ── */
+.fv3-scroll,.table-wrap{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--t1) 22%,transparent) transparent}
+
+/* ── 폰: 눌림 영역 확보 ── */
+@media (max-width:760px){
+  .detail-tf-btn,.detail-ind-btn{min-height:32px}
+}
+@media (prefers-reduced-motion:reduce){
+  .toast.show,.modal.show .modal-content,.modal.show .modal-box,.modal.show .modal-macro,.modal.show .modal-logs{animation:none}
+  .btn,.detail-tf-btn,.detail-ind-btn,.close-x,.detail-zoom-btn{transition:none}
+}
+
+/* ── 대시보드(초보자) 인기 종목·AI 관심 종목: 고정 열폭이 이름 칸을 28px 로 눌러 'A..' 'H..' 로 잘리던 것 ──
+   두 칸 나란히일 때(≥761px)만 — 스파크라인·가격·알약 칸을 줄여 이름에 자리를 돌려준다(폰은 1열이라 그대로) */
+@media (min-width:761px){
+  #easyDash .g2 > table td.k{width:56px}
+  #easyDash .g2 > table td.k svg{width:56px}
+  #easyDash .g2 > table td.p.w{width:86px}
+  #easyDash .g2 > table td.p[style]{width:68px!important}
+  #easyDash .g2 > table .pill{min-width:58px;padding:4px 5px;font-size:12px}
+  #easyDash .g2 .g2 > div td.p.w{width:76px}
+  #easyDash .g2 .g2 > div td.p[style]{width:64px!important}
+  #easyDash .g2 .g2 > div .pill{min-width:54px;padding:4px 4px;font-size:11.5px}
+}
+@media (min-width:761px) and (max-width:1180px){
+  #easyDash .g2 > table td.k{display:none}
+}
+#easyDash td.p b{font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+#easyDash .pill{font-variant-numeric:tabular-nums}

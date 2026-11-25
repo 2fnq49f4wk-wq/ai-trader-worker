@@ -132,3 +132,17 @@
   #page-detail .detail-side .detail-data{grid-template-columns:1fr}
   #page-detail .detail-side .detail-dcell .v{white-space:normal;overflow:visible;text-overflow:clip}
 }
+
+/* [V33.867] 종목 상세 — 차트 아래 왼쪽(정보 탭·뉴스·재무)과 오른쪽(시세 데이터·심리·개요…)을 각각 따로 스크롤(사용자 11/26).
+   왼쪽 묶음 .detail-lcol 은 좁은 화면에서 display:contents(종전 순서 order 그대로) · 넓은 화면은 오른쪽 열과 같은 '붙어 따라오는 칸'(sticky + 안에서 스크롤). */
+#page-detail .detail-lcol{display:contents}
+@media (min-width:901px){
+  html body #page-detail #detailLCol{display:flex;flex-direction:column;gap:12px;grid-column:1!important;grid-row:4 / span 5!important;min-width:0;
+    position:sticky;top:112px;align-self:start;max-height:calc(100dvh - 130px);overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;padding-right:2px}
+  html body #page-detail #detailContent .detail-side{grid-row:4 / span 5!important}
+  html body #page-detail #detailContent:not([style*="none"])::after{content:"";grid-column:1 / -1;grid-row:8;height:var(--lcol-h,calc(100dvh - 128px));pointer-events:none}   /* 두 칸 자리 = 화면 높이 — 페이지가 차트만큼 내려가 두 칸이 위에 붙고, 더 내려갈 빈 곳은 없다 */
+  html body #page-detail #detailLCol #luxInfo .lxs{top:0!important}   /* 정보 탭 줄은 이제 왼쪽 칸 안에서 붙는다(페이지 기준 top 이면 칸 가운데 떠 있었다) */
+  html body #page-detail #detailLCol>*{grid-row:auto!important;grid-column:auto!important;margin-top:0!important;flex:0 0 auto}
+}
+/* 왼쪽 글씨 잘림(…): IR 자료 제목 · 내부자 거래 설명 · 섹션 머리 · 실적 기간 — 한 줄 말줄임 대신 줄바꿈 */
+html body #page-detail #luxInfo :is(.li .t,.lxh span:first-child,span.p){white-space:normal!important;overflow:visible!important;text-overflow:clip!important;overflow-wrap:anywhere;word-break:keep-all}

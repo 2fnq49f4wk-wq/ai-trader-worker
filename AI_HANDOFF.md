@@ -12,6 +12,14 @@
 
 ## Current handoff
 
+### V33.867 (2026-11-26) — 종목 상세 좌우 따로 스크롤 · 왼쪽 글씨 잘림 · UI 디테일(lux-detail.css)
+- 종목 상세(≥901): 차트 아래 왼쪽 묶음 `#detailLCol`(정보 탭 #luxInfo · 뉴스 #detailNews(차트 옆에서 이리로 옮김) · 재무 · 전체 보기)이 오른쪽 `.detail-side` 처럼 sticky + 안에서 스크롤.
+  좁은 화면은 display:contents(종전 order 그대로). 두 칸 높이는 index.html 의 fit()(V33.855) 이 함께 맞춤 — 페이지 맨 아래 여백 bp 만큼 줄여 끝까지 내리면 둘 다 top 112 에 붙음.
+  두 칸 자리 = #detailContent::after(grid-row 8 · 높이 --lcol-h) — 두 칸이 짧아도 페이지가 차트만큼 내려가게. 패드(761~1180)의 max-height:none!important 는 setProperty important 로 이김. 정보 탭 줄(.lxs) sticky top 0.
+  실측(헤드리스): 데스크톱 끝까지 내리면 L·R 둘 다 112+700 · 패드 112+620 · 폰 변화 없음.
+- 왼쪽 글씨 잘림: #luxInfo 의 한 줄 말줄임(.li .t IR 제목·내부자 설명 · .lxh 머리 · span.p 실적 기간) → 줄바꿈.
+- UI 디테일(에이전트): 새 `public/lux-detail.css` — 인기/AI 관심 종목 이름 칸 잘림(열폭) · 입력칸 글꼴 상속 · focus-visible · 버튼 눌림 · 표 행 호버/구분선 · tabular-nums · 모달 진입 모션 · 보유 배지 크기.
+
 ### V33.866 (2026-11-24) — 리퀴드 글라스: 블러 → 진짜 유리(굴절 + 빛 테두리)
 - 새 파일 `public/lux-liquid.css` · `public/lux-liquid.js`(index.html 에서 lux-admin 다음에 로드).
 - 굴절: 크기별 변위맵(둥근 사각형 가장자리 띠 · 볼록 렌즈 기울기)을 캔버스로 그려 SVG feDisplacementMap(R·G·B 세기 다르게 = 가장자리 분산)을 `backdrop-filter:url()` 로 건다.
