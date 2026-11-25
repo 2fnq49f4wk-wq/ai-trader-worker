@@ -26,7 +26,7 @@
   }
   /* 둥근 사각형 SDF(안쪽 음수) → 가장자리 띠(bz px)에서 안쪽 법선 방향으로 미는 세기. 볼록 렌즈(스쿼클 높이 h=(1-(1-t)^4)^¼)의 기울기 꼴. */
   function mapUrl(w, h, r, bz) {
-    var s = Math.min(1, 384 / Math.max(w, h)), cw = Math.max(8, Math.round(w * s)), ch = Math.max(8, Math.round(h * s));
+    var s = Math.min(1, 256 / Math.max(w, h)), cw = Math.max(8, Math.round(w * s)), ch = Math.max(8, Math.round(h * s));
     var c = D.createElement("canvas"); c.width = cw; c.height = ch;
     var g = c.getContext("2d"), im = g.createImageData(cw, ch), d = im.data;
     var hw = w / 2, hh = h / 2, rr = Math.min(r, hw, hh);
@@ -75,10 +75,14 @@
     return (maps[key] = id);
   }
   function blurOf(el) { return el.matches("nav.sidebar,#luxTopbar,.modal-content") ? 6 : 3; }
+  /* [V33.867] 렉 수정 — 종전엔 여기서 getBoundingClientRect()+getComputedStyle() 을 대상마다 읽고 바로 style 을 써서
+     '읽기→쓰기→읽기' 강제 배치가 대상 수만큼 반복됐다(데스크톱 CPU 4배 실측: 초보자→전문가 전환 때 ResizeObserver 콜백 1,081ms · 배치 916ms).
+     이제 크기는 ResizeObserver/IntersectionObserver 가 이미 잰 값(el.__lgW/H)을 쓰고 둥글기는 처음 한 번만 읽는다. */
   function applyRefr(el) {
-    var rc = el.getBoundingClientRect(); if (rc.width < 60 || rc.height < 40) return;
-    var r = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 12;
-    var id = filterFor(rc.width, rc.height, r);
+    var w = el.__lgW, h = el.__lgH; if (!w || w < 60 || h < 40) return;
+    if (el.__lgRad == null) el.__lgRad = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 12;
+    var id = filterFor(w, h, el.__lgRad);
+    el.__lgKey = id;
     if (scOn) { if (!el.__lgOn) { el.__lgOn = 1; live++; } if (onEls.indexOf(el) < 0) onEls.push(el); el.classList.add("lg-r"); return; }
     var v = "url(#" + id + ") blur(" + blurOf(el) + "px) saturate(165%) brightness(1.04)";
     el.style.setProperty("-webkit-backdrop-filter", v, "important"); el.style.setProperty("backdrop-filter", v, "important");
@@ -92,10 +96,24 @@
      헤드리스 실측 프레임 16.7→117ms. 나머지 카드는 빛 테두리만. */
   var REFR_SEL = "nav.sidebar,#luxTopbar,.modal-content,.fv-idx,#easyDash .ix";
   var io = REFR && "IntersectionObserver" in window ? new IntersectionObserver(function (es) {
-    es.forEach(function (e) { if (e.isIntersecting) { if (live < MAXLIVE || e.target.__lgOn) applyRefr(e.target); } else dropRefr(e.target); });
+    es.forEach(function (e) {
+      var t = e.target;
+      if (e.isIntersecting) { if (!t.__lgW) { t.__lgW = e.boundingClientRect.width; t.__lgH = e.boundingClientRect.height; } if (live < MAXLIVE || t.__lgOn) applyRefr(t); }
+      else dropRefr(t);
+    });
   }, { rootMargin: "120px 0px" }) : null;
+  /* 크기가 바뀌는 동안(전문가↔초보자·창 크기·사이드바 접기)은 굴절을 내려 놓고(CSS 블러) 크기가 멈춘 뒤 260ms 에 한 번만 다시 건다 —
+     크기마다 변위맵(캔버스 PNG)을 새로 만들던 것이 전환 중 여러 번 겹쳤다. 2px 안 바뀜은 무시. */
+  var rzSet = [], rzT = 0;
   var ro = io && "ResizeObserver" in window ? new ResizeObserver(function (es) {
-    es.forEach(function (e) { if (e.target.__lgOn) applyRefr(e.target); });
+    es.forEach(function (e) {
+      var t = e.target, b = e.borderBoxSize && e.borderBoxSize[0], w = b ? b.inlineSize : e.contentRect.width, h = b ? b.blockSize : e.contentRect.height;
+      if (Math.abs(w - (t.__lgW || 0)) < 2 && Math.abs(h - (t.__lgH || 0)) < 2) return;
+      t.__lgW = w; t.__lgH = h;
+      if (!t.__lgOn) return;
+      if (rzSet.indexOf(t) < 0) { rzSet.push(t); t.style.removeProperty("backdrop-filter"); t.style.removeProperty("-webkit-backdrop-filter"); }
+    });
+    if (rzSet.length) { clearTimeout(rzT); rzT = setTimeout(function () { var l = rzSet; rzSet = []; requestAnimationFrame(function () { l.forEach(function (el) { if (el.__lgOn && !scOn) applyRefr(el); }); }); }, 260); }
   }) : null;
 
   /* 스크롤 중에는 굴절을 잠깐 내려 놓는다(CSS 블러로 돌아감 · 멈추고 180ms 뒤 다시) — SVG 필터는 GPU 가 없는 기기에서
@@ -138,27 +156,43 @@
     }, { passive: true });
   }
 
+  /* [V33.867] 렉 수정 — 종전엔 새 대상마다 자손 전체(querySelectorAll('*'))의 getComputedStyle 을 읽었다. 초보자 대시보드는 시세가 올 때마다
+     카드를 새로 그려 매번 다시 훑었다(데스크톱 CPU 4배 실측: 유휴 콜백 165ms · 강제 스타일 계산 반복). 같은 태그·클래스의 대상은 결과가 같으므로
+     처음 한 번만 판정해 기억한다(kind 캐시). */
+  var kindOk = {}, kindRad = {};
   function adopt(el) {
     if (el.__lg) return; el.__lg = 1;
-    var pos = getComputedStyle(el).position, ok = pos !== "static";
-    if (!ok) {   // 안쪽에 절대배치가 없을 때만 relative 로(있으면 위치 기준이 바뀌어 흔들린다 → 빛 테두리 생략 · 굴절만)
-      var any = false, k = el.querySelectorAll("*");
-      for (var i = 0; i < k.length && !any; i++) { var ps = getComputedStyle(k[i]).position; any = ps === "absolute" || ps === "fixed"; }
-      if (!any) { el.style.position = "relative"; ok = true; }
+    var kind = el.tagName + "#" + (el.id || "") + "." + String(el.className || "").replace(/\blg-\S+/g, "").trim();
+    var sig = kind; for (var ci = 0, ch = el.children; ci < ch.length && ci < 12; ci++) sig += "|" + ch[ci].tagName + "." + ch[ci].className;   // 같은 모양 = 같은 클래스 + 같은 자식 구성(같은 .c 라도 안쪽이 다르면 따로 판정)
+    var ok = kindOk[sig];
+    if (ok == null) {
+      var pos = getComputedStyle(el).position; ok = pos !== "static" ? 1 : 0;
+      if (!ok) {   // 안쪽에 절대배치가 없을 때만 relative 로(있으면 위치 기준이 바뀌어 흔들린다 → 빛 테두리 생략 · 굴절만)
+        var any = false, k = el.querySelectorAll("*");
+        for (var i = 0; i < k.length && !any; i++) { var ps = getComputedStyle(k[i]).position; any = ps === "absolute" || ps === "fixed"; }
+        ok = any ? -1 : 2;   // -1 = 테두리 생략 · 2 = relative 로 만들어 테두리
+      }
+      kindOk[sig] = ok;
     }
+    if (ok === -1) ok = 0; else if (ok === 2) { el.style.position = "relative"; ok = 1; }
     if (ok) {
       el.classList.add("lg-t");
       var rim = D.createElement("i"); rim.className = "lg-rim"; rim.setAttribute("aria-hidden", "true");
       el.appendChild(rim); el.__lgRim = rim;
     }
-    if (io && el.matches(REFR_SEL)) { io.observe(el); if (ro) ro.observe(el); }
+    if (io && el.matches(REFR_SEL)) {   // 둥글기는 여기(유휴 시간)서 모양별 한 번만 읽는다 — 관찰자 콜백 안에서 읽으면 쓰기 직후라 강제 스타일 계산
+      el.__lgRad = kindRad[kind] != null ? kindRad[kind] : (kindRad[kind] = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 12);
+      io.observe(el); if (ro) ro.observe(el);
+    }
   }
   var pend = 0;
   function scan() { pend = 0; var l = D.querySelectorAll(SEL); for (var i = 0; i < l.length; i++) adopt(l[i]); }
   function later() { if (!pend) pend = (window.requestIdleCallback || setTimeout)(scan, { timeout: 800 }); }
   function init() {
     scan();
-    new MutationObserver(function (ms) { for (var i = 0; i < ms.length; i++) if (ms[i].addedNodes.length) { later(); return; } })
+    new MutationObserver(function (ms) {
+      for (var i = 0; i < ms.length; i++) { var a = ms[i].addedNodes; for (var j = 0; j < a.length; j++) { var n = a[j]; if (n.nodeType === 1 && n.className !== "lg-rim" && (n.matches(SEL) || n.firstElementChild)) { later(); return; } } }
+    })
       .observe(D.body, { childList: true, subtree: true });
   }
   if (D.readyState === "loading") D.addEventListener("DOMContentLoaded", init); else init();

@@ -12,6 +12,12 @@
 
 ## Current handoff
 
+### V33.868 (2026-11-26) — 메뉴 전환 렉(에이전트 실측 · CPU 4배)
+- 주범 lux-liquid.js(V33.866): ResizeObserver 안 읽기·쓰기 교차(강제 배치) 1,081ms → 0 · 대상마다 자손 전체 getComputedStyle 훑기 → '클래스+자식 구성' 단위 기억 · 크기 바뀌는 동안 굴절 내리고 멈춘 뒤 260ms 에 한 번 · 변위맵 384→256 · MutationObserver 는 대상 후보 노드만.
+- 시총맵 첫 그리기를 setTimeout 0 으로(새 화면 먼저) · playbook-observatory orbitDraw 한 프레임 800줄씩 나눠 칠함.
+- 전문가 전환 첫 화면: 데스크톱 879/1,644 → 269/346ms · 패드 837/624 → 104/96ms · 폰 첫 그리기 2.39 → 0.92s. AI 원리 진입 폰 최장 작업 859 → 188ms.
+- 남은 것: 폰 전문가 전환 여전히 무거움(lux-dz 축소 보기 전체 재배치 274ms · 시총맵 SVG 글씨 textLength 956ms) · 시장 화면 openMacro/openFx/renderNews · 스크롤(헤드리스 33ms 중앙값) · WebGL 유리.
+
 ### V33.867 (2026-11-26) — 종목 상세 좌우 따로 스크롤 · 왼쪽 글씨 잘림 · UI 디테일(lux-detail.css)
 - 종목 상세(≥901): 차트 아래 왼쪽 묶음 `#detailLCol`(정보 탭 #luxInfo · 뉴스 #detailNews(차트 옆에서 이리로 옮김) · 재무 · 전체 보기)이 오른쪽 `.detail-side` 처럼 sticky + 안에서 스크롤.
   좁은 화면은 display:contents(종전 order 그대로). 두 칸 높이는 index.html 의 fit()(V33.855) 이 함께 맞춤 — 페이지 맨 아래 여백 bp 만큼 줄여 끝까지 내리면 둘 다 top 112 에 붙음.

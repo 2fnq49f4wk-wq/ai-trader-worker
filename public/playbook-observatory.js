@@ -314,13 +314,15 @@
     var lvl = 0, idx = 0;
     var step = function () {
       if (tok !== orbitTok) return;
-      var t0 = performance.now();
-      while (lvl < L && performance.now() - t0 < 12) {
+      var t0 = performance.now(), n0 = 0;
+      /* [V33.867] 시간(12ms)만 보면 '기록'만 재고 실제 그리기(래스터)는 재지 못한다 — 캔버스 2D 는 선을 모아 두었다가 화면에 낼 때·마지막 보관본 복사(drawImage) 때
+         한꺼번에 칠해, 폰 CPU4× 실측 AI 원리 첫 진입 뒤 944ms 긴 작업 하나가 됐다. 한 번에 800줄까지만 긋고 다음 쉬는 틈으로 넘긴다(프레임마다 조금씩 칠해진다). */
+      while (lvl < L && performance.now() - t0 < 12 && n0 < 800) {
         var arr = buckets[lvl], end = Math.min(arr.length, idx + 800); g.strokeStyle = cols[lvl]; g.beginPath();   // [V33.860] 4000 → 800: 한 묶음이 12ms 예산을 크게 넘어(폰 CPU4× 50~100ms) 긴 작업이 됐다
         for (; idx < end; idx++) { var ee = arr[idx]; g.moveTo(SX[la[ee]], SY[la[ee]]); g.lineTo(SX[lb[ee]], SY[lb[ee]]); }
-        g.stroke(); if (idx >= arr.length) { lvl++; idx = 0; }
+        n0 += 800; g.stroke(); if (idx >= arr.length) { lvl++; idx = 0; }
       }
-      if (lvl < L) { (window.requestIdleCallback || function (f) { return setTimeout(f, 16); })(step, { timeout: 200 }); return; }
+      if (lvl < L) { requestAnimationFrame(function () { (window.requestIdleCallback || function (f) { return setTimeout(f, 16); })(step, { timeout: 200 }); }); return; }   // 한 프레임에 한 묶음 — 그사이 그 묶음이 칠해진다
       if (hi.length) { g.strokeStyle = 'rgba(220,240,255,.75)'; g.lineWidth = 1.1; g.beginPath(); hi.forEach(function (ee) { g.moveTo(SX[la[ee]], SY[la[ee]]); g.lineTo(SX[lb[ee]], SY[lb[ee]]); }); g.stroke(); }
       g.globalCompositeOperation = 'source-over';
       // ③ 뉴런 점 — 뒤에서 앞으로
