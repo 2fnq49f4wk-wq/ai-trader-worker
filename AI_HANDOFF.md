@@ -12,6 +12,14 @@
 
 ## Current handoff
 
+### V33.869 (2026-11-26) — 리퀴드 글라스 WebGL(에이전트)
+- public/lux-liquid.js·css 전면 교체: 웹 워커 OffscreenCanvas WebGL 하나가 카드마다 '유리 판'(SDF·베벨 법선·굴절+색분산·프레넬 반사·스페큘러·림·두께/바깥 그림자·다크/라이트 틴트)을 한 번 그려 ImageBitmap 으로 카드 맨 뒤 <lg-glass>(shadow DOM 캔버스 · z -1 · 여백 24px)에 붙임.
+  다시 그림: 크기 변화·스크롤 멈춘 뒤 40px 넘게 움직임·테마·창 크기만 · 스크롤 중 0 · 유휴 시간 · 동시 폰 2/데스크톱 4 · 보이는 카드만 · 메모리 상한 폰 9M/데스크톱 16M px.
+  배경 오로라: JS LAYERS 한 곳에서 셰이더 uniform 과 html.lg-gl::before CSS 를 같이 만든다. 그림 붙은 카드(.lg-g)는 CSS 배경·blur·테두리·그림자 걷음 · 폰 하단 탭은 CSS 흐림 유지+유리 그림.
+  물러남: WebGL/워커/OffscreenCanvas 없음·컨텍스트 잃음 → 종전 CSS 유리 · localStorage luxGlass=off. V33.866 SVG 굴절·.lg-rim 삭제.
+- 실측(헤드리스 swiftshader · CPU 4배): 데스크톱 12동작 긴 작업 21.2s/19.2s → 5.1s/5.0s · 폰 스크롤 p50/p95 16.7/16.8 그대로.
+- 남은 것: static+자손 120개 넘는 큰 패널(TOP MOVERS 등)은 CSS 그대로 · 실기기 GPU 미확인 · 진단 window.luxGlass.stats 남김.
+
 ### V33.868 (2026-11-26) — 메뉴 전환 렉(에이전트 실측 · CPU 4배)
 - 주범 lux-liquid.js(V33.866): ResizeObserver 안 읽기·쓰기 교차(강제 배치) 1,081ms → 0 · 대상마다 자손 전체 getComputedStyle 훑기 → '클래스+자식 구성' 단위 기억 · 크기 바뀌는 동안 굴절 내리고 멈춘 뒤 260ms 에 한 번 · 변위맵 384→256 · MutationObserver 는 대상 후보 노드만.
 - 시총맵 첫 그리기를 setTimeout 0 으로(새 화면 먼저) · playbook-observatory orbitDraw 한 프레임 800줄씩 나눠 칠함.

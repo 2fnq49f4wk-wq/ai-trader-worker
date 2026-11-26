@@ -1,201 +1,286 @@
-/* [V33.866] ★리퀴드 글라스 굴절★ — 블러 대신 '뒤 화면이 유리 가장자리에서 휘어 보이는' 진짜 유리(lux-liquid.css 주석).
-   방법: 대상마다 크기에 맞는 변위맵(둥근 사각형의 가장자리 띠에서 안쪽으로 미는 볼록 렌즈 기울기)을 캔버스로 그려
-   SVG <filter>(feImage → feDisplacementMap, R·G·B 를 조금씩 다른 세기로 휘어 가장자리 무지개 분산)를 만들고
-   backdrop-filter:url(#…) 로 건다. url() backdrop-filter 는 크롬 계열만 그린다 → 크롬·엣지 데스크톱에서만 굴절,
-   사파리·파이어폭스·폰은 빛 테두리(.lg-rim)만(성능 그대로).
-   비용: 화면 안에 보이는 대상만 굴절(IntersectionObserver · 최대 14개) · 맵은 크기(2px 단위)별 1회 · 서버 0. */
+/* [V33.869] ★리퀴드 글라스 = WebGL★ (사용자 11/26 "CSS 로 하니까 유리가 아니라 플라스틱 느낌. CSS 말고 다른 걸로")
+   V33.866 의 SVG 굴절(backdrop-filter:url) + CSS 빛 테두리 대신, 유리 판 한 장을 셰이더로 '그림'으로 만든다.
+   방법: 공유 WebGL 컨텍스트 하나(웹 워커 안 OffscreenCanvas — 메인 스레드 0) → 카드마다 크기에 맞춰 한 번 그린 뒤 ImageBitmap 으로 넘겨
+   카드 안 맨 뒤(z-index:-1 · 그림자 여백만큼 바깥으로) 2D 캔버스에 붙인다(shadow DOM 안 — 카드 안 querySelector('canvas') 와 안 섞인다).
+   셰이더: 둥근 사각형 SDF · 볼록 베벨 높이 → 법선 · 뒤 배경 굴절(배경 오로라를 CSS 와 '같은 수식'으로 계산 — 아래 LAYERS 로
+   html::before 도 같은 값으로 만든다) + 가장자리 색분산 · 프레넬 스튜디오 조명 반사 · 위왼쪽 스페큘러 · 얇은 림 · 두께 그림자 · 바깥 그림자 · 본체 틴트.
+   ★성능★: 그림은 카드와 같이 스크롤된다(프레임마다 다시 그리지 않는다). 다시 그리는 때 = 크기 변화 · 스크롤이 멈춘 뒤 40px 넘게 움직인 것 ·
+   테마 전환 · 창 크기. 유휴 시간에 한 번에 몇 장씩(폰 2 · 데스크톱 4) · 보이는 카드만 · 큰 카드는 dpr 1 · 캔버스 픽셀 총량 상한.
+   읽기(getBoundingClientRect)는 모아서 먼저, 쓰기는 뒤에 — 강제 배치 없음. 크기는 ResizeObserver 값.
+   WebGL 이 없거나 잃으면 lg-gl 을 떼어 종전 CSS 유리로 돌아간다. localStorage luxGlass=off 로 끔. */
 (function () {
   "use strict";
-  var D = document, H = D.documentElement;
-  var SEL = "nav.sidebar,#luxTopbar,.fv-idx,.fv-breadth,.fv-panel,#easyDash .ix,#easyDash .bri,#easyDash .c,.dash-block,#pbObs .k-panel,#settingsModal .modal-content,.modal-content";
-  var RM = false, RT = false;
-  try { RM = matchMedia("(prefers-reduced-motion: reduce)").matches; RT = matchMedia("(prefers-reduced-transparency: reduce)").matches; } catch (e) {}
-  if (RT) return;
-  var fine = false; try { fine = matchMedia("(pointer: fine) and (min-width: 900px)").matches; } catch (e) {}
-  var chromium = !!(navigator.userAgentData && navigator.userAgentData.brands && navigator.userAgentData.brands.some(function (b) { return /Chromium|Chrome|Edge/.test(b.brand); }));
-  var REFR = chromium && fine && !navigator.userAgentData.mobile && (navigator.hardwareConcurrency || 4) >= 4;
-  try { var _o = localStorage.getItem("luxGlass"); if (_o === "off" || (_o && +_o > Date.now())) REFR = false; } catch (e) {}   // "off" = 사용자 끔 · 숫자 = 프레임 가드가 끈 기한
-  H.classList.add("lg-on"); if (REFR) H.classList.add("lg-refr");
+  var D = document, H = D.documentElement, W = window;
+  var RT = false; try { RT = matchMedia("(prefers-reduced-transparency: reduce)").matches; } catch (e) {}
+  H.classList.add("lg-on");
+  try { if (localStorage.getItem("luxGlass") === "off") return; } catch (e) {}
+  if (RT || !("ResizeObserver" in W) || !("IntersectionObserver" in W)) return;
 
-  var NS = "http://www.w3.org/2000/svg", svg = null, defs = null, maps = {}, live = 0, MAXLIVE = 14;
-  function ensureSvg() {
-    if (svg) return;
-    svg = D.createElementNS(NS, "svg"); svg.setAttribute("aria-hidden", "true");
-    svg.setAttribute("style", "position:absolute;width:0;height:0;overflow:hidden;pointer-events:none");
-    defs = D.createElementNS(NS, "defs"); svg.appendChild(defs); D.body.appendChild(svg);
-  }
-  /* 둥근 사각형 SDF(안쪽 음수) → 가장자리 띠(bz px)에서 안쪽 법선 방향으로 미는 세기. 볼록 렌즈(스쿼클 높이 h=(1-(1-t)^4)^¼)의 기울기 꼴. */
-  function mapUrl(w, h, r, bz) {
-    var s = Math.min(1, 256 / Math.max(w, h)), cw = Math.max(8, Math.round(w * s)), ch = Math.max(8, Math.round(h * s));
-    var c = D.createElement("canvas"); c.width = cw; c.height = ch;
-    var g = c.getContext("2d"), im = g.createImageData(cw, ch), d = im.data;
-    var hw = w / 2, hh = h / 2, rr = Math.min(r, hw, hh);
-    for (var y = 0; y < ch; y++) {
-      for (var x = 0; x < cw; x++) {
-        var px = (x + .5) / s - hw, py = (y + .5) / s - hh;
-        var qx = Math.abs(px) - (hw - rr), qy = Math.abs(py) - (hh - rr);
-        var ox = Math.max(qx, 0), oy = Math.max(qy, 0), ol = Math.sqrt(ox * ox + oy * oy);
-        var dist = -(ol + Math.min(Math.max(qx, qy), 0) - rr);   // 가장자리까지 거리(안쪽 양수)
-        var nx = 0, ny = 0;
-        if (ol > 0) { nx = ox / ol; ny = oy / ol; } else if (qx > qy) nx = 1; else ny = 1;
-        nx *= px < 0 ? -1 : 1; ny *= py < 0 ? -1 : 1;   // 바깥 법선
-        var t = Math.max(0, Math.min(1, dist / bz)), m = 0;
-        if (t < 1) { var u = 1 - t; m = Math.pow(u, 3) * (1 - .35 * u); }   // 가장자리에서 가장 세고 띠 안쪽에서 0
-        var i = (y * cw + x) * 4;
-        d[i] = Math.round(127.5 - 127 * m * nx);       // R: x 변위(안쪽에서 끌어온다 → 가장자리가 확대돼 휘어 보임)
-        d[i + 1] = Math.round(127.5 - 127 * m * ny);   // G: y 변위
-        d[i + 2] = 128; d[i + 3] = 255;
-      }
-    }
-    g.putImageData(im, 0, 0);
-    return c.toDataURL("image/png");
-  }
-  function filterFor(w, h, r) {
-    var bw = Math.round(w / 2) * 2, bh = Math.round(h / 2) * 2, br = Math.round(r);
-    var bz = Math.max(10, Math.min(28, Math.min(bw, bh) * .16)), sc = Math.round(Math.max(18, Math.min(52, bz * 1.9)));
-    var key = bw + "x" + bh + "r" + br;
-    if (maps[key]) return maps[key];
-    ensureSvg();
-    var id = "lgf-" + key, f = D.createElementNS(NS, "filter");
-    f.setAttribute("id", id); f.setAttribute("x", "0"); f.setAttribute("y", "0"); f.setAttribute("width", bw); f.setAttribute("height", bh);
-    f.setAttribute("filterUnits", "userSpaceOnUse"); f.setAttribute("primitiveUnits", "userSpaceOnUse"); f.setAttribute("color-interpolation-filters", "sRGB");
-    var img = mapUrl(bw, bh, br, bz);
-    f.innerHTML =
-      '<feImage href="' + img + '" x="0" y="0" width="' + bw + '" height="' + bh + '" preserveAspectRatio="none" result="m"/>' +
-      // 빛의 파장마다 굴절률이 달라 가장자리에 아주 얇은 무지개(분산) — R 은 덜, B 는 더 휜다
-      '<feDisplacementMap in="SourceGraphic" in2="m" scale="' + sc + '" xChannelSelector="R" yChannelSelector="G" result="dr"/>' +
-      '<feDisplacementMap in="SourceGraphic" in2="m" scale="' + Math.round(sc * 1.08) + '" xChannelSelector="R" yChannelSelector="G" result="dg"/>' +
-      '<feDisplacementMap in="SourceGraphic" in2="m" scale="' + Math.round(sc * 1.16) + '" xChannelSelector="R" yChannelSelector="G" result="db"/>' +
-      '<feColorMatrix in="dr" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="cr"/>' +
-      '<feColorMatrix in="dg" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" result="cg"/>' +
-      '<feColorMatrix in="db" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" result="cb"/>' +
-      '<feComposite in="cr" in2="cg" operator="arithmetic" k2="1" k3="1" result="rg"/>' +
-      '<feComposite in="rg" in2="cb" operator="arithmetic" k2="1" k3="1"/>';
-    defs.appendChild(f);
-    return (maps[key] = id);
-  }
-  function blurOf(el) { return el.matches("nav.sidebar,#luxTopbar,.modal-content") ? 6 : 3; }
-  /* [V33.867] 렉 수정 — 종전엔 여기서 getBoundingClientRect()+getComputedStyle() 을 대상마다 읽고 바로 style 을 써서
-     '읽기→쓰기→읽기' 강제 배치가 대상 수만큼 반복됐다(데스크톱 CPU 4배 실측: 초보자→전문가 전환 때 ResizeObserver 콜백 1,081ms · 배치 916ms).
-     이제 크기는 ResizeObserver/IntersectionObserver 가 이미 잰 값(el.__lgW/H)을 쓰고 둥글기는 처음 한 번만 읽는다. */
-  function applyRefr(el) {
-    var w = el.__lgW, h = el.__lgH; if (!w || w < 60 || h < 40) return;
-    if (el.__lgRad == null) el.__lgRad = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 12;
-    var id = filterFor(w, h, el.__lgRad);
-    el.__lgKey = id;
-    if (scOn) { if (!el.__lgOn) { el.__lgOn = 1; live++; } if (onEls.indexOf(el) < 0) onEls.push(el); el.classList.add("lg-r"); return; }
-    var v = "url(#" + id + ") blur(" + blurOf(el) + "px) saturate(165%) brightness(1.04)";
-    el.style.setProperty("-webkit-backdrop-filter", v, "important"); el.style.setProperty("backdrop-filter", v, "important");
-    if (!el.__lgOn) { el.__lgOn = 1; live++; } el.classList.add("lg-r");
-  }
-  function dropRefr(el) {
-    if (!el.__lgOn) return; el.__lgOn = 0; live--;
-    el.style.removeProperty("backdrop-filter"); el.style.removeProperty("-webkit-backdrop-filter"); el.classList.remove("lg-r");
-  }
-  /* 굴절은 '떠 있는 유리'(사이드바·상단바·창·카드 중 지정)만 — 스크롤마다 움직이는 큰 카드 수십 장에 SVG 필터를 걸면
-     헤드리스 실측 프레임 16.7→117ms. 나머지 카드는 빛 테두리만. */
-  var REFR_SEL = "nav.sidebar,#luxTopbar,.modal-content,.fv-idx,#easyDash .ix";
-  var io = REFR && "IntersectionObserver" in window ? new IntersectionObserver(function (es) {
-    es.forEach(function (e) {
-      var t = e.target;
-      if (e.isIntersecting) { if (!t.__lgW) { t.__lgW = e.boundingClientRect.width; t.__lgH = e.boundingClientRect.height; } if (live < MAXLIVE || t.__lgOn) applyRefr(t); }
-      else dropRefr(t);
-    });
-  }, { rootMargin: "120px 0px" }) : null;
-  /* 크기가 바뀌는 동안(전문가↔초보자·창 크기·사이드바 접기)은 굴절을 내려 놓고(CSS 블러) 크기가 멈춘 뒤 260ms 에 한 번만 다시 건다 —
-     크기마다 변위맵(캔버스 PNG)을 새로 만들던 것이 전환 중 여러 번 겹쳤다. 2px 안 바뀜은 무시. */
-  var rzSet = [], rzT = 0;
-  var ro = io && "ResizeObserver" in window ? new ResizeObserver(function (es) {
-    es.forEach(function (e) {
-      var t = e.target, b = e.borderBoxSize && e.borderBoxSize[0], w = b ? b.inlineSize : e.contentRect.width, h = b ? b.blockSize : e.contentRect.height;
-      if (Math.abs(w - (t.__lgW || 0)) < 2 && Math.abs(h - (t.__lgH || 0)) < 2) return;
-      t.__lgW = w; t.__lgH = h;
-      if (!t.__lgOn) return;
-      if (rzSet.indexOf(t) < 0) { rzSet.push(t); t.style.removeProperty("backdrop-filter"); t.style.removeProperty("-webkit-backdrop-filter"); }
-    });
-    if (rzSet.length) { clearTimeout(rzT); rzT = setTimeout(function () { var l = rzSet; rzSet = []; requestAnimationFrame(function () { l.forEach(function (el) { if (el.__lgOn && !scOn) applyRefr(el); }); }); }, 260); }
-  }) : null;
-
-  /* 스크롤 중에는 굴절을 잠깐 내려 놓는다(CSS 블러로 돌아감 · 멈추고 180ms 뒤 다시) — SVG 필터는 GPU 가 없는 기기에서
-     매 프레임 다시 그려져 무겁다(헤드리스 실측 33~50ms/프레임). 굴절은 가장자리 10~28px 띠라 스크롤 중 차이는 거의 안 보인다. */
-  var scT = 0, scOn = false, onEls = [];
-  function scPause() {
-    if (!scOn) { scOn = true; onEls = []; D.querySelectorAll(".lg-r").forEach(function (el) { onEls.push(el); el.style.removeProperty("backdrop-filter"); el.style.removeProperty("-webkit-backdrop-filter"); }); }
-    clearTimeout(scT); scT = setTimeout(function () { scOn = false; onEls.forEach(function (el) { if (el.__lgOn) applyRefr(el); }); onEls = []; }, 180);
-  }
-  if (io) addEventListener("scroll", scPause, { passive: true, capture: true });
-  /* ★프레임 가드★ — 켠 뒤 1.5초 동안 실제 프레임 간격을 재서 중앙값이 22ms(≈45fps)를 넘으면 이 기기에서는 굴절을 끄고
-     7일 동안 다시 켜지 않는다(빛 테두리·CSS 블러는 그대로). GPU 가 없는 기기에서 헤드리스 실측 16.7→33~50ms 였다. */
-  function guard() {
-    if (!io || !live) return;
-    if (D.visibilityState !== "visible") { D.addEventListener("visibilitychange", function v() { if (D.visibilityState === "visible") { D.removeEventListener("visibilitychange", v); setTimeout(guard, 1000); } }); return; }
-    var f = [], t0 = 0, last = 0;
-    requestAnimationFrame(function step(t) {
-      if (!t0) { t0 = last = t; } else { f.push(t - last); last = t; }
-      if (t - t0 < 1500) return requestAnimationFrame(step);
-      if (D.visibilityState !== "visible") return setTimeout(guard, 1000);   // 재는 도중 탭이 가려지면 무효
-      f.sort(function (a, b) { return a - b; }); var med = f[f.length >> 1] || 0;
-      if (med > 22) {
-        REFR = false; H.classList.remove("lg-refr"); io.disconnect(); if (ro) ro.disconnect();
-        D.querySelectorAll(".lg-r").forEach(dropRefr);
-        try { localStorage.setItem("luxGlass", String(Date.now() + 7 * 864e5)); } catch (e) {}
-      }
-      window.luxGlass.frameMs = +med.toFixed(1);
-    });
+  /* 배경 오로라 — 위에서부터(맨 앞 = 맨 위). [cx%, cy%, rx vmax, ry vmax, r, g, b, a] · 투명은 70% 지점(CSS 와 같은 식) */
+  var LAYERS = {
+    dark: { base: ["#0b1326", "#0a1122", "#070d1b"], l: [
+      [30, 34, 16, 13, 70, 130, 255, .34], [74, 52, 11, 10, 40, 200, 190, .24], [52, 86, 14, 12, 130, 100, 255, .30],
+      [88, 12, 9, 8, 120, 170, 255, .24], [6, 0, 60, 50, 60, 90, 170, .34], [100, 10, 50, 44, 70, 100, 180, .26], [60, 110, 60, 50, 40, 60, 120, .26]] },
+    light: { base: ["#f4f8ff", "#e8f0fc", "#eef4ff"], l: [
+      [12, 8, 70, 22, 59, 130, 246, .22], [96, 30, 60, 18, 31, 107, 255, .16], [30, 78, 80, 24, 96, 165, 250, .20],
+      [100, 105, 60, 20, 59, 130, 246, .18], [70, 40, 18, 14, 120, 90, 255, .10]] }
+  };
+  function bgCss(T) {
+    var s = T.l.map(function (L) { return "radial-gradient(" + L[2] + "vmax " + L[3] + "vmax at " + L[0] + "% " + L[1] + "%,rgba(" + L[4] + "," + L[5] + "," + L[6] + "," + L[7] + "),transparent 70%)"; });
+    s.push("linear-gradient(180deg," + T.base[0] + "," + T.base[1] + " 55%," + T.base[2] + ")");
+    return s.join(",") + "!important";
   }
 
-  /* 포인터를 따라가는 반짝임(데스크톱) — 올라가 있는 대상 하나만 rAF 로 변수 2개 갱신 */
-  var hot = null, px = 0, py = 0, raf = 0;
-  function glint() { raf = 0; if (!hot) return; var rc = hot.getBoundingClientRect(), rim = hot.__lgRim; if (!rim || !rc.width) return;
-    rim.style.setProperty("--lgx", ((px - rc.left) / rc.width * 100).toFixed(1) + "%"); rim.style.setProperty("--lgy", ((py - rc.top) / rc.height * 100).toFixed(1) + "%"); }
-  if (fine && !RM) {
-    D.addEventListener("pointermove", function (e) {
-      var t = e.target && e.target.closest ? e.target.closest(".lg-t") : null;
-      if (hot && hot !== t && hot.__lgRim) { hot.__lgRim.style.removeProperty("--lgx"); hot.__lgRim.style.removeProperty("--lgy"); }
-      hot = t; px = e.clientX; py = e.clientY; if (hot && !raf) raf = requestAnimationFrame(glint);
-    }, { passive: true });
-  }
 
-  /* [V33.867] 렉 수정 — 종전엔 새 대상마다 자손 전체(querySelectorAll('*'))의 getComputedStyle 을 읽었다. 초보자 대시보드는 시세가 올 때마다
-     카드를 새로 그려 매번 다시 훑었다(데스크톱 CPU 4배 실측: 유휴 콜백 165ms · 강제 스타일 계산 반복). 같은 태그·클래스의 대상은 결과가 같으므로
-     처음 한 번만 판정해 기억한다(kind 캐시). */
-  var kindOk = {}, kindRad = {};
+  /* ── WebGL 은 워커 안에서(OffscreenCanvas) — 셰이더 컴파일·그리기·GPU 대기가 메인 스레드를 막지 않는다. 메인은 받은 ImageBitmap 을 붙이기만. ── */
+  if (typeof OffscreenCanvas === "undefined" || typeof Worker === "undefined" || typeof ImageBitmapRenderingContext === "undefined" || !W.Blob || !W.URL) return;
+  var VS = "attribute vec2 a;void main(){gl_Position=vec4(a,0.,1.);}";
+  var FSB =
+    "uniform vec2 uC,uS,uP,uV;uniform float uM,uR,uDk,uFl,uDpr,uN,uSh;uniform vec4 uL[7],uK[7];uniform vec3 uB0,uB1,uB2;\n" +
+    "float sd(vec2 p,vec2 b,float r){vec2 q=abs(p)-b+r;return length(max(q,0.))+min(max(q.x,q.y),0.)-r;}\n" +
+    "vec3 bg(vec2 v){float t=clamp(v.y/uV.y,0.,1.);vec3 c=t<.55?mix(uB0,uB1,t/.55):mix(uB1,uB2,(t-.55)/.45);float vm=max(uV.x,uV.y)*.01;\n" +
+    " for(int i=6;i>=0;i--){if(float(i)>=uN)continue;vec4 L=uL[i];vec2 d=(v-L.xy*uV*.01)/(L.zw*vm);float a=uK[i].a*(1.-clamp(length(d)/.7,0.,1.));c=mix(c,uK[i].rgb,a);}return c;}\n" +
+    "void main(){vec2 f=vec2(gl_FragCoord.x,uC.y*uDpr-gl_FragCoord.y)/uDpr;vec2 hs=uS*.5;vec2 pc=f-uM-hs;float r=min(uR,min(hs.x,hs.y));\n" +
+    " float d=sd(pc,hs,r);float aa=1./uDpr;float A=clamp(.5-d/aa,0.,1.);\n" +
+    // 바깥 그림자: 넓고 부드러운 것 + 바닥 접촉
+    " float sh=(1.-smoothstep(-16.,uM*.9,sd(pc-vec2(0.,9.),hs-3.,r)))*mix(.13,.40,uDk)+(1.-smoothstep(-1.,3.,sd(pc-vec2(0.,1.5),hs,r)))*mix(.05,.16,uDk);sh*=uSh;\n" +
+    " if(A<=0.){gl_FragColor=vec4(0.,0.,0.,sh);return;}\n" +
+    // 안쪽 평평한 곳(대부분의 픽셀)은 굴절·법선이 없다 → 배경 한 번 + 틴트만(큰 판에서 3~4배 싸다)
+    " float bz=clamp(min(uS.x,uS.y)*.14,8.,24.);\n" +
+    " if(-d>bz*1.75&&uFl<.5){vec2 v0=uP+hs+(f-uM-hs)*.9;vec3 c0=bg(v0);float l0=dot(c0,vec3(.299,.587,.114));c0=clamp(mix(vec3(l0),c0,1.3),0.,1.);c0=mix(c0,uDk>.5?vec3(.035,.05,.105):vec3(1.),uDk>.5?.30:.50);c0+=(1.-f.y/uC.y)*(uDk>.5?.045:.02);c0+=(fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)-.5)/255.;gl_FragColor=vec4(clamp(c0,0.,1.),1.);return;}\n" +
+    " vec2 e=vec2(.5,0.);vec2 g=vec2(sd(pc+e.xy,hs,r)-sd(pc-e.xy,hs,r),sd(pc+e.yx,hs,r)-sd(pc-e.yx,hs,r));g=g/max(length(g),1e-4);\n" +
+    " float t=clamp(-d/bz,0.,1.);float u=1.-t;\n" +
+    // 볼록 베벨(스쿼클 높이 h=(1-u^4)^¼)의 기울기 → 법선(가장자리에서 바깥으로 눕는다)
+    " float sl=min(pow(u,3.)/pow(max(1.-pow(u,4.),1e-3),.75),5.);vec3 N=normalize(vec3(g*sl*.85,1.));\n" +
+    " vec2 v=uP+f-uM;vec2 cc=uP+hs;v=cc+(v-cc)*.9;vec2 o=-N.xy*bz*2.2;vec3 c;\n" +
+    " if(uFl<.5){c=vec3(bg(v+o*.9).r,bg(v+o).g,bg(v+o*1.12).b);float l=dot(c,vec3(.299,.587,.114));c=clamp(mix(vec3(l),c,1.3),0.,1.);}\n" +
+    " else c=uDk>.5?vec3(.08,.10,.17):vec3(.96,.97,1.);\n" +
+    // 본체 틴트(글자 대비) + 위가 아주 조금 밝은 결
+    " vec3 tn=uDk>.5?vec3(.035,.05,.105):vec3(1.);c=mix(c,tn,uDk>.5?.30:.50);c+=(1.-f.y/uC.y)*(uDk>.5?.045:.02);\n" +
+    // 프레넬 — 스튜디오 조명(위 큰 소프트박스 · 왼쪽 세로 띠 · 아래는 어둡게)
+    " vec3 R=reflect(vec3(0.,0.,-1.),N);float fr=pow(1.-N.z,1.6);\n" +
+    " float env=.10+.75*smoothstep(-.15,.75,-R.y)+.45*exp(-pow((R.x+.6)*3.2,2.))+.2*exp(-pow((R.x-.7)*4.,2.))*smoothstep(-.2,.4,R.y);\n" +
+    " c=mix(c,vec3(env)*(uDk>.5?vec3(.86,.92,1.):vec3(1.)),clamp(fr*(uDk>.5?.62:.5),0.,.9));\n" +
+    // 위왼쪽 스페큘러
+    " vec3 Ld=normalize(vec3(-.45,-.8,.45));float sp=pow(max(dot(N,normalize(Ld+vec3(0.,0.,1.))),0.),70.);c+=sp*(uDk>.5?1.1:.8);\n" +
+    // 두께: 가장자리 안쪽 아래·오른쪽은 살짝 어둡고(두께 그림자) 아래쪽 안으로 번진 빛(코스틱)
+    " float bd=smoothstep(bz*1.7,0.,-d);c*=1.-bd*max(dot(g,vec2(.45,.9)),0.)*(uDk>.5?.22:.10);\n" +
+    " c+=bd*max(dot(g,vec2(.25,.97)),0.)*smoothstep(0.,bz*.6,-d)*(uDk>.5?vec3(.06,.10,.16):vec3(.04,.06,.10));\n" +
+    // 얇은 안쪽 림(위왼쪽·아래오른쪽이 밝다)
+    " float rim=(1.-smoothstep(.0,1.3,-d));float rl=.22+.78*pow(abs(dot(g,vec2(-.6,-.8))),1.5);c+=rim*rl*(uDk>.5?.30:.55);\n" +
+    " if(uDk<.5){c=mix(c,vec3(.12,.18,.32),(1.-smoothstep(0.,1.1,-d))*.22*(1.-rl*.6));}\n" +
+    " c+=(fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)-.5)/255.;\n float a=uFl>.5?(uDk>.5?.58:.62)+fr*.3+sp:1.;a=clamp(a,0.,1.)*A;\n" +
+    " gl_FragColor=vec4(clamp(c,0.,1.)*a,a+sh*(1.-a));}";
+
+  function WK() {
+    var gl = null, glc = null, U = {};
+    function sh(t, s) { var o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o)); return o; }
+    onmessage = function (m) {
+      var q = m.data;
+      try {
+        if (q.init) {
+          glc = new OffscreenCanvas(4, 4);
+          gl = glc.getContext("webgl", { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false, powerPreference: "low-power" });
+          if (!gl) throw new Error("no webgl");
+          glc.addEventListener("webglcontextlost", function (e) { e.preventDefault(); postMessage({ fail: "lost" }); });
+          var hp = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
+          var pr = gl.createProgram(); gl.attachShader(pr, sh(gl.VERTEX_SHADER, q.vs)); gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, "precision " + (hp && hp.precision > 0 ? "highp" : "mediump") + " float;\n" + q.fs)); gl.linkProgram(pr);
+          if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(pr));
+          gl.useProgram(pr);
+          var bf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, bf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+          var al = gl.getAttribLocation(pr, "a"); gl.enableVertexAttribArray(al); gl.vertexAttribPointer(al, 2, gl.FLOAT, false, 0, 0);
+          "uC uS uP uV uM uR uDk uFl uDpr uN uSh uL uK uB0 uB1 uB2".split(" ").forEach(function (n) { U[n] = gl.getUniformLocation(pr, n); });
+          postMessage({ ready: 1 }); return;
+        }
+        if (q.theme) { var t = q.theme; gl.uniform4fv(U.uL, t.L); gl.uniform4fv(U.uK, t.K); gl.uniform1f(U.uN, t.n); gl.uniform3fv(U.uB0, t.b0); gl.uniform3fv(U.uB1, t.b1); gl.uniform3fv(U.uB2, t.b2); gl.uniform1f(U.uDk, t.dk); return; }
+        var t0 = performance.now();
+        if (glc.width !== q.pw || glc.height !== q.ph) { glc.width = q.pw; glc.height = q.ph; }
+        gl.viewport(0, 0, q.pw, q.ph);
+        gl.uniform2f(U.uC, q.cw, q.ch); gl.uniform2f(U.uS, q.w, q.h); gl.uniform2f(U.uP, q.x, q.y); gl.uniform2f(U.uV, q.vw, q.vh);
+        gl.uniform1f(U.uM, q.m); gl.uniform1f(U.uR, q.r); gl.uniform1f(U.uFl, q.fl); gl.uniform1f(U.uSh, q.sh); gl.uniform1f(U.uDpr, q.pw / q.cw);
+        gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        var bmp = glc.transferToImageBitmap();
+        postMessage({ id: q.id, bmp: bmp, ms: performance.now() - t0 }, [bmp]);
+      } catch (e) { postMessage({ fail: String(e && e.message || e), id: q.id }); }
+    };
+  }
+  function hex(h) { return [parseInt(h.substr(1, 2), 16) / 255, parseInt(h.substr(3, 2), 16) / 255, parseInt(h.substr(5, 2), 16) / 255]; }
+  var curTheme = "";
+  function setTheme(dark) {
+    var k = dark ? "dark" : "light"; if (curTheme === k) return; curTheme = k;
+    var T = LAYERS[k], L = new Float32Array(28), K = new Float32Array(28);
+    T.l.forEach(function (x, i) { L.set([x[0], x[1], x[2], x[3]], i * 4); K.set([x[4] / 255, x[5] / 255, x[6] / 255, x[7]], i * 4); });
+    wk.postMessage({ theme: { L: L, K: K, n: T.l.length, b0: hex(T.base[0]), b1: hex(T.base[1]), b2: hex(T.base[2]), dk: dark ? 1 : 0 } });
+  }
+  var wk, lost = false, started = false;
+  try {
+    var bu = URL.createObjectURL(new Blob(["(" + WK.toString() + ")()"], { type: "text/javascript" }));
+    wk = new Worker(bu);
+  } catch (e) { return; }
+  wk.onerror = function () { off(); };
+  wk.onmessage = function (m) {
+    var q = m.data;
+    if (q.ready) { start(); return; }
+    if (q.fail) { try { console.warn("[lux-liquid] WebGL 유리 끔 → CSS 유리:", q.fail); } catch (e) {} off(); return; }
+    got(q);
+  };
+  wk.postMessage({ init: 1, vs: VS, fs: FSB });
+
+  /* ── 대상 · 상태 ── */
+  var SEL = "nav.sidebar,.m-tabbar,.fv-idx,#easyDash .ix,.fv-panel,.fv-breadth,#easyDash .bri,#easyDash .c,.dash-block,#pbObs .k-panel,.detail-vcard";
+  var FLOAT = ".m-tabbar";   // 뒤로 글이 지나가는 떠 있는 판: 굴절 대신 CSS 흐림 + 반투명 유리 그림
+  var M = 24;                // 그림자 여백(px)
+  var PH = false; try { PH = matchMedia("(max-width: 760px)").matches || matchMedia("(pointer: coarse)").matches; } catch (e) {}
+  var PER = PH ? 2 : 4, PXCAP = PH ? 9e6 : 16e6, pxUsed = 0;
+  var items = [], pool = {}, kindOk = {};
+  function dark() { return H.getAttribute("data-theme") !== "light"; }
+  function dprFor(w, h) { var d = Math.min(W.devicePixelRatio || 1, 2); return (w * h > 240000 || pxUsed > PXCAP * .7) ? 1 : d; }
+
+  function mkHost(it) {
+    var host = D.createElement("lg-glass"), cv = D.createElement("canvas");
+    host.setAttribute("aria-hidden", "true");
+    host.style.cssText = "position:absolute;display:block;pointer-events:none;z-index:-1;margin:0;padding:0;border:0;top:" + (-M - it.bt) + "px;left:" + (-M - it.bl) + "px;width:calc(100% + " + (2 * M) + "px + " + (it.bl + it.br) + "px);height:calc(100% + " + (2 * M) + "px + " + (it.bt + it.bb) + "px)";
+    cv.style.cssText = "display:block;width:100%;height:100%";
+    try { host.attachShadow({ mode: "closed" }).appendChild(cv); } catch (e) { host.appendChild(cv); }
+    it.host = host; it.cv = cv; it.ctx = null;
+  }
   function adopt(el) {
-    if (el.__lg) return; el.__lg = 1;
+    if (el.__lgI !== undefined) return;
+    el.__lgI = null;
+    var par = el.parentElement && el.parentElement.closest(SEL); if (par) return;   // 바깥 대상 안의 대상은 그 판 위에 그대로(겹친 유리는 안 그린다)
     var kind = el.tagName + "#" + (el.id || "") + "." + String(el.className || "").replace(/\blg-\S+/g, "").trim();
-    var sig = kind; for (var ci = 0, ch = el.children; ci < ch.length && ci < 12; ci++) sig += "|" + ch[ci].tagName + "." + ch[ci].className;   // 같은 모양 = 같은 클래스 + 같은 자식 구성(같은 .c 라도 안쪽이 다르면 따로 판정)
-    var ok = kindOk[sig];
-    if (ok == null) {
-      var pos = getComputedStyle(el).position; ok = pos !== "static" ? 1 : 0;
-      if (!ok) {   // 안쪽에 절대배치가 없을 때만 relative 로(있으면 위치 기준이 바뀌어 흔들린다 → 빛 테두리 생략 · 굴절만)
-        var any = false, k = el.querySelectorAll("*");
-        for (var i = 0; i < k.length && !any; i++) { var ps = getComputedStyle(k[i]).position; any = ps === "absolute" || ps === "fixed"; }
-        ok = any ? -1 : 2;   // -1 = 테두리 생략 · 2 = relative 로 만들어 테두리
-      }
-      kindOk[sig] = ok;
+    var sig = kind; for (var ci = 0, ch = el.children; ci < ch.length && ci < 12; ci++) sig += "|" + ch[ci].tagName + "." + ch[ci].className;
+    var k = kindOk[sig];
+    if (!k) {
+      var cs = getComputedStyle(el), ok = 1;
+      if (/auto|scroll/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 4 && !el.matches("nav.sidebar")) ok = 0;   // 안에서 스크롤되는 상자는 그림이 같이 밀린다
+      var rel = cs.position === "static";
+      // 안쪽에 절대배치가 있으면 relative 로 바꿀 때 위치 기준이 바뀐다 → 안 씌움. 자손이 많은 큰 상자는 훑지 않고 건너뛴다(스타일 계산 폭주 방지)
+      if (ok && rel) { var q = el.getElementsByTagName("*"); if (q.length > 120) ok = 0; for (var i = 0; i < q.length && ok; i++) { var ps = getComputedStyle(q[i]).position; if (ps === "absolute" || ps === "fixed") ok = 0; } }
+      k = kindOk[sig] = { ok: ok, rel: rel, r: parseFloat(cs.borderTopLeftRadius) || 12, bt: parseFloat(cs.borderTopWidth) || 0, bl: parseFloat(cs.borderLeftWidth) || 0, br: parseFloat(cs.borderRightWidth) || 0, bb: parseFloat(cs.borderBottomWidth) || 0, sh: 1 };
+      var pp = el.parentElement && getComputedStyle(el.parentElement); if (pp && (pp.overflowX !== "visible" || pp.overflowY !== "visible")) k.sh = .15;   // 부모가 잘라 내면 그림자 끝이 곧은 선으로 보인다 → 그림자 거의 끔
     }
-    if (ok === -1) ok = 0; else if (ok === 2) { el.style.position = "relative"; ok = 1; }
-    if (ok) {
-      el.classList.add("lg-t");
-      var rim = D.createElement("i"); rim.className = "lg-rim"; rim.setAttribute("aria-hidden", "true");
-      el.appendChild(rim); el.__lgRim = rim;
+    if (!k.ok) return;
+    if (k.rel) el.style.position = "relative";
+    var it = { el: el, w: 0, h: 0, r: k.r, bt: k.bt, bl: k.bl, br: k.br, bb: k.bb, sh: k.sh, fl: el.matches(FLOAT), vis: false, dirty: true, drawn: null, px: 0 };
+    el.__lgI = it; items.push(it);
+    ro.observe(el); io.observe(el);
+  }
+
+  /* 같은 크기·모양 판이 다시 생기면(초보 대시보드는 시세마다 카드를 새로 그린다) 그려 둔 그림을 옮겨 쓴다 */
+  function pkey(it) { return Math.round(it.w) + "x" + Math.round(it.h) + "r" + it.r + (it.fl ? "f" : "") + (dark() ? "dark" : "light"); }
+  function release(it) {
+    ro.unobserve(it.el); io.unobserve(it.el); it.el.__lgI = undefined;
+    if (it.host && it.drawn) { var key = it.drawn.key; (pool[key] = pool[key] || []).push(it); poolN++; if (poolN > 24) trimPool(); }
+    else freeIt(it);
+  }
+  var poolN = 0;
+  function trimPool() { for (var k in pool) { while (pool[k].length && poolN > 12) { freeIt(pool[k].shift()); poolN--; } if (!pool[k].length) delete pool[k]; } }
+  function freeIt(it) { if (it.cv) { pxUsed -= it.px; it.px = 0; it.cv.width = it.cv.height = 0; } if (it.host && it.host.parentNode) it.host.parentNode.removeChild(it.host); }
+
+  var ro = new ResizeObserver(function (es) {
+    for (var i = 0; i < es.length; i++) {
+      var e = es[i], it = e.target.__lgI; if (!it) continue;
+      var b = e.borderBoxSize && e.borderBoxSize[0], w = b ? b.inlineSize : e.contentRect.width, h = b ? b.blockSize : e.contentRect.height;
+      if (Math.abs(w - it.w) < 1 && Math.abs(h - it.h) < 1) continue;
+      it.w = w; it.h = h; it.dirty = true;
+      if (!it.drawn) { var l = pool[pkey(it)]; if (l && l.length) { var o = l.pop(); poolN--; it.host = o.host; it.cv = o.cv; it.ctx = o.ctx; it.px = o.px; it.drawn = o.drawn; it.check = true; it.dirty = false; it.el.appendChild(it.host); it.el.classList.add("lg-g"); if (it.fl) it.el.classList.add("lg-fl"); } }
     }
-    if (io && el.matches(REFR_SEL)) {   // 둥글기는 여기(유휴 시간)서 모양별 한 번만 읽는다 — 관찰자 콜백 안에서 읽으면 쓰기 직후라 강제 스타일 계산
-      el.__lgRad = kindRad[kind] != null ? kindRad[kind] : (kindRad[kind] = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 12);
-      io.observe(el); if (ro) ro.observe(el);
+    kick(140);
+  });
+  var io = new IntersectionObserver(function (es) {
+    for (var i = 0; i < es.length; i++) { var it = es[i].target.__lgI; if (it) it.vis = es[i].isIntersecting; }
+    kick(60);
+  }, { rootMargin: "300px 0px" });
+
+  /* ── 그리기(유휴 시간 · 한 번에 PER 장) ── */
+
+  /* ── 그리기 — 유휴 시간에 읽기(사각형) 모아서 한 번 → 워커로 보냄(동시에 PER 장까지) → 받은 그림을 붙임 ── */
+  var tm = 0, idl = 0, fly = 0, seq = 0, wait = {}, stats = [];
+  function kick(ms) { if (lost || !started) return; clearTimeout(tm); tm = setTimeout(function () { if (!idl) idl = (W.requestIdleCallback || function (f) { return setTimeout(f, 1); })(pass, { timeout: 700 }); }, ms); }
+  function pass() {
+    idl = 0; if (lost) return;
+    if (scOn) return;   // 스크롤 중엔 아무것도 안 그린다(멈춘 뒤 한꺼번에)
+    var todo = [];
+    for (var i = 0; i < items.length && todo.length + fly < PER; i++) { var it = items[i]; if (it.vis && !it.fly && it.w > 40 && it.h > 30 && (it.dirty || it.check)) todo.push(it); }
+    if (!todo.length) return;
+    var vw = H.clientWidth, vh = W.innerHeight, rs = todo.map(function (it) { return it.el.getBoundingClientRect(); });
+    var dk = dark(); setTheme(dk);
+    for (var j = 0; j < todo.length; j++) {
+      var it2 = todo[j], rc = rs[j], dr = it2.drawn;
+      it2.check = false;
+      if (!it2.dirty && dr && dr.dk === dk && Math.abs(dr.x - rc.left) < 40 && Math.abs(dr.y - rc.top) < 40 && dr.vw === vw && dr.vh === vh) continue;
+      send(it2, rc.left, rc.top, vw, vh, dk);
     }
   }
+  function send(it, x, y, vw, vh, dk) {
+    var w = it.w, h = it.h, cw = w + 2 * M, ch = h + 2 * M, dpr = dprFor(w, h);
+    var pw = Math.max(1, Math.round(cw * dpr)), ph = Math.max(1, Math.round(ch * dpr)), id = ++seq;
+    it.dirty = false; it.fly = id; fly++;
+    it.next = { x: x, y: y, vw: vw, vh: vh, dk: dk, pw: pw, ph: ph, w: w, h: h };
+    wait[id] = it;
+    wk.postMessage({ id: id, pw: pw, ph: ph, cw: cw, ch: ch, w: w, h: h, x: x, y: y, vw: vw, vh: vh, m: M, r: it.r, fl: it.fl ? 1 : 0, sh: it.sh });
+  }
+  function got(q) {
+    var it = wait[q.id]; delete wait[q.id]; fly = Math.max(0, fly - 1);
+    if (!it || it.fly !== q.id || !it.el.isConnected) { if (q.bmp) q.bmp.close(); if (it) it.fly = 0; kick(0); return; }
+    it.fly = 0;
+    var n = it.next;
+    if (!it.host) mkHost(it);
+    if (!it.ctx) it.ctx = it.cv.getContext("bitmaprenderer");
+    it.cv.width = n.pw; it.cv.height = n.ph; it.ctx.transferFromImageBitmap(q.bmp);
+    pxUsed += n.pw * n.ph - it.px; it.px = n.pw * n.ph;
+    if (it.host.parentNode !== it.el) it.el.appendChild(it.host);
+    it.drawn = { x: n.x, y: n.y, vw: n.vw, vh: n.vh, dk: n.dk, key: Math.round(n.w) + "x" + Math.round(n.h) + "r" + it.r + (it.fl ? "f" : "") + (n.dk ? "dark" : "light") };
+    if (!it.el.classList.contains("lg-g")) { it.el.classList.add("lg-g"); if (it.fl) it.el.classList.add("lg-fl"); }
+    if (pxUsed > PXCAP) shed();
+    if (stats.length < 200) stats.push([Math.round(n.w), Math.round(n.h), +q.ms.toFixed(1)]);
+    kick(0);
+  }
+  /* 메모리 상한: 안 보이는 판의 그림부터 비운다(다시 보이면 다시 그림) */
+  function shed() { for (var i = 0; i < items.length && pxUsed > PXCAP * .8; i++) { var it = items[i]; if (!it.vis && it.px) { pxUsed -= it.px; it.px = 0; it.cv.width = it.cv.height = 0; it.dirty = true; } } }
+
+  function off() {
+    lost = true; H.classList.remove("lg-gl");
+    items.forEach(function (it) { it.el.classList.remove("lg-g", "lg-fl"); freeIt(it); });
+    items = []; ro.disconnect(); io.disconnect(); try { wk.terminate(); } catch (e) {}
+  }
+
+  /* ── 대상 찾기(유휴) · 다시 그릴 때 ── */
   var pend = 0;
-  function scan() { pend = 0; var l = D.querySelectorAll(SEL); for (var i = 0; i < l.length; i++) adopt(l[i]); }
-  function later() { if (!pend) pend = (window.requestIdleCallback || setTimeout)(scan, { timeout: 800 }); }
+  var MT = { scan: 0, pass: 0, got: 0, ro: 0, max: 0 };
+  function tk(k, t0) { var d = performance.now() - t0; MT[k] += d; if (d > MT.max) MT.max = d; }
+  function scan() {
+    var t0 = performance.now(); pend = 0;
+    for (var i = items.length - 1; i >= 0; i--) {
+      var it = items[i];
+      if (!it.el.isConnected) { items.splice(i, 1); release(it); continue; }
+      if (it.host && it.host.parentNode !== it.el) it.el.appendChild(it.host);   // 카드 innerHTML 을 새로 쓰면 그림 상자가 빠진다 → 그대로 다시 붙임(다시 그리지 않음)
+    }
+    var l = D.querySelectorAll(SEL); for (var j = 0; j < l.length; j++) adopt(l[j]);
+    tk("scan", t0);
+  }
+  function later() { if (!pend) pend = (W.requestIdleCallback || setTimeout)(scan, { timeout: 600 }); }
+  function allDirty(chk) { items.forEach(function (it) { if (chk) it.check = true; else it.dirty = true; }); kick(chk ? 0 : 30); }
+  var scT = 0, scOn = false;
+  addEventListener("scroll", function () { scOn = true; clearTimeout(scT); scT = setTimeout(function () { scOn = false; allDirty(true); }, 320); }, { passive: true, capture: true });
+  var rzT = 0; addEventListener("resize", function () { clearTimeout(rzT); rzT = setTimeout(function () { allDirty(false); }, 200); }, { passive: true });
   function init() {
     scan();
     new MutationObserver(function (ms) {
-      for (var i = 0; i < ms.length; i++) { var a = ms[i].addedNodes; for (var j = 0; j < a.length; j++) { var n = a[j]; if (n.nodeType === 1 && n.className !== "lg-rim" && (n.matches(SEL) || n.firstElementChild)) { later(); return; } } }
-    })
-      .observe(D.body, { childList: true, subtree: true });
+      for (var i = 0; i < ms.length; i++) { var m = ms[i]; if (m.removedNodes.length) { later(); return; } var a = m.addedNodes; for (var j = 0; j < a.length; j++) { var n = a[j]; if (n.nodeType === 1 && n.tagName !== "LG-GLASS") { later(); return; } } }
+    }).observe(D.body, { childList: true, subtree: true });
+    new MutationObserver(function () { allDirty(false); }).observe(H, { attributes: true, attributeFilter: ["data-theme"] });
   }
-  if (D.readyState === "loading") D.addEventListener("DOMContentLoaded", init); else init();
-  setTimeout(guard, 2500);
-  window.luxGlass = { refraction: function () { return REFR; }, live: function () { return live; } };
+
+  function start() {
+    if (started || lost) return; started = true;
+    var st = D.createElement("style"); st.id = "lgBg";
+    st.textContent = "html.lg-gl:not([data-theme=\"light\"])::before{background:" + bgCss(LAYERS.dark) + ";opacity:1!important}" +
+      "html.lg-gl[data-theme=\"light\"]::before{background:" + bgCss(LAYERS.light) + ";opacity:1!important}";
+    D.head.appendChild(st);
+    H.classList.add("lg-gl");
+    if (D.readyState === "loading") D.addEventListener("DOMContentLoaded", init); else init();
+  }
+  W.luxGlass = { webgl: function () { return started && !lost; }, items: function () { return items.length; }, drawn: function () { return items.filter(function (i) { return i.drawn; }).length; }, px: function () { return pxUsed; }, off: off, stats: stats, mt: MT };
 })();
