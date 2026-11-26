@@ -12,6 +12,29 @@
 
 ## Current handoff
 
+### V33.877 (2026-11-27) — 리퀴드 글라스 = V33.876 렌즈 판 + 배경 물결 없음 · 누름 반응
+- 사용자: 배경 물결 '이상함' → 장면 rich 0(오로라만) · 이어 시험한 Midielhg 스킬의 얇은 렌즈판은 "다시 블러처럼" → ★V33.876 렌즈 셰이더(xenitV1 규칙 · 림 띠 14~28 · 굴절 1.5 · 무지개 .45 · 확대 1.06)로 되돌림★.
+- affaan-m/everything-claude-code skills/liquid-glass-design(MIT · 사용자가 보낸 링크) 받아 적용: interactive = 누르면 스프링 눌림(.lg-g:active scale .992 · transform 만).
+- 참고 스킬 3개 모두 스크래치에만(저장소에 넣지 않음): xenitV1/liquid-glass-skill · lzq20121022-tech/the-best-liquid-glass · Midielhg/real-web-liquid-glass. 저장 키 luxGlassP6.
+
+### V33.876 (2026-11-27) — 리퀴드 글라스: 다운받은 스킬(xenitV1/liquid-glass-skill · MIT) 규칙으로 다시 · 투명 본체 · 조절 4종
+- 사용자: "뒤가 투명하게 — 회색 빛" · "굴곡이 중간에 불연속 — 박스 접은 느낌" · "Refraction·rainbow·frost·light 4가지 조절" · "skill.md 다운받아 사용".
+- 스킬(SKILL.md + references/materials.md '굴절과 림') 적용: 림 띠 = 모서리 반지름 ½(8~20px · 짧은 변 ⅓ 미만) · 최대 이동 0.6×띠 · 바깥선에서 가장 세고 띠 안쪽 끝 0 — 곡선 (1-t)² 라 기울기까지 이어져 접힘 없음 · 안쪽 거리는 둥근 SDF(rI=max(r,2bz)) · 림 빛 위왼쪽 최대·옆 옅음·아래오른쪽 다시 · 부드러운 안쪽 광채 · 반대편 옅은 그늘.
+- 회색 막 제거: 틴트 다크 .02/라이트 .12 · 흰/회색 더하던 부피광·프레넬·스튜디오 환경 반사 삭제 · 9탭 frost.
+- 평가 에이전트(리퀴드 글라스 평가) 지적 반영: 바깥 1px 윤곽·두 번째 반사선·라이트 남색 선·닫힌 림 고리 제거 · 베벨 상한 30→20px · 테마 전환 뒤 큰 판이 다크로 남던 것 — 지금 판에서 재현 안 됨(헤드리스).
+- 조절 4종 = P.refraction(1)·chroma(무지개 .35)·blur(frost 2px)·spec(빛 1) — MY › 내 정보 › 화면 · 유리 슬라이더 · ?glass=debug · luxGlass.set. 저장 키 luxGlassP3(예전 값 무시).
+- (같은 판 추가 · 사용자 "블러 말고 뒤가 보이고 렌즈처럼 왜곡") 두 번째 스킬 the-best-liquid-glass(MIT) recipes: '단색 위 유리는 굴절할 게 없다' → 배경 장면에 뚜렷한 물결 띠 4개(가장자리 ~5px) · 가운데 렌즈 확대 magnify 1.06 · 림 띠 14~28px · 굴절 1.5 · 무지개 .45 · frost .5px. 저장 키 luxGlassP4.
+- 참고: 스킬은 'Apple 은 유리를 콘텐츠 카드가 아닌 기능층(바·사이드바·탭)에만' 이라고 한다 — 사용자가 카드 전체 유리를 원해 유지 중.
+
+### V33.875 (2026-11-27) — 유리 경계: 선 없이 빛·그늘의 짝으로(사용자 "테두리 선이 너무 보임 · 흰/검 조합 · 안쪽 박스 선")
+- 셰이더: 바깥 1px 윤곽(sh+=) 제거 · 안쪽 두 번째 반사선(bz*.55) 제거(박스 느낌 원인) · 테두리 1.3px 선 → 광원 쪽은 곡면 위로 번지는 흰 빛(폭 ≈ 베벨 ⅓) + 반대쪽은 어두운 굴절 그늘(+ 아주 얇은 반사광) — 선 없이 경계 인식.
+- CSS 원뿔 테두리(.sp .rg) 1.25px·상시 옅은 빛 → 1px·광원 쪽 호만(나머지 0).
+
+### V33.874 (2026-11-27) — 폰 검색 삭제 · 배경 보케 원 제거 · MY 화면·유리 설정
+- 폰 아래 탭 '검색'(cmdk 열기) 삭제 · 폰(≤767) .cmdk-fab 숨김(사용자 "폰 메뉴 검색 렉 심함 — 삭제"). 데스크톱 검색은 그대로.
+- lux-liquid 배경 장면의 보케 원 9개 제거(사용자 "배경에 이상한 원") — 빛 띠·오로라만.
+- MY › 내 정보 › '화면 · 유리'(mine.js 가 window.luxGlassUI.html() 삽입 · lux-liquid.js 가 data-gl/data-glk 조작 받음): 유리 켜기/끄기(localStorage luxGlass) · 빛 따라 움직임(luxGlassMove) · 굴절·빛 반사·진하기·색 번짐·두께감 슬라이더(luxGlassP · change 때만 다시 그림) · 처음 값으로.
+
 ### V33.873 (2026-11-27) — 리퀴드 글라스 렌더 파이프라인: 배경 장면 → FBO → 굴절 샘플 · 광원 uniform · 튜닝 패널
 - 진단(평면 블러처럼 보인 이유): ① 유리 뒤가 큰 그라데이션 몇 덩이뿐(휘어 보일 무늬 없음) ② 굴절 샘플이 수식 재계산(거칠기 단계 없음) ③ 셰이더 빛이 위왼쪽 고정.
 - 지금(public/lux-liquid.js): 배경 '장면'(오로라 LAYERS + 빛 띠 2 + 보케 9 — RICH)을 워커 WebGL 이 ★화면 뒤 고정 캔버스 #lgBg(transferControlToOffscreen)★ 와 ★FBO(뷰포트 ½)★ 에 같은 셰이더로 그림 → 유리 판은 FBO 를 법선·베벨 곡률로 휜 UV 로 샘플(가운데 렌즈 확대 magnify · 베벨 굴절 refraction · 가장자리만 R/G/B 오프셋 chroma · 5탭 미세 흐림 blur).

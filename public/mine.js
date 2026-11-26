@@ -712,6 +712,8 @@
         : li("meLogin", "👤", "로그인 · 회원가입", "")) +
       '<div class="li lang"><span class="ic" aria-hidden="true">🌐</span><span class="lb">언어</span><span class="seg" role="radiogroup" aria-label="언어"><button type="button" role="radio" aria-checked="' + !en + '" data-lang="ko" class="' + (en ? "" : "on") + '">한국어</button><button type="button" role="radio" aria-checked="' + en + '" data-lang="en" class="' + (en ? "on" : "") + '">English</button></span></div>' +
       (isAuth() ? li("meOut", "↩", "로그아웃", "") : "") + "</section>";
+    /* [V33.874] 화면 · 유리 설정(lux-liquid.js 의 luxGlassUI — 이 기기에만 저장) */
+    if (window.luxGlassUI) h += '<div class="sec">화면 · 유리</div><section class="card lgset">' + window.luxGlassUI.html() + "</section>";
     h += '<div class="sec">모의계좌</div><section class="card lst">' + ["us", "kr"].map(function (m) {
       return '<button type="button" class="li" data-reset="' + m + '"><span class="ic" aria-hidden="true">' + (m === "us" ? "$" : "₩") + '</span><span class="lb">' + MK[m] + ' 계좌 처음부터</span><span class="rv">' + (has(m) ? fmt(m, val(m).eq) : "없음") + '</span><span class="ch" aria-hidden="true">›</span></button>'; }).join("") + "</section>";
     /* [V33.734] 알림 · 약관 · 데이터(사용자 11/2 "체결 알림·이용 안내를 MY 내 정보로 · 동의서 · 데이터와 약관 제대로") */

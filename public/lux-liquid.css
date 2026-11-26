@@ -16,3 +16,19 @@ html.lg-gl body .lg-g:is(#lg_,.lg-g):is(#lg_,.lg-g)::before{box-shadow:none!impo
 /* 뒤로 글이 지나가는 떠 있는 판(폰 아래 탭): 흐림은 CSS 가 · 유리 모양(림·반사·틴트)은 셰이더 그림이 */
 html.lg-gl body .lg-g.lg-fl:is(#lg_,.lg-g):is(#lg_,.lg-g){-webkit-backdrop-filter:blur(16px) saturate(160%)!important;backdrop-filter:blur(16px) saturate(160%)!important}
 lg-glass{contain:strict}
+/* [V33.874] MY › 내 정보 › 화면 · 유리 설정 */
+.lgset{padding:4px 14px!important}
+.lgset .lgr{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 2px;border-bottom:1px solid rgba(127,137,155,.14)}
+.lgset .lgr:last-child{border-bottom:0}
+.lgset .lgr.sl{flex-direction:column;align-items:stretch;gap:6px}
+.lgset .lgr .lb{font-size:14px}.lgset .lgr .lb b{float:right;font-variant-numeric:tabular-nums;opacity:.8;font-weight:600}
+.lgset input[type=range]{width:100%;accent-color:#5b8cff}
+.lgset .seg{display:inline-flex;border-radius:10px;padding:2px;background:rgba(127,137,155,.14)}
+.lgset .seg button{border:0;background:none;color:inherit;font:inherit;font-size:13px;padding:5px 12px;border-radius:8px;cursor:pointer;opacity:.7}
+.lgset .seg button.on{background:rgba(91,140,255,.9);color:#fff;opacity:1}
+.lgset .lgn{font-size:12.5px;opacity:.7;padding:8px 2px}
+/* [V33.877] affaan-m/everything-claude-code 'liquid-glass-design' 스킬 — .interactive(): 유리는 누르면 반응한다(짧은 스프링 눌림 · transform 만 = 배치 0) */
+@media (prefers-reduced-motion:no-preference){
+  html.lg-gl .lg-g{transition:transform .32s cubic-bezier(.34,1.56,.64,1)}
+  html.lg-gl .lg-g:active{transform:scale(.992);transition-duration:.12s}
+}
