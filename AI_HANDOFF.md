@@ -12,6 +12,14 @@
 
 ## Current handoff
 
+### V33.873 (2026-11-27) — 리퀴드 글라스 렌더 파이프라인: 배경 장면 → FBO → 굴절 샘플 · 광원 uniform · 튜닝 패널
+- 진단(평면 블러처럼 보인 이유): ① 유리 뒤가 큰 그라데이션 몇 덩이뿐(휘어 보일 무늬 없음) ② 굴절 샘플이 수식 재계산(거칠기 단계 없음) ③ 셰이더 빛이 위왼쪽 고정.
+- 지금(public/lux-liquid.js): 배경 '장면'(오로라 LAYERS + 빛 띠 2 + 보케 9 — RICH)을 워커 WebGL 이 ★화면 뒤 고정 캔버스 #lgBg(transferControlToOffscreen)★ 와 ★FBO(뷰포트 ½)★ 에 같은 셰이더로 그림 → 유리 판은 FBO 를 법선·베벨 곡률로 휜 UV 로 샘플(가운데 렌즈 확대 magnify · 베벨 굴절 refraction · 가장자리만 R/G/B 오프셋 chroma · 5탭 미세 흐림 blur).
+  광원 uLt(마우스·기울기 → 멈추고 15° 넘게 바뀌면 보이는 판만 다시 그림 · 1.2s 에 한 번) → 스페큘러·프레넬 소프트박스·테두리 빛·반대편 두께 그늘·안쪽 두 번째 반사선. CSS 원뿔 테두리 빛(.sp)은 그대로 실시간.
+  #lgBg 없으면(transferControlToOffscreen 미지원) 장면은 오로라만(rich 0 = CSS html::before 와 같음).
+- 파라미터 P = {refraction 2.8, bevel .15, curve .62, chroma .14, blur 1.4, tint -1(다크 .14·라이트 .30), spec 1, magnify .92, rich 1} · luxGlass.set({...,light:각도}) · ?glass=debug 슬라이더 패널(값은 그 브라우저 localStorage luxGlassP).
+- 실측(헤드리스 CPU 4배): 스크롤 p50/p95 데스크톱 16.7/33.4 · 폰 16.7/16.7 — 라이브와 같음 · 긴 작업 52→0ms.
+
 ### V33.872 (2026-11-26) — 유리 빛 층 다시(사용자 "조잡하다")
 - 원인(확대 실측): V33.871 움직이는 빛의 '베벨 띠'(.gw · 폭 bz 고리 마스크)가 안쪽이 칼같이 잘려 카드마다 밝은 사각 띠·경계선 · 테두리 빛 덩이(220px 방사)가 얼룩처럼 보임.
 - 지금: <lg-glass> shadow DOM .sp = 테두리 1.25px 고리(.rg) 하나에 conic-gradient(from --lga) — 빛 쪽 가장 밝고 둘레 따라 매끈하게 옅어지며 반대편 약한 반사 · 본체 광택(.sh)은 넓고 옅은 타원(가장자리 없음, --sx/--sy). 자식 없는 요소라 변수 바뀌면 그 요소만 다시 칠함. 셰이더 고정 림 .24→.10(빛 층이 대신).
