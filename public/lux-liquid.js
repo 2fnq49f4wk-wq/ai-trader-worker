@@ -72,7 +72,7 @@
     " float bd=smoothstep(bz*1.7,0.,-d);c*=1.-bd*max(dot(g,vec2(.45,.9)),0.)*(uDk>.5?.12:.06);\n" +
     " c+=bd*max(dot(g,vec2(.25,.97)),0.)*smoothstep(0.,bz*.6,-d)*(uDk>.5?vec3(.05,.08,.13):vec3(.03,.05,.08));\n" +
     // 테두리 빛은 빛 닿는 쪽(위왼쪽)과 반대편 반사(아래오른쪽)에만 — 고르게 두른 테가 '뚜껑' 처럼 보였다
-    " float rim=(1.-smoothstep(.0,1.3,-d));float rl=.06+.9*pow(max(dot(g,vec2(-.6,-.8)),0.),2.)+.35*pow(max(dot(g,vec2(.6,.8)),0.),3.);c+=rim*rl*(uDk>.5?.24:.40);\n" +
+    " float rim=(1.-smoothstep(.0,1.3,-d));float rl=.06+.9*pow(max(dot(g,vec2(-.6,-.8)),0.),2.)+.35*pow(max(dot(g,vec2(.6,.8)),0.),3.);c+=rim*rl*(uDk>.5?.10:.30);\n" +
     " if(uDk<.5){c=mix(c,vec3(.12,.18,.32),(1.-smoothstep(0.,1.1,-d))*.18*(1.-rl*.6));}\n" +
     " c+=dn;\n float a=uFl>.5?(uDk>.5?.58:.62)+fr*.3+sp:1.;a=clamp(a,0.,1.)*A;\n" +
     " gl_FragColor=vec4(clamp(c,0.,1.)*a,a+sh*(1.-a));}";
@@ -154,25 +154,21 @@
        프레임마다 '쓰기'만(읽기 0) · 화면에 보이는 판만 · 입력이 멈추면 루프도 멈춤. */
     {
       var sp = D.createElement("div"); sp.className = "sp";
-      sp.innerHTML = '<div class="rg"><i class="b1"></i><i class="b2"></i></div><div class="gw"><i class="b1"></i><i class="b2"></i></div><div class="sh"><i class="bl"></i></div>';
+      sp.innerHTML = '<div class="rg"></div><div class="sh"></div>';
       var st = D.createElement("style"); st.textContent = SPCSS;
       root.appendChild(st); root.appendChild(sp);
-      var q = sp.querySelectorAll("i");
-      it.sp = { el: sp, b: [q[0], q[1], q[2], q[3]], bl: q[4] };
+      it.sp = { el: sp, rg: sp.firstChild, sh: sp.lastChild };
     }
     it.host = host; it.cv = cv; it.ctx = null;
   }
+  /* [V33.872] 빛 층을 다시: 종전 '빛 덩이 + 베벨 띠'는 띠 안쪽이 칼같이 잘려 카드마다 밝은 사각 띠·경계선이 보였다(조잡).
+     → 테두리 1.25px 고리 하나에 원뿔 그라데이션(빛 쪽이 가장 밝고 둘레를 따라 매끈하게 옅어지며 반대편에 약한 반사) — 빛 방향(--lga)만 바뀐다.
+     본체 광택은 아주 넓고 옅은 타원(가장자리 없음). 두 층 모두 자식 없는 요소라 변수 바뀌어도 그 요소만 다시 칠한다. */
   var SPCSS = ".sp{position:absolute;inset:" + M + "px;border-radius:var(--r);pointer-events:none}" +
-    ".rg,.gw,.sh{position:absolute;inset:0;border-radius:inherit;overflow:hidden}" +
-    ".rg{padding:1.6px;-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0)}" +
-    ".gw{padding:var(--bz);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0);opacity:.9}" +
-    "i{position:absolute;left:0;top:0;display:block;border-radius:50%;pointer-events:none}" +
-    ".rg .b1{width:var(--s1);height:var(--s1);margin:calc(var(--s1)/-2) 0 0 calc(var(--s1)/-2);background:radial-gradient(closest-side,rgba(255,255,255,1),rgba(255,255,255,.7) 30%,rgba(255,255,255,0))}" +
-    ".rg .b2{width:calc(var(--s1)*.7);height:calc(var(--s1)*.7);margin:calc(var(--s1)*-.35) 0 0 calc(var(--s1)*-.35);background:radial-gradient(closest-side,rgba(215,232,255,.42),rgba(215,232,255,0))}" +
-    ".gw .b1{width:var(--s2);height:var(--s2);margin:calc(var(--s2)/-2) 0 0 calc(var(--s2)/-2);background:radial-gradient(closest-side,rgba(255,255,255,.42),rgba(255,255,255,.12) 45%,rgba(255,255,255,0))}" +
-    ".gw .b2{width:calc(var(--s2)*.7);height:calc(var(--s2)*.7);margin:calc(var(--s2)*-.35) 0 0 calc(var(--s2)*-.35);background:radial-gradient(closest-side,rgba(190,220,255,.26),rgba(190,220,255,0))}" +
-    ".sh .bl{width:140%;height:120%;margin:-60% 0 0 -70%;background:radial-gradient(closest-side,rgba(255,255,255,.10),rgba(255,255,255,0))}" +
-    ":host-context(html[data-theme=light]) .gw{opacity:.8}";
+    ".rg,.sh{position:absolute;inset:0;border-radius:inherit}" +
+    ".rg{padding:1.25px;background:conic-gradient(from var(--lga,-37deg),rgba(255,255,255,.95),rgba(255,255,255,.55) 18deg,rgba(255,255,255,.16) 45deg,rgba(255,255,255,.05) 90deg,rgba(255,255,255,.03) 150deg,rgba(225,238,255,.32) 180deg,rgba(255,255,255,.08) 207deg,rgba(255,255,255,.03) 250deg,rgba(255,255,255,.06) 300deg,rgba(255,255,255,.45) 335deg,rgba(255,255,255,.95));" +
+    "-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0)}" +
+    ".sh{background:radial-gradient(90% 80% at var(--sx,30%) var(--sy,20%),rgba(255,255,255,.065),rgba(255,255,255,.02) 45%,rgba(255,255,255,0) 75%)}";
   function adopt(el) {
     if (el.__lgI !== undefined) return;
     el.__lgI = null;
@@ -287,15 +283,12 @@
   function bzOf(it) { return Math.max(8, Math.min(24, Math.min(it.w, it.h) * .14)); }
   function placeSpec(it) {
     var S = it.sp; if (!S || !it.w) return;
-    var hw = it.w / 2, hh = it.h / 2, dx = Math.sin(LT.a), dy = -Math.cos(LT.a);
-    var t = Math.min(hw / Math.max(Math.abs(dx), 1e-4), hh / Math.max(Math.abs(dy), 1e-4));
-    var px = hw + dx * t, py = hh + dy * t, ox = hw - dx * t, oy = hh - dy * t;
-    S.b[0].style.transform = S.b[2].style.transform = "translate(" + px.toFixed(1) + "px," + py.toFixed(1) + "px)";
-    S.b[1].style.transform = S.b[3].style.transform = "translate(" + ox.toFixed(1) + "px," + oy.toFixed(1) + "px)";
-    S.bl.style.transform = "translate(" + (hw + dx * hw * .45).toFixed(1) + "px," + (hh + dy * hh * .45).toFixed(1) + "px)";
+    S.rg.style.setProperty("--lga", LT.a.toFixed(3) + "rad");
+    S.sh.style.setProperty("--sx", (50 + Math.sin(LT.a) * 30).toFixed(1) + "%"); S.sh.style.setProperty("--sy", (50 - Math.cos(LT.a) * 34).toFixed(1) + "%");
     S.el.style.opacity = LT.k.toFixed(3);
   }
-  function specSize(it) { if (!it.sp) return; it.sp.el.style.setProperty("--r", it.r + "px"); it.sp.el.style.setProperty("--bz", bzOf(it).toFixed(1) + "px"); it.sp.el.style.setProperty("--s1", Math.round(Math.min(900, Math.max(160, Math.max(it.w, it.h) * .85))) + "px"); it.sp.el.style.setProperty("--s2", Math.round(Math.min(700, Math.max(140, Math.min(it.w, it.h) * 1.5))) + "px"); placeSpec(it); }
+
+  function specSize(it) { if (!it.sp) return; it.sp.el.style.setProperty("--r", it.r + "px"); placeSpec(it); }
   function lightLoop() {
     lraf = 0;
     var d = LT.ta - LT.a; d = Math.atan2(Math.sin(d), Math.cos(d));   // 가까운 쪽으로 돈다
