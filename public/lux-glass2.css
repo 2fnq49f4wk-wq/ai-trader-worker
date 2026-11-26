@@ -605,3 +605,12 @@ html.lux-dz body .shell{padding-bottom:calc((62px + env(safe-area-inset-bottom,0
 html.lux-dz body .m-ab-title{animation:none!important}
 html.lux-dz body .page:not(#lux_none) *:not(.tabs):not(.pz-tabs):not(.lxp-sw):not(.page-header):not([class*="modal"]){-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
 html.lux-dz body .m-drawer-scrim:not(.show),html.lux-dz body .m-drawer:not(.show){-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+/* [V33.869] ★폰 스크롤 렉★ — 본문 카드 바깥 그림자(0 18px 40px −22px · 흐림 40px)를 폰에서 작게(흐림 14px). 카드가 화면에 들어올 때마다 그림자를 새로 칠하는데
+   (종목 목록 카드 60장은 content-visibility 로 들어올 때 칠함) 흐림 반경이 칠하기 비용을 좌우한다. 안쪽 빛줄은 그대로 · 어두운 바탕에서 차이가 거의 안 보이는 크기. */
+@media (max-width:760px){
+  /* 종목 상세 목록 카드의 content-visibility:auto(V33.819 · 전환 렉용)는 폰에서 끈다 — 스크롤 중 카드가 들어올 때마다 그 카드를 메인 스레드에서 배치·칠하기·래스터해
+     폰 스크롤이 끊겼다(iPhone 13 에뮬 · CPU 4배 · 휠 2,400px: 메인 p95 52/36 → 9/17ms · 래스터 838/646 → 84/166ms). 카드 60장(요소 900개)이라 한 번에 배치해도 작다. */
+  #detailBrowseKR .wl-card,#detailBrowseUS .wl-card{content-visibility:visible;contain-intrinsic-size:none}
+  html:not([data-theme="light"]) body :is(.fv-panel,.idx-card,.fv-idx,.fv-breadth,#easyDash .c,#easyDash .ix,#easyDash .bri,.lux-topbar,#mineRoot .card,#mineRoot .hold,.pos-market-card,.port-card,.wl-card){box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 8px 14px -10px rgba(0,0,0,.55)!important}
+}
+html.lux-dz:not([data-theme="light"]) body :is(.fv-panel,.idx-card,.fv-idx,.fv-breadth,#easyDash .c,#easyDash .ix,#easyDash .bri,.lux-topbar,#mineRoot .card,#mineRoot .hold,.pos-market-card,.port-card,.wl-card){box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 8px 14px -10px rgba(0,0,0,.55)!important}

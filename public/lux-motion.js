@@ -14,9 +14,18 @@
   function Pill(host, itemSel, rectOf, pad) {
     var pill = D.createElement("i"); pill.className = "lux-pill"; pill.setAttribute("aria-hidden", "true");
     host.insertBefore(pill, host.firstChild);
-    var cur = null, first = true;
+    var cur = null, first = true, rc = [];
+    /* [V33.869] 메뉴 자리는 기억해 둔다 — 종전엔 화면을 바꿀 때마다 offsetLeft/Top 을 다시 읽어, 막 바뀐 새 화면(요소 수천 개)의 배치를 그 자리에서 한 번 더 강제했다
+       (데스크톱 CPU 4배 실측: 시장 화면 전환 때 132ms). 크기 변화·글꼴·복귀·메뉴 보임/숨김(style/class 변경) 때만 다시 잰다. */
+    function rectOfC(a) {
+      for (var i = 0; i < rc.length; i++) if (rc[i][0] === a) return rc[i][1];
+      rc = []; $$(itemSel, host).forEach(function (it) { var q = rectOf(it); if (q && q.w) rc.push([it, q]); });   // 한 번 잴 때 메뉴 전부(배치는 어차피 한 번)
+      for (var j = 0; j < rc.length; j++) if (rc[j][0] === a) return rc[j][1];
+      return rectOf(a);
+    }
     function place(animate) {
-      var act = $(itemSel + ".active", host), r = act && rectOf(act);
+      if (first) rc = [];
+      var act = $(itemSel + ".active", host), r = act && rectOfC(act);
       if (!r || !r.w) { pill.classList.remove("on"); cur = null; return; }
       var x = r.x - pad[0], y = r.y - pad[1], w = r.w + pad[0] * 2, h = r.h + pad[1] * 2, a = A();
       if (first || !animate || RM || !a || !cur) {
@@ -40,8 +49,14 @@
       if (tx) a({ targets: tx, opacity: [0.3, 1], duration: 380, easing: "easeOutQuad" });
     }
     var q = 0; function sched(anim) { if (q) return; q = requestAnimationFrame(function () { setTimeout(function () { q = 0; place(anim); }, 0); }); }   /* [V33.838] 위치는 그 프레임 배치가 끝난 뒤 잰다 — rAF 안에서 재면 사이드바 접기 직후 문서 전체 배치를 앞당겨 강제했다(0.46초 · 4배 감속) */
-    new MutationObserver(function (ms) { for (var i = 0; i < ms.length; i++) if (ms[i].attributeName === "class" && ms[i].target !== pill) { sched(true); return; } })
-      .observe(host, { subtree: true, attributes: true, attributeFilter: ["class"] });
+    new MutationObserver(function (ms) {
+      var hit = false;
+      for (var i = 0; i < ms.length; i++) { var t = ms[i].target; if (t === pill) continue;
+        var isItem = t.classList && t.classList.contains(itemSel.slice(1));
+        if (t === host || (ms[i].attributeName === "style" ? isItem : (!isItem && t.parentNode === host))) rc = [];   // 메뉴가 보이거나 숨음(style) · 묶음 모양이 바뀜 → 자리 다시 잼(아이콘 튀는 효과의 style 은 무시)
+        if (ms[i].attributeName === "class") hit = true; }
+      if (hit) sched(true);
+    }).observe(host, { subtree: true, attributes: true, attributeFilter: ["class", "style"] });
     addEventListener("resize", function () { first = true; sched(false); }, { passive: true });
     /* [V33.849] 사이트를 나갔다 들어오면(뒤로 가기 캐시 · 탭 복귀) 알약이 옛 자리에 남아 선택 메뉴가 검은 글자로 어긋나 보였다 — 다시 잰다.
        사이드바 폭이 바뀔 때(접기·펼치기·다른 탭에서 바꾼 설정)도 크기 관찰로 다시 잰다. */
@@ -108,9 +123,10 @@
         if (!p.classList || !p.classList.contains("page") || !p.classList.contains("active") || p === seen) continue;
         seen = p;
         if (RM || p.id === "page-detail" || p.id === "page-dashboard" || Date.now() - lastIn > 1500) continue;   /* [V33.834] 대시보드는 들어올 때 투명→보임 효과를 빼다 — 그리는 동안 효과가 멈춰 빈 화면처럼 보였다 */
-        var a = A();
-        if (a) a({ targets: p, opacity: [0, 1], translateY: [12, 0], duration: 380, easing: "easeOutCubic", complete: function () { p.style.transform = ""; p.style.opacity = ""; } });
-        else if (p.animate) p.animate([{ opacity: 0, transform: "translateY(12px)" }, { opacity: 1, transform: "none" }], { duration: 320, easing: "cubic-bezier(.22,.9,.3,1)" });
+        /* [V33.869] anime(JS) 대신 브라우저 애니메이션(WAAPI) — anime 는 시작할 때 대상의 계산 스타일을 읽어 막 바뀐 화면 전체 배치를 클릭 처리 안에서 강제했고
+           (데스크톱 CPU 4배 실측: 시장 화면 클릭 처리 255ms 중 배치 252ms) 이후 380ms 동안 매 프레임 인라인 style 을 써 화면 전체를 다시 칠했다.
+           WAAPI 의 opacity·transform 은 합성기에서 돌아 메인 스레드가 바빠도 부드럽다. 모양(투명→보임 · 12px 올라옴 · 380ms)은 같다. */
+        if (p.animate) p.animate([{ opacity: 0, transform: "translateY(12px)" }, { opacity: 1, transform: "none" }], { duration: 380, easing: "cubic-bezier(.215,.61,.355,1)" });
       }
     });
     $$(".page").forEach(function (pg) { mo.observe(pg, { attributes: true, attributeFilter: ["class"] }); });   /* 페이지 요소만 본다 */

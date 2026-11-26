@@ -12,6 +12,12 @@
 
 ## Current handoff
 
+### V33.870 (2026-11-26) — 폰 스크롤 · 사이드바 메뉴 전환 렉(에이전트 실측 · CPU 4배)
+- 폰 종목 상세 스크롤: 목록 카드 60장 content-visibility:auto(V33.819)가 스크롤 중 배치·래스터 → 폰(≤760)만 visible · 다크 카드 바깥 그림자 흐림 40→14px(lux-glass2.css 끝). 메인 프레임 p95 42.8/14.7 → 7.4/7.5ms · 래스터 706/534 → 135/43ms. 대가: 폰 상세 진입 첫 그리기 +6~60ms.
+- 메뉴 전환: lux-motion.js 화면 전환 anime → WAAPI(모양 동일 · 클릭 처리 341 → 28~39ms) · 사이드바 알약 메뉴 위치 기억. 패드 30쌍 긴 작업 7,236 → 3,227ms.
+- 대시보드 5초 갱신: fvCommitCam 같은 viewBox 재기록 안 함 · renderFvDeck 지수 카드·시장폭·TOP MOVERS 같으면 안 씀(fvSetH) → 시총맵 재배치(폰 542ms/회) 없어짐.
+- 남은 것: 메뉴 전환 첫 그리기 시장 ~200ms·AI 원리 ~250~330ms(renderNews·macroRenderTable·brain-studio) · 폰 전문가 전환 긴 작업 2.4~2.9s(textLength 가설은 틀림 — 첫 생성+대시보드 전체 배치).
+
 ### V33.869 (2026-11-26) — 리퀴드 글라스 WebGL(에이전트)
 - public/lux-liquid.js·css 전면 교체: 웹 워커 OffscreenCanvas WebGL 하나가 카드마다 '유리 판'(SDF·베벨 법선·굴절+색분산·프레넬 반사·스페큘러·림·두께/바깥 그림자·다크/라이트 틴트)을 한 번 그려 ImageBitmap 으로 카드 맨 뒤 <lg-glass>(shadow DOM 캔버스 · z -1 · 여백 24px)에 붙임.
   다시 그림: 크기 변화·스크롤 멈춘 뒤 40px 넘게 움직임·테마·창 크기만 · 스크롤 중 0 · 유휴 시간 · 동시 폰 2/데스크톱 4 · 보이는 카드만 · 메모리 상한 폰 9M/데스크톱 16M px.
