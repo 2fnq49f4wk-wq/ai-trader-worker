@@ -40,36 +40,41 @@
     "float sd(vec2 p,vec2 b,float r){vec2 q=abs(p)-b+r;return length(max(q,0.))+min(max(q.x,q.y),0.)-r;}\n" +
     "vec3 bg(vec2 v){float t=clamp(v.y/uV.y,0.,1.);vec3 c=t<.55?mix(uB0,uB1,t/.55):mix(uB1,uB2,(t-.55)/.45);float vm=max(uV.x,uV.y)*.01;\n" +
     " for(int i=6;i>=0;i--){if(float(i)>=uN)continue;vec4 L=uL[i];vec2 d=(v-L.xy*uV*.01)/(L.zw*vm);float a=uK[i].a*(1.-clamp(length(d)/.7,0.,1.));c=mix(c,uK[i].rgb,a);}return c;}\n" +
+    // [V33.871] 본체에 빛과 깊이(사용자 "가운데가 비어 보이고 플라스틱 뚜껑") — 평평한 남색 칠 → 굴절된 배경이 비치고 · 빛 쪽(위왼쪽)에서 안으로 번지는 부피광 ·
+    // 가장자리에서 안으로 스며드는 빛 · 아래로 갈수록 아주 조금 깊어짐. 테두리는 빛 닿는 쪽만 얇게(나머지는 거의 안 보임) · 안쪽 어두운 선 제거.
+    "vec3 shade(vec3 c,vec2 f,float dd,float bz){float l=dot(c,vec3(.299,.587,.114));c=clamp(mix(vec3(l),c,1.35),0.,1.);\n" +
+    " vec3 tn=uDk>.5?vec3(.03,.045,.095):vec3(1.);c=mix(c,tn,uDk>.5?.20:.42);\n" +
+    " vec2 q=(f-uM)/uS;float k=clamp(1.-dot(q,vec2(.62,.48)),0.,1.);c+=k*k*(uDk>.5?vec3(.055,.07,.095):vec3(.03,.035,.045));\n" +
+    " c+=exp(-dd/(bz*2.4))*(uDk>.5?vec3(.045,.06,.09):vec3(.035,.04,.05));\n" +
+    " c*=1.-smoothstep(.5,1.,q.y)*(uDk>.5?.07:.03);return c;}\n" +
     "void main(){vec2 f=vec2(gl_FragCoord.x,uC.y*uDpr-gl_FragCoord.y)/uDpr;vec2 hs=uS*.5;vec2 pc=f-uM-hs;float r=min(uR,min(hs.x,hs.y));\n" +
     " float d=sd(pc,hs,r);float aa=1./uDpr;float A=clamp(.5-d/aa,0.,1.);\n" +
-    // 바깥 그림자: 넓고 부드러운 것 + 바닥 접촉
+    // 바깥 그림자: 넓고 부드러운 것 + 바닥 접촉 + 아주 옅은 윤곽
     " float sh=(1.-smoothstep(-16.,uM*.9,sd(pc-vec2(0.,9.),hs-3.,r)))*mix(.13,.40,uDk)+(1.-smoothstep(-1.,3.,sd(pc-vec2(0.,1.5),hs,r)))*mix(.05,.16,uDk);sh*=uSh;\n" +
-    " if(A<=0.){gl_FragColor=vec4(0.,0.,0.,sh);return;}\n" +
-    // 안쪽 평평한 곳(대부분의 픽셀)은 굴절·법선이 없다 → 배경 한 번 + 틴트만(큰 판에서 3~4배 싸다)
-    " float bz=clamp(min(uS.x,uS.y)*.14,8.,24.);\n" +
-    " if(-d>bz*1.75&&uFl<.5){vec2 v0=uP+hs+(f-uM-hs)*.9;vec3 c0=bg(v0);float l0=dot(c0,vec3(.299,.587,.114));c0=clamp(mix(vec3(l0),c0,1.3),0.,1.);c0=mix(c0,uDk>.5?vec3(.035,.05,.105):vec3(1.),uDk>.5?.30:.50);c0+=(1.-f.y/uC.y)*(uDk>.5?.045:.02);c0+=(fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)-.5)/255.;gl_FragColor=vec4(clamp(c0,0.,1.),1.);return;}\n" +
+    " sh+=(1.-smoothstep(0.,1.2,d))*(uDk>.5?.22:.08);\n if(A<=0.){gl_FragColor=vec4(0.,0.,0.,sh);return;}\n" +
+    " float bz=clamp(min(uS.x,uS.y)*.14,8.,24.);float dn=(fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)-.5)/255.;\n" +
+    // 안쪽(대부분의 픽셀)은 법선이 없다 → 렌즈처럼 살짝 줄인 배경 + 본체 빛만
+    " if(-d>bz*1.75&&uFl<.5){vec2 v0=uP+hs+(f-uM-hs)*.9;vec3 c0=shade(bg(v0),f,-d,bz)+dn;gl_FragColor=vec4(clamp(c0,0.,1.),1.);return;}\n" +
     " vec2 e=vec2(.5,0.);vec2 g=vec2(sd(pc+e.xy,hs,r)-sd(pc-e.xy,hs,r),sd(pc+e.yx,hs,r)-sd(pc-e.yx,hs,r));g=g/max(length(g),1e-4);\n" +
     " float t=clamp(-d/bz,0.,1.);float u=1.-t;\n" +
-    // 볼록 베벨(스쿼클 높이 h=(1-u^4)^¼)의 기울기 → 법선(가장자리에서 바깥으로 눕는다)
-    " float sl=min(pow(u,3.)/pow(max(1.-pow(u,4.),1e-3),.75),5.);vec3 N=normalize(vec3(g*sl*.85,1.));\n" +
-    " vec2 v=uP+f-uM;vec2 cc=uP+hs;v=cc+(v-cc)*.9;vec2 o=-N.xy*bz*2.2;vec3 c;\n" +
-    " if(uFl<.5){c=vec3(bg(v+o*.9).r,bg(v+o).g,bg(v+o*1.12).b);float l=dot(c,vec3(.299,.587,.114));c=clamp(mix(vec3(l),c,1.3),0.,1.);}\n" +
+    // 볼록 베벨 기울기 → 법선(전보다 완만 — 두꺼운 테 대신 매끈한 곡면)
+    " float sl=min(pow(u,3.)/pow(max(1.-pow(u,4.),1e-3),.75),5.);vec3 N=normalize(vec3(g*sl*.6,1.));\n" +
+    " vec2 v=uP+f-uM;vec2 cc=uP+hs;v=cc+(v-cc)*.9;vec2 o=-N.xy*bz*2.8;vec3 c;\n" +
+    " if(uFl<.5)c=vec3(bg(v+o*.88).r,bg(v+o).g,bg(v+o*1.14).b);\n" +
     " else c=uDk>.5?vec3(.08,.10,.17):vec3(.96,.97,1.);\n" +
-    // 본체 틴트(글자 대비) + 위가 아주 조금 밝은 결
-    " vec3 tn=uDk>.5?vec3(.035,.05,.105):vec3(1.);c=mix(c,tn,uDk>.5?.30:.50);c+=(1.-f.y/uC.y)*(uDk>.5?.045:.02);\n" +
-    // 프레넬 — 스튜디오 조명(위 큰 소프트박스 · 왼쪽 세로 띠 · 아래는 어둡게)
+    " c=shade(c,f,-d,bz);\n" +
+    // 프레넬 — 스튜디오 조명(약하게: 곡면이 빛을 '받는' 정도)
     " vec3 R=reflect(vec3(0.,0.,-1.),N);float fr=pow(1.-N.z,1.6);\n" +
     " float env=.10+.75*smoothstep(-.15,.75,-R.y)+.45*exp(-pow((R.x+.6)*3.2,2.))+.2*exp(-pow((R.x-.7)*4.,2.))*smoothstep(-.2,.4,R.y);\n" +
-    " c=mix(c,vec3(env)*(uDk>.5?vec3(.86,.92,1.):vec3(1.)),clamp(fr*(uDk>.5?.62:.5),0.,.9));\n" +
-    // 위왼쪽 스페큘러
-    " vec3 Ld=normalize(vec3(-.45,-.8,.45));float sp=pow(max(dot(N,normalize(Ld+vec3(0.,0.,1.))),0.),70.);c+=sp*(uDk>.5?1.1:.8);\n" +
-    // 두께: 가장자리 안쪽 아래·오른쪽은 살짝 어둡고(두께 그림자) 아래쪽 안으로 번진 빛(코스틱)
-    " float bd=smoothstep(bz*1.7,0.,-d);c*=1.-bd*max(dot(g,vec2(.45,.9)),0.)*(uDk>.5?.22:.10);\n" +
-    " c+=bd*max(dot(g,vec2(.25,.97)),0.)*smoothstep(0.,bz*.6,-d)*(uDk>.5?vec3(.06,.10,.16):vec3(.04,.06,.10));\n" +
-    // 얇은 안쪽 림(위왼쪽·아래오른쪽이 밝다)
-    " float rim=(1.-smoothstep(.0,1.3,-d));float rl=.22+.78*pow(abs(dot(g,vec2(-.6,-.8))),1.5);c+=rim*rl*(uDk>.5?.30:.55);\n" +
-    " if(uDk<.5){c=mix(c,vec3(.12,.18,.32),(1.-smoothstep(0.,1.1,-d))*.22*(1.-rl*.6));}\n" +
-    " c+=(fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)-.5)/255.;\n float a=uFl>.5?(uDk>.5?.58:.62)+fr*.3+sp:1.;a=clamp(a,0.,1.)*A;\n" +
+    " c=mix(c,vec3(env)*(uDk>.5?vec3(.86,.92,1.):vec3(1.)),clamp(fr*(uDk>.5?.22:.30),0.,.9));\n" +
+    " vec3 Ld=normalize(vec3(-.45,-.8,.45));float sp=pow(max(dot(N,normalize(Ld+vec3(0.,0.,1.))),0.),70.);c+=sp*(uDk>.5?.30:.25);\n" +
+    // 두께: 아래·오른쪽 곡면은 살짝 어둡고 아래쪽 안으로 번진 빛
+    " float bd=smoothstep(bz*1.7,0.,-d);c*=1.-bd*max(dot(g,vec2(.45,.9)),0.)*(uDk>.5?.12:.06);\n" +
+    " c+=bd*max(dot(g,vec2(.25,.97)),0.)*smoothstep(0.,bz*.6,-d)*(uDk>.5?vec3(.05,.08,.13):vec3(.03,.05,.08));\n" +
+    // 테두리 빛은 빛 닿는 쪽(위왼쪽)과 반대편 반사(아래오른쪽)에만 — 고르게 두른 테가 '뚜껑' 처럼 보였다
+    " float rim=(1.-smoothstep(.0,1.3,-d));float rl=.06+.9*pow(max(dot(g,vec2(-.6,-.8)),0.),2.)+.35*pow(max(dot(g,vec2(.6,.8)),0.),3.);c+=rim*rl*(uDk>.5?.24:.40);\n" +
+    " if(uDk<.5){c=mix(c,vec3(.12,.18,.32),(1.-smoothstep(0.,1.1,-d))*.18*(1.-rl*.6));}\n" +
+    " c+=dn;\n float a=uFl>.5?(uDk>.5?.58:.62)+fr*.3+sp:1.;a=clamp(a,0.,1.)*A;\n" +
     " gl_FragColor=vec4(clamp(c,0.,1.)*a,a+sh*(1.-a));}";
 
   function WK() {
@@ -141,9 +146,33 @@
     host.setAttribute("aria-hidden", "true");
     host.style.cssText = "position:absolute;display:block;pointer-events:none;z-index:-1;margin:0;padding:0;border:0;top:" + (-M - it.bt) + "px;left:" + (-M - it.bl) + "px;width:calc(100% + " + (2 * M) + "px + " + (it.bl + it.br) + "px);height:calc(100% + " + (2 * M) + "px + " + (it.bt + it.bb) + "px)";
     cv.style.cssText = "display:block;width:100%;height:100%";
-    try { host.attachShadow({ mode: "closed" }).appendChild(cv); } catch (e) { host.appendChild(cv); }
+    var root = host; try { root = host.attachShadow({ mode: "closed" }); } catch (e) {}
+    root.appendChild(cv);
+    if (root === host) { it.host = host; it.cv = cv; it.ctx = null; return; }   // shadow DOM 없으면 움직이는 빛 생략(스타일이 밖으로 새지 않게)
+    /* [V33.870] ★움직이는 빛★ — 판 그림(셰이더)은 정지 화면 · 그 위에 '빛이 닿는 자리'만 움직이는 얇은 층(기울기·마우스를 따라 테두리를 돈다).
+       테두리 띠(1.5px · 고리 마스크)와 베벨 띠(넓고 흐림) 안에서 작은 빛 덩이 2개(주광 · 반대편 반사)가 transform 으로만 움직인다 · 본체엔 아주 옅은 광택이 반대로 흐른다.
+       프레임마다 '쓰기'만(읽기 0) · 화면에 보이는 판만 · 입력이 멈추면 루프도 멈춤. */
+    {
+      var sp = D.createElement("div"); sp.className = "sp";
+      sp.innerHTML = '<div class="rg"><i class="b1"></i><i class="b2"></i></div><div class="gw"><i class="b1"></i><i class="b2"></i></div><div class="sh"><i class="bl"></i></div>';
+      var st = D.createElement("style"); st.textContent = SPCSS;
+      root.appendChild(st); root.appendChild(sp);
+      var q = sp.querySelectorAll("i");
+      it.sp = { el: sp, b: [q[0], q[1], q[2], q[3]], bl: q[4] };
+    }
     it.host = host; it.cv = cv; it.ctx = null;
   }
+  var SPCSS = ".sp{position:absolute;inset:" + M + "px;border-radius:var(--r);pointer-events:none}" +
+    ".rg,.gw,.sh{position:absolute;inset:0;border-radius:inherit;overflow:hidden}" +
+    ".rg{padding:1.6px;-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0)}" +
+    ".gw{padding:var(--bz);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0);opacity:.9}" +
+    "i{position:absolute;left:0;top:0;display:block;border-radius:50%;pointer-events:none}" +
+    ".rg .b1{width:var(--s1);height:var(--s1);margin:calc(var(--s1)/-2) 0 0 calc(var(--s1)/-2);background:radial-gradient(closest-side,rgba(255,255,255,1),rgba(255,255,255,.7) 30%,rgba(255,255,255,0))}" +
+    ".rg .b2{width:calc(var(--s1)*.7);height:calc(var(--s1)*.7);margin:calc(var(--s1)*-.35) 0 0 calc(var(--s1)*-.35);background:radial-gradient(closest-side,rgba(215,232,255,.42),rgba(215,232,255,0))}" +
+    ".gw .b1{width:var(--s2);height:var(--s2);margin:calc(var(--s2)/-2) 0 0 calc(var(--s2)/-2);background:radial-gradient(closest-side,rgba(255,255,255,.42),rgba(255,255,255,.12) 45%,rgba(255,255,255,0))}" +
+    ".gw .b2{width:calc(var(--s2)*.7);height:calc(var(--s2)*.7);margin:calc(var(--s2)*-.35) 0 0 calc(var(--s2)*-.35);background:radial-gradient(closest-side,rgba(190,220,255,.26),rgba(190,220,255,0))}" +
+    ".sh .bl{width:140%;height:120%;margin:-60% 0 0 -70%;background:radial-gradient(closest-side,rgba(255,255,255,.10),rgba(255,255,255,0))}" +
+    ":host-context(html[data-theme=light]) .gw{opacity:.8}";
   function adopt(el) {
     if (el.__lgI !== undefined) return;
     el.__lgI = null;
@@ -156,7 +185,12 @@
       if (/auto|scroll/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 4 && !el.matches("nav.sidebar")) ok = 0;   // 안에서 스크롤되는 상자는 그림이 같이 밀린다
       var rel = cs.position === "static";
       // 안쪽에 절대배치가 있으면 relative 로 바꿀 때 위치 기준이 바뀐다 → 안 씌움. 자손이 많은 큰 상자는 훑지 않고 건너뛴다(스타일 계산 폭주 방지)
-      if (ok && rel) { var q = el.getElementsByTagName("*"); if (q.length > 120) ok = 0; for (var i = 0; i < q.length && ok; i++) { var ps = getComputedStyle(q[i]).position; if (ps === "absolute" || ps === "fixed") ok = 0; } }
+      // [V33.870] 종전 '자손 120개 넘으면 건너뜀' → 전문가 큰 패널(TOP MOVERS 등)이 통째로 빠졌다. 이제는 relative 로 바꿨을 때 ★실제로 기준이 바뀌는★
+      // 절대배치 자손(가장 가까운 위치 기준이 이 상자 바깥)이 있을 때만 건너뛴다. 모양(sig)마다 한 번만 · 자손 4,000 개 상한.
+      if (ok && rel) { var q = el.getElementsByTagName("*"); if (q.length > 4000) ok = 0;
+        for (var i = 0; i < q.length && ok; i++) { if (getComputedStyle(q[i]).position !== "absolute") continue;
+          var a = q[i].parentElement, inner = false; while (a && a !== el) { if (getComputedStyle(a).position !== "static") { inner = true; break; } a = a.parentElement; }
+          if (!inner) ok = 0; } }
       k = kindOk[sig] = { ok: ok, rel: rel, r: parseFloat(cs.borderTopLeftRadius) || 12, bt: parseFloat(cs.borderTopWidth) || 0, bl: parseFloat(cs.borderLeftWidth) || 0, br: parseFloat(cs.borderRightWidth) || 0, bb: parseFloat(cs.borderBottomWidth) || 0, sh: 1 };
       var pp = el.parentElement && getComputedStyle(el.parentElement); if (pp && (pp.overflowX !== "visible" || pp.overflowY !== "visible")) k.sh = .15;   // 부모가 잘라 내면 그림자 끝이 곧은 선으로 보인다 → 그림자 거의 끔
     }
@@ -184,7 +218,7 @@
       var b = e.borderBoxSize && e.borderBoxSize[0], w = b ? b.inlineSize : e.contentRect.width, h = b ? b.blockSize : e.contentRect.height;
       if (Math.abs(w - it.w) < 1 && Math.abs(h - it.h) < 1) continue;
       it.w = w; it.h = h; it.dirty = true;
-      if (!it.drawn) { var l = pool[pkey(it)]; if (l && l.length) { var o = l.pop(); poolN--; it.host = o.host; it.cv = o.cv; it.ctx = o.ctx; it.px = o.px; it.drawn = o.drawn; it.check = true; it.dirty = false; it.el.appendChild(it.host); it.el.classList.add("lg-g"); if (it.fl) it.el.classList.add("lg-fl"); } }
+      if (!it.drawn) { var l = pool[pkey(it)]; if (l && l.length) { var o = l.pop(); poolN--; it.host = o.host; it.cv = o.cv; it.ctx = o.ctx; it.sp = o.sp; it.px = o.px; it.drawn = o.drawn; it.check = true; it.dirty = false; it.el.appendChild(it.host); it.el.classList.add("lg-g"); if (it.fl) it.el.classList.add("lg-fl"); } }
     }
     kick(140);
   });
@@ -233,6 +267,7 @@
     if (it.host.parentNode !== it.el) it.el.appendChild(it.host);
     it.drawn = { x: n.x, y: n.y, vw: n.vw, vh: n.vh, dk: n.dk, key: Math.round(n.w) + "x" + Math.round(n.h) + "r" + it.r + (it.fl ? "f" : "") + (n.dk ? "dark" : "light") };
     if (!it.el.classList.contains("lg-g")) { it.el.classList.add("lg-g"); if (it.fl) it.el.classList.add("lg-fl"); }
+    specSize(it);
     if (pxUsed > PXCAP) shed();
     if (stats.length < 200) stats.push([Math.round(n.w), Math.round(n.h), +q.ms.toFixed(1)]);
     kick(0);
@@ -244,6 +279,55 @@
     lost = true; H.classList.remove("lg-gl");
     items.forEach(function (it) { it.el.classList.remove("lg-g", "lg-fl"); freeIt(it); });
     items = []; ro.disconnect(); io.disconnect(); try { wk.terminate(); } catch (e) {}
+  }
+
+  /* ── [V33.870] 움직이는 빛 — 빛 방향 θ(0 = 위, 시계 방향) · 세기 k. 입력: 데스크톱 마우스 위치 · 폰 기울기(deviceorientation · iOS 는 첫 터치 때 한 번 허락 요청) ── */
+  var RM = false; try { RM = matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
+  var LT = { a: -0.6435, k: .9, ta: -0.6435, tk: .9 }, lraf = 0;
+  function bzOf(it) { return Math.max(8, Math.min(24, Math.min(it.w, it.h) * .14)); }
+  function placeSpec(it) {
+    var S = it.sp; if (!S || !it.w) return;
+    var hw = it.w / 2, hh = it.h / 2, dx = Math.sin(LT.a), dy = -Math.cos(LT.a);
+    var t = Math.min(hw / Math.max(Math.abs(dx), 1e-4), hh / Math.max(Math.abs(dy), 1e-4));
+    var px = hw + dx * t, py = hh + dy * t, ox = hw - dx * t, oy = hh - dy * t;
+    S.b[0].style.transform = S.b[2].style.transform = "translate(" + px.toFixed(1) + "px," + py.toFixed(1) + "px)";
+    S.b[1].style.transform = S.b[3].style.transform = "translate(" + ox.toFixed(1) + "px," + oy.toFixed(1) + "px)";
+    S.bl.style.transform = "translate(" + (hw + dx * hw * .45).toFixed(1) + "px," + (hh + dy * hh * .45).toFixed(1) + "px)";
+    S.el.style.opacity = LT.k.toFixed(3);
+  }
+  function specSize(it) { if (!it.sp) return; it.sp.el.style.setProperty("--r", it.r + "px"); it.sp.el.style.setProperty("--bz", bzOf(it).toFixed(1) + "px"); it.sp.el.style.setProperty("--s1", Math.round(Math.min(900, Math.max(160, Math.max(it.w, it.h) * .85))) + "px"); it.sp.el.style.setProperty("--s2", Math.round(Math.min(700, Math.max(140, Math.min(it.w, it.h) * 1.5))) + "px"); placeSpec(it); }
+  function lightLoop() {
+    lraf = 0;
+    var d = LT.ta - LT.a; d = Math.atan2(Math.sin(d), Math.cos(d));   // 가까운 쪽으로 돈다
+    LT.a += d * .2; LT.k += (LT.tk - LT.k) * .2;
+    for (var i = 0; i < items.length; i++) { var it = items[i]; if (it.vis && it.sp && it.drawn) placeSpec(it); }
+    if (Math.abs(d) > .003 || Math.abs(LT.tk - LT.k) > .004) lraf = requestAnimationFrame(lightLoop);
+  }
+  function aim(vx, vy, k) { if (RM) return; LT.ta = Math.atan2(vx, -vy); LT.tk = k; if (!lraf) lraf = requestAnimationFrame(lightLoop); }
+  if (!RM) {
+    if (!PH) addEventListener("pointermove", function (e) {
+      if (e.pointerType !== "mouse") return;
+      var vx = e.clientX - W.innerWidth / 2, vy = e.clientY - W.innerHeight / 2, ds = Math.sqrt(vx * vx + vy * vy);
+      if (ds < 30) return; aim(vx, vy, .8 + .3 * Math.min(1, ds / (W.innerWidth * .5)));
+    }, { passive: true });
+    var b0 = null;
+    var onOri = function (e) {
+      if (e.beta == null || e.gamma == null) return;
+      if (b0 == null) b0 = e.beta; b0 += (e.beta - b0) * .004;   // 손에 쥔 각도를 천천히 '평평한 자세' 로 삼는다
+      var gx = Math.max(-1, Math.min(1, e.gamma / 32)), by = Math.max(-1, Math.min(1, (e.beta - b0) / 32));
+      aim(-.6 + gx * 1.4, -.8 + by * 1.4, Math.max(.75, Math.min(1.15, .78 + .35 * Math.sqrt(gx * gx + by * by))));
+    };
+    if (PH && W.DeviceOrientationEvent) {
+      var RP = DeviceOrientationEvent.requestPermission;
+      if (typeof RP === "function") {   // iOS: 사용자 동작 안에서 한 번만 묻는다(거절하면 다시 묻지 않음)
+        var tv = null; try { tv = localStorage.getItem("luxTilt"); } catch (e) {}
+        if (tv !== "asked") D.addEventListener("touchend", function ask() {   // 처음이면 묻고, 전에 허락했으면 조용히 다시 켠다(iOS 는 페이지마다 요청 필요 · 허락된 곳은 창이 안 뜬다)
+          D.removeEventListener("touchend", ask, true);
+          try { localStorage.setItem("luxTilt", "asked"); } catch (e) {}
+          RP.call(DeviceOrientationEvent).then(function (r) { if (r === "granted") { try { localStorage.setItem("luxTilt", "granted"); } catch (e) {} addEventListener("deviceorientation", onOri, { passive: true }); } })["catch"](function () {});
+        }, true);
+      } else addEventListener("deviceorientation", onOri, { passive: true });
+    }
   }
 
   /* ── 대상 찾기(유휴) · 다시 그릴 때 ── */
@@ -282,5 +366,5 @@
     H.classList.add("lg-gl");
     if (D.readyState === "loading") D.addEventListener("DOMContentLoaded", init); else init();
   }
-  W.luxGlass = { webgl: function () { return started && !lost; }, items: function () { return items.length; }, drawn: function () { return items.filter(function (i) { return i.drawn; }).length; }, px: function () { return pxUsed; }, off: off, stats: stats, mt: MT };
+  W.luxGlass = { light: LT, webgl: function () { return started && !lost; }, items: function () { return items.length; }, drawn: function () { return items.filter(function (i) { return i.drawn; }).length; }, px: function () { return pxUsed; }, off: off, stats: stats, mt: MT };
 })();
