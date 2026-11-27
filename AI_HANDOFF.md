@@ -12,6 +12,10 @@
 
 ## Current handoff
 
+### V33.881 (2026-11-27) — 터치 햅틱(사용자가 보낸 스킬 2개 실제 받아 적용)
+- 받은 것: haider-nawaz/liquid-glass-skill(SwiftUI .glassEffect · GlassEffectContainer · 마이그레이션) · zakisheriff/Claude-Liquid-Glass-Skill(SwiftUI/UIKit/RN 네이티브 유리 + 'Mandatory Haptics'). 둘 다 iOS 네이티브용 — 웹에 옮길 수 있는 규칙만 적용. 둘 다 LICENSE 파일 없음(코드 복사 안 함 · 규칙만).
+- 적용: '모든 터치에 햅틱' — lux-liquid.js 앞부분: 버튼·탭·칩·카드·목록 pointerdown(마우스 제외) → 앱(Capacitor Plugins.Haptics.impact LIGHT) · 안드로이드 navigator.vibrate(8) · iOS 사파리는 웹 진동 API 없음(생략) · 60ms 연타 1회 · MY › 화면·유리 '터치할 때 진동' 끔(luxHaptic=off).
+
 ### V33.880 (2026-11-27) — 유리 = 맨 끝 1px 경계선 + 안쪽 굴절·무지개만(사용자 "띠 말고 끝에 경계선만 · 안쪽에서 빛 왜곡과 무지개")
 - 셰이더: 렌즈 띠·그늘·틴트·반사 삭제. 카드 전체가 하나의 렌즈 — 이동량 = 법선 × bz×1.6×굴절 × u^2.2(u = 1 − 안쪽거리/짧은 반폭 · 가운데 0, 가장자리 최대, 기울기 연속) · 채널별 이동(무지개 uChr×.9×같은 곡선) · 맨 끝 exp(−d/.55) 선(빛 쪽 흰 · 다크 반대쪽 옅은 검) · 그림자 ×.35.
 

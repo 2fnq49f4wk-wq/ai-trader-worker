@@ -27,6 +27,7 @@
       if (on && live) {
         var P0 = G.params, dk = H.getAttribute("data-theme") !== "light";
         h += '<div class="lgr"><span class="lb">빛이 기울기·마우스를 따라 움직임</span>' + seg("move", glMove()) + '</div>';
+        h += '<div class="lgr"><span class="lb">터치할 때 진동(햅틱)</span>' + seg("hap", !(function () { try { return localStorage.getItem("luxHaptic") === "off"; } catch (e) { return false; } })()) + '</div>';
         h += GL_F.map(function (f) { var v = P0[f[0]]; if (f[0] === "tint" && v < 0) v = dk ? .02 : .12;
           return '<label class="lgr sl"><span class="lb">' + f[1] + ' <b data-glv="' + f[0] + '">' + (+v).toFixed(2) + '</b></span><input type="range" min="' + f[2] + '" max="' + f[3] + '" step="' + f[4] + '" value="' + v + '" data-glk="' + f[0] + '"></label>'; }).join("");
         h += '<div class="lgr"><span class="lb">처음 값으로</span><button type="button" class="b" data-gl="reset">되돌리기</button></div>';
@@ -41,11 +42,26 @@
     var k = t.getAttribute("data-gl"), v = t.getAttribute("data-v") === "1";
     try {
       if (k === "on") { if (v === glOn()) return; localStorage.setItem("luxGlass", v ? "on" : "off"); location.reload(); return; }
+      if (k === "hap") { localStorage.setItem("luxHaptic", v ? "on" : "off"); if (v && W.luxHaptic) W.luxHaptic.buzz(); }
       if (k === "move") { localStorage.setItem("luxGlassMove", v ? "on" : "off"); if (W.luxGlass && W.luxGlass.move) W.luxGlass.move(v); }
       if (k === "reset") { localStorage.removeItem("luxGlassP7"); localStorage.removeItem("luxGlassMove"); location.reload(); return; }
     } catch (x) {}
     var box = t.closest(".lgset"); if (box) box.innerHTML = W.luxGlassUI.html();
   });
+  /* [V33.881] ★모든 터치에 햅틱★ — zakisheriff/Claude-Liquid-Glass-Skill 'Mandatory Haptics'(버튼·탭·칩·토글·카드·목록 행 전부) 를 웹에 옮김.
+     앱(Capacitor Haptics 플러그인) → impact LIGHT · 안드로이드 브라우저 → navigator.vibrate(8) · iOS 사파리는 웹 진동 API 가 없어 조용히 생략.
+     MY › 화면 · 유리 에서 끔(luxHaptic=off) · 60ms 안 연타는 한 번. */
+  (function () {
+    var last = 0, SELH = "button,a[href],[role=tab],[role=button],.nav-item,.m-tab,.seg button,input[type=checkbox],input[type=radio],.c,.ix,.wl-card,[data-sym]";
+    function off() { try { return localStorage.getItem("luxHaptic") === "off"; } catch (e) { return false; } }
+    function buzz() {
+      var n = Date.now(); if (n - last < 60 || off()) return; last = n;
+      try { var C = W.Capacitor, H2 = C && C.Plugins && C.Plugins.Haptics; if (H2 && H2.impact) { H2.impact({ style: "LIGHT" }); return; } } catch (e) {}
+      try { if (navigator.vibrate) navigator.vibrate(8); } catch (e) {}
+    }
+    D.addEventListener("pointerdown", function (e) { if (e.pointerType === "mouse") return; var t = e.target && e.target.closest && e.target.closest(SELH); if (t && !t.disabled) buzz(); }, { passive: true, capture: true });
+    W.luxHaptic = { buzz: buzz, on: function () { return !off(); } };
+  })();
   try { if (localStorage.getItem("luxGlass") === "off") return; } catch (e) {}
   if (RT || !("ResizeObserver" in W) || !("IntersectionObserver" in W)) return;
 
