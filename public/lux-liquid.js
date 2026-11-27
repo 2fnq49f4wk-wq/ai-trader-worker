@@ -118,18 +118,16 @@
     " vec2 cc=uP+hs;vec2 v=cc+(uP+f-uM-cc)/uMag;vec3 tn=uDk>.5?vec3(.02,.035,.08):vec3(1.);\n" +
     " vec2 e=vec2(.5,0.);vec2 n2=-vec2(sd(pc+e.xy,hs,rI)-sd(pc-e.xy,hs,rI),sd(pc+e.yx,hs,rI)-sd(pc-e.yx,hs,rI));n2=n2/max(length(n2),1e-4);\n" +
     " float t=clamp(dIn/bz,0.,1.);float pr=(1.-t)*(1.-t);\n" +
-    " vec3 c;\n" +
+    // [V33.880] 사용자 "끝에 경계선만 · 안쪽에서 빛 왜곡과 무지개만" — 띠·그늘·틴트·반사 없음.
+    //  카드 전체가 하나의 렌즈: 가운데 0 → 가장자리로 갈수록 매끄럽게 커지는 굴절(곡선 u^2.2 · 기울기 연속) + 채널별 이동(무지개) · 맨 끝 1px 선(빛 쪽 흰 · 반대쪽 옅은 검)
+    " vec3 c;float L=max(min(hs.x,hs.y),1.);float u=1.-clamp(dIn/L,0.,1.);float pw=pow(u,2.2);\n" +
+    " vec2 s=n2*(bz*1.6*uRefr*pw);float k=uChr*.9*pw;\n" +
     " if(uFl>.5)c=uDk>.5?vec3(.08,.10,.17):vec3(.96,.97,1.);\n" +
-    " else if(pr<=0.&&dIn>bz*1.4){gl_FragColor=vec4(0.);return;}\n else if(pr<=0.)c=frost(v,uBlur);\n" +
-    " else{vec2 s=n2*(1.1*bz*uRefr*pr);float k=uChr*.45;c=vec3(frost(v+s*(1.+k),uBlur).r,frost(v+s,uBlur).g,frost(v+s*(1.-k),uBlur).b);}\n" +
-    " float l=dot(c,vec3(.2126,.7152,.0722));c=mix(vec3(l),c,1.15);c=mix(c,tn,uTint);\n" +
+    " else c=vec3(frost(v+s*(1.+k),uBlur).r,frost(v+s,uBlur).g,frost(v+s*(1.-k),uBlur).b);\n" +
+    " c=mix(c,tn,uTint);\n" +
     " float fl=dot(-n2,uLt);float lit=pow(max(fl,0.),1.5),opp=pow(max(-fl,0.),2.);\n" +
-    " float ring=exp(-dIn/.7);float wR=.95*lit+.35*opp;\n" +
-    " c=mix(c,vec3(1.),clamp(ring*wR*.5*uSpec,0.,.85));\n" +
-    // [V33.878] 가장자리 안쪽 광채 띠 삭제 — 회색 액자처럼 보였다(사용자 "가장자리 이상") · 대신 빛 쪽 곡면에만 아주 좁은 반사(폭 ≈ 베벨 ¼)
-    " c+=exp(-dIn/(bz*.25))*lit*.10*uSpec;\n" +
-    " c*=1.-exp(-dIn/(bz*.35))*opp*(uDk>.5?.20:.08);\n" +
-    " c+=dn;\n float a=uFl>.5?(uDk>.5?.6:.64)+ring*wR*.3*uSpec:1.;a=clamp(a,0.,1.)*A;if(uFl<.5)a*=1.-smoothstep(bz*.9,bz*1.4,dIn);\n" +
+    " float line=exp(-dIn/.55);c=mix(c,vec3(1.),clamp(line*(.22+.6*lit)*uSpec,0.,.9));c=mix(c,vec3(0.),clamp(line*opp*.25,0.,.5)*step(.5,uDk));\n" +
+    " c+=dn;\n float a=uFl>.5?(uDk>.5?.6:.64)+line*.3*uSpec:1.;a=clamp(a,0.,1.)*A;sh*=.35;\n" +
     " gl_FragColor=vec4(clamp(c,0.,1.)*a,a+sh*(1.-a));}";
 
   function WK() {
