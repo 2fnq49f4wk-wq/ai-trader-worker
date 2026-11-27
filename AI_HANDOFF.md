@@ -12,6 +12,13 @@
 
 ## Current handoff
 
+### V33.882 (2026-11-27) — 애플 방식: 떠 있는 메뉴가 실제 화면을 굴절 · 탭바 스크롤 축소
+- 애플 발표(newsroom 2025-06, web-fetch 로 원문 확인): 유리는 앱 위 '기능 층'(컨트롤·탭바·사이드바) · "reflects and refracts its surroundings" · 스크롤하면 탭바 줄고 올리면 펴짐 · 움직임에 반응하는 하이라이트.
+  우리와의 차이: 우리는 빈 배경 위 '콘텐츠 카드' 에 유리 → 뒤에 휠 게 없음. 셰이더 그림은 실제 화면을 못 읽음.
+- 적용: 폰 아래 탭(.m-tabbar)·위 앱바(.m-appbar) = xenitV1/liquid-glass-skill refraction.js(MIT · public/vendor/liquid-refraction.js · 크롬 계열 backdrop-filter:url(#변위맵) 로 그 아래 지나가는 실제 화면을 실시간 굴절 · 사파리/파폭은 흐림 유지). 우리 수정 1곳: setProperty 에 'important'(사이트 CSS !important 흐림을 이기도록). .m-tabbar 는 WebGL 대상에서 뺌.
+  폭 ≤900 에서만 lux-liquid.js 가 data-refract 붙이고 스크립트를 늦게 불러옴 · 탭바 스크롤 아래 → scale .9 · 위 → 원래(transform 만) · .is-refracting 일 때 채움 18~22%.
+- 애플 공식 유리(SwiftUI glassEffect·UIKit UIGlassEffect)는 웹 브라우저에서 호출 불가. 가능한 길은 iOS 네이티브 앱(Capacitor iOS + 네이티브 탭바 플러그인) — app/README ⑤ 대로 애플 개발자 계정($99/년)·Mac 필요, 현재 iOS 껍데기 없음.
+
 ### V33.881 (2026-11-27) — 터치 햅틱(사용자가 보낸 스킬 2개 실제 받아 적용)
 - 받은 것: haider-nawaz/liquid-glass-skill(SwiftUI .glassEffect · GlassEffectContainer · 마이그레이션) · zakisheriff/Claude-Liquid-Glass-Skill(SwiftUI/UIKit/RN 네이티브 유리 + 'Mandatory Haptics'). 둘 다 iOS 네이티브용 — 웹에 옮길 수 있는 규칙만 적용. 둘 다 LICENSE 파일 없음(코드 복사 안 함 · 규칙만).
 - 적용: '모든 터치에 햅틱' — lux-liquid.js 앞부분: 버튼·탭·칩·카드·목록 pointerdown(마우스 제외) → 앱(Capacitor Plugins.Haptics.impact LIGHT) · 안드로이드 navigator.vibrate(8) · iOS 사파리는 웹 진동 API 없음(생략) · 60ms 연타 1회 · MY › 화면·유리 '터치할 때 진동' 끔(luxHaptic=off).

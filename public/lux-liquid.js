@@ -62,6 +62,25 @@
     D.addEventListener("pointerdown", function (e) { if (e.pointerType === "mouse") return; var t = e.target && e.target.closest && e.target.closest(SELH); if (t && !t.disabled) buzz(); }, { passive: true, capture: true });
     W.luxHaptic = { buzz: buzz, on: function () { return !off(); } };
   })();
+  /* [V33.882] ★애플 방식 — 떠 있는 메뉴가 그 아래로 지나가는 실제 화면을 굴절★(Apple newsroom 2025-06: "Controls … a distinct functional layer that sits above apps" ·
+     "reflects and refracts its surroundings" · 탭바는 스크롤하면 줄었다가 위로 올리면 펴진다). 셰이더 그림은 '뒤의 실제 화면' 을 볼 수 없다 →
+     폰 아래 탭(.m-tabbar)·위 앱바(.m-appbar)는 xenitV1/liquid-glass-skill 의 refraction.js(MIT · public/vendor/liquid-refraction.js · 크롬 계열에서
+     backdrop-filter:url(#변위맵) 로 실시간 화면을 렌즈처럼 휨 · 사파리는 흐림 유지)로. 요소 2개 · 크기 바뀔 때만 맵 다시 그림 = 가벼움. */
+  (function () {
+    var done = false;
+    function go() {
+      if (done) return; var tb = D.querySelector(".m-tabbar"), ab = D.querySelector(".m-appbar"); if (!tb && !ab) return; done = true;
+      [[tb, "1.3", "1.5", "0.08"], [ab, "1", "2", "0.06"]].forEach(function (x) { var el = x[0]; if (!el) return;
+        el.setAttribute("data-refract", x[1]); el.setAttribute("data-refract-blur", x[2]); el.setAttribute("data-refract-dispersion", x[3]); el.setAttribute("data-refract-magnify", "0.03"); });
+      var sc = D.createElement("script"); sc.src = "/vendor/liquid-refraction.js?v=1"; sc.defer = true; D.head.appendChild(sc);
+      // 탭바: 아래로 스크롤하면 줄고(내용에 집중) 위로 올리면 펴짐 — transform 만
+      if (tb) { var lastY = 0, sh = false; D.addEventListener("scroll", function (e) { var t = e.target && e.target.scrollTop != null ? e.target : D.scrollingElement; if (!t || t.scrollTop == null) return; var y = t.scrollTop, dy = y - lastY; lastY = y;
+        var want = dy > 6 && y > 80 ? true : dy < -6 ? false : sh; if (want !== sh) { sh = want; tb.classList.toggle("lg-shrink", sh); } }, { passive: true, capture: true }); }
+    }
+    var mm = null; try { mm = matchMedia("(max-width: 900px)"); } catch (e) {}
+    function chk() { if (mm && mm.matches) { if (D.readyState === "loading") D.addEventListener("DOMContentLoaded", function () { setTimeout(go, 400); }); else setTimeout(go, 400); } }
+    chk(); if (mm && mm.addEventListener) mm.addEventListener("change", chk);
+  })();
   try { if (localStorage.getItem("luxGlass") === "off") return; } catch (e) {}
   if (RT || !("ResizeObserver" in W) || !("IntersectionObserver" in W)) return;
 
@@ -265,7 +284,7 @@
   })();
 
   /* ── 대상 · 상태 ── */
-  var SEL = "nav.sidebar,.m-tabbar,.fv-idx,#easyDash .ix,.fv-panel,.fv-breadth,#easyDash .bri,#easyDash .c,.dash-block,#pbObs .k-panel,.detail-vcard";
+  var SEL = "nav.sidebar,.fv-idx,#easyDash .ix,.fv-panel,.fv-breadth,#easyDash .bri,#easyDash .c,.dash-block,#pbObs .k-panel,.detail-vcard";
   var FLOAT = ".m-tabbar";   // 뒤로 글이 지나가는 떠 있는 판: 굴절 대신 CSS 흐림 + 반투명 유리 그림
   var M = 24;                // 그림자 여백(px)
   var PH = false; try { PH = matchMedia("(max-width: 760px)").matches || matchMedia("(pointer: coarse)").matches; } catch (e) {}

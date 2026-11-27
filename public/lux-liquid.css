@@ -32,3 +32,9 @@ lg-glass{contain:strict}
   html.lg-gl .lg-g{transition:transform .32s cubic-bezier(.34,1.56,.64,1)}
   html.lg-gl .lg-g:active{transform:scale(.992);transition-duration:.12s}
 }
+/* [V33.882] 폰 아래 탭: 스크롤 내리면 살짝 줄어듦(애플 탭바) · 굴절 켜지면(.is-refracting) 채움을 걷어 뒤 화면이 보이게 */
+.m-tabbar{transition:transform .35s cubic-bezier(.32,.72,0,1)}
+.m-tabbar.lg-shrink{transform:scale(.9) translateY(6px)}
+html:not([data-theme="light"]) body .m-tabbar.is-refracting,html:not([data-theme="light"]) body .m-appbar.is-refracting{background:rgba(12,17,30,.18)!important;background-image:none!important}
+html[data-theme="light"] body .m-tabbar.is-refracting,html[data-theme="light"] body .m-appbar.is-refracting{background:rgba(255,255,255,.22)!important;background-image:none!important}
+@media (prefers-reduced-motion:reduce){.m-tabbar.lg-shrink{transform:none}}
