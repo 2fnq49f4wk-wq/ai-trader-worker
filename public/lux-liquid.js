@@ -42,7 +42,7 @@
     try {
       if (k === "on") { if (v === glOn()) return; localStorage.setItem("luxGlass", v ? "on" : "off"); location.reload(); return; }
       if (k === "move") { localStorage.setItem("luxGlassMove", v ? "on" : "off"); if (W.luxGlass && W.luxGlass.move) W.luxGlass.move(v); }
-      if (k === "reset") { localStorage.removeItem("luxGlassP6"); localStorage.removeItem("luxGlassMove"); location.reload(); return; }
+      if (k === "reset") { localStorage.removeItem("luxGlassP7"); localStorage.removeItem("luxGlassMove"); location.reload(); return; }
     } catch (x) {}
     var box = t.closest(".lgset"); if (box) box.innerHTML = W.luxGlassUI.html();
   });
@@ -73,7 +73,7 @@
      지금: ⓐ 배경 '장면'(오로라 + 빛 띠 2 + 보케 원 9)을 워커 WebGL 이 ★화면 뒤 고정 캔버스(#lgBg)★ 와 ★오프스크린 텍스처(FBO)★ 에 똑같이 그린다
      ⓑ 유리 판 = FBO 를 표면 법선·베벨 곡률로 휜 UV 로 샘플(가운데는 렌즈처럼 살짝 확대 · 베벨은 강하게 휨 · 가장자리만 R/G/B 오프셋 · 미세 흐림 5탭)
      ⓒ 광원 방향 uLt(마우스·기울기 · 멈추면 다시 그림)로 스페큘러·프레넬·테두리 빛·두께 그늘 ⓓ 값은 전부 P(파라미터) — luxGlass.set({...}) · ?glass=debug 패널. */
-  var P = { refraction: 1.5, chroma: .45, blur: .5, spec: 1, tint: -1, bevel: .15, magnify: 1.06, curve: 1, rich: 0 };   // V33.876 렌즈 값 · rich 0 = 배경 물결 없음(사용자 "배경 이상")   // magnify = 가운데 렌즈 확대(the-best-liquid-glass zoom)   // tint -1 = 테마 기본(다크 .03 · 라이트 .18) · [V33.876] 스넬 굴절 기준으로 다시 맞춤
+  var P = { refraction: 1.5, chroma: .45, blur: 0, spec: 1, tint: 0, bevel: .15, magnify: 1, curve: 1, rich: 0 };   // [V33.879] 사용자 "완전 투명 · 테두리만" — 흐림 0 · 틴트 0 · 확대 없음 · 본체는 그리지 않음   // V33.876 렌즈 값 · rich 0 = 배경 물결 없음(사용자 "배경 이상")   // magnify = 가운데 렌즈 확대(the-best-liquid-glass zoom)   // tint -1 = 테마 기본(다크 .03 · 라이트 .18) · [V33.876] 스넬 굴절 기준으로 다시 맞춤
   var VS = "attribute vec2 a;void main(){gl_Position=vec4(a,0.,1.);}";
   var SCN =
     "uniform vec2 uV;uniform float uN,uDk,uRich;uniform vec4 uL[7],uK[7],uBo[9],uBc[9],uRb[2],uRc[2];uniform vec3 uB0,uB1,uB2;\n" +
@@ -120,7 +120,7 @@
     " float t=clamp(dIn/bz,0.,1.);float pr=(1.-t)*(1.-t);\n" +
     " vec3 c;\n" +
     " if(uFl>.5)c=uDk>.5?vec3(.08,.10,.17):vec3(.96,.97,1.);\n" +
-    " else if(pr<=0.)c=frost(v,uBlur);\n" +
+    " else if(pr<=0.&&dIn>bz*1.4){gl_FragColor=vec4(0.);return;}\n else if(pr<=0.)c=frost(v,uBlur);\n" +
     " else{vec2 s=n2*(1.1*bz*uRefr*pr);float k=uChr*.45;c=vec3(frost(v+s*(1.+k),uBlur).r,frost(v+s,uBlur).g,frost(v+s*(1.-k),uBlur).b);}\n" +
     " float l=dot(c,vec3(.2126,.7152,.0722));c=mix(vec3(l),c,1.15);c=mix(c,tn,uTint);\n" +
     " float fl=dot(-n2,uLt);float lit=pow(max(fl,0.),1.5),opp=pow(max(-fl,0.),2.);\n" +
@@ -129,7 +129,7 @@
     // [V33.878] 가장자리 안쪽 광채 띠 삭제 — 회색 액자처럼 보였다(사용자 "가장자리 이상") · 대신 빛 쪽 곡면에만 아주 좁은 반사(폭 ≈ 베벨 ¼)
     " c+=exp(-dIn/(bz*.25))*lit*.10*uSpec;\n" +
     " c*=1.-exp(-dIn/(bz*.35))*opp*(uDk>.5?.20:.08);\n" +
-    " c+=dn;\n float a=uFl>.5?(uDk>.5?.6:.64)+ring*wR*.3*uSpec:1.;a=clamp(a,0.,1.)*A;\n" +
+    " c+=dn;\n float a=uFl>.5?(uDk>.5?.6:.64)+ring*wR*.3*uSpec:1.;a=clamp(a,0.,1.)*A;if(uFl<.5)a*=1.-smoothstep(bz*.9,bz*1.4,dIn);\n" +
     " gl_FragColor=vec4(clamp(c,0.,1.)*a,a+sh*(1.-a));}";
 
   function WK() {
@@ -496,16 +496,16 @@
     Object.keys(o).forEach(function (k) { if (k === "light") { LT.fixed = true; LT.a = LT.ta = +o.light * Math.PI / 180; return; } if (k in P) { if (k === "rich") sc = true; P[k] = +o[k]; } });
     if (sc) { curTheme = ""; setTheme(dark()); }
     sendParams(); allDirty(false); if (LT.fixed) items.forEach(function (it) { if (it.sp) placeSpec(it); });
-    if (!keep) try { localStorage.setItem("luxGlassP6", JSON.stringify(P)); } catch (e) {}
+    if (!keep) try { localStorage.setItem("luxGlassP7", JSON.stringify(P)); } catch (e) {}
   }
-  try { var sv = JSON.parse(localStorage.getItem("luxGlassP6") || "null"); if (sv) Object.keys(sv).forEach(function (k) { if (k in P) P[k] = +sv[k]; }); } catch (e) {}
+  try { var sv = JSON.parse(localStorage.getItem("luxGlassP7") || "null"); if (sv) Object.keys(sv).forEach(function (k) { if (k in P) P[k] = +sv[k]; }); } catch (e) {}
   function debugPanel() {
     var dv = D.createElement("div"); dv.id = "lgDebug";
     dv.style.cssText = "position:fixed;right:12px;bottom:12px;z-index:99999;width:250px;padding:10px 12px;border-radius:14px;background:rgba(10,14,26,.88);color:#dfe7ff;font:12px/1.4 system-ui;box-shadow:0 10px 30px rgba(0,0,0,.5)";
     var F = [["refraction", "굴절", 0, 2.5, .05], ["chroma", "무지개", 0, 1, .02], ["blur", "흐림 px", 0, 12, .25], ["spec", "빛", 0, 2, .05], ["tint", "틴트(-1=기본)", -1, .5, .01], ["light", "광원 각도(고정)", -180, 180, 1]];
     dv.innerHTML = '<b>Liquid Glass</b> <a href="#" id="lgDbR" style="float:right;color:#8fb2ff">초기화</a>' + F.map(function (f) { var v = f[0] === "light" ? Math.round(LT.a * 180 / Math.PI) : P[f[0]]; return '<label style="display:block;margin-top:6px">' + f[1] + ' <span id="lgDv-' + f[0] + '">' + v + '</span><input type="range" min="' + f[2] + '" max="' + f[3] + '" step="' + f[4] + '" value="' + v + '" data-k="' + f[0] + '" style="width:100%"></label>'; }).join("");
     dv.addEventListener("input", function (e) { var k = e.target.getAttribute("data-k"); if (!k) return; D.getElementById("lgDv-" + k).textContent = e.target.value; var o = {}; o[k] = e.target.value; setP(o); });
-    dv.querySelector("#lgDbR").addEventListener("click", function (e) { e.preventDefault(); try { localStorage.removeItem("luxGlassP6"); } catch (x) {} location.reload(); });
+    dv.querySelector("#lgDbR").addEventListener("click", function (e) { e.preventDefault(); try { localStorage.removeItem("luxGlassP7"); } catch (x) {} location.reload(); });
     D.body.appendChild(dv);
   }
   var dbg = false; try { dbg = /[?&]glass=debug/.test(location.search) || localStorage.getItem("luxGlassDebug") === "1"; } catch (e) {}
