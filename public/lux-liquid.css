@@ -38,3 +38,9 @@ lg-glass{contain:strict}
 html:not([data-theme="light"]) body .m-tabbar.is-refracting,html:not([data-theme="light"]) body .m-appbar.is-refracting{background:rgba(12,17,30,.18)!important;background-image:none!important}
 html[data-theme="light"] body .m-tabbar.is-refracting,html[data-theme="light"] body .m-appbar.is-refracting{background:rgba(255,255,255,.22)!important;background-image:none!important}
 @media (prefers-reduced-motion:reduce){.m-tabbar.lg-shrink{transform:none}}
+/* [V33.883] Zettersten/skills liquid-glass(MIT) 4층 구성의 '스페큘러 층' — 위 가장자리 밝은 안쪽 빛 · 아래 옅은 빛(선이 아니라 안쪽 반사) · 굴절 중인 사이드바·머리 */
+html body nav.sidebar.is-refracting,html body #page-detail .page-header.is-refracting{isolation:isolate;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.55),inset 0 -1px 0 rgba(255,255,255,.12),0 18px 40px -24px rgba(0,0,0,.55)!important;border-color:transparent!important}
+html:not([data-theme="light"]) body nav.sidebar.is-refracting{background:rgba(12,17,30,.16)!important;background-image:none!important}
+html[data-theme="light"] body nav.sidebar.is-refracting{background:rgba(255,255,255,.2)!important;background-image:none!important}
+html:not([data-theme="light"]) body #page-detail .page-header.is-refracting{background:rgba(12,17,30,.3)!important;background-image:none!important}

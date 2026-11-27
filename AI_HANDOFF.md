@@ -12,6 +12,11 @@
 
 ## Current handoff
 
+### V33.883 (2026-11-27) — 데스크톱 사이드바·종목 상세 머리도 실제 화면 굴절 · Zettersten/skills liquid-glass(MIT) 스페큘러 층
+- refraction.js 대상 확대: nav.sidebar(WebGL 대상에서 뺌) · #page-detail .page-header(위로 화면이 스크롤되어 지나감) · 모든 폭에서 로드.
+- 새 스킬 Zettersten/skills/liquid-glass(MIT · feDisplacementMap 4층 구성): 스페큘러 층 = inset 0 1px 흰 .55 + 아래 .12 · isolation:isolate · 굴절 중 채움 16~30%.
+- 한계: 데스크톱 사이드바 뒤에는 페이지 배경만 있다(본문이 사이드바 밑으로 안 지나감) — 애플처럼 내용이 밑으로 지나가게 하려면 배치 변경 필요.
+
 ### V33.882 (2026-11-27) — 애플 방식: 떠 있는 메뉴가 실제 화면을 굴절 · 탭바 스크롤 축소
 - 애플 발표(newsroom 2025-06, web-fetch 로 원문 확인): 유리는 앱 위 '기능 층'(컨트롤·탭바·사이드바) · "reflects and refracts its surroundings" · 스크롤하면 탭바 줄고 올리면 펴짐 · 움직임에 반응하는 하이라이트.
   우리와의 차이: 우리는 빈 배경 위 '콘텐츠 카드' 에 유리 → 뒤에 휠 게 없음. 셰이더 그림은 실제 화면을 못 읽음.

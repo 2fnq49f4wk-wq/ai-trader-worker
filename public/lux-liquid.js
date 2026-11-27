@@ -69,8 +69,10 @@
   (function () {
     var done = false;
     function go() {
-      if (done) return; var tb = D.querySelector(".m-tabbar"), ab = D.querySelector(".m-appbar"); if (!tb && !ab) return; done = true;
-      [[tb, "1.3", "1.5", "0.08"], [ab, "1", "2", "0.06"]].forEach(function (x) { var el = x[0]; if (!el) return;
+      if (done) return; var tb = D.querySelector(".m-tabbar"), ab = D.querySelector(".m-appbar"); if (!tb && !ab && !D.querySelector("nav.sidebar")) return; done = true;
+      // [V33.883] 데스크톱 사이드바·종목 상세 머리(위로 화면이 지나감)도 실제 화면 굴절(사용자 11/27)
+      var sb = D.querySelector("nav.sidebar"), dh = D.querySelector("#page-detail .page-header");
+      [[tb, "1.3", "1.5", "0.08"], [ab, "1", "2", "0.06"], [sb, "1.2", "1", "0.08"], [dh, "1", "2", "0.06"]].forEach(function (x) { var el = x[0]; if (!el) return;
         el.setAttribute("data-refract", x[1]); el.setAttribute("data-refract-blur", x[2]); el.setAttribute("data-refract-dispersion", x[3]); el.setAttribute("data-refract-magnify", "0.03"); });
       var sc = D.createElement("script"); sc.src = "/vendor/liquid-refraction.js?v=1"; sc.defer = true; D.head.appendChild(sc);
       // 탭바: 아래로 스크롤하면 줄고(내용에 집중) 위로 올리면 펴짐 — transform 만
@@ -78,7 +80,7 @@
         var want = dy > 6 && y > 80 ? true : dy < -6 ? false : sh; if (want !== sh) { sh = want; tb.classList.toggle("lg-shrink", sh); } }, { passive: true, capture: true }); }
     }
     var mm = null; try { mm = matchMedia("(max-width: 900px)"); } catch (e) {}
-    function chk() { if (mm && mm.matches) { if (D.readyState === "loading") D.addEventListener("DOMContentLoaded", function () { setTimeout(go, 400); }); else setTimeout(go, 400); } }
+    function chk() { if (true) { if (D.readyState === "loading") D.addEventListener("DOMContentLoaded", function () { setTimeout(go, 400); }); else setTimeout(go, 400); } }
     chk(); if (mm && mm.addEventListener) mm.addEventListener("change", chk);
   })();
   try { if (localStorage.getItem("luxGlass") === "off") return; } catch (e) {}
@@ -284,7 +286,7 @@
   })();
 
   /* ── 대상 · 상태 ── */
-  var SEL = "nav.sidebar,.fv-idx,#easyDash .ix,.fv-panel,.fv-breadth,#easyDash .bri,#easyDash .c,.dash-block,#pbObs .k-panel,.detail-vcard";
+  var SEL = ".fv-idx,#easyDash .ix,.fv-panel,.fv-breadth,#easyDash .bri,#easyDash .c,.dash-block,#pbObs .k-panel,.detail-vcard";
   var FLOAT = ".m-tabbar";   // 뒤로 글이 지나가는 떠 있는 판: 굴절 대신 CSS 흐림 + 반투명 유리 그림
   var M = 24;                // 그림자 여백(px)
   var PH = false; try { PH = matchMedia("(max-width: 760px)").matches || matchMedia("(pointer: coarse)").matches; } catch (e) {}
