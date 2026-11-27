@@ -12,6 +12,12 @@
 
 ## Current handoff
 
+### V33.878 (2026-11-27) — 유리 가장자리 회색 액자 제거 · Apple HIG 스킬(milistu/agent-skills apple-human-interface-guidelines · MIT)
+- 원인(3배 확대): 가장자리 안쪽 광채 띠(exp(-dIn/(bz·.9)))가 15~20px 회색 액자 · 닫힌 링(바닥값 .10) · CSS .rg 원뿔 테두리와 겹침.
+- 수정: 광채 띠 삭제 → 빛 쪽 곡면에만 좁은 반사(폭 베벨 ¼) · 링 바닥 0(빛 쪽만) · 렌즈 띠 9~16px(얇게) · 굴절 이동 0.6→1.1×띠 · CSS 테두리 .75→.55.
+- HIG(materials-guidelines.md): '클리어 유리는 색이 풍부한 배경 위에서만' → 무늬 추가 없이 다크 오로라 색 덩이 알파 .24~.34 → .36~.48.
+- 애플이 웹용 공식 리퀴드 글라스(코드)는 제공하지 않음 — 공식은 SwiftUI glassEffect / UIKit UIGlassEffect + HIG 문서뿐.
+
 ### V33.877 (2026-11-27) — 리퀴드 글라스 = V33.876 렌즈 판 + 배경 물결 없음 · 누름 반응
 - 사용자: 배경 물결 '이상함' → 장면 rich 0(오로라만) · 이어 시험한 Midielhg 스킬의 얇은 렌즈판은 "다시 블러처럼" → ★V33.876 렌즈 셰이더(xenitV1 규칙 · 림 띠 14~28 · 굴절 1.5 · 무지개 .45 · 확대 1.06)로 되돌림★.
 - affaan-m/everything-claude-code skills/liquid-glass-design(MIT · 사용자가 보낸 링크) 받아 적용: interactive = 누르면 스프링 눌림(.lg-g:active scale .992 · transform 만).

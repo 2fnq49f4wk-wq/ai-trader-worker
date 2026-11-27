@@ -52,8 +52,8 @@
   /* 배경 오로라 — 위에서부터(맨 앞 = 맨 위). [cx%, cy%, rx vmax, ry vmax, r, g, b, a] · 투명은 70% 지점(CSS 와 같은 식) */
   var LAYERS = {
     dark: { base: ["#0b1326", "#0a1122", "#070d1b"], l: [
-      [30, 34, 16, 13, 70, 130, 255, .34], [74, 52, 11, 10, 40, 200, 190, .24], [52, 86, 14, 12, 130, 100, 255, .30],
-      [88, 12, 9, 8, 120, 170, 255, .24], [6, 0, 60, 50, 60, 90, 170, .34], [100, 10, 50, 44, 70, 100, 180, .26], [60, 110, 60, 50, 40, 60, 120, .26]] },
+      [30, 34, 16, 13, 70, 130, 255, .48], [74, 52, 11, 10, 40, 200, 190, .38], [52, 86, 14, 12, 130, 100, 255, .42],
+      [88, 12, 9, 8, 120, 170, 255, .36], [6, 0, 60, 50, 60, 90, 170, .34], [100, 10, 50, 44, 70, 100, 180, .26], [60, 110, 60, 50, 40, 60, 120, .26]] },
     light: { base: ["#f4f8ff", "#e8f0fc", "#eef4ff"], l: [
       [12, 8, 70, 22, 59, 130, 246, .22], [96, 30, 60, 18, 31, 107, 255, .16], [30, 78, 80, 24, 96, 165, 250, .20],
       [100, 105, 60, 20, 59, 130, 246, .18], [70, 40, 18, 14, 120, 90, 255, .10]] }
@@ -113,7 +113,7 @@
     " float d=sd(pc,hs,r);float aa=1./uDpr;float A=clamp(.5-d/aa,0.,1.);\n" +
     " float sh=(1.-smoothstep(-16.,uM*.9,sd(pc-vec2(0.,8.),hs-3.,r)))*mix(.10,.32,uDk)+(1.-smoothstep(-1.,4.,sd(pc-vec2(0.,1.5),hs,r)))*mix(.04,.12,uDk);sh*=uSh;\n" +
     " if(A<=0.){gl_FragColor=vec4(0.,0.,0.,sh);return;}\n" +
-    " float bz=min(clamp(r*1.2,14.,28.),min(uS.x,uS.y)/3.);float rI=max(r,bz*2.);float dI=sd(pc,hs,rI);float dIn=max(-dI,0.);\n" +
+    " float bz=min(clamp(r*.7,9.,16.),min(uS.x,uS.y)/3.);float rI=max(r,bz*2.);float dI=sd(pc,hs,rI);float dIn=max(-dI,0.);\n" +
     " float dn=(fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)-.5)/255.;\n" +
     " vec2 cc=uP+hs;vec2 v=cc+(uP+f-uM-cc)/uMag;vec3 tn=uDk>.5?vec3(.02,.035,.08):vec3(1.);\n" +
     " vec2 e=vec2(.5,0.);vec2 n2=-vec2(sd(pc+e.xy,hs,rI)-sd(pc-e.xy,hs,rI),sd(pc+e.yx,hs,rI)-sd(pc-e.yx,hs,rI));n2=n2/max(length(n2),1e-4);\n" +
@@ -121,13 +121,14 @@
     " vec3 c;\n" +
     " if(uFl>.5)c=uDk>.5?vec3(.08,.10,.17):vec3(.96,.97,1.);\n" +
     " else if(pr<=0.)c=frost(v,uBlur);\n" +
-    " else{vec2 s=n2*(.6*bz*uRefr*pr);float k=uChr*.45;c=vec3(frost(v+s*(1.+k),uBlur).r,frost(v+s,uBlur).g,frost(v+s*(1.-k),uBlur).b);}\n" +
+    " else{vec2 s=n2*(1.1*bz*uRefr*pr);float k=uChr*.45;c=vec3(frost(v+s*(1.+k),uBlur).r,frost(v+s,uBlur).g,frost(v+s*(1.-k),uBlur).b);}\n" +
     " float l=dot(c,vec3(.2126,.7152,.0722));c=mix(vec3(l),c,1.15);c=mix(c,tn,uTint);\n" +
     " float fl=dot(-n2,uLt);float lit=pow(max(fl,0.),1.5),opp=pow(max(-fl,0.),2.);\n" +
-    " float ring=exp(-dIn/1.1);float wR=.10+.9*lit+.4*opp;\n" +
+    " float ring=exp(-dIn/.7);float wR=.95*lit+.35*opp;\n" +
     " c=mix(c,vec3(1.),clamp(ring*wR*.5*uSpec,0.,.85));\n" +
-    " c+=exp(-dIn/(bz*.9))*(.03+.11*lit+.04*opp)*uSpec*(uDk>.5?vec3(.85,.92,1.):vec3(1.));\n" +
-    " c*=1.-exp(-dIn/(bz*.45))*opp*(uDk>.5?.16:.08);\n" +
+    // [V33.878] 가장자리 안쪽 광채 띠 삭제 — 회색 액자처럼 보였다(사용자 "가장자리 이상") · 대신 빛 쪽 곡면에만 아주 좁은 반사(폭 ≈ 베벨 ¼)
+    " c+=exp(-dIn/(bz*.25))*lit*.10*uSpec;\n" +
+    " c*=1.-exp(-dIn/(bz*.35))*opp*(uDk>.5?.20:.08);\n" +
     " c+=dn;\n float a=uFl>.5?(uDk>.5?.6:.64)+ring*wR*.3*uSpec:1.;a=clamp(a,0.,1.)*A;\n" +
     " gl_FragColor=vec4(clamp(c,0.,1.)*a,a+sh*(1.-a));}";
 
@@ -284,7 +285,7 @@
      본체 광택은 아주 넓고 옅은 타원(가장자리 없음). 두 층 모두 자식 없는 요소라 변수 바뀌어도 그 요소만 다시 칠한다. */
   var SPCSS = ".sp{position:absolute;inset:" + M + "px;border-radius:var(--r);pointer-events:none}" +
     ".rg,.sh{position:absolute;inset:0;border-radius:inherit}" +
-    ".rg{padding:1px;background:conic-gradient(from var(--lga,-37deg),rgba(255,255,255,.75),rgba(255,255,255,.28) 22deg,rgba(255,255,255,0) 55deg,rgba(255,255,255,0) 160deg,rgba(225,238,255,.16) 180deg,rgba(255,255,255,0) 200deg,rgba(255,255,255,0) 305deg,rgba(255,255,255,.28) 338deg,rgba(255,255,255,.75));" +
+    ".rg{padding:1px;background:conic-gradient(from var(--lga,-37deg),rgba(255,255,255,.55),rgba(255,255,255,.18) 22deg,rgba(255,255,255,0) 55deg,rgba(255,255,255,0) 160deg,rgba(225,238,255,.16) 180deg,rgba(255,255,255,0) 200deg,rgba(255,255,255,0) 305deg,rgba(255,255,255,.18) 338deg,rgba(255,255,255,.55));" +
     "-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0)}" +
     ".sh{background:radial-gradient(90% 80% at var(--sx,30%) var(--sy,20%),rgba(255,255,255,.065),rgba(255,255,255,.02) 45%,rgba(255,255,255,0) 75%)}";
   function adopt(el) {
