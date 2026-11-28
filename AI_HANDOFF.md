@@ -13,6 +13,7 @@
 ## Current handoff
 
 ### ⛔ 2026-11-28 Threads 계정 비활성화 — 자동 게시 전면 중지
+- ★2026-11-29 사용자 지시: Threads·페이스북·인스타 관련 작업 영구 중지★ — threads-post.yml 워크플로·tools/threads/post.py 삭제. 다시 만들거나 메타 API(graph.threads.net·graph.facebook.com)를 부르는 코드·예약 작업을 추가하지 말 것.
 - 메타가 11/28 게시용 계정을 '사기 및 부정행위' 규정 위반으로 비활성화(재검토 불가 표시) · 사용자 개인 인스타그램 계정까지 정지됨.
 - 예약 작업 'Threads 오늘의 주식 이슈'(trig_01X277ZwdsKgP5x4gXG2Mq5k) 끔. ★threads-post.yml 워크플로를 어떤 도구도 실행하지 말 것★ · 새 Threads/인스타 자동 게시 금지(사용자 명시 지시 전까지).
 - 추정 원인(확인 아님): 매일 같은 사이트 링크 카드(?r= 추적) 자동 게시 · 링크 첨부 실패 후 재시도 · 11/9 3시간 9건 게시 이력.
