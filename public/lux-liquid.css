@@ -44,3 +44,10 @@ html body nav.sidebar.is-refracting,html body #page-detail .page-header.is-refra
 html:not([data-theme="light"]) body nav.sidebar.is-refracting{background:rgba(12,17,30,.16)!important;background-image:none!important}
 html[data-theme="light"] body nav.sidebar.is-refracting{background:rgba(255,255,255,.2)!important;background-image:none!important}
 html:not([data-theme="light"]) body #page-detail .page-header.is-refracting{background:rgba(12,17,30,.3)!important;background-image:none!important}
+/* [V33.884] ★사이트 배경화면 = 밤바다 사진★(사용자 11/28) — 모든 화면 UI 뒤 · 화면 크기에 맞춰 덮기(cover) · 고정
+   유리 셰이더(lux-liquid.js)는 같은 사진을 같은 배치로 샘플해 카드 안에서 굴절해 보여 준다(카드 안 = 글자·그래프 외엔 사진이 비침) */
+html.lg-on::before,html.lg-on:not([data-theme="light"])::before,html.lg-gl:not([data-theme="light"])::before,html.lg-gl[data-theme="light"]::before{
+  content:""!important;position:fixed!important;inset:0!important;z-index:0!important;pointer-events:none!important;opacity:1!important;
+  background:#070b16 url(/bg/night-sea.jpg) center/cover no-repeat!important}
+html.lg-on body,html.lg-on[data-theme="light"] body{background:transparent!important}
+html.lg-on{background:#070b16!important}

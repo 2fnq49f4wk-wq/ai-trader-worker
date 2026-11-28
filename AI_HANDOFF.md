@@ -12,6 +12,11 @@
 
 ## Current handoff
 
+### V33.884 (2026-11-28) — 사이트 배경화면 = 밤바다 사진 · 유리 카드 안으로 사진이 비침
+- 사용자 제공 사진 public/bg/night-sea.jpg(1280×831 · 179KB) · lux-liquid.css: html::before 에 cover·center·고정(모든 화면 UI 뒤) · body 투명.
+- lux-liquid.js: 장면 캔버스(#lgBg)·오로라 주입 중단 · 워커가 같은 사진을 텍스처로 받아(createImageBitmap) scene() 이 CSS 와 같은 cover 배치로 샘플 → 카드 안(글자·그래프 외)은 사진이 렌즈처럼 비침. 사진 받기 전엔 오로라.
+- 작은 카드에서 사진이 세로로 늘어지는 줄무늬 → 기본 굴절 1.5→.55 · 무지개 .45→.3(luxGlassP8).
+
 ### V33.883 (2026-11-27) — 데스크톱 사이드바·종목 상세 머리도 실제 화면 굴절 · Zettersten/skills liquid-glass(MIT) 스페큘러 층
 - refraction.js 대상 확대: nav.sidebar(WebGL 대상에서 뺌) · #page-detail .page-header(위로 화면이 스크롤되어 지나감) · 모든 폭에서 로드.
 - 새 스킬 Zettersten/skills/liquid-glass(MIT · feDisplacementMap 4층 구성): 스페큘러 층 = inset 0 1px 흰 .55 + 아래 .12 · isolation:isolate · 굴절 중 채움 16~30%.

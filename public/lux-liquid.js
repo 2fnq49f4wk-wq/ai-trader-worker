@@ -44,7 +44,7 @@
       if (k === "on") { if (v === glOn()) return; localStorage.setItem("luxGlass", v ? "on" : "off"); location.reload(); return; }
       if (k === "hap") { localStorage.setItem("luxHaptic", v ? "on" : "off"); if (v && W.luxHaptic) W.luxHaptic.buzz(); }
       if (k === "move") { localStorage.setItem("luxGlassMove", v ? "on" : "off"); if (W.luxGlass && W.luxGlass.move) W.luxGlass.move(v); }
-      if (k === "reset") { localStorage.removeItem("luxGlassP7"); localStorage.removeItem("luxGlassMove"); location.reload(); return; }
+      if (k === "reset") { localStorage.removeItem("luxGlassP8"); localStorage.removeItem("luxGlassMove"); location.reload(); return; }
     } catch (x) {}
     var box = t.closest(".lgset"); if (box) box.innerHTML = W.luxGlassUI.html();
   });
@@ -110,11 +110,11 @@
      지금: ⓐ 배경 '장면'(오로라 + 빛 띠 2 + 보케 원 9)을 워커 WebGL 이 ★화면 뒤 고정 캔버스(#lgBg)★ 와 ★오프스크린 텍스처(FBO)★ 에 똑같이 그린다
      ⓑ 유리 판 = FBO 를 표면 법선·베벨 곡률로 휜 UV 로 샘플(가운데는 렌즈처럼 살짝 확대 · 베벨은 강하게 휨 · 가장자리만 R/G/B 오프셋 · 미세 흐림 5탭)
      ⓒ 광원 방향 uLt(마우스·기울기 · 멈추면 다시 그림)로 스페큘러·프레넬·테두리 빛·두께 그늘 ⓓ 값은 전부 P(파라미터) — luxGlass.set({...}) · ?glass=debug 패널. */
-  var P = { refraction: 1.5, chroma: .45, blur: 0, spec: 1, tint: 0, bevel: .15, magnify: 1, curve: 1, rich: 0 };   // [V33.879] 사용자 "완전 투명 · 테두리만" — 흐림 0 · 틴트 0 · 확대 없음 · 본체는 그리지 않음   // V33.876 렌즈 값 · rich 0 = 배경 물결 없음(사용자 "배경 이상")   // magnify = 가운데 렌즈 확대(the-best-liquid-glass zoom)   // tint -1 = 테마 기본(다크 .03 · 라이트 .18) · [V33.876] 스넬 굴절 기준으로 다시 맞춤
+  var P = { refraction: .55, chroma: .3, blur: 0, spec: 1, tint: 0, bevel: .15, magnify: 1, curve: 1, rich: 0 };   // [V33.879] 사용자 "완전 투명 · 테두리만" — 흐림 0 · 틴트 0 · 확대 없음 · 본체는 그리지 않음   // V33.876 렌즈 값 · rich 0 = 배경 물결 없음(사용자 "배경 이상")   // magnify = 가운데 렌즈 확대(the-best-liquid-glass zoom)   // tint -1 = 테마 기본(다크 .03 · 라이트 .18) · [V33.876] 스넬 굴절 기준으로 다시 맞춤
   var VS = "attribute vec2 a;void main(){gl_Position=vec4(a,0.,1.);}";
   var SCN =
-    "uniform vec2 uV;uniform float uN,uDk,uRich;uniform vec4 uL[7],uK[7],uBo[9],uBc[9],uRb[2],uRc[2];uniform vec3 uB0,uB1,uB2;\n" +
-    "vec3 scene(vec2 v){float t=clamp(v.y/uV.y,0.,1.);vec3 c=t<.55?mix(uB0,uB1,t/.55):mix(uB1,uB2,(t-.55)/.45);float vm=max(uV.x,uV.y)*.01;\n" +
+    "uniform sampler2D uImg;uniform vec3 uImgI;uniform vec2 uV;uniform float uN,uDk,uRich;uniform vec4 uL[7],uK[7],uBo[9],uBc[9],uRb[2],uRc[2];uniform vec3 uB0,uB1,uB2;\n" +
+    "vec3 scene(vec2 v){if(uImgI.z>.5){float s=max(uV.x/uImgI.x,uV.y/uImgI.y);vec2 sz=uImgI.xy*s;vec2 tt=(v-(uV-sz)*.5)/sz;return texture2D(uImg,clamp(tt,0.,1.)).rgb;}float t=clamp(v.y/uV.y,0.,1.);vec3 c=t<.55?mix(uB0,uB1,t/.55):mix(uB1,uB2,(t-.55)/.45);float vm=max(uV.x,uV.y)*.01;\n" +
     " for(int i=6;i>=0;i--){if(float(i)>=uN)continue;vec4 L=uL[i];vec2 d=(v-L.xy*uV*.01)/(L.zw*vm);float a=uK[i].a*(1.-clamp(length(d)/.7,0.,1.));c=mix(c,uK[i].rgb,a);}\n" +
     " if(uRich>.5){vec2 q=v/uV-.5;q.x*=uV.x/uV.y;\n" +
     // [V33.876] 배경화면 = 뚜렷한 물결 띠 4개(가장자리 약 5px) — 유리 뒤에 '휘어 보일 무늬' 가 있어야 렌즈가 보인다(스킬 recipes: 단색 위 유리는 굴절할 게 없다)
@@ -168,8 +168,8 @@
     " gl_FragColor=vec4(clamp(c,0.,1.)*a,a+sh*(1.-a));}";
 
   function WK() {
-    var gl = null, glc = null, U = {}, prG = null, prB = null, fbo = null, ftex = null, fw = 0, fh = 0, bgGl = null, bgc = null, bgPr = null, UB = {}, TH = null, VW = 0, VH = 0, PR = null;
-    var SC = "uV uN uDk uRich uL uK uBo uBc uRb uRc uB0 uB1 uB2".split(" ");
+    var itex = null, IMW = 1, IMH = 1, gl = null, glc = null, U = {}, prG = null, prB = null, fbo = null, ftex = null, fw = 0, fh = 0, bgGl = null, bgc = null, bgPr = null, UB = {}, TH = null, VW = 0, VH = 0, PR = null;
+    var SC = "uImg uImgI uV uN uDk uRich uL uK uBo uBc uRb uRc uB0 uB1 uB2".split(" ");
     function sh(g, t, s) { var o = g.createShader(t); g.shaderSource(o, s); g.compileShader(o); if (!g.getShaderParameter(o, g.COMPILE_STATUS)) throw new Error(g.getShaderInfoLog(o)); return o; }
     function prog(g, vs, fs) {
       var hp = g.getShaderPrecisionFormat(g.FRAGMENT_SHADER, g.HIGH_FLOAT);
@@ -180,6 +180,7 @@
     function quad(g, p) { var bf = g.createBuffer(); g.bindBuffer(g.ARRAY_BUFFER, bf); g.bufferData(g.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), g.STATIC_DRAW); var al = g.getAttribLocation(p, "a"); g.enableVertexAttribArray(al); g.vertexAttribPointer(al, 2, g.FLOAT, false, 0, 0); }
     function locs(g, p, names, o) { names.forEach(function (n) { o[n] = g.getUniformLocation(p, n); }); return o; }
     function setScene(g, L) {   // 장면 uniform(테마 · 뷰포트)
+      if (g === gl) { g.uniform1i(L.uImg, 1); g.uniform3f(L.uImgI, IMW, IMH, itex ? 1 : 0); if (itex) { g.activeTexture(g.TEXTURE1); g.bindTexture(g.TEXTURE_2D, itex); g.activeTexture(g.TEXTURE0); } } else g.uniform3f(L.uImgI, 1, 1, 0);
       var t = TH; g.uniform2f(L.uV, VW, VH); g.uniform1f(L.uN, t.n); g.uniform1f(L.uDk, t.dk); g.uniform1f(L.uRich, t.rich);
       g.uniform4fv(L.uL, t.L); g.uniform4fv(L.uK, t.K); g.uniform4fv(L.uBo, t.Bo); g.uniform4fv(L.uBc, t.Bc); g.uniform4fv(L.uRb, t.Rb); g.uniform4fv(L.uRc, t.Rc);
       g.uniform3fv(L.uB0, t.b0); g.uniform3fv(L.uB1, t.b1); g.uniform3fv(L.uB2, t.b2);
@@ -224,6 +225,12 @@
           }
           postMessage({ ready: 1, bg: !!bgGl }); return;
         }
+        if (q.img) {   // [V33.884] 배경화면 사진 → 텍스처(유리가 이 사진을 굴절해 보여 줌)
+          itex = gl.createTexture(); gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, itex);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, q.img);
+          [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]].forEach(function (k) { gl.texParameteri(gl.TEXTURE_2D, k[0], k[1]); });
+          gl.activeTexture(gl.TEXTURE0); IMW = q.img.width; IMH = q.img.height; try { q.img.close(); } catch (e) {} paintScene(); postMessage({ imgok: 1 }); return;
+        }
         if (q.theme) { TH = q.theme; paintScene(); return; }
         if (q.view) { VW = q.view[0]; VH = q.view[1]; paintScene(); return; }
         if (q.params) { setParams(q.params); return; }
@@ -263,6 +270,7 @@
     wk.postMessage({ params: { refraction: P.refraction, bevel: P.bevel, chroma: P.chroma, blur: P.blur, tint: t, spec: P.spec, magnify: P.magnify, curve: P.curve, lx: Math.sin(LT.a), ly: -Math.cos(LT.a) } });
     LT.drawnA = LT.a;
   }
+  var BGIMG = "/bg/night-sea.jpg";   // [V33.884] 사이트 배경화면(사용자 11/28)
   var wk, lost = false, started = false, bgCv = null;
   try {
     var bu = URL.createObjectURL(new Blob(["(" + WK.toString() + ")()"], { type: "text/javascript" }));
@@ -271,7 +279,10 @@
   wk.onerror = function () { off(); };
   wk.onmessage = function (m) {
     var q = m.data;
-    if (q.ready) { hasBgCanvas = !!q.bg; start(); return; }
+    if (q.ready) { hasBgCanvas = !!q.bg; start();
+      try { fetch(BGIMG).then(function (r) { return r.blob(); }).then(function (b) { return createImageBitmap(b); }).then(function (bm) { wk.postMessage({ img: bm }, [bm]); })["catch"](function () {}); } catch (e) {}
+      return; }
+    if (q.imgok) { allDirty(false); return; }
     if (q.fail) { try { console.warn("[lux-liquid] WebGL 유리 끔 → CSS 유리:", q.fail); } catch (e) {} off(); return; }
     got(q);
   };
@@ -280,7 +291,7 @@
     try {
       bgCv = D.createElement("canvas"); bgCv.id = "lgBg"; bgCv.setAttribute("aria-hidden", "true");
       bgCv.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;z-index:0;pointer-events:none;display:block";
-      if (bgCv.transferControlToOffscreen) { var oc = bgCv.transferControlToOffscreen(); msg.bgc = oc; tr.push(oc); } else bgCv = null;
+      bgCv = null;   // [V33.884] 배경은 CSS 사진(html::before) — 장면 캔버스는 안 씀(유리는 같은 사진을 같은 cover 배치로 샘플)
     } catch (e) { bgCv = null; }
     wk.postMessage(msg, tr);
   })();
@@ -516,8 +527,7 @@
   function start() {
     if (started || lost) return; started = true;
     var st = D.createElement("style"); st.id = "lgBg";
-    st.textContent = "html.lg-gl:not([data-theme=\"light\"])::before{background:" + bgCss(LAYERS.dark) + ";opacity:1!important}" +
-      "html.lg-gl[data-theme=\"light\"]::before{background:" + bgCss(LAYERS.light) + ";opacity:1!important}";
+    st.textContent = "";   // [V33.884] 배경은 lux-liquid.css 의 사진(오로라 주입 중단)
     if (hasBgCanvas && bgCv) st.textContent += "html.lg-bgc::before{opacity:0!important}";
     D.head.appendChild(st);
     H.classList.add("lg-gl");
@@ -531,16 +541,16 @@
     Object.keys(o).forEach(function (k) { if (k === "light") { LT.fixed = true; LT.a = LT.ta = +o.light * Math.PI / 180; return; } if (k in P) { if (k === "rich") sc = true; P[k] = +o[k]; } });
     if (sc) { curTheme = ""; setTheme(dark()); }
     sendParams(); allDirty(false); if (LT.fixed) items.forEach(function (it) { if (it.sp) placeSpec(it); });
-    if (!keep) try { localStorage.setItem("luxGlassP7", JSON.stringify(P)); } catch (e) {}
+    if (!keep) try { localStorage.setItem("luxGlassP8", JSON.stringify(P)); } catch (e) {}
   }
-  try { var sv = JSON.parse(localStorage.getItem("luxGlassP7") || "null"); if (sv) Object.keys(sv).forEach(function (k) { if (k in P) P[k] = +sv[k]; }); } catch (e) {}
+  try { var sv = JSON.parse(localStorage.getItem("luxGlassP8") || "null"); if (sv) Object.keys(sv).forEach(function (k) { if (k in P) P[k] = +sv[k]; }); } catch (e) {}
   function debugPanel() {
     var dv = D.createElement("div"); dv.id = "lgDebug";
     dv.style.cssText = "position:fixed;right:12px;bottom:12px;z-index:99999;width:250px;padding:10px 12px;border-radius:14px;background:rgba(10,14,26,.88);color:#dfe7ff;font:12px/1.4 system-ui;box-shadow:0 10px 30px rgba(0,0,0,.5)";
     var F = [["refraction", "굴절", 0, 2.5, .05], ["chroma", "무지개", 0, 1, .02], ["blur", "흐림 px", 0, 12, .25], ["spec", "빛", 0, 2, .05], ["tint", "틴트(-1=기본)", -1, .5, .01], ["light", "광원 각도(고정)", -180, 180, 1]];
     dv.innerHTML = '<b>Liquid Glass</b> <a href="#" id="lgDbR" style="float:right;color:#8fb2ff">초기화</a>' + F.map(function (f) { var v = f[0] === "light" ? Math.round(LT.a * 180 / Math.PI) : P[f[0]]; return '<label style="display:block;margin-top:6px">' + f[1] + ' <span id="lgDv-' + f[0] + '">' + v + '</span><input type="range" min="' + f[2] + '" max="' + f[3] + '" step="' + f[4] + '" value="' + v + '" data-k="' + f[0] + '" style="width:100%"></label>'; }).join("");
     dv.addEventListener("input", function (e) { var k = e.target.getAttribute("data-k"); if (!k) return; D.getElementById("lgDv-" + k).textContent = e.target.value; var o = {}; o[k] = e.target.value; setP(o); });
-    dv.querySelector("#lgDbR").addEventListener("click", function (e) { e.preventDefault(); try { localStorage.removeItem("luxGlassP7"); } catch (x) {} location.reload(); });
+    dv.querySelector("#lgDbR").addEventListener("click", function (e) { e.preventDefault(); try { localStorage.removeItem("luxGlassP8"); } catch (x) {} location.reload(); });
     D.body.appendChild(dv);
   }
   var dbg = false; try { dbg = /[?&]glass=debug/.test(location.search) || localStorage.getItem("luxGlassDebug") === "1"; } catch (e) {}
